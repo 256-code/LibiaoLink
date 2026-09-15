@@ -1,0 +1,19 @@
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# Casdoor 运行数据（files/ 只保留自托管的品牌资源，其余是上传件）
+deploy/casdoor/files/*
+!deploy/casdoor/files/brand/
+deploy/casdoor/logs/
+deploy/casdoor/backup/
+deploy/casdoor/tmp/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# 系统
+.DS_Store
+Thumbs.db

@@ -1,0 +1,109 @@
+# 本地沙箱说明（LibiaoLink 演练环境）
+
+> 这份文档只讲**本机 Docker 里那一套 Casdoor**（`deploy/casdoor/`）的现状与用法。
+> 它与公司环境（正式 `auth.libiaorobot.com` / 测试 `authtest.libiaorobot.com`）是**两套完全独立的用户库** —— 同名同邮箱也不是同一个人。
+> 最后更新：2026-09-15
+
+## 一、用途与边界
+
+- **用途**：在完全不碰公司环境的前提下，验证接入代码、登录页与流程。组织、应用、证书、令牌字段口径都按公司标准配置。
+- **边界**：本地用户是手工建的演示数据；公司账号靠联邦入口登录（见第五节）。正式上线时业务系统直接对接公司 Casdoor，本地这套不参与。
+
+## 二、起停
+
+```powershell
+cd D:\LibiaoLink\deploy\casdoor
+docker compose up -d      # 启动（casdoor / mysql / redis 三个容器）
+docker compose ps         # 状态，三个都应是 healthy
+docker compose logs -f casdoor
+docker compose down       # 停止（数据保留在数据卷）
+docker compose down -v    # 连数据一起清掉，下次启动是全新环境
+```
+
+健康检查：`curl http://localhost:8000/api/health`
+
+## 三、登录入口与账号
+
+带应用 Logo 的登录页（收藏这一条就够，不需要任何其它本地服务）：
+
+```
+http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d4&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Faccount&scope=openid+profile+email&state=demo
+```
+
+页面上有三条登录路径：
+
+| 路径 | 位置 | 用什么登录 | 效果 |
+|---|---|---|---|
+| 本地账号 | 登录页 `密码（本地）` 页签 | `zhangsan` / `Zhangsan@2026` | 登录到本地用户库，不碰公司 |
+| 公司账号 | 登录页下方「公司统一登录（测试环境）」 | 测试环境组织 `libiaorobot.com` 下的账号（如 `yicaonan`） | 联邦登录，首次登录自动建本地账号 |
+| Casdoor 管理员 | `http://localhost:8000/login/built-in` | `admin` / `123` | 进控制台（**上线前必须改**） |
+
+> `验证码` 页签现在点了发不出码 —— 本地没有短信/邮箱通道（公司测试环境也一样）。
+
+## 四、当前配置快照
+
+| 项 | 值 |
+|---|---|
+| 组织 | `libiaorobot`（**本地专用名**；公司是 `libiaorobot.com`） |
+| 证书 | `cert-libiaorobot`（RS256） |
+| 应用 | `libiaolink`，Client ID `libiaolink-a195b721bb30a7d4`（Secret 在控制台应用详情页） |
+| Grant Types | 只勾 `authorization_code` |
+| Token | `JWT-Custom`，字段 `name` / `owner` / `id` / `displayName` / `email` |
+| Redirect URLs | `http://localhost:8000/account` —— 回跳 Casdoor 自己的账户页，所以没有业务系统也能验证登录 |
+| 登录方式 | `密码（本地）` + `验证码` |
+| 外部认证源 | `provider_authtest` → `https://authtest.libiaorobot.com`（类型 Casdoor，即联邦）；应用里 `canSignIn` 与 `canSignUp` 都为真 |
+| 注册 | 应用 `enableSignUp` 已开：公司账号第一次登录会自动建本地用户 |
+| Logo | `http://localhost:8000/files/brand/libiaolink-logo.svg`、`...-dark.svg`（Casdoor 自托管；源文件在 `assets/`，副本在 `deploy/casdoor/files/brand/`） |
+| 登录页 Logo 尺寸 | `formCss = .login-logo-box img{height:140px!important}`（Casdoor 默认只给 40px） |
+| 会话 | SSO Cookie 30 天（compose 的 `sessionCookieLifeTime`） |
+| 本地用户 | `zhangsan`（张三，已绑定公司测试环境 UUID `8a11328a-…`）、`yicaonan`（预留，绑定 `a7cf26f5-…`） |
+
+## 五、公司账号是怎么登进来的（联邦原理）
+
+1. 本地登录页 → 点「公司统一登录（测试环境）」→ 跳到 `https://authtest.libiaorobot.com`（用的是测试环境 `libiaolink` 应用的 Client ID `75a4ed2163aa67549ae3`）；
+2. 在**公司页面**上输入公司账号（密码 / 扫码都在那边输入）；
+3. 回到本地 Casdoor：按认证源的 `userMapping` 把公司用户映射成本地用户 —— 已绑定的直接命中，没绑定的自动建号；
+4. 本地 Casdoor 再签发自己的令牌给业务系统 —— 所以业务系统自始至终只认本地这一套。
+
+本地用户身上的 `casdoor` 字段存的就是**公司那边的用户 UUID**，这是两边能对上的关键。
+
+> ⚠️ 联邦回调是本地 Casdoor 的 `/callback`（`http://localhost:8000/callback`）—— **公司测试环境 `libiaolink` 应用的 Redirect URLs 里必须保留这一条**，删掉联邦就登不进去。
+
+## 六、没有浏览器也能查
+
+```
+# 登录页会渲染出哪些登录方式与入口
+GET http://localhost:8000/api/get-app-login?clientId=libiaolink-a195b721bb30a7d4&responseType=code&redirectUri=http%3A%2F%2Flocalhost%3A8000%2Faccount&type=code&scope=openid%20profile%20email&state=x
+
+# 应用 / 认证源 / 用户
+GET http://localhost:8000/api/get-application?id=admin/libiaolink
+GET http://localhost:8000/api/get-providers?owner=admin
+GET http://localhost:8000/api/get-user?id=libiaorobot/zhangsan
+
+# 管理员登录（返回会话 Cookie，后续请求带上）
+POST http://localhost:8000/api/login
+{"application":"app-built-in","organization":"built-in","username":"admin","password":"123","autoLogin":true,"type":"login"}
+```
+
+## 七、常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 在「密码（本地）」里填公司邮箱 → `user … doesn’t exist` | 本地页只查本地用户库；公司账号必须走下方「公司统一登录（测试环境）」 |
+| 公司账号登录报 `libiaorobot.com/xxx 不存在` | 账号建在了别的组织（如 `built-in`）。用户必须建在应用所属的 `libiaorobot.com` |
+| 「验证码」点了没反应 | 本地没有短信 / 邮箱通道（公司测试环境同样没有） |
+| 公司登录入口图标是 Casdoor 的立方体 | 认证源类型为 `Casdoor` 时图标被 Casdoor 写死；改成 `OIDC` 类型才能自定义 `customLogo`（需重新验证链路） |
+| 换了 Logo 但页面没变 | 改 `assets/` 后要同步一份到 `deploy/casdoor/files/brand/` |
+| 想切回「只有本地账号」 | 控制台应用 `libiaolink` → Providers 取消勾选 `provider_authtest` |
+| 登录页一闪而过 / 直接进业务系统 | 应用 `enableAutoSignin` 打开时，已有 SSO 会话会自动签发（本地默认关闭） |
+
+## 八、与公司环境对照
+
+| 项 | 本地沙箱 | 公司测试 | 公司正式 |
+|---|---|---|---|
+| 地址 | `http://localhost:8000` | `https://authtest.libiaorobot.com`（仅内网） | `https://auth.libiaorobot.com` |
+| 组织 | `libiaorobot` | `libiaorobot.com` | `libiaorobot.com` |
+| 管理员 | `admin` / `123` | `admintest` | 由 SSO 管理员维护 |
+| 用户来源 | 手工建 + 联邦自动建 | 手工建（无正式员工数据） | 企微通讯录同步 |
+| 企微登录 | 无 | 无 | ✅ `WeCom` Provider |
+| 应用注册 | 控制台自助 | 管理员账号可自助 | 需找 SSO 管理员 |

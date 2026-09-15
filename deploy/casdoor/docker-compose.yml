@@ -1,0 +1,114 @@
+# ============================================================
+# 公司统一身份中心（Casdoor）生产部署模板
+# ------------------------------------------------------------
+# 用法：
+#   cp .env.example .env    # 先改域名和密码
+#   docker compose up -d
+#   docker compose logs -f casdoor
+#
+# 说明：
+#   Casdoor 的任意配置项都可以用「同名环境变量」覆盖（见源码 conf/conf.go），
+#   所以这里不挂载 app.conf，全部用 environment 注入 —— 配置即代码，便于审计与回滚。
+# ============================================================
+name: casdoor
+
+services:
+  casdoor:
+    image: casbin/casdoor:${CASDOOR_VERSION:-4.4.0}   # 生产务必固定版本号，不要用 latest
+    container_name: casdoor
+    restart: unless-stopped
+    # 首次启动自动建库建表，之后启动幂等
+    entrypoint: ["/bin/sh", "-c", "/server --createDatabase=true"]
+    environment:
+      appname: casdoor
+      httpport: "8000"
+      runmode: prod
+      showSql: "false"
+      driverName: mysql
+      dbName: casdoor
+      # 注意：MySQL 下 DSN 会与 dbName 直接拼接（源码 ormer.go: open() => dataSourceName + dbName），
+      # 所以这里必须停在 "/" 结束，不能带 ?charset=&parseTime= 之类的查询参数，否则启动即 panic。
+      # 字符集在下面 mysql 服务里通过 --character-set-server=utf8mb4 保证。
+      dataSourceName: "casdoor:${MYSQL_PASSWORD}@tcp(mysql:3306)/"
+      origin: "${SSO_ORIGIN}"                  # 对外完整地址，影响回调拼装，必须正确
+      originFrontend: "${SSO_ORIGIN}"
+      redisEndpoint: "redis:6379,100,${REDIS_PASSWORD}"   # 多副本共享会话；单副本也建议接
+      enableGzip: "true"
+      logPostOnly: "true"
+      sessionCookieLifeTime: "2592000"          # 会话 Cookie 30 天
+      defaultLanguage: "zh"
+      defaultApplication: "app-built-in"
+      # 纯内网（无法访问公网 CDN）时再放开，值要指向你自己镜像的静态资源地址：
+      # staticBaseUrl: "https://static.example.com/casdoor"
+    ports:
+      - "127.0.0.1:8000:8000"   # 只给本机 Nginx 反代，不直接暴露公网
+      - "389:389"               # LDAP  : Linux / NAS / VPN / 网络设备接入
+      - "636:636"               # LDAPS
+      - "1812:1812/udp"         # RADIUS: VPN 认证（用不到可删）
+    volumes:
+      - ./files:/files          # 上传的 Logo / 附件（宿主目录需 uid 1000 可写）
+      - ./logs:/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  mysql:
+    image: mysql:8.0.36
+    container_name: casdoor-mysql
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=500
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: casdoor
+      MYSQL_USER: casdoor
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./backup:/backup        # 备份输出目录
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    container_name: casdoor-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}      # 健康检查要用，必须注入容器环境
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql-data:
+  redis-data:

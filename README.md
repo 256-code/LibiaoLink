@@ -1,2 +1,47 @@
 # LibiaoLink
-打通公司全链路，使得信息流通，让世界更高效
+
+打通公司全链路，使得信息流通，让世界更高效。
+
+## 统一登录（SSO）
+
+公司各系统的统一账号与登录，基于开源 [Casdoor](https://github.com/casdoor/casdoor)（自托管身份中心）搭建。
+支持 OAuth 2.0 / OIDC、SAML 2.0、CAS、LDAP、SCIM 2.0，可对接企业微信、钉钉、飞书、AD/LDAP 等账号来源。
+
+| 目录 | 用途 |
+|---|---|
+| `docs/公司统一登录(SSO)实施方案.md` | 实施方案：选型决策、部署、控制台配置、各系统接入方式、接口速查、上线清单、常见坑 |
+| `deploy/casdoor/` | **本地联调**部署模板（Docker Compose：Casdoor + MySQL + Redis），用于复刻公司环境验证接入 |
+| `docs/本地沙箱(LibiaoLink 演练环境).md` | **本地沙箱现状**：起停、登录入口与账号、配置快照、联邦原理、常见问题、与公司环境对照 |
+| `docs/开发者接入注意事项(SSO接入标准).md` | **开发者必读**：只用标准 OIDC、Grant Types、JWT-Custom 与 Token fields、字段命名差异 |
+| `docs/企业微信(WeCom)对接指南.md` | **企微对接**：登录通道（Provider 字段/可信域名）+ 通讯录同步（离职自动禁用）+ 常见报错 |
+| `docs/实测报告(SSO接入验证).md` | **实测记录**：本地沙箱三轮实测（PKCE 全链路、公司接入标准落地、合规改造）+ 公司测试环境端到端演练 + 正式环境只读核对 |
+| `assets/` | 应用图标源文件（SVG，浅色 / 深色两版）；本地沙箱的副本放在 `deploy/casdoor/files/brand/`，由 Casdoor 自己托管 |
+
+### 公司环境
+
+| 环境 | 地址 | 管理员入口 | 公网访问 |
+|---|---|---|---|
+| 正式 | https://auth.libiaorobot.com | https://auth.libiaorobot.com/login/built-in | ✅ 开放 |
+| 测试 | https://authtest.libiaorobot.com | https://authtest.libiaorobot.com/login/built-in（`admintest`） | ❌ 仅内网 |
+
+业务组织固定为 `libiaorobot.com`：**所有应用和用户都必须建在该组织下**。`built-in` 是管理员组织（不要改），`casbin` 是复现 Bug 用的测试组织。
+测试环境没有短信 / 邮箱验证码 / 企业微信登录，也没有正式员工数据，需要自行创建同名同邮箱的用户再验证。
+正式环境已配好企业微信 Provider（`WeCom`，`Use id as name` 已开 → 令牌 `name` 就是企微 userid），业务应用在 `Applications → Providers` 勾选即可，细节见企微对接指南。
+
+> `deploy/casdoor/` 是**本地联调**环境（组织名 `libiaorobot`），现状与用法见 `docs/本地沙箱(LibiaoLink 演练环境).md`。
+
+### 快速开始
+
+```bash
+# 1. 本地联调：起一套 Casdoor 沙箱（公司环境已就绪，接入方一般不需要自己部署）
+cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
+
+# 2. 登录控制台并加固：http://<服务器IP>:8000  （built-in / admin / 123，登录后立刻改密码）
+#    然后按方案文档第四章配置组织、证书、应用、认证源
+
+# 3. 验证接入：打开带应用 Logo 的本地登录页（应用 libiaolink，回跳到 Casdoor 账户页）
+#    http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d4&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Faccount&scope=openid+profile+email&state=demo
+#    登录页：密码（本地）+ 验证码；下方「公司统一登录（测试环境）」可用公司账号登录（详见本地沙箱说明）
+```
+
+> 生产最低要求：HTTPS、改掉默认密码、`origin` 设为对外域名、数据库定时备份、多副本时接 Redis。
