@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import Home from "./Home";
 
-type User = {
+export type User = {
   name: string | null;
   displayName: string | null;
   email: string | null;
@@ -8,7 +9,7 @@ type User = {
   owner: string | null;
 };
 
-type MeResponse = {
+export type MeResponse = {
   user: User;
   claims: Record<string, unknown>;
   expiresAt: number | null;
@@ -19,14 +20,6 @@ type ViewState =
   | { kind: "signed-out" }
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
-
-const FIELD_ROWS: Array<{ key: keyof User; label: string }> = [
-  { key: "name", label: "Name（登录名）" },
-  { key: "displayName", label: "DisplayName（姓名）" },
-  { key: "email", label: "Email（企业邮箱）" },
-  { key: "id", label: "Id（用户 ID）" },
-  { key: "owner", label: "Owner（所属组织）" },
-];
 
 export default function App() {
   const [state, setState] = useState<ViewState>({ kind: "loading" });
@@ -99,45 +92,5 @@ export default function App() {
     );
   }
 
-  const { me } = state;
-  const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString();
-
-  return (
-    <main className="page">
-      <div className="card">
-        <header className="header">
-          <img className="logo" src="/libiaolink-logo.svg" alt="LibiaoLink" />
-          <div>
-            <h1>LibiaoLink</h1>
-            <p className="muted">已通过公司统一登录（Casdoor）认证</p>
-          </div>
-        </header>
-
-        <dl className="fields">
-          {FIELD_ROWS.map((row) => (
-            <div className="row" key={row.key}>
-              <dt>{row.label}</dt>
-              <dd>{me.user[row.key] ?? "—"}</dd>
-            </div>
-          ))}
-          <div className="row">
-            <dt>令牌到期时间</dt>
-            <dd>{expiresText}</dd>
-          </div>
-        </dl>
-
-        <details className="raw">
-          <summary>令牌声明（id_token，已通过 JWKS 验签）</summary>
-          <pre>{JSON.stringify(me.claims, null, 2)}</pre>
-        </details>
-
-        <footer className="actions">
-          <a className="button" href="/auth/logout">
-            退出登录
-          </a>
-          <span className="muted">这是前端接入参考页，字段直接来自令牌</span>
-        </footer>
-      </div>
-    </main>
-  );
+  return <Home me={state.me} />;
 }
