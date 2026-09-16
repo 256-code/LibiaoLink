@@ -1,19 +1,10 @@
 import { useEffect, useState } from "react";
 import Home from "./Home";
-
-export type User = {
-  name: string | null;
-  displayName: string | null;
-  email: string | null;
-  id: string | null;
-  owner: string | null;
-};
-
-export type MeResponse = {
-  user: User;
-  claims: Record<string, unknown>;
-  expiresAt: number | null;
-};
+import ProjectDetail from "./ProjectDetail";
+import { INITIAL_PROJECTS } from "./data/projects";
+import { useHashRoute } from "./useHashRoute";
+import type { CardAccent, MeResponse, Project } from "./types";
+import type { NewProjectDraft } from "./components/NewProjectModal";
 
 type ViewState =
   | { kind: "loading" }
@@ -23,6 +14,8 @@ type ViewState =
 
 export default function App() {
   const [state, setState] = useState<ViewState>({ kind: "loading" });
+  const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
+  const route = useHashRoute();
 
   useEffect(() => {
     let cancelled = false;
@@ -61,6 +54,30 @@ export default function App() {
     }
   }, [state]);
 
+  const handleCreateProject = (draft: NewProjectDraft) => {
+    setProjects((previous) => {
+      const nextNumber = previous.length + 1;
+      const accents: readonly CardAccent[] = ["blue", "emerald", "amber", "rose", "violet"];
+      const accent = accents[(nextNumber - 1) % accents.length] ?? "blue";
+      const now = new Date();
+      const pad = (value: number) => String(value).padStart(2, "0");
+      const updatedAt =
+        String(now.getFullYear()) + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate()) + " " + pad(now.getHours()) + ":" + pad(now.getMinutes());
+      return [
+        ...previous,
+        {
+          id: "custom-" + String(nextNumber),
+          index: String(nextNumber).padStart(2, "0"),
+          title: draft.title.trim(),
+          description: draft.description.trim(),
+          accent,
+          updatedAt,
+          manager: draft.manager.trim(),
+        },
+      ];
+    });
+  };
+
   if (state.kind === "loading" || state.kind === "signed-out") {
     return (
       <main className="page">
@@ -92,5 +109,10 @@ export default function App() {
     );
   }
 
-  return <Home me={state.me} />;
+  if (route.kind === "project") {
+    const project = projects.find((item) => item.id === route.id) ?? null;
+    return <ProjectDetail me={state.me} project={project} />;
+  }
+
+  return <Home me={state.me} projects={projects} onCreate={handleCreateProject} />;
 }
