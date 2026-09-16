@@ -1,21 +1,13 @@
+@import "tailwindcss";
+
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #f5f6f8;
   --card: #ffffff;
   --text: #1f2329;
   --muted: #6b7280;
   --line: #e5e7eb;
   --accent: #feca04;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181d;
-    --card: #1f2229;
-    --text: #f2f3f5;
-    --muted: #9aa1ac;
-    --line: #33383f;
-  }
 }
 
 * {
@@ -60,7 +52,7 @@ body {
   object-fit: contain;
 }
 
-h1 {
+.card h1 {
   font-size: 20px;
   margin: 0 0 4px;
 }
@@ -136,7 +128,8 @@ dd {
   font-size: 14px;
 }
 
-button {
+/* 仅旧版骨架页（.card 内）使用；Tailwind 组件不再受全局按钮样式影响 */
+.card button {
   padding: 8px 16px;
   border-radius: 8px;
   border: 1px solid var(--line);
@@ -144,4 +137,15 @@ button {
   color: var(--text);
   cursor: pointer;
   font-size: 14px;
+}
+
+.car-icon {
+  -webkit-mask-image: url("/libiaolink-car-icon.svg");
+  mask-image: url("/libiaolink-car-icon.svg");
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
 }
