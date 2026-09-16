@@ -30,6 +30,8 @@ docker compose down -v    # 连数据一起清掉，下次启动是全新环境
 http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d4&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Faccount&scope=openid+profile+email&state=demo
 ```
 
+业务系统前端（LibiaoLink）：`http://localhost:3000` —— 从应用页 `http://localhost:8000/apps` 点 `LibiaoLink` 卡片进入；未登录会自动跳单点登录。用法见第九节。
+
 页面上有三条登录路径：
 
 | 路径 | 位置 | 用什么登录 | 效果 |
@@ -40,6 +42,8 @@ http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d
 
 > `验证码` 页签现在点了发不出码 —— 本地没有短信/邮箱通道（公司测试环境也一样）。
 
+> 应用已开 `enableAutoSignin`：**已有 SSO 会话时，打开登录入口（或点应用卡片）会直接签发、不再显示登录页**（对应接入标准第 4 条「打开主页即弹认证页、无需二次点击」）。想查看登录页本身或切换账号：用无痕窗口，或先退出登录。
+
 ## 四、当前配置快照
 
 | 项 | 值 |
@@ -49,7 +53,9 @@ http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d
 | 应用 | `libiaolink`，Client ID `libiaolink-a195b721bb30a7d4`（Secret 在控制台应用详情页） |
 | Grant Types | 只勾 `authorization_code` |
 | Token | `JWT-Custom`，字段 `name` / `owner` / `id` / `displayName` / `email` |
-| Redirect URLs | `http://localhost:8000/account` —— 回跳 Casdoor 自己的账户页，所以没有业务系统也能验证登录 |
+| Redirect URLs | `http://localhost:8000/account`（回跳 Casdoor 账户页，验证登录用）、`http://localhost:3000/auth/callback`（前端回调） |
+| Homepage URL | `http://localhost:3000` —— Casdoor 应用页点卡片跳这里 |
+| 自动签发 | `enableAutoSignin=true`：已有 SSO 会话时授权页自动签发，免二次点击 |
 | 登录方式 | `密码（本地）` + `验证码` |
 | 外部认证源 | `provider_authtest` → `https://authtest.libiaorobot.com`（类型 Casdoor，即联邦；clientId 指向测试环境的 `LibiaoLink` 应用）；应用里 `canSignIn` 与 `canSignUp` 都为真 |
 | 注册 | 应用 `enableSignUp` 已开：公司账号第一次登录会自动建本地用户 |
@@ -96,7 +102,9 @@ POST http://localhost:8000/api/login
 | 公司登录入口图标是 Casdoor 的立方体 | 认证源类型为 `Casdoor` 时图标被 Casdoor 写死；改成 `OIDC` 类型才能自定义 `customLogo`（需重新验证链路） |
 | 换了 Logo 但页面没变 | 改 `assets/` 后要同步一份到 `deploy/casdoor/files/brand/` |
 | 想切回「只有本地账号」 | 控制台应用 `libiaolink` → Providers 取消勾选 `provider_authtest` |
-| 登录页一闪而过 / 直接进业务系统 | 应用 `enableAutoSignin` 打开时，已有 SSO 会话会自动签发（本地默认关闭） |
+| 登录页一闪而过 / 直接进业务系统 | 应用 `enableAutoSignin` 已开（标准要求）：已有 SSO 会话时直接签发；想看登录页用无痕窗口或先登出 |
+| 点应用卡片打不开 | 前端没在跑：`cd frontend && npm run dev`（占用 3000 端口） |
+| 前端报「换取令牌失败」 | Casdoor 应用 Redirect URLs 里要有 `http://localhost:3000/auth/callback`（逐字符一致） |
 
 ## 八、与公司环境对照
 
@@ -108,3 +116,22 @@ POST http://localhost:8000/api/login
 | 用户来源 | 手工建 + 联邦自动建 | 手工建（无正式员工数据） | 企微通讯录同步 |
 | 企微登录 | 无 | 无 | ✅ `WeCom` Provider |
 | 应用注册 | 控制台自助 | 管理员账号可自助 | 需找 SSO 管理员 |
+| 业务前端 | `http://localhost:3000`（`frontend/`，SSO 链路已跑通） | 未接入 | 未接入（上线后由 SSO 管理员建 `LibiaoLink` 应用） |
+
+## 九、前端联调（frontend/）
+
+`frontend/` 是 LibiaoLink 前端起点，也是标准 OIDC 接入参考（React + Vite + TypeScript，严格模式）：
+
+```powershell
+cd frontend
+npm install
+copy .env.example .env.local      # 填 CASDOOR_CLIENT_SECRET（应用详情页可复制）
+npm run dev                       # http://localhost:3000
+```
+
+- 入口一：`http://localhost:8000/apps` 点 `LibiaoLink` 卡片（= 应用配置里的 Homepage URL）
+- 入口二：直接打开 `http://localhost:3000`，未登录自动跳 SSO
+- 无浏览器回归：`node scripts/smoke-test.mjs`（7 组断言，全绿 = 链路完整）
+- 令牌交换在服务端（本地是 `server/oidc-plugin.ts` 的 4 个 `/auth/*` 路由），`client_secret` 不进浏览器；生产环境把这 4 个路由搬到后端即可，细节见 `frontend/README.md`
+
+> 本地前端只对接本地 Casdoor；验证公司账号走登录页下方「公司统一登录（测试环境）」（第五节），上线时把 `.env.local` 换成公司环境地址与正式应用凭据。

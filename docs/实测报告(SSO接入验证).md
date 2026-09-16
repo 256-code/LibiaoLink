@@ -153,7 +153,28 @@ cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 
 补充说明：控制台用户列表里的「应用」列是 `signupApplication`（**注册来源应用**），**不决定**用户能登录哪些应用 —— 能不能登录只看用户 `owner` 与应用的 `organization` 是否一致（都是 `libiaorobot.com` 即可）。测试环境演练用户 `zhangsan` 的该字段已由 `app-built-in` 调整为 `libiaolink`（纯展示语义，不影响登录与令牌；已复测登录 + 换令牌，`name=zhangsan`、`displayName=张三`、`email=zhangsan@libiaorobot.com` 不变）。
 
-## 六、清理
+## 六、前端接入参考（React + Vite + TypeScript）：端到端验证
+
+2026-09-16 新增 `frontend/`（LibiaoLink 前端起点 + 标准 OIDC 接入参考），在本地沙箱把「点应用卡片 → 进入前端 → 自动 SSO → 展示用户字段」整条链路做了无浏览器端到端验证（`frontend/scripts/smoke-test.mjs`，全部通过）。
+
+| 验证项 | 结果 |
+|---|---|
+| 应用卡片跳转 | ✅ 卡片链接 = 应用 `Homepage URL`（Casdoor v4.4.0 `AppListPage.tsx` 行为），本地应用已指向 `http://localhost:3000` |
+| 登录入口 | ✅ `GET /auth/login` → 302 授权页，带 `state` + PKCE（S256），`redirect_uri` 与应用配置逐字符一致 |
+| 口令登录 | ✅ `/api/login`（OAuth 参数走 query、驼峰名）建立 SSO 会话 |
+| 免二次点击 | ✅ 应用开 `enableAutoSignin` 后，已有会话时授权页自动签发授权码 |
+| 回调换令牌 | ✅ `code + code_verifier + client_secret` 换令牌成功，建立本地会话（HttpOnly Cookie） |
+| 用户字段 | ✅ `name=zhangsan`、`displayName`、`email`、`id`、`owner` 五项齐全（JWT-Custom） |
+| 验签 | ✅ `id_token` 经 JWKS（RS256）验签后才采信 |
+| 登出 | ✅ `/auth/logout` → Casdoor `/api/logout`（带 `id_token_hint`），登出后 `/auth/me` 返回 401 |
+| 生产构建 | ✅ `tsc` 严格模式 + Vite 生产构建通过 |
+
+两个值得记的发现（写自动化时容易踩）：
+
+1. **`/api/login` 的 `type=code` 不落地 SSO 会话**（能拿到授权码，但随后 `get-account` 读不到会话）；`type=login` 才建立会话。浏览器登录页的正常路径不受影响。
+2. **「免二次点击」是页面 JS 行为**：`enableAutoSignin=true` 时由登录页 JS 自动提交一次「仅带会话、不带口令」的 `/api/login`（等价于再发一次 `type=code`），服务端不会直接 302 —— 无浏览器测试要模拟这一步，而不是等 authorize 端点 302。
+
+## 七、清理
 
 ```bash
 cd deploy/casdoor && docker compose down -v      # -v 会连数据库卷一起删，仅测试环境使用

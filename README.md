@@ -11,10 +11,12 @@
 |---|---|
 | `docs/公司统一登录(SSO)实施方案.md` | 实施方案：选型决策、部署、控制台配置、各系统接入方式、接口速查、上线清单、常见坑 |
 | `deploy/casdoor/` | **本地联调**部署模板（Docker Compose：Casdoor + MySQL + Redis），用于复刻公司环境验证接入 |
+| `frontend/` | **LibiaoLink 前端**（React + Vite + TypeScript）：标准 OIDC 接入参考实现，`npm run dev` 起在 3000 端口，登录后展示 5 个标准字段 |
 | `docs/本地沙箱(LibiaoLink 演练环境).md` | **本地沙箱现状**：起停、登录入口与账号、配置快照、联邦原理、常见问题、与公司环境对照 |
 | `docs/开发者接入注意事项(SSO接入标准).md` | **开发者必读**：只用标准 OIDC、Grant Types、JWT-Custom 与 Token fields、字段命名差异 |
 | `docs/企业微信(WeCom)对接指南.md` | **企微对接**：登录通道（Provider 字段/可信域名）+ 通讯录同步（离职自动禁用）+ 常见报错 |
 | `docs/实测报告(SSO接入验证).md` | **实测记录**：本地沙箱三轮实测（PKCE 全链路、公司接入标准落地、合规改造）+ 公司测试环境端到端演练 + 正式环境只读核对 |
+| `docs/开发日志.md` | **每次推送的开发日志**：做了什么、效果与验证、风险与后续；最新记录在最上面 |
 | `assets/` | 应用图标源文件（SVG，浅色 / 深色两版）；本地沙箱的副本放在 `deploy/casdoor/files/brand/`，由 Casdoor 自己托管 |
 
 ### 公司环境
@@ -42,6 +44,10 @@ cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 # 3. 验证接入：打开带应用 Logo 的本地登录页（应用 libiaolink，回跳到 Casdoor 账户页）
 #    http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d4&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Faccount&scope=openid+profile+email&state=demo
 #    登录页：密码（本地）+ 验证码；下方「公司统一登录（测试环境）」可用公司账号登录（详见本地沙箱说明）
+#    注意：应用已开 enableAutoSignin —— 已有 SSO 会话时会直接签发、不再显示登录页
+
+# 4. 前端（接入参考）：已登录会话下点应用卡片直接进前端；未登录自动跳 SSO
+cd frontend && npm install && cp .env.example .env.local && npm run dev
 ```
 
 > 生产最低要求：HTTPS、改掉默认密码、`origin` 设为对外域名、数据库定时备份、多副本时接 Redis。

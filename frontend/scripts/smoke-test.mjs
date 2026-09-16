@@ -1,0 +1,177 @@
+/**
+ * LibiaoLink 前端 SSO 链路冒烟测试（无需浏览器）
+ *
+ * 前置：
+ *   1. 本地 Casdoor 已启动（deploy/casdoor，docker compose up -d）
+ *   2. npm run dev 已在 3000 端口运行
+ *   3. Casdoor 应用 libiaolink 的 Redirect URLs 含 http://localhost:3000/auth/callback
+ *
+ * 用法：node scripts/smoke-test.mjs
+ * 可用环境变量覆盖：FRONTEND_BASE / TEST_USERNAME / TEST_PASSWORD / CASDOOR_APPLICATION / CASDOOR_ORGANIZATION
+ */
+
+const FRONTEND = process.env.FRONTEND_BASE ?? "http://localhost:3000";
+const APP_NAME = process.env.CASDOOR_APPLICATION ?? "libiaolink";
+const ORG_NAME = process.env.CASDOOR_ORGANIZATION ?? "libiaorobot";
+const USERNAME = process.env.TEST_USERNAME ?? "zhangsan";
+const PASSWORD = process.env.TEST_PASSWORD ?? "Zhangsan@2026";
+
+const jar = new Map();
+let failures = 0;
+
+function storeCookies(response) {
+  for (const raw of response.headers.getSetCookie()) {
+    const pair = raw.split(";")[0];
+    const index = pair.indexOf("=");
+    if (index === -1) {
+      continue;
+    }
+    const name = pair.slice(0, index).trim();
+    const value = pair.slice(index + 1).trim();
+    if (value === "") {
+      jar.delete(name);
+    } else {
+      jar.set(name, value);
+    }
+  }
+}
+
+function cookieHeader() {
+  const parts = [];
+  for (const entry of jar.entries()) {
+    parts.push(entry[0] + "=" + entry[1]);
+  }
+  return parts.join("; ");
+}
+
+function check(name, ok, detail) {
+  if (ok) {
+    console.log("  [PASS] " + name);
+  } else {
+    failures += 1;
+    console.log("  [FAIL] " + name + (detail === undefined ? "" : "  -> " + detail));
+  }
+}
+
+async function main() {
+  console.log("== 1. 首页 ==");
+  const rootResponse = await fetch(FRONTEND + "/", { redirect: "manual" });
+  const rootHtml = await rootResponse.text();
+  check("首页可访问（200）", rootResponse.status === 200, String(rootResponse.status));
+  check("首页返回 SPA 壳", rootHtml.includes("id=\"root\""), "未找到 #root");
+
+  console.log("== 2. 登录入口（/auth/login）==");
+  const loginResponse = await fetch(FRONTEND + "/auth/login", { redirect: "manual" });
+  storeCookies(loginResponse);
+  const authorizeUrl = loginResponse.headers.get("location") ?? "";
+  check("302 到 Casdoor 授权页", loginResponse.status === 302 && authorizeUrl.includes("/login/oauth/authorize"), String(loginResponse.status) + " " + authorizeUrl);
+  const authUrl = new URL(authorizeUrl);
+  const state = authUrl.searchParams.get("state") ?? "";
+  const redirectUri = authUrl.searchParams.get("redirect_uri") ?? "";
+  check("带 PKCE（S256）", authUrl.searchParams.get("code_challenge_method") === "S256" && (authUrl.searchParams.get("code_challenge") ?? "") !== "");
+  check("redirect_uri = " + FRONTEND + "/auth/callback", redirectUri === FRONTEND + "/auth/callback", redirectUri);
+  check("已种下登录会话 Cookie（ll_oidc）", jar.has("ll_oidc"));
+
+  console.log("== 3. 在 Casdoor 登录，建立 SSO 会话（模拟用户在登录页输入账号口令）==");
+  const issuer = authUrl.origin;
+  const casdoorLoginUrl = new URL(issuer + "/api/login");
+  const loginParams = [
+    ["clientId", "client_id"],
+    ["responseType", "response_type"],
+    ["redirectUri", "redirect_uri"],
+    ["scope", "scope"],
+    ["state", "state"],
+    ["code_challenge", "code_challenge"],
+    ["code_challenge_method", "code_challenge_method"],
+  ];
+  for (const [target, source] of loginParams) {
+    const value = authUrl.searchParams.get(source);
+    if (value !== null) {
+      casdoorLoginUrl.searchParams.set(target, value);
+    }
+  }
+  const casdoorResponse = await fetch(casdoorLoginUrl, {
+    method: "POST",
+    redirect: "manual",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      application: APP_NAME,
+      organization: ORG_NAME,
+      username: USERNAME,
+      password: PASSWORD,
+      autoLogin: true,
+      type: "login",
+    }),
+  });
+  storeCookies(casdoorResponse);
+  const casdoorJson = await casdoorResponse.json();
+  check("Casdoor 接受账号口令（status=ok）", casdoorJson.status === "ok", JSON.stringify(casdoorJson.msg ?? casdoorJson));
+  check("已建立 SSO 会话（casdoor_session_id）", jar.has("casdoor_session_id"), String(casdoorJson.status));
+
+  console.log("== 4. 已有 SSO 会话 + enableAutoSignin：自动签发（免二次点击）==");
+  // 登录页 JS（loginAsCurrentAccount）在已有会话时发的就是下面这个请求：只带会话 Cookie，不带账号口令。
+  const autoLoginUrl = new URL(issuer + "/api/login");
+  for (const [target, source] of loginParams) {
+    const value = authUrl.searchParams.get(source);
+    if (value !== null) {
+      autoLoginUrl.searchParams.set(target, value);
+    }
+  }
+  const autoResponse = await fetch(autoLoginUrl, {
+    method: "POST",
+    redirect: "manual",
+    headers: { "Content-Type": "application/json", Cookie: cookieHeader() },
+    body: JSON.stringify({ application: APP_NAME, organization: ORG_NAME, language: "zh", type: "code" }),
+  });
+  const autoJson = await autoResponse.json();
+  check("凭已有会话静默换取授权码", autoJson.status === "ok", JSON.stringify(autoJson.msg ?? autoJson));
+  let code = "";
+  if (typeof autoJson.data === "string" && autoJson.data !== "") {
+    code = autoJson.data.includes("code=") ? (new URL(autoJson.data).searchParams.get("code") ?? "") : autoJson.data;
+  }
+  check("拿到授权码", code !== "");
+
+  console.log("== 5. 回调换令牌（/auth/callback）==");
+  const callbackResponse = await fetch(FRONTEND + "/auth/callback?code=" + encodeURIComponent(code) + "&state=" + encodeURIComponent(state), {
+    redirect: "manual",
+    headers: { Cookie: cookieHeader() },
+  });
+  if (callbackResponse.status !== 302) {
+    console.log("     回调响应: " + (await callbackResponse.text()));
+  }
+  storeCookies(callbackResponse);
+  check("回调 302 回首页", callbackResponse.status === 302 && callbackResponse.headers.get("location") === "/", String(callbackResponse.status));
+  check("已建立本地会话（ll_at / ll_idt）", jar.has("ll_at") && jar.has("ll_idt"));
+
+  console.log("== 6. 取用户信息（/auth/me）==");
+  const meResponse = await fetch(FRONTEND + "/auth/me", { headers: { Cookie: cookieHeader() } });
+  const me = await meResponse.json();
+  check("/auth/me 200", meResponse.status === 200, String(meResponse.status));
+  const user = me.user ?? {};
+  check("Name = " + USERNAME, user.name === USERNAME, String(user.name));
+  check("DisplayName 非空", typeof user.displayName === "string" && user.displayName !== "", String(user.displayName));
+  check("Email 非空", typeof user.email === "string" && user.email.includes("@"), String(user.email));
+  check("Id 非空", typeof user.id === "string" && user.id !== "", String(user.id));
+  check("Owner 非空", typeof user.owner === "string" && user.owner !== "", String(user.owner));
+  check("id_token 通过 JWKS 验签（claims 可读）", typeof me.claims === "object" && me.claims !== null && me.claims.name !== undefined);
+
+  console.log("== 7. 登出（/auth/logout）==");
+  const logoutResponse = await fetch(FRONTEND + "/auth/logout", { redirect: "manual", headers: { Cookie: cookieHeader() } });
+  storeCookies(logoutResponse);
+  check("登出 302", logoutResponse.status === 302, String(logoutResponse.status));
+  const afterLogout = await fetch(FRONTEND + "/auth/me", { headers: { Cookie: cookieHeader() } });
+  check("登出后 /auth/me 401", afterLogout.status === 401, String(afterLogout.status));
+
+  console.log("");
+  if (failures === 0) {
+    console.log("全部通过：SSO 链路完整可用");
+  } else {
+    console.log("失败项：" + String(failures));
+    process.exitCode = 1;
+  }
+}
+
+main().catch((error) => {
+  console.error("冒烟测试异常：", error);
+  process.exitCode = 1;
+});
