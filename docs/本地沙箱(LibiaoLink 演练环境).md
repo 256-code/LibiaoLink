@@ -2,7 +2,7 @@
 
 > 这份文档只讲**本机 Docker 里那一套 Casdoor**（`deploy/casdoor/`）的现状与用法。
 > 它与公司环境（正式 `auth.libiaorobot.com` / 测试 `authtest.libiaorobot.com`）是**两套完全独立的用户库** —— 同名同邮箱也不是同一个人。
-> 最后更新：2026-09-15
+> 最后更新：2026-09-16
 
 ## 一、用途与边界
 
@@ -51,7 +51,7 @@ http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d
 | Token | `JWT-Custom`，字段 `name` / `owner` / `id` / `displayName` / `email` |
 | Redirect URLs | `http://localhost:8000/account` —— 回跳 Casdoor 自己的账户页，所以没有业务系统也能验证登录 |
 | 登录方式 | `密码（本地）` + `验证码` |
-| 外部认证源 | `provider_authtest` → `https://authtest.libiaorobot.com`（类型 Casdoor，即联邦）；应用里 `canSignIn` 与 `canSignUp` 都为真 |
+| 外部认证源 | `provider_authtest` → `https://authtest.libiaorobot.com`（类型 Casdoor，即联邦；clientId 指向测试环境的 `LibiaoLink` 应用）；应用里 `canSignIn` 与 `canSignUp` 都为真 |
 | 注册 | 应用 `enableSignUp` 已开：公司账号第一次登录会自动建本地用户 |
 | Logo | `http://localhost:8000/files/brand/libiaolink-logo.svg`、`...-dark.svg`（Casdoor 自托管；源文件在 `assets/`，副本在 `deploy/casdoor/files/brand/`） |
 | 登录页 Logo 尺寸 | `formCss = .login-logo-box img{height:140px!important}`（Casdoor 默认只给 40px） |
@@ -60,14 +60,14 @@ http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d
 
 ## 五、公司账号是怎么登进来的（联邦原理）
 
-1. 本地登录页 → 点「公司统一登录（测试环境）」→ 跳到 `https://authtest.libiaorobot.com`（用的是测试环境 `libiaolink` 应用的 Client ID `75a4ed2163aa67549ae3`）；
+1. 本地登录页 → 点「公司统一登录（测试环境）」→ 跳到 `https://authtest.libiaorobot.com`（用的是测试环境 `LibiaoLink` 应用的 Client ID `41e162d34e5fa4022ae5`）；
 2. 在**公司页面**上输入公司账号（密码 / 扫码都在那边输入）；
 3. 回到本地 Casdoor：按认证源的 `userMapping` 把公司用户映射成本地用户 —— 已绑定的直接命中，没绑定的自动建号；
 4. 本地 Casdoor 再签发自己的令牌给业务系统 —— 所以业务系统自始至终只认本地这一套。
 
 本地用户身上的 `casdoor` 字段存的就是**公司那边的用户 UUID**，这是两边能对上的关键。
 
-> ⚠️ 联邦回调是本地 Casdoor 的 `/callback`（`http://localhost:8000/callback`）—— **公司测试环境 `libiaolink` 应用的 Redirect URLs 里必须保留这一条**，删掉联邦就登不进去。
+> ⚠️ 联邦回调是本地 Casdoor 的 `/callback`（`http://localhost:8000/callback`）—— **公司测试环境 `LibiaoLink` 应用的 Redirect URLs 里必须保留这一条**，删掉联邦就登不进去。
 
 ## 六、没有浏览器也能查
 
@@ -89,7 +89,8 @@ POST http://localhost:8000/api/login
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 在「密码（本地）」里填公司邮箱 → `user … doesn’t exist` | 本地页只查本地用户库；公司账号必须走下方「公司统一登录（测试环境）」 |
+| 在「密码（本地）」里填公司账号（邮箱或用户名）→ 报「用户不存在」 | 本地页只查本地用户库；公司账号必须走下方「公司统一登录（测试环境）」 |
+| 直接打开或刷新 `/callback` → `Unknown authentication type` | `/callback` 是联邦回跳的落地页，只有带 `code`/`state` 时才有效；验证登录请从登录页入口走 |
 | 公司账号登录报 `libiaorobot.com/xxx 不存在` | 账号建在了别的组织（如 `built-in`）。用户必须建在应用所属的 `libiaorobot.com` |
 | 「验证码」点了没反应 | 本地没有短信 / 邮箱通道（公司测试环境同样没有） |
 | 公司登录入口图标是 Casdoor 的立方体 | 认证源类型为 `Casdoor` 时图标被 Casdoor 写死；改成 `OIDC` 类型才能自定义 `customLogo`（需重新验证链路） |

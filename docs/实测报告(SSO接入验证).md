@@ -118,15 +118,17 @@ cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 | 令牌字段 | ✅ access_token 与 id_token 均为 JWT-Custom，只带 `name`/`owner`/`id`/`displayName`/`email` + 标准声明；`owner=libiaorobot.com` |
 | 本地沙箱怎么连它 | 本地登录页下方「公司统一登录（测试环境）」入口走联邦（认证源 `provider_authtest`）：沙箱里业务系统只对接本地 Casdoor，上线时再改成直接对接公司环境 —— 见《本地沙箱(LibiaoLink 演练环境)》 |
 
-### 2026-09-15 管理员只读核对（测试环境现状）
+### 2026-09-16 管理员只读核对（测试环境现状）
+
+> ⚠️ 09-15 演练时建的 `libiaolink`（clientId `75a4ed…`）已不在；LibiaoLink 当前的应用是 **`LibiaoLink`**（displayName「立镖全链路信息平台」，2026-09-15 创建），本地沙箱联邦已切到新 clientId。
 
 | 项 | 实况 |
 |---|---|
-| `libiaolink` 应用 | `redirectUris = ["http://localhost:3000/callback", "http://localhost:8000/callback"]`：后者是本地沙箱联邦登录的回调（**必须保留**，本地 Casdoor 的 `/callback`），前者是早期示例业务系统残留（可清理）；`enableAutoSignin=true`、`expireInHours=168`、Logo 为空、`enableSignUp=false` |
-| 应用清单 | `libiaorobot.com` 组织下 11 个：`3dprint`、`api-docs`、`chatbot_workbench`、`patent`、`qa`、`tested`、`omplat`、`exp`、`hubspot`、`app-built-in`、`libiaolink`；另有 `casbin/sslvpn` |
+| `LibiaoLink` 应用 | clientId `41e162d34e5fa4022ae5`；`redirectUris = ["http://localhost:9000/callback", "http://localhost:8000/callback"]`（后者是本地沙箱联邦回调，**必须保留**）；`enableAutoSignin=true`、`expireInHours=168`；**待按接入标准调整**：`tokenFormat=JWT`（标准 JWT-Custom）、`tokenFields=[]`（标准 5 字段）、Grant Types 开了 6 种（标准只留 `authorization_code`）、Logo 仍为 Casdoor 默认图 |
+| 应用清单 | `libiaorobot.com` 组织下 13 个：`LibiaoLink`、`INPulse`、`bom`、`3dprint`、`api-docs`、`chatbot_workbench`、`patent`、`qa`、`tested`、`omplat`、`exp`、`hubspot`、`app-built-in`；另有 `casbin/sslvpn` |
 | Redirect 写法参考（推荐） | `3dprint` = `["http://127.0.0.1:8000/api/v1/auth/casdoor/callback", "https://3dprint.libiaorobot.com/api/v1/auth/casdoor/callback"]` —— 本地调试 + 线上域名各一条 |
 | Provider | `Email`（Default）、`WoCom`（类型 WeCom，**参数全空，占位未配置**）、`provider_captcha_default`（Default / Captcha） |
-| 用户 | `libiaorobot.com` 组织下 13 个，均为演练 / 测试账号，无正式员工数据 |
+| 用户 | `libiaorobot.com` 组织下 18 个（含 `panxing`、`zhangsan`、`yicaonan` 等，由测试人员陆续自建；测试环境无正式员工同步数据） |
 
 ### 过程中踩到的坑
 
