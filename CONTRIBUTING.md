@@ -73,8 +73,8 @@
 ## 附录 A：仓库落地清单（LibiaoLink 现状）
 
 1. 仓库初始化：主干 `main`；按人功能分支（当前 `px`，同岗位成员 `wmj` / `lan` 各自建分支）；共享区域主理人待明确。
-2. 平台保护（待确认 / 启用）：squash-only 合并、合并后自动删除源分支、`main` 分支保护 / ruleset（require PR、require status checks、conversation resolution、linear history、block force push / deletion、disable bypass）；`CODEOWNERS`（真实账号）；secret scanning 与 push protection。
-3. 文档骨架：`README.md`、`AGENTS.md`、本文件、`docs/开发日志.md`、`docs/前端功能需求.md`、`docs/字段对照清单.md` 已有；待补 ADR 目录与唯一索引、PR 模板。
-4. CI 门禁（待配置，建议顺序）：锁定安装（`npm ci`）→ 格式检查 → typecheck → 单元测试 → smoke → 生成物无漂移 → 构建 → 依赖与 Secret 扫描；稳定后把对应 job 设为 required checks。
+2. 平台保护：已配置（2026-09-17 仓库转公开后全部生效）—— squash-only 合并、合并后自动删除源分支、`main` 分支保护（require PR、必需状态检查 `frontend`、conversation resolution、linear history、禁止 force push / 删除、enforce admins、无绕过者）、GitHub Secret scanning + push protection、Dependabot 漏洞提醒与安全更新、`CODEOWNERS`（评审自动路由）。暂不可用：Secret scanning 的 non-provider patterns 与 validity checks（需付费 SKU）。
+3. 文档骨架：`README.md`、`AGENTS.md`、本文件、`docs/开发日志.md`、`docs/前端功能需求.md`、`docs/字段对照清单.md`、PR 模板（`.github/pull_request_template.md`）已有；待补 ADR 目录与唯一索引。
+4. CI 门禁：`.github/workflows/ci.yml` 已配置（PR 与 `main` push 触发：锁定安装 `npm ci` → typecheck → build）；仓库转公开后复跑成功（run 35185708338，job `frontend` success），并已设为 `main` 的必需状态检查；单测与 smoke 尚未纳入（smoke 依赖本地 Casdoor 沙箱 + 3000 端口 dev server）；依赖漏洞通过 Dependabot 提醒与安全更新。
 5. 接口契约：前端需求已在 `docs/前端功能需求.md` 第三节列出；后端落地时先定义唯一来源与生成流程，再写第一个纵切片。
-6. 流程验证：分支 → PR → 评审 → 合并 → 删除分支 → 更新开发日志 已走通（PR #1 / #2）；本规则随 PR #3 落地。
+6. 流程验证：分支 → PR → 评审 → 合并 → 删除分支 → 更新开发日志 已走通（PR #1 / #2 / #3）；规则随 PR #4 落地，平台保护与 CI 门禁随 PR #5 落地。
