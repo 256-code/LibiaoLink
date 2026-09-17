@@ -21,7 +21,7 @@ docker compose logs -f casdoor
 ## 二、首次登录并加固
 
 1. 访问 `http://<服务器IP>:8000`（或已配好的 HTTPS 域名）
-2. 组织 `built-in` / 用户名 `admin` / 密码 `123`
+2. 组织 `built-in` / 用户名 `admin` / 密码见本地 `deploy/casdoor/.env.local` 的 `CASDOOR_ADMIN_PASSWORD`（该文件不入库，本地联调时随 `deploy/casdoor/.env` 一起自备）
 3. **立刻改密码 + 开 MFA**，然后按方案文档第四章配置组织、证书、应用、认证源。
 
 ## 三、反向代理
