@@ -7,7 +7,12 @@
 - 字段口径变化时，同步更新 `docs/字段对照清单.md`。
 - 推送前在 `frontend/` 下跑通 `npm run typecheck` 与 `npm run build`（纯文档改动除外）。
 
+## 分支与推送
+
+- 先推自己的常驻分支（`px` / `wmj` / `lan`），再经 PR 合入 `main`；禁止直接推送 `main`。
+- 合并方式 squash-only；合并后常驻分支保留、不删除（规则集 `resident-branches-no-deletion`）。
+
 ## 完整规则
 
-- 仓库协作与开发规则见根目录 `CONTRIBUTING.md`（《通用开发规则》第 11–17 节落地版）；与本文件冲突时，以更严格者为准。
+- 仓库协作与开发规则见根目录 `CONTRIBUTING.md`（《通用开发规则》第 5、11–17 节落地版）；与本文件冲突时，以更严格者为准。
 - 代理（AI）在本仓库工作时，必须同时遵守 `CONTRIBUTING.md` 第 12 节（Secrets 与安全）与第 17 节（Definition of Done）。

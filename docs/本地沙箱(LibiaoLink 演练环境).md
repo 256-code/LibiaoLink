@@ -6,6 +6,8 @@
 
 ## 一、用途与边界
 
+> 未入库说明：本机沙箱的账号与口令（测试账号、管理员、DB / Redis）只写在 `deploy/casdoor/.env.local`（gitignore），仓库与文档里只留引用；`frontend/.env.local` 另存 smoke 用的 `TEST_USERNAME` / `TEST_PASSWORD`。
+
 - **用途**：在完全不碰公司环境的前提下，验证接入代码、登录页与流程。组织、应用、证书、令牌字段口径都按公司标准配置。
 - **边界**：本地用户是手工建的演示数据；公司账号靠联邦入口登录（见第五节）。正式上线时业务系统直接对接公司 Casdoor，本地这套不参与。
 
@@ -36,9 +38,9 @@ http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d
 
 | 路径 | 位置 | 用什么登录 | 效果 |
 |---|---|---|---|
-| 本地账号 | 登录页 `密码（本地）` 页签 | `zhangsan` / `Zhangsan@2026` | 登录到本地用户库，不碰公司 |
+| 本地账号 | 登录页 `密码（本地）` 页签 | 用户名 `zhangsan`，口令见 `deploy/casdoor/.env.local` 的 `TEST_PASSWORD` | 登录到本地用户库，不碰公司 |
 | 公司账号 | 登录页下方「公司统一登录（测试环境）」 | 测试环境组织 `libiaorobot.com` 下的账号（如 `yicaonan`） | 联邦登录，首次登录自动建本地账号 |
-| Casdoor 管理员 | `http://localhost:8000/login/built-in` | `admin` / `123` | 进控制台（**上线前必须改**） |
+| Casdoor 管理员 | `http://localhost:8000/login/built-in` | 见 `deploy/casdoor/.env.local` 的 `CASDOOR_ADMIN_USERNAME` / `CASDOOR_ADMIN_PASSWORD` | 进控制台（**上线前必须改**） |
 
 > `验证码` 页签现在点了发不出码 —— 本地没有短信/邮箱通道（公司测试环境也一样）。
 
@@ -87,8 +89,8 @@ GET http://localhost:8000/api/get-providers?owner=admin
 GET http://localhost:8000/api/get-user?id=libiaorobot/zhangsan
 
 # 管理员登录（返回会话 Cookie，后续请求带上）
-POST http://localhost:8000/api/login
-{"application":"app-built-in","organization":"built-in","username":"admin","password":"123","autoLogin":true,"type":"login"}
+POST http://localhost:8000/api/login   # 口令见 deploy/casdoor/.env.local
+{"application":"app-built-in","organization":"built-in","username":"admin","password":"<见 deploy/casdoor/.env.local>","autoLogin":true,"type":"login"}
 ```
 
 ## 七、常见问题
@@ -112,7 +114,7 @@ POST http://localhost:8000/api/login
 |---|---|---|---|
 | 地址 | `http://localhost:8000` | `https://authtest.libiaorobot.com`（仅内网） | `https://auth.libiaorobot.com` |
 | 组织 | `libiaorobot` | `libiaorobot.com` | `libiaorobot.com` |
-| 管理员 | `admin` / `123` | `admintest` | 由 SSO 管理员维护 |
+| 管理员 | `admin`（口令见 `.env.local`） | `admintest` | 由 SSO 管理员维护 |
 | 用户来源 | 手工建 + 联邦自动建 | 手工建（无正式员工数据） | 企微通讯录同步 |
 | 企微登录 | 无 | 无 | ✅ `WeCom` Provider |
 | 应用注册 | 控制台自助 | 管理员账号可自助 | 需找 SSO 管理员 |

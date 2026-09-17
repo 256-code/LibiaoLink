@@ -7,14 +7,46 @@
  *   3. Casdoor 应用 libiaolink 的 Redirect URLs 含 http://localhost:3000/auth/callback
  *
  * 用法：node scripts/smoke-test.mjs
- * 可用环境变量覆盖：FRONTEND_BASE / TEST_USERNAME / TEST_PASSWORD / CASDOOR_APPLICATION / CASDOOR_ORGANIZATION
+ * 账号口令取自 .env.local（frontend/ 或 deploy/casdoor/，均不入库）；可用环境变量覆盖：
+ *   FRONTEND_BASE / TEST_USERNAME / TEST_PASSWORD / CASDOOR_APPLICATION / CASDOOR_ORGANIZATION
  */
+
+import fs from "node:fs";
+
+// 本地沙箱账号口令从 gitignore 的 .env.local 读取（仓库不存明文；已存在的环境变量优先）
+function loadEnvFile(file) {
+  if (!fs.existsSync(file)) {
+    return;
+  }
+  for (const raw of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const key = match[1];
+    const value = match[2].replace(/^["']|["']$/g, "");
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadEnvFile(new URL("../.env.local", import.meta.url));
+loadEnvFile(new URL("../../deploy/casdoor/.env.local", import.meta.url));
 
 const FRONTEND = process.env.FRONTEND_BASE ?? "http://localhost:3000";
 const APP_NAME = process.env.CASDOOR_APPLICATION ?? "libiaolink";
 const ORG_NAME = process.env.CASDOOR_ORGANIZATION ?? "libiaorobot";
 const USERNAME = process.env.TEST_USERNAME ?? "zhangsan";
-const PASSWORD = process.env.TEST_PASSWORD ?? "Zhangsan@2026";
+const PASSWORD = process.env.TEST_PASSWORD ?? "";
+if (PASSWORD === "") {
+  console.error("缺少本地测试口令：请在 frontend/.env.local 或 deploy/casdoor/.env.local 设 TEST_USERNAME / TEST_PASSWORD（仓库不存明文）");
+  process.exit(2);
+}
 
 const jar = new Map();
 let failures = 0;

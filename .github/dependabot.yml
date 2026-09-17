@@ -1,12 +1,15 @@
 version: 2
+# 通知治理（2026-09-17）：暂停 Dependabot 版本更新 PR，避免每周批量开 PR 刷屏、反复邮件打扰开发者；
+# open-pull-requests-limit: 0 为官方推荐的「暂停版本更新」写法；依赖漏洞提醒与安全更新仍开启（不受此上限影响）。
+# 需要恢复自动升级时：把两个 0 改回 1-5（建议同时改为 monthly + groups，减少打扰）。
 updates:
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
