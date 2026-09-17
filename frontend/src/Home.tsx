@@ -42,7 +42,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
             </div>
             <p className="mt-1 text-sm text-zinc-500">选择一个项目进入，账号信息来自公司统一登录令牌。</p>
           </div>
-          <div className="flex w-full flex-col items-end gap-3 sm:w-auto">
+          <div className="flex w-full flex-col items-end gap-3 sm:w-auto sm:flex-row sm:items-center">
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
