@@ -74,7 +74,7 @@
 - 新行为、失败路径与回归路径均有适当测试（前端现状：`npm run typecheck`、`npm run build`、`npm run smoke`；界面改动以无头浏览器或手动实测为准并记入开发日志）；
 - 所有适用验证已通过；未执行或失败的检查已被明确报告；
 - 派生产物无漂移（当前无生成物；锁文件与依赖清单保持一致）；
-- ADR、设计文档、需求文档与运行手册已按行为同步（本仓库：`前端功能需求.md`、`字段对照清单.md`）；
+- ADR、设计文档、需求文档与运行手册已按行为同步（本仓库：`系统功能书.md`、`前端功能需求.md`、`字段对照清单.md`、`技术设计v0.1-选型分析.md`、`技术设计v0.2-架构与数据模型.md`）；
 - diff 已经人工检查，不包含 Secret、调试输出、临时文件或未批准的依赖；
 - 开发日志已按本次 PR 的实际推送、验证与交付内容更新；
 - 交付说明列出：修改内容、验证证据、剩余风险与后续事项。
@@ -82,7 +82,7 @@
 
 1. 仓库初始化：主干 `main`；开发者常驻分支 `px` / `wmj` / `lan`（由本人创建并维护，各人默认分支，合并后保留、不删除，各自承接本人后续开发；推送流程见第 5 节）；共享区域主理人待明确。
 2. 平台保护：已配置（2026-09-17 仓库转公开后全部生效）—— squash-only 合并、合并后保留源分支（`delete_branch_on_merge=false`）、常驻分支删除保护（规则集 `resident-branches-no-deletion`：`px` / `wmj` / `lan`）、`main` 分支保护（require PR、必需状态检查 `frontend`、conversation resolution、linear history、禁止 force push / 删除、enforce admins、无绕过者）、GitHub Secret scanning + push protection、Dependabot 漏洞提醒与安全更新、`CODEOWNERS`（评审自动路由）。暂不可用：Secret scanning 的 non-provider patterns 与 validity checks（需付费 SKU）。
-3. 文档骨架：`README.md`、`AGENTS.md`、本文件、`开发日志.md`、`前端功能需求.md`、`字段对照清单.md`、PR 模板（`.github/pull_request_template.md`）已有；待补 ADR 目录与唯一索引。
+3. 文档骨架：`README.md`、`AGENTS.md`、本文件、`开发日志.md`、`系统功能书.md`、`前端功能需求.md`、`字段对照清单.md`、`技术设计v0.1-选型分析.md`、`技术设计v0.2-架构与数据模型.md`、PR 模板（`.github/pull_request_template.md`）已有；待补 ADR 目录与唯一索引。
 4. CI 门禁：`.github/workflows/ci.yml` 已配置（PR 与 `main` push 触发：锁定安装 `npm ci` → typecheck → build）；仓库转公开后复跑成功（run 35185708338，job `frontend` success），并已设为 `main` 的必需状态检查；单测与 smoke 尚未纳入（smoke 依赖本地 Casdoor 沙箱 + 3000 端口 dev server）；依赖漏洞通过 Dependabot 提醒与安全更新。
 5. 接口契约：前端需求已在 `前端功能需求.md` 第三节列出；后端落地时先定义唯一来源与生成流程，再写第一个纵切片。
 6. 流程验证：分支 → PR → 评审 → 合并（源分支保留） → 更新开发日志 已走通（PR #1 / #2 / #3）；规则随 PR #4 落地，平台保护与 CI 门禁随 PR #5 落地。
