@@ -82,7 +82,7 @@ docker compose logs -f casdoor
 |---|---|
 | Organization | `built-in` |
 | Username | `admin` |
-| Password | `123` |
+| Password | 见本地 `deploy/casdoor/.env.local` 的 `CASDOOR_ADMIN_PASSWORD`（本地联调自备；正式环境由 SSO 管理员维护） |
 
 > 登录页的"组织"和"用户名"是两个独立输入框，文档里写作 `built-in/admin` 只是简写。
 
