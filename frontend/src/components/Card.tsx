@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
-
-export type CardAccent = "violet" | "blue" | "emerald" | "amber" | "rose";
+import type { CardAccent } from "../types";
 
 const ACCENT_STYLES: Record<CardAccent, { icon: string; hover: string }> = {
   violet: { icon: "bg-violet-500", hover: "hover:shadow-[0_12px_28px_rgba(139,92,246,0.35)]" },
