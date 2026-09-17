@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, type ProjectTask, type TaskPriority } from "../data/tasks";
+import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { TRACKER_STEPS, trackerLabel, trackerStep } from "./Tracker";
 
 const CLOSE_ANIMATION_MS = 170;
@@ -8,6 +8,22 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
   高: "bg-rose-50 text-rose-600",
   中: "bg-amber-50 text-amber-700",
   低: "bg-zinc-100 text-zinc-500",
+};
+
+const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
+  已完成: "bg-emerald-500",
+  提前完成: "bg-emerald-500",
+  进行中: "bg-blue-500",
+  已延期: "bg-red-500",
+  待开始: "bg-zinc-300",
+};
+
+const STATUS_CHIP_CLASS: Record<TaskStatus, string> = {
+  已完成: "bg-emerald-50 text-emerald-700",
+  提前完成: "bg-emerald-50 text-emerald-700",
+  进行中: "bg-blue-50 text-blue-700",
+  已延期: "bg-red-50 text-red-600",
+  待开始: "bg-zinc-100 text-zinc-500",
 };
 
 type TaskDrawerProps = {
@@ -66,18 +82,14 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
 
   const done = isTaskDone(task);
   const overdue = isTaskOverdue(task);
-  const status = done ? "已完成" : task.status;
+  const status = taskStatus(task);
   const step = trackerStep(task.progress);
   const stepPct = Math.round((step / TRACKER_STEPS) * 100);
   const progressText = trackerLabel(task.progress);
   const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
   const barClass = done ? "bg-emerald-500" : task.status === "进行中" ? "bg-blue-500" : "bg-zinc-200";
-  const dotClass = done ? "bg-emerald-500" : task.status === "进行中" ? "bg-blue-500" : "bg-zinc-300";
-  const statusChipClass = done
-    ? "bg-emerald-50 text-emerald-700"
-    : task.status === "进行中"
-      ? "bg-blue-50 text-blue-700"
-      : "bg-zinc-100 text-zinc-500";
+  const dotClass = STATUS_DOT_CLASS[status];
+  const statusChipClass = STATUS_CHIP_CLASS[status];
   const dash = <span className="text-zinc-300">—</span>;
 
   const fields: Array<{ label: string; value: ReactNode }> = [
@@ -175,9 +187,6 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage}</span>
               <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
-              {overdue ? (
-                <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-[11px] font-medium text-red-600">已逾期</span>
-              ) : null}
             </div>
             <button
               type="button"

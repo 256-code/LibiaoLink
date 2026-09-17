@@ -1,4 +1,4 @@
-export type TaskStatus = "已完成" | "进行中" | "待开始";
+export type TaskStatus = "已完成" | "提前完成" | "进行中" | "待开始" | "已延期";
 
 export type TaskPriority = "高" | "中" | "低";
 
@@ -122,6 +122,18 @@ export function isTaskDone(task: ProjectTask): boolean {
   return task.doneDate !== "" || task.progress >= 1;
 }
 
+export function isTaskDoneEarly(task: ProjectTask): boolean {
+  if (task.doneDate === "" || task.dueDate === "") {
+    return false;
+  }
+  const done = parseCnDate(task.doneDate);
+  const due = parseCnDate(task.dueDate);
+  if (done === null || due === null) {
+    return false;
+  }
+  return done.month < due.month || (done.month === due.month && done.day < due.day);
+}
+
 export function isTaskOverdue(task: ProjectTask, now: Date = new Date()): boolean {
   if (isTaskDone(task)) {
     return false;
@@ -136,4 +148,14 @@ export function isTaskOverdue(task: ProjectTask, now: Date = new Date()): boolea
     return due.month < todayMonth;
   }
   return due.day < todayDay;
+}
+
+export function taskStatus(task: ProjectTask, now: Date = new Date()): TaskStatus {
+  if (isTaskDone(task) || task.status === "已完成" || task.status === "提前完成") {
+    return isTaskDoneEarly(task) ? "提前完成" : "已完成";
+  }
+  if (isTaskOverdue(task, now)) {
+    return "已延期";
+  }
+  return task.status === "进行中" ? "进行中" : "待开始";
 }
