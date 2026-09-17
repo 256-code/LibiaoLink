@@ -31,7 +31,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
     <div className="min-h-screen">
       <AppHeader me={me} />
 
-      <main className="mx-auto w-full max-w-[1440px] px-6 py-10">
+      <main className="w-full px-6 py-10">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-baseline gap-3">

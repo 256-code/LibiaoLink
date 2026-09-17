@@ -54,7 +54,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
               <span className="font-mono text-[13px] font-semibold text-zinc-900">{project.title}</span>
             </p>
             <p className="mt-0.5 truncate text-xs text-zinc-500">
-              {project.description} · 项目经理：{project.manager} · 更新于 {project.updatedAt}
+              {project.description} · 更新于 {project.updatedAt}
             </p>
           </div>
         ) : null}

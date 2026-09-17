@@ -5,6 +5,7 @@ import { INITIAL_PROJECTS } from "./data/projects";
 import { useHashRoute } from "./useHashRoute";
 import type { CardAccent, MeResponse, Project } from "./types";
 import type { NewProjectDraft } from "./components/NewProjectModal";
+import { Loader } from "./components/Loader";
 
 type ViewState =
   | { kind: "loading" }
@@ -78,7 +79,15 @@ export default function App() {
     });
   };
 
-  if (state.kind === "loading" || state.kind === "signed-out") {
+  if (state.kind === "loading") {
+    return (
+      <main className="page">
+        <Loader />
+      </main>
+    );
+  }
+
+  if (state.kind === "signed-out") {
     return (
       <main className="page">
         <div className="card">
