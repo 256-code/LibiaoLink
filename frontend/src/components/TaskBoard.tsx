@@ -1,6 +1,6 @@
 import { Fragment, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, type ProjectTask, type TaskPriority } from "../data/tasks";
+import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { TaskDrawer } from "./TaskDrawer";
 import { Tracker } from "./Tracker";
 
@@ -74,6 +74,22 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
   低: "bg-zinc-100 text-zinc-500",
 };
 
+const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
+  已完成: "bg-emerald-500",
+  提前完成: "bg-emerald-500",
+  进行中: "bg-blue-500",
+  已延期: "bg-red-500",
+  待开始: "bg-zinc-300",
+};
+
+const STATUS_TEXT_CLASS: Record<TaskStatus, string> = {
+  已完成: "text-zinc-600",
+  提前完成: "text-emerald-700",
+  进行中: "text-zinc-600",
+  已延期: "text-red-600",
+  待开始: "text-zinc-600",
+};
+
 type TaskBoardProps = {
   tasks: ProjectTask[];
   onSetProgress?: (taskId: string, progress: number) => void;
@@ -102,10 +118,9 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
 }
 
 function TaskRow({ task, columns, selected, onSelect, onProgress }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void }) {
-  const done = isTaskDone(task);
   const overdue = isTaskOverdue(task);
-  const status = done ? "已完成" : task.status;
-  const dotClass = done ? "bg-emerald-500" : task.status === "进行中" ? "bg-blue-500" : "bg-zinc-300";
+  const status = taskStatus(task);
+  const dotClass = STATUS_DOT_CLASS[status];
   const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
 
   const cells: Record<ColumnKey, ReactNode> = {
@@ -129,7 +144,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress }: { task: Proj
       </span>
     ),
     status: (
-      <span className="flex items-center gap-1.5 text-xs text-zinc-600">
+      <span className={"flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
         <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
         {status}
       </span>
