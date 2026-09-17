@@ -1,5 +1,36 @@
 # 代码所有者（PR 自动请求评审）
 # 成员：px=@256-code、wmj=@suikiiovo、lan=@XSZR341。
-# 规则见 CONTRIBUTING.md（评审与合并）；main 已启用分支保护（require PR + 必需检查 frontend）。
+# 依据：CONTRIBUTING.md（评审与合并）、根目录《团队分工.md》§5.1、AGENTS.md「分工与路由」。
+# 说明：CODEOWNERS 只做评审路由，不等于合并权限；后匹配的规则生效，具体路径写在默认规则之后。
+# main 已启用分支保护（require PR + 必需检查 frontend）。
+# 每条具体路径至少 2 名所有者，保证「非作者评审」始终有人被自动请求。
 
 * @256-code @suikiiovo @XSZR341
+
+# —— 前端 / 交付 / 运维（主责 px）——
+/frontend/ @256-code @suikiiovo
+/assets/ @256-code @suikiiovo
+/deploy/ @256-code @XSZR341
+/.github/ @256-code @XSZR341
+/docs/ @256-code @suikiiovo
+
+# —— 根目录文档（主责 px）——
+/README.md @256-code @suikiiovo
+/开发日志.md @256-code @suikiiovo
+/团队分工.md @256-code @suikiiovo
+/前端功能需求.md @256-code @suikiiovo
+/字段对照清单.md @256-code @suikiiovo
+/系统功能书.md @256-code @suikiiovo
+
+# —— 技术设计（主责 wmj）——
+/技术设计v0.1-选型分析.md @suikiiovo @256-code
+/技术设计v0.2-架构与数据模型.md @suikiiovo @XSZR341 @256-code
+
+# —— 仓库规则（三方都要看）——
+/AGENTS.md @256-code @suikiiovo @XSZR341
+/CONTRIBUTING.md @256-code @suikiiovo @XSZR341
+
+# —— 后端（目录落地后自动生效；wmj 领域 + lan 平台）——
+/server/ @suikiiovo @XSZR341
+/database/ @suikiiovo @XSZR341
+/shared/ @suikiiovo @XSZR341
