@@ -38,7 +38,7 @@
 # 1. 本地联调：起一套 Casdoor 沙箱（公司环境已就绪，接入方一般不需要自己部署）
 cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 
-# 2. 登录控制台并加固：http://<服务器IP>:8000  （built-in / admin / 123，登录后立刻改密码）
+# 2. 登录控制台并加固：http://<服务器IP>:8000  （管理员账号密码见 deploy/casdoor/.env.local，登录后立刻改密码）
 #    然后按方案文档第四章配置组织、证书、应用、认证源
 
 # 3. 验证接入：打开带应用 Logo 的本地登录页（应用 libiaolink，回跳到 Casdoor 账户页）
@@ -51,3 +51,5 @@ cd frontend && npm install && cp .env.example .env.local && npm run dev
 ```
 
 > 生产最低要求：HTTPS、改掉默认密码、`origin` 设为对外域名、数据库定时备份、多副本时接 Redis。
+>
+> 本地沙箱的账号与口令（测试账号、管理员、DB / Redis）只存 `deploy/casdoor/.env.local`、`frontend/.env.local`（均被 gitignore），仓库内不写明文；`.env.example` 只有变量名与说明。

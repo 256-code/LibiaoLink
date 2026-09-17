@@ -15,7 +15,7 @@ npm run dev                    # http://localhost:3000
 ```
 
 打开 `http://localhost:3000`：未登录会自动跳公司统一登录页，登录后回跳展示用户字段。
-无浏览器回归：`npm run smoke`（7 组断言，覆盖入口 → 登录 → 免点击签发 → 换令牌 → 验签 → 登出）。
+无浏览器回归：`npm run smoke`（7 组断言，覆盖入口 → 登录 → 免点击签发 → 换令牌 → 验签 → 登出）；账号口令从 `.env.local`（`TEST_USERNAME` / `TEST_PASSWORD`，不入库）读取，不需要写在命令行上。
 
 本地联调用的 Casdoor 在 `deploy/casdoor/`（`docker compose up -d`），应用 `libiaolink` 需要以下配置：
 

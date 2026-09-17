@@ -336,9 +336,9 @@ const user = {
 
 | 路径 | 入口 | 账号 |
 |---|---|---|
-| 本地账号 | 登录页的 `密码（本地）` | `zhangsan` / `Zhangsan@2026` |
+| 本地账号 | 登录页的 `密码（本地）` | 用户名 `zhangsan`，口令见本地 `deploy/casdoor/.env.local` |
 | 公司账号 | 登录页的「公司统一登录（测试环境）」 | 测试环境组织 `libiaorobot.com` 下的账号（如 `yicaonan`） |
-| Casdoor 管理员 | `http://localhost:8000/login/built-in` | `admin` / `123`（**上线前必须改**） |
+| Casdoor 管理员 | `http://localhost:8000/login/built-in` | 账号口令见本地 `deploy/casdoor/.env.local`（**上线前必须改**） |
 
 应用 `libiaolink`：Client ID `libiaolink-a195b721bb30a7d4`，Redirect URLs = `http://localhost:8000/account`，Logo 由 Casdoor 自托管（`http://localhost:8000/files/brand/...`，源文件在仓库 `assets/`）。
 
