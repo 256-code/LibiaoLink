@@ -3,26 +3,29 @@ import { MANAGERS } from "../data/managers";
 import { PROJECT_TYPES } from "../types";
 import type { ProjectType } from "../types";
 
-export type NewProjectDraft = {
+export type ProjectDraft = {
   code: string;
   description: string;
   managerId: string;
   projectType: ProjectType;
 };
 
-type NewProjectModalProps = {
+type ProjectModalProps = {
+  mode: "create" | "edit";
+  initial?: ProjectDraft;
   onClose: () => void;
-  onCreate: (draft: NewProjectDraft) => void;
+  onSubmit: (draft: ProjectDraft) => void;
 };
 
 const fieldClass =
   "block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25";
 
-export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
-  const [code, setCode] = useState("");
-  const [description, setDescription] = useState("");
-  const [managerId, setManagerId] = useState("");
-  const [projectType, setProjectType] = useState<ProjectType>("T-sort");
+export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalProps) {
+  const isEdit = mode === "edit";
+  const [code, setCode] = useState(initial?.code ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [managerId, setManagerId] = useState(initial?.managerId ?? "");
+  const [projectType, setProjectType] = useState<ProjectType>(initial?.projectType ?? "T-sort");
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -37,6 +40,7 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
   }, [onClose]);
 
   const canSubmit = code.trim() !== "" && description.trim() !== "" && managerId !== "";
+  const title = isEdit ? "编辑项目" : "新建项目";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -44,11 +48,13 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="新建项目"
+        aria-label={title}
         className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
       >
-        <h2 className="text-lg font-bold text-zinc-900">新建项目</h2>
-        <p className="mt-1 text-sm text-zinc-500">填写项目信息，创建后出现在项目列表末尾。</p>
+        <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后出现在项目列表末尾。"}
+        </p>
 
         <form
           className="mt-5 space-y-4"
@@ -57,7 +63,7 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
             if (!canSubmit) {
               return;
             }
-            onCreate({ code, description, managerId, projectType });
+            onSubmit({ code, description, managerId, projectType });
           }}
         >
           <label className="block">
@@ -123,7 +129,7 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
               disabled={!canSubmit}
               className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              创建项目
+              {isEdit ? "保存修改" : "创建项目"}
             </button>
           </div>
         </form>
