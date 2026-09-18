@@ -7,6 +7,7 @@ import { z } from "../zod.ts";
 export const ERROR_CODES = [
   "VALIDATION_FAILED",
   "AUTH_REQUIRED",
+  "AUTH_CALLBACK_FAILED",
   "FORBIDDEN",
   "NOT_FOUND",
   "VERSION_CONFLICT",
@@ -36,6 +37,7 @@ export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export const HTTP_STATUS_BY_ERROR_CODE: Record<ErrorCode, number> = {
   VALIDATION_FAILED: 400,
   AUTH_REQUIRED: 401,
+  AUTH_CALLBACK_FAILED: 400,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   VERSION_CONFLICT: 409,
