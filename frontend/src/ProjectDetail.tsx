@@ -10,10 +10,9 @@ import type { MeResponse, Project } from "./types";
 type ProjectDetailProps = {
   me: MeResponse;
   project: Project | null;
-  onEdit: (project: Project) => void;
 };
 
-export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project }: ProjectDetailProps) {
   const [activeStage, setActiveStage] = useState<string>(PROJECT_STAGES[0] ?? "项目总览");
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
 
@@ -30,6 +29,25 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
   const [tableOverflow, setTableOverflow] = useState(false);
 
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
+  const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
+  const visibleStageNames = (activeStage === "项目总览" ? PROJECT_STAGES.filter((stage) => stage !== "项目总览") : [activeStage]).filter((stage) =>
+    tasks.some((task) => task.stage === stage),
+  );
+  const allCollapsed = visibleStageNames.length > 0 && visibleStageNames.every((stage) => collapsedStages[stage] === true);
+  const toggleAllStages = () => {
+    if (allCollapsed) {
+      setCollapsedStages({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const stage of visibleStageNames) {
+      next[stage] = true;
+    }
+    setCollapsedStages(next);
+  };
+  const toggleStage = (stage: string) => {
+    setCollapsedStages((previous) => ({ ...previous, [stage]: previous[stage] !== true }));
+  };
 
   const handleToggleColumn = (key: ColumnKey, checked: boolean) => {
     setVisibleColumns((previous) => ({ ...previous, [key]: checked }));
@@ -56,7 +74,7 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
   return (
     <div className="min-h-screen">
       <AppHeader me={me} project={project} />
-      <main className="w-full px-6 pb-10 pt-6">
+      <main className="w-full px-6 pb-10 pt-3">
         <div className="flex items-center gap-3 border-b border-zinc-200">
           <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
             {PROJECT_STAGES.map((stage) => {
@@ -78,18 +96,6 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
               );
             })}
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              onEdit(project);
-            }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-              <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            编辑项目
-          </button>
           <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
         </div>
 
@@ -97,10 +103,10 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
           {activeStage === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} />
+              <TaskBoard tasks={tasks} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} />
             </>
           ) : (
-            <TaskBoard tasks={tasks.filter((task) => task.stage === activeStage)} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} />
+            <TaskBoard tasks={tasks.filter((task) => task.stage === activeStage)} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} />
           )}
         </div>
 

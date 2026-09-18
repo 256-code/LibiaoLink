@@ -46,6 +46,9 @@ export type Project = {
   region: string;
   projectType: ProjectType;
   accent: CardAccent;
+  /** 创建时间（契约 createdAt）：创建时生成、不随编辑变化；卡片右下角与详情顶栏「创建于」展示。 */
+  createdAt: string;
+  /** 项目时间（契约 updatedAt）：项目最近活动时间——主数据变更 / 阶段推进 / 任务变更刷新；列表排序 / 搜索 / 「项目时间」区间筛选用，暂不上卡面（见 前端功能需求 第六章第 14 条）。 */
   updatedAt: string;
   managerId: string;
 };

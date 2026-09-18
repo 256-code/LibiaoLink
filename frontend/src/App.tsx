@@ -15,7 +15,7 @@ type ViewState =
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
 
-/** 展示用时间戳（YYYY-MM-DD HH:mm）；接后端后 updatedAt 由服务端生成。 */
+/** 展示用时间戳（YYYY-MM-DD HH:mm）；接后端后 createdAt 由服务端生成。 */
 function nowText(): string {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -68,6 +68,7 @@ export default function App() {
   const handleCreateProject = (draft: ProjectDraft) => {
     setProjects((previous) => {
       const nextNumber = previous.reduce((max, project) => Math.max(max, project.seqNo), 0) + 1;
+      const timestamp = nowText();
       return [
         ...previous,
         {
@@ -78,7 +79,8 @@ export default function App() {
           region: "未分类",
           projectType: draft.projectType,
           accent: PROJECT_TYPE_ACCENTS[draft.projectType],
-          updatedAt: nowText(),
+          createdAt: timestamp,
+          updatedAt: timestamp,
           managerId: draft.managerId,
         },
       ];
@@ -95,8 +97,8 @@ export default function App() {
               description: draft.description.trim(),
               projectType: draft.projectType,
               accent: PROJECT_TYPE_ACCENTS[draft.projectType],
-              managerId: draft.managerId,
               updatedAt: nowText(),
+              managerId: draft.managerId,
             }
           : project,
       ),
@@ -167,7 +169,7 @@ export default function App() {
     const project = projects.find((item) => item.id === route.id) ?? null;
     return (
       <>
-        <ProjectDetail me={state.me} project={project} onEdit={setEditingProject} />
+        <ProjectDetail me={state.me} project={project} />
         {editModal}
       </>
     );
