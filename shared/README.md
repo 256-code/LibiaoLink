@@ -82,7 +82,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 - 第一批（g2）：项目、任务、流程节点与蓝图（对应阶段 6 纵切的 h1~h4）。
 - 第二批（S7·file，i1）：文件与变更（上传 / 版本 / 定档 / 变更 / 回收站）；预览（preview）契约随 i3 补。
 - 认证与会话（g6）：identity 契约（User / MeResponse / /auth/login 与 /auth/callback 查询参数），随会话后端化落地。
-- 对齐清单 A1~A8（Push 48）：projects（时间区间 / 软删）、tasks（列表项与详情 / 排序白名单）、users（用户目录 / 用户偏好）、dicts（数据字典下发）—— 决议见 PR #40 评审记录，A2 / A3 为 M1 出口（前端移除硬编码）前提。
+- 对齐清单 A1~A8（Push 49）：projects（时间区间 / 软删）、tasks（列表项与详情 / 排序白名单）、users（用户目录 / 用户偏好）、dicts（数据字典下发）—— 决议见 PR #40 评审记录，A2 / A3 为 M1 出口（前端移除硬编码）前提。
 - 后续切片（随对应模块落地补契约，仍在本包内）：通知（notify，阶段 8）、
   搜索与统计（search / dashboard，阶段 8）、迁移工具链（阶段 9）、
   自动化规则与日报/问题（automation / report，阶段 7）。

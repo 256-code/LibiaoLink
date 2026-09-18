@@ -35,7 +35,7 @@ export const ProjectSummarySchema = z
 
 /**
  * 列表查询：多维筛选 + 分页 + 排序；多值筛选用英文逗号分隔（与 v0.2 §8.2 filter[...] 口径一致）。
- * A1（Push 48）：filter[timeFrom] / filter[timeTo] 为 DateOnly 闭区间，按 Asia/Shanghai 日界截断
+ * A1（Push 49）：filter[timeFrom] / filter[timeTo] 为 DateOnly 闭区间，按 Asia/Shanghai 日界截断
  * —— 下界取当日 00:00:00+08:00（含）、上界取次日 00:00:00+08:00（不含）；一期维度映射 projects.updated_at，
  * 语义以 v0.3 §7 第 4 项「项目时间」ADR 为准（主数据变更 / 阶段推进 / 任务变更触发，文件与日报不触发）。
  * 边界：只传一端合法；timeFrom 晚于 timeTo 或格式非法返回 400 VALIDATION_FAILED（不返回空列表）。
