@@ -95,3 +95,70 @@ jobs:
       - name: Boundary rules
         working-directory: server
         run: npm run check:boundaries
+
+  # 数据库门禁：空库迁移 + Drizzle 结构漂移（加迁移 0005+ 的卡片必须在此 job 全绿）。
+  # postgres:18 service（trust）→ 角色脚本 → 空库迁移 → 幂等复跑 → server 的 check:db-schema
+  # （以 libiaolink_api 连接，顺带校验角色脚本的默认授权）。
+  database:
+    name: database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: libiaolink
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d libiaolink"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            shared/package-lock.json
+            server/package-lock.json
+            database/package-lock.json
+      - name: Install shared (locked)
+        working-directory: shared
+        run: npm ci
+      - name: Build shared
+        working-directory: shared
+        run: npm run build
+      - name: Install server (locked)
+        working-directory: server
+        run: npm ci
+      - name: Build server (drizzle schema)
+        working-directory: server
+        run: npm run build
+      - name: Install database (locked)
+        working-directory: database
+        run: npm ci
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Apply roles (idempotent)
+        run: psql "postgresql://postgres@127.0.0.1:5432/libiaolink" -v ON_ERROR_STOP=1 -f database/roles/0001_roles.sql
+      - name: Migrate empty database
+        working-directory: database
+        env:
+          DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/migrate.mjs
+      - name: Migrate re-run (idempotence + drift guard)
+        working-directory: database
+        env:
+          DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/migrate.mjs
+      - name: Schema drift check (Drizzle vs migrated DB, as libiaolink_api)
+        working-directory: server
+        env:
+          DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+        run: npm run check:db-schema
