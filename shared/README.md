@@ -63,7 +63,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 蓝图 | 自建 JSON（schemaVersion=1）；导出/导入 round-trip 无损；导入即快照 |
 | 认证与会话 | /auth/*（根路径；OIDC authorization_code + PKCE + state；HttpOnly Cookie 会话）；/auth/me 返回 `{ user, claims, expiresAt }`；未认证 401 AUTH_REQUIRED、回调失败 400 AUTH_CALLBACK_FAILED |
 | 文件状态 | 五态 draft/final/changed/archived/recycled；定档后不可覆盖，修改必须走变更（FILE_STATE_INVALID 拒绝） |
-| 上传 | 分片预签名直传（api 只签名与登记元数据）；`intent=version` 仅草稿替换、`intent=change` 定档后变更；会话过期 / 分片未齐 409（UPLOAD_EXPIRED / UPLOAD_INCOMPLETE）；内容哈希只做**重复提示**、不做强阻断 |
+| 上传 | 分片预签名直传（api 只签名与登记元数据）；`intent=version` 仅草稿替换、`intent=change` 定档后变更；分片未齐 409（UPLOAD_INCOMPLETE）、会话过期 410（UPLOAD_SESSION_EXPIRED）、哈希不符 422（FILE_HASH_MISMATCH，命名对齐技术设计v0.3 §4.8）；分片状态以对象存储 ListParts 为唯一真相（**不落 upload_parts 表**）；内容哈希只做**重复提示**、不做强阻断 |
 | 变更 | 一期申请即通过（status=applied）：提交变更后文件与变更字段，完成上传时同事务写 change_requests + 新版本 + 状态 changed + Outbox（R01 / 通知由消费方处理）；缺变更后文件不允许提交 |
 | 回收站 | 任意状态可回收（默认保留 30 天，可恢复回原状态）；彻底删除仅管理员且留痕（权限模型落地前为临时口径） |
 | 下载与预览地址 | 短时签名 URL + 审计；对象存储禁止匿名读取 |

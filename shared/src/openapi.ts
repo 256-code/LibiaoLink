@@ -62,6 +62,7 @@ const commonErrors = {
   403: errorResponse("无权限（FORBIDDEN）"),
   404: errorResponse("资源不存在或不可见（NOT_FOUND，统一 404 语义）"),
   409: errorResponse("冲突（VERSION_CONFLICT / 状态不允许当前操作）"),
+  410: errorResponse("上传会话已过期（UPLOAD_SESSION_EXPIRED，需重新发起上传）"),
   422: errorResponse("业务校验未通过（门禁 / 蓝图校验，含明细）"),
 } as const;
 
@@ -375,7 +376,7 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "分片预签名 URL", ...json(UploadPartsResponseSchema) },
       404: commonErrors[404],
-      409: commonErrors[409],
+      410: commonErrors[410],
     },
   });
 
@@ -402,6 +403,7 @@ export function buildOpenApiDocument() {
       200: { description: "文件、版本与（change 意图的）变更记录", ...json(UploadCompleteResponseSchema) },
       404: commonErrors[404],
       409: commonErrors[409],
+      410: commonErrors[410],
       422: commonErrors[422],
     },
   });
