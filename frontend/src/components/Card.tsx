@@ -4,7 +4,7 @@ import type { CardAccent, ProjectType } from "../types";
 const ACCENT_STYLES: Record<CardAccent, { icon: string; hover: string; badge: string }> = {
   blue: { icon: "bg-blue-500", hover: "hover:shadow-[0_12px_28px_rgba(59,130,246,0.35)]", badge: "bg-blue-500 text-white" },
   emerald: { icon: "bg-emerald-500", hover: "hover:shadow-[0_12px_28px_rgba(16,185,129,0.35)]", badge: "bg-emerald-500 text-white" },
-  amber: { icon: "bg-amber-500", hover: "hover:shadow-[0_12px_28px_rgba(245,158,11,0.35)]", badge: "bg-amber-500 text-amber-950" },
+  amber: { icon: "bg-[#feca04]", hover: "hover:shadow-[0_12px_28px_rgba(254,202,4,0.35)]", badge: "bg-[#feca04] text-[#313033]" },
   // 预留：未来新增项目类型时启用（如红色 rb / 紫色 vt），当前仅保留蓝 / 绿 / 橙三种
   // rose: { icon: "bg-rose-500", hover: "hover:shadow-[0_12px_28px_rgba(244,63,94,0.35)]", badge: "bg-rose-500 text-white" },
   // violet: { icon: "bg-violet-500", hover: "hover:shadow-[0_12px_28px_rgba(139,92,246,0.35)]", badge: "bg-violet-500 text-white" },
