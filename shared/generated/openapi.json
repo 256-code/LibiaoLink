@@ -27,6 +27,14 @@
     {
       "name": "auth",
       "description": "认证与会话（ADR-010；根路径 /auth/*，OIDC + PKCE）"
+    },
+    {
+      "name": "files",
+      "description": "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）"
+    },
+    {
+      "name": "changes",
+      "description": "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）"
     }
   ],
   "components": {
@@ -306,6 +314,210 @@
         ],
         "description": "完成预检（UI 置灰依据；服务端仍在事务内强校验）"
       },
+      "ChangeIntentBody": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "变更原因（必填；无变更后文件不允许提交）"
+          },
+          "beforeSummary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "afterSummary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "description": "变更申请字段（随上传会话提交，完成上传时同事务生效）"
+      },
+      "ChangeRequest": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "nodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "stageKey": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StageKey"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "变更阶段（九阶段字典）"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "变更原因（必填）"
+          },
+          "beforeSummary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "变更前摘要"
+          },
+          "afterSummary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "变更后摘要"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ChangeStatus"
+          },
+          "appliedBy": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "appliedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "fileId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）"
+              }
+            ]
+          },
+          "versionId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "变更后版本（file_versions.change_request_id 反查）"
+              }
+            ]
+          },
+          "versionSeq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "nodeId",
+          "stageKey",
+          "reason",
+          "beforeSummary",
+          "afterSummary",
+          "status",
+          "appliedBy",
+          "appliedAt",
+          "createdAt",
+          "fileId",
+          "versionId",
+          "versionSeq"
+        ],
+        "description": "intent=change 时的变更记录；version 意图为空"
+      },
+      "ChangeRequestDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ChangeRequest"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "file": {
+                "$ref": "#/components/schemas/File"
+              },
+              "version": {
+                "$ref": "#/components/schemas/FileVersion"
+              }
+            },
+            "required": [
+              "file",
+              "version"
+            ]
+          }
+        ],
+        "description": "变更记录（v0.2 §5.3；一期申请即通过、全程留痕）"
+      },
+      "ChangeRequestListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ChangeRequest"
+                },
+                {
+                  "description": "变更记录（v0.2 §5.3；一期申请即通过、全程留痕）"
+                }
+              ]
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "ChangeStatus": {
+        "type": "string",
+        "enum": [
+          "applied"
+        ],
+        "description": "变更申请状态；一期申请即通过（唯一终态 applied），多级审批二期可启用"
+      },
       "DateOnly": {
         "type": [
           "string",
@@ -339,6 +551,38 @@
         ],
         "description": "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）"
       },
+      "DuplicateHint": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uploadedBy": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "uploadedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "fileId",
+          "name",
+          "sizeBytes",
+          "uploadedBy",
+          "uploadedAt"
+        ],
+        "description": "同内容哈希的既有文件提示（用户确认后可继续上传，不做强阻断）"
+      },
       "ErrorCode": {
         "type": "string",
         "enum": [
@@ -355,6 +599,9 @@
           "BLUEPRINT_SCHEMA_INVALID",
           "BLUEPRINT_REF_UNKNOWN",
           "FILE_STATE_INVALID",
+          "UPLOAD_INCOMPLETE",
+          "UPLOAD_EXPIRED",
+          "CHECKSUM_MISMATCH",
           "IDEMPOTENT_REPLAY",
           "PREVIEW_NOT_READY",
           "PREVIEW_FAILED",
@@ -387,6 +634,474 @@
           "message"
         ],
         "description": "字段级错误明细（校验失败、门禁缺件等）"
+      },
+      "File": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "nodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "taskId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "docType": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocType"
+              },
+              {
+                "description": "成果文件类型（十类字典）；普通附件为空"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "example": "机械设计图纸-v2.docx",
+            "description": "原文件名（含中文，保留在元数据）"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FileStatus"
+          },
+          "currentVersionId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "finalizedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "定档时间；未定档为空"
+              }
+            ]
+          },
+          "finalizedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "recycledAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "进入回收站时间；恢复或彻底删除后清空 / 记录终止"
+              }
+            ]
+          },
+          "recycledBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "recycledFromStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FileStatus"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "进入回收站前的状态；恢复时回退到该状态"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "nodeId",
+          "taskId",
+          "docType",
+          "name",
+          "status",
+          "currentVersionId",
+          "version",
+          "createdBy",
+          "createdAt",
+          "updatedAt",
+          "finalizedAt",
+          "finalizedBy",
+          "recycledAt",
+          "recycledBy",
+          "recycledFromStatus"
+        ],
+        "description": "文件（v0.2 §5.2；定档后不可覆盖，修改必须走变更）"
+      },
+      "FileDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/File"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "currentVersion": {
+                "$ref": "#/components/schemas/FileVersion"
+              }
+            },
+            "required": [
+              "currentVersion"
+            ]
+          }
+        ],
+        "description": "文件详情（含当前版本；版本链走 /files/{id}/versions）"
+      },
+      "FileDownloadUrlResponse": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "短时签名下载地址（写查看 / 下载审计；对象存储禁止匿名读取）"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "url",
+          "fileName",
+          "sizeBytes",
+          "expiresAt"
+        ]
+      },
+      "FileFinalizeBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换"
+      },
+      "FileListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/File"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "FilePurgeBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "彻底删除（仅管理员；对象与元数据一并清理，操作留痕）"
+      },
+      "FilePurgeResponse": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "purgedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "fileId",
+          "purgedAt"
+        ]
+      },
+      "FileRecycleBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "移入回收站（任意状态可删；默认保留 30 天，可恢复）"
+      },
+      "FileRestoreBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "FileRollbackBody": {
+        "type": "object",
+        "properties": {
+          "toVersionId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "回溯目标版本"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "回溯原因（留痕；定档 / 已变更文件按变更流处理）"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "toVersionId",
+          "reason",
+          "version"
+        ],
+        "description": "回溯生成新版本（不删除历史版本；定档后回溯走变更、申请即通过）"
+      },
+      "FileRollbackResponse": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/File"
+          },
+          "version": {
+            "$ref": "#/components/schemas/FileVersion"
+          },
+          "changeRequest": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ChangeRequest"
+              },
+              {
+                "description": "变更记录（v0.2 §5.3；一期申请即通过、全程留痕）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "file",
+          "version",
+          "changeRequest"
+        ]
+      },
+      "FileStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "final",
+          "changed",
+          "archived",
+          "recycled"
+        ],
+        "description": "文件五态（v0.2 §5.2）"
+      },
+      "FileVersion": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "版本号（同一文件内递增，从 1 开始）"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentHash": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Sha256"
+              },
+              {
+                "description": "SHA-256 内容哈希（十六进制）；用于重复内容提示与变更前后留痕"
+              }
+            ]
+          },
+          "mime": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uploadedBy": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "uploadedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "changeRequestId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "来源变更；普通版本（草稿期）为空"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "fileId",
+          "seq",
+          "sizeBytes",
+          "contentHash",
+          "mime",
+          "uploadedBy",
+          "uploadedAt",
+          "changeRequestId"
+        ],
+        "description": "文件版本（v0.2 §5.1；对象键 = projects/{projectId}/files/{fileId}/v{seq}/{contentHash}.{ext}）"
+      },
+      "FileVersionListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileVersion"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ]
       },
       "IdempotencyKey": {
         "type": "string",
@@ -1028,6 +1743,11 @@
           "version"
         ]
       },
+      "Sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$/i",
+        "description": "客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传"
+      },
       "StageKey": {
         "type": "string",
         "enum": [
@@ -1301,6 +2021,333 @@
           "progress",
           "version"
         ]
+      },
+      "UploadAbortResponse": {
+        "type": "object",
+        "properties": {
+          "upload": {
+            "$ref": "#/components/schemas/UploadSession"
+          }
+        },
+        "required": [
+          "upload"
+        ]
+      },
+      "UploadCompleteBody": {
+        "type": "object",
+        "properties": {
+          "contentHash": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Sha256"
+              },
+              {
+                "description": "完成时回传；与 init 提供值不一致返回 422 CHECKSUM_MISMATCH"
+              }
+            ]
+          }
+        },
+        "required": [
+          "contentHash"
+        ]
+      },
+      "UploadCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/File"
+          },
+          "version": {
+            "$ref": "#/components/schemas/FileVersion"
+          },
+          "changeRequest": {
+            "$ref": "#/components/schemas/ChangeRequest"
+          }
+        },
+        "required": [
+          "file",
+          "version",
+          "changeRequest"
+        ]
+      },
+      "UploadCreateBody": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED"
+              },
+              "mime": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "contentHash": {
+                "$ref": "#/components/schemas/Sha256"
+              },
+              "docType": {
+                "$ref": "#/components/schemas/DocType"
+              },
+              "nodeId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "taskId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "intent": {
+                "type": "string",
+                "enum": [
+                  "version"
+                ]
+              }
+            },
+            "required": [
+              "projectId",
+              "name",
+              "sizeBytes",
+              "intent"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED"
+              },
+              "mime": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "contentHash": {
+                "$ref": "#/components/schemas/Sha256"
+              },
+              "docType": {
+                "$ref": "#/components/schemas/DocType"
+              },
+              "nodeId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "taskId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "intent": {
+                "type": "string",
+                "enum": [
+                  "change"
+                ]
+              },
+              "change": {
+                "$ref": "#/components/schemas/ChangeIntentBody"
+              }
+            },
+            "required": [
+              "projectId",
+              "name",
+              "sizeBytes",
+              "intent",
+              "change"
+            ]
+          }
+        ],
+        "description": "发起上传（分片直传；返回预签名分片 URL 的获取入口）"
+      },
+      "UploadCreateResponse": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/File"
+          },
+          "upload": {
+            "$ref": "#/components/schemas/UploadSession"
+          },
+          "duplicateHint": {
+            "$ref": "#/components/schemas/DuplicateHint"
+          }
+        },
+        "required": [
+          "file",
+          "upload",
+          "duplicateHint"
+        ]
+      },
+      "UploadIntent": {
+        "type": "string",
+        "enum": [
+          "version",
+          "change"
+        ],
+        "description": "上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）"
+      },
+      "UploadPartsBody": {
+        "type": "object",
+        "properties": {
+          "partNumbers": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "minItems": 1,
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "partNumbers"
+        ],
+        "description": "批量获取分片预签名 URL（首传与断点续传共用；续传前先查会话状态拿缺失分片）"
+      },
+      "UploadPartsResponse": {
+        "type": "object",
+        "properties": {
+          "uploadId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "partSizeBytes": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UploadPartUrl"
+            }
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "uploadId",
+          "partSizeBytes",
+          "parts",
+          "expiresAt"
+        ]
+      },
+      "UploadPartUrl": {
+        "type": "object",
+        "properties": {
+          "partNumber": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "url": {
+            "type": "string",
+            "description": "预签名 PUT URL（浏览器直传对象存储，api 不代理大文件流量）"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "partNumber",
+          "url",
+          "expiresAt"
+        ]
+      },
+      "UploadSession": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/UploadIntent"
+          },
+          "partSizeBytes": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "totalParts": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/UploadSessionStatus"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "id",
+          "fileId",
+          "intent",
+          "partSizeBytes",
+          "totalParts",
+          "status",
+          "createdAt",
+          "expiresAt"
+        ],
+        "description": "上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准）"
+      },
+      "UploadSessionStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "completed",
+          "aborted",
+          "expired"
+        ],
+        "description": "上传会话状态；active 可续传，completed/aborted/expired 不可再用"
+      },
+      "UploadSessionView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UploadSession"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "uploadedPartNumbers": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "已上传分片（来自对象存储 ListParts）"
+              },
+              "missingPartNumbers": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "缺失分片（断点续传只补这些）"
+              }
+            },
+            "required": [
+              "uploadedPartNumbers",
+              "missingPartNumbers"
+            ]
+          }
+        ],
+        "description": "上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准）"
       },
       "User": {
         "type": "object",
@@ -2497,6 +3544,1162 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CanCompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/files": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[nodeId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[taskId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "文件状态（多值逗号分隔）：draft / final / changed / archived / recycled"
+            },
+            "required": false,
+            "description": "文件状态（多值逗号分隔）：draft / final / changed / archived / recycled",
+            "name": "filter[status]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "成果文件类型（多值逗号分隔，取值见 DocType 字典）"
+            },
+            "required": false,
+            "description": "成果文件类型（多值逗号分隔，取值见 DocType 字典）",
+            "name": "filter[docType]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[uploadedBy]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（文件名）"
+            },
+            "required": false,
+            "description": "关键字（文件名）",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
+              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "example": "plannedEnd:asc"
+            },
+            "required": false,
+            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "name": "sort",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/uploads": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "发起上传（分片直传；version = 草稿替换 / change = 定档后变更，申请即通过）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "上传会话（含分片参数；complete 时登记版本）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "文件详情（含当前版本）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/versions": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "版本链（历史版本可预览 / 下载，受权限控制）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "版本链",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileVersionListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/versions/{versionId}/download-url": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "版本短时签名下载（写查看 / 下载审计）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "签名下载地址",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDownloadUrlResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/uploads/{uploadId}/parts": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "批量获取分片预签名 URL（首传 / 断点续传共用）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "uploadId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadPartsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "分片预签名 URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadPartsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/uploads/{uploadId}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "上传会话状态（已传 / 缺失分片；断点续传依据）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "uploadId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "会话状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSessionView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/uploads/{uploadId}/complete": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "完成上传（登记 file_version；intent=change 同事务落变更）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "uploadId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadCompleteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "文件、版本与（change 意图的）变更记录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadCompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/uploads/{uploadId}/abort": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "取消上传会话（未完成分片由对象存储生命周期兜底清理）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "uploadId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已取消的会话",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadAbortResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/finalize": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "定档（锁版；此后修改必须走变更）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileFinalizeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已定档的文件",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/File"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/rollback": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "回溯生成新版本（不删除历史；定档后按变更流留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRollbackBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "回溯后的文件与新版本",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileRollbackResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/recycle": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "移入回收站（默认保留 30 天，可恢复）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRecycleBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已回收的文件",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/File"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/restore": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "从回收站恢复（回到进入前状态）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRestoreBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已恢复的文件",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/File"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/purge": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "彻底删除（仅管理员；对象与元数据一并清理，操作留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FilePurgeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已彻底删除",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilePurgeResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/change-requests": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "变更记录列表（按阶段 / 节点 / 文件 / 申请人 / 关键字检索）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "阶段（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "阶段（多值逗号分隔）",
+            "name": "filter[stageKey]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[nodeId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[fileId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[appliedBy]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[projectId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（变更原因 / 变更前后摘要）"
+            },
+            "required": false,
+            "description": "关键字（变更原因 / 变更前后摘要）",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
+              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "example": "plannedEnd:asc"
+            },
+            "required": false,
+            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "name": "sort",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "变更记录列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeRequestListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/change-requests/{id}": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "变更详情（含变更后文件与版本）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "变更详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeRequestDetail"
                 }
               }
             }
