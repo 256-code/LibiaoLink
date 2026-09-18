@@ -3,7 +3,7 @@ import { z } from "../zod.ts";
 /**
  * 认证与会话（identity 模块）契约（ADR-010）。
  * - 浏览器直接导航 /auth/*（根路径，不进 /api/v1）：login / callback / me / logout 由后端承载（g6）。
- * - /auth/me 响应形状与前端 MeResponse 保持一致（前端切换见 k6 卡片），本批不引入破坏性变更。
+ * - /auth/me 响应形状与前端 MeResponse 保持一致（前端已于 Push 46 切到后端 /auth/*），本批不引入破坏性变更。
  */
 
 /** 登录用户：Casdoor JWT-Custom claims 归一化后的稳定口径（name=工号、displayName=姓名）。 */

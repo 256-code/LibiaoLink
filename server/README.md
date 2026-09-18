@@ -156,7 +156,7 @@ server/
 
 ## 后续卡片衔接
 
-- g6：`/auth/*` 会话后端化（identity 模块首个实现）——已落地（Push 43；前端切换 k6、正式环境切换 g7 仍在 px 线）。
+- g6：`/auth/*` 会话后端化（identity 模块首个实现）——已落地（Push 43）；前端切换 k6 已合入（Push 46），正式环境 SSO 核对（g7）仍在 px 线。
 - g5：CI 扩展（上方片段 + 契约漂移）——已落地（Push 41：`server` job 入 `.github/workflows/ci.yml`）。
 - lan 线：file / preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。
