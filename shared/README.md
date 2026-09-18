@@ -44,9 +44,10 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 主题 | 口径 |
 |---|---|
-| 前缀 / 编码 | `/api/v1`；JSON；请求与响应字段 camelCase（与 DDL snake_case 一一映射，如 owner_id ↔ ownerId） |
+| 前缀 / 编码 | `/api/v1`；JSON；请求与响应字段 camelCase（与 DDL snake_case 一一映射，如 manager_id ↔ managerId） |
 | 分页 | 表格型 `page` / `limit` + `total`；信息流型后续用 cursor |
-| 筛选与排序 | `filter[region]=..`（多值逗号分隔）、`sort=field:asc,field2:desc`、`q` 关键字 |
+| 筛选与排序 | `filter[...]=..`（多值逗号分隔，如 region / projectType / managerId）、`sort=field:asc,field2:desc`、`q` 关键字 |
+| 项目人员 | 项目级唯一责任人为「项目经理」（`projects.manager_id`，必填；首页筛选用 `filter[managerId]`，多值逗号分隔）；任务级为「任务负责人」（`tasks.owner_id`），两者不同粒度，不可混用 |
 | 乐观锁 | 更新必须回传 `version`；冲突返回 409（VERSION_CONFLICT） |
 | 幂等 | 写操作支持 `Idempotency-Key` 头；重复提交返回首次结果 |
 | 时间 | 时间戳 ISO8601（UTC 存储，前端按 Asia/Shanghai 展示）；业务日期 `YYYY-MM-DD` |
