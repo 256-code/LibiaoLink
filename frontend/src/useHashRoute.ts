@@ -8,7 +8,7 @@ import { useSyncExternalStore } from "react";
 export type ListQueryState = {
   regions: string[];
   projectTypes: string[];
-  managers: string[];
+  managerIds: string[];
   timeFrom: string | null;
   timeTo: string | null;
   q: string;
@@ -18,7 +18,7 @@ export type ListQueryState = {
 export const EMPTY_LIST_QUERY: ListQueryState = {
   regions: [],
   projectTypes: [],
-  managers: [],
+  managerIds: [],
   timeFrom: null,
   timeTo: null,
   q: "",
@@ -65,7 +65,7 @@ function parseDayValue(value: string | null): string | null {
   return trimmed;
 }
 
-/** 解析 hash 里的 query 串（形如 filter[region]=A,B&filter[projectType]=..&filter[manager]=..&filter[timeFrom]=..&filter[timeTo]=..&q=..&sort=updatedAt:asc）。 */
+/** 解析 hash 里的 query 串（形如 filter[region]=A,B&filter[projectType]=..&filter[managerId]=..&filter[timeFrom]=..&filter[timeTo]=..&q=..&sort=updatedAt:asc）。 */
 export function parseListQuery(search: string): ListQueryState {
   const params = new Map<string, string>();
   for (const chunk of search.split("&")) {
@@ -88,7 +88,7 @@ export function parseListQuery(search: string): ListQueryState {
   return {
     regions: parseListValue(params.get("filter[region]") ?? null),
     projectTypes: parseListValue(params.get("filter[projectType]") ?? null),
-    managers: parseListValue(params.get("filter[manager]") ?? null),
+    managerIds: parseListValue(params.get("filter[managerId]") ?? null),
     timeFrom,
     timeTo,
     q: params.get("q") ?? "",
@@ -106,7 +106,7 @@ export function buildListHash(filters: ListQueryState): string {
   };
   pushList("filter[region]", filters.regions);
   pushList("filter[projectType]", filters.projectTypes);
-  pushList("filter[manager]", filters.managers);
+  pushList("filter[managerId]", filters.managerIds);
   if (filters.timeFrom !== null && filters.timeTo !== null) {
     parts.push("filter[timeFrom]=" + encodeURIComponent(filters.timeFrom));
     parts.push("filter[timeTo]=" + encodeURIComponent(filters.timeTo));
@@ -124,7 +124,7 @@ export function hasListFilters(filters: ListQueryState): boolean {
   return (
     filters.regions.length > 0 ||
     filters.projectTypes.length > 0 ||
-    filters.managers.length > 0 ||
+    filters.managerIds.length > 0 ||
     filters.timeFrom !== null ||
     filters.timeTo !== null
   );

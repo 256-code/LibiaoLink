@@ -19,6 +19,7 @@ export const projects = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     code: text("code").notNull(),
+    seqNo: integer("seq_no").notNull().default(sql`nextval('projects_seq_no_seq')`),
     name: text("name").notNull(),
     customer: text("customer"),
     region: text("region").notNull(),
@@ -33,6 +34,7 @@ export const projects = pgTable(
   },
   (table) => [
     unique("projects_code_key").on(table.code),
+    unique("uq_projects_seq_no").on(table.seqNo),
     index("ix_projects_facets").on(table.region, table.projectType, table.managerId),
     index("ix_projects_stage").on(table.status, table.stageKey),
     check(
@@ -41,6 +43,7 @@ export const projects = pgTable(
     ),
     check("ck_projects_status", sql`${table.status} in ${sql.raw(sqlValueList(["active", "paused", "done", "archived"]))}`),
     check("ck_projects_version", sql`${table.version} >= 0`),
+    check("ck_projects_seq_no", sql`${table.seqNo} > 0`),
   ],
 );
 

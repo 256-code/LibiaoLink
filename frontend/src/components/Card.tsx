@@ -11,18 +11,19 @@ const ACCENT_STYLES: Record<CardAccent, { icon: string; hover: string; badge: st
 };
 
 type CardProps = {
-  index: string;
-  title: string;
+  seqNo: number;
+  code: string;
   description: string;
   accent?: CardAccent;
   projectType: ProjectType;
   icon?: ReactNode;
-  manager: string;
+  managerName: string;
   time: string;
 };
 
-export function Card({ index, title, description, accent = "blue", projectType, icon, manager, time }: CardProps) {
+export function Card({ seqNo, code, description, accent = "blue", projectType, icon, managerName, time }: CardProps) {
   const styles = ACCENT_STYLES[accent];
+  const seqNoText = String(seqNo).padStart(2, "0");
   return (
     <div
       className={
@@ -34,15 +35,15 @@ export function Card({ index, title, description, accent = "blue", projectType, 
         {projectType}
       </span>
       <div className="w-20 h-20 rounded-full absolute -right-5 -top-7 bg-zinc-100">
-        <p className="absolute bottom-5 left-6 text-2xl font-medium text-zinc-500">{index}</p>
+        <p className="absolute bottom-5 left-6 text-2xl font-medium text-zinc-500" title={"项目序号 " + seqNoText}>{seqNoText}</p>
       </div>
       <div className="flex w-full items-center gap-3">
         {icon ?? <span className={"car-icon block h-9 w-12 shrink-0 " + styles.icon} />}
         <p className="text-sm text-zinc-400">
-          项目经理：<span className="font-medium text-zinc-600">{manager}</span>
+          项目经理：<span className="font-medium text-zinc-600">{managerName}</span>
         </p>
       </div>
-      <h1 className="font-mono text-xl font-bold tracking-tight">{title}</h1>
+      <h1 className="font-mono text-xl font-bold tracking-tight">{code}</h1>
       <p className="text-lg text-zinc-500 leading-7">{description}</p>
       <p className="text-right font-mono text-sm text-zinc-400">{time}</p>
     </div>
