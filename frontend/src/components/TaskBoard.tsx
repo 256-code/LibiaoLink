@@ -267,18 +267,11 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
       const items = tasks.filter((task) => task.stage === stage);
       return items.length > 0 && items.some((task) => !isTaskDone(task));
     }) ?? "全部完成";
-  const overdue = tasks.filter((task) => isTaskOverdue(task)).length;
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-xl border border-zinc-200 bg-white px-5 py-3.5">
       <p className="text-xs text-zinc-500">
-        当前阶段<span className="ml-1.5 text-sm font-medium text-zinc-800">{currentStage}</span>
-      </p>
-      <p className="text-xs text-zinc-500">
-        逾期
-        <span className={"ml-1.5 text-sm font-medium " + (overdue > 0 ? "text-red-600" : "text-zinc-800")}>
-          {overdue} 条
-        </span>
+        当前阶段<span className="ml-1.5 text-sm font-bold text-zinc-800">{currentStage}</span>
       </p>
       <div className="ml-auto flex items-center gap-2.5">
         <span className="text-xs text-zinc-500">整体进度</span>
