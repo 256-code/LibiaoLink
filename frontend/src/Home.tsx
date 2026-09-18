@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
@@ -6,7 +6,9 @@ import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { NewProjectModal, type NewProjectDraft } from "./components/NewProjectModal";
 import { SearchInput } from "./components/SearchInput";
-import { openProject } from "./useHashRoute";
+import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
+import type { ListQueryState } from "./useHashRoute";
+import { PROJECT_TYPES } from "./types";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
@@ -18,31 +20,57 @@ type HomeProps = {
 export default function Home({ me, projects, onCreate }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
+  const route = useHashRoute();
+  const filters = route.kind === "list" ? route.filters : EMPTY_LIST_QUERY;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
-  const [selectedManagers, setSelectedManagers] = useState<string[]>([]);
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [dateRange, setDateRange] = useState<DateRange | null>(null);
-  const [sortDesc, setSortDesc] = useState(true);
+  const [filterOpen, setFilterOpen] = useState(() => hasListFilters(filters));
+  const knownRegions = useMemo(() => new Set(projects.map((project) => project.region)), [projects]);
+  const knownManagers = useMemo(() => new Set(projects.map((project) => project.manager)), [projects]);
+  // 链接里可能带着当前数据不存在的取值（分享过期 / 手改地址）：先丢弃，再由下面的 effect 归一化地址栏
+  const activeFilters = useMemo(() => {
+    const regions = filters.regions.filter((region) => knownRegions.has(region));
+    const managers = filters.managers.filter((manager) => knownManagers.has(manager));
+    const projectTypes = filters.projectTypes.filter((projectType) => (PROJECT_TYPES as readonly string[]).includes(projectType));
+    if (
+      regions.length === filters.regions.length &&
+      managers.length === filters.managers.length &&
+      projectTypes.length === filters.projectTypes.length
+    ) {
+      return filters;
+    }
+    return { ...filters, regions, managers, projectTypes };
+  }, [filters, knownManagers, knownRegions]);
+  useEffect(() => {
+    if (buildListHash(activeFilters) !== buildListHash(filters)) {
+      replaceListQuery(activeFilters);
+    }
+  }, [activeFilters, filters]);
+
+  const updateFilters = (patch: Partial<ListQueryState>) => {
+    replaceListQuery({ ...activeFilters, ...patch });
+  };
+  const query = activeFilters.q;
   const keyword = query.trim().toLowerCase();
-  const hasFilters =
-    selectedRegions.length > 0 || selectedManagers.length > 0 || selectedTypes.length > 0 || dateRange !== null;
+  const hasFilters = hasListFilters(activeFilters);
+  const sortDesc = activeFilters.sortDesc;
+  const dateRange: DateRange | null =
+    activeFilters.timeFrom !== null && activeFilters.timeTo !== null
+      ? { from: activeFilters.timeFrom, to: activeFilters.timeTo }
+      : null;
   const filtered = useMemo(() => {
     const matched = projects.filter((project) => {
-      if (selectedRegions.length > 0 && !selectedRegions.includes(project.region)) {
+      if (activeFilters.regions.length > 0 && !activeFilters.regions.includes(project.region)) {
         return false;
       }
-      if (selectedManagers.length > 0 && !selectedManagers.includes(project.manager)) {
+      if (activeFilters.managers.length > 0 && !activeFilters.managers.includes(project.manager)) {
         return false;
       }
-      if (selectedTypes.length > 0 && !selectedTypes.includes(project.projectType)) {
+      if (activeFilters.projectTypes.length > 0 && !activeFilters.projectTypes.includes(project.projectType)) {
         return false;
       }
-      if (dateRange !== null) {
+      if (activeFilters.timeFrom !== null && activeFilters.timeTo !== null) {
         const day = project.updatedAt.slice(0, 10);
-        if (day < dateRange.from || day > dateRange.to) {
+        if (day < activeFilters.timeFrom || day > activeFilters.timeTo) {
           return false;
         }
       }
@@ -55,12 +83,9 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
     });
     const ordered = matched.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : left.updatedAt > right.updatedAt ? -1 : 0));
     return sortDesc ? ordered : ordered.reverse();
-  }, [keyword, projects, selectedRegions, selectedManagers, selectedTypes, dateRange, sortDesc]);
+  }, [activeFilters, keyword, projects, sortDesc]);
   const resetFilters = () => {
-    setSelectedRegions([]);
-    setSelectedManagers([]);
-    setSelectedTypes([]);
-    setDateRange(null);
+    updateFilters({ regions: [], projectTypes: [], managers: [], timeFrom: null, timeTo: null });
   };
   const toggleValue = (list: string[], value: string) => (list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
 
@@ -71,21 +96,24 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
       <CategoryFilterSidebar
         open={filterOpen}
         projects={projects}
-        selectedRegions={selectedRegions}
-        selectedManagers={selectedManagers}
-        selectedTypes={selectedTypes}
+        selectedRegions={activeFilters.regions}
+        selectedManagers={activeFilters.managers}
+        selectedTypes={activeFilters.projectTypes}
         dateRange={dateRange}
         onToggleRegion={(region) => {
-          setSelectedRegions((previous) => toggleValue(previous, region));
+          updateFilters({ regions: toggleValue(activeFilters.regions, region) });
         }}
         onToggleManager={(manager) => {
-          setSelectedManagers((previous) => toggleValue(previous, manager));
+          updateFilters({ managers: toggleValue(activeFilters.managers, manager) });
         }}
         onToggleType={(projectType) => {
-          setSelectedTypes((previous) => toggleValue(previous, projectType));
+          updateFilters({ projectTypes: toggleValue(activeFilters.projectTypes, projectType) });
         }}
         onDateRangeChange={(range) => {
-          setDateRange(range);
+          updateFilters({
+            timeFrom: range === null ? null : range.from,
+            timeTo: range === null ? null : range.to,
+          });
         }}
         onReset={resetFilters}
         onClose={() => {
@@ -106,7 +134,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
               type="button"
               aria-pressed={sortDesc}
               onClick={() => {
-                setSortDesc(true);
+                updateFilters({ sortDesc: true });
               }}
               className={
                 "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition " +
@@ -122,7 +150,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
               type="button"
               aria-pressed={!sortDesc}
               onClick={() => {
-                setSortDesc(false);
+                updateFilters({ sortDesc: false });
               }}
               className={
                 "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition " +
@@ -151,7 +179,9 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
             </button>
             <SearchInput
               value={query}
-              onChange={setQuery}
+              onChange={(value) => {
+                updateFilters({ q: value });
+              }}
               placeholder="搜索名称、国家、时间或项目经理"
               className="w-full sm:w-72"
             />
@@ -168,7 +198,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setQuery("");
+                    updateFilters({ q: "" });
                   }}
                   className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
                 >
