@@ -95,6 +95,9 @@ type TaskBoardProps = {
   onSetProgress?: (taskId: string, progress: number) => void;
   visibleColumns?: VisibleColumns;
   scrollRef?: RefObject<HTMLDivElement | null>;
+  collapsed: Record<string, boolean>;
+  onToggleStage: (stage: string) => void;
+  onToggleAllStages: () => void;
 };
 
 function shortenFileName(name: string): string {
@@ -291,8 +294,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef }: TaskBoardProps) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   const closeDrawer = () => setSelectedTask(null);
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
@@ -303,10 +305,8 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef }: T
     stage,
     items: tasks.filter((task) => task.stage === stage),
   })).filter((group) => group.items.length > 0);
-
-  const toggle = (stage: string) => {
-    setCollapsed((previous) => ({ ...previous, [stage]: previous[stage] !== true }));
-  };
+  const stages = groups.map((group) => group.stage);
+  const allCollapsed = stages.length > 0 && stages.every((stage) => collapsed[stage] === true);
 
   return (
     <>
@@ -317,15 +317,38 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef }: T
             className="grid items-center border-b border-zinc-200 bg-zinc-50/70 px-5 py-2.5 text-xs font-medium text-zinc-400"
             style={{ gridTemplateColumns: gridTemplate }}
           >
-            {columns.map((column) => (
-              <span
-                key={column.key}
-                title={column.label === "" ? undefined : column.label}
-                className={"truncate " + (column.headerClass ?? "")}
-              >
-                {column.header ?? column.label}
-              </span>
-            ))}
+            {columns.map((column) =>
+              column.key === "title" ? (
+                <span key={column.key} className="flex min-w-0 items-center gap-2.5">
+                  <span className="truncate">{column.header ?? column.label}</span>
+                  <button
+                    type="button"
+                    onClick={onToggleAllStages}
+                    disabled={stages.length === 0}
+                    aria-label={allCollapsed ? "展开全部阶段" : "收起全部阶段"}
+                    title={allCollapsed ? "展开全部阶段" : "收起全部阶段"}
+                    className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-3 w-3">
+                      {allCollapsed ? (
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M7 6.5 12 11.5l5-5M7 11.5l5 5 5-5" />
+                      ) : (
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5 12 6.5l5 5M7 16.5l5-5 5 5" />
+                      )}
+                    </svg>
+                    {allCollapsed ? "全部展开" : "一键收起"}
+                  </button>
+                </span>
+              ) : (
+                <span
+                  key={column.key}
+                  title={column.label === "" ? undefined : column.label}
+                  className={"truncate " + (column.headerClass ?? "")}
+                >
+                  {column.header ?? column.label}
+                </span>
+              ),
+            )}
           </div>
           {groups.map((group) => {
             const done = group.items.filter(isTaskDone).length;
@@ -335,7 +358,9 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef }: T
               <section key={group.stage} className="border-b border-zinc-100 last:border-b-0">
                 <button
                   type="button"
-                  onClick={() => toggle(group.stage)}
+                  onClick={() => {
+                    onToggleStage(group.stage);
+                  }}
                   aria-expanded={!isCollapsed}
                   className="flex w-full items-center gap-2.5 bg-zinc-100 px-5 py-3 text-left transition hover:bg-zinc-200/60"
                 >
