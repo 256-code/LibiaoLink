@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import Hub from "./Hub";
 import Home from "./Home";
+import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
 import { apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
@@ -164,6 +166,14 @@ export default function App() {
         }}
       />
     );
+
+  if (route.kind === "hub") {
+    return <Hub me={state.me} />;
+  }
+
+  if (route.kind === "placeholder") {
+    return <PlaceholderPage me={state.me} page={route.page} />;
+  }
 
   if (route.kind === "project") {
     const project = projects.find((item) => item.id === route.id) ?? null;

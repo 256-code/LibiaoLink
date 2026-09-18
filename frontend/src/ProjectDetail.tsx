@@ -63,7 +63,7 @@ export default function ProjectDetail({ me, project }: ProjectDetailProps) {
         <AppHeader me={me} />
         <main className="w-full px-6 py-10">
           <p className="text-sm text-zinc-500">未找到该项目，可能已被删除。</p>
-          <a href="#/" className="mt-4 inline-block text-sm font-medium text-zinc-700 underline underline-offset-4">
+          <a href="#/projects" className="mt-4 inline-block text-sm font-medium text-zinc-700 underline underline-offset-4">
             返回项目列表
           </a>
         </main>
