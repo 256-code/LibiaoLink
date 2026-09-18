@@ -90,7 +90,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
       if (keyword === "") {
         return true;
       }
-      return [String(project.seqNo), String(project.seqNo).padStart(2, "0"), project.code, project.description, project.region, project.projectType, project.id, project.updatedAt, managerName(project.managerId)].some((field) =>
+      return [String(project.seqNo), String(project.seqNo).padStart(2, "0"), project.code, project.description, project.region, project.projectType, project.id, project.createdAt, project.updatedAt, managerName(project.managerId)].some((field) =>
         field.toLowerCase().includes(keyword),
       );
     });
@@ -146,7 +146,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
           />
           <div
             role="group"
-            aria-label="按更新时间排序"
+            aria-label="按项目时间排序"
             className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
           >
             <span className="px-1 text-[10px] font-semibold tracking-[0.18em] text-zinc-400 select-none" aria-hidden="true">
@@ -156,8 +156,8 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
             <button
               type="button"
               aria-pressed={sortDesc}
-              aria-label="按更新时间降序排列"
-              title="按更新时间降序排列（最新在前）"
+              aria-label="按项目时间降序排列"
+              title="按项目时间降序排列（最近活动在前）"
               onClick={() => {
                 updateFilters({ sortDesc: true });
               }}
@@ -174,8 +174,8 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
             <button
               type="button"
               aria-pressed={!sortDesc}
-              aria-label="按更新时间升序排列"
-              title="按更新时间升序排列（最早在前）"
+              aria-label="按项目时间升序排列"
+              title="按项目时间升序排列（最早活动在前）"
               onClick={() => {
                 updateFilters({ sortDesc: false });
               }}
@@ -268,7 +268,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
                 accent={project.accent}
                 projectType={project.projectType}
                 managerName={managerName(project.managerId)}
-                time={project.updatedAt}
+                time={project.createdAt}
                 onEdit={() => {
                   onEdit(project);
                 }}
