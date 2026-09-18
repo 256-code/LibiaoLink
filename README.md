@@ -12,6 +12,7 @@
 | `docs/公司统一登录(SSO)实施方案.md` | 实施方案：选型决策、部署、控制台配置、各系统接入方式、接口速查、上线清单、常见坑 |
 | `deploy/casdoor/` | **本地联调**部署模板（Docker Compose：Casdoor + MySQL + Redis），用于复刻公司环境验证接入 |
 | `frontend/` | **LibiaoLink 前端**（React + Vite + TypeScript）：标准 OIDC 接入参考实现，`npm run dev` 起在 3000 端口，登录后展示 5 个标准字段 |
+| `shared/` | **API 契约包**（g2）：Zod schema 唯一真相 → 生成 `openapi.json` 与前端 TypeScript 类型；`npm run generate` 生成、`npm run check` 漂移校验（详见 `shared/README.md`） |
 | `docs/本地沙箱(LibiaoLink 演练环境).md` | **本地沙箱现状**：起停、登录入口与账号、配置快照、联邦原理、常见问题、与公司环境对照 |
 | `docs/开发者接入注意事项(SSO接入标准).md` | **开发者必读**：只用标准 OIDC、Grant Types、JWT-Custom 与 Token fields、字段命名差异 |
 | `docs/企业微信(WeCom)对接指南.md` | **企微对接**：登录通道（Provider 字段/可信域名）+ 通讯录同步（离职自动禁用）+ 常见报错 |
