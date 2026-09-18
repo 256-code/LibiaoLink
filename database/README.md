@@ -12,6 +12,8 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0002_projects_manager.sql` | 项目级人员字段收敛（v0.2.2 §2.3）：`projects` 删 `owner_id`、`manager_id` 改必填、`ix_projects_facets` 改用 `manager_id`（含空值回填） |
 | `migrations/0003_projects_seq_no.sql` | 项目序号（v0.2.3 §2.3）：`projects.seq_no` 新增全库唯一序号列（序列分配 + 存量按 created_at / code 回填 1..N + 唯一 / 正数约束） |
 | `migrations/0004_identity.sql` | 身份与会话（v0.2.5 §2.3；ADR-010）：`users`（SSO 归一化用户）+ `sessions`（会话 Cookie 值只存 sha256 哈希；id_token 仅用于单点登出） |
+| `migrations/0005_file_lifecycle.sql` | 文件生命周期与分片上传（v0.2 §5.1-5.3 / §11.1-11.2）：`files` 增 `finalized_at/by`、`recycled_at/by/from_status`、`purge_after`（回收站到期）+ `upload_sessions`（分片直传会话） |
+| `migrations/0006_idempotency_keys.sql` | 写接口幂等（v0.2 §1.3 / §11.1 platform）：`idempotency_keys`（只存 key 哈希；作用域 = 调用方 + 接口指纹） |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
 | `package.json` / `package-lock.json` | 独立 npm 包，唯一依赖 `pg`（不引入根 package.json） |
@@ -50,10 +52,12 @@ migrate: 已执行 0001_baseline.sql（xx ms）
 migrate: 已执行 0002_projects_manager.sql（xx ms）
 migrate: 已执行 0003_projects_seq_no.sql（xx ms）
 migrate: 已执行 0004_identity.sql（xx ms）
-migrate: 完成，本次执行 4 个迁移
+migrate: 已执行 0005_file_lifecycle.sql（xx ms）
+migrate: 已执行 0006_idempotency_keys.sql（xx ms）
+migrate: 完成，本次执行 6 个迁移
 ```
 
-再次执行输出 `migrate: 数据库已是最新（已执行 4 个迁移，无漂移）`。
+再次执行输出 `migrate: 数据库已是最新（已执行 6 个迁移，无漂移）`。
 
 ## 不变式（迁移器保证）
 
@@ -77,10 +81,15 @@ migrate: 完成，本次执行 4 个迁移
   2. 补齐 4 条关系外键：`file_versions.change_request_id`、`files.current_version_id`、`files.task_id`、`tasks.change_ref`。
 - 人员字段口径（v0.2.2）：`0001_baseline.sql` 落库时为旧口径（`projects.owner_id` not null、`projects.manager_id` 可空、`ix_projects_facets` 用 `owner_id`）；`0002_projects_manager.sql` 收敛为 v0.2.2 §2.3 —— 删 `owner_id`、`manager_id` 改必填、索引改用 `manager_id`（先把 `manager_id` 为空的行按 `owner_id` 回填）。空库按 0001 → 0002 顺序执行后的最终结构 = v0.2.2 §2.3。
 - 项目序号（v0.2.3）：`0003_projects_seq_no.sql` 新增 `projects.seq_no integer not null unique default nextval('projects_seq_no_seq')`（另加 `ck_projects_seq_no check (seq_no > 0)`），存量行按 `created_at, code` 回填 1..N，序列 `setval` 推到 `max(seq_no)+1`；口径 = 全库唯一、创建时分配、稳定不回收，与「项目编号 code」一一对应同一项目。
+- 文件生命周期（v0.2 §5.1-5.3 / §11.2）：`0005_file_lifecycle.sql` 给 `files` 补定档（`finalized_at` / `finalized_by`）、回收站（`recycled_at` / `recycled_by` / `recycled_from_status`）与到期清理（`purge_after`，A4-12）；定档 / 回收站字段成对写入（CHECK 约束），`recycled_from_status` 不允许取 `recycled`。回收站 30 天保留期由应用写入 `purge_after`，到期清理任务随回收站切片落地。
+- 分片上传（v0.2 §5.1 / §11.1）：`upload_sessions` 只登记元数据（目标对象键、分片大小 / 分片数、总量与哈希、有效期、`change` 意图的变更申请负载）；**`upload_parts` 不落表**（评审已定案，2026-09-18）—— 分片状态以对象存储 ListParts 为唯一真相，避免双写漂移；如后续确需落表，以新增迁移补。
+- 幂等（v0.2 §1.3 / §11.1）：`0006_idempotency_keys.sql` 落 `idempotency_keys`；只存 sha256(key)，作用域 = 调用方 + 接口指纹（route），`request_hash` 防同 Key 换请求体重放，记录按 `expires_at` 清理。审计表（`audit_logs`）随 admin 模块切片落地。
 - 枚举取值以 §2.5 字典为准（九阶段、十类成果文件、文件五态、任务基础态等）；字典全量落表随后续迁移。
 - 一期不含：种子数据、业务字典表（C9 全量）、问题 / 日报 / 干系人表（随对应模块的切片落地）。
 
 ## 验证（g3 验收）
 
-- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 3 行、业务表 10 张 + 迁移记录表 1 张。
+- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 6 行、业务表 14 张 + 迁移记录表 1 张。
+- **应用角色可写新表**：新表 / 新列由 `roles/0001` 的 default privileges 自动授权（应用角色无需额外 GRANT 即可读写 `upload_sessions` / `idempotency_keys`）。
+- **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - **已合入迁移不可变**：改文件 / 删文件 / 中间插队三种情形均退出码 1，并给出中文原因（`scripts/migrate.mjs` 的 `verifyNoDrift`）。

@@ -600,8 +600,8 @@
           "BLUEPRINT_REF_UNKNOWN",
           "FILE_STATE_INVALID",
           "UPLOAD_INCOMPLETE",
-          "UPLOAD_EXPIRED",
-          "CHECKSUM_MISMATCH",
+          "UPLOAD_SESSION_EXPIRED",
+          "FILE_HASH_MISMATCH",
           "IDEMPOTENT_REPLAY",
           "PREVIEW_NOT_READY",
           "PREVIEW_FAILED",
@@ -2042,7 +2042,7 @@
                 "$ref": "#/components/schemas/Sha256"
               },
               {
-                "description": "完成时回传；与 init 提供值不一致返回 422 CHECKSUM_MISMATCH"
+                "description": "完成时回传；与 init 提供值不一致返回 422 FILE_HASH_MISMATCH"
               }
             ]
           }
@@ -3960,8 +3960,8 @@
               }
             }
           },
-          "409": {
-            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+          "410": {
+            "description": "上传会话已过期（UPLOAD_SESSION_EXPIRED，需重新发起上传）",
             "content": {
               "application/json": {
                 "schema": {
@@ -4100,6 +4100,16 @@
           },
           "409": {
             "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "上传会话已过期（UPLOAD_SESSION_EXPIRED，需重新发起上传）",
             "content": {
               "application/json": {
                 "schema": {
