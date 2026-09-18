@@ -2,7 +2,8 @@ import { z } from "../zod.ts";
 
 /**
  * 统一错误码（唯一来源）。
- * 与 技术设计v0.2-架构与数据模型.md §7.2 错误模型表逐条对应；新增错误码必须同步回写该表。
+ * 与 技术设计v0.2-架构与数据模型.md §7.2 错误模型表逐条对应（增补清单见 技术设计v0.3 §4.8）；
+ * 新增 / 更名错误码必须同步回写该表并重新生成 OpenAPI。
  */
 export const ERROR_CODES = [
   "VALIDATION_FAILED",
@@ -19,8 +20,8 @@ export const ERROR_CODES = [
   "BLUEPRINT_REF_UNKNOWN",
   "FILE_STATE_INVALID",
   "UPLOAD_INCOMPLETE",
-  "UPLOAD_EXPIRED",
-  "CHECKSUM_MISMATCH",
+  "UPLOAD_SESSION_EXPIRED",
+  "FILE_HASH_MISMATCH",
   "IDEMPOTENT_REPLAY",
   "PREVIEW_NOT_READY",
   "PREVIEW_FAILED",
@@ -49,8 +50,8 @@ export const HTTP_STATUS_BY_ERROR_CODE: Record<ErrorCode, number> = {
   BLUEPRINT_REF_UNKNOWN: 422,
   FILE_STATE_INVALID: 409,
   UPLOAD_INCOMPLETE: 409,
-  UPLOAD_EXPIRED: 409,
-  CHECKSUM_MISMATCH: 422,
+  UPLOAD_SESSION_EXPIRED: 410,
+  FILE_HASH_MISMATCH: 422,
   IDEMPOTENT_REPLAY: 200,
   PREVIEW_NOT_READY: 200,
   PREVIEW_FAILED: 200,

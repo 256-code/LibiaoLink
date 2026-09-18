@@ -206,7 +206,7 @@ export const UploadSessionViewSchema = UploadSessionSchema.extend({
 
 export const UploadCompleteBodySchema = z
   .object({
-    contentHash: Sha256Schema.openapi({ description: "完成时回传；与 init 提供值不一致返回 422 CHECKSUM_MISMATCH" }),
+    contentHash: Sha256Schema.openapi({ description: "完成时回传；与 init 提供值不一致返回 422 FILE_HASH_MISMATCH" }),
   })
   .openapi("UploadCompleteBody");
 
