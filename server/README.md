@@ -152,7 +152,7 @@ server/
         run: npm run check:boundaries
 ```
 
-（可选）数据库漂移 job：起 `postgres:18` service → 跑 `database` 迁移 → `npm run check:db-schema`；建议与 g5 的「空库迁移」job 合并设计。
+数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。
 
 ## 后续卡片衔接
 
