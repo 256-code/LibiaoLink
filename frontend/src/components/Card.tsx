@@ -19,15 +19,16 @@ type CardProps = {
   icon?: ReactNode;
   managerName: string;
   time: string;
+  onEdit?: () => void;
 };
 
-export function Card({ seqNo, code, description, accent = "blue", projectType, icon, managerName, time }: CardProps) {
+export function Card({ seqNo, code, description, accent = "blue", projectType, icon, managerName, time, onEdit }: CardProps) {
   const styles = ACCENT_STYLES[accent];
   const seqNoText = String(seqNo).padStart(2, "0");
   return (
     <div
       className={
-        "w-full bg-white shadow-[0px_0px_15px_rgba(0,0,0,0.09)] p-7 space-y-3 relative overflow-hidden transition-all duration-300 hover:scale-[1.02] " +
+        "group w-full bg-white shadow-[0px_0px_15px_rgba(0,0,0,0.09)] p-7 space-y-3 relative overflow-hidden transition-all duration-300 hover:scale-[1.02] " +
         styles.hover
       }
     >
@@ -45,7 +46,25 @@ export function Card({ seqNo, code, description, accent = "blue", projectType, i
       </div>
       <h1 className="font-mono text-xl font-bold tracking-tight">{code}</h1>
       <p className="text-lg text-zinc-500 leading-7">{description}</p>
-      <p className="text-right font-mono text-sm text-zinc-400">{time}</p>
+      <div className="flex items-center gap-3">
+        {onEdit === undefined ? null : (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onEdit();
+            }}
+            aria-label="编辑项目"
+            title="编辑项目"
+            className="relative z-10 -ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 transition duration-200 group-hover:text-zinc-400 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+              <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+        <p className="ml-auto font-mono text-sm text-zinc-400">{time}</p>
+      </div>
     </div>
   );
 }

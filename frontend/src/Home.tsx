@@ -4,7 +4,7 @@ import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
 import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
-import { NewProjectModal, type NewProjectDraft } from "./components/NewProjectModal";
+import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
 import { managerName } from "./data/managers";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
@@ -15,10 +15,11 @@ import type { MeResponse, Project } from "./types";
 type HomeProps = {
   me: MeResponse;
   projects: Project[];
-  onCreate: (draft: NewProjectDraft) => void;
+  onCreate: (draft: ProjectDraft) => void;
+  onEdit: (project: Project) => void;
 };
 
-export default function Home({ me, projects, onCreate }: HomeProps) {
+export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
   const route = useHashRoute();
@@ -233,10 +234,18 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
 
         <div className="grid grid-cols-1 gap-6 @md:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-4">
           {filtered.map((project) => (
-            <button
+            <div
               key={project.id}
-              type="button"
+              role="link"
+              tabIndex={0}
+              aria-label={"打开项目 " + project.code}
               onClick={() => openProject(project.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openProject(project.id);
+                }
+              }}
               className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
               <Card
@@ -247,8 +256,11 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
                 projectType={project.projectType}
                 managerName={managerName(project.managerId)}
                 time={project.updatedAt}
+                onEdit={() => {
+                  onEdit(project);
+                }}
               />
-            </button>
+            </div>
           ))}
         </div>
 
@@ -260,9 +272,10 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
       </main>
 
       {isCreateOpen && (
-        <NewProjectModal
+        <ProjectModal
+          mode="create"
           onClose={() => setIsCreateOpen(false)}
-          onCreate={(draft) => {
+          onSubmit={(draft) => {
             onCreate(draft);
             setIsCreateOpen(false);
           }}
