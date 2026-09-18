@@ -58,7 +58,7 @@ export default function App() {
 
   const handleCreateProject = (draft: NewProjectDraft) => {
     setProjects((previous) => {
-      const nextNumber = previous.length + 1;
+      const nextNumber = previous.reduce((max, project) => Math.max(max, project.seqNo), 0) + 1;
       const accent = PROJECT_TYPE_ACCENTS[draft.projectType];
       const now = new Date();
       const pad = (value: number) => String(value).padStart(2, "0");
@@ -68,14 +68,14 @@ export default function App() {
         ...previous,
         {
           id: "custom-" + String(nextNumber),
-          index: String(nextNumber).padStart(2, "0"),
-          title: draft.title.trim(),
+          seqNo: nextNumber,
+          code: draft.code.trim(),
           description: draft.description.trim(),
           region: "未分类",
           projectType: draft.projectType,
           accent,
           updatedAt,
-          manager: draft.manager.trim(),
+          managerId: draft.managerId,
         },
       ];
     });

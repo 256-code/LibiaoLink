@@ -17,6 +17,7 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const homeHref = listHref();
+  const seqNoText = project ? String(project.seqNo).padStart(2, "0") : "";
 
   useEffect(() => {
     if (!menuOpen) {
@@ -64,7 +65,12 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
             <p className="truncate text-xs text-zinc-500">
               <a href={homeHref} onClick={handleHomeClick} className="transition hover:text-zinc-800">项目空间</a>
               <span className="mx-1.5 text-zinc-300">/</span>
-              <span className="font-mono text-[13px] font-semibold text-zinc-900">{project.title}</span>
+              <span className="text-zinc-500">
+                序号{" "}
+                <span className="font-mono text-[13px] font-medium text-zinc-600">{seqNoText}</span>
+              </span>
+              <span className="mx-1.5 text-zinc-300">/</span>
+              <span className="font-mono text-[13px] font-semibold text-zinc-900">{project.code}</span>
             </p>
             <p className="mt-0.5 truncate text-xs text-zinc-500">
               {project.description} · 更新于 {project.updatedAt}

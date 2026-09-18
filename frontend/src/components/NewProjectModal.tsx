@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
+import { MANAGERS } from "../data/managers";
 import { PROJECT_TYPES } from "../types";
 import type { ProjectType } from "../types";
 
 export type NewProjectDraft = {
-  title: string;
+  code: string;
   description: string;
-  manager: string;
+  managerId: string;
   projectType: ProjectType;
 };
 
@@ -18,9 +19,9 @@ const fieldClass =
   "block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25";
 
 export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
-  const [title, setTitle] = useState("");
+  const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
-  const [manager, setManager] = useState("");
+  const [managerId, setManagerId] = useState("");
   const [projectType, setProjectType] = useState<ProjectType>("T-sort");
 
   useEffect(() => {
@@ -35,7 +36,7 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
     };
   }, [onClose]);
 
-  const canSubmit = title.trim() !== "" && description.trim() !== "" && manager.trim() !== "";
+  const canSubmit = code.trim() !== "" && description.trim() !== "" && managerId !== "";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -56,15 +57,15 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
             if (!canSubmit) {
               return;
             }
-            onCreate({ title, description, manager, projectType });
+            onCreate({ code, description, managerId, projectType });
           }}
         >
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目编号</span>
             <input
               className={fieldClass}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
               placeholder="如 CNBJ-20260708-0001"
             />
           </label>
@@ -79,12 +80,18 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
           </label>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目经理</span>
-            <input
+            <select
               className={fieldClass}
-              value={manager}
-              onChange={(event) => setManager(event.target.value)}
-              placeholder="如 李伟"
-            />
+              value={managerId}
+              onChange={(event) => setManagerId(event.target.value)}
+            >
+              <option value="">请选择项目经理</option>
+              {MANAGERS.map((manager) => (
+                <option key={manager.id} value={manager.id}>
+                  {manager.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
