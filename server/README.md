@@ -105,9 +105,9 @@ server/
 - `npm run test`：vitest；端到端用 `@nestjs/testing` + supertest，PG 用替身（测试不依赖数据库）。
 - 骨架测试：/healthz、/readyz（ok / degraded）、未知路由信封、ZodValidationPipe。
 
-## CI 接线（g5 · px）
+## CI 接线（g5 · px｜已落地）
 
-`.github/` 归 px 线；下方 job 片段由 g5 落地（后端门禁 + 边界规则）：
+`.github/` 归 px 线；下方 job 片段已按 g5 落入 `.github/workflows/ci.yml` 的 `server` job（另补 `npm run build` 一步，保证部署产物可构建）：
 
 ```yaml
   server:
@@ -147,6 +147,6 @@ server/
 ## 后续卡片衔接
 
 - g6：`/auth/*` 会话后端化（identity 模块首个实现）。
-- g5：CI 扩展（上方片段 + 契约漂移）。
+- g5：CI 扩展（上方片段 + 契约漂移）——已落地（Push 41：`server` job 入 `.github/workflows/ci.yml`）。
 - lan 线：file / preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。
