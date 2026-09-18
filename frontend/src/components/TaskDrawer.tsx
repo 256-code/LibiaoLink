@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { ScrollArea } from "./ScrollArea";
 import { TRACKER_STEPS, trackerLabel, trackerStep } from "./Tracker";
 
 const CLOSE_ANIMATION_MS = 170;
@@ -220,7 +221,7 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
           ) : null}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-1">
+        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1">
           <dl>
             {fields.map((field) => (
               <div
@@ -232,7 +233,7 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
               </div>
             ))}
           </dl>
-        </div>
+        </ScrollArea>
 
         <footer className="border-t border-zinc-100 px-6 py-3">
           <p className="text-[11px] text-zinc-400">点击空白处或按 Esc 关闭</p>

@@ -3,7 +3,8 @@ import Home from "./Home";
 import ProjectDetail from "./ProjectDetail";
 import { INITIAL_PROJECTS } from "./data/projects";
 import { useHashRoute } from "./useHashRoute";
-import type { CardAccent, MeResponse, Project } from "./types";
+import { PROJECT_TYPE_ACCENTS } from "./types";
+import type { MeResponse, Project } from "./types";
 import type { NewProjectDraft } from "./components/NewProjectModal";
 import { Loader } from "./components/Loader";
 
@@ -58,8 +59,7 @@ export default function App() {
   const handleCreateProject = (draft: NewProjectDraft) => {
     setProjects((previous) => {
       const nextNumber = previous.length + 1;
-      const accents: readonly CardAccent[] = ["blue", "emerald", "amber", "rose", "violet"];
-      const accent = accents[(nextNumber - 1) % accents.length] ?? "blue";
+      const accent = PROJECT_TYPE_ACCENTS[draft.projectType];
       const now = new Date();
       const pad = (value: number) => String(value).padStart(2, "0");
       const updatedAt =
@@ -71,6 +71,8 @@ export default function App() {
           index: String(nextNumber).padStart(2, "0"),
           title: draft.title.trim(),
           description: draft.description.trim(),
+          region: "未分类",
+          projectType: draft.projectType,
           accent,
           updatedAt,
           manager: draft.manager.trim(),
