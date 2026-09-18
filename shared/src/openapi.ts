@@ -65,7 +65,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects",
     tags: ["projects"],
-    summary: "新建项目（编号服务端生成；默认按已发布蓝图导入节点）",
+    summary: "新建项目（编号由创建人填写；默认按已发布蓝图导入节点）",
     request: { headers: idempotencyHeader, body: json(ProjectCreateBodySchema) },
     responses: {
       201: { description: "创建成功", ...json(ProjectSchema) },
