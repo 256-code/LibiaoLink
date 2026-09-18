@@ -6,10 +6,10 @@ type CategorySwitchProps = {
 export function CategorySwitch({ checked, onChange }: CategorySwitchProps) {
   const sliderClass =
     "absolute inset-0 cursor-pointer rounded-[30px] transition-all duration-[400ms] peer-focus-visible:shadow-[10px_10px_100px_#7f8996] " +
-    (checked ? "bg-[#8a5cd4]" : "bg-[#313033]");
+    (checked ? "bg-[#feca04]" : "bg-[#313033]");
   const titleClass =
-    "absolute top-1/2 -translate-x-1/2 -translate-y-1/2 font-semibold whitespace-nowrap text-white transition-all duration-[400ms] select-none " +
-    (checked ? "left-[36%]" : "left-[64%]");
+    "absolute top-1/2 -translate-x-1/2 -translate-y-1/2 font-semibold whitespace-nowrap transition-all duration-[400ms] select-none " +
+    (checked ? "left-[36%] text-[#313033]" : "left-[64%] text-white");
   const ballClass =
     "absolute top-0 h-9 w-9 rounded-full bg-white transition-all duration-[400ms] " +
     (checked ? "left-[72%] rotate-[360deg] [outline:6px_solid_rgba(255,255,255,0.278)]" : "-left-px");
