@@ -1144,6 +1144,11 @@ export interface components {
              * @example CNBJ-20260708-0001
              */
             code: string;
+            /**
+             * @description 项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc
+             * @example 1
+             */
+            seqNo: number;
             /** @example XX 客户分拣项目 */
             name: string;
             customer: string | null;
@@ -1159,6 +1164,7 @@ export interface components {
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
         };
+        /** @description 创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回 */
         ProjectCreateBody: {
             /**
              * @description 项目编号：创建人填写；格式仅前端提示，服务端不做强校验；重复返回 409 PROJECT_CODE_EXISTS

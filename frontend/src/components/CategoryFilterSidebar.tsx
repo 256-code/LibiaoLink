@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { ScrollArea } from "./ScrollArea";
 import { DateRangePicker } from "./DateRangePicker";
 import type { DateRange } from "./DateRangePicker";
+import { managerName } from "../data/managers";
 import { PROJECT_TYPES } from "../types";
 import type { Project } from "../types";
 
@@ -9,11 +10,11 @@ type CategoryFilterSidebarProps = {
   open: boolean;
   projects: Project[];
   selectedRegions: string[];
-  selectedManagers: string[];
+  selectedManagerIds: string[];
   selectedTypes: string[];
   dateRange: DateRange | null;
   onToggleRegion: (region: string) => void;
-  onToggleManager: (manager: string) => void;
+  onToggleManager: (managerId: string) => void;
   onToggleType: (projectType: string) => void;
   onDateRangeChange: (range: DateRange | null) => void;
   onReset: () => void;
@@ -32,7 +33,7 @@ export function CategoryFilterSidebar({
   open,
   projects,
   selectedRegions,
-  selectedManagers,
+  selectedManagerIds,
   selectedTypes,
   dateRange,
   onToggleRegion,
@@ -58,7 +59,10 @@ export function CategoryFilterSidebar({
   }, [open, onClose]);
 
   const regions = countBy(projects.map((project) => project.region));
-  const managers = countBy(projects.map((project) => project.manager));
+  const managers = countBy(projects.map((project) => project.managerId)).map((option) => ({
+    ...option,
+    label: managerName(option.value),
+  }));
   const types = PROJECT_TYPES.map((type) => ({
     value: type,
     count: projects.filter((project) => project.projectType === type).length,
@@ -69,9 +73,9 @@ export function CategoryFilterSidebar({
   ).slice(0, 10);
 
   const activeCount =
-    selectedRegions.length + selectedManagers.length + selectedTypes.length + (dateRange === null ? 0 : 1);
+    selectedRegions.length + selectedManagerIds.length + selectedTypes.length + (dateRange === null ? 0 : 1);
 
-  const renderChips = (options: Array<{ value: string; count: number }>, selected: string[], onToggle: (value: string) => void) => (
+  const renderChips = (options: Array<{ value: string; count: number; label?: string }>, selected: string[], onToggle: (value: string) => void) => (
     <div className="mt-3 flex flex-wrap gap-2">
       {options.map((option) => {
         const isSelected = selected.includes(option.value);
@@ -89,7 +93,7 @@ export function CategoryFilterSidebar({
                 : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50")
             }
           >
-            {option.value}
+            {option.label ?? option.value}
             <span className={"ml-1 " + (isSelected ? "text-white/60" : "text-zinc-400")}>{option.count}</span>
           </button>
         );
@@ -143,7 +147,7 @@ export function CategoryFilterSidebar({
           </section>
           <section>
             <p className="text-sm font-semibold tracking-wide text-zinc-700">项目经理</p>
-            {renderChips(managers, selectedManagers, onToggleManager)}
+            {renderChips(managers, selectedManagerIds, onToggleManager)}
           </section>
           <section>
             <p className="text-sm font-semibold tracking-wide text-zinc-700">项目时间</p>

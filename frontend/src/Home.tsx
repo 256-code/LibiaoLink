@@ -6,6 +6,7 @@ import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { NewProjectModal, type NewProjectDraft } from "./components/NewProjectModal";
 import { SearchInput } from "./components/SearchInput";
+import { managerName } from "./data/managers";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
 import { PROJECT_TYPES } from "./types";
@@ -25,21 +26,21 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(() => hasListFilters(filters));
   const knownRegions = useMemo(() => new Set(projects.map((project) => project.region)), [projects]);
-  const knownManagers = useMemo(() => new Set(projects.map((project) => project.manager)), [projects]);
+  const knownManagerIds = useMemo(() => new Set(projects.map((project) => project.managerId)), [projects]);
   // 链接里可能带着当前数据不存在的取值（分享过期 / 手改地址）：先丢弃，再由下面的 effect 归一化地址栏
   const activeFilters = useMemo(() => {
     const regions = filters.regions.filter((region) => knownRegions.has(region));
-    const managers = filters.managers.filter((manager) => knownManagers.has(manager));
+    const managerIds = filters.managerIds.filter((managerId) => knownManagerIds.has(managerId));
     const projectTypes = filters.projectTypes.filter((projectType) => (PROJECT_TYPES as readonly string[]).includes(projectType));
     if (
       regions.length === filters.regions.length &&
-      managers.length === filters.managers.length &&
+      managerIds.length === filters.managerIds.length &&
       projectTypes.length === filters.projectTypes.length
     ) {
       return filters;
     }
-    return { ...filters, regions, managers, projectTypes };
-  }, [filters, knownManagers, knownRegions]);
+    return { ...filters, regions, managerIds, projectTypes };
+  }, [filters, knownManagerIds, knownRegions]);
   useEffect(() => {
     if (buildListHash(activeFilters) !== buildListHash(filters)) {
       replaceListQuery(activeFilters);
@@ -62,7 +63,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
       if (activeFilters.regions.length > 0 && !activeFilters.regions.includes(project.region)) {
         return false;
       }
-      if (activeFilters.managers.length > 0 && !activeFilters.managers.includes(project.manager)) {
+      if (activeFilters.managerIds.length > 0 && !activeFilters.managerIds.includes(project.managerId)) {
         return false;
       }
       if (activeFilters.projectTypes.length > 0 && !activeFilters.projectTypes.includes(project.projectType)) {
@@ -77,7 +78,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
       if (keyword === "") {
         return true;
       }
-      return [project.title, project.description, project.region, project.projectType, project.id, project.updatedAt, project.manager].some((field) =>
+      return [String(project.seqNo), String(project.seqNo).padStart(2, "0"), project.code, project.description, project.region, project.projectType, project.id, project.updatedAt, managerName(project.managerId)].some((field) =>
         field.toLowerCase().includes(keyword),
       );
     });
@@ -85,7 +86,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
     return sortDesc ? ordered : ordered.reverse();
   }, [activeFilters, keyword, projects, sortDesc]);
   const resetFilters = () => {
-    updateFilters({ regions: [], projectTypes: [], managers: [], timeFrom: null, timeTo: null });
+    updateFilters({ regions: [], projectTypes: [], managerIds: [], timeFrom: null, timeTo: null });
   };
   const toggleValue = (list: string[], value: string) => (list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
 
@@ -97,14 +98,14 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
         open={filterOpen}
         projects={projects}
         selectedRegions={activeFilters.regions}
-        selectedManagers={activeFilters.managers}
+        selectedManagerIds={activeFilters.managerIds}
         selectedTypes={activeFilters.projectTypes}
         dateRange={dateRange}
         onToggleRegion={(region) => {
           updateFilters({ regions: toggleValue(activeFilters.regions, region) });
         }}
-        onToggleManager={(manager) => {
-          updateFilters({ managers: toggleValue(activeFilters.managers, manager) });
+        onToggleManager={(managerId) => {
+          updateFilters({ managerIds: toggleValue(activeFilters.managerIds, managerId) });
         }}
         onToggleType={(projectType) => {
           updateFilters({ projectTypes: toggleValue(activeFilters.projectTypes, projectType) });
@@ -129,10 +130,20 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
               setFilterOpen(next);
             }}
           />
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 text-xs">
+          <div
+            role="group"
+            aria-label="按更新时间排序"
+            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
+          >
+            <span className="px-1 text-[10px] font-semibold tracking-[0.18em] text-zinc-400 select-none" aria-hidden="true">
+              TIME
+            </span>
+            <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
             <button
               type="button"
               aria-pressed={sortDesc}
+              aria-label="按更新时间降序排列"
+              title="按更新时间降序排列（最新在前）"
               onClick={() => {
                 updateFilters({ sortDesc: true });
               }}
@@ -149,6 +160,8 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
             <button
               type="button"
               aria-pressed={!sortDesc}
+              aria-label="按更新时间升序排列"
+              title="按更新时间升序排列（最早在前）"
               onClick={() => {
                 updateFilters({ sortDesc: false });
               }}
@@ -227,12 +240,12 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
               className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
               <Card
-                index={project.index}
-                title={project.title}
+                seqNo={project.seqNo}
+                code={project.code}
                 description={project.description}
                 accent={project.accent}
                 projectType={project.projectType}
-                manager={project.manager}
+                managerName={managerName(project.managerId)}
                 time={project.updatedAt}
               />
             </button>
