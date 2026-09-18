@@ -10,9 +10,10 @@ import type { MeResponse, Project } from "./types";
 type ProjectDetailProps = {
   me: MeResponse;
   project: Project | null;
+  onEdit: (project: Project) => void;
 };
 
-export default function ProjectDetail({ me, project }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProps) {
   const [activeStage, setActiveStage] = useState<string>(PROJECT_STAGES[0] ?? "项目总览");
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
 
@@ -77,6 +78,18 @@ export default function ProjectDetail({ me, project }: ProjectDetailProps) {
               );
             })}
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              onEdit(project);
+            }}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+              <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            编辑项目
+          </button>
           <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
         </div>
 
