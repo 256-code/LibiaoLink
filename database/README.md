@@ -8,7 +8,8 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 
 | 路径 | 用途 |
 |---|---|
-| `migrations/0001_baseline.sql` | 一期基线 DDL：10 张表 + 索引 + CHECK 约束 + 关系外键（v0.2 §2.3 全量落地） |
+| `migrations/0001_baseline.sql` | 一期基线 DDL：10 张表 + 索引 + CHECK 约束 + 关系外键（v0.2 §2.3 落地；人员字段为旧口径，由 0002 收敛） |
+| `migrations/0002_projects_manager.sql` | 项目级人员字段收敛（v0.2.2 §2.3）：`projects` 删 `owner_id`、`manager_id` 改必填、`ix_projects_facets` 改用 `manager_id`（含空值回填） |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
 | `package.json` / `package-lock.json` | 独立 npm 包，唯一依赖 `pg`（不引入根 package.json） |
@@ -44,10 +45,11 @@ DATABASE_URL=... node scripts/migrate.mjs --dry-run   # 只列出待执行，不
 ```
 migrate: 目标 postgres://***:***@host:5432/libiaolink，迁移目录 ...
 migrate: 已执行 0001_baseline.sql（xx ms）
-migrate: 完成，本次执行 1 个迁移
+migrate: 已执行 0002_projects_manager.sql（xx ms）
+migrate: 完成，本次执行 2 个迁移
 ```
 
-再次执行输出 `migrate: 数据库已是最新（已执行 1 个迁移，无漂移）`。
+再次执行输出 `migrate: 数据库已是最新（已执行 2 个迁移，无漂移）`。
 
 ## 不变式（迁移器保证）
 
@@ -69,10 +71,11 @@ migrate: 完成，本次执行 1 个迁移
 - `0001_baseline.sql` 覆盖 §2.3 全部 10 张表与索引，另补两处（文件头已注明）：
   1. 稳定枚举补 CHECK 约束（项目状态 / 阶段、节点状态、任务进度四格、文件五态、outbox 状态等）；
   2. 补齐 4 条关系外键：`file_versions.change_request_id`、`files.current_version_id`、`files.task_id`、`tasks.change_ref`。
+- 人员字段口径（v0.2.2）：`0001_baseline.sql` 落库时为旧口径（`projects.owner_id` not null、`projects.manager_id` 可空、`ix_projects_facets` 用 `owner_id`）；`0002_projects_manager.sql` 收敛为 v0.2.2 §2.3 —— 删 `owner_id`、`manager_id` 改必填、索引改用 `manager_id`（先把 `manager_id` 为空的行按 `owner_id` 回填）。空库按 0001 → 0002 顺序执行后的最终结构 = v0.2.2 §2.3。
 - 枚举取值以 §2.5 字典为准（九阶段、十类成果文件、文件五态、任务基础态等）；字典全量落表随后续迁移。
 - 一期不含：种子数据、业务字典表（C9 全量）、问题 / 日报 / 干系人表（随对应模块的切片落地）。
 
 ## 验证（g3 验收）
 
-- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 1 行、业务表 10 张 + 迁移记录表 1 张。
+- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 2 行、业务表 10 张 + 迁移记录表 1 张。
 - **已合入迁移不可变**：改文件 / 删文件 / 中间插队三种情形均退出码 1，并给出中文原因（`scripts/migrate.mjs` 的 `verifyNoDrift`）。
