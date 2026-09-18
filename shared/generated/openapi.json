@@ -1,0 +1,2439 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LibiaoLink API（市场项目管理系统）",
+    "version": "0.1.0",
+    "description": "契约唯一真相 = shared/src 下的 Zod schema（技术设计v0.2 §7）；本文件与 generated/api-types.d.ts 由工具生成，禁止手改（CONTRIBUTING §14）。"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "同源部署（Nginx 反代 /api/v1）"
+    }
+  ],
+  "tags": [
+    {
+      "name": "projects",
+      "description": "项目主数据与首页分类（v0.2 §8）"
+    },
+    {
+      "name": "tasks",
+      "description": "任务与进度（v0.2 §2.3 / §2.4）"
+    },
+    {
+      "name": "flow",
+      "description": "流程节点与蓝图（v0.2 §3）"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string",
+            "example": "参数校验失败"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            },
+            "default": []
+          },
+          "traceId": {
+            "type": "string",
+            "example": "4f1c2f2e-6f8a-4b1e-9a1f-2f6d6f2c9d10"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "traceId"
+        ],
+        "description": "统一错误信封（技术设计v0.2 §7.2）"
+      },
+      "Blueprint": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "blueprintVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlueprintStage"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "blueprintVersion",
+          "name",
+          "updatedAt",
+          "stages"
+        ],
+        "description": "自建蓝图 JSON（v0.2 §3.2）；导入校验 = schema + 引用 + 幂等"
+      },
+      "BlueprintConstraint": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/BlueprintRequiredDocConstraint"
+          },
+          {
+            "$ref": "#/components/schemas/BlueprintReservedConstraint"
+          }
+        ]
+      },
+      "BlueprintImportBody": {
+        "type": "object",
+        "properties": {
+          "blueprint": {
+            "$ref": "#/components/schemas/Blueprint"
+          }
+        },
+        "required": [
+          "blueprint"
+        ],
+        "description": "导入自建蓝图 JSON（保存为草稿；重复导入幂等）"
+      },
+      "BlueprintNode": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "design.mech",
+            "description": "节点稳定键；一经发布不可改名（改名 = 新增 + 废弃）"
+          },
+          "name": {
+            "type": "string",
+            "example": "机械设计图纸"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "排序（建议 10/20/30 步长，便于插入）"
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlueprintConstraint"
+            },
+            "default": []
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "seq"
+        ],
+        "description": "每个节点至少一类约束（校验规则见 v0.2 §3.4）"
+      },
+      "BlueprintRequiredDocConstraint": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "required_doc"
+            ]
+          },
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "minCount": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1
+          }
+        },
+        "required": [
+          "type",
+          "docType"
+        ],
+        "description": "必交成果物（一期门禁实现的唯一约束类型）"
+      },
+      "BlueprintReservedConstraint": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "field",
+              "dependency",
+              "deadline"
+            ]
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": {},
+            "default": {}
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "description": "预留约束类型（结构就位、规则后置）"
+      },
+      "BlueprintSaveBody": {
+        "type": "object",
+        "properties": {
+          "blueprint": {
+            "$ref": "#/components/schemas/Blueprint"
+          }
+        },
+        "required": [
+          "blueprint"
+        ],
+        "description": "保存蓝图草稿（必须通过 schema + 引用校验）"
+      },
+      "BlueprintStage": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "name": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlueprintNode"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "seq",
+          "nodes"
+        ]
+      },
+      "BlueprintStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "published"
+        ],
+        "description": "蓝图状态：发布产生新版本，不自动影响已生成项目（快照）"
+      },
+      "BlueprintView": {
+        "type": "object",
+        "properties": {
+          "blueprint": {
+            "$ref": "#/components/schemas/Blueprint"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BlueprintStatus"
+          },
+          "publishedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "publishedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "blueprint",
+          "status",
+          "publishedAt",
+          "publishedBy"
+        ]
+      },
+      "CanCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "canComplete": {
+            "type": "boolean"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeGateMissing"
+            }
+          }
+        },
+        "required": [
+          "canComplete",
+          "missing"
+        ],
+        "description": "完成预检（UI 置灰依据；服务端仍在事务内强校验）"
+      },
+      "DateOnly": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date",
+        "description": "业务日期 YYYY-MM-DD（不携带时区）"
+      },
+      "DateTime": {
+        "type": "string",
+        "format": "date-time",
+        "description": "ISO8601 时间戳（UTC 存储，前端按 Asia/Shanghai 展示）"
+      },
+      "DocType": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "CAD图纸",
+          "技术协议",
+          "合同",
+          "评审单",
+          "设备清单",
+          "物料总清单",
+          "发货装箱单",
+          "到货单",
+          "安装完成证明",
+          "验收单",
+          null
+        ],
+        "description": "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）"
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "VALIDATION_FAILED",
+          "AUTH_REQUIRED",
+          "FORBIDDEN",
+          "NOT_FOUND",
+          "VERSION_CONFLICT",
+          "NODE_REQUIRED_DOC_MISSING",
+          "NODE_ALREADY_DONE",
+          "NODE_DELETED",
+          "BLUEPRINT_SCHEMA_INVALID",
+          "BLUEPRINT_REF_UNKNOWN",
+          "FILE_STATE_INVALID",
+          "IDEMPOTENT_REPLAY",
+          "PREVIEW_NOT_READY",
+          "PREVIEW_FAILED",
+          "INTERNAL"
+        ],
+        "description": "统一错误码（技术设计v0.2 §7.2）"
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "too_small"
+          },
+          "message": {
+            "type": "string",
+            "example": "limit 必须是 1~200 的整数"
+          },
+          "path": {
+            "type": "string",
+            "example": "query.limit"
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "description": "字段级错误明细（校验失败、门禁缺件等）"
+      },
+      "IdempotencyKey": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128,
+        "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果"
+      },
+      "NodeCompleteBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "NodeCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "$ref": "#/components/schemas/ProjectNode"
+          }
+        },
+        "required": [
+          "node"
+        ]
+      },
+      "NodeCreateBody": {
+        "type": "object",
+        "properties": {
+          "stageId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "nodeKey": {
+            "type": "string",
+            "description": "模板节点池内的节点稳定键（一期仅允许蓝图内的 key）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "stageId",
+          "nodeKey"
+        ],
+        "description": "新增节点（仅模板节点池，留痕）"
+      },
+      "NodeDeleteBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "NodeGateMissing": {
+        "type": "object",
+        "properties": {
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "required": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "present": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "docType",
+          "required",
+          "present"
+        ],
+        "description": "缺件明细（门禁拒绝时会一次性返回）"
+      },
+      "NodeOrigin": {
+        "type": "string",
+        "enum": [
+          "blueprint",
+          "added_by_user"
+        ],
+        "description": "节点来源；一期增删仅限模板节点池"
+      },
+      "NodeRequirement": {
+        "type": "object",
+        "properties": {
+          "requirementType": {
+            "type": "string",
+            "enum": [
+              "required_doc",
+              "field",
+              "dependency",
+              "deadline"
+            ]
+          },
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "minCount": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "requirementType",
+          "docType",
+          "minCount"
+        ],
+        "description": "节点约束实例（node_requirements）"
+      },
+      "NodeStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "done",
+          "deleted"
+        ],
+        "description": "节点状态（project_nodes.status）；done 必须过门禁"
+      },
+      "Priority": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "重要且紧急",
+          "紧急但不重要",
+          "重要不紧急",
+          "不紧急不重要",
+          null
+        ],
+        "description": "紧急重要度四象限字典"
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "code": {
+            "type": "string",
+            "example": "LB-2026-0001",
+            "description": "项目编号：服务端生成，创建请求不接收"
+          },
+          "name": {
+            "type": "string",
+            "example": "XX 客户分拣项目"
+          },
+          "customer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "region": {
+            "type": "string",
+            "description": "项目落地地区（字典 region；缺省「未分类」）"
+          },
+          "projectType": {
+            "type": "string",
+            "description": "项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码）"
+          },
+          "ownerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "managerId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "customer",
+          "region",
+          "projectType",
+          "ownerId",
+          "managerId",
+          "stageKey",
+          "status",
+          "description",
+          "version",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "项目（v0.2 §2.3 projects）"
+      },
+      "ProjectCreateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "customer": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "projectType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "ownerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "managerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "blueprintVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "导入的蓝图版本；缺省 = 当前已发布版本"
+          }
+        },
+        "required": [
+          "name",
+          "region",
+          "projectType",
+          "ownerId"
+        ]
+      },
+      "ProjectFacets": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "region": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "projectType": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "ownerId": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "stageKey": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "status": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "required": [
+          "total",
+          "region",
+          "projectType",
+          "ownerId",
+          "stageKey",
+          "status"
+        ],
+        "description": "首页分类计数；计数与列表同口径（同筛选条件）"
+      },
+      "ProjectFlow": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "blueprintVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "项目导入时的蓝图版本（快照）"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectStage"
+            }
+          }
+        },
+        "required": [
+          "projectId",
+          "blueprintVersion",
+          "stages"
+        ],
+        "description": "项目流程（阶段 + 节点 + 约束 + 状态）；导入即快照"
+      },
+      "ProjectListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "ProjectNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "stageId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "nodeKey": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "number"
+          },
+          "status": {
+            "$ref": "#/components/schemas/NodeStatus"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/NodeOrigin"
+          },
+          "doneAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "doneBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "sourceBlueprintVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeRequirement"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "stageId",
+          "nodeKey",
+          "name",
+          "seq",
+          "status",
+          "origin",
+          "doneAt",
+          "doneBy",
+          "sourceBlueprintVersion",
+          "version",
+          "requirements"
+        ]
+      },
+      "ProjectStage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "name": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          },
+          "plannedStart": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "plannedEnd": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "actualStart": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "actualEnd": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectNode"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "stageKey",
+          "name",
+          "seq",
+          "status",
+          "plannedStart",
+          "plannedEnd",
+          "actualStart",
+          "actualEnd",
+          "nodes"
+        ]
+      },
+      "ProjectStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "done",
+          "archived"
+        ],
+        "description": "项目状态（projects.status）"
+      },
+      "ProjectSummary": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "currentStage": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "overdue": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "done": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "projectId",
+          "currentStage",
+          "overdue",
+          "done",
+          "total"
+        ],
+        "description": "项目总览统计（任务派生，口径见 v0.2 §2.4）"
+      },
+      "ProjectUpdateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "customer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "projectType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "ownerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "managerId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "StageKey": {
+        "type": "string",
+        "enum": [
+          "presale",
+          "design",
+          "purchase",
+          "assembly",
+          "install",
+          "deploy",
+          "trial",
+          "production",
+          "acceptance"
+        ],
+        "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）"
+      },
+      "StageStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "done"
+        ],
+        "description": "阶段状态（project_stages.status）"
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "nodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskBaseStatus"
+          },
+          "displayStatus": {
+            "$ref": "#/components/schemas/TaskDisplayStatus"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          },
+          "plannedStart": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "plannedEnd": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "actualEnd": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "estimatedDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "headcount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "priority": {
+            "$ref": "#/components/schemas/Priority"
+          },
+          "deliverable": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "onTime": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "changeRef": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "stageKey",
+          "nodeId",
+          "title",
+          "titleEn",
+          "ownerId",
+          "status",
+          "displayStatus",
+          "progress",
+          "plannedStart",
+          "plannedEnd",
+          "actualEnd",
+          "estimatedDays",
+          "headcount",
+          "priority",
+          "deliverable",
+          "note",
+          "onTime",
+          "changeRef",
+          "version",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "任务（v0.2 §2.3 tasks；展示态派生规则见 §2.4）"
+      },
+      "TaskBaseStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "done"
+        ],
+        "description": "任务存储基础态（不写回派生结果）"
+      },
+      "TaskDisplayStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "done",
+          "overdue",
+          "early_done"
+        ],
+        "description": "任务展示五态（服务端派生）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；逾期标注落在 actualEnd"
+      },
+      "TaskListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "TaskProgress": {
+        "anyOf": [
+          {
+            "type": "number",
+            "enum": [
+              0
+            ]
+          },
+          {
+            "type": "number",
+            "enum": [
+              0.25
+            ]
+          },
+          {
+            "type": "number",
+            "enum": [
+              0.5
+            ]
+          },
+          {
+            "type": "number",
+            "enum": [
+              0.75
+            ]
+          },
+          {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          }
+        ],
+        "description": "任务进度四格：0 / 25% / 50% / 75% / 100%"
+      },
+      "TaskProgressUpdateBody": {
+        "type": "object",
+        "properties": {
+          "progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          },
+          "actualEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "完成日期；progress=1 且缺省时服务端按当天写入"
+              }
+            ]
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "progress",
+          "version"
+        ]
+      },
+      "Uuid": {
+        "type": "string",
+        "format": "uuid",
+        "description": "UUID（主键与关联 ID）"
+      },
+      "Version": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "乐观锁版本：读取时返回，更新时必须原样回传，冲突返回 409"
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/api/v1/projects": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "项目列表（分页 + 多维筛选 + 排序）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "地区（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "地区（多值逗号分隔）",
+            "name": "filter[region]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "项目类型（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "项目类型（多值逗号分隔）",
+            "name": "filter[projectType]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[ownerId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "阶段 key（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "阶段 key（多值逗号分隔）",
+            "name": "filter[stageKey]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "项目状态（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "项目状态（多值逗号分隔）",
+            "name": "filter[status]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（编号 / 名称 / 客户）"
+            },
+            "required": false,
+            "description": "关键字（编号 / 名称 / 客户）",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
+              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "example": "plannedEnd:asc"
+            },
+            "required": false,
+            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "name": "sort",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "项目列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "新建项目（编号服务端生成；默认按已发布蓝图导入节点）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/facets": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "首页分类计数（与列表同一筛选口径）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "地区（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "地区（多值逗号分隔）",
+            "name": "filter[region]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "项目类型（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "项目类型（多值逗号分隔）",
+            "name": "filter[projectType]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[ownerId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "阶段 key（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "阶段 key（多值逗号分隔）",
+            "name": "filter[stageKey]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "项目状态（多值逗号分隔）"
+            },
+            "required": false,
+            "description": "项目状态（多值逗号分隔）",
+            "name": "filter[status]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（编号 / 名称 / 客户）"
+            },
+            "required": false,
+            "description": "关键字（编号 / 名称 / 客户）",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
+              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "example": "plannedEnd:asc"
+            },
+            "required": false,
+            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "name": "sort",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "各维度计数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectFacets"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "项目详情",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "项目",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "更新项目（乐观锁：必须回传 version）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的项目",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/summary": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "项目总览四格（当前阶段 / 逾期 / 已完成 / 总数）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "总览统计",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "项目任务列表（表格与抽屉直接渲染的全字段）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/StageKey"
+            },
+            "required": false,
+            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+            "name": "stage",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "filter[ownerId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "展示态（多值逗号分隔）：pending / active / done / overdue / early_done"
+            },
+            "required": false,
+            "description": "展示态（多值逗号分隔）：pending / active / done / overdue / early_done",
+            "name": "filter[status]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（中英文任务描述）"
+            },
+            "required": false,
+            "description": "关键字（中英文任务描述）",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
+              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "example": "plannedEnd:asc"
+            },
+            "required": false,
+            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "name": "sort",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}/progress": {
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "更新任务进度（联动状态与完成日期，写审计；回退同样留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskProgressUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/blueprint": {
+      "get": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "当前蓝图（含版本与发布状态）",
+        "responses": {
+          "200": {
+            "description": "蓝图视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlueprintView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "保存蓝图草稿（必须通过 schema + 引用校验）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlueprintSaveBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的蓝图视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlueprintView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/blueprint/publish": {
+      "post": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "发布蓝图（递增 blueprintVersion；不影响已生成项目）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlueprintSaveBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "发布后的蓝图视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlueprintView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/blueprint/export": {
+      "get": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "导出蓝图 JSON（自建格式，round-trip 无损）",
+        "responses": {
+          "200": {
+            "description": "蓝图 JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Blueprint"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/blueprint/import": {
+      "post": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "导入蓝图 JSON（保存为草稿；重复导入幂等）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlueprintImportBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "导入后的蓝图视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlueprintView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/flow": {
+      "get": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "项目流程（阶段 + 节点 + 约束 + 状态）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "项目流程",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectFlow"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/nodes": {
+      "post": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "新增节点（一期仅模板节点池；留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "新节点",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectNode"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/nodes/{nodeId}": {
+      "delete": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "删除节点（软删除 + 留痕；关联成果物时先提示）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "nodeId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeDeleteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已删除的节点（status=deleted）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectNode"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/nodes/{id}/complete": {
+      "post": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "完成节点（服务端事务内过门禁；缺件返回 422 + missing 明细）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeCompleteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "完成后的节点",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeCompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/nodes/{id}/can-complete": {
+      "get": {
+        "tags": [
+          "flow"
+        ],
+        "summary": "完成预检（UI 置灰依据；不替代服务端强校验）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "预检结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanCompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}
