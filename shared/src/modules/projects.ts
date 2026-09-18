@@ -6,13 +6,13 @@ import { ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
 export const ProjectSchema = z
   .object({
     id: UuidSchema,
-    code: z.string().openapi({ example: "LB-2026-0001", description: "项目编号：服务端生成，创建请求不接收" }),
+    code: z.string().openapi({ example: "CNBJ-20260708-0001", description: "项目编号：创建人填写（建后可修改）；服务端只校验唯一性，不生成；格式仅前端提示" }),
+    seqNo: z.number().int().positive().openapi({ example: 1, description: "项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc" }),
     name: z.string().openapi({ example: "XX 客户分拣项目" }),
     customer: z.string().nullable(),
     region: z.string().openapi({ description: "项目落地地区（字典 region；缺省「未分类」）" }),
     projectType: z.string().openapi({ description: "项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码）" }),
-    ownerId: UuidSchema,
-    managerId: UuidSchema.nullable(),
+    managerId: UuidSchema,
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
     description: z.string().nullable(),
@@ -37,7 +37,7 @@ export const ProjectSummarySchema = z
 export const ProjectListQuerySchema = z.object({
   "filter[region]": z.string().optional().openapi({ description: "地区（多值逗号分隔）" }),
   "filter[projectType]": z.string().optional().openapi({ description: "项目类型（多值逗号分隔）" }),
-  "filter[ownerId]": UuidSchema.optional(),
+  "filter[managerId]": z.string().optional().openapi({ description: "项目经理（多值逗号分隔）" }),
   "filter[stageKey]": z.string().optional().openapi({ description: "阶段 key（多值逗号分隔）" }),
   "filter[status]": z.string().optional().openapi({ description: "项目状态（多值逗号分隔）" }),
   q: z.string().optional().openapi({ description: "关键字（编号 / 名称 / 客户）" }),
@@ -55,29 +55,30 @@ export const ProjectListResponseSchema = z
   })
   .openapi("ProjectListResponse");
 
-/** 创建项目：编号由服务端生成；默认按当前已发布蓝图导入节点（导入即快照）。 */
+/** 创建项目：编号由创建人填写（服务端保证唯一性）；项目序号由服务端分配（创建请求不传 seqNo）；默认按当前已发布蓝图导入节点（导入即快照）。 */
 export const ProjectCreateBodySchema = z
   .object({
+    code: z.string().min(1).max(50).openapi({ example: "CNBJ-20260708-0001", description: "项目编号：创建人填写；格式仅前端提示，服务端不做强校验；重复返回 409 PROJECT_CODE_EXISTS" }),
     name: z.string().min(1).max(200),
     customer: z.string().max(200).optional(),
     region: z.string().min(1).max(100),
     projectType: z.string().min(1).max(100),
-    ownerId: UuidSchema,
-    managerId: UuidSchema.optional(),
+    managerId: UuidSchema,
     stageKey: StageKeySchema.optional(),
     description: z.string().max(2000).optional(),
     blueprintVersion: z.number().int().positive().optional().openapi({ description: "导入的蓝图版本；缺省 = 当前已发布版本" }),
   })
-  .openapi("ProjectCreateBody");
+  .openapi("ProjectCreateBody", { description: "创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回" });
 
+/** 项目更新：code 可选（编号建后可修改）；修改时同样校验唯一性。 */
 export const ProjectUpdateBodySchema = z
   .object({
+    code: z.string().min(1).max(50).optional().openapi({ example: "CNBJ-20260708-0001", description: "项目编号：建后可修改；同样校验唯一性，重复返回 409 PROJECT_CODE_EXISTS" }),
     name: z.string().min(1).max(200).optional(),
     customer: z.string().max(200).nullable().optional(),
     region: z.string().min(1).max(100).optional(),
     projectType: z.string().min(1).max(100).optional(),
-    ownerId: UuidSchema.optional(),
-    managerId: UuidSchema.nullable().optional(),
+    managerId: UuidSchema.optional(),
     stageKey: StageKeySchema.optional(),
     status: ProjectStatusSchema.optional(),
     description: z.string().max(2000).nullable().optional(),
@@ -91,7 +92,7 @@ export const ProjectFacetsSchema = z
     total: z.number().int().min(0),
     region: z.record(z.string(), z.number().int().min(0)),
     projectType: z.record(z.string(), z.number().int().min(0)),
-    ownerId: z.record(z.string(), z.number().int().min(0)),
+    managerId: z.record(z.string(), z.number().int().min(0)),
     stageKey: z.record(z.string(), z.number().int().min(0)),
     status: z.record(z.string(), z.number().int().min(0)),
   })

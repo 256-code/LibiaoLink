@@ -10,6 +10,7 @@ export const ERROR_CODES = [
   "FORBIDDEN",
   "NOT_FOUND",
   "VERSION_CONFLICT",
+  "PROJECT_CODE_EXISTS",
   "NODE_REQUIRED_DOC_MISSING",
   "NODE_ALREADY_DONE",
   "NODE_DELETED",
@@ -35,6 +36,7 @@ export const HTTP_STATUS_BY_ERROR_CODE: Record<ErrorCode, number> = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   VERSION_CONFLICT: 409,
+  PROJECT_CODE_EXISTS: 409,
   NODE_REQUIRED_DOC_MISSING: 422,
   NODE_ALREADY_DONE: 409,
   NODE_DELETED: 409,
@@ -65,3 +67,6 @@ export const ApiErrorSchema = z
     traceId: z.string().openapi({ example: "4f1c2f2e-6f8a-4b1e-9a1f-2f6d6f2c9d10" }),
   })
   .openapi("ApiError", { description: "统一错误信封（技术设计v0.2 §7.2）" });
+
+export type ErrorDetail = z.infer<typeof ErrorDetailSchema>;
+export type ApiError = z.infer<typeof ApiErrorSchema>;

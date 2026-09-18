@@ -1,27 +1,31 @@
 import { useEffect, useState } from "react";
+import { MANAGERS } from "../data/managers";
 import { PROJECT_TYPES } from "../types";
 import type { ProjectType } from "../types";
 
-export type NewProjectDraft = {
-  title: string;
+export type ProjectDraft = {
+  code: string;
   description: string;
-  manager: string;
+  managerId: string;
   projectType: ProjectType;
 };
 
-type NewProjectModalProps = {
+type ProjectModalProps = {
+  mode: "create" | "edit";
+  initial?: ProjectDraft;
   onClose: () => void;
-  onCreate: (draft: NewProjectDraft) => void;
+  onSubmit: (draft: ProjectDraft) => void;
 };
 
 const fieldClass =
   "block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25";
 
-export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [manager, setManager] = useState("");
-  const [projectType, setProjectType] = useState<ProjectType>("T-sort");
+export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalProps) {
+  const isEdit = mode === "edit";
+  const [code, setCode] = useState(initial?.code ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [managerId, setManagerId] = useState(initial?.managerId ?? "");
+  const [projectType, setProjectType] = useState<ProjectType>(initial?.projectType ?? "T-sort");
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -35,7 +39,8 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
     };
   }, [onClose]);
 
-  const canSubmit = title.trim() !== "" && description.trim() !== "" && manager.trim() !== "";
+  const canSubmit = code.trim() !== "" && description.trim() !== "" && managerId !== "";
+  const title = isEdit ? "编辑项目" : "新建项目";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -43,11 +48,13 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="新建项目"
+        aria-label={title}
         className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
       >
-        <h2 className="text-lg font-bold text-zinc-900">新建项目</h2>
-        <p className="mt-1 text-sm text-zinc-500">填写项目信息，创建后出现在项目列表末尾。</p>
+        <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后出现在项目列表末尾。"}
+        </p>
 
         <form
           className="mt-5 space-y-4"
@@ -56,15 +63,15 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
             if (!canSubmit) {
               return;
             }
-            onCreate({ title, description, manager, projectType });
+            onSubmit({ code, description, managerId, projectType });
           }}
         >
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目编号</span>
             <input
               className={fieldClass}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
               placeholder="如 CNBJ-20260708-0001"
             />
           </label>
@@ -79,12 +86,18 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
           </label>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目经理</span>
-            <input
+            <select
               className={fieldClass}
-              value={manager}
-              onChange={(event) => setManager(event.target.value)}
-              placeholder="如 李伟"
-            />
+              value={managerId}
+              onChange={(event) => setManagerId(event.target.value)}
+            >
+              <option value="">请选择项目经理</option>
+              {MANAGERS.map((manager) => (
+                <option key={manager.id} value={manager.id}>
+                  {manager.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
@@ -116,7 +129,7 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
               disabled={!canSubmit}
               className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              创建项目
+              {isEdit ? "保存修改" : "创建项目"}
             </button>
           </div>
         </form>

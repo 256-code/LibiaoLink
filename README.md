@@ -13,6 +13,8 @@
 | `deploy/casdoor/` | **本地联调**部署模板（Docker Compose：Casdoor + MySQL + Redis），用于复刻公司环境验证接入 |
 | `frontend/` | **LibiaoLink 前端**（React + Vite + TypeScript）：标准 OIDC 接入参考实现，`npm run dev` 起在 3000 端口，登录后展示 5 个标准字段 |
 | `shared/` | **API 契约包**（g2）：Zod schema 唯一真相 → 生成 `openapi.json` 与前端 TypeScript 类型；`npm run generate` 生成、`npm run check` 漂移校验（详见 `shared/README.md`） |
+| `database/` | **数据库基线**（g3）：只追加迁移（`migrations/`，0001 一期基线 DDL）、最小权限角色（`roles/`）、带 advisory lock 与漂移校验的迁移器（`scripts/migrate.mjs`）；`npm run migrate` 空库一键迁移（详见 `database/README.md`） |
+| `server/` | **后端服务**（g4）：NestJS 12 模块化单体骨架（api / worker 双入口）、统一错误与日志、健康检查、Drizzle schema（对齐 `database/` 基线）与服务边界规则（`npm run check:boundaries`）（详见 `server/README.md`）
 | `docs/本地沙箱(LibiaoLink 演练环境).md` | **本地沙箱现状**：起停、登录入口与账号、配置快照、联邦原理、常见问题、与公司环境对照 |
 | `docs/开发者接入注意事项(SSO接入标准).md` | **开发者必读**：只用标准 OIDC、Grant Types、JWT-Custom 与 Token fields、字段命名差异 |
 | `docs/企业微信(WeCom)对接指南.md` | **企微对接**：登录通道（Provider 字段/可信域名）+ 通讯录同步（离职自动禁用）+ 常见报错 |

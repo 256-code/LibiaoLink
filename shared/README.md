@@ -38,21 +38,23 @@ npm run check        # 漂移校验：生成结果与仓库内生成物一致才
 ```
 
 生成链路：修改 src 下的 Zod schema → `npm run generate` → 提交生成物（源与生成物同一 PR）。
-CI 尚未接入本检查（阶段 5 的 CI 扩展任务负责），在那之前由作者在推送前手动执行 `npm run check`。
+CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.github/workflows/ci.yml` 的 `shared` job 自动执行 `npm run typecheck` + `npm run check`；本地推送前仍建议手动执行。
 
 ## 已定案口径（契约层）
 
 | 主题 | 口径 |
 |---|---|
-| 前缀 / 编码 | `/api/v1`；JSON；请求与响应字段 camelCase（与 DDL snake_case 一一映射，如 owner_id ↔ ownerId） |
+| 前缀 / 编码 | `/api/v1`；JSON；请求与响应字段 camelCase（与 DDL snake_case 一一映射，如 manager_id ↔ managerId） |
 | 分页 | 表格型 `page` / `limit` + `total`；信息流型后续用 cursor |
-| 筛选与排序 | `filter[region]=..`（多值逗号分隔）、`sort=field:asc,field2:desc`、`q` 关键字 |
+| 筛选与排序 | `filter[...]=..`（多值逗号分隔，如 region / projectType / managerId）、`sort=field:asc,field2:desc`、`q` 关键字 |
+| 项目人员 | 项目级唯一责任人为「项目经理」（`projects.manager_id`，必填；首页筛选用 `filter[managerId]`，多值逗号分隔）；任务级为「任务负责人」（`tasks.owner_id`），两者不同粒度，不可混用 |
 | 乐观锁 | 更新必须回传 `version`；冲突返回 409（VERSION_CONFLICT） |
 | 幂等 | 写操作支持 `Idempotency-Key` 头；重复提交返回首次结果 |
 | 时间 | 时间戳 ISO8601（UTC 存储，前端按 Asia/Shanghai 展示）；业务日期 `YYYY-MM-DD` |
 | 可见性 | 资源不存在与无权访问统一 404 语义（防 IDOR） |
 | 错误模型 | 统一信封 `{ code, message, details[], traceId }`；错误码见 src/common/errors.ts（与 v0.2 §7.2 同步维护） |
-| 项目编号 | 服务端生成（创建请求不接收 code）；编号唯一性由服务端保证 |
+| 项目编号 | 创建人填写（创建请求必填 code；格式仅前端提示、不做强校验）；唯一性由服务端校验 + 数据库唯一约束保证，重复返回 409 PROJECT_CODE_EXISTS；建后可修改（更新请求可传 code，同样校验唯一性） |
+| 项目序号 | 服务端创建时分配（`projects.seq_no` ↔ `seqNo`，全库唯一正整数、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示两位补零，列表支持 `sort=seqNo:asc\|desc` |
 | 主题色 accent | 随项目类型字典（C9）元数据下发；前端不硬编码颜色 |
 | 任务状态 | 存储基础态 pending/active/done；展示五态由服务端派生为 `displayStatus`（不写回） |
 | 节点门禁 | 完成需过服务端事务内校验；缺件返回 422 + `missing` 明细（NODE_REQUIRED_DOC_MISSING） |

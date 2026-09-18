@@ -18,8 +18,8 @@ export interface paths {
                     "filter[region]"?: string;
                     /** @description 项目类型（多值逗号分隔） */
                     "filter[projectType]"?: string;
-                    /** @description UUID（主键与关联 ID） */
-                    "filter[ownerId]"?: components["schemas"]["Uuid"];
+                    /** @description 项目经理（多值逗号分隔） */
+                    "filter[managerId]"?: string;
                     /** @description 阶段 key（多值逗号分隔） */
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
@@ -58,7 +58,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 新建项目（编号服务端生成；默认按已发布蓝图导入节点） */
+        /** 新建项目（编号由创建人填写；默认按已发布蓝图导入节点） */
         post: {
             parameters: {
                 query?: never;
@@ -125,8 +125,8 @@ export interface paths {
                     "filter[region]"?: string;
                     /** @description 项目类型（多值逗号分隔） */
                     "filter[projectType]"?: string;
-                    /** @description UUID（主键与关联 ID） */
-                    "filter[ownerId]"?: components["schemas"]["Uuid"];
+                    /** @description 项目经理（多值逗号分隔） */
+                    "filter[managerId]"?: string;
                     /** @description 阶段 key（多值逗号分隔） */
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
@@ -1076,7 +1076,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -1140,10 +1140,15 @@ export interface components {
         Project: {
             id: components["schemas"]["Uuid"];
             /**
-             * @description 项目编号：服务端生成，创建请求不接收
-             * @example LB-2026-0001
+             * @description 项目编号：创建人填写（建后可修改）；服务端只校验唯一性，不生成；格式仅前端提示
+             * @example CNBJ-20260708-0001
              */
             code: string;
+            /**
+             * @description 项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc
+             * @example 1
+             */
+            seqNo: number;
             /** @example XX 客户分拣项目 */
             name: string;
             customer: string | null;
@@ -1151,8 +1156,7 @@ export interface components {
             region: string;
             /** @description 项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码） */
             projectType: string;
-            ownerId: components["schemas"]["Uuid"];
-            managerId: components["schemas"]["Uuid"] & (string | null);
+            managerId: components["schemas"]["Uuid"];
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
             description: string | null;
@@ -1160,13 +1164,18 @@ export interface components {
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
         };
+        /** @description 创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回 */
         ProjectCreateBody: {
+            /**
+             * @description 项目编号：创建人填写；格式仅前端提示，服务端不做强校验；重复返回 409 PROJECT_CODE_EXISTS
+             * @example CNBJ-20260708-0001
+             */
+            code: string;
             name: string;
             customer?: string;
             region: string;
             projectType: string;
-            ownerId: components["schemas"]["Uuid"];
-            managerId?: components["schemas"]["Uuid"];
+            managerId: components["schemas"]["Uuid"];
             stageKey?: components["schemas"]["StageKey"];
             description?: string;
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
@@ -1181,7 +1190,7 @@ export interface components {
             projectType: {
                 [key: string]: number;
             };
-            ownerId: {
+            managerId: {
                 [key: string]: number;
             };
             stageKey: {
@@ -1245,12 +1254,16 @@ export interface components {
             total: number;
         };
         ProjectUpdateBody: {
+            /**
+             * @description 项目编号：建后可修改；同样校验唯一性，重复返回 409 PROJECT_CODE_EXISTS
+             * @example CNBJ-20260708-0001
+             */
+            code?: string;
             name?: string;
             customer?: string | null;
             region?: string;
             projectType?: string;
-            ownerId?: components["schemas"]["Uuid"];
-            managerId?: components["schemas"]["Uuid"] & (string | null);
+            managerId?: components["schemas"]["Uuid"];
             stageKey?: components["schemas"]["StageKey"];
             status?: components["schemas"]["ProjectStatus"];
             description?: string | null;

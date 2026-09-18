@@ -343,6 +343,7 @@
           "FORBIDDEN",
           "NOT_FOUND",
           "VERSION_CONFLICT",
+          "PROJECT_CODE_EXISTS",
           "NODE_REQUIRED_DOC_MISSING",
           "NODE_ALREADY_DONE",
           "NODE_DELETED",
@@ -533,8 +534,14 @@
           },
           "code": {
             "type": "string",
-            "example": "LB-2026-0001",
-            "description": "项目编号：服务端生成，创建请求不接收"
+            "example": "CNBJ-20260708-0001",
+            "description": "项目编号：创建人填写（建后可修改）；服务端只校验唯一性，不生成；格式仅前端提示"
+          },
+          "seqNo": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "example": 1,
+            "description": "项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc"
           },
           "name": {
             "type": "string",
@@ -554,21 +561,8 @@
             "type": "string",
             "description": "项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码）"
           },
-          "ownerId": {
-            "$ref": "#/components/schemas/Uuid"
-          },
           "managerId": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            ]
+            "$ref": "#/components/schemas/Uuid"
           },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
@@ -595,11 +589,11 @@
         "required": [
           "id",
           "code",
+          "seqNo",
           "name",
           "customer",
           "region",
           "projectType",
-          "ownerId",
           "managerId",
           "stageKey",
           "status",
@@ -613,6 +607,13 @@
       "ProjectCreateBody": {
         "type": "object",
         "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "example": "CNBJ-20260708-0001",
+            "description": "项目编号：创建人填写；格式仅前端提示，服务端不做强校验；重复返回 409 PROJECT_CODE_EXISTS"
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -632,9 +633,6 @@
             "minLength": 1,
             "maxLength": 100
           },
-          "ownerId": {
-            "$ref": "#/components/schemas/Uuid"
-          },
           "managerId": {
             "$ref": "#/components/schemas/Uuid"
           },
@@ -652,11 +650,13 @@
           }
         },
         "required": [
+          "code",
           "name",
           "region",
           "projectType",
-          "ownerId"
-        ]
+          "managerId"
+        ],
+        "description": "创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回"
       },
       "ProjectFacets": {
         "type": "object",
@@ -679,7 +679,7 @@
               "minimum": 0
             }
           },
-          "ownerId": {
+          "managerId": {
             "type": "object",
             "additionalProperties": {
               "type": "integer",
@@ -705,7 +705,7 @@
           "total",
           "region",
           "projectType",
-          "ownerId",
+          "managerId",
           "stageKey",
           "status"
         ],
@@ -943,6 +943,13 @@
       "ProjectUpdateBody": {
         "type": "object",
         "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "example": "CNBJ-20260708-0001",
+            "description": "项目编号：建后可修改；同样校验唯一性，重复返回 409 PROJECT_CODE_EXISTS"
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -965,21 +972,8 @@
             "minLength": 1,
             "maxLength": 100
           },
-          "ownerId": {
-            "$ref": "#/components/schemas/Uuid"
-          },
           "managerId": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            ]
+            "$ref": "#/components/schemas/Uuid"
           },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
@@ -1319,11 +1313,12 @@
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/Uuid"
+              "type": "string",
+              "description": "项目经理（多值逗号分隔）"
             },
             "required": false,
-            "description": "UUID（主键与关联 ID）",
-            "name": "filter[ownerId]",
+            "description": "项目经理（多值逗号分隔）",
+            "name": "filter[managerId]",
             "in": "query"
           },
           {
@@ -1417,7 +1412,7 @@
         "tags": [
           "projects"
         ],
-        "summary": "新建项目（编号服务端生成；默认按已发布蓝图导入节点）",
+        "summary": "新建项目（编号由创建人填写；默认按已发布蓝图导入节点）",
         "parameters": [
           {
             "schema": {
@@ -1501,11 +1496,12 @@
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/Uuid"
+              "type": "string",
+              "description": "项目经理（多值逗号分隔）"
             },
             "required": false,
-            "description": "UUID（主键与关联 ID）",
-            "name": "filter[ownerId]",
+            "description": "项目经理（多值逗号分隔）",
+            "name": "filter[managerId]",
             "in": "query"
           },
           {

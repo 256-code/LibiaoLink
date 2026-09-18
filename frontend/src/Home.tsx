@@ -1,66 +1,93 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
 import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
-import { NewProjectModal, type NewProjectDraft } from "./components/NewProjectModal";
+import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
-import { openProject } from "./useHashRoute";
+import { managerName } from "./data/managers";
+import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
+import type { ListQueryState } from "./useHashRoute";
+import { PROJECT_TYPES } from "./types";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
   me: MeResponse;
   projects: Project[];
-  onCreate: (draft: NewProjectDraft) => void;
+  onCreate: (draft: ProjectDraft) => void;
+  onEdit: (project: Project) => void;
 };
 
-export default function Home({ me, projects, onCreate }: HomeProps) {
+export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
+  const route = useHashRoute();
+  const filters = route.kind === "list" ? route.filters : EMPTY_LIST_QUERY;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
-  const [selectedManagers, setSelectedManagers] = useState<string[]>([]);
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [dateRange, setDateRange] = useState<DateRange | null>(null);
-  const [sortDesc, setSortDesc] = useState(true);
+  const [filterOpen, setFilterOpen] = useState(() => hasListFilters(filters));
+  const knownRegions = useMemo(() => new Set(projects.map((project) => project.region)), [projects]);
+  const knownManagerIds = useMemo(() => new Set(projects.map((project) => project.managerId)), [projects]);
+  // 链接里可能带着当前数据不存在的取值（分享过期 / 手改地址）：先丢弃，再由下面的 effect 归一化地址栏
+  const activeFilters = useMemo(() => {
+    const regions = filters.regions.filter((region) => knownRegions.has(region));
+    const managerIds = filters.managerIds.filter((managerId) => knownManagerIds.has(managerId));
+    const projectTypes = filters.projectTypes.filter((projectType) => (PROJECT_TYPES as readonly string[]).includes(projectType));
+    if (
+      regions.length === filters.regions.length &&
+      managerIds.length === filters.managerIds.length &&
+      projectTypes.length === filters.projectTypes.length
+    ) {
+      return filters;
+    }
+    return { ...filters, regions, managerIds, projectTypes };
+  }, [filters, knownManagerIds, knownRegions]);
+  useEffect(() => {
+    if (buildListHash(activeFilters) !== buildListHash(filters)) {
+      replaceListQuery(activeFilters);
+    }
+  }, [activeFilters, filters]);
+
+  const updateFilters = (patch: Partial<ListQueryState>) => {
+    replaceListQuery({ ...activeFilters, ...patch });
+  };
+  const query = activeFilters.q;
   const keyword = query.trim().toLowerCase();
-  const hasFilters =
-    selectedRegions.length > 0 || selectedManagers.length > 0 || selectedTypes.length > 0 || dateRange !== null;
+  const hasFilters = hasListFilters(activeFilters);
+  const sortDesc = activeFilters.sortDesc;
+  const dateRange: DateRange | null =
+    activeFilters.timeFrom !== null && activeFilters.timeTo !== null
+      ? { from: activeFilters.timeFrom, to: activeFilters.timeTo }
+      : null;
   const filtered = useMemo(() => {
     const matched = projects.filter((project) => {
-      if (selectedRegions.length > 0 && !selectedRegions.includes(project.region)) {
+      if (activeFilters.regions.length > 0 && !activeFilters.regions.includes(project.region)) {
         return false;
       }
-      if (selectedManagers.length > 0 && !selectedManagers.includes(project.manager)) {
+      if (activeFilters.managerIds.length > 0 && !activeFilters.managerIds.includes(project.managerId)) {
         return false;
       }
-      if (selectedTypes.length > 0 && !selectedTypes.includes(project.projectType)) {
+      if (activeFilters.projectTypes.length > 0 && !activeFilters.projectTypes.includes(project.projectType)) {
         return false;
       }
-      if (dateRange !== null) {
+      if (activeFilters.timeFrom !== null && activeFilters.timeTo !== null) {
         const day = project.updatedAt.slice(0, 10);
-        if (day < dateRange.from || day > dateRange.to) {
+        if (day < activeFilters.timeFrom || day > activeFilters.timeTo) {
           return false;
         }
       }
       if (keyword === "") {
         return true;
       }
-      return [project.title, project.description, project.region, project.projectType, project.id, project.updatedAt, project.manager].some((field) =>
+      return [String(project.seqNo), String(project.seqNo).padStart(2, "0"), project.code, project.description, project.region, project.projectType, project.id, project.updatedAt, managerName(project.managerId)].some((field) =>
         field.toLowerCase().includes(keyword),
       );
     });
     const ordered = matched.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : left.updatedAt > right.updatedAt ? -1 : 0));
     return sortDesc ? ordered : ordered.reverse();
-  }, [keyword, projects, selectedRegions, selectedManagers, selectedTypes, dateRange, sortDesc]);
+  }, [activeFilters, keyword, projects, sortDesc]);
   const resetFilters = () => {
-    setSelectedRegions([]);
-    setSelectedManagers([]);
-    setSelectedTypes([]);
-    setDateRange(null);
+    updateFilters({ regions: [], projectTypes: [], managerIds: [], timeFrom: null, timeTo: null });
   };
   const toggleValue = (list: string[], value: string) => (list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
 
@@ -71,21 +98,24 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
       <CategoryFilterSidebar
         open={filterOpen}
         projects={projects}
-        selectedRegions={selectedRegions}
-        selectedManagers={selectedManagers}
-        selectedTypes={selectedTypes}
+        selectedRegions={activeFilters.regions}
+        selectedManagerIds={activeFilters.managerIds}
+        selectedTypes={activeFilters.projectTypes}
         dateRange={dateRange}
         onToggleRegion={(region) => {
-          setSelectedRegions((previous) => toggleValue(previous, region));
+          updateFilters({ regions: toggleValue(activeFilters.regions, region) });
         }}
-        onToggleManager={(manager) => {
-          setSelectedManagers((previous) => toggleValue(previous, manager));
+        onToggleManager={(managerId) => {
+          updateFilters({ managerIds: toggleValue(activeFilters.managerIds, managerId) });
         }}
         onToggleType={(projectType) => {
-          setSelectedTypes((previous) => toggleValue(previous, projectType));
+          updateFilters({ projectTypes: toggleValue(activeFilters.projectTypes, projectType) });
         }}
         onDateRangeChange={(range) => {
-          setDateRange(range);
+          updateFilters({
+            timeFrom: range === null ? null : range.from,
+            timeTo: range === null ? null : range.to,
+          });
         }}
         onReset={resetFilters}
         onClose={() => {
@@ -101,12 +131,22 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
               setFilterOpen(next);
             }}
           />
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 text-xs">
+          <div
+            role="group"
+            aria-label="按更新时间排序"
+            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
+          >
+            <span className="px-1 text-[10px] font-semibold tracking-[0.18em] text-zinc-400 select-none" aria-hidden="true">
+              TIME
+            </span>
+            <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
             <button
               type="button"
               aria-pressed={sortDesc}
+              aria-label="按更新时间降序排列"
+              title="按更新时间降序排列（最新在前）"
               onClick={() => {
-                setSortDesc(true);
+                updateFilters({ sortDesc: true });
               }}
               className={
                 "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition " +
@@ -121,8 +161,10 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
             <button
               type="button"
               aria-pressed={!sortDesc}
+              aria-label="按更新时间升序排列"
+              title="按更新时间升序排列（最早在前）"
               onClick={() => {
-                setSortDesc(false);
+                updateFilters({ sortDesc: false });
               }}
               className={
                 "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition " +
@@ -151,7 +193,9 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
             </button>
             <SearchInput
               value={query}
-              onChange={setQuery}
+              onChange={(value) => {
+                updateFilters({ q: value });
+              }}
               placeholder="搜索名称、国家、时间或项目经理"
               className="w-full sm:w-72"
             />
@@ -168,7 +212,7 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setQuery("");
+                    updateFilters({ q: "" });
                   }}
                   className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
                 >
@@ -190,22 +234,33 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
 
         <div className="grid grid-cols-1 gap-6 @md:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-4">
           {filtered.map((project) => (
-            <button
+            <div
               key={project.id}
-              type="button"
+              role="link"
+              tabIndex={0}
+              aria-label={"打开项目 " + project.code}
               onClick={() => openProject(project.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openProject(project.id);
+                }
+              }}
               className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
               <Card
-                index={project.index}
-                title={project.title}
+                seqNo={project.seqNo}
+                code={project.code}
                 description={project.description}
                 accent={project.accent}
                 projectType={project.projectType}
-                manager={project.manager}
+                managerName={managerName(project.managerId)}
                 time={project.updatedAt}
+                onEdit={() => {
+                  onEdit(project);
+                }}
               />
-            </button>
+            </div>
           ))}
         </div>
 
@@ -217,9 +272,10 @@ export default function Home({ me, projects, onCreate }: HomeProps) {
       </main>
 
       {isCreateOpen && (
-        <NewProjectModal
+        <ProjectModal
+          mode="create"
           onClose={() => setIsCreateOpen(false)}
-          onCreate={(draft) => {
+          onSubmit={(draft) => {
             onCreate(draft);
             setIsCreateOpen(false);
           }}

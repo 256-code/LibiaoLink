@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import Home from "./Home";
 import ProjectDetail from "./ProjectDetail";
+import { Loader } from "./components/Loader";
+import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { INITIAL_PROJECTS } from "./data/projects";
 import { useHashRoute } from "./useHashRoute";
 import { PROJECT_TYPE_ACCENTS } from "./types";
 import type { MeResponse, Project } from "./types";
-import type { NewProjectDraft } from "./components/NewProjectModal";
-import { Loader } from "./components/Loader";
 
 type ViewState =
   | { kind: "loading" }
@@ -14,9 +14,17 @@ type ViewState =
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
 
+/** 展示用时间戳（YYYY-MM-DD HH:mm）；接后端后 updatedAt 由服务端生成。 */
+function nowText(): string {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return String(now.getFullYear()) + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate()) + " " + pad(now.getHours()) + ":" + pad(now.getMinutes());
+}
+
 export default function App() {
   const [state, setState] = useState<ViewState>({ kind: "loading" });
   const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
   const route = useHashRoute();
 
   useEffect(() => {
@@ -56,29 +64,42 @@ export default function App() {
     }
   }, [state]);
 
-  const handleCreateProject = (draft: NewProjectDraft) => {
+  const handleCreateProject = (draft: ProjectDraft) => {
     setProjects((previous) => {
-      const nextNumber = previous.length + 1;
-      const accent = PROJECT_TYPE_ACCENTS[draft.projectType];
-      const now = new Date();
-      const pad = (value: number) => String(value).padStart(2, "0");
-      const updatedAt =
-        String(now.getFullYear()) + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate()) + " " + pad(now.getHours()) + ":" + pad(now.getMinutes());
+      const nextNumber = previous.reduce((max, project) => Math.max(max, project.seqNo), 0) + 1;
       return [
         ...previous,
         {
           id: "custom-" + String(nextNumber),
-          index: String(nextNumber).padStart(2, "0"),
-          title: draft.title.trim(),
+          seqNo: nextNumber,
+          code: draft.code.trim(),
           description: draft.description.trim(),
           region: "未分类",
           projectType: draft.projectType,
-          accent,
-          updatedAt,
-          manager: draft.manager.trim(),
+          accent: PROJECT_TYPE_ACCENTS[draft.projectType],
+          updatedAt: nowText(),
+          managerId: draft.managerId,
         },
       ];
     });
+  };
+
+  const handleUpdateProject = (id: string, draft: ProjectDraft) => {
+    setProjects((previous) =>
+      previous.map((project) =>
+        project.id === id
+          ? {
+              ...project,
+              code: draft.code.trim(),
+              description: draft.description.trim(),
+              projectType: draft.projectType,
+              accent: PROJECT_TYPE_ACCENTS[draft.projectType],
+              managerId: draft.managerId,
+              updatedAt: nowText(),
+            }
+          : project,
+      ),
+    );
   };
 
   if (state.kind === "loading") {
@@ -120,10 +141,41 @@ export default function App() {
     );
   }
 
+  const editModal =
+    editingProject === null ? null : (
+      <ProjectModal
+        key={editingProject.id}
+        mode="edit"
+        initial={{
+          code: editingProject.code,
+          description: editingProject.description,
+          managerId: editingProject.managerId,
+          projectType: editingProject.projectType,
+        }}
+        onClose={() => {
+          setEditingProject(null);
+        }}
+        onSubmit={(draft) => {
+          handleUpdateProject(editingProject.id, draft);
+          setEditingProject(null);
+        }}
+      />
+    );
+
   if (route.kind === "project") {
     const project = projects.find((item) => item.id === route.id) ?? null;
-    return <ProjectDetail me={state.me} project={project} />;
+    return (
+      <>
+        <ProjectDetail me={state.me} project={project} onEdit={setEditingProject} />
+        {editModal}
+      </>
+    );
   }
 
-  return <Home me={state.me} projects={projects} onCreate={handleCreateProject} />;
+  return (
+    <>
+      <Home me={state.me} projects={projects} onCreate={handleCreateProject} onEdit={setEditingProject} />
+      {editModal}
+    </>
+  );
 }
