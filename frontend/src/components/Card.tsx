@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
-import type { CardAccent } from "../types";
+import type { CardAccent, ProjectType } from "../types";
 
-const ACCENT_STYLES: Record<CardAccent, { icon: string; hover: string }> = {
-  violet: { icon: "bg-violet-500", hover: "hover:shadow-[0_12px_28px_rgba(139,92,246,0.35)]" },
-  blue: { icon: "bg-blue-500", hover: "hover:shadow-[0_12px_28px_rgba(59,130,246,0.35)]" },
-  emerald: { icon: "bg-emerald-500", hover: "hover:shadow-[0_12px_28px_rgba(16,185,129,0.35)]" },
-  amber: { icon: "bg-amber-500", hover: "hover:shadow-[0_12px_28px_rgba(245,158,11,0.35)]" },
-  rose: { icon: "bg-rose-500", hover: "hover:shadow-[0_12px_28px_rgba(244,63,94,0.35)]" },
+const ACCENT_STYLES: Record<CardAccent, { icon: string; hover: string; badge: string }> = {
+  blue: { icon: "bg-blue-500", hover: "hover:shadow-[0_12px_28px_rgba(59,130,246,0.35)]", badge: "bg-blue-500 text-white" },
+  emerald: { icon: "bg-emerald-500", hover: "hover:shadow-[0_12px_28px_rgba(16,185,129,0.35)]", badge: "bg-emerald-500 text-white" },
+  amber: { icon: "bg-amber-500", hover: "hover:shadow-[0_12px_28px_rgba(245,158,11,0.35)]", badge: "bg-amber-500 text-amber-950" },
+  // 预留：未来新增项目类型时启用（如红色 rb / 紫色 vt），当前仅保留蓝 / 绿 / 橙三种
+  // rose: { icon: "bg-rose-500", hover: "hover:shadow-[0_12px_28px_rgba(244,63,94,0.35)]", badge: "bg-rose-500 text-white" },
+  // violet: { icon: "bg-violet-500", hover: "hover:shadow-[0_12px_28px_rgba(139,92,246,0.35)]", badge: "bg-violet-500 text-white" },
 };
 
 type CardProps = {
@@ -14,12 +15,13 @@ type CardProps = {
   title: string;
   description: string;
   accent?: CardAccent;
+  projectType: ProjectType;
   icon?: ReactNode;
   manager: string;
   time: string;
 };
 
-export function Card({ index, title, description, accent = "violet", icon, manager, time }: CardProps) {
+export function Card({ index, title, description, accent = "blue", projectType, icon, manager, time }: CardProps) {
   const styles = ACCENT_STYLES[accent];
   return (
     <div
@@ -28,6 +30,9 @@ export function Card({ index, title, description, accent = "violet", icon, manag
         styles.hover
       }
     >
+      <span className={"absolute top-0 left-0 rounded-br-xl px-3 py-1 text-[11px] font-semibold tracking-wide " + styles.badge}>
+        {projectType}
+      </span>
       <div className="w-20 h-20 rounded-full absolute -right-5 -top-7 bg-zinc-100">
         <p className="absolute bottom-5 left-6 text-2xl font-medium text-zinc-500">{index}</p>
       </div>

@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { PROJECT_TYPES } from "../types";
+import type { ProjectType } from "../types";
 
 export type NewProjectDraft = {
   title: string;
   description: string;
   manager: string;
+  projectType: ProjectType;
 };
 
 type NewProjectModalProps = {
@@ -18,6 +21,7 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [manager, setManager] = useState("");
+  const [projectType, setProjectType] = useState<ProjectType>("T-sort");
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -52,7 +56,7 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
             if (!canSubmit) {
               return;
             }
-            onCreate({ title, description, manager });
+            onCreate({ title, description, manager, projectType });
           }}
         >
           <label className="block">
@@ -81,6 +85,22 @@ export function NewProjectModal({ onClose, onCreate }: NewProjectModalProps) {
               onChange={(event) => setManager(event.target.value)}
               placeholder="如 李伟"
             />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
+            <select
+              className={fieldClass}
+              value={projectType}
+              onChange={(event) => {
+                setProjectType(event.target.value as ProjectType);
+              }}
+            >
+              {PROJECT_TYPES.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
           </label>
 
           <div className="flex justify-end gap-3 pt-1">
