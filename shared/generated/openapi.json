@@ -33,6 +33,14 @@
       "description": "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）"
     },
     {
+      "name": "users",
+      "description": "用户目录与用户偏好（A2 / A4；M1）"
+    },
+    {
+      "name": "dicts",
+      "description": "数据字典下发（A3；region / projectType，含主题色元数据）"
+    },
+    {
       "name": "changes",
       "description": "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）"
     }
@@ -519,17 +527,93 @@
         "description": "变更申请状态；一期申请即通过（唯一终态 applied），多级审批二期可启用"
       },
       "DateOnly": {
-        "type": [
-          "string",
-          "null"
-        ],
+        "type": "string",
         "format": "date",
-        "description": "业务日期 YYYY-MM-DD（不携带时区）"
+        "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）"
       },
       "DateTime": {
         "type": "string",
         "format": "date-time",
         "description": "ISO8601 时间戳（UTC 存储，前端按 Asia/Shanghai 展示）"
+      },
+      "Dict": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/DictType"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DictItem"
+            }
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "type",
+          "items",
+          "updatedAt"
+        ],
+        "description": "单个字典（含元数据）；响应带 ETag，前端启动拉一次、登出清缓存"
+      },
+      "DictItem": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "字典码（projects.region / projects.projectType 存该值）"
+          },
+          "name": {
+            "type": "string",
+            "description": "显示名"
+          },
+          "sort": {
+            "type": "integer",
+            "description": "展示顺序（升序）"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "普通用户只见 enabled=true 的项；管理员可见全集（二期）"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "sort",
+          "enabled",
+          "metadata"
+        ]
+      },
+      "DictListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dict"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "全量字典（一期两个类型：region / projectType）"
+      },
+      "DictType": {
+        "type": "string",
+        "enum": [
+          "region",
+          "projectType"
+        ],
+        "description": "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404"
       },
       "DocType": {
         "type": [
@@ -1311,6 +1395,13 @@
           "managerId": {
             "$ref": "#/components/schemas/Uuid"
           },
+          "managerName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」）"
+          },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           },
@@ -1342,6 +1433,7 @@
           "region",
           "projectType",
           "managerId",
+          "managerName",
           "stageKey",
           "status",
           "description",
@@ -1456,7 +1548,7 @@
           "stageKey",
           "status"
         ],
-        "description": "首页分类计数；计数与列表同口径（同筛选条件）"
+        "description": "首页分类计数；计数与列表同口径（同筛选条件）；五组固定返回，前端按需展示（A6）"
       },
       "ProjectFlow": {
         "type": "object",
@@ -1615,16 +1707,60 @@
             "$ref": "#/components/schemas/StageStatus"
           },
           "plannedStart": {
-            "$ref": "#/components/schemas/DateOnly"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
           },
           "plannedEnd": {
-            "$ref": "#/components/schemas/DateOnly"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
           },
           "actualStart": {
-            "$ref": "#/components/schemas/DateOnly"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
           },
           "actualEnd": {
-            "$ref": "#/components/schemas/DateOnly"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
           },
           "nodes": {
             "type": "array",
@@ -1819,13 +1955,46 @@
             "$ref": "#/components/schemas/TaskProgress"
           },
           "plannedStart": {
-            "$ref": "#/components/schemas/DateOnly"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
           },
           "plannedEnd": {
-            "$ref": "#/components/schemas/DateOnly"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
           },
           "actualEnd": {
-            "$ref": "#/components/schemas/DateOnly"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
           },
           "estimatedDays": {
             "type": [
@@ -1918,6 +2087,39 @@
         ],
         "description": "任务存储基础态（不写回派生结果）"
       },
+      "TaskDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Task"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ownerName": {
+                "type": "string"
+              },
+              "changeSummary": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TaskFileBrief"
+                }
+              }
+            },
+            "required": [
+              "ownerName",
+              "changeSummary",
+              "files"
+            ]
+          }
+        ],
+        "description": "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）"
+      },
       "TaskDisplayStatus": {
         "type": "string",
         "enum": [
@@ -1929,13 +2131,232 @@
         ],
         "description": "任务展示五态（服务端派生）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；逾期标注落在 actualEnd"
       },
+      "TaskFileBrief": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FileStatus"
+          },
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "docType"
+        ]
+      },
+      "TaskFileSummary": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "draft": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "未定档（draft）数量；>0 时完成门禁放行但返回 warning 并触发 R02"
+          },
+          "final": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计"
+          }
+        },
+        "required": [
+          "total",
+          "draft",
+          "final"
+        ]
+      },
+      "TaskListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "nodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskBaseStatus"
+          },
+          "displayStatus": {
+            "$ref": "#/components/schemas/TaskDisplayStatus"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          },
+          "plannedStart": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "plannedEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "actualEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "estimatedDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "headcount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "priority": {
+            "$ref": "#/components/schemas/Priority"
+          },
+          "deliverable": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "onTime": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "ownerName": {
+            "type": "string",
+            "description": "负责人姓名（users.display_name 随行下发）"
+          },
+          "changeSummary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "变更摘要（列表用短文本；详情用 changeRef 跳变更记录）"
+          },
+          "fileSummary": {
+            "$ref": "#/components/schemas/TaskFileSummary"
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "stageKey",
+          "nodeId",
+          "title",
+          "titleEn",
+          "ownerId",
+          "status",
+          "displayStatus",
+          "progress",
+          "plannedStart",
+          "plannedEnd",
+          "actualEnd",
+          "estimatedDays",
+          "headcount",
+          "priority",
+          "deliverable",
+          "note",
+          "onTime",
+          "version",
+          "createdAt",
+          "updatedAt",
+          "ownerName",
+          "changeSummary",
+          "fileSummary"
+        ]
+      },
       "TaskListResponse": {
         "type": "object",
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Task"
+              "$ref": "#/components/schemas/TaskListItem"
             }
           },
           "page": {
@@ -1956,7 +2377,8 @@
           "page",
           "limit",
           "total"
-        ]
+        ],
+        "description": "任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要）"
       },
       "TaskProgress": {
         "anyOf": [
@@ -2401,6 +2823,117 @@
         ],
         "description": "登录用户（SSO 归一化口径，ADR-010）"
       },
+      "UserListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserSummary"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "UserPreferences": {
+        "type": "object",
+        "properties": {
+          "taskTableHiddenColumns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "任务表隐藏列 key 列表；key 白名单与前端任务表列一致，未知 key 返回 400 VALIDATION_FAILED"
+          },
+          "updatedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "偏好最后更新时间（前端乐观更新用）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "taskTableHiddenColumns",
+          "updatedAt"
+        ],
+        "description": "用户偏好（全量；GET 返回当前值）"
+      },
+      "UserPreferencesUpdateBody": {
+        "type": "object",
+        "properties": {
+          "taskTableHiddenColumns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": {},
+        "description": "PATCH 合并语义：只传变更键；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400）"
+      },
+      "UserStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "disabled"
+        ],
+        "description": "用户状态；非 active 时该用户全部会话被撤销"
+      },
+      "UserSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "username": {
+            "type": "string",
+            "description": "工号（users.username，唯一）",
+            "example": "10086"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "姓名（users.display_name）"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "email",
+          "status"
+        ],
+        "description": "用户目录项（M1：项目经理下拉 / 任务负责人候选 / 姓名解析）"
+      },
       "Uuid": {
         "type": "string",
         "format": "uuid",
@@ -2474,11 +3007,36 @@
           },
           {
             "schema": {
-              "type": "string",
-              "description": "关键字（编号 / 名称 / 客户）"
+              "$ref": "#/components/schemas/DateOnly"
             },
             "required": false,
-            "description": "关键字（编号 / 名称 / 客户）",
+            "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）",
+            "name": "filter[timeFrom]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
+            "name": "filter[timeTo]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（编号 / 名称 / 客户 / 序号）"
+            },
+            "required": false,
+            "description": "关键字（编号 / 名称 / 客户 / 序号）",
             "name": "q",
             "in": "query"
           },
@@ -2507,11 +3065,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
             "name": "sort",
             "in": "query"
           }
@@ -2657,11 +3215,36 @@
           },
           {
             "schema": {
-              "type": "string",
-              "description": "关键字（编号 / 名称 / 客户）"
+              "$ref": "#/components/schemas/DateOnly"
             },
             "required": false,
-            "description": "关键字（编号 / 名称 / 客户）",
+            "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）",
+            "name": "filter[timeFrom]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
+            "name": "filter[timeTo]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（编号 / 名称 / 客户 / 序号）"
+            },
+            "required": false,
+            "description": "关键字（编号 / 名称 / 客户 / 序号）",
             "name": "q",
             "in": "query"
           },
@@ -2690,11 +3273,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
             "name": "sort",
             "in": "query"
           }
@@ -2830,6 +3413,77 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "删除项目（软删；If-Match 回传当前 version 防误删）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d+$",
+              "description": "项目当前 version（防误删）；缺失或非数字 → 400 VALIDATION_FAILED，不匹配 → 409 VERSION_CONFLICT",
+              "example": "3"
+            },
+            "required": true,
+            "description": "项目当前 version（防误删）；缺失或非数字 → 400 VALIDATION_FAILED，不匹配 → 409 VERSION_CONFLICT",
+            "name": "If-Match",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已软删项目（列表 / 详情 / facets / 搜索不再返回）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/projects/{id}/summary": {
@@ -2878,7 +3532,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "项目任务列表（表格与抽屉直接渲染的全字段）",
+        "summary": "项目任务列表（TaskListItem：表格直接渲染 + 内联摘要）",
         "parameters": [
           {
             "schema": {
@@ -2951,12 +3605,12 @@
           {
             "schema": {
               "type": "string",
-              "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "pattern": "^(plannedStart|plannedEnd|actualEnd|progress|title|createdAt)(:(asc|desc))?(,(plannedStart|plannedEnd|actualEnd|progress|title|createdAt)(:(asc|desc))?)*$",
+              "description": "排序：sort=field:asc,field2:desc；字段白名单 plannedStart / plannedEnd / actualEnd / progress / title / createdAt（白名单外 400）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "description": "排序：sort=field:asc,field2:desc；字段白名单 plannedStart / plannedEnd / actualEnd / progress / title / createdAt（白名单外 400）",
             "name": "sort",
             "in": "query"
           }
@@ -2968,6 +3622,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TaskListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "任务详情（抽屉全字段 + 文件清单；列表走 TaskListItem，抽屉打开时按需请求）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetail"
                 }
               }
             }
@@ -3022,11 +3726,11 @@
         },
         "responses": {
           "200": {
-            "description": "更新后的任务",
+            "description": "更新后的任务（TaskListItem 同形，前端直接替换行）",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Task"
+                  "$ref": "#/components/schemas/TaskListItem"
                 }
               }
             }
@@ -3053,6 +3757,217 @@
           },
           "409": {
             "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "用户目录（项目经理下拉 / 任务负责人候选 / 姓名解析；只返回启用用户，默认按工号升序）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "关键字（工号 / 姓名 / 邮箱）"
+            },
+            "required": false,
+            "description": "关键字（工号 / 姓名 / 邮箱）",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "用户列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/preferences": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "读取当前用户偏好（任务表列显隐等）",
+        "responses": {
+          "200": {
+            "description": "偏好全量",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferences"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPreferencesUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的偏好全量",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferences"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dicts": {
+      "get": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+        "responses": {
+          "200": {
+            "description": "全部字典",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DictListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dicts/{type}": {
+      "get": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "单个字典（未知类型返回 404）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/DictType"
+            },
+            "required": true,
+            "description": "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404",
+            "name": "type",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "字典",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {
