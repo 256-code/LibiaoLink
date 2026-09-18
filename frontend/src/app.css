@@ -207,11 +207,29 @@ body {
   animation: ll-drawer-out 160ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
+/* 账号菜单弹出动画 */
+@keyframes ll-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.menu-pop {
+  transform-origin: top right;
+  animation: ll-menu-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drawer-backdrop,
   .drawer-panel,
   .drawer-backdrop.is-closing,
-  .drawer-panel.is-closing {
+  .drawer-panel.is-closing,
+  .menu-pop {
     animation: none;
   }
 }
@@ -358,5 +376,14 @@ body {
 }
 
 #task-board-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 隐藏原生滚动条，改用 ScrollArea 组件自绘的悬浮滑块（分类筛选侧边栏 / 任务抽屉） */
+.scrollbar-hidden {
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
   display: none;
 }
