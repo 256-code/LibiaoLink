@@ -11,7 +11,7 @@
 |---|---|
 | `docs/公司统一登录(SSO)实施方案.md` | 实施方案：选型决策、部署、控制台配置、各系统接入方式、接口速查、上线清单、常见坑 |
 | `deploy/casdoor/` | **本地联调**部署模板（Docker Compose：Casdoor + MySQL + Redis），用于复刻公司环境验证接入 |
-| `frontend/` | **LibiaoLink 前端**（React + Vite + TypeScript）：标准 OIDC 接入参考实现，`npm run dev` 起在 3000 端口，登录后展示 5 个标准字段 |
+| `frontend/` | **LibiaoLink 前端**（React + Vite + TypeScript）：项目空间 / 项目总览页面；登录会话由 `server/` 承载（本地 `/auth/*` 经 Vite 代理到后端），`npm run dev` 起在 3000 端口 |
 | `shared/` | **API 契约包**（g2）：Zod schema 唯一真相 → 生成 `openapi.json` 与前端 TypeScript 类型；`npm run generate` 生成、`npm run check` 漂移校验（详见 `shared/README.md`） |
 | `database/` | **数据库基线**（g3）：只追加迁移（`migrations/`，0001 一期基线 DDL）、最小权限角色（`roles/`）、带 advisory lock 与漂移校验的迁移器（`scripts/migrate.mjs`）；`npm run migrate` 空库一键迁移（详见 `database/README.md`） |
 | `server/` | **后端服务**（g4）：NestJS 12 模块化单体骨架（api / worker 双入口）、统一错误与日志、健康检查、Drizzle schema（对齐 `database/` 基线）与服务边界规则（`npm run check:boundaries`）（详见 `server/README.md`）
@@ -21,8 +21,9 @@
 | `docs/实测报告(SSO接入验证).md` | **实测记录**：本地沙箱三轮实测（PKCE 全链路、公司接入标准落地、合规改造）+ 公司测试环境端到端演练 + 正式环境只读核对 |
 | `系统功能书.md` | **系统功能书（定档版）**：市场项目管理系统功能点清单 V1.1（模块 A1~D5、期次划分、项目总览字段口径） |
 | `技术设计v0.1-选型分析.md` | **技术设计 v0.1（选型分析篇）**：需求基线、规模画像、技术选型对比与结论、待确认问题（v0.1.7 讨论稿） |
-| `技术设计v0.2-架构与数据模型.md` | **技术设计 v0.2（架构与数据模型篇）**：总体架构、领域模型与 DDL 草案、流程节点与蓝图、权限模型、文件管道、自动化规则、接口契约（v0.2.1 讨论稿） |
-| `docs/adr/` | **架构决策记录（ADR）**：选型定档 17 条（ADR-001~017，来自技术设计 v0.1 的结论固化）+ 索引与编写规则 |
+| `技术设计v0.2-架构与数据模型.md` | **技术设计 v0.2（架构与数据模型篇）**：总体架构、领域模型与 DDL 草案、流程节点与蓝图、权限模型、文件管道、自动化规则、接口契约（v0.2.6 讨论稿；§11 为实施反推增补） |
+| `技术设计v0.3-实施与验收.md` | **技术设计 v0.3（实施与验收篇）**：卡片流水线与 DoR/DoD、M0~M8 里程碑与依赖、逐里程碑详细设计、横切机制、协作与联调、M0 待定案口径清单（v0.3 讨论稿） |
+| `docs/adr/` | **架构决策记录（ADR）**：选型定档 18 条（ADR-001~018，来自技术设计 v0.1 的结论固化 + v0.3 的实施流程）+ 索引与编写规则 |
 | `开发日志.md` | **每次推送的开发日志**：做了什么、效果与验证、风险与后续；最新记录在最上面 |
 | `团队分工.md` | **团队分工与责任边界**：3 人角色（2 后端 + 1 前端/运维）、模块归属、契约与文档责任、阶段 0 PoC 分工、运维值班与单点风险 |
 | `assets/` | 应用图标源文件（SVG，浅色 / 深色两版）；本地沙箱的副本放在 `deploy/casdoor/files/brand/`，由 Casdoor 自己托管 |
@@ -54,7 +55,7 @@ cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 #    登录页：密码（本地）+ 验证码；下方「公司统一登录（测试环境）」可用公司账号登录（详见本地沙箱说明）
 #    注意：应用已开 enableAutoSignin —— 已有 SSO 会话时会直接签发、不再显示登录页
 
-# 4. 前端（接入参考）：已登录会话下点应用卡片直接进前端；未登录自动跳 SSO
+# 4. 前端：先起后端 server/（本地 PORT=3001，见 server/README.md），再起前端；未登录自动跳 SSO
 cd frontend && npm install && cp .env.example .env.local && npm run dev
 ```
 

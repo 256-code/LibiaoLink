@@ -7,7 +7,8 @@ import type { DateRange } from "./components/DateRangePicker";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
 import { managerName } from "./data/managers";
-import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
+import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
+import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
 import { PROJECT_TYPES } from "./types";
 import type { MeResponse, Project } from "./types";
@@ -25,7 +26,14 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
   const route = useHashRoute();
   const filters = route.kind === "list" ? route.filters : EMPTY_LIST_QUERY;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(() => hasListFilters(filters));
+  // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
+  const [filterOpen, setFilterOpen] = useState(() => {
+    if (initialRouteRestored()) {
+      const storedOpen = readStoredSidebarOpen();
+      return storedOpen === null ? hasListFilters(filters) : storedOpen;
+    }
+    return hasListFilters(filters) || readStoredSidebarOpen() === true;
+  });
   const knownRegions = useMemo(() => new Set(projects.map((project) => project.region)), [projects]);
   const knownManagerIds = useMemo(() => new Set(projects.map((project) => project.managerId)), [projects]);
   // 链接里可能带着当前数据不存在的取值（分享过期 / 手改地址）：先丢弃，再由下面的 effect 归一化地址栏
@@ -49,7 +57,10 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
   }, [activeFilters, filters]);
 
   const updateFilters = (patch: Partial<ListQueryState>) => {
-    replaceListQuery({ ...activeFilters, ...patch });
+    const next = { ...activeFilters, ...patch };
+    replaceListQuery(next);
+    // 用户主动操作（勾选 / 时间区间 / 排序 / 搜索）：更新本地记忆，作为不带参数入口的恢复依据（关键字不写入）
+    saveFiltersPref(next);
   };
   const query = activeFilters.q;
   const keyword = query.trim().toLowerCase();
@@ -120,6 +131,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
         onReset={resetFilters}
         onClose={() => {
           setFilterOpen(false);
+          saveSidebarPref(false);
         }}
       />
 
@@ -129,6 +141,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
             checked={filterOpen}
             onChange={(next) => {
               setFilterOpen(next);
+              saveSidebarPref(next);
             }}
           />
           <div

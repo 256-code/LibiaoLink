@@ -122,18 +122,23 @@ POST http://localhost:8000/api/login   # 口令见 deploy/casdoor/.env.local
 
 ## 九、前端联调（frontend/）
 
-`frontend/` 是 LibiaoLink 前端起点，也是标准 OIDC 接入参考（React + Vite + TypeScript，严格模式）：
+`frontend/` 是 LibiaoLink 业务前端（React + Vite + TypeScript，严格模式）；登录与会话自 k6 起由后端 `server/`（identity 模块）承载，本地由 Vite 把 `/auth/*` 代理到后端：
 
 ```powershell
+# 1. 后端（新窗口）：server/.env 指向本沙箱，PORT=3001（前端占 3000）
+cd shared; npm ci; npm run build
+cd ../server; npm ci; npm run build; npm run start:api
+
+# 2. 前端（新窗口）
 cd frontend
 npm install
-copy .env.example .env.local      # 填 CASDOOR_CLIENT_SECRET（应用详情页可复制）
+copy .env.example .env.local      # BACKEND_ORIGIN 默认已指向 http://127.0.0.1:3001
 npm run dev                       # http://localhost:3000
 ```
 
 - 入口一：`http://localhost:8000/apps` 点 `LibiaoLink` 卡片（= 应用配置里的 Homepage URL）
 - 入口二：直接打开 `http://localhost:3000`，未登录自动跳 SSO
-- 无浏览器回归：`node scripts/smoke-test.mjs`（7 组断言，全绿 = 链路完整）
-- 令牌交换在服务端（本地是 `server/oidc-plugin.ts` 的 4 个 `/auth/*` 路由），`client_secret` 不进浏览器；生产环境把这 4 个路由搬到后端即可，细节见 `frontend/README.md`
+- 无浏览器回归：`npm run smoke`（先起后端与前端；登录 → 回调 → me → 登出 → returnTo 白名单，共 8 组）
+- 令牌交换与验签在后端（`server/src/modules/identity/`），`client_secret` 只存在于 `server/.env`；生产环境由站点域名直接承载 4 个 `/auth/*` 路由，细节见 `frontend/README.md`
 
-> 本地前端只对接本地 Casdoor；验证公司账号走登录页下方「公司统一登录（测试环境）」（第五节），上线时把 `.env.local` 换成公司环境地址与正式应用凭据。
+> 本地前端只对接本地 Casdoor；验证公司账号走登录页下方「公司统一登录（测试环境）」（第五节），上线时把 `server/.env` 换成公司环境地址与正式应用凭据。

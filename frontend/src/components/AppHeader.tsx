@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { clearHomePrefs } from "../homePrefs";
 import { goBackToList, listHref } from "../useHashRoute";
 import type { MeResponse, Project } from "../types";
 
@@ -102,6 +103,10 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
                 <a
                   role="menuitem"
                   href="/auth/logout"
+                  onClick={() => {
+                    // 退出登录清除本地记忆：多人共用设备时，避免把上一位用户的筛选选择带给下一位
+                    clearHomePrefs();
+                  }}
                   className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
                   退出登录
