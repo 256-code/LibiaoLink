@@ -23,6 +23,10 @@
     {
       "name": "flow",
       "description": "流程节点与蓝图（v0.2 §3）"
+    },
+    {
+      "name": "auth",
+      "description": "认证与会话（ADR-010；根路径 /auth/*，OIDC + PKCE）"
     }
   ],
   "components": {
@@ -340,6 +344,7 @@
         "enum": [
           "VALIDATION_FAILED",
           "AUTH_REQUIRED",
+          "AUTH_CALLBACK_FAILED",
           "FORBIDDEN",
           "NOT_FOUND",
           "VERSION_CONFLICT",
@@ -388,6 +393,33 @@
         "minLength": 8,
         "maxLength": 128,
         "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果"
+      },
+      "MeResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "claims": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "ID Token 声明（已验签；排障用）"
+          },
+          "expiresAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "example": 1758182400,
+            "description": "ID Token 到期时间（Unix 秒，UTC）；null = 未知"
+          }
+        },
+        "required": [
+          "user",
+          "claims",
+          "expiresAt"
+        ],
+        "description": "/auth/me 响应（会话由 HttpOnly Cookie 承载）"
       },
       "NodeCompleteBody": {
         "type": "object",
@@ -1269,6 +1301,58 @@
           "progress",
           "version"
         ]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "a195b721bb30a7d4",
+            "description": "Casdoor 用户 ID（claims.id → users.casdoor_id）"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "A0001",
+            "description": "工号（claims.name → users.username）"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "张三",
+            "description": "姓名（claims.displayName → users.display_name）"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "zhangsan@libiaorobot.com"
+          },
+          "owner": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "libiaorobot.com",
+            "description": "所属组织（claims.owner）"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "displayName",
+          "email",
+          "owner"
+        ],
+        "description": "登录用户（SSO 归一化口径，ADR-010）"
       },
       "Uuid": {
         "type": "string",
@@ -2426,6 +2510,132 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "登录入口：302 跳转 Casdoor 授权页（PKCE + state；returnTo 为同源回跳路径）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "/projects/12",
+              "description": "登录成功后的回跳路径（仅同源相对路径）"
+            },
+            "required": false,
+            "description": "登录成功后的回跳路径（仅同源相对路径）",
+            "name": "returnTo",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "跳转 SSO 授权页（Set-Cookie: 转场 state / verifier）"
+          }
+        }
+      }
+    },
+    "/auth/callback": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "登录回调：校验 state + PKCE 换令牌，建立 HttpOnly 会话后 302 回 returnTo",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "code",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "error",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "error_description",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "会话建立，跳转应用内路径"
+          },
+          "400": {
+            "description": "回调校验失败（AUTH_CALLBACK_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "当前登录用户（会话无效 / 超时返回 401，前端据此重新走 SSO）",
+        "responses": {
+          "200": {
+            "description": "已登录用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "登出：清本地会话并 302 到 Casdoor 单点登出（携 id_token_hint）",
+        "responses": {
+          "302": {
+            "description": "跳转 SSO 登出（本地会话已撤销）"
           }
         }
       }

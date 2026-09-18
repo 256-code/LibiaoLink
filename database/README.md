@@ -11,6 +11,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0001_baseline.sql` | 一期基线 DDL：10 张表 + 索引 + CHECK 约束 + 关系外键（v0.2 §2.3 落地；人员字段为旧口径，由 0002 收敛） |
 | `migrations/0002_projects_manager.sql` | 项目级人员字段收敛（v0.2.2 §2.3）：`projects` 删 `owner_id`、`manager_id` 改必填、`ix_projects_facets` 改用 `manager_id`（含空值回填） |
 | `migrations/0003_projects_seq_no.sql` | 项目序号（v0.2.3 §2.3）：`projects.seq_no` 新增全库唯一序号列（序列分配 + 存量按 created_at / code 回填 1..N + 唯一 / 正数约束） |
+| `migrations/0004_identity.sql` | 身份与会话（v0.2.5 §2.3；ADR-010）：`users`（SSO 归一化用户）+ `sessions`（会话 Cookie 值只存 sha256 哈希；id_token 仅用于单点登出） |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
 | `package.json` / `package-lock.json` | 独立 npm 包，唯一依赖 `pg`（不引入根 package.json） |
@@ -48,10 +49,11 @@ migrate: 目标 postgres://***:***@host:5432/libiaolink，迁移目录 ...
 migrate: 已执行 0001_baseline.sql（xx ms）
 migrate: 已执行 0002_projects_manager.sql（xx ms）
 migrate: 已执行 0003_projects_seq_no.sql（xx ms）
-migrate: 完成，本次执行 3 个迁移
+migrate: 已执行 0004_identity.sql（xx ms）
+migrate: 完成，本次执行 4 个迁移
 ```
 
-再次执行输出 `migrate: 数据库已是最新（已执行 3 个迁移，无漂移）`。
+再次执行输出 `migrate: 数据库已是最新（已执行 4 个迁移，无漂移）`。
 
 ## 不变式（迁移器保证）
 
