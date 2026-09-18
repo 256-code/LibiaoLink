@@ -1,0 +1,45 @@
+{
+  "name": "libiaolink-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LibiaoLink 后端（api / worker 双入口）：NestJS 12 模块化单体骨架与服务边界规则（g4 · S5·工程骨架）",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "nest build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev:api": "nest start --watch --entryFile entry/api",
+    "start:api": "node --env-file-if-exists=.env dist/entry/api.js",
+    "start:worker": "node --env-file-if-exists=.env dist/entry/worker.js",
+    "test": "vitest run",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:db-schema": "node --env-file-if-exists=.env scripts/check-db-schema.mjs"
+  },
+  "dependencies": {
+    "@libiaolink/contracts": "file:../shared",
+    "@nestjs/common": "^12.0.3",
+    "@nestjs/core": "^12.0.3",
+    "@nestjs/platform-express": "^12.0.3",
+    "drizzle-orm": "^0.45.2",
+    "nestjs-pino": "^5.2.0",
+    "pg": "^8.23.0",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^12.0.3",
+    "@nestjs/schematics": "^12.0.3",
+    "@nestjs/testing": "^12.0.3",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
+    "typescript": "~6.0.2",
+    "vitest": "^5.0.1"
+  }
+}
