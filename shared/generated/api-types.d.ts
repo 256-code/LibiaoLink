@@ -32,7 +32,7 @@ export interface paths {
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序：sort=field:asc,field2:desc（v0.2 §7.1） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
                     sort?: string;
                 };
                 header?: never;
@@ -143,7 +143,7 @@ export interface paths {
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序：sort=field:asc,field2:desc（v0.2 §7.1） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
                     sort?: string;
                 };
                 header?: never;
@@ -2628,7 +2628,7 @@ export interface components {
             sort: number;
             /** @description 普通用户只见 enabled=true 的项；管理员可见全集（二期） */
             enabled: boolean;
-            /** @description 字典元数据；projectType 必含 accent（主题色），前端据此渲染，不硬编码 */
+            /** @description 字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码 */
             metadata: {
                 [key: string]: unknown;
             };
@@ -2849,6 +2849,8 @@ export interface components {
             /** @description 项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码） */
             projectType: string;
             managerId: components["schemas"]["Uuid"];
+            /** @description 项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」） */
+            managerName: string | null;
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
             description: string | null;

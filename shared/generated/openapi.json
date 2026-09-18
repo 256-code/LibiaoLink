@@ -581,7 +581,7 @@
           "metadata": {
             "type": "object",
             "additionalProperties": {},
-            "description": "字典元数据；projectType 必含 accent（主题色），前端据此渲染，不硬编码"
+            "description": "字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码"
           }
         },
         "required": [
@@ -1395,6 +1395,13 @@
           "managerId": {
             "$ref": "#/components/schemas/Uuid"
           },
+          "managerName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」）"
+          },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           },
@@ -1426,6 +1433,7 @@
           "region",
           "projectType",
           "managerId",
+          "managerName",
           "stageKey",
           "status",
           "description",
@@ -3057,11 +3065,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
             "name": "sort",
             "in": "query"
           }
@@ -3265,11 +3273,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序：sort=field:asc,field2:desc（v0.2 §7.1）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
             "name": "sort",
             "in": "query"
           }
