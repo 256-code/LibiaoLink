@@ -16,8 +16,9 @@ shared/
 │   ├── modules/
 │   │   ├── projects.ts         项目主数据 + 首页分类 facets
 │   │   ├── tasks.ts            任务 + 四格进度
+│   │   ├── identity.ts       登录用户 + /auth/me（ADR-010；g6）
 │   │   └── flow.ts             蓝图 JSON + 流程节点 + 完成门禁
-│   └── openapi.ts              /api/v1 路径注册与文档生成
+│   └── openapi.ts              /api/v1 与 /auth/* 路径注册与文档生成
 ├── scripts/
 │   ├── lib.mjs                 渲染 OpenAPI 文档与客户端类型
 │   ├── generate.mjs            写生成物（npm run generate）
@@ -58,11 +59,13 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 主题色 accent | 随项目类型字典（C9）元数据下发；前端不硬编码颜色 |
 | 任务状态 | 存储基础态 pending/active/done；展示五态由服务端派生为 `displayStatus`（不写回） |
 | 节点门禁 | 完成需过服务端事务内校验；缺件返回 422 + `missing` 明细（NODE_REQUIRED_DOC_MISSING） |
-| 蓝图 | 自建 JSON（schemaVersion=1）；导出/导入 round-trip 无损；导入即快照 |
+│ 蓝图 | 自建 JSON（schemaVersion=1）；导出/导入 round-trip 无损；导入即快照 |
+| 认证与会话 | /auth/*（根路径；OIDC authorization_code + PKCE + state；HttpOnly Cookie 会话）；/auth/me 返回 `{ user, claims, expiresAt }`；未认证 401 AUTH_REQUIRED、回调失败 400 AUTH_CALLBACK_FAILED |
 
 ## 本批范围与后续切片
 
 - 本批（g2 第一切片）：项目、任务、流程节点与蓝图（对应阶段 6 纵切的 h1~h4）。
+- 认证与会话（g6）：identity 契约（User / MeResponse / /auth/login 与 /auth/callback 查询参数），随会话后端化落地。
 - 后续切片（随对应模块落地补契约，仍在本包内）：文件与预览（file / preview，阶段 7）、
   通知（notify，阶段 8）、搜索与统计（search / dashboard，阶段 8）、迁移工具链（阶段 9）、
   自动化规则与日报/问题（automation / report，阶段 7）。
