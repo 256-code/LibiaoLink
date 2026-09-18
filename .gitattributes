@@ -1,0 +1,3 @@
+# 统一行尾：仓库内文本文件一律 LF（索引与工作区）。
+# 避免 Windows（core.autocrlf=true）检出 CRLF 导致 shared 契约漂移检查误报；二进制文件不转换。
+* text=auto eol=lf

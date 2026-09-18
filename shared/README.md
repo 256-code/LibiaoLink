@@ -38,7 +38,7 @@ npm run check        # 漂移校验：生成结果与仓库内生成物一致才
 ```
 
 生成链路：修改 src 下的 Zod schema → `npm run generate` → 提交生成物（源与生成物同一 PR）。
-CI 尚未接入本检查（阶段 5 的 CI 扩展任务负责），在那之前由作者在推送前手动执行 `npm run check`。
+CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.github/workflows/ci.yml` 的 `shared` job 自动执行 `npm run typecheck` + `npm run check`；本地推送前仍建议手动执行。
 
 ## 已定案口径（契约层）
 
