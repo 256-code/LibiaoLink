@@ -3,10 +3,11 @@
  *
  * 前置：
  *   1. 本地 Casdoor 已启动（deploy/casdoor，docker compose up -d）
- *   2. npm run dev 已在 3000 端口运行
- *   3. Casdoor 应用 libiaolink 的 Redirect URLs 含 http://localhost:3000/auth/callback
+ *   2. 后端 api 已启动：server/ 下 npm run start:api（server/.env 指向本地沙箱；PORT=3001 与前端错开）
+ *   3. npm run dev 已在 3000 端口运行（/auth/* 经 Vite 代理到后端）
+ *   4. Casdoor 应用 libiaolink 的 Redirect URLs 含 http://localhost:3000/auth/callback
  *
- * 用法：node scripts/smoke-test.mjs
+ * 用法：node scripts/smoke-test.mjs（或 npm run smoke）
  * 账号口令取自 .env.local（frontend/ 或 deploy/casdoor/，均不入库）；可用环境变量覆盖：
  *   FRONTEND_BASE / TEST_USERNAME / TEST_PASSWORD / CASDOOR_APPLICATION / CASDOOR_ORGANIZATION
  */
@@ -49,6 +50,7 @@ if (PASSWORD === "") {
 }
 
 const jar = new Map();
+const cookieRaw = new Map();
 let failures = 0;
 
 function storeCookies(response) {
@@ -62,8 +64,10 @@ function storeCookies(response) {
     const value = pair.slice(index + 1).trim();
     if (value === "") {
       jar.delete(name);
+      cookieRaw.delete(name);
     } else {
       jar.set(name, value);
+      cookieRaw.set(name, raw);
     }
   }
 }
@@ -86,6 +90,11 @@ function check(name, ok, detail) {
 }
 
 async function main() {
+  console.log("== 0. 后端就绪（/readyz，经前端代理）==");
+  const readyResponse = await fetch(FRONTEND + "/readyz");
+  const readyText = await readyResponse.text();
+  check("后端 readyz 200（PG 连通、核心表可达）", readyResponse.status === 200, String(readyResponse.status) + " " + readyText.slice(0, 120));
+
   console.log("== 1. 首页 ==");
   const rootResponse = await fetch(FRONTEND + "/", { redirect: "manual" });
   const rootHtml = await rootResponse.text();
@@ -173,7 +182,10 @@ async function main() {
   }
   storeCookies(callbackResponse);
   check("回调 302 回首页", callbackResponse.status === 302 && callbackResponse.headers.get("location") === "/", String(callbackResponse.status));
-  check("已建立本地会话（ll_at / ll_idt）", jar.has("ll_at") && jar.has("ll_idt"));
+  check("已建立本地会话（ll_sid）", jar.has("ll_sid"));
+  check("ll_sid 为 HttpOnly", (cookieRaw.get("ll_sid") ?? "").toLowerCase().includes("httponly"));
+  check("ll_csrf 可读（非 HttpOnly，供 X-CSRF-Token）", jar.has("ll_csrf") && !(cookieRaw.get("ll_csrf") ?? "").toLowerCase().includes("httponly"));
+  check("旧的令牌 Cookie 已移除（ll_at / ll_idt）", !jar.has("ll_at") && !jar.has("ll_idt"));
 
   console.log("== 6. 取用户信息（/auth/me）==");
   const meResponse = await fetch(FRONTEND + "/auth/me", { headers: { Cookie: cookieHeader() } });
@@ -186,13 +198,47 @@ async function main() {
   check("Id 非空", typeof user.id === "string" && user.id !== "", String(user.id));
   check("Owner 非空", typeof user.owner === "string" && user.owner !== "", String(user.owner));
   check("id_token 通过 JWKS 验签（claims 可读）", typeof me.claims === "object" && me.claims !== null && me.claims.name !== undefined);
+  check("expiresAt 为 Unix 秒", typeof me.expiresAt === "number" && me.expiresAt > 0, String(me.expiresAt));
 
   console.log("== 7. 登出（/auth/logout）==");
   const logoutResponse = await fetch(FRONTEND + "/auth/logout", { redirect: "manual", headers: { Cookie: cookieHeader() } });
   storeCookies(logoutResponse);
   check("登出 302", logoutResponse.status === 302, String(logoutResponse.status));
+  const logoutLocation = logoutResponse.headers.get("location") ?? "";
+  check("登出跳 Casdoor 单点登出（带 id_token_hint）", logoutLocation.includes("/api/logout") && logoutLocation.includes("id_token_hint="), logoutLocation.slice(0, 100));
+  check("登出清理会话 Cookie（ll_sid / ll_csrf）", !jar.has("ll_sid") && !jar.has("ll_csrf"));
   const afterLogout = await fetch(FRONTEND + "/auth/me", { headers: { Cookie: cookieHeader() } });
   check("登出后 /auth/me 401", afterLogout.status === 401, String(afterLogout.status));
+
+  console.log("== 8. 登录回跳 returnTo（白名单）==");
+  async function loginWithReturnTo(returnTo) {
+    const loginResponse2 = await fetch(FRONTEND + "/auth/login?returnTo=" + encodeURIComponent(returnTo), { redirect: "manual" });
+    storeCookies(loginResponse2);
+    const authUrl2 = new URL(loginResponse2.headers.get("location") ?? "");
+    const loginUrl2 = new URL(authUrl2.origin + "/api/login");
+    for (const [target, source] of loginParams) {
+      const value = authUrl2.searchParams.get(source);
+      if (value !== null) {
+        loginUrl2.searchParams.set(target, value);
+      }
+    }
+    const auto2 = await fetch(loginUrl2, { method: "POST", redirect: "manual", headers: { "Content-Type": "application/json", Cookie: cookieHeader() }, body: JSON.stringify({ application: APP_NAME, organization: ORG_NAME, language: "zh", type: "code" }) });
+    const autoJson2 = await auto2.json();
+    let code2 = "";
+    if (typeof autoJson2.data === "string" && autoJson2.data !== "") {
+      code2 = autoJson2.data.includes("code=") ? (new URL(autoJson2.data).searchParams.get("code") ?? "") : autoJson2.data;
+    }
+    const callback2 = await fetch(FRONTEND + "/auth/callback?code=" + encodeURIComponent(code2) + "&state=" + encodeURIComponent(authUrl2.searchParams.get("state") ?? ""), { redirect: "manual", headers: { Cookie: cookieHeader() } });
+    storeCookies(callback2);
+    return callback2;
+  }
+
+  const legitCallback = await loginWithReturnTo("/#/project/3");
+  check("回调按 returnTo 回跳（/#/project/3）", legitCallback.status === 302 && legitCallback.headers.get("location") === "/#/project/3", String(legitCallback.status) + " " + (legitCallback.headers.get("location") ?? ""));
+  const evilCallback = await loginWithReturnTo("//evil.example/x");
+  check("非法 returnTo 回退到 /", evilCallback.status === 302 && evilCallback.headers.get("location") === "/", String(evilCallback.status) + " " + (evilCallback.headers.get("location") ?? ""));
+  const logoutFinal = await fetch(FRONTEND + "/auth/logout", { redirect: "manual", headers: { Cookie: cookieHeader() } });
+  check("收尾登出 302", logoutFinal.status === 302, String(logoutFinal.status));
 
   console.log("");
   if (failures === 0) {

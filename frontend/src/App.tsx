@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Home from "./Home";
 import ProjectDetail from "./ProjectDetail";
+import { apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { INITIAL_PROJECTS } from "./data/projects";
@@ -31,7 +32,7 @@ export default function App() {
     let cancelled = false;
     const load = async (): Promise<void> => {
       try {
-        const response = await fetch("/auth/me", { headers: { Accept: "application/json" } });
+        const response = await apiFetch("/auth/me");
         if (cancelled) {
           return;
         }
@@ -60,7 +61,7 @@ export default function App() {
 
   useEffect(() => {
     if (state.kind === "signed-out") {
-      window.location.replace("/auth/login");
+      redirectToLogin();
     }
   }, [state]);
 
