@@ -972,6 +972,1003 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description UUID（主键与关联 ID） */
+                    "filter[nodeId]"?: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    "filter[taskId]"?: components["schemas"]["Uuid"];
+                    /** @description 文件状态（多值逗号分隔）：draft / final / changed / archived / recycled */
+                    "filter[status]"?: string;
+                    /** @description 成果文件类型（多值逗号分隔，取值见 DocType 字典） */
+                    "filter[docType]"?: string;
+                    /** @description UUID（主键与关联 ID） */
+                    "filter[uploadedBy]"?: components["schemas"]["Uuid"];
+                    /** @description 关键字（文件名） */
+                    q?: string;
+                    page?: number;
+                    limit?: number;
+                    /** @description 排序：sort=field:asc,field2:desc（v0.2 §7.1） */
+                    sort?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 文件列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileListResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 发起上传（分片直传；version = 草稿替换 / change = 定档后变更，申请即通过） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["UploadCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 上传会话（含分片参数；complete 时登记版本） */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UploadCreateResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 文件详情（含当前版本） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 文件详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileDetail"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 版本链（历史版本可预览 / 下载，受权限控制） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 版本链 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileVersionListResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/versions/{versionId}/download-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 版本短时签名下载（写查看 / 下载审计） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 签名下载地址 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileDownloadUrlResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/uploads/{uploadId}/parts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量获取分片预签名 URL（首传 / 断点续传共用） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    uploadId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["UploadPartsBody"];
+                };
+            };
+            responses: {
+                /** @description 分片预签名 URL */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UploadPartsResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/uploads/{uploadId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 上传会话状态（已传 / 缺失分片；断点续传依据） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    uploadId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 会话状态 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UploadSessionView"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/uploads/{uploadId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 完成上传（登记 file_version；intent=change 同事务落变更） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    uploadId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["UploadCompleteBody"];
+                };
+            };
+            responses: {
+                /** @description 文件、版本与（change 意图的）变更记录 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UploadCompleteResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/uploads/{uploadId}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消上传会话（未完成分片由对象存储生命周期兜底清理） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    uploadId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已取消的会话 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UploadAbortResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/finalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 定档（锁版；此后修改必须走变更） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileFinalizeBody"];
+                };
+            };
+            responses: {
+                /** @description 已定档的文件 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["File"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 回溯生成新版本（不删除历史；定档后按变更流留痕） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileRollbackBody"];
+                };
+            };
+            responses: {
+                /** @description 回溯后的文件与新版本 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileRollbackResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/recycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 移入回收站（默认保留 30 天，可恢复） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileRecycleBody"];
+                };
+            };
+            responses: {
+                /** @description 已回收的文件 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["File"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从回收站恢复（回到进入前状态） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileRestoreBody"];
+                };
+            };
+            responses: {
+                /** @description 已恢复的文件 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["File"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 彻底删除（仅管理员；对象与元数据一并清理，操作留痕） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FilePurgeBody"];
+                };
+            };
+            responses: {
+                /** @description 已彻底删除 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FilePurgeResponse"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/change-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 变更记录列表（按阶段 / 节点 / 文件 / 申请人 / 关键字检索） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 阶段（多值逗号分隔） */
+                    "filter[stageKey]"?: string;
+                    /** @description UUID（主键与关联 ID） */
+                    "filter[nodeId]"?: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    "filter[fileId]"?: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    "filter[appliedBy]"?: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    "filter[projectId]"?: components["schemas"]["Uuid"];
+                    /** @description 关键字（变更原因 / 变更前后摘要） */
+                    q?: string;
+                    page?: number;
+                    limit?: number;
+                    /** @description 排序：sort=field:asc,field2:desc（v0.2 §7.1） */
+                    sort?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 变更记录列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChangeRequestListResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/change-requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 变更详情（含变更后文件与版本） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 变更详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChangeRequestDetail"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1057,6 +2054,50 @@ export interface components {
             canComplete: boolean;
             missing: components["schemas"]["NodeGateMissing"][];
         };
+        /** @description 变更申请字段（随上传会话提交，完成上传时同事务生效） */
+        ChangeIntentBody: {
+            /** @description 变更原因（必填；无变更后文件不允许提交） */
+            reason: string;
+            beforeSummary?: string;
+            afterSummary?: string;
+            stageKey?: components["schemas"]["StageKey"];
+        };
+        /** @description intent=change 时的变更记录；version 意图为空 */
+        ChangeRequest: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            nodeId: components["schemas"]["Uuid"] & (string | null);
+            stageKey: components["schemas"]["StageKey"] & (string | null);
+            /** @description 变更原因（必填） */
+            reason: string;
+            /** @description 变更前摘要 */
+            beforeSummary: string | null;
+            /** @description 变更后摘要 */
+            afterSummary: string | null;
+            status: components["schemas"]["ChangeStatus"];
+            appliedBy: components["schemas"]["Uuid"];
+            appliedAt: components["schemas"]["DateTime"];
+            createdAt: components["schemas"]["DateTime"];
+            fileId: components["schemas"]["Uuid"] & unknown;
+            versionId: components["schemas"]["Uuid"] & unknown;
+            versionSeq: number;
+        } | null;
+        /** @description 变更记录（v0.2 §5.3；一期申请即通过、全程留痕） */
+        ChangeRequestDetail: components["schemas"]["ChangeRequest"] & {
+            file: components["schemas"]["File"];
+            version: components["schemas"]["FileVersion"];
+        };
+        ChangeRequestListResponse: {
+            items: (components["schemas"]["ChangeRequest"] & unknown)[];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /**
+         * @description 变更申请状态；一期申请即通过（唯一终态 applied），多级审批二期可启用
+         * @enum {string}
+         */
+        ChangeStatus: "applied";
         /**
          * Format: date
          * @description 业务日期 YYYY-MM-DD（不携带时区）
@@ -1072,11 +2113,19 @@ export interface components {
          * @enum {string|null}
          */
         DocType: "CAD图纸" | "技术协议" | "合同" | "评审单" | "设备清单" | "物料总清单" | "发货装箱单" | "到货单" | "安装完成证明" | "验收单" | null;
+        /** @description 同内容哈希的既有文件提示（用户确认后可继续上传，不做强阻断） */
+        DuplicateHint: {
+            fileId: components["schemas"]["Uuid"];
+            name: string;
+            sizeBytes: number;
+            uploadedBy: components["schemas"]["Uuid"];
+            uploadedAt: components["schemas"]["DateTime"];
+        } | null;
         /**
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_EXPIRED" | "CHECKSUM_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -1088,6 +2137,102 @@ export interface components {
             meta?: {
                 [key: string]: unknown;
             };
+        };
+        /** @description 文件（v0.2 §5.2；定档后不可覆盖，修改必须走变更） */
+        File: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            nodeId: components["schemas"]["Uuid"] & (string | null);
+            taskId: components["schemas"]["Uuid"] & (string | null);
+            docType: components["schemas"]["DocType"] & unknown;
+            /**
+             * @description 原文件名（含中文，保留在元数据）
+             * @example 机械设计图纸-v2.docx
+             */
+            name: string;
+            status: components["schemas"]["FileStatus"];
+            currentVersionId: components["schemas"]["Uuid"] & (string | null);
+            version: components["schemas"]["Version"];
+            createdBy: components["schemas"]["Uuid"];
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+            finalizedAt: components["schemas"]["DateTime"] & (string | null);
+            finalizedBy: components["schemas"]["Uuid"] & (string | null);
+            recycledAt: components["schemas"]["DateTime"] & (string | null);
+            recycledBy: components["schemas"]["Uuid"] & (string | null);
+            recycledFromStatus: components["schemas"]["FileStatus"] & (string | null);
+        };
+        /** @description 文件详情（含当前版本；版本链走 /files/{id}/versions） */
+        FileDetail: components["schemas"]["File"] & {
+            currentVersion: components["schemas"]["FileVersion"];
+        };
+        FileDownloadUrlResponse: {
+            /** @description 短时签名下载地址（写查看 / 下载审计；对象存储禁止匿名读取） */
+            url: string;
+            fileName: string;
+            sizeBytes: number;
+            expiresAt: components["schemas"]["DateTime"];
+        };
+        /** @description 定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换 */
+        FileFinalizeBody: {
+            version: components["schemas"]["Version"];
+        };
+        FileListResponse: {
+            items: components["schemas"]["File"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /** @description 彻底删除（仅管理员；对象与元数据一并清理，操作留痕） */
+        FilePurgeBody: {
+            version: components["schemas"]["Version"];
+            reason?: string;
+        };
+        FilePurgeResponse: {
+            fileId: components["schemas"]["Uuid"];
+            purgedAt: components["schemas"]["DateTime"];
+        };
+        /** @description 移入回收站（任意状态可删；默认保留 30 天，可恢复） */
+        FileRecycleBody: {
+            version: components["schemas"]["Version"];
+            reason?: string;
+        };
+        FileRestoreBody: {
+            version: components["schemas"]["Version"];
+        };
+        /** @description 回溯生成新版本（不删除历史版本；定档后回溯走变更、申请即通过） */
+        FileRollbackBody: {
+            toVersionId: components["schemas"]["Uuid"] & unknown;
+            /** @description 回溯原因（留痕；定档 / 已变更文件按变更流处理） */
+            reason: string;
+            version: components["schemas"]["Version"];
+        };
+        FileRollbackResponse: {
+            file: components["schemas"]["File"];
+            version: components["schemas"]["FileVersion"];
+            changeRequest: components["schemas"]["ChangeRequest"] & unknown;
+        };
+        /**
+         * @description 文件五态（v0.2 §5.2）
+         * @enum {string}
+         */
+        FileStatus: "draft" | "final" | "changed" | "archived" | "recycled";
+        /** @description 文件版本（v0.2 §5.1；对象键 = projects/{projectId}/files/{fileId}/v{seq}/{contentHash}.{ext}） */
+        FileVersion: {
+            id: components["schemas"]["Uuid"];
+            fileId: components["schemas"]["Uuid"];
+            /** @description 版本号（同一文件内递增，从 1 开始） */
+            seq: number;
+            sizeBytes: number;
+            contentHash: components["schemas"]["Sha256"] & unknown;
+            mime: string | null;
+            uploadedBy: components["schemas"]["Uuid"];
+            uploadedAt: components["schemas"]["DateTime"];
+            changeRequestId: components["schemas"]["Uuid"] & (string | null);
+        } | null;
+        FileVersionListResponse: {
+            items: components["schemas"]["FileVersion"][];
+            total: number;
         };
         /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
         IdempotencyKey: string;
@@ -1269,6 +2414,8 @@ export interface components {
             description?: string | null;
             version: components["schemas"]["Version"];
         };
+        /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
+        Sha256: string;
         /**
          * @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）
          * @enum {string}
@@ -1328,6 +2475,93 @@ export interface components {
             actualEnd?: components["schemas"]["DateOnly"] & unknown;
             note?: string;
             version: components["schemas"]["Version"];
+        };
+        UploadAbortResponse: {
+            upload: components["schemas"]["UploadSession"];
+        };
+        UploadCompleteBody: {
+            contentHash: components["schemas"]["Sha256"] & unknown;
+        };
+        UploadCompleteResponse: {
+            file: components["schemas"]["File"];
+            version: components["schemas"]["FileVersion"];
+            changeRequest: components["schemas"]["ChangeRequest"];
+        };
+        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口） */
+        UploadCreateBody: {
+            projectId: components["schemas"]["Uuid"];
+            name: string;
+            /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
+            sizeBytes: number;
+            mime?: string;
+            contentHash?: components["schemas"]["Sha256"];
+            docType?: components["schemas"]["DocType"];
+            nodeId?: components["schemas"]["Uuid"];
+            taskId?: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            intent: "version";
+        } | {
+            projectId: components["schemas"]["Uuid"];
+            name: string;
+            /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
+            sizeBytes: number;
+            mime?: string;
+            contentHash?: components["schemas"]["Sha256"];
+            docType?: components["schemas"]["DocType"];
+            nodeId?: components["schemas"]["Uuid"];
+            taskId?: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            intent: "change";
+            change: components["schemas"]["ChangeIntentBody"];
+        };
+        UploadCreateResponse: {
+            file: components["schemas"]["File"];
+            upload: components["schemas"]["UploadSession"];
+            duplicateHint: components["schemas"]["DuplicateHint"];
+        };
+        /**
+         * @description 上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）
+         * @enum {string}
+         */
+        UploadIntent: "version" | "change";
+        /** @description 批量获取分片预签名 URL（首传与断点续传共用；续传前先查会话状态拿缺失分片） */
+        UploadPartsBody: {
+            partNumbers: number[];
+        };
+        UploadPartsResponse: {
+            uploadId: components["schemas"]["Uuid"];
+            partSizeBytes: number;
+            parts: components["schemas"]["UploadPartUrl"][];
+            expiresAt: components["schemas"]["DateTime"];
+        };
+        UploadPartUrl: {
+            partNumber: number;
+            /** @description 预签名 PUT URL（浏览器直传对象存储，api 不代理大文件流量） */
+            url: string;
+            expiresAt: components["schemas"]["DateTime"];
+        };
+        /** @description 上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准） */
+        UploadSession: {
+            id: components["schemas"]["Uuid"];
+            fileId: components["schemas"]["Uuid"];
+            intent: components["schemas"]["UploadIntent"];
+            partSizeBytes: number;
+            totalParts: number;
+            status: components["schemas"]["UploadSessionStatus"];
+            createdAt: components["schemas"]["DateTime"];
+            expiresAt: components["schemas"]["DateTime"];
+        };
+        /**
+         * @description 上传会话状态；active 可续传，completed/aborted/expired 不可再用
+         * @enum {string}
+         */
+        UploadSessionStatus: "active" | "completed" | "aborted" | "expired";
+        /** @description 上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准） */
+        UploadSessionView: components["schemas"]["UploadSession"] & {
+            /** @description 已上传分片（来自对象存储 ListParts） */
+            uploadedPartNumbers: number[];
+            /** @description 缺失分片（断点续传只补这些） */
+            missingPartNumbers: number[];
         };
         /**
          * Format: uuid

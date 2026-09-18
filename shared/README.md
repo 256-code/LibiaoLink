@@ -16,7 +16,8 @@ shared/
 │   ├── modules/
 │   │   ├── projects.ts         项目主数据 + 首页分类 facets
 │   │   ├── tasks.ts            任务 + 四格进度
-│   │   └── flow.ts             蓝图 JSON + 流程节点 + 完成门禁
+│   │   ├── flow.ts             蓝图 JSON + 流程节点 + 完成门禁
+│   │   └── files.ts            文件与变更（上传 / 版本 / 定档 / 回收站；v0.2 §5）
 │   └── openapi.ts              /api/v1 路径注册与文档生成
 ├── scripts/
 │   ├── lib.mjs                 渲染 OpenAPI 文档与客户端类型
@@ -59,12 +60,18 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 任务状态 | 存储基础态 pending/active/done；展示五态由服务端派生为 `displayStatus`（不写回） |
 | 节点门禁 | 完成需过服务端事务内校验；缺件返回 422 + `missing` 明细（NODE_REQUIRED_DOC_MISSING） |
 | 蓝图 | 自建 JSON（schemaVersion=1）；导出/导入 round-trip 无损；导入即快照 |
+| 文件状态 | 五态 draft/final/changed/archived/recycled；定档后不可覆盖，修改必须走变更（FILE_STATE_INVALID 拒绝） |
+| 上传 | 分片预签名直传（api 只签名与登记元数据）；`intent=version` 仅草稿替换、`intent=change` 定档后变更；会话过期 / 分片未齐 409（UPLOAD_EXPIRED / UPLOAD_INCOMPLETE）；内容哈希只做**重复提示**、不做强阻断 |
+| 变更 | 一期申请即通过（status=applied）：提交变更后文件与变更字段，完成上传时同事务写 change_requests + 新版本 + 状态 changed + Outbox（R01 / 通知由消费方处理）；缺变更后文件不允许提交 |
+| 回收站 | 任意状态可回收（默认保留 30 天，可恢复回原状态）；彻底删除仅管理员且留痕（权限模型落地前为临时口径） |
+| 下载与预览地址 | 短时签名 URL + 审计；对象存储禁止匿名读取 |
 
 ## 本批范围与后续切片
 
-- 本批（g2 第一切片）：项目、任务、流程节点与蓝图（对应阶段 6 纵切的 h1~h4）。
-- 后续切片（随对应模块落地补契约，仍在本包内）：文件与预览（file / preview，阶段 7）、
-  通知（notify，阶段 8）、搜索与统计（search / dashboard，阶段 8）、迁移工具链（阶段 9）、
+- 第一批（g2）：项目、任务、流程节点与蓝图（对应阶段 6 纵切的 h1~h4）。
+- 第二批（S7·file，i1）：文件与变更（上传 / 版本 / 定档 / 变更 / 回收站）；预览（preview）契约随 i3 补。
+- 后续切片（随对应模块落地补契约，仍在本包内）：通知（notify，阶段 8）、
+  搜索与统计（search / dashboard，阶段 8）、迁移工具链（阶段 9）、
   自动化规则与日报/问题（automation / report，阶段 7）。
 
 ## 边界与注意事项

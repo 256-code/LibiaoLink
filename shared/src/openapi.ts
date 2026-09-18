@@ -24,6 +24,32 @@ import {
   ProjectFlowSchema,
   ProjectNodeSchema,
 } from "./modules/flow.ts";
+import {
+  ChangeRequestDetailSchema,
+  ChangeRequestListQuerySchema,
+  ChangeRequestListResponseSchema,
+  FileDetailSchema,
+  FileDownloadUrlResponseSchema,
+  FileFinalizeBodySchema,
+  FileListQuerySchema,
+  FileListResponseSchema,
+  FilePurgeBodySchema,
+  FilePurgeResponseSchema,
+  FileRecycleBodySchema,
+  FileRestoreBodySchema,
+  FileRollbackBodySchema,
+  FileRollbackResponseSchema,
+  FileSchema,
+  FileVersionListResponseSchema,
+  UploadAbortResponseSchema,
+  UploadCompleteBodySchema,
+  UploadCompleteResponseSchema,
+  UploadCreateBodySchema,
+  UploadCreateResponseSchema,
+  UploadPartsBodySchema,
+  UploadPartsResponseSchema,
+  UploadSessionViewSchema,
+} from "./modules/files.ts";
 
 const json = (schema: z.ZodTypeAny) => ({ content: { "application/json": { schema } } });
 
@@ -272,6 +298,217 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 文件与变更（v0.2 §5.1-5.3；系统功能书 A4 / D2 接口面）----
+  const uploadParams = z.object({ id: UuidSchema, uploadId: UuidSchema });
+  const versionParams = z.object({ id: UuidSchema, versionId: UuidSchema });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/files",
+    tags: ["files"],
+    summary: "项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选）",
+    request: { params: idParams, query: FileListQuerySchema },
+    responses: {
+      200: { description: "文件列表", ...json(FileListResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/uploads",
+    tags: ["files"],
+    summary: "发起上传（分片直传；version = 草稿替换 / change = 定档后变更，申请即通过）",
+    request: { headers: idempotencyHeader, body: json(UploadCreateBodySchema) },
+    responses: {
+      201: { description: "上传会话（含分片参数；complete 时登记版本）", ...json(UploadCreateResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/files/{id}",
+    tags: ["files"],
+    summary: "文件详情（含当前版本）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "文件详情", ...json(FileDetailSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/files/{id}/versions",
+    tags: ["files"],
+    summary: "版本链（历史版本可预览 / 下载，受权限控制）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "版本链", ...json(FileVersionListResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/files/{id}/versions/{versionId}/download-url",
+    tags: ["files"],
+    summary: "版本短时签名下载（写查看 / 下载审计）",
+    request: { params: versionParams },
+    responses: {
+      200: { description: "签名下载地址", ...json(FileDownloadUrlResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/uploads/{uploadId}/parts",
+    tags: ["files"],
+    summary: "批量获取分片预签名 URL（首传 / 断点续传共用）",
+    request: { params: uploadParams, body: json(UploadPartsBodySchema) },
+    responses: {
+      200: { description: "分片预签名 URL", ...json(UploadPartsResponseSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/files/{id}/uploads/{uploadId}",
+    tags: ["files"],
+    summary: "上传会话状态（已传 / 缺失分片；断点续传依据）",
+    request: { params: uploadParams },
+    responses: {
+      200: { description: "会话状态", ...json(UploadSessionViewSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/uploads/{uploadId}/complete",
+    tags: ["files"],
+    summary: "完成上传（登记 file_version；intent=change 同事务落变更）",
+    request: { params: uploadParams, headers: idempotencyHeader, body: json(UploadCompleteBodySchema) },
+    responses: {
+      200: { description: "文件、版本与（change 意图的）变更记录", ...json(UploadCompleteResponseSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/uploads/{uploadId}/abort",
+    tags: ["files"],
+    summary: "取消上传会话（未完成分片由对象存储生命周期兜底清理）",
+    request: { params: uploadParams },
+    responses: {
+      200: { description: "已取消的会话", ...json(UploadAbortResponseSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/finalize",
+    tags: ["files"],
+    summary: "定档（锁版；此后修改必须走变更）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(FileFinalizeBodySchema) },
+    responses: {
+      200: { description: "已定档的文件", ...json(FileSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/rollback",
+    tags: ["files"],
+    summary: "回溯生成新版本（不删除历史；定档后按变更流留痕）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(FileRollbackBodySchema) },
+    responses: {
+      200: { description: "回溯后的文件与新版本", ...json(FileRollbackResponseSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/recycle",
+    tags: ["files"],
+    summary: "移入回收站（默认保留 30 天，可恢复）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(FileRecycleBodySchema) },
+    responses: {
+      200: { description: "已回收的文件", ...json(FileSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/restore",
+    tags: ["files"],
+    summary: "从回收站恢复（回到进入前状态）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(FileRestoreBodySchema) },
+    responses: {
+      200: { description: "已恢复的文件", ...json(FileSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/files/{id}/purge",
+    tags: ["files"],
+    summary: "彻底删除（仅管理员；对象与元数据一并清理，操作留痕）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(FilePurgeBodySchema) },
+    responses: {
+      200: { description: "已彻底删除", ...json(FilePurgeResponseSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/change-requests",
+    tags: ["changes"],
+    summary: "变更记录列表（按阶段 / 节点 / 文件 / 申请人 / 关键字检索）",
+    request: { params: idParams, query: ChangeRequestListQuerySchema },
+    responses: {
+      200: { description: "变更记录列表", ...json(ChangeRequestListResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/change-requests/{id}",
+    tags: ["changes"],
+    summary: "变更详情（含变更后文件与版本）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "变更详情", ...json(ChangeRequestDetailSchema) },
+      404: commonErrors[404],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -285,6 +522,8 @@ export function buildOpenApiDocument() {
       { name: "projects", description: "项目主数据与首页分类（v0.2 §8）" },
       { name: "tasks", description: "任务与进度（v0.2 §2.3 / §2.4）" },
       { name: "flow", description: "流程节点与蓝图（v0.2 §3）" },
+      { name: "files", description: "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）" },
+      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
     ],
   });
 }
