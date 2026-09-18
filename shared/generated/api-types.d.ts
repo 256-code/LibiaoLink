@@ -1076,7 +1076,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -1140,8 +1140,8 @@ export interface components {
         Project: {
             id: components["schemas"]["Uuid"];
             /**
-             * @description 项目编号：服务端生成，创建请求不接收
-             * @example LB-2026-0001
+             * @description 项目编号：创建人填写（建后可修改）；服务端只校验唯一性，不生成；格式仅前端提示
+             * @example CNBJ-20260708-0001
              */
             code: string;
             /** @example XX 客户分拣项目 */
@@ -1161,6 +1161,11 @@ export interface components {
             updatedAt: components["schemas"]["DateTime"];
         };
         ProjectCreateBody: {
+            /**
+             * @description 项目编号：创建人填写；格式仅前端提示，服务端不做强校验；重复返回 409 PROJECT_CODE_EXISTS
+             * @example CNBJ-20260708-0001
+             */
+            code: string;
             name: string;
             customer?: string;
             region: string;
@@ -1245,6 +1250,11 @@ export interface components {
             total: number;
         };
         ProjectUpdateBody: {
+            /**
+             * @description 项目编号：建后可修改；同样校验唯一性，重复返回 409 PROJECT_CODE_EXISTS
+             * @example CNBJ-20260708-0001
+             */
+            code?: string;
             name?: string;
             customer?: string | null;
             region?: string;

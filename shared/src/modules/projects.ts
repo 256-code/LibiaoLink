@@ -6,7 +6,7 @@ import { ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
 export const ProjectSchema = z
   .object({
     id: UuidSchema,
-    code: z.string().openapi({ example: "LB-2026-0001", description: "项目编号：服务端生成，创建请求不接收" }),
+    code: z.string().openapi({ example: "CNBJ-20260708-0001", description: "项目编号：创建人填写（建后可修改）；服务端只校验唯一性，不生成；格式仅前端提示" }),
     name: z.string().openapi({ example: "XX 客户分拣项目" }),
     customer: z.string().nullable(),
     region: z.string().openapi({ description: "项目落地地区（字典 region；缺省「未分类」）" }),
@@ -55,9 +55,10 @@ export const ProjectListResponseSchema = z
   })
   .openapi("ProjectListResponse");
 
-/** 创建项目：编号由服务端生成；默认按当前已发布蓝图导入节点（导入即快照）。 */
+/** 创建项目：编号由创建人填写（服务端保证唯一性）；默认按当前已发布蓝图导入节点（导入即快照）。 */
 export const ProjectCreateBodySchema = z
   .object({
+    code: z.string().min(1).max(50).openapi({ example: "CNBJ-20260708-0001", description: "项目编号：创建人填写；格式仅前端提示，服务端不做强校验；重复返回 409 PROJECT_CODE_EXISTS" }),
     name: z.string().min(1).max(200),
     customer: z.string().max(200).optional(),
     region: z.string().min(1).max(100),
@@ -70,8 +71,10 @@ export const ProjectCreateBodySchema = z
   })
   .openapi("ProjectCreateBody");
 
+/** 项目更新：code 可选（编号建后可修改）；修改时同样校验唯一性。 */
 export const ProjectUpdateBodySchema = z
   .object({
+    code: z.string().min(1).max(50).optional().openapi({ example: "CNBJ-20260708-0001", description: "项目编号：建后可修改；同样校验唯一性，重复返回 409 PROJECT_CODE_EXISTS" }),
     name: z.string().min(1).max(200).optional(),
     customer: z.string().max(200).nullable().optional(),
     region: z.string().min(1).max(100).optional(),
