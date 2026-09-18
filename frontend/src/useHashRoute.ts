@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { readStoredFilters } from "./homePrefs";
 
 /**
  * 列表页筛选态：URL query 是唯一来源（可分享、可收藏、刷新不丢）。
@@ -146,14 +147,43 @@ function readHash(): string {
   return typeof window === "undefined" ? "" : window.location.hash;
 }
 
-let currentRoute: Route =
-  typeof window === "undefined" ? { kind: "list", filters: EMPTY_LIST_QUERY } : parseHash(window.location.hash);
+/**
+ * 初始路由：URL 未携带列表参数时，用本地记忆恢复上次筛选选择（A1-18，URL 优先、本地次之）。
+ * 恢复出的选择由下方初始化代码同步回地址栏（replace），与「URL 是筛选态唯一来源」的口径一致。
+ */
+function resolveInitialRoute(): { route: Route; restored: boolean } {
+  const parsed = parseHash(window.location.hash);
+  if (parsed.kind !== "list" || buildListHash(parsed.filters) !== "#/") {
+    return { route: parsed, restored: false };
+  }
+  const stored = readStoredFilters();
+  if (stored === null) {
+    return { route: parsed, restored: false };
+  }
+  const restoredFilters: ListQueryState = { ...stored, q: "" };
+  if (buildListHash(restoredFilters) === "#/") {
+    // 记忆里是「无筛选」视图（用户上次重置过）：与默认视图一致，无需恢复
+    return { route: parsed, restored: false };
+  }
+  return { route: { kind: "list", filters: restoredFilters }, restored: true };
+}
+
+const initial =
+  typeof window === "undefined"
+    ? { route: { kind: "list", filters: EMPTY_LIST_QUERY } as Route, restored: false }
+    : resolveInitialRoute();
+let currentRoute: Route = initial.route;
 /** 进入详情页时所处列表页的地址（含筛选态）：顶栏与返回按钮据此还原列表页。 */
 let listReturnHash: string | null = null;
 let cameFromList = false;
 let retryTimer: number | null = null;
 let installed = false;
 const listeners = new Set<() => void>();
+
+// 初始化时把从本地记忆恢复出的筛选态写回地址栏（replace，不产生历史条目）
+if (initial.restored) {
+  flushHash();
+}
 
 function emit(): void {
   for (const listener of listeners) {
@@ -213,6 +243,11 @@ function getSnapshot(): Route {
 
 export function useHashRoute(): Route {
   return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/** 初始加载是否由本地记忆恢复而来（首页据此区分「书签入口」与「带参数链接」两种初始态）。 */
+export function initialRouteRestored(): boolean {
+  return initial.restored;
 }
 
 /** 更新筛选态：同步渲染并写入 URL（replace，不新增历史条目）。 */
