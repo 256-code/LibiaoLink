@@ -972,6 +972,170 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 登录入口：302 跳转 Casdoor 授权页（PKCE + state；returnTo 为同源回跳路径） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 登录成功后的回跳路径（仅同源相对路径） */
+                    returnTo?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 跳转 SSO 授权页（Set-Cookie: 转场 state / verifier） */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 登录回调：校验 state + PKCE 换令牌，建立 HttpOnly 会话后 302 回 returnTo */
+        get: {
+            parameters: {
+                query?: {
+                    code?: string;
+                    state?: string;
+                    error?: string;
+                    error_description?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 会话建立，跳转应用内路径 */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 回调校验失败（AUTH_CALLBACK_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前登录用户（会话无效 / 超时返回 401，前端据此重新走 SSO） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已登录用户 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MeResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 登出：清本地会话并 302 到 Casdoor 单点登出（携 id_token_hint） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 跳转 SSO 登出（本地会话已撤销） */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1076,7 +1240,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -1091,6 +1255,19 @@ export interface components {
         };
         /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
         IdempotencyKey: string;
+        /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
+        MeResponse: {
+            user: components["schemas"]["User"];
+            /** @description ID Token 声明（已验签；排障用） */
+            claims: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description ID Token 到期时间（Unix 秒，UTC）；null = 未知
+             * @example 1758182400
+             */
+            expiresAt: number | null;
+        };
         NodeCompleteBody: {
             version: components["schemas"]["Version"];
         };
@@ -1328,6 +1505,31 @@ export interface components {
             actualEnd?: components["schemas"]["DateOnly"] & unknown;
             note?: string;
             version: components["schemas"]["Version"];
+        };
+        /** @description 登录用户（SSO 归一化口径，ADR-010） */
+        User: {
+            /**
+             * @description Casdoor 用户 ID（claims.id → users.casdoor_id）
+             * @example a195b721bb30a7d4
+             */
+            id: string | null;
+            /**
+             * @description 工号（claims.name → users.username）
+             * @example A0001
+             */
+            name: string | null;
+            /**
+             * @description 姓名（claims.displayName → users.display_name）
+             * @example 张三
+             */
+            displayName: string | null;
+            /** @example zhangsan@libiaorobot.com */
+            email: string | null;
+            /**
+             * @description 所属组织（claims.owner）
+             * @example libiaorobot.com
+             */
+            owner: string | null;
         };
         /**
          * Format: uuid

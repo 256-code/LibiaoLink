@@ -24,6 +24,7 @@ import {
   ProjectFlowSchema,
   ProjectNodeSchema,
 } from "./modules/flow.ts";
+import { CallbackQuerySchema, LoginQuerySchema, MeResponseSchema } from "./modules/identity.ts";
 
 const json = (schema: z.ZodTypeAny) => ({ content: { "application/json": { schema } } });
 
@@ -272,6 +273,47 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 认证与会话（根路径 /auth/*，浏览器直接导航；ADR-010） ----
+  registry.registerPath({
+    method: "get",
+    path: "/auth/login",
+    tags: ["auth"],
+    summary: "登录入口：302 跳转 Casdoor 授权页（PKCE + state；returnTo 为同源回跳路径）",
+    request: { query: LoginQuerySchema },
+    responses: { 302: { description: "跳转 SSO 授权页（Set-Cookie: 转场 state / verifier）" } },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/auth/callback",
+    tags: ["auth"],
+    summary: "登录回调：校验 state + PKCE 换令牌，建立 HttpOnly 会话后 302 回 returnTo",
+    request: { query: CallbackQuerySchema },
+    responses: {
+      302: { description: "会话建立，跳转应用内路径" },
+      400: { description: "回调校验失败（AUTH_CALLBACK_FAILED）", ...json(ApiErrorSchema) },
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/auth/me",
+    tags: ["auth"],
+    summary: "当前登录用户（会话无效 / 超时返回 401，前端据此重新走 SSO）",
+    responses: {
+      200: { description: "已登录用户", ...json(MeResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/auth/logout",
+    tags: ["auth"],
+    summary: "登出：清本地会话并 302 到 Casdoor 单点登出（携 id_token_hint）",
+    responses: { 302: { description: "跳转 SSO 登出（本地会话已撤销）" } },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -285,6 +327,7 @@ export function buildOpenApiDocument() {
       { name: "projects", description: "项目主数据与首页分类（v0.2 §8）" },
       { name: "tasks", description: "任务与进度（v0.2 §2.3 / §2.4）" },
       { name: "flow", description: "流程节点与蓝图（v0.2 §3）" },
+      { name: "auth", description: "认证与会话（ADR-010；根路径 /auth/*，OIDC + PKCE）" },
     ],
   });
 }
