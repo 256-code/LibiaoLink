@@ -67,3 +67,6 @@ export const ApiErrorSchema = z
     traceId: z.string().openapi({ example: "4f1c2f2e-6f8a-4b1e-9a1f-2f6d6f2c9d10" }),
   })
   .openapi("ApiError", { description: "统一错误信封（技术设计v0.2 §7.2）" });
+
+export type ErrorDetail = z.infer<typeof ErrorDetailSchema>;
+export type ApiError = z.infer<typeof ApiErrorSchema>;
