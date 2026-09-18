@@ -19,7 +19,8 @@ export const DictItemSchema = z
     sort: z.number().int().openapi({ description: "展示顺序（升序）" }),
     enabled: z.boolean().openapi({ description: "普通用户只见 enabled=true 的项；管理员可见全集（二期）" }),
     metadata: z.record(z.string(), z.unknown()).openapi({
-      description: "字典元数据；projectType 必含 accent（主题色），前端据此渲染，不硬编码",
+      description:
+        "字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码",
     }),
   })
   .openapi("DictItem");

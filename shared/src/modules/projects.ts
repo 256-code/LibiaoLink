@@ -13,6 +13,9 @@ export const ProjectSchema = z
     region: z.string().openapi({ description: "项目落地地区（字典 region；缺省「未分类」）" }),
     projectType: z.string().openapi({ description: "项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码）" }),
     managerId: UuidSchema,
+    managerName: z.string().nullable().openapi({
+      description: "项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」）",
+    }),
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
     description: z.string().nullable(),
@@ -40,6 +43,7 @@ export const ProjectSummarySchema = z
  * 语义以 v0.3 §7 第 4 项「项目时间」ADR 为准（主数据变更 / 阶段推进 / 任务变更触发，文件与日报不触发）。
  * 边界：只传一端合法；timeFrom 晚于 timeTo 或格式非法返回 400 VALIDATION_FAILED（不返回空列表）。
  * 列表与 facets 共用本 schema 与同一 QueryBuilder（禁止两套 SQL）。
+ * 缺省排序：updatedAt:desc（项目最近活动在前）；排序白名单 updatedAt / seqNo。
  */
 export const ProjectListQuerySchema = z
   .object({
@@ -57,7 +61,9 @@ export const ProjectListQuerySchema = z
     q: z.string().optional().openapi({ description: "关键字（编号 / 名称 / 客户 / 序号）" }),
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
-    sort: SortQuerySchema.optional(),
+    sort: SortQuerySchema.optional().openapi({
+      description: "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+    }),
   })
   .openapi("ProjectListQuery", {
     description: "首页列表筛选（多维 + 时间闭区间 + 分页 + 排序）；时间区间按 Asia/Shanghai 日界，timeFrom 晚于 timeTo 返回 400",
