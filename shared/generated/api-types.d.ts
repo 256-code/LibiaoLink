@@ -18,8 +18,8 @@ export interface paths {
                     "filter[region]"?: string;
                     /** @description 项目类型（多值逗号分隔） */
                     "filter[projectType]"?: string;
-                    /** @description UUID（主键与关联 ID） */
-                    "filter[ownerId]"?: components["schemas"]["Uuid"];
+                    /** @description 项目经理（多值逗号分隔） */
+                    "filter[managerId]"?: string;
                     /** @description 阶段 key（多值逗号分隔） */
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
@@ -58,7 +58,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 新建项目（编号服务端生成；默认按已发布蓝图导入节点） */
+        /** 新建项目（编号由创建人填写；默认按已发布蓝图导入节点） */
         post: {
             parameters: {
                 query?: never;
@@ -125,8 +125,8 @@ export interface paths {
                     "filter[region]"?: string;
                     /** @description 项目类型（多值逗号分隔） */
                     "filter[projectType]"?: string;
-                    /** @description UUID（主键与关联 ID） */
-                    "filter[ownerId]"?: components["schemas"]["Uuid"];
+                    /** @description 项目经理（多值逗号分隔） */
+                    "filter[managerId]"?: string;
                     /** @description 阶段 key（多值逗号分隔） */
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
@@ -1151,8 +1151,7 @@ export interface components {
             region: string;
             /** @description 项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码） */
             projectType: string;
-            ownerId: components["schemas"]["Uuid"];
-            managerId: components["schemas"]["Uuid"] & (string | null);
+            managerId: components["schemas"]["Uuid"];
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
             description: string | null;
@@ -1170,8 +1169,7 @@ export interface components {
             customer?: string;
             region: string;
             projectType: string;
-            ownerId: components["schemas"]["Uuid"];
-            managerId?: components["schemas"]["Uuid"];
+            managerId: components["schemas"]["Uuid"];
             stageKey?: components["schemas"]["StageKey"];
             description?: string;
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
@@ -1186,7 +1184,7 @@ export interface components {
             projectType: {
                 [key: string]: number;
             };
-            ownerId: {
+            managerId: {
                 [key: string]: number;
             };
             stageKey: {
@@ -1259,8 +1257,7 @@ export interface components {
             customer?: string | null;
             region?: string;
             projectType?: string;
-            ownerId?: components["schemas"]["Uuid"];
-            managerId?: components["schemas"]["Uuid"] & (string | null);
+            managerId?: components["schemas"]["Uuid"];
             stageKey?: components["schemas"]["StageKey"];
             status?: components["schemas"]["ProjectStatus"];
             description?: string | null;
