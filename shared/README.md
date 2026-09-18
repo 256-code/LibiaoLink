@@ -52,7 +52,7 @@ CI 尚未接入本检查（阶段 5 的 CI 扩展任务负责），在那之前�
 | 时间 | 时间戳 ISO8601（UTC 存储，前端按 Asia/Shanghai 展示）；业务日期 `YYYY-MM-DD` |
 | 可见性 | 资源不存在与无权访问统一 404 语义（防 IDOR） |
 | 错误模型 | 统一信封 `{ code, message, details[], traceId }`；错误码见 src/common/errors.ts（与 v0.2 §7.2 同步维护） |
-| 项目编号 | 服务端生成（创建请求不接收 code）；编号唯一性由服务端保证 |
+| 项目编号 | 创建人填写（创建请求必填 code；格式仅前端提示、不做强校验）；唯一性由服务端校验 + 数据库唯一约束保证，重复返回 409 PROJECT_CODE_EXISTS；建后可修改（更新请求可传 code，同样校验唯一性） |
 | 主题色 accent | 随项目类型字典（C9）元数据下发；前端不硬编码颜色 |
 | 任务状态 | 存储基础态 pending/active/done；展示五态由服务端派生为 `displayStatus`（不写回） |
 | 节点门禁 | 完成需过服务端事务内校验；缺件返回 422 + `missing` 明细（NODE_REQUIRED_DOC_MISSING） |
