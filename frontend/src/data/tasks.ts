@@ -171,6 +171,11 @@ export function daysBetweenInclusive(fromIso: string, toIso: string): number {
 /** 四格进度条的格数（与 `Tracker` 同一口径；Push 65 起任务状态与它双向联动）。 */
 export const PROGRESS_STEPS = 4;
 
+/** 完成态（手动改成非完成态时，实际完成日期要一并清空 —— Push 67 业务定案）。 */
+export function isCompleteStatus(status: TaskStatus): boolean {
+  return status === "已完成" || status === "提前完成";
+}
+
 /** 进度（0~1 小数）→ 点亮的格数（0~4，四舍五入）。 */
 export function progressStep(progress: number, steps: number = PROGRESS_STEPS): number {
   return Math.max(0, Math.min(steps, Math.round(progress * steps)));
@@ -187,15 +192,19 @@ export function isTaskDone(task: ProjectTask): boolean {
 
 /**
  * 改进度条后任务状态跟着走（Push 65 联动口径）：
- * 0 格 = 待开始、1~3 格 = 进行中、4 格 = 取消手动指定（交给完成态按工期派生）。
+ * 4 格 = 取消手动指定（交给完成态按工期派生）；已过预计完成日期且未完成 = 保持「已延期」（Push 67 修正：
+ * 点进度条不再把「已延期」改成「待开始 / 进行中」）；其余 0 格 = 待开始、1~3 格 = 进行中。
  */
-export function statusOverrideAfterProgress(progress: number): TaskStatus | undefined {
+export function statusOverrideAfterProgress(progress: number, pastDue = false): TaskStatus | undefined {
   const step = progressStep(progress);
-  if (step <= 0) {
-    return "待开始";
-  }
   if (step >= PROGRESS_STEPS) {
     return undefined;
+  }
+  if (pastDue) {
+    return "已延期";
+  }
+  if (step <= 0) {
+    return "待开始";
   }
   return "进行中";
 }
@@ -233,10 +242,8 @@ export function isTaskDoneEarly(task: ProjectTask): boolean {
   return done.month < due.month || (done.month === due.month && done.day < due.day);
 }
 
-export function isTaskOverdue(task: ProjectTask, now: Date = new Date()): boolean {
-  if (isTaskDone(task)) {
-    return false;
-  }
+/** 预计完成日期早于今天（不看完成情况；「M月D日」按月 / 日比较）。 */
+export function isPastDue(task: ProjectTask, now: Date = new Date()): boolean {
   const due = parseCnDate(task.dueDate);
   if (due === null) {
     return false;
@@ -247,6 +254,34 @@ export function isTaskOverdue(task: ProjectTask, now: Date = new Date()): boolea
     return due.month < todayMonth;
   }
   return due.day < todayDay;
+}
+
+export function isTaskOverdue(task: ProjectTask, now: Date = new Date()): boolean {
+  return !isTaskDone(task) && isPastDue(task, now);
+}
+
+/**
+ * 「是否按时交付」列的逾期标注（Push 67 业务定案：逾期标注从「实际完成日期」列移到这里）：
+ * 已过预计完成日期且未完成 → 「逾期未交付」；已完成但晚于预计完成日期（或没填完成日期、预计完成日期已过）→ 「逾期已交付」；
+ * 其余返回 null（照源表的 onTime 值展示）。
+ */
+export function lateDeliveryLabel(task: ProjectTask, now: Date = new Date()): "逾期未交付" | "逾期已交付" | null {
+  const due = parseCnDate(task.dueDate);
+  if (due === null) {
+    return null;
+  }
+  if (!isTaskDone(task)) {
+    return isPastDue(task, now) ? "逾期未交付" : null;
+  }
+  if (task.doneDate === "") {
+    return isPastDue(task, now) ? "逾期已交付" : null;
+  }
+  const done = parseCnDate(task.doneDate);
+  if (done === null) {
+    return null;
+  }
+  const late = done.month > due.month || (done.month === due.month && done.day > due.day);
+  return late ? "逾期已交付" : null;
 }
 
 export function taskStatus(task: ProjectTask, now: Date = new Date()): TaskStatus {

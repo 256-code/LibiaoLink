@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, lateDeliveryLabel, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { ScrollArea } from "./ScrollArea";
 import { TRACKER_STEPS, trackerLabel, trackerStep } from "./Tracker";
 
@@ -87,6 +87,8 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
 
   const done = isTaskDone(task);
   const overdue = isTaskOverdue(task);
+  /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期字段）。 */
+  const late = lateDeliveryLabel(task);
   const status = taskStatus(task);
   const step = trackerStep(task.progress);
   const stepPct = Math.round((step / TRACKER_STEPS) * 100);
@@ -119,7 +121,11 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
     {
       label: "是否按时交付",
       value:
-        task.onTime === "" ? (
+        late === "逾期未交付" ? (
+          <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
+        ) : late === "逾期已交付" ? (
+          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
+        ) : task.onTime === "" ? (
           dash
         ) : (
           <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">{task.onTime}</span>
@@ -149,13 +155,7 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
     {
       label: "实际完成日期",
       value:
-        task.doneDate !== "" ? (
-          task.doneDate
-        ) : overdue ? (
-          <span className="font-medium text-red-600">逾期未完成</span>
-        ) : (
-          dash
-        ),
+        task.doneDate !== "" ? task.doneDate : dash,
     },
     {
       label: "变更关联",
