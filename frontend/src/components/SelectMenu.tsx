@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { usePopover } from "./usePopover";
 
-export type SelectOption = { value: string; label: string };
+/** 选项文案：普通枚举用字符串，带色标签的枚举（如任务状态）直接用 ReactNode。 */
+export type SelectOption = { value: string; label: ReactNode };
 
 type OptionListProps = {
   options: SelectOption[];

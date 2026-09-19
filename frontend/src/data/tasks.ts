@@ -22,6 +22,11 @@ export type ProjectTask = {
   headcount: number;
   priority: TaskPriority;
   files: string[];
+  /**
+   * 手动指定的任务状态（Push 65 表格行内下拉 / 进度条联动的结果）。
+   * 未指定 = 纯派生（进度 + 日期）；指定后以手动为准，直到再次改进度条。
+   */
+  statusOverride?: TaskStatus;
 };
 
 /** 兜底项目经理（虚构演示名；正常路径取项目卡片上的经理 `project.managerId` → 姓名，Push 61 起）。 */
@@ -163,8 +168,57 @@ export function daysBetweenInclusive(fromIso: string, toIso: string): number {
   return Math.round((to - from) / 86400000) + 1;
 }
 
+/** 四格进度条的格数（与 `Tracker` 同一口径；Push 65 起任务状态与它双向联动）。 */
+export const PROGRESS_STEPS = 4;
+
+/** 进度（0~1 小数）→ 点亮的格数（0~4，四舍五入）。 */
+export function progressStep(progress: number, steps: number = PROGRESS_STEPS): number {
+  return Math.max(0, Math.min(steps, Math.round(progress * steps)));
+}
+
+/** 四格全亮 = 任务完成（未填预计完成时间也按完成算，完成态再按工期派生 已完成 / 提前完成）。 */
+export function isTrackerComplete(task: ProjectTask): boolean {
+  return task.doneDate !== "" || progressStep(task.progress) >= PROGRESS_STEPS;
+}
+
 export function isTaskDone(task: ProjectTask): boolean {
-  return task.doneDate !== "" || task.progress >= 1;
+  return isTrackerComplete(task);
+}
+
+/**
+ * 改进度条后任务状态跟着走（Push 65 联动口径）：
+ * 0 格 = 待开始、1~3 格 = 进行中、4 格 = 取消手动指定（交给完成态按工期派生）。
+ */
+export function statusOverrideAfterProgress(progress: number): TaskStatus | undefined {
+  const step = progressStep(progress);
+  if (step <= 0) {
+    return "待开始";
+  }
+  if (step >= PROGRESS_STEPS) {
+    return undefined;
+  }
+  return "进行中";
+}
+
+/**
+ * 选任务状态后进度条跟着走（Push 65 联动口径）：
+ * 待开始 = 0 格；进行中 = 至少 1 格（已全亮则退回 3 格）；已完成 / 提前完成 = 4 格全亮；已延期 = 保持当前格数。
+ */
+export function progressAfterStatus(status: TaskStatus, progress: number): number {
+  const step = progressStep(progress);
+  if (status === "待开始") {
+    return 0;
+  }
+  if (status === "已延期") {
+    return progress;
+  }
+  if (status === "进行中") {
+    if (step <= 0) {
+      return 1 / PROGRESS_STEPS;
+    }
+    return step >= PROGRESS_STEPS ? (PROGRESS_STEPS - 1) / PROGRESS_STEPS : progress;
+  }
+  return 1;
 }
 
 export function isTaskDoneEarly(task: ProjectTask): boolean {
@@ -196,11 +250,27 @@ export function isTaskOverdue(task: ProjectTask, now: Date = new Date()): boolea
 }
 
 export function taskStatus(task: ProjectTask, now: Date = new Date()): TaskStatus {
-  if (isTaskDone(task) || task.status === "已完成" || task.status === "提前完成") {
+  // ① 手动指定优先（行内下拉 / 点进度条联动的结果）：选了完成态就按完成态显示；
+  //    选了 待开始 / 进行中 / 已延期 时，只要进度条没重新点满四格就以手动为准。
+  if (task.statusOverride !== undefined) {
+    if (task.statusOverride === "已完成" || task.statusOverride === "提前完成") {
+      return task.statusOverride;
+    }
+    if (progressStep(task.progress) < PROGRESS_STEPS) {
+      return task.statusOverride;
+    }
+  }
+  // ② 完成态：四格全亮 / 已填实际完成日期 / 数据里就是完成态 → 按工期派生「已完成 / 提前完成」
+  //    （未填预计完成时间 → 只显示「已完成」）。
+  if (isTrackerComplete(task) || task.status === "已完成" || task.status === "提前完成") {
     return isTaskDoneEarly(task) ? "提前完成" : "已完成";
+  }
+  // ③ 未完成：先看延期，再看进度条格数
+  if (task.status === "已延期") {
+    return "已延期";
   }
   if (isTaskOverdue(task, now)) {
     return "已延期";
   }
-  return task.status === "进行中" ? "进行中" : "待开始";
+  return progressStep(task.progress) >= 1 || task.status === "进行中" ? "进行中" : "待开始";
 }

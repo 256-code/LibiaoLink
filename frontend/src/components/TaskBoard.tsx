@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName } from "../data/members";
-import { PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, isTaskDone, isTaskOverdue, isoFromCnDate, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, isTaskDone, isTaskOverdue, isoFromCnDate, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { InlineDateCell, InlineMemberCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
+import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
 import { TaskEditModal, type TaskEditSubmit } from "./TaskEditModal";
 import { Tracker } from "./Tracker";
@@ -95,8 +96,23 @@ const STATUS_TEXT_CLASS: Record<TaskStatus, string> = {
   待开始: "text-zinc-600",
 };
 
+/** 状态色标签（表格行内下拉与单元格共用；口径 = 业务截图里的五个色签）。 */
+const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
+  已延期: "bg-rose-100 text-rose-700",
+  进行中: "bg-amber-100 text-amber-800",
+  已完成: "bg-emerald-100 text-emerald-700",
+  待开始: "bg-sky-100 text-sky-700",
+  提前完成: "bg-fuchsia-100 text-fuchsia-700",
+};
+
+/** 任务状态可选项（顺序对齐业务截图：已延期 / 进行中 / 已完成 / 待开始 / 提前完成）。 */
+const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", "待开始", "提前完成"] as TaskStatus[]).map((status) => ({
+  value: status,
+  label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{status}</span>,
+}));
+
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "owner" | "ownerEn" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "owner" | "ownerEn" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -237,12 +253,25 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
           }}
         />
       ),
-    status: (
-      <span className={"flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
-        <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
-        {status}
-      </span>
-    ),
+    status:
+      onPatch === undefined ? (
+        <span className={"inline-flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
+          <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
+          {status}
+        </span>
+      ) : (
+        <InlineOptionCell
+          value={status}
+          options={STATUS_OPTIONS}
+          ariaLabel="修改任务状态"
+          display={<span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{status}</span>}
+          onPick={(value) => {
+            const next = value as TaskStatus;
+            // 状态与四格进度条联动（Push 65）：选 已完成 / 提前完成 → 四格全亮；进行中 → 至少亮一格；待开始 → 清零；已延期 → 保持当前格数
+            onPatch({ statusOverride: next, progress: progressAfterStatus(next, task.progress) });
+          }}
+        />
+      ),
     priority: (
       <span>
         {onPatch === undefined ? (
