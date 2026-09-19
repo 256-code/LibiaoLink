@@ -4,6 +4,7 @@ export * from "./common/conventions.ts";
 export * from "./common/dicts.ts";
 export * from "./modules/projects.ts";
 export * from "./modules/tasks.ts";
+export * from "./modules/templates.ts";
 export * from "./modules/flow.ts";
 export * from "./modules/files.ts";
 export * from "./modules/identity.ts";
