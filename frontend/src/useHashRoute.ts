@@ -32,7 +32,10 @@ export type Route =
   | { kind: "hub" }
   | { kind: "list"; filters: ListQueryState }
   | { kind: "project"; id: string }
-  | { kind: "placeholder"; page: PlaceholderPage };
+  | { kind: "placeholder"; page: PlaceholderPage; section: string | null };
+
+/** 任务模板页地址：当前板块（标签栏选中的阶段）也走 URL —— 与列表页筛选态同一口径，地址即状态。 */
+export const TEMPLATE_BASE_HASH = "#/templates";
 
 /** 列表页地址：入口页（Hub）占用 #/，项目空间列表移到 #/projects。 */
 export const LIST_BASE_HASH = "#/projects";
@@ -109,6 +112,43 @@ export function parseListQuery(search: string): ListQueryState {
   };
 }
 
+/** 任务模板页的板块参数（`?section=设计开发`）：空值 / 重复键丢弃，与列表页筛选态同口径。 */
+function parseSectionValue(search: string): string | null {
+  let section: string | null = null;
+  for (const chunk of search.split("&")) {
+    if (chunk === "") {
+      continue;
+    }
+    const separator = chunk.indexOf("=");
+    const key = safeDecode(separator === -1 ? chunk : chunk.slice(0, separator));
+    if (key !== "section" || section !== null) {
+      continue;
+    }
+    const value = safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)).trim();
+    section = value === "" ? null : value;
+  }
+  return section;
+}
+
+/** 任务模板页某个板块的地址（板块名走 query，可直接刷新 / 收藏 / 分享）。 */
+export function templateSectionHref(section: string): string {
+  return TEMPLATE_BASE_HASH + "?section=" + encodeURIComponent(section);
+}
+
+/** 切换任务模板页的板块：同步渲染并写回地址（replace，不新增历史条目）。 */
+export function replaceTemplateSection(section: string): void {
+  if (currentRoute.kind !== "placeholder" || currentRoute.page !== "templates") {
+    return;
+  }
+  currentRoute = { ...currentRoute, section };
+  emit();
+  try {
+    window.history.replaceState(null, "", templateSectionHref(section));
+  } catch {
+    // URL 只是当前板块的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
+  }
+}
+
 /** 序列化筛选态：默认值不落 URL（排序默认降序省略 sort；时间区间两端齐全才写入）。 */
 export function buildListHash(filters: ListQueryState): string {
   const parts: string[] = [];
@@ -162,10 +202,10 @@ export function parseHash(hash: string): Route {
     return { kind: "hub" };
   }
   if (path === "/templates") {
-    return { kind: "placeholder", page: "templates" };
+    return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
   }
   if (path === "/files") {
-    return { kind: "placeholder", page: "files" };
+    return { kind: "placeholder", page: "files", section: null };
   }
   const match = PROJECT_PATH.exec(path);
   if (match) {
