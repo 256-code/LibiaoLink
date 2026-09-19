@@ -107,6 +107,18 @@ export default function App() {
     );
   };
 
+  /** 任务编辑里改「项目经理」：项目经理是项目级字段（projects.manager_id），回写后本项目所有任务行与项目卡片同步，并刷新项目时间。 */
+  const handleChangeManager = (id: string, managerId: string) => {
+    setProjects((previous) =>
+      previous.map((project) => (project.id === id ? { ...project, managerId, updatedAt: nowText() } : project)),
+    );
+  };
+
+  /** 任务字段被编辑：按「任务变更刷新项目时间」口径刷新最近活动（updatedAt）。 */
+  const handleTaskEdited = (id: string) => {
+    setProjects((previous) => previous.map((project) => (project.id === id ? { ...project, updatedAt: nowText() } : project)));
+  };
+
   if (state.kind === "loading") {
     return (
       <main className="page">
@@ -179,7 +191,7 @@ export default function App() {
     const project = projects.find((item) => item.id === route.id) ?? null;
     return (
       <>
-        <ProjectDetail me={state.me} project={project} />
+        <ProjectDetail me={state.me} project={project} onChangeManager={handleChangeManager} onTaskEdited={handleTaskEdited} />
         {editModal}
       </>
     );

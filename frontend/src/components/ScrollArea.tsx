@@ -6,6 +6,8 @@ type ScrollAreaProps = {
   className?: string;
   viewportClassName?: string;
   ariaLabel?: string;
+  /** 有溢出时滑块常显（默认只在滚动 / 悬停时浮现）——弹窗这类「一眼要看出还有内容」的场景用。 */
+  thumbAlwaysVisible?: boolean;
 };
 
 type ThumbMetrics = {
@@ -20,7 +22,7 @@ const MIN_THUMB_HEIGHT = 28;
 
 // 原生滚动条在 Chrome 下不会随样式变化重绘，无法做到「滚动才浮现」，
 // 因此隐藏原生滚动条，改由本组件自绘悬浮滑块（默认透明，滚动 / 悬停滑块时浮现）。
-export function ScrollArea({ children, className = "", viewportClassName = "", ariaLabel }: ScrollAreaProps) {
+export function ScrollArea({ children, className = "", viewportClassName = "", ariaLabel, thumbAlwaysVisible = false }: ScrollAreaProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const hideTimerRef = useRef(0);
   const [thumb, setThumb] = useState<ThumbMetrics | null>(null);
@@ -105,8 +107,8 @@ export function ScrollArea({ children, className = "", viewportClassName = "", a
   };
 
   return (
-    <div className={"relative " + viewportClassName}>
-      <div ref={scrollRef} aria-label={ariaLabel} className={"scrollbar-hidden h-full overflow-y-auto " + className}>
+    <div className={"relative flex flex-col " + viewportClassName}>
+      <div ref={scrollRef} aria-label={ariaLabel} className={"scrollbar-hidden min-h-0 flex-1 overflow-y-auto " + className}>
         {children}
       </div>
       {thumb === null ? null : (
@@ -121,7 +123,7 @@ export function ScrollArea({ children, className = "", viewportClassName = "", a
             style={{ height: thumb.height, top: TRACK_INSET + thumb.top }}
             className={
               "pointer-events-auto absolute left-1/2 w-1.5 -translate-x-1/2 cursor-grab rounded-full bg-zinc-400/70 transition-opacity duration-200 hover:bg-zinc-500 active:cursor-grabbing active:bg-zinc-500 " +
-              (active ? "opacity-100" : "opacity-0 hover:opacity-100")
+              (thumbAlwaysVisible ? "opacity-60 hover:opacity-100" : active ? "opacity-100" : "opacity-0 hover:opacity-100")
             }
           />
         </div>

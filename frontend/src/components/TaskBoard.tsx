@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName } from "../data/members";
+import { PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, isTaskDone, isTaskOverdue, isoFromCnDate, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { InlineDateCell, InlineMemberCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import { TaskDrawer } from "./TaskDrawer";
+import { TaskEditModal, type TaskEditSubmit } from "./TaskEditModal";
 import { Tracker } from "./Tracker";
 import { StageAddCard } from "./StageAddCard";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -92,6 +95,15 @@ const STATUS_TEXT_CLASS: Record<TaskStatus, string> = {
   待开始: "text-zinc-600",
 };
 
+/** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
+export type TaskPatch = Partial<Pick<ProjectTask, "owner" | "ownerEn" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note">>;
+
+const PRIORITY_OPTIONS = [
+  { value: "高", label: "高" },
+  { value: "中", label: "中" },
+  { value: "低", label: "低" },
+];
+
 type TaskBoardProps = {
   tasks: ProjectTask[];
   onSetProgress?: (taskId: string, progress: number) => void;
@@ -106,6 +118,14 @@ type TaskBoardProps = {
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
   manager?: string;
+  /** 项目经理 id（项目级字段：编辑弹窗「项目经理」下拉的当前选中项）。 */
+  managerId?: string;
+  /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
+  onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
+  /** 表格行内编辑：只改任务字段（负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述）。 */
+  onPatchTask?: (taskId: string, patch: TaskPatch) => void;
+  /** 表格行内改「项目经理」：项目级字段，回写项目（不传 = 该列仍是只读文本）。 */
+  onChangeManager?: (managerId: string) => void;
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
   viewStage?: string;
 };
@@ -130,11 +150,22 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, manager }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; manager: string }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manager, managerId, onChangeManager, onPatch }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onEdit: () => void; manager: string; managerId: string; onChangeManager?: (managerId: string) => void; onPatch?: (patch: TaskPatch) => void }) {
   const overdue = isTaskOverdue(task);
   const status = taskStatus(task);
   const dotClass = STATUS_DOT_CLASS[status];
   const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
+  const ownerMember = memberByName(task.owner);
+  const startIso = isoFromCnDate(task.startDate);
+  const dueIso = isoFromCnDate(task.dueDate);
+  /** 行内改任一日期时，把两个显示日期与联动天数一起写回（含首尾）。 */
+  const patchRange = (nextStartIso: string, nextDueIso: string) => {
+    onPatch?.({
+      startDate: nextStartIso === "" ? "" : cnDateFromIso(nextStartIso),
+      dueDate: nextDueIso === "" ? "" : cnDateFromIso(nextDueIso),
+      days: nextStartIso !== "" && nextDueIso !== "" ? daysBetweenInclusive(nextStartIso, nextDueIso) : 0,
+    });
+  };
 
   const cells: Record<ColumnKey, ReactNode> = {
     title: (
@@ -148,14 +179,64 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, manager }: { t
           )}
         </div>
         <Tracker progress={task.progress} onChange={onProgress} />
+        <button
+          type="button"
+          aria-label="编辑任务"
+          title="编辑任务"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit();
+          }}
+          className="shrink-0 rounded-lg p-1.5 text-zinc-400 opacity-0 transition hover:bg-white hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+            <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
     ),
-    manager: <span className="truncate text-xs text-zinc-600">{manager}</span>,
-    owner: (
-      <span className="truncate text-xs text-zinc-600" title={fullOwner}>
-        {task.owner}
-      </span>
-    ),
+    manager:
+      onChangeManager === undefined ? (
+        <span className="truncate text-xs text-zinc-600">{manager}</span>
+      ) : (
+        <InlineMemberCell
+          value={managerId}
+          options={PROJECT_MANAGERS}
+          ariaLabel="修改项目经理"
+          display={<span className="text-zinc-600">{manager}</span>}
+          onPick={(member) => {
+            onChangeManager(member.id);
+          }}
+        />
+      ),
+    owner:
+      onPatch === undefined ? (
+        task.owner === "" ? (
+          <span className="text-xs text-zinc-300">待分配</span>
+        ) : (
+          <span className="truncate text-xs text-zinc-600" title={fullOwner}>
+            {task.owner}
+          </span>
+        )
+      ) : (
+        <InlineMemberCell
+          value={ownerMember?.id ?? ""}
+          options={MEMBER_DIRECTORY}
+          ariaLabel="修改任务负责人"
+          display={
+            task.owner === "" ? (
+              <span className="text-zinc-300">待分配</span>
+            ) : (
+              <span className="text-zinc-600" title={fullOwner}>
+                {task.owner}
+              </span>
+            )
+          }
+          onPick={(member) => {
+            onPatch({ owner: member.name, ownerEn: member.handle });
+          }}
+        />
+      ),
     status: (
       <span className={"flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
         <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
@@ -164,9 +245,25 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, manager }: { t
     ),
     priority: (
       <span>
-        <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
-          {task.priority}
-        </span>
+        {onPatch === undefined ? (
+          <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
+            {task.priority}
+          </span>
+        ) : (
+          <InlineOptionCell
+            value={task.priority}
+            options={PRIORITY_OPTIONS}
+            ariaLabel="修改紧急重要度"
+            display={
+              <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
+                {task.priority}
+              </span>
+            }
+            onPick={(value) => {
+              onPatch({ priority: value as TaskPriority });
+            }}
+          />
+        )}
       </span>
     ),
     onTime: (
@@ -201,24 +298,76 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, manager }: { t
     ),
     note: (
       <span className="min-w-0">
-        {task.note === "" ? (
-          <span className="text-xs text-zinc-300">—</span>
+        {onPatch === undefined ? (
+          task.note === "" ? (
+            <span className="text-xs text-zinc-300">—</span>
+          ) : (
+            <span className="block truncate text-xs text-zinc-600" title={task.note}>{task.note}</span>
+          )
         ) : (
-          <span className="block truncate text-xs text-zinc-600" title={task.note}>{task.note}</span>
+          <InlineTextCell
+            value={task.note}
+            ariaLabel="修改项目进展描述"
+            display={task.note === "" ? <span className="text-zinc-300">—</span> : <span className="text-zinc-600" title={task.note}>{task.note}</span>}
+            onSave={(value) => {
+              onPatch({ note: value });
+            }}
+          />
         )}
       </span>
     ),
-    start: <span className="justify-self-end text-xs tabular-nums text-zinc-600">{task.startDate}</span>,
+    start:
+      onPatch === undefined ? (
+        <span className="justify-self-end text-xs tabular-nums text-zinc-600">{task.startDate}</span>
+      ) : (
+        <InlineDateCell
+          valueIso={startIso}
+          ariaLabel="修改开始日期"
+          triggerClassName="justify-self-end tabular-nums text-zinc-600"
+          display={task.startDate === "" ? <span className="text-zinc-300">—</span> : task.startDate}
+          onChange={(iso) => {
+            patchRange(iso, dueIso);
+          }}
+        />
+      ),
     days: (
       <span className="relative flex items-center justify-center self-stretch">
         <span className="h-px w-10 bg-zinc-300" />
         <span className="absolute inset-x-0 bottom-1/2 mb-1 text-center text-[11px] leading-none tabular-nums text-zinc-500">{task.days}</span>
       </span>
     ),
-    due: <span className="text-xs tabular-nums text-zinc-600">{task.dueDate}</span>,
+    due:
+      onPatch === undefined ? (
+        <span className="text-xs tabular-nums text-zinc-600">{task.dueDate}</span>
+      ) : (
+        <InlineDateCell
+          valueIso={dueIso}
+          ariaLabel="修改预计完成日期"
+          triggerClassName="tabular-nums text-zinc-600"
+          display={task.dueDate === "" ? <span className="text-zinc-300">—</span> : task.dueDate}
+          onChange={(iso) => {
+            patchRange(startIso, iso);
+          }}
+        />
+      ),
     headcount: (
       <span className="text-xs tabular-nums text-zinc-600">
-        {task.headcount > 0 ? task.headcount + " 人" : <span className="text-zinc-300">—</span>}
+        {onPatch === undefined ? (
+          task.headcount > 0 ? (
+            task.headcount + " 人"
+          ) : (
+            <span className="text-zinc-300">—</span>
+          )
+        ) : (
+          <InlineNumberCell
+            value={task.headcount}
+            ariaLabel="修改预计所需施工人数"
+            display={task.headcount > 0 ? task.headcount + " 人" : <span className="text-zinc-300">—</span>}
+            onSave={(value) => {
+              onPatch({ headcount: value });
+            }}
+          />
+        )}
       </span>
     ),
     doneDate: (
@@ -256,7 +405,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, manager }: { t
         }
       }}
       className={
-        "grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
+        "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
         (selected ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]" : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
       }
       style={{ gridTemplateColumns: columns.map((column) => column.width).join(" ") }}
@@ -303,11 +452,17 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, viewStage, manager }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, viewStage, manager, managerId, onSubmitTaskEdit, onPatchTask, onChangeManager }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+  /** 正在编辑的任务（弹窗；入口 = 任务行铅笔 / 详情抽屉「编辑任务」）。 */
+  const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
   const closeDrawer = () => setSelectedTask(null);
+  const openEditor = (task: ProjectTask) => {
+    setSelectedTask(null);
+    setEditingTask(task);
+  };
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
@@ -428,7 +583,13 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                         selected={selectedTask !== null && selectedTask.id === task.id}
                         onSelect={() => setSelectedTask(task)}
                         onProgress={(progress) => onSetProgress?.(task.id, progress)}
+                        onEdit={() => {
+                          openEditor(task);
+                        }}
                         manager={manager ?? PROJECT_MANAGER}
+                        managerId={managerId ?? ""}
+                        onChangeManager={onChangeManager}
+                        onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                       />
                     ))}
                   </div>
@@ -439,9 +600,25 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
         </div>
       </div>
       </div>
-      <TaskDrawer task={selectedTask} manager={manager ?? PROJECT_MANAGER} onClose={closeDrawer} />
+      <TaskDrawer
+        task={selectedTask}
+        manager={manager ?? PROJECT_MANAGER}
+        onEdit={onSubmitTaskEdit === undefined ? undefined : openEditor}
+        onClose={closeDrawer}
+      />
       {cardStage !== null && onAddNode !== undefined ? (
         <StageAddCard stage={cardStage} existingTaskIds={existingTaskIds} onAddNode={onAddNode} onClose={() => setCardStage(null)} />
+      ) : null}
+      {editingTask !== null && onSubmitTaskEdit !== undefined ? (
+        <TaskEditModal
+          task={editingTask}
+          managerId={managerId ?? ""}
+          onClose={() => setEditingTask(null)}
+          onSubmit={(values) => {
+            onSubmitTaskEdit(values);
+            setEditingTask(null);
+          }}
+        />
       ) : null}
     </>
   );
