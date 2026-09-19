@@ -56,12 +56,18 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
           event.stopPropagation();
         }}
         className={
-          "-mx-1.5 inline-block max-w-[calc(100%+0.75rem)] truncate rounded-md px-1.5 py-0.5 text-left text-xs transition " +
-          (open ? "bg-zinc-100 ring-1 ring-zinc-300/70" : "hover:bg-zinc-100") +
+          // 「液态玻璃」小框（Push 66）：可点区域 = 这个框本身 —— 不给负外边距，
+          // 平时只是一层很淡的玻璃底 + 发丝描边，悬停 / 展开时才稍微实一点。
+          "inline-flex max-w-full items-center gap-1 rounded-lg border px-1.5 py-[3px] text-left text-xs " +
+          "backdrop-blur-[3px] transition " +
+          (open
+            ? "border-white bg-white/95 ring-1 ring-zinc-900/15 shadow-[0_2px_10px_rgba(15,23,42,0.10)] "
+            : "border-white/70 bg-zinc-900/[0.045] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] " +
+              "hover:border-zinc-200/90 hover:bg-white/95 hover:shadow-[0_1px_4px_rgba(15,23,42,0.08)] ") +
           (triggerClassName === undefined ? "" : " " + triggerClassName)
         }
       >
-        {display}
+        <span className="min-w-0 truncate">{display}</span>
       </button>
       {open && position !== null
         ? createPortal(
