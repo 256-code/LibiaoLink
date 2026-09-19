@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName } from "../data/members";
-import { PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, isTaskDone, isTaskOverdue, isoFromCnDate, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { InlineDateCell, InlineMemberCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
@@ -49,7 +49,7 @@ export const TABLE_COLUMNS: ColumnDef[] = [
   { key: "deliverable", label: "输出成果文件", width: "0.86fr", min: 86 },
   { key: "files", label: "文件", width: "0.96fr", min: 96 },
   { key: "note", label: "项目进展描述", width: "0.9fr", min: 90 },
-  { key: "start", label: "开始日期", width: "0.66fr", min: 66, headerClass: "text-right" },
+  { key: "start", label: "开始日期", width: "0.66fr", min: 66 },
   { key: "days", label: "预计所需天数", width: "56px", min: 56, header: "" },
   { key: "due", label: "预计完成日期", width: "0.86fr", min: 86 },
   { key: "headcount", label: "预计所需施工人数", width: "1.08fr", min: 108 },
@@ -60,8 +60,6 @@ export const TABLE_COLUMNS: ColumnDef[] = [
 export type VisibleColumns = Partial<Record<ColumnKey, boolean>>;
 
 export const DEFAULT_VISIBLE_COLUMNS: VisibleColumns = {
-  files: false,
-  note: false,
   headcount: false,
 };
 
@@ -112,7 +110,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "owner" | "ownerEn" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "owner" | "ownerEn" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -167,13 +165,15 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
 }
 
 function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manager, managerId, onChangeManager, onPatch }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onEdit: () => void; manager: string; managerId: string; onChangeManager?: (managerId: string) => void; onPatch?: (patch: TaskPatch) => void }) {
-  const overdue = isTaskOverdue(task);
+  /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期列）。 */
+  const late = lateDeliveryLabel(task);
   const status = taskStatus(task);
   const dotClass = STATUS_DOT_CLASS[status];
   const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
   const ownerMember = memberByName(task.owner);
   const startIso = isoFromCnDate(task.startDate);
   const dueIso = isoFromCnDate(task.dueDate);
+  const doneIso = isoFromCnDate(task.doneDate);
   /** 行内改任一日期时，把两个显示日期与联动天数一起写回（含首尾）。 */
   const patchRange = (nextStartIso: string, nextDueIso: string) => {
     onPatch?.({
@@ -268,7 +268,12 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
           onPick={(value) => {
             const next = value as TaskStatus;
             // 状态与四格进度条联动（Push 65）：选 已完成 / 提前完成 → 四格全亮；进行中 → 至少亮一格；待开始 → 清零；已延期 → 保持当前格数
-            onPatch({ statusOverride: next, progress: progressAfterStatus(next, task.progress) });
+            // 手动改成非完成态（待开始 / 进行中 / 已延期）时，实际完成日期一并清空（Push 67 业务定案）
+            onPatch({
+              statusOverride: next,
+              progress: progressAfterStatus(next, task.progress),
+              doneDate: isCompleteStatus(next) ? task.doneDate : "",
+            });
           }}
         />
       ),
@@ -297,7 +302,11 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
     ),
     onTime: (
       <span>
-        {task.onTime === "" ? (
+        {late === "逾期未交付" ? (
+          <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
+        ) : late === "逾期已交付" ? (
+          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
+        ) : task.onTime === "" ? (
           <span className="text-xs text-zinc-300">—</span>
         ) : (
           <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">{task.onTime}</span>
@@ -347,12 +356,12 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
     ),
     start:
       onPatch === undefined ? (
-        <span className="justify-self-end text-xs tabular-nums text-zinc-600">{task.startDate}</span>
+        <span className="text-xs tabular-nums text-zinc-600">{task.startDate}</span>
       ) : (
         <InlineDateCell
           valueIso={startIso}
           ariaLabel="修改开始日期"
-          triggerClassName="justify-self-end tabular-nums text-zinc-600"
+          triggerClassName="tabular-nums text-zinc-600"
           display={task.startDate === "" ? <span className="text-zinc-300">—</span> : task.startDate}
           onChange={(iso) => {
             patchRange(iso, dueIso);
@@ -401,12 +410,33 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
     ),
     doneDate: (
       <span className="text-xs tabular-nums">
-        {task.doneDate !== "" ? (
-          <span className="text-zinc-600">{task.doneDate}</span>
-        ) : overdue ? (
-          <span className="font-medium text-red-600">逾期</span>
+        {onPatch === undefined ? (
+          task.doneDate !== "" ? (
+            <span className="text-zinc-600">{task.doneDate}</span>
+          ) : (
+            <span className="text-zinc-400">—</span>
+          )
         ) : (
-          <span className="text-zinc-400">—</span>
+          <InlineDateCell
+            valueIso={doneIso}
+            ariaLabel="修改实际完成日期"
+            triggerClassName="tabular-nums"
+            display={
+              task.doneDate !== "" ? (
+                <span className="text-zinc-600">{task.doneDate}</span>
+              ) : (
+                <span className="text-zinc-400">—</span>
+              )
+            }
+            onChange={(iso) => {
+              // 填实际完成日期 = 完成（四格全亮、状态按工期派生）；清空 = 退回进行中（3 格），与状态 / 进度条同一套口径
+              onPatch({
+                doneDate: iso === "" ? "" : cnDateFromIso(iso),
+                progress: iso === "" ? (PROGRESS_STEPS - 1) / PROGRESS_STEPS : 1,
+                statusOverride: iso === "" ? "进行中" : undefined,
+              });
+            }}
+          />
         )}
       </span>
     ),
@@ -440,7 +470,14 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
       style={{ gridTemplateColumns: columns.map((column) => column.width).join(" ") }}
     >
       {columns.map((column) => (
-        <Fragment key={column.key}>{cells[column.key]}</Fragment>
+        <Fragment key={column.key}>
+          {column.key === "title" ? (
+            cells[column.key]
+          ) : (
+            // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）
+            <div className="flex min-w-0 items-center justify-center self-stretch">{cells[column.key]}</div>
+          )}
+        </Fragment>
       ))}
     </div>
   );
@@ -487,6 +524,11 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
+  /** 卡片的落点（Push 67：固定在表格表头正下方、左边缘对齐「项目经理」列，不浮在页面右上角、也不跟着点击跑）。 */
+  const [cardBox, setCardBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+  const boardWrapRef = useRef<HTMLDivElement | null>(null);
+  const boardCardRef = useRef<HTMLDivElement | null>(null);
+  const headerRowRef = useRef<HTMLDivElement | null>(null);
   const closeDrawer = () => setSelectedTask(null);
   const openEditor = (task: ProjectTask) => {
     setSelectedTask(null);
@@ -502,6 +544,72 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
     setCardStage(null);
   }, [viewStage]);
 
+  /**
+   * 量落点（Push 67，业务定稿版）：卡片**顶部与所点阶段的分组头在同一水平线**（卡顶 = 分组头顶，卡片正好贴在这一阶段左边，
+   * 页面滚到哪都保持这条水平线），左边缘对齐「项目经理」列（该列被列显隐关掉时回落到表格右边、始终夹在表格内）。
+   */
+  const measureCardBox = (stage: string) => {
+    const wrap = boardWrapRef.current;
+    const board = boardCardRef.current;
+    const header = headerRowRef.current;
+    if (wrap === null || board === null || header === null) {
+      return null;
+    }
+    const wrapRect = wrap.getBoundingClientRect();
+    const boardRect = board.getBoundingClientRect();
+    const headerRect = header.getBoundingClientRect();
+    const stageHeader = board.querySelector('[data-stage-header="' + stage + '"]');
+    // 分组头找不到（异常情况）时回落到表头下沿
+    const topRect = stageHeader === null ? null : stageHeader.getBoundingClientRect();
+    const cardWidth = Math.min(400, wrapRect.width - 48);
+    const managerCell = header.querySelector('[data-column="manager"]');
+    const managerRect = managerCell === null ? null : managerCell.getBoundingClientRect();
+    // 回落到右边（项目经理列被列显隐关掉时），并保证卡片不出表格
+    const naturalLeft = managerRect === null ? boardRect.right - 24 - cardWidth : managerRect.left;
+    const minLeft = boardRect.left + 16;
+    const maxLeft = boardRect.right - 24 - cardWidth;
+    const top = topRect === null ? headerRect.bottom + 10 : topRect.top;
+    return {
+      top: Math.round(top - wrapRect.top),
+      left: Math.round(Math.max(minLeft, Math.min(maxLeft, naturalLeft)) - wrapRect.left),
+      maxHeight: Math.round(Math.max(320, Math.min(window.innerHeight * 0.72, boardRect.bottom - top - 16))),
+    };
+  };
+
+  /** 点阶段标签：再点同一个 = 关掉；开的时候先量好落点，避免卡片先闪在旧位置。 */
+  const toggleCard = (stage: string) => {
+    if (cardStage === stage) {
+      setCardStage(null);
+      return;
+    }
+    setCardBox(measureCardBox(stage));
+    setCardStage(stage);
+  };
+
+  // 表格尺寸变化（列显隐 / 阶段折叠 / 换项目）与窗口缩放时重新量落点
+  useEffect(() => {
+    if (cardStage === null) {
+      return;
+    }
+    const update = () => {
+      setCardBox(cardStage === null ? null : measureCardBox(cardStage));
+    };
+    update();
+    window.addEventListener("resize", update);
+    // 表格横向滚动时「项目经理」列会跟着动，卡片跟着列走
+    const scroller = scrollRef?.current ?? null;
+    scroller?.addEventListener("scroll", update);
+    const observer = new ResizeObserver(update);
+    if (boardCardRef.current !== null) {
+      observer.observe(boardCardRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", update);
+      scroller?.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [cardStage, scrollRef]);
+
   const groups = STAGE_ORDER.map((stage) => ({
     stage,
     items: tasks.filter((task) => task.stage === stage),
@@ -511,16 +619,18 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
 
   return (
     <>
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <div ref={boardWrapRef} className="relative">
+      <div ref={boardCardRef} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
       <div id="task-board-scroll" ref={scrollRef} className="overflow-x-auto">
         <div style={{ minWidth: minWidth }}>
           <div
+            ref={headerRowRef}
             className="grid items-center border-b border-zinc-200 bg-zinc-50/70 px-5 py-2.5 text-xs font-medium text-zinc-400"
             style={{ gridTemplateColumns: gridTemplate }}
           >
             {columns.map((column) =>
               column.key === "title" ? (
-                <span key={column.key} className="flex min-w-0 items-center gap-2.5">
+                <span key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-2.5">
                   <span className="truncate">{column.header ?? column.label}</span>
                   <button
                     type="button"
@@ -543,8 +653,9 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
               ) : (
                 <span
                   key={column.key}
+                  data-column={column.key}
                   title={column.label === "" ? undefined : column.label}
-                  className={"truncate " + (column.headerClass ?? "")}
+                  className={"truncate text-center " + (column.headerClass ?? "")}
                 >
                   {column.header ?? column.label}
                 </span>
@@ -558,6 +669,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
             return (
               <section key={group.stage} className="border-b border-zinc-100 last:border-b-0">
                 <div
+                  data-stage-header={group.stage}
                   role="button"
                   tabIndex={0}
                   aria-expanded={!isCollapsed}
@@ -580,7 +692,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                     aria-expanded={cardStage === group.stage}
                     onClick={(event) => {
                       event.stopPropagation();
-                      setCardStage((prev) => (prev === group.stage ? null : group.stage));
+                      toggleCard(group.stage);
                     }}
                     title="打开右侧卡片：这个阶段的任务节点 + 模板（预览 / 添加到项目）"
                     className={
@@ -629,15 +741,22 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
         </div>
       </div>
       </div>
+      {cardStage !== null && onAddNode !== undefined ? (
+        <StageAddCard
+          stage={cardStage}
+          existingTaskIds={existingTaskIds}
+          onAddNode={onAddNode}
+          onClose={() => setCardStage(null)}
+          style={cardBox === null ? { top: 10, left: 24 } : cardBox}
+        />
+      ) : null}
+      </div>
       <TaskDrawer
         task={selectedTask}
         manager={manager ?? PROJECT_MANAGER}
         onEdit={onSubmitTaskEdit === undefined ? undefined : openEditor}
         onClose={closeDrawer}
       />
-      {cardStage !== null && onAddNode !== undefined ? (
-        <StageAddCard stage={cardStage} existingTaskIds={existingTaskIds} onAddNode={onAddNode} onClose={() => setCardStage(null)} />
-      ) : null}
       {editingTask !== null && onSubmitTaskEdit !== undefined ? (
         <TaskEditModal
           task={editingTask}

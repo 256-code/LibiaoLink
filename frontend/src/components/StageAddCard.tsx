@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "../data/templatePresets";
 
 type StageAddCardProps = {
@@ -6,6 +6,8 @@ type StageAddCardProps = {
   existingTaskIds: ReadonlySet<string>;
   onAddNode: (stage: string, node: TemplatePresetNode) => void;
   onClose: () => void;
+  /** 卡片落点（由 TaskBoard 量表格算出来：表头正下方、贴表格右边缘）；不传时回落到右上角悬浮。 */
+  style?: CSSProperties;
 };
 
 /** 这个阶段的节点池（与任务模板页左列同口径）：该阶段全部预设节点按出现顺序去重。 */
@@ -30,7 +32,7 @@ function presetNodesOf(stage: string): TemplatePresetNode[] {
  * 其余每个标签 = 这个阶段的一块模板（按预设顺序预览、可鼠标滚动，也能逐条 / 整套加）。
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
-export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose }: StageAddCardProps) {
+export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose, style }: StageAddCardProps) {
   const presets = useMemo(() => STAGE_TEMPLATE_PRESETS[stage] ?? [], [stage]);
   const nodes = useMemo(() => presetNodesOf(stage), [stage]);
   const [activeTab, setActiveTab] = useState("nodes");
@@ -78,7 +80,8 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose }: Sta
       ref={cardRef}
       role="dialog"
       aria-label={stage + "：任务节点与模板"}
-      className="fixed right-6 top-28 z-40 flex max-h-[72vh] w-[400px] max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.98),rgba(255,255,255,0.94))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-2xl backdrop-saturate-150"
+      style={style ?? { top: 112, right: 24 }}
+      className="absolute z-40 flex max-h-[72vh] w-[400px] max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.98),rgba(255,255,255,0.94))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-2xl backdrop-saturate-150"
     >
       <div className="flex shrink-0 items-start justify-between gap-2">
         <div className="min-w-0">

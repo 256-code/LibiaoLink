@@ -5,7 +5,7 @@ import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskEditModal";
 import { PROJECT_STAGES } from "./data/projects";
-import { statusOverrideAfterProgress, tasksForProject, type ProjectTask } from "./data/tasks";
+import { isCompleteStatus, isPastDue, statusOverrideAfterProgress, tasksForProject, type ProjectTask } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { managerName } from "./data/managers";
 import type { MeResponse, Project } from "./types";
@@ -71,10 +71,23 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
     return override === undefined ? withEdit : { ...withEdit, progress: override };
   });
 
-  /** 点四格进度条：进度 + 联动状态一起写（0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生，Push 65）。 */
+  /**
+   * 点四格进度条：进度 + 联动状态一起写（0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生，Push 65；
+   * Push 67 修正：已过预计完成日期的任务点进度条保持「已延期」，不会被改成「待开始 / 进行中」）。
+   */
   const handleSetProgress = (taskId: string, progress: number) => {
+    const current = tasks.find((task) => task.id === taskId);
+    const nextStatus = statusOverrideAfterProgress(progress, current !== undefined && isPastDue(current));
     setProgressOverrides((previous) => ({ ...previous, [taskId]: progress }));
-    setTaskEdits((previous) => ({ ...previous, [taskId]: { ...previous[taskId], statusOverride: statusOverrideAfterProgress(progress) } }));
+    setTaskEdits((previous) => ({
+      ...previous,
+      [taskId]: {
+        ...previous[taskId],
+        statusOverride: nextStatus,
+        // 进度退回非完成态时，实际完成日期一并清空（Push 67 业务定案）
+        ...(nextStatus === undefined || isCompleteStatus(nextStatus) ? {} : { doneDate: "" }),
+      },
+    }));
   };
 
   /** 任务编辑保存：项目经理变化回写项目（项目级），其余字段进任务覆盖表；同时刷新项目时间。 */
