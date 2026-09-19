@@ -9,7 +9,7 @@ type TaskNodeCardProps = {
   draggable?: boolean;
   onDragStart?: (event: DragEvent<HTMLElement>) => void;
   onDragEnd?: () => void;
-  /** 传了就把叉号渲染成「移除」按钮；不传则保持参考稿里的装饰语义（一期无点击行为） */
+  /** 传了就把叉号渲染成「移除」按钮；不传则保持参考稿里的装饰语义（当前原型无点击行为） */
   onRemove?: () => void;
   /** 高亮描边（拖拽时提示「这个节点已经在右侧了」） */
   highlighted?: boolean;

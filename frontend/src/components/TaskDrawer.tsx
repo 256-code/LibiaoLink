@@ -28,11 +28,13 @@ const STATUS_CHIP_CLASS: Record<TaskStatus, string> = {
 };
 
 type TaskDrawerProps = {
+  /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
+  manager?: string;
   task: ProjectTask | null;
   onClose: () => void;
 };
 
-export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, manager, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -96,7 +98,7 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
   const fields: Array<{ label: string; value: ReactNode }> = [
     {
       label: "项目经理",
-      value: <span className="font-medium text-zinc-800">{PROJECT_MANAGER}</span>,
+      value: <span className="font-medium text-zinc-800">{manager ?? PROJECT_MANAGER}</span>,
     },
     { label: "任务负责人", value: fullOwner },
     {
