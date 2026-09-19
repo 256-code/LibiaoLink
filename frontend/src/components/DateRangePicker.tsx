@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type DateRange = {
   from: string;
@@ -9,6 +10,10 @@ type DateRangePickerProps = {
   value: DateRange | null;
   onChange: (value: DateRange | null) => void;
   hintDate?: string;
+  /** 未选日期时触发器上的文案（默认「全部时间」，分类筛选用；任务编辑表单传业务文案）。 */
+  placeholder?: string;
+  /** 触发器的无障碍名称（默认「选择日期范围」）。 */
+  ariaLabel?: string;
 };
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
@@ -25,7 +30,7 @@ const toDate = (key: string) => {
 
 const formatKey = (key: string) => key.replace(/-/g, "/");
 
-export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerProps) {
+export function DateRangePicker({ value, onChange, hintDate, placeholder = "全部时间", ariaLabel = "选择日期范围" }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | null>(value);
   const [view, setView] = useState(() => {
@@ -91,7 +96,7 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
     });
   }, [view]);
 
-  const label = value === null ? "全部时间" : formatKey(value.from) + " – " + formatKey(value.to);
+  const label = value === null ? placeholder : formatKey(value.from) + " – " + formatKey(value.to);
 
   const pick = (key: string) => {
     setDraft((previous) => {
@@ -112,6 +117,7 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
         ref={triggerRef}
         type="button"
         aria-expanded={open}
+        aria-label={ariaLabel}
         onClick={() => {
           setOpen((previous) => !previous);
         }}
@@ -124,12 +130,13 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
         </svg>
       </button>
 
-      {open && position !== null ? (
-        <div
-          ref={popoverRef}
-          className="fixed z-40 w-[264px] rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_16px_40px_rgba(0,0,0,0.18)]"
-          style={{ top: position.top, left: position.left }}
-        >
+      {open && position !== null
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="fixed z-50 w-[264px] rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_16px_40px_rgba(0,0,0,0.18)]"
+              style={{ top: position.top, left: position.left }}
+            >
           <div className="flex items-center justify-between">
             <button
               type="button"
@@ -209,8 +216,10 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
               确定
             </button>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

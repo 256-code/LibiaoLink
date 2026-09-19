@@ -31,10 +31,12 @@ type TaskDrawerProps = {
   /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
   manager?: string;
   task: ProjectTask | null;
+  /** 「编辑任务」入口（打开任务编辑弹窗）；不传时不显示按钮。 */
+  onEdit?: (task: ProjectTask) => void;
   onClose: () => void;
 };
 
-export function TaskDrawer({ task, manager, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -100,7 +102,7 @@ export function TaskDrawer({ task, manager, onClose }: TaskDrawerProps) {
       label: "项目经理",
       value: <span className="font-medium text-zinc-800">{manager ?? PROJECT_MANAGER}</span>,
     },
-    { label: "任务负责人", value: fullOwner },
+    { label: "任务负责人", value: task.owner === "" ? <span className="text-zinc-400">待分配</span> : fullOwner },
     {
       label: "任务状态",
       value: (
@@ -191,16 +193,32 @@ export function TaskDrawer({ task, manager, onClose }: TaskDrawerProps) {
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage}</span>
               <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
             </div>
-            <button
-              type="button"
-              onClick={requestClose}
-              aria-label="关闭任务详情"
-              className="-mr-1.5 -mt-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
-            >
-              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-                <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {onEdit === undefined ? null : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onEdit(task);
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                  </svg>
+                  编辑任务
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={requestClose}
+                aria-label="关闭任务详情"
+                className="-mr-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
           </div>
           <h2 id="task-drawer-title" className="mt-3.5 text-lg font-semibold leading-7 text-zinc-900">
             {task.title}

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { TableScrollbar } from "./components/TableScrollbar";
-import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type VisibleColumns } from "./components/TaskBoard";
+import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
+import type { TaskEditSubmit } from "./components/TaskEditModal";
 import { PROJECT_STAGES } from "./data/projects";
 import { tasksForProject, type ProjectTask } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
@@ -40,11 +41,17 @@ function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTas
 type ProjectDetailProps = {
   me: MeResponse;
   project: Project | null;
+  /** 任务编辑里改「项目经理」时回写项目（项目经理是项目级字段）。 */
+  onChangeManager?: (projectId: string, managerId: string) => void;
+  /** 任务字段被编辑（按口径刷新项目时间 updatedAt）。 */
+  onTaskEdited?: (projectId: string) => void;
 };
 
-export default function ProjectDetail({ me, project }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, onChangeManager, onTaskEdited }: ProjectDetailProps) {
   const [activeStage, setActiveStage] = useState<string>(PROJECT_STAGES[0] ?? "项目总览");
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
+  /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
+  const [taskEdits, setTaskEdits] = useState<Record<string, Partial<ProjectTask>>>({});
 
   /** 原型阶段只有印度项目（`inmu-0010`）带示例任务数据；其余项目为空列表（正式版按项目取数）。 */
   const baseTasks = tasksForProject(project?.id ?? "");
@@ -52,16 +59,61 @@ export default function ProjectDetail({ me, project }: ProjectDetailProps) {
   const [addedTasks, setAddedTasks] = useState<ProjectTask[]>([]);
   useEffect(() => {
     setAddedTasks([]);
+    setProgressOverrides({});
+    setTaskEdits({});
   }, [project?.id]);
   const projectTasks = [...baseTasks, ...addedTasks];
 
   const tasks = projectTasks.map((task) => {
+    const edit = taskEdits[task.id];
     const override = progressOverrides[task.id];
-    return override === undefined ? task : { ...task, progress: override };
+    const withEdit = edit === undefined ? task : { ...task, ...edit };
+    return override === undefined ? withEdit : { ...withEdit, progress: override };
   });
 
   const handleSetProgress = (taskId: string, progress: number) => {
     setProgressOverrides((previous) => ({ ...previous, [taskId]: progress }));
+  };
+
+  /** 任务编辑保存：项目经理变化回写项目（项目级），其余字段进任务覆盖表；同时刷新项目时间。 */
+  const handleSubmitTaskEdit = (values: TaskEditSubmit) => {
+    if (project === null) {
+      return;
+    }
+    if (values.managerId !== "" && values.managerId !== project.managerId) {
+      onChangeManager?.(project.id, values.managerId);
+    }
+    setTaskEdits((previous) => ({
+      ...previous,
+      [values.taskId]: {
+        owner: values.owner,
+        ownerEn: values.ownerEn,
+        startDate: values.startDate,
+        dueDate: values.dueDate,
+        days: values.days,
+        headcount: values.headcount,
+        priority: values.priority,
+        note: values.note,
+      },
+    }));
+    onTaskEdited?.(project.id);
+  };
+
+  /** 表格行内编辑：只覆盖被改的字段（与弹窗共用同一张覆盖表），并刷新项目时间。 */
+  const handlePatchTask = (taskId: string, patch: TaskPatch) => {
+    if (project === null) {
+      return;
+    }
+    setTaskEdits((previous) => ({ ...previous, [taskId]: { ...previous[taskId], ...patch } }));
+    onTaskEdited?.(project.id);
+  };
+
+  /** 表格行内改「项目经理」：项目级字段，回写项目卡片。 */
+  const handleBoardManagerChange = (nextManagerId: string) => {
+    if (project === null || nextManagerId === project.managerId) {
+      return;
+    }
+    onChangeManager?.(project.id, nextManagerId);
   };
 
   /** 从「任务模板」预设加一个节点到项目：模板里已加过的节点按 id 判重，不重复加。 */
@@ -156,10 +208,10 @@ export default function ProjectDetail({ me, project }: ProjectDetailProps) {
           {activeStage === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
             </>
           ) : (
-            <TaskBoard tasks={tasks.filter((task) => task.stage === activeStage)} skeletonStages={[activeStage]} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} />
+            <TaskBoard tasks={tasks.filter((task) => task.stage === activeStage)} skeletonStages={[activeStage]} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
           )}
         </div>
 
