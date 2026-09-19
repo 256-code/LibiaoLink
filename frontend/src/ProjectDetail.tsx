@@ -5,7 +5,7 @@ import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskEditModal";
 import { PROJECT_STAGES } from "./data/projects";
-import { tasksForProject, type ProjectTask } from "./data/tasks";
+import { statusOverrideAfterProgress, tasksForProject, type ProjectTask } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { managerName } from "./data/managers";
 import type { MeResponse, Project } from "./types";
@@ -71,8 +71,10 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
     return override === undefined ? withEdit : { ...withEdit, progress: override };
   });
 
+  /** 点四格进度条：进度 + 联动状态一起写（0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生，Push 65）。 */
   const handleSetProgress = (taskId: string, progress: number) => {
     setProgressOverrides((previous) => ({ ...previous, [taskId]: progress }));
+    setTaskEdits((previous) => ({ ...previous, [taskId]: { ...previous[taskId], statusOverride: statusOverrideAfterProgress(progress) } }));
   };
 
   /** 任务编辑保存：项目经理变化回写项目（项目级），其余字段进任务覆盖表；同时刷新项目时间。 */
@@ -103,6 +105,11 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
   const handlePatchTask = (taskId: string, patch: TaskPatch) => {
     if (project === null) {
       return;
+    }
+    // 行内改状态会同时带进度（四格联动）：进度仍走进度覆盖表，避免被旧值盖回去
+    if (patch.progress !== undefined) {
+      const nextProgress = patch.progress;
+      setProgressOverrides((previous) => ({ ...previous, [taskId]: nextProgress }));
     }
     setTaskEdits((previous) => ({ ...previous, [taskId]: { ...previous[taskId], ...patch } }));
     onTaskEdited?.(project.id);

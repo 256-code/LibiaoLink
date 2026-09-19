@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PROGRESS_STEPS, progressStep } from "../data/tasks";
 
 type TrackerProps = {
   progress: number;
@@ -6,13 +7,12 @@ type TrackerProps = {
   onChange?: (progress: number) => void;
 };
 
-export const TRACKER_STEPS = 4;
+export const TRACKER_STEPS = PROGRESS_STEPS;
 
 export const TRACKER_LABELS = ["未开始", "刚开工", "完成一半", "快完成了", "完成了"];
 
-export function trackerStep(progress: number, steps: number = TRACKER_STEPS): number {
-  return Math.max(0, Math.min(steps, Math.round(progress * steps)));
-}
+/** 格数换算与 `data/tasks.ts` 共用一套口径（Push 65 起任务状态与进度条联动）。 */
+export const trackerStep = progressStep;
 
 export function trackerLabel(progress: number, steps: number = TRACKER_STEPS): string {
   return TRACKER_LABELS[trackerStep(progress, steps)] ?? "";
