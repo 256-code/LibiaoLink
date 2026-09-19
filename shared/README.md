@@ -15,7 +15,8 @@ shared/
 │   │   └── dicts.ts            阶段、成果文件、状态机等枚举（v0.2 §2.4 / §2.5）
 │   ├── modules/
 │   │   ├── projects.ts         项目主数据 + 首页分类 facets
-│   │   ├── tasks.ts            任务 + 四格进度
+│   │   ├── tasks.ts            任务 + 四格进度（含创建 / 编辑 / 从模板生成）
+│   │   ├── templates.ts        任务节点库 + 任务模板（A1-16 / A1-17）
 │   │   ├── flow.ts             蓝图 JSON + 流程节点 + 完成门禁
 │   │   ├── files.ts            文件与变更（上传 / 版本 / 定档 / 回收站；v0.2 §5）
 │   │   ├── identity.ts         登录用户 + /auth/me（ADR-010；g6）
@@ -59,6 +60,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 项目序号 | 服务端创建时分配（`projects.seq_no` ↔ `seqNo`，全库唯一正整数、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示两位补零，列表支持 `sort=seqNo:asc\|desc` |
 | 主题色 accent | 随项目类型字典（C9）元数据下发；前端不硬编码颜色 |
 | 任务状态 | 存储基础态 pending/active/done；展示五态由服务端派生为 `displayStatus`（不写回） |
+| 任务来源 | 任务从「任务节点库」的节点生成（任务模板 = 名称 + 阶段 + 节点顺序）；同一节点在项目里只留一份（单条重复返回 409；「整套添加」默认跳过并返回 `skipped`）；任务描述 / 成果文件按 A1-17 生成后锁定 |
 | 节点门禁 | 完成需过服务端事务内校验；缺件返回 422 + `missing` 明细（NODE_REQUIRED_DOC_MISSING） |
 | 蓝图 | 自建 JSON（schemaVersion=1）；导出/导入 round-trip 无损；导入即快照 |
 | 认证与会话 | /auth/*（根路径；OIDC authorization_code + PKCE + state；HttpOnly Cookie 会话）；/auth/me 返回 `{ user, claims, expiresAt }`；未认证 401 AUTH_REQUIRED、回调失败 400 AUTH_CALLBACK_FAILED |
@@ -71,6 +73,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 ## 本批范围与后续切片
 
 - 第一批（g2）：项目、任务、流程节点与蓝图（对应阶段 6 纵切的 h1~h4）。
+- 任务节点库与任务模板（A1-16 / A1-17；2026-09-19 定案）：任务模板 CRUD（按阶段）+ 从模板批量生成任务；落库表建议 `task_nodes` / `task_templates` / `task_template_nodes`（见 `前端功能需求.md` §3.8 A11 / `字段对照清单.md` §四）。
 - 第二批（S7·file，i1）：文件与变更（上传 / 版本 / 定档 / 变更 / 回收站）；预览（preview）契约随 i3 补。
 - 认证与会话（g6）：identity 契约（User / MeResponse / /auth/login 与 /auth/callback 查询参数），随会话后端化落地。
 - 后续切片（随对应模块落地补契约，仍在本包内）：通知（notify，阶段 8）、

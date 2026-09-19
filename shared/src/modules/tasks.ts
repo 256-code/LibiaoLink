@@ -64,3 +64,59 @@ export const TaskProgressUpdateBodySchema = z
     version: VersionSchema,
   })
   .openapi("TaskProgressUpdateBody");
+
+/**
+ * 任务创建（A10；2026-09-19 定案入契约）：从任务节点库 / 任务模板生成或手工创建。
+ * 默认值：状态 pending、进度 0；headcount / priority 可空（Q8 定案）。
+ */
+export const TaskCreateBodySchema = z
+  .object({
+    stageKey: StageKeySchema,
+    title: z.string().min(1).max(200).openapi({ example: "货架组装", description: "任务描述（节点名称）" }),
+    titleEn: z.string().max(200).nullable().optional(),
+    taskNodeId: UuidSchema.optional().openapi({
+      description: "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409）并建立节点关联",
+    }),
+    ownerId: UuidSchema.optional().openapi({ description: "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底" }),
+    plannedStart: DateOnlySchema.nullable().optional(),
+    plannedEnd: DateOnlySchema.nullable().optional(),
+    estimatedDays: z.number().int().min(0).nullable().optional(),
+    headcount: z.number().int().min(0).nullable().optional(),
+    priority: PrioritySchema.nullable().optional(),
+    deliverable: DocTypeSchema.nullable().optional(),
+    note: z.string().max(2000).nullable().optional(),
+  })
+  .openapi("TaskCreateBody", { description: "创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径）" });
+
+/** 任务编辑（A10）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度走 /progress。 */
+export const TaskUpdateBodySchema = z
+  .object({
+    ownerId: UuidSchema.optional(),
+    plannedStart: DateOnlySchema.nullable().optional(),
+    plannedEnd: DateOnlySchema.nullable().optional(),
+    estimatedDays: z.number().int().min(0).nullable().optional(),
+    headcount: z.number().int().min(0).nullable().optional(),
+    priority: PrioritySchema.nullable().optional(),
+    note: z.string().max(2000).nullable().optional(),
+    version: VersionSchema,
+  })
+  .openapi("TaskUpdateBody", { description: "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口）" });
+
+/** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
+export const TaskCreateFromTemplateBodySchema = z
+  .object({
+    templateId: UuidSchema,
+    nodeIds: z.array(UuidSchema).optional().openapi({ description: "只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400" }),
+    skipExisting: z.boolean().default(true).openapi({ description: "已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409" }),
+    ownerId: UuidSchema.optional().openapi({ description: "任务负责人；缺省 = 项目项目经理兜底" }),
+  })
+  .openapi("TaskCreateFromTemplateBody", { description: "从任务模板生成任务（批量；同一节点在项目里只留一份）" });
+
+export const TaskCreateFromTemplateResponseSchema = z
+  .object({
+    created: z.array(TaskSchema),
+    skipped: z
+      .array(z.object({ nodeId: UuidSchema, taskId: UuidSchema }))
+      .openapi({ description: "skipExisting=true 时跳过的节点及其已存在的任务" }),
+  })
+  .openapi("TaskCreateFromTemplateResponse");
