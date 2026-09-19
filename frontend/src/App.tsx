@@ -172,7 +172,7 @@ export default function App() {
   }
 
   if (route.kind === "placeholder") {
-    return <PlaceholderPage me={state.me} page={route.page} />;
+    return <PlaceholderPage me={state.me} page={route.page} section={route.section} />;
   }
 
   if (route.kind === "project") {
