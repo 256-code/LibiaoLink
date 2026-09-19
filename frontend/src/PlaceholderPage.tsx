@@ -3,12 +3,12 @@ import type { DragEvent } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { TaskNodeCard } from "./components/TaskNodeCard";
 import { PROJECT_STAGES } from "./data/projects";
-import { PROJECT_TASKS } from "./data/tasks";
+import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "./data/templatePresets";
 import { replaceTemplateSection, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
-  templates: { title: "任务模板", note: "任务模板库还没开工：左侧按上方标签栏列出该板块的任务节点（一期取「项目总览」数据，中英对照），板块内的模板编排与接口需求后续填充。" },
+  templates: { title: "任务模板", note: "任务模板当前由业务写死的模板预设驱动（`data/templatePresets.ts`，前端原型、未接后端）：左侧是该板块的节点池，右侧每块面板预置该板块的节点顺序（硬件实施两套）；正式的节点 / 模板数据由后端下发、落库（接口待后端）。" },
   files: { title: "文件库", note: "文件库还没开工：先把入口与路由占好，后续按需求填充。" },
 };
 
@@ -16,28 +16,40 @@ const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
 const TEMPLATE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
 /**
- * 任务节点（一期）：直接取「项目总览」的任务数据，按板块分组，一个任务节点一张卡片。
- * 后续接入模板自己的节点数据时，只换这个常量的来源即可。
+ * 某个板块的「任务节点」池：取该板块**业务写死的模板预设**里的节点，按出现顺序去重
+ * （硬件实施因此会多出「模板二（格口 / 滑槽型）」里的节点）。
  */
+function presetNodesOf(stage: string): TemplatePresetNode[] {
+  const seen = new Set<string>();
+  const items: TemplatePresetNode[] = [];
+  for (const preset of STAGE_TEMPLATE_PRESETS[stage] ?? []) {
+    for (const node of preset.nodes) {
+      if (seen.has(node.id)) {
+        continue;
+      }
+      seen.add(node.id);
+      items.push(node);
+    }
+  }
+  return items;
+}
+
+/** 任务节点（当前原型写死）：一个任务节点一张卡片，备用节点池的正式来源接后端后再换。 */
 const TEMPLATE_NODES = TEMPLATE_SECTIONS.map((stage) => ({
   stage,
-  items: PROJECT_TASKS.filter((task) => task.stage === stage).map((task) => ({
-    id: task.id,
-    title: task.title,
-    titleEn: task.titleEn,
-  })),
+  items: presetNodesOf(stage),
 }));
 
-type TemplateNode = (typeof TEMPLATE_NODES)[number]["items"][number];
+type TemplateNode = TemplatePresetNode;
 
-/** 右侧一块模板面板 = 一份模板草稿（一期都在内存里：可新建、可改名，未接保存）。 */
+/** 右侧一块模板面板 = 一份模板草稿（当前原型都在内存里：可新建、可改名，未接保存；正式版落库）。 */
 type TemplateDraft = {
   id: string;
   /** 模板名（本地草稿字段，可直接改） */
   name: string;
   /** 这份模板里已选的节点，顺序即模板里的顺序 */
   nodes: TemplateNode[];
-  /** 上次「保存」时的样子（一期只存在浏览器内存里；用来判断有没有未保存的改动） */
+  /** 上次「保存」时的样子（当前原型存浏览器内存、未接后端；正式版由后端持久化；用来判断有没有未保存的改动） */
   saved: string;
 };
 
@@ -49,17 +61,29 @@ const snapshotOf = (template: Pick<TemplateDraft, "name" | "nodes">): string =>
 const EMPTY_TEMPLATE_LIST: TemplateDraft[] = [];
 
 /**
- * 每个阶段的初始模板面板：**模板按阶段分开存**，一期各阶段都从「一张空白草稿」开始，
- * 名字带阶段名（售前规划模板 / 设计开发模板 …）以区分不同阶段各自的模板。
+ * 每个阶段的初始模板面板：**业务写死的模板预设**（名称 + 节点顺序）——
+ * 硬件实施两套（机器人 / 导轨型 18 条、格口 / 滑槽型 11 条），软件部署一套，其余阶段各一套；
+ * 面板初始就是「已保存」，之后改名 / 拖拽 / 增删才会变回「保存」。
  */
 function initialTemplatesByStage(): Record<string, TemplateDraft[]> {
   const map: Record<string, TemplateDraft[]> = {};
-  TEMPLATE_SECTIONS.forEach((stage, index) => {
-    const name = stage + "模板";
-    map[stage] = [{ id: "tpl-" + String(index + 1), name, nodes: [], saved: snapshotOf({ name, nodes: [] }) }];
-  });
+  let seq = 1;
+  for (const stage of TEMPLATE_SECTIONS) {
+    map[stage] = (STAGE_TEMPLATE_PRESETS[stage] ?? []).map((preset) => {
+      const id = "tpl-" + String(seq);
+      seq += 1;
+      const nodes = preset.nodes.slice();
+      return { id, name: preset.name, nodes, saved: snapshotOf({ name: preset.name, nodes }) };
+    });
+  }
   return map;
 }
+
+/** 预设面板总数：「＋ 新建模板」的序号从这里往后排，避免 id 撞车。 */
+const INITIAL_TEMPLATE_COUNT = TEMPLATE_SECTIONS.reduce(
+  (total, stage) => total + (STAGE_TEMPLATE_PRESETS[stage]?.length ?? 0),
+  0,
+);
 
 /** 拖拽只传 id，落点时按 id 找回节点内容（相当于复制一份到右侧模板）。 */
 const TEMPLATE_NODE_BY_ID = new Map<string, TemplateNode>(
@@ -114,10 +138,10 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
       replaceTemplateSection(activeSection);
     }
   }, [page, section, activeSection]);
-  /** 右侧的模板面板：**按阶段分开存**，每个阶段一套、互不影响（一期都是内存草稿）。 */
+  /** 右侧的模板面板：**按阶段分开存**，每个阶段一套、互不影响（当前原型都是内存草稿、未接后端）。 */
   const [templatesByStage, setTemplatesByStage] =
     useState<Record<string, TemplateDraft[]>>(initialTemplatesByStage);
-  const nextTemplateSeq = useRef(TEMPLATE_SECTIONS.length + 1);
+  const nextTemplateSeq = useRef(INITIAL_TEMPLATE_COUNT + 1);
   /** 当前阶段的模板面板。 */
   const templates = templatesByStage[activeSection] ?? EMPTY_TEMPLATE_LIST;
   /** 当前悬停的模板面板 id（高亮 / 重复提示都按面板算）。 */
@@ -131,6 +155,21 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
   /** 落点：哪块面板 + 插到第几张卡片前面（0..N）。 */
   const [dropTarget, setDropTarget] = useState<{ templateId: string; index: number } | null>(null);
   const activeNodes = TEMPLATE_NODES.find((section) => section.stage === activeSection)?.items ?? [];
+  /** 左列「任务节点」的搜索词：按中 / 英文名过滤当前板块的节点卡片。 */
+  const [nodeQuery, setNodeQuery] = useState("");
+
+  // 切板块时清空搜索词：否则上一个板块的关键词会把新板块的节点全滤掉，看起来像没数据
+  useEffect(() => {
+    setNodeQuery("");
+  }, [activeSection]);
+
+  const normalizedQuery = nodeQuery.trim().toLowerCase();
+  const visibleNodes =
+    normalizedQuery === ""
+      ? activeNodes
+      : activeNodes.filter((node) =>
+          (node.title + "\n" + node.titleEn).toLowerCase().includes(normalizedQuery),
+        );
 
   /** 这块面板里是不是已经有正在拖的那个节点（只有从左侧拖过来才可能重复）。 */
   const isDuplicateIn = (template: TemplateDraft): boolean =>
@@ -171,7 +210,7 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
     updateTemplates((previous) => previous.map((item) => (item.id === templateId ? { ...item, name } : item)));
   };
 
-  /** 保存这份模板：一期没有后端，就把当前样子记进内存（之后再改动会重新变回「保存」）。 */
+  /** 保存这份模板：当前原型没有后端，就把当前样子记进内存（正式版落库；之后再改动会重新变回「保存」）。 */
   const saveTemplate = (templateId: string): void => {
     updateTemplates((previous) =>
       previous.map((item) => (item.id === templateId ? { ...item, saved: snapshotOf(item) } : item)),
@@ -310,14 +349,61 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
             {/* 左列「任务节点」固定不动（宽屏滚动时钉住），右侧模板面板一行放不下就换到下一行 */}
             <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-start">
               <section className="flex w-full flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 lg:sticky lg:top-[81px] lg:w-[370px] lg:shrink-0 lg:self-start">
-                <p className="mb-3 flex items-baseline justify-between text-sm">
+                <p className="mb-2 flex items-baseline justify-between text-sm">
                   <span className="font-semibold text-zinc-800">任务节点</span>
                   <span className="text-xs text-zinc-500">
-                    {activeSection} · {activeNodes.length} 个节点
+                    {activeSection} ·{" "}
+                    {visibleNodes.length === activeNodes.length
+                      ? activeNodes.length + " 个节点"
+                      : visibleNodes.length + " / " + activeNodes.length + " 个节点"}
                   </span>
                 </p>
+                {/* 搜索框：按中 / 英文名过滤左列的节点卡片（切板块时自动清空） */}
+                <div className="relative mb-3">
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+                  >
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={nodeQuery}
+                    onChange={(event) => setNodeQuery(event.target.value)}
+                    placeholder="搜索节点（中 / 英）"
+                    aria-label="搜索任务节点"
+                    className="w-full rounded-lg border border-white/70 bg-white/55 py-1.5 pl-8 pr-8 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 hover:bg-white/70 focus:border-zinc-300 focus:bg-white/80"
+                  />
+                  {nodeQuery !== "" && (
+                    <button
+                      type="button"
+                      onClick={() => setNodeQuery("")}
+                      aria-label="清空搜索"
+                      title="清空搜索"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-zinc-400 transition hover:bg-white/70 hover:text-zinc-700"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 15 15"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                        strokeLinecap="round"
+                        className="h-3.5 w-3.5"
+                      >
+                        <path d="M4 4l7 7M11 4l-7 7" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-3">
-                  {activeNodes.map((item) => (
+                  {visibleNodes.map((item) => (
                     <TaskNodeCard
                       key={item.id}
                       title={item.title}
@@ -333,6 +419,11 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                       onDragEnd={resetDrag}
                     />
                   ))}
+                  {visibleNodes.length === 0 && (
+                    <p className="rounded-xl border border-dashed border-white/80 bg-white/35 px-4 py-8 text-center text-xs text-zinc-500">
+                      没有匹配的节点，换个关键词试试
+                    </p>
+                  )}
                 </div>
               </section>
 
@@ -387,7 +478,7 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                           <button
                             type="button"
                             onClick={() => saveTemplate(template.id)}
-                            title="保存这份模板：一期只存在浏览器内存里（未接后端），保存后再改动会重新变回「保存」"
+                            title="保存这份模板：当前原型未接后端、只写浏览器内存（正式版落库）；保存后再改动会重新变回「保存」"
                             className={
                               "shrink-0 rounded-md px-2 py-0.5 text-xs font-medium transition " +
                               (savedOk

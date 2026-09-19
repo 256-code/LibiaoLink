@@ -110,6 +110,17 @@ export const PROJECT_TASKS: ProjectTask[] = BASE_TASKS.map((task, index) => {
   };
 });
 
+/**
+ * 示例任务数据（源表 44 条）归属的项目：原型阶段只有印度项目有真实来源（源表那一个项目），
+ * 其余项目暂为空列表 —— 打开后只出页面骨架（阶段标签导航 + 阶段分组头，没有任务行）。
+ */
+export const DEMO_TASKS_PROJECT_ID = "inmu-0010";
+
+/** 取某个项目的任务：原型阶段只有示例项目（印度）带数据，其余项目返回空列表（正式版按项目取数）。 */
+export function tasksForProject(projectId: string): ProjectTask[] {
+  return projectId === DEMO_TASKS_PROJECT_ID ? PROJECT_TASKS : [];
+}
+
 export function parseCnDate(value: string): { month: number; day: number } | null {
   const match = /(\d+)月(\d+)日/.exec(value);
   if (match === null) {

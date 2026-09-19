@@ -1,8 +1,10 @@
-import { Fragment, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { TaskDrawer } from "./TaskDrawer";
 import { Tracker } from "./Tracker";
+import { StageAddCard } from "./StageAddCard";
+import type { TemplatePresetNode } from "../data/templatePresets";
 
 const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
@@ -98,6 +100,14 @@ type TaskBoardProps = {
   collapsed: Record<string, boolean>;
   onToggleStage: (stage: string) => void;
   onToggleAllStages: () => void;
+  /** 没有数据也要出分组头的阶段（原型阶段没有任务的项目：只出阶段骨架，展开后没有任务行）。 */
+  skeletonStages?: readonly string[];
+  /** 「添加任务」：从任务模板预设里挑节点加进项目（不传 = 阶段标签点不开右侧卡片）。 */
+  onAddNode?: (stage: string, node: TemplatePresetNode) => void;
+  /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
+  manager?: string;
+  /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
+  viewStage?: string;
 };
 
 function shortenFileName(name: string): string {
@@ -120,7 +130,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, manager }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; manager: string }) {
   const overdue = isTaskOverdue(task);
   const status = taskStatus(task);
   const dotClass = STATUS_DOT_CLASS[status];
@@ -140,7 +150,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress }: { task: Proj
         <Tracker progress={task.progress} onChange={onProgress} />
       </div>
     ),
-    manager: <span className="truncate text-xs text-zinc-600">{PROJECT_MANAGER}</span>,
+    manager: <span className="truncate text-xs text-zinc-600">{manager}</span>,
     owner: (
       <span className="truncate text-xs text-zinc-600" title={fullOwner}>
         {task.owner}
@@ -262,11 +272,14 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   const total = tasks.length;
   const done = tasks.filter(isTaskDone).length;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  /** 没有任务的项目（原型阶段除印度外）：当前阶段给占位符，不写「全部完成」这种会误读的结论。 */
   const currentStage =
-    STAGE_ORDER.find((stage) => {
-      const items = tasks.filter((task) => task.stage === stage);
-      return items.length > 0 && items.some((task) => !isTaskDone(task));
-    }) ?? "全部完成";
+    total === 0
+      ? "—"
+      : (STAGE_ORDER.find((stage) => {
+          const items = tasks.filter((task) => task.stage === stage);
+          return items.length > 0 && items.some((task) => !isTaskDone(task));
+        }) ?? "全部完成");
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-xl border border-zinc-200 bg-white px-5 py-3.5">
@@ -279,25 +292,36 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
           <div className="h-full rounded-full bg-zinc-900" style={{ width: pct + "%" }} />
         </div>
         <span className="text-sm font-semibold tabular-nums text-zinc-900">{pct}%</span>
-        <span className="text-xs text-zinc-400">
-          {done}/{total} 完成
-        </span>
+        {/* 没有任务的项目（原型阶段除印度外）：不显示 0/0 完成这种没有意义的计数 */}
+        {total === 0 ? null : (
+          <span className="text-xs text-zinc-400">
+            已完成 {done}/{total}
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, viewStage, manager }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+  /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
+  const [cardStage, setCardStage] = useState<string | null>(null);
   const closeDrawer = () => setSelectedTask(null);
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
+  /** 项目里已有的任务 id：添加任务时用来判断节点是不是已经加过。 */
+  const existingTaskIds = new Set(tasks.map((task) => task.id));
+  // 换阶段标签（顶部）时把卡片关掉，避免卡片停在上一个阶段的上下文里
+  useEffect(() => {
+    setCardStage(null);
+  }, [viewStage]);
 
   const groups = STAGE_ORDER.map((stage) => ({
     stage,
     items: tasks.filter((task) => task.stage === stage),
-  })).filter((group) => group.items.length > 0);
+  })).filter((group) => group.items.length > 0 || (skeletonStages?.includes(group.stage) ?? false));
   const stages = groups.map((group) => group.stage);
   const allCollapsed = stages.length > 0 && stages.every((stage) => collapsed[stage] === true);
 
@@ -349,23 +373,51 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
             const isCollapsed = collapsed[group.stage] === true;
             return (
               <section key={group.stage} className="border-b border-zinc-100 last:border-b-0">
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={!isCollapsed}
                   onClick={() => {
                     onToggleStage(group.stage);
                   }}
-                  aria-expanded={!isCollapsed}
-                  className="flex w-full items-center gap-2.5 bg-zinc-100 px-5 py-3 text-left transition hover:bg-zinc-200/60"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onToggleStage(group.stage);
+                    }
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2.5 bg-zinc-100 px-5 py-3 text-left transition hover:bg-zinc-200/60"
                 >
                   <Chevron collapsed={isCollapsed} />
-                  <span className="relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 ring-zinc-200">
+                  {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉；折叠 / 展开仍点整行或左侧箭头） */}
+                  <button
+                    type="button"
+                    data-stage-pill="true"
+                    aria-expanded={cardStage === group.stage}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setCardStage((prev) => (prev === group.stage ? null : group.stage));
+                    }}
+                    title="打开右侧卡片：这个阶段的任务节点 + 模板（预览 / 添加到项目）"
+                    className={
+                      "relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 transition " +
+                      (cardStage === group.stage ? "ring-2 ring-[#feca04]/70" : "ring-zinc-200 hover:ring-zinc-300")
+                    }
+                  >
                     <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
                     <span className="relative text-sm font-semibold text-zinc-800">{group.stage}</span>
-                    <span className="relative text-xs text-zinc-500">
-                      {done}/{group.items.length} 完成
-                    </span>
-                  </span>
-                </button>
+                    {/* 空阶段（只出骨架的项目）：只留阶段名，不显示 0/0 完成 */}
+                    {group.items.length === 0 ? null : (
+                      <span className="relative text-xs text-zinc-500">
+                        已完成 {done}/{group.items.length}
+                      </span>
+                    )}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="relative h-3 w-3 text-zinc-400">
+                      <path d="M4 5h16v14H4z" />
+                      <path d="M14.5 5v14" />
+                    </svg>
+                  </button>
+                </div>
                 {isCollapsed ? null : (
                   <div className="divide-y divide-zinc-100">
                     {group.items.map((task) => (
@@ -376,6 +428,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                         selected={selectedTask !== null && selectedTask.id === task.id}
                         onSelect={() => setSelectedTask(task)}
                         onProgress={(progress) => onSetProgress?.(task.id, progress)}
+                        manager={manager ?? PROJECT_MANAGER}
                       />
                     ))}
                   </div>
@@ -386,7 +439,10 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
         </div>
       </div>
       </div>
-      <TaskDrawer task={selectedTask} onClose={closeDrawer} />
+      <TaskDrawer task={selectedTask} manager={manager ?? PROJECT_MANAGER} onClose={closeDrawer} />
+      {cardStage !== null && onAddNode !== undefined ? (
+        <StageAddCard stage={cardStage} existingTaskIds={existingTaskIds} onAddNode={onAddNode} onClose={() => setCardStage(null)} />
+      ) : null}
     </>
   );
 }
