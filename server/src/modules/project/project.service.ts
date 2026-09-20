@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ProjectFacetsSchema, ProjectListResponseSchema, ProjectSchema, ProjectCreateBodySchema, ProjectUpdateBodySchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
+import type { ProjectScopeFilter } from "../permission/index.js";
 import { FlowService } from "./flow.service.js";
 import { ProjectRepository, type ProjectInsertInput, type ProjectUpdateInput, type ProjectViewRow } from "./project.repository.js";
 import { buildProjectFilter, parseProjectSort, type ProjectListQueryInput } from "./project.query.js";
@@ -47,19 +48,19 @@ export class ProjectService {
     private readonly flow: FlowService,
   ) {}
 
-  /** 列表（M2-04）：筛选 / 时间区间 / 排序与 facets 同口径；软删项目不可见（A5）。 */
-  async listProjects(query: ProjectListQueryInput): Promise<ProjectListResult> {
+  /** 列表（M2-04）：筛选 / 时间区间 / 排序与 facets 同口径；软删不可见（A5）+ 记录级可见集（h6）。 */
+  async listProjects(query: ProjectListQueryInput, scope: ProjectScopeFilter): Promise<ProjectListResult> {
     const filter = buildProjectFilter(query);
     const sorts = parseProjectSort(query.sort);
-    const { items, total } = await this.projects.listPage(filter, sorts, query.limit, (query.page - 1) * query.limit);
+    const { items, total } = await this.projects.listPage(filter, sorts, query.limit, (query.page - 1) * query.limit, scope);
     return { items: items.map(toProjectView), page: query.page, limit: query.limit, total };
   }
 
   /** 首页分类计数（M2-04 · A6）：五组固定返回，与列表同筛选口径。 */
-  async getFacets(query: ProjectListQueryInput): Promise<ProjectFacetsResult> {
+  async getFacets(query: ProjectListQueryInput, scope: ProjectScopeFilter): Promise<ProjectFacetsResult> {
     const filter = buildProjectFilter(query);
     parseProjectSort(query.sort);
-    return this.projects.facets(filter);
+    return this.projects.facets(filter, scope);
   }
 
   async getProject(id: string): Promise<ProjectView> {

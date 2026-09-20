@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -18,9 +18,10 @@ server/
     db/                   # PG 连接 + Drizzle schema（对齐 database/migrations）
     health/               # 垂直样例：controller -> service -> repository
     modules/identity/     # 首个真实实现：/auth/* 会话链路（g6）
-    modules/<其余 12 个模块>/README.md（占位）
+    modules/permission/   # 权限策略层（h6 · PoC-6）：记录级 / 功能权限 / 字段级 / 五出口投影（其余模块仍为 README 占位）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
+  scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
   test/                          # vitest（health / auth 端到端 + 校验管道单测；auth 用进程内桩 IdP，不依赖 PG 与 Casdoor）
 ```
 
@@ -34,6 +35,7 @@ server/
 | `npm run start:api` / `start:worker` | 运行构建产物（自带 `--env-file-if-exists=.env`） |
 | `npm run test` | vitest run |
 | `npm run check:boundaries` | 依赖方向规则（违规退出码 1） |
+| `npm run check:permission-matrix` | 权限矩阵自检：种子 #6b ↔ 契约 `PermissionKey` 枚举 ↔ 角色集（admin 必须全量；不连库，退出码 1） |
 | `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build） |
 | `node dist/entry/worker.js --health-check` | worker 一次性健康检查 |
 
@@ -63,6 +65,7 @@ server/
 | 类型 | 模块 | 主责 |
 |---|---|---|
 | 领域（domain） | identity、project、blueprint、node、task、report-issue、stakeholder | wmj |
+| 领域（domain · 横切） | permission（权限策略层 · h6） | wmj |
 | 平台（platform） | file、notify、search、dashboard | lan |
 | 平台（platform） | automation、admin | wmj |
 
@@ -168,6 +171,7 @@ server/
 - 流程门禁测试（`test/flow-gate.test.ts` · h3）：节点完成缺件明细 `missing[]`、阶段推进三类缺项（`node_not_done` / `task_not_done` / `doc_missing`）、门禁全过分支与阶段完成度派生，共 6 例；**h3 后全量 100 例（9 文件）**。
 - 任务规则测试（`test/task-rules.test.ts` · h4）：五态派生（待开始 / 进行中 / 已延期 / 已完成 / 提前完成）、按时交付派生（含回落存储值）、状态写入联动、进度写入联动（清完成日期 = 唯一方式）、上海日界、列表筛选 / 排序解析（非法值 400），共 17 例；
 - 门禁拒绝测试（`test/flow-gate-rejection.test.ts` · h5 · PoC-9）：服务端强校验 422 + `details[].code=required_doc`、拒绝留痕 `node.gate_rejected`（含 missing 明细与操作人）、不部分生效（未 `markNodeDone` / 未 touch）、can-complete 预检（缺件 false / 齐备 true / 已完成 false）、门禁通过对照（`node.completed`），共 5 例；**h5 后全量 135 例（12 文件）**。
+- 权限矩阵测试（`test/permission-matrix.test.ts` · h6 · PoC-6）：**记录级 9 例**（六角色数据范围的可见集规格、多角色并集、主数据责任人恒可见、单项目谓词与可见 id 同源）＋**功能权限 7 例**（全局位、任务负责人、项目内项目经理 / 成员平权、非成员先 404、项目上下文外只看全局位、隐含位 ⊆ 且全在契约枚举内）＋**字段级 6 例**（联系方式三字段 / 商务字段 / 备注三级、行投影删字段不落 null、员工邮箱一期全员可见、策略表字段登记校验）＋**五出口 5 例**（四出口投影一致、导出单独授权、导出字段仍按同一策略裁剪、任一出口不含被裁字段、出口集合 = 四类 + 记录级）＋**策略服务 7 例**（projectScope all / ids、resolveProjectAccess 的 404 语义与角色位、软删、assertCan 403、画像缓存单次查库），共 34 例；**h6 后全量 169 例（13 文件）**。
 - 任务用例测试（`test/task-service.test.ts` · h4）：带节点创建缺省项目经理 / 节点判重 409 / 手工创建仅管理员 403 / 阶段不一致 400 / 归档 409、状态联动（done 满格补当天、active 退 0.75 清日期、过期保持已延期）、乐观锁 409 / 跨项目 404、进度写回清完成日期、项目总览四格，共 13 例；**h4 后全量 130 例（11 文件）**。
 
 ## PoC-9 回放（h5 · S6·PoC-9）
@@ -177,6 +181,14 @@ server/
 - 证据入库：`docs/PoC-9-回放证据(蓝图round-trip与门禁拒绝).md`（真机 14 项断言：B1~B4 round-trip 无损 + P1 / P2 快照 + G1~G7 门禁三条 + 补齐放行闭环）。
 - CI 回归（不连库）：`test/flow-gate-rejection.test.ts` 5 例 —— 拒绝 422 + `missing` 明细、`node.gate_rejected` 留痕、不部分生效、预检置灰、门禁通过对照。
 - 回放中发现并修正的契约漂移（h5）：`POST /api/v1/nodes/{id}/complete` 原先返回裸节点视图，与契约 `NodeCompleteResponse = { node }` 不一致 —— 已按契约包成 `{ node }`（`src/modules/project/nodes.controller.ts`）。
+
+## PoC-6 回放（h6 · S6·PoC-6：权限矩阵与脱敏五出口）
+
+- 脚本：`scripts/poc6-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、建 `POC6-xxx` 回放项目、临时把受限账号加入名册 —— 跑完硬删回放项目（含任务 / 节点 / 阶段 / outbox 事件）与两个会话）。
+  - 复跑：`cd server && node scripts/poc6-replay.mjs --out ../docs/PoC-6-回放证据(权限矩阵与脱敏五出口).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据、`--actor <userId>` 指定受限账号。
+- 证据入库：`docs/PoC-6-回放证据(权限矩阵与脱敏五出口).md`（真机 24 项断言：记录级列表 / 详情 / 子资源统一 404 + 名册即刻可见 + 可见但无权限位 403 + 成员平权 200 + 出口键位数据面 + 收尾零残留）。
+- 矩阵门禁（不连库，随 `npm test` 与 CI 常跑）：`check:permission-matrix`（种子 #6b ↔ 契约枚举 ↔ 角色集三方对齐）+ `test/permission-matrix.test.ts` 34 例（五类出口的策略层用例）。
+- 差异与后续：搜索 / 通知模块（lan 线）尚未落地、投影入口已就绪；字段级真实出口随 j6 干系人；导出 / 搜索 / 通知出口的调用方接线随 i 系列与 M7 —— 明细见 `src/modules/permission/README.md` 差异 1~5。
 
 ## CI 接线（g5 · px｜已落地）
 
@@ -224,5 +236,6 @@ server/
 - h3：流程节点（蓝图版本化 / 建项目快照 / 阶段推进与回退 / 节点增删 / 完成门禁）—— 已落地（Push 83）；记录级 404 与权限矩阵随 h6，文件门禁口径随 i1（file）与 h4（task）。
 - h4：task 模块（任务列表 / 详情 / 创建 / 编辑 / 进度 / 项目总览四格 / 五态与按时交付派生）—— 已落地（Push 89）；任务侧完成门禁（M3-03）、批量（M3-04）、从模板实例化与快筛、1 万行压测（M3-06）为后续卡片，记录级 404 与权限矩阵随 h6。
 - h5：PoC-9 回放（蓝图 round-trip 与门禁拒绝的证据入库：回放脚本 + `docs/` 证据 + CI 回归测试）—— 已落地（Push 93）；任务侧完成门禁（M3-03）仍为后续卡片。
+- h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。
 - lan 线：file / preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。

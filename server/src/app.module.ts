@@ -7,6 +7,7 @@ import type { Env } from "./config/env.js";
 import { DatabaseModule } from "./db/db.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { IdentityModule } from "./modules/identity/index.js";
+import { PermissionModule } from "./modules/permission/index.js";
 import { ProjectModule } from "./modules/project/index.js";
 import { TaskModule } from "./modules/task/index.js";
 
@@ -16,7 +17,16 @@ export class AppModule {
   static forRoot(env: Env): DynamicModule {
     return {
       module: AppModule,
-      imports: [createLoggerModule(env), AppConfigModule.forRoot(env), DatabaseModule, HealthModule, IdentityModule, ProjectModule, TaskModule],
+      imports: [
+        createLoggerModule(env),
+        AppConfigModule.forRoot(env),
+        DatabaseModule,
+        HealthModule,
+        IdentityModule,
+        PermissionModule,
+        ProjectModule,
+        TaskModule,
+      ],
       providers: [{ provide: APP_FILTER, useClass: ApiErrorFilter }],
     };
   }
