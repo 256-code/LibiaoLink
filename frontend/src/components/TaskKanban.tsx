@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -29,6 +29,8 @@ import { trackerLabel } from "./Tracker";
  * 放开即插到该位置（**同一列内也能拖着换顺序**）；插入位按鼠标与卡片中线算（某张卡片中线以上 = 插到这张前面，都在上面 = 插到列尾），顺序存 `ProjectDetail` 的看板顺序表（原型内存态，与任务覆盖表同一层；任务表同阶段内顺序跟着走）。
  * 列内滚动条是**隐式**的：原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块（`ScrollArea`，与分类筛选侧栏 / 任务抽屉同一套）。
  * 看板横向滚动条同样**隐式**（Push 87）：列排布交给 `ScrollArea axis="horizontal"`，原生滚动条（Windows 下带箭头那条横杠）隐藏，滑块只在滚动 / 悬停时浮在列底留白里；列高按「铺满视口」重算（`100vh - 12.75rem`），列底与页面底之间不再留下大块空白。
+ * Push 107（业务反馈「拖动时支持鼠标滑动」）：**拖动到边缘自动滚动** —— 拖着卡片把鼠标贴到看板左右边（翻列）或列内卡片列表的上下边（翻卡片），容器就自己滚，贴得越近越快，
+ * 卡片因此能拖到视口外的列 / 卡片；滚动实现放在 `ScrollArea` 里（两块看板 + 抽屉通用），列内插入槽位在自动滚动期间按帧跟着鼠标重算，不会停在旧位置。
  */
 export type KanbanMode = "owner" | "status";
 
@@ -390,6 +392,8 @@ function KanbanColumn({
   /** 插入位（Push 105）：鼠标落在列内第几格（0 = 最前、`items.length` = 列尾）。 */
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const columnRef = useRef<HTMLElement | null>(null);
+  /** 拖动中鼠标的纵向位置（Push 107）：自动滚动时鼠标可以不动，插入位得按这个位置重算。 */
+  const lastPointerYRef = useRef(0);
   /** 拖动的就是本列的卡片（同列放开 = 只换顺序，不写负责人 / 状态）。 */
   const isOwnColumn = draggingId !== null && group.items.some((task) => task.id === draggingId);
   /** 有卡片在拖 = 这一列可以接（同列也可以：拖着换顺序，Push 105）。 */
@@ -399,19 +403,49 @@ function KanbanColumn({
    * 鼠标落在列内哪个插入位（Push 105）：按卡片中线判断 —— 鼠标在某张卡片中线以上 = 插到这张前面；
    * 所有中线都在上面 = 插到列尾。浮动的那块虚线槽位不参与计算（它没有 `data-kanban-card`）。
    */
-  const indexAt = (clientY: number): number => {
-    if (columnRef.current === null) {
-      return group.items.length;
-    }
-    const cards = Array.from(columnRef.current.querySelectorAll("[data-kanban-card='true']"));
-    for (let i = 0; i < cards.length; i++) {
-      const rect = cards[i].getBoundingClientRect();
-      if (clientY < rect.top + rect.height / 2) {
-        return i;
+  const indexAt = useCallback(
+    (clientY: number): number => {
+      if (columnRef.current === null) {
+        return group.items.length;
       }
+      const cards = Array.from(columnRef.current.querySelectorAll("[data-kanban-card='true']"));
+      for (let i = 0; i < cards.length; i++) {
+        const rect = cards[i].getBoundingClientRect();
+        if (clientY < rect.top + rect.height / 2) {
+          return i;
+        }
+      }
+      return cards.length;
+    },
+    [group.items.length],
+  );
+
+  /**
+   * 自动滚动时插入位跟着重算（Push 107）：鼠标贴着列边不动、列内卡片在自动滚，卡片位置一直在变；
+   * 只靠 dragover 重算会慢半拍（Chrome 鼠标不动时 dragover 约 350ms 才来一次），所以拖动落在本列期间按帧重算。
+   */
+  useEffect(() => {
+    if (!over) {
+      return;
     }
-    return cards.length;
-  };
+    let raf = window.requestAnimationFrame(function tick() {
+      const next = indexAt(lastPointerYRef.current);
+      setDropIndex((prev) => (prev === next ? prev : next));
+      raf = window.requestAnimationFrame(tick);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [indexAt, over]);
+
+  // 拖动结束（放开 / Esc 取消 / 在别处松手）就把这一列的落点状态清干净（Push 107）：
+  // `dragleave` 在「拖着卡片时按 Esc」这类收尾下不一定派到每一列，免得上一轮的槽位在下一轮拖动刚开始时又冒出来。
+  useEffect(() => {
+    if (draggingId === null) {
+      setOver(false);
+      setDropIndex(null);
+    }
+  }, [draggingId]);
 
   /** 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
   const context: KanbanAddContext = {
@@ -487,6 +521,7 @@ function KanbanColumn({
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
         // 插入位跟着鼠标走（Push 105）：拖到哪两格之间，槽位就浮在那里
+        lastPointerYRef.current = event.clientY;
         const next = indexAt(event.clientY);
         if (!over) {
           setOver(true);
