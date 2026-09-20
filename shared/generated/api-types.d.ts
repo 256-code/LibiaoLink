@@ -335,6 +335,170 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/projects/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目成员名册（记录级权限来源） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 成员列表（项目经理在前，同角色按工号升序） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMemberListResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 添加 / 更新成员（幂等：同项目 + 同用户唯一） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectMemberCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 成员行（重复添加 = 覆盖角色） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMember"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 移除成员（返回被移除的成员行；项目归档后拒绝） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    userId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 被移除的成员 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMember"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/summary": {
         parameters: {
             query?: never;
@@ -3323,7 +3487,15 @@ export interface components {
             code: string;
             name: string;
             customer?: string;
+            /**
+             * @description 项目落地地区（字典 region）；未填写归入「未分类」（A1-12 定档）
+             * @default 未分类
+             */
             region: string;
+            /**
+             * @description 项目类型（字典 project_type）；未填写归入「未分类」（A1-12 定档）
+             * @default 未分类
+             */
             projectType: string;
             managerId: components["schemas"]["Uuid"];
             stageKey?: components["schemas"]["StageKey"];
@@ -3363,6 +3535,33 @@ export interface components {
             limit: number;
             total: number;
         };
+        /** @description 项目成员（名册行） */
+        ProjectMember: {
+            userId: components["schemas"]["Uuid"];
+            /**
+             * @description 工号（users.username）
+             * @example 10086
+             */
+            username: string;
+            /** @description 姓名（users.display_name；账号停用 / 离职后仍返回） */
+            displayName: string;
+            roleInProject: components["schemas"]["ProjectMemberRole"];
+            joinedAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 添加成员：重复添加（同 project + user）幂等并覆盖角色；项目归档后拒绝（409 PROJECT_ARCHIVED） */
+        ProjectMemberCreateBody: {
+            userId: components["schemas"]["Uuid"];
+            roleInProject?: components["schemas"]["ProjectMemberRole"] & unknown;
+        };
+        ProjectMemberListResponse: {
+            items: components["schemas"]["ProjectMember"][];
+            total: number;
+        };
+        /**
+         * @description 项目内角色：project_manager（项目经理）/ project_member（项目成员）；只作用于项目名册，不改变全局功能权限
+         * @enum {string}
+         */
+        ProjectMemberRole: "project_manager" | "project_member";
         ProjectNode: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];

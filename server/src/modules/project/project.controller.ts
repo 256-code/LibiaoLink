@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Headers,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -13,6 +14,7 @@ import {
 import {
   ProjectCreateBodySchema,
   ProjectListQuerySchema,
+  ProjectMemberCreateBodySchema,
   ProjectUpdateBodySchema,
   UuidSchema,
   z,
@@ -20,12 +22,15 @@ import {
 import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { ProjectMemberService } from "./project-member.service.js";
+import type { ProjectMemberListResult, ProjectMemberView } from "./project-member.service.js";
 import { ProjectService } from "./project.service.js";
 import type { ProjectFacetsResult, ProjectListResult, ProjectView } from "./project.service.js";
 
 type ProjectListQuery = z.infer<typeof ProjectListQuerySchema>;
 type ProjectCreateBody = z.infer<typeof ProjectCreateBodySchema>;
 type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
+type ProjectMemberCreateBody = z.infer<typeof ProjectMemberCreateBodySchema>;
 
 /** 路径参数 id 校验：非法 uuid 直接 400 VALIDATION_FAILED（不落到 SQL 层）。 */
 const uuidParam = new ZodValidationPipe(UuidSchema);
@@ -38,7 +43,10 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard)
 export class ProjectsController {
-  constructor(private readonly projects: ProjectService) {}
+  constructor(
+    private readonly projects: ProjectService,
+    private readonly members: ProjectMemberService,
+  ) {}
 
   /** 列表（M2-04）：多维筛选 + 时间闭区间 + 分页 + 排序；软删项目不可见（A5）。 */
   @Get()
@@ -81,6 +89,31 @@ export class ProjectsController {
     @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
     return this.projects.deleteProject(id, parseIfMatch(ifMatch), actorId);
+  }
+
+  /** 成员名册（M2-05）：项目经理在前，同角色按工号升序；项目不存在 / 已软删统一 404。 */
+  @Get(":id/members")
+  listMembers(@Param("id", uuidParam) id: string): Promise<ProjectMemberListResult> {
+    return this.members.listMembers(id);
+  }
+
+  /** 添加 / 更新成员（幂等 upsert；缺省角色 project_member）；归档项目 409 PROJECT_ARCHIVED。 */
+  @Post(":id/members")
+  @HttpCode(200)
+  addMember(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(ProjectMemberCreateBodySchema)) body: ProjectMemberCreateBody,
+  ): Promise<ProjectMemberView> {
+    return this.members.addMember(id, body);
+  }
+
+  /** 移除成员：返回被移除的行；成员不存在 / 项目不存在统一 404。 */
+  @Delete(":id/members/:userId")
+  removeMember(
+    @Param("id", uuidParam) id: string,
+    @Param("userId", uuidParam) userId: string,
+  ): Promise<ProjectMemberView> {
+    return this.members.removeMember(id, userId);
   }
 }
 
