@@ -94,8 +94,8 @@ const STATUS_TEXT_CLASS: Record<TaskStatus, string> = {
   待开始: "text-zinc-600",
 };
 
-/** 状态色标签（表格行内下拉与单元格共用；口径 = 业务截图里的五个色签）。 */
-const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
+/** 状态色标签（表格行内下拉与单元格共用；看板「任务进展」的表头也用同一套，口径 = 业务截图里的五个色签）。 */
+export const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
   已延期: "bg-rose-100 text-rose-700",
   进行中: "bg-amber-100 text-amber-800",
   已完成: "bg-emerald-100 text-emerald-700",
@@ -610,10 +610,14 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
     };
   }, [cardStage, scrollRef]);
 
-  const groups = STAGE_ORDER.map((stage) => ({
-    stage,
-    items: tasks.filter((task) => task.stage === stage),
-  })).filter((group) => group.items.length > 0 || (skeletonStages?.includes(group.stage) ?? false));
+  /** 阶段不在九阶段里的任务（看板「添加」直接建的空任务）归到「未分组」组，依旧能在表里看到。 */
+  const stageOf = (task: ProjectTask) => (task.stage === "" ? "未分组" : task.stage);
+  const groups = [...STAGE_ORDER, "未分组"]
+    .map((stage) => ({
+      stage,
+      items: tasks.filter((task) => stageOf(task) === stage),
+    }))
+    .filter((group) => group.items.length > 0 || (skeletonStages?.includes(group.stage) ?? false));
   const stages = groups.map((group) => group.stage);
   const allCollapsed = stages.length > 0 && stages.every((stage) => collapsed[stage] === true);
 
