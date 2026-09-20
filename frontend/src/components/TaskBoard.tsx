@@ -758,6 +758,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
         managerId={managerId ?? ""}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
+        onPatch={onPatchTask}
         onClose={closeDrawer}
       />
     </>

@@ -21,10 +21,11 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0011_blueprints.sql` | 蓝图与版本（h3 · M2-02；ADR-019）：`blueprints`（`project_type` 唯一 + 草稿 `draft_payload` + `published_version` + 乐观锁 `version`）与 `blueprint_versions`（版本 payload + 校验 issues，`unique(blueprint_id, blueprint_version)`）——「导入即快照」的版本来源 |
 | `migrations/0012_project_stages_tracking.sql` | 阶段推进 / 回退留痕（h3 · M2-03；ADR-023）：`project_stages` 增 `advanced_at` / `advanced_by` / `rolled_back_at` / `rolled_back_by` / `rollback_reason` |
 | `migrations/0013_admin_dict_audit.sql` | 字典与审计（h7 · C9 / C7）：`dict_types`（类型注册表）+ `dict_items`（条目，`uq_dict_items_type_code` 同类型内码唯一）+ `audit_logs`（追加写；`changes` / `metadata` jsonb + 按对象 / 操作人 / 项目 / 时间索引；api 角色被收回 UPDATE / DELETE） |
+| `migrations/0014_work_calendar.sql` | 工作日历（h8 · D5）：`calendar_days`（只存例外：holiday 放假 / makeup_workday 调休上班 + name / note + `updated_by` + 4 CHECK + (day_type, date) 索引）与 `calendar_settings`（单行顺延配置：`reminder_shift_enabled` / `shift_direction` + 2 CHECK；迁移即建默认行） |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |
-| `seeds/role-permissions.mjs` | 种子 #6b：六角色 × 权限位矩阵（h6 · Push 95；键唯一来源 = 契约 `PERMISSION_KEYS`，移除键会删除 —— 权限吊销必须生效） |
+| `seeds/role-permissions.mjs` | 种子 #6b：六角色 × 权限位矩阵（h6 · Push 95，h8 补 `calendar.manage`；键唯一来源 = 契约 `PERMISSION_KEYS`，移除键会删除 —— 权限吊销必须生效） |
 | `seeds/dicts.mjs` | 种子 #5：地区 8 项 + 项目类型 3 项（h7 · Push 97；metadata 带 accent / accentText 主题色，幂等、不覆盖库内已修订值、不删除） |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
@@ -80,10 +81,11 @@ migrate: 已执行 0010_project_members.sql（xx ms）
 migrate: 已执行 0011_blueprints.sql（xx ms）
 migrate: 已执行 0012_project_stages_tracking.sql（xx ms）
 migrate: 已执行 0013_admin_dict_audit.sql（xx ms）
-migrate: 完成，本次执行 13 个迁移
+migrate: 已执行 0014_work_calendar.sql（xx ms）
+migrate: 完成，本次执行 14 个迁移
 ```
 
-再次执行输出 `migrate: 数据库已是最新（已执行 13 个迁移，无漂移）`；随后执行种子（示例）：
+再次执行输出 `migrate: 数据库已是最新（已执行 14 个迁移，无漂移）`；随后执行种子（示例）：
 
 ```
 seed: 目标 postgres://***:***@host:5432/libiaolink，种子目录 .../seeds
@@ -92,13 +94,13 @@ seed: dicts（数据字典（地区 / 项目类型 · v0.2 §2.5）） 已提交
 seed: roles（角色（一期六个内置角色 · v0.2 §4.1）） 已提交
   - inserted 6，updated 0，unchanged 0
 seed: role-permissions（功能权限矩阵（一期六角色 · v0.2 §4.1）） 已提交
-  - inserted 73，deleted 0，unchanged 0
+  - inserted 74，deleted 0，unchanged 0
 seed: blueprint（蓝图（默认模板 + 版本 1 · ADR-019；种子 #7）） 已提交
   - inserted 1，unchanged 0，kept 0
 seed: 完成，本次执行 4 个种子
 ```
 
-复跑同一条命令应零变更（`dicts` 计数不变、`roles` `unchanged 6`、`role-permissions` `unchanged 73`、`blueprint` `unchanged 1`；`--dry-run` 不改库）。
+复跑同一条命令应零变更（`dicts` 计数不变、`roles` `unchanged 6`、`role-permissions` `unchanged 74`、`blueprint` `unchanged 1`；`--dry-run` 不改库）。
 
 ## 不变式（迁移器保证）
 
@@ -134,11 +136,12 @@ seed: 完成，本次执行 4 个种子
 - blueprints（h3 · Push 83）：`0011_blueprints.sql` 落 `blueprints`（`project_type` 唯一 —— ADR-019 按项目类型各一份 + default 兜底；`draft_payload` / `published_version` / `version`）与 `blueprint_versions`（历史版本 payload + 校验 issues；`unique(blueprint_id, blueprint_version)` + 蓝图索引）。口径：发布 = 写新版本并把草稿归一为发布 payload（PG jsonb 重排键，直比会误判变更）；已生成项目按 `project_nodes.source_blueprint_version` 锁定快照，不受后续蓝图变更影响；种子 #7 落 default 模板（9 阶段 19 节点）。
 - project_stages/tracking（h3 · Push 83）：`0012_project_stages_tracking.sql` 为 `project_stages` 增 `advanced_at` / `advanced_by` / `rolled_back_at` / `rolled_back_by` / `rollback_reason`（阶段推进 / 回退留痕；ADR-023）。口径：推进 = 本阶段 `done` + 下一阶段 `active` + `projects.stage_key` 前移；回退 = 本阶段回 `pending`（原因必填）+ 上一阶段回 `active` + `stage_key` 回移；`project_stages.status` 的 `active` 恒等于「当前阶段」。
 - admin/dict-audit（h7 · Push 97）：`0013_admin_dict_audit.sql` 落 `dict_types`（类型注册表：code 主键 / name / sort / enabled + 3 CHECK）、`dict_items`（uuid 主键 + `type_code` 外键（on update cascade）+ `uq_dict_items_type_code` 同类型内码唯一 + 排序索引 + 4 CHECK + `metadata` jsonb + `updated_by`）与 `audit_logs`（bigserial 主键 + occurred_at / actor_id / actor_name / action / object_type / object_id / project_id / result / entry / summary / changes / metadata + 6 CHECK + 按对象 / 操作人 / 项目 / 时间索引）。口径：字典「删除」= 停用（`enabled=false`，无物理删除；停用不影响存量数据展示）、类型目录固定 region / projectType（阶段 / 成果文件类型走契约枚举）；审计追加写、api 角色无 UPDATE / DELETE（C7-05），保留 ≥6 个月由运维按月清理。种子 #5 `seeds/dicts.mjs`（region 8 项 / projectType 3 项 + 主题色 metadata）与 #6b 补 `dict.manage` / `audit.view`（admin = 契约 26 键全量）。
+- calendar/work-calendar（h8 · Push 99）：`0014_work_calendar.sql` 落 `calendar_days`（只存例外：`date` 主键 + `day_type` 两值 `holiday` 放假 / `makeup_workday` 调休上班 + `name` / `note` + `updated_by` + 4 CHECK（类型 / 日期区间 2000-01-01~2100-12-31 / 名称 1~80 / 说明 1~200）+ `(day_type, date)` 索引）与 `calendar_settings`（单行：布尔主键恒 true + `reminder_shift_enabled` + `shift_direction`（forward 顺延 / backward 提前）+ 2 CHECK；迁移即建默认行）。口径：未登记日期按默认规则（周一至周五工作日、周六周日非工作日）—— 不落 365 行 / 年，改年历只增删例外；顺延与 T-N·T+N 实时求值不落表（`GET /api/v1/calendar/*`）；维护动作写审计（`audit_logs.object_type = calendar_day` / `calendar_settings`）；种子 #6b 补 `calendar.manage`（admin = 契约 27 键全量）。年度节假日 / 调休数据属种子 #10（待业务提供，管理入口已就绪）。
 - 一期不含：问题 / 日报 / 干系人表（随对应模块的切片落地）；字典只落「可运营数据字典」（region / projectType，h7 已落地），模板类种子随各卡片追加。
 
 ## 验证（g3 验收）
 
-- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 13 行、业务表 24 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表；h3 新增 `blueprints` / `blueprint_versions`；h7 新增 `dict_types` / `dict_items` / `audit_logs`）。本地演练库 `check:db-schema`：24 表 / 246 列 / 69 索引（含唯一）/ 64 CHECK。
+- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 14 行、业务表 26 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表；h3 新增 `blueprints` / `blueprint_versions`；h7 新增 `dict_types` / `dict_items` / `audit_logs`；h8 新增 `calendar_days` / `calendar_settings`）。本地演练库 `check:db-schema`：26 表 / 258 列 / 72 索引（含唯一）/ 70 CHECK。
 - **种子幂等**：`node scripts/seed.mjs` 连续执行两次，第二次零变更（`dicts` 地区 / 项目类型字典、`roles` 六个内置角色、`role-permissions` 六角色矩阵、`blueprint` 的 default 模板 —— 后两者按「键序归一化后的 payload 比较」判等，库内已修订时不覆盖；`--dry-run` 不改库）。
 - **应用角色可写新表**：新表 / 新列由 `roles/0001` 的 default privileges 自动授权（应用角色无需额外 GRANT 即可读写 `upload_sessions` / `idempotency_keys`）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。

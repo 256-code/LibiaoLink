@@ -1,6 +1,6 @@
 import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 import { z } from "./zod.ts";
-import { IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
+import { DateOnlySchema, IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
 import { StageKeySchema } from "./common/dicts.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
 import {
@@ -65,6 +65,19 @@ import {
   DictSchema,
 } from "./modules/dicts.ts";
 import { AuditLogListQuerySchema, AuditLogListResponseSchema } from "./modules/audits.ts";
+import {
+  CalendarDayQuerySchema,
+  CalendarDayUpsertBodySchema,
+  CalendarDayViewSchema,
+  CalendarOffsetQuerySchema,
+  CalendarOffsetResultSchema,
+  CalendarSettingsUpdateBodySchema,
+  CalendarShiftQuerySchema,
+  CalendarShiftResultSchema,
+  CalendarShiftSettingsSchema,
+  CalendarYearQuerySchema,
+  CalendarYearSchema,
+} from "./modules/calendar.ts";
 import { PermissionMeResponseSchema } from "./modules/permissions.ts";
 import {
   ChangeRequestDetailSchema,
@@ -114,6 +127,8 @@ const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
 const idempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema.optional() });
 // 字典类型路径参数：一期取值 region / projectType；未知类型返回 404（非 400）——与 DictsController 行为一致
 const dictTypeParams = z.object({ type: z.string().min(1).max(64).openapi({ description: "字典类型（一期：region / projectType）；未知类型返回 404" }) });
+// 工作日历路径参数：业务日期 YYYY-MM-DD（例外表的业务键；非法日期由契约校验拦成 400）
+const calendarDayParams = z.object({ date: DateOnlySchema });
 
 /**
  * /api/v1 契约唯一入口：由各模块 Zod schema 注册而来。
@@ -947,6 +962,112 @@ export function buildOpenApiDocument() {
     responses: { 302: { description: "跳转 SSO 登出（本地会话已撤销）" } },
   });
 
+  // ---- 工作日历（D5；h8：日历维护 / 顺延配置 / T-1·T+1 求值） ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/calendar/days",
+    tags: ["calendar"],
+    summary: "某年工作日历：例外清单（放假 / 调休上班）+ 顺延配置（登录即可读）",
+    request: { query: CalendarYearQuerySchema },
+    responses: {
+      200: { description: "某年日历", ...json(CalendarYearSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/calendar/day",
+    tags: ["calendar"],
+    summary: "某天的工作日判定（缺省今天；顺延与 T-1/T+1 的输入口径）",
+    request: { query: CalendarDayQuerySchema },
+    responses: {
+      200: { description: "某天判定", ...json(CalendarDayViewSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "put",
+    path: "/api/v1/calendar/days/{date}",
+    tags: ["calendar"],
+    summary: "设置某天为放假 / 调休上班（仅管理员 · calendar.manage；幂等 upsert，变更写审计留痕）",
+    request: { params: calendarDayParams, body: json(CalendarDayUpsertBodySchema) },
+    responses: {
+      200: { description: "更新后的整年日历", ...json(CalendarYearSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/calendar/days/{date}",
+    tags: ["calendar"],
+    summary: "删除某天的例外（回落默认规则：周一至周五工作日 / 周六周日非工作日；仅管理员 · calendar.manage）",
+    request: { params: calendarDayParams },
+    responses: {
+      200: { description: "更新后的整年日历", ...json(CalendarYearSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/calendar/settings",
+    tags: ["calendar"],
+    summary: "顺延规则配置（D5-02：提醒日期落在非工作日时是否顺延 + 方向；登录即可读）",
+    responses: {
+      200: { description: "顺延配置", ...json(CalendarShiftSettingsSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "put",
+    path: "/api/v1/calendar/settings",
+    tags: ["calendar"],
+    summary: "更新顺延规则（仅管理员 · calendar.manage；变更写审计留痕）",
+    request: { body: json(CalendarSettingsUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的顺延配置", ...json(CalendarShiftSettingsSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/calendar/shift",
+    tags: ["calendar"],
+    summary: "顺延求值：非工作日按方向移动到最近工作日（金标：节假日顺延开 / 关两态）",
+    request: { query: CalendarShiftQuerySchema },
+    responses: {
+      200: { description: "顺延结果", ...json(CalendarShiftResultSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/calendar/offset",
+    tags: ["calendar"],
+    summary: "T-N / T+N 求值：自然日偏移 + 可选顺延 + 提醒时刻（如 R03 的「前 1 天 08:00」）",
+    request: { query: CalendarOffsetQuerySchema },
+    responses: {
+      200: { description: "T-N / T+N 结果", ...json(CalendarOffsetResultSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -966,7 +1087,9 @@ export function buildOpenApiDocument() {
       { name: "users", description: "用户目录与用户偏好（A2 / A4；M1）" },
       { name: "permissions", description: "权限画像与策略出口（ADR-011；PoC-6 权限矩阵与脱敏五出口）" },
       { name: "dicts", description: "数据字典下发（A3；region / projectType，含主题色元数据）" },
-      { name: "audit", description: "操作审计（C7）：关键操作留痕、按对象 / 操作人检索与越权尝试（admin 模块）" },      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
+      { name: "audit", description: "操作审计（C7）：关键操作留痕、按对象 / 操作人检索与越权尝试（admin 模块）" },
+      { name: "calendar", description: "工作日历（D5）：日历维护 / 顺延规则配置 / T-1·T+1 求值（h8）" },
+      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
     ],
   });
 }

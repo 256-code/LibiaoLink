@@ -32,13 +32,21 @@ const PROJECT_SCOPED_HINTS = ["/projects/", "/nodes/", "/blueprint"];
 
 /**
  * URL → 审计对象引用：只认 /api/v1 下的已知资源段；返回 null 表示该路由不记（如 /auth/*）。
- * objectId 取路径里最靠后的 uuid，缺省取最靠后的路径段（如 /dicts/region）；字典例外：与写入侧同形，取 type[:code]（路径段先解码）。
+ * objectId 取路径里最靠后的 uuid，缺省取最靠后的路径段（如 /dicts/region）；字典例外：与写入侧同形，取 type[:code]（路径段先解码）；
+ * 工作日历例外：calendar_day 取业务日期、calendar_settings 取 default（与写入侧同形，h8）。
  */
 export function objectRefOfUrl(url: string): { objectType: string; objectId: string } | null {
   const pathname = url.split("?")[0] ?? url;
   const segments = pathname.split("/").filter((segment) => segment.length > 0).map(safeDecode);
   if (segments[0] !== "api" || segments[1] !== "v1") return null;
   const rest = segments.slice(2);
+  // 工作日历（h8）：对象 id 与写入侧同形 —— calendar_day 取业务日期（/calendar/days/{date}），
+  // 顺延配置固定 default（/calendar/settings，单行配置）。
+  if (rest[0] === "calendar") {
+    if (rest[1] === "settings") return { objectType: "calendar_settings", objectId: "default" };
+    if (rest[1] === "days" && rest[2] !== undefined) return { objectType: "calendar_day", objectId: rest[2] };
+    return null;
+  }
   let objectType: string | null = null;
   for (const segment of rest) {
     const mapped = OBJECT_TYPE_BY_SEGMENT[segment];

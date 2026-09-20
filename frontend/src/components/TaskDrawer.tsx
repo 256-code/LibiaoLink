@@ -5,19 +5,22 @@ import {
   PROJECT_MANAGER,
   cnDateFromIso,
   daysBetweenInclusive,
-  isTaskDone,
+  isCompleteStatus,
   isTaskOverdue,
   isoFromCnDate,
   lateDeliveryLabel,
+  progressAfterStatus,
   taskStatus,
   type ProjectTask,
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
+import { InlineDateCell } from "./InlineEdit";
 import { MemberSelect } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
-import { SelectMenu } from "./SelectMenu";
+import { SelectMenu, type SelectOption } from "./SelectMenu";
+import type { TaskPatch } from "./TaskBoard";
 import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } from "./Tracker";
 
 const CLOSE_ANIMATION_MS = 170;
@@ -45,6 +48,14 @@ const STATUS_CHIP_CLASS: Record<TaskStatus, string> = {
   已延期: "bg-red-50 text-red-600",
   待开始: "bg-zinc-100 text-zinc-500",
 };
+
+/** 任务状态下拉（与任务表行内同一份五个状态、同一套色签）。 */
+const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", "待开始", "提前完成"] as TaskStatus[]).map((status) => ({
+  value: status,
+  label: (
+    <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_CHIP_CLASS[status]}>{status}</span>
+  ),
+}));
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -109,6 +120,8 @@ type TaskDrawerProps = {
   onSubmit?: (values: TaskEditSubmit) => void;
   /** 点四格进度条（Push 98；联动口径同任务表 §6.4：0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生）。 */
   onProgress?: (taskId: string, progress: number) => void;
+  /** 抽屉内直接改任务状态 / 实际完成日期（口径同任务表行内与看板卡片，§6.9）；不传 = 这两项也只读。 */
+  onPatch?: (taskId: string, patch: TaskPatch) => void;
   onClose: () => void;
 };
 
@@ -117,10 +130,11 @@ type TaskDrawerProps = {
  * **要改直接在抽屉里改**（Push 88 业务口径：「编辑任务」弹窗不再需要）—— 项目经理 / 任务负责人 / 紧急重要度选完即存，
  * 日期区间选完即存，施工人数 / 进展描述失焦时存（值没变不写，避免无谓刷新项目时间）；保存后右下角闪一下「已保存」。
  * 进度自 Push 98 起也能在抽屉里改：进度条长度不变，**四颗点平均分布在条上**（刚开工 / 完成一半 / 快完成了 / 已完成），点哪颗写哪档；
- * 只读口径不变：任务状态 / 实际完成日期按字段口径派生（要改状态 / 实际完成日期去任务表行内改，看板卡片上也能改实际完成日期），
- * 任务描述 / 输出成果文件按 A1-17 锁定，文件走文件库。
+ * 任务状态与实际完成日期自 Push 101 起也能在抽屉里直接改（口径与任务表行内 / 看板卡片完全一致，§6.9：
+ * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
+ * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、文件（走文件库）、变更关联。
  */
-export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress, onPatch, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -230,7 +244,7 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
   }
 
   const editable = onSubmit !== undefined;
-  const done = isTaskDone(task);
+  const canPatch = onPatch !== undefined;
   const overdue = isTaskOverdue(task);
   /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期字段）。 */
   const late = lateDeliveryLabel(task);
@@ -241,10 +255,11 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
   const stepPct = Math.round((shownStep / TRACKER_STEPS) * 100);
   const progressText = hoveredStep > 0 ? TRACKER_LABELS[hoveredStep] ?? "" : trackerLabel(task.progress);
   const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
-  const barClass = done ? "bg-emerald-500" : task.status === "进行中" ? "bg-blue-500" : "bg-zinc-200";
-  /** 条上那四颗点「点亮」的样子：实心 + 白描边（已完成 / 提前完成 = 绿、进行中 = 蓝、其余 = 灰），
-   *  压在条上、也压在未填充的浅灰轨道上都能看清。 */
-  const dotOnClass = done ? "border-white bg-emerald-500" : task.status === "进行中" ? "border-white bg-blue-500" : "border-white bg-zinc-400";
+  /** 进度条与条上那四颗点一律用绿色（与任务表四格点 `bg-emerald-500` 同一个绿）—— 进度条只表达「做了多少」，
+   *  状态色由状态签与色点单独表达；业务反馈：灰的看不懂，要和任务表一样绿。 */
+  const barClass = "bg-emerald-500";
+  /** 点亮的点 = 实心绿 + 白描边（压在绿条上也能看清）。 */
+  const dotOnClass = "border-white bg-emerald-500";
   const dotClass = STATUS_DOT_CLASS[status];
   const statusChipClass = STATUS_CHIP_CLASS[status];
   const dash = <span className="text-zinc-300">—</span>;
@@ -317,7 +332,30 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
     },
     {
       label: "任务状态",
-      value: (
+      value: canPatch ? (
+        <>
+          <SelectMenu
+            value={status}
+            options={STATUS_OPTIONS}
+            onChange={(next) => {
+              if (onPatch === undefined) {
+                return;
+              }
+              const value = next as TaskStatus;
+              // 与任务表行内同一套联动（§6.4 / §6.9）：完成态 = 四格全亮、进行中 = 至少一格、待开始 = 清零、已延期 = 保持格数；
+              // 手动改成非完成态时，实际完成日期一并清空（Push 67 业务定案）
+              onPatch(task.id, {
+                statusOverride: value,
+                progress: progressAfterStatus(value, task.progress),
+                doneDate: isCompleteStatus(value) ? task.doneDate : "",
+              });
+              setSavedTick(Date.now());
+            }}
+            ariaLabel="选择任务状态"
+          />
+          <span className={CAPTION_CLASS}>选完成态 = 四格全亮；改成非完成态会清空实际完成日期</span>
+        </>
+      ) : (
         <span className="inline-flex items-center gap-1.5">
           <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
           {status}
@@ -448,7 +486,34 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
     },
     {
       label: "实际完成日期",
-      value: task.doneDate !== "" ? task.doneDate : dash,
+      value: canPatch ? (
+        <>
+          <InlineDateCell
+            valueIso={isoFromCnDate(task.doneDate)}
+            ariaLabel="修改实际完成日期"
+            display={
+              task.doneDate !== "" ? <span className="text-zinc-600">{task.doneDate}</span> : <span className="text-zinc-400">—</span>
+            }
+            onChange={(iso) => {
+              if (onPatch === undefined) {
+                return;
+              }
+              // 与任务表行内 / 看板卡片同一套口径：填 = 完成（四格全亮、按工期派生 已完成 / 提前完成）；清 = 退回进行中（3 格）
+              onPatch(task.id, {
+                doneDate: iso === "" ? "" : cnDateFromIso(iso),
+                progress: iso === "" ? (TRACKER_STEPS - 1) / TRACKER_STEPS : 1,
+                statusOverride: iso === "" ? "进行中" : undefined,
+              });
+              setSavedTick(Date.now());
+            }}
+          />
+          <span className={CAPTION_CLASS}>填上 = 完成；清空 = 退回进行中</span>
+        </>
+      ) : task.doneDate !== "" ? (
+        task.doneDate
+      ) : (
+        dash
+      ),
     },
     {
       label: "变更关联",

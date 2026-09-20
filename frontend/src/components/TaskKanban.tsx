@@ -533,6 +533,7 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
         managerId={managerId}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
+        onPatch={onPatchTask}
         onClose={() => {
           setSelectedTask(null);
         }}
