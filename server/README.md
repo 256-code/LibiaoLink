@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · 存储接入）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -16,6 +16,7 @@ server/
     common/               # errors / http（校验管道）/ audit（越权留痕路径解析与 sink 令牌 · h7）/ clock（ClockService · h8）/ logging
     config/               # 环境变量契约（Zod）与全局配置模块
     db/                   # PG 连接 + Drizzle schema（对齐 database/migrations）
+    storage/              # 对象存储接入：S3 协议端口 + 适配器（ADR-006；见 src/storage/README.md）
     health/               # 垂直样例：controller -> service -> repository
     modules/identity/     # 首个真实实现：/auth/* 会话链路（g6）
     modules/permission/   # 权限策略层（h6 · PoC-6）：记录级 / 功能权限 / 字段级 / 五出口投影
@@ -39,6 +40,8 @@ server/
 | `npm run check:boundaries` | 依赖方向规则（违规退出码 1） |
 | `npm run check:permission-matrix` | 权限矩阵自检：种子 #6b ↔ 契约 `PermissionKey` 枚举 ↔ 角色集（admin 必须全量；不连库，退出码 1） |
 | `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build） |
+| `npm run storage:init` | 对象存储初始化（建桶 / 版本控制 / CORS / 分片清理；`-- --check` 只读校验） |
+| `npm run storage:it` | 对象存储真机回放（需真实对象存储 + 先 `npm run build`） |
 | `node dist/entry/worker.js --health-check` | worker 一次性健康检查 |
 
 ## 本地运行
@@ -47,7 +50,7 @@ server/
 
 1. `cd shared && npm ci && npm run build`（server 依赖 `@libiaolink/contracts` 的 `dist/` 产物）
 2. `cd server && npm ci`
-3. `cp .env.example .env`，按需改 `DATABASE_URL`（应用角色 `libiaolink_api`，无 DDL 权限）；`/auth/*` 另需 `CASDOOR_*`（本地沙箱见 `deploy/casdoor/`，真实值不落仓库）
+3. `cp .env.example .env`，按需改 `DATABASE_URL`（应用角色 `libiaolink_api`，无 DDL 权限）；`/auth/*` 另需 `CASDOOR_*`（本地沙箱见 `deploy/casdoor/`，真实值不落仓库）；文件能力另需 `S3_*`（本地沙箱见 `deploy/minio/`，然后 `npm run storage:init`）
 4. `npm run build && npm run start:api`，然后 `curl http://127.0.0.1:3000/healthz`、`/readyz`
 
 数据库迁移不在 server 内执行：`database/scripts/migrate.mjs`（见 `database/README.md`）。
@@ -75,7 +78,7 @@ server/
 
 1. 跨模块只允许 `import` 对端 `index.ts`；
 2. 平台模块不得反依赖领域模块（例外：`file → project` 仅限项目快照出口，即 `modules/project/index.ts`）；
-3. `common/`、`db/`、`config/` 不得依赖 `modules/`；
+3. `common/`、`db/`、`config/`、`storage/` 不得依赖 `modules/`；
 4. 禁止循环依赖。
 
 实现：`scripts/check-boundaries.mjs`（TypeScript 编译器 API，零新增依赖；违规退出码 1）。规则来源：v0.2 §1.2。
@@ -96,9 +99,22 @@ server/
 ## 健康检查
 
 - `GET /healthz`：存活（进程在即可），200 `{status:"ok"}`。
-- `GET /readyz`：就绪；探测 PG 连通 + 核心表可达（projects / outbox_events）；失败 503 `{status:"degraded",checks:[...]}`。
+- `GET /readyz`：就绪；探测 PG 连通 + 核心表可达（projects / outbox_events）+ 对象存储桶可达（`object-storage:head-bucket`，数据库通不等于文件可用）；失败 503 `{status:"degraded",checks:[...]}`。
 - readyz 不校验迁移版本：应用角色 `libiaolink_api` 无权读 `schema_migrations`（最小权限，见 `database/README.md`）；迁移是否最新用 `node database/scripts/migrate.mjs --dry-run`。
 - 两个端点都在 `/api/v1` 之外（基础设施端点，不走业务契约）。
+
+## 对象存储接入（S3 协议 · ADR-006）
+
+- 端口 `src/storage/object-storage.ts`（`ObjectStorage` 抽象类 + `StorageError` + `toApiError`）→ 实现 `s3-object-storage.ts`（唯一处配置协议细节）→ 装配 `storage.module.ts`（`@Global`，api 侧注入）；细节见 `src/storage/README.md`。
+- **只依赖 S3 协议**：换实现（内网 MinIO / SeaweedFS / 云 OSS）只改 `createS3Client` 的 endpoint 与凭据，调用方代码不动（ADR-006「实现可替换」）。
+- **本层不得依赖 `modules/`**：`storage/` 与 `common` / `db` / `config` 同级，已纳入 `check:boundaries` 规则 3。
+- 对象键 `projects/{projectId}/files/{fileId}/v{seq}/{contentHash}.{ext}`：版本与哈希进键（定档不覆盖物理对象），原文件名（含中文）只进元数据，片段严格校验防路径穿越。
+- 分片计划 `part-plan.ts`：非末片 ≥ 5 MiB、单片 ≤ 5 GiB、总片数 ≤ 10000（客户端不传 `partSizeBytes`，由服务端算并随 `UploadCreateResponse` 返回）。**分片状态以对象存储 ListParts 为唯一真相，不落 `upload_parts` 表**。
+- 错误映射：`NoSuchUpload` → 410 `UPLOAD_SESSION_EXPIRED`；`InvalidPart` / `EntityTooSmall` → 409 `UPLOAD_INCOMPLETE`；对象缺失 → 404；其余 → 500 `INTERNAL`。
+- 预签名：分片直传与下载均为短时签名（`S3_PART_URL_TTL_SECONDS` 默认 900 / `S3_DOWNLOAD_URL_TTL_SECONDS` 默认 300）；中文文件名下载头走 RFC 5987。
+- 环境变量：`S3_ENDPOINT` / `S3_REGION` / `S3_ACCESS_KEY` / `S3_SECRET_KEY`（生产必填，启动即校验）/ `S3_BUCKET` / `S3_FORCE_PATH_STYLE`（auto = 非 AWS 端点走 path-style）/ 两个 TTL / `UPLOAD_MAX_SIZE_MB`。
+- 真机回放（`npm run storage:it`，沙箱见 `deploy/minio/`）：**20 项断言全过** —— 建会话 → 3 片预签名直传（8 / 8 / 4 MiB）→ ListParts 一致 → 乱序合并 → HEAD 大小校验 → 签名下载 → SHA-256 哈希比对 → 匿名 GET 403 → 中止幂等且会话即失效（映射 410）。跑后清理回放对象。
+- 待复核（ADR-006 阶段 0）：MinIO 社区版**上游已归档**、官方下载 410、Docker Hub 镜像下架；本版本 `PutBucketCors` 返回 `NotImplemented`（CORS 走服务端 `MINIO_API_CORS_ALLOW_ORIGIN`）、lifecycle 规则被拒（内置 `stale_uploads_expiry` 兜底）。是否切换实现属 ADR 变更，提请 wmj 定案；证据见 `deploy/minio/README.md`。
 
 ## 会话链路（/auth/*，g6）
 
