@@ -13,10 +13,21 @@ export const AuditActionSchema = z.enum(AUDIT_ACTIONS).openapi("AuditAction", {
     "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝",
 });
 
-/** 审计对象类型（audit_logs.object_type）：一期覆盖 h7 的全部写入点。 */
-export const AUDIT_OBJECT_TYPES = ["project", "project_member", "task", "node", "stage", "dict_item", "blueprint"] as const;
+/** 审计对象类型（audit_logs.object_type）：覆盖 h7 全部写入点 + h8 工作日历（calendar_day / calendar_settings）。 */
+export const AUDIT_OBJECT_TYPES = [
+  "project",
+  "project_member",
+  "task",
+  "node",
+  "stage",
+  "dict_item",
+  "blueprint",
+  "calendar_day",
+  "calendar_settings",
+] as const;
 export const AuditObjectTypeSchema = z.enum(AUDIT_OBJECT_TYPES).openapi("AuditObjectType", {
-  description: "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图",
+  description:
+    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default）",
 });
 
 /** 审计结果：成功 / 越权拒绝（C7-03，管理员可按 result=denied 筛出）/ 失败（门禁拒绝等）。 */

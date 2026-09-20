@@ -39,3 +39,9 @@ export const AUDIT_RESULT_KEYS = ["succeeded", "denied", "failed"] as const;
 
 /** 审计入口（audit_logs.entry）：页面 / API / 系统任务 / 批量。 */
 export const AUDIT_ENTRY_KEYS = ["api", "page", "system", "batch"] as const;
+
+/** 工作日历例外类型（calendar_days.day_type，h8 · D5-01）：holiday 放假 / makeup_workday 调休上班。 */
+export const CALENDAR_DAY_TYPE_KEYS = ["holiday", "makeup_workday"] as const;
+
+/** 顺延方向（calendar_settings.shift_direction，h8 · D5-02）：forward 顺延到之后 / backward 提前到之前最近工作日。 */
+export const CALENDAR_SHIFT_DIRECTION_KEYS = ["forward", "backward"] as const;
