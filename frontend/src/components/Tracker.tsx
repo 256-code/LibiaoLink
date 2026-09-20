@@ -26,7 +26,7 @@ export function trackerNextProgress(progress: number, step: number, steps: numbe
 }
 
 /**
- * 四格进度点（Push 92 从 `Tracker` 抽出，任务表与任务详情抽屉共用）：
+ * 四格进度点（从 `Tracker` 抽出，任务表 / 看板卡片这一行的「档位文字 + 四格点」用）：
  * 悬停 / 键盘聚焦即预览到该档，点击写进度；`hovered` 由父级持有 —— 抽屉要拿它把档位文字一起预览。
  */
 export function TrackerDots({
@@ -78,6 +78,86 @@ export function TrackerDots({
             className={
               "block h-4 w-1.5 cursor-pointer rounded-sm transition-colors " +
               (on ? "bg-emerald-500" : "bg-zinc-200")
+            }
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+/**
+ * 进度条 + 条上四颗点（Push 94）：四颗点**平均分布**在进度条上（1/4、2/4、3/4、末尾各一颗，末尾那颗贴右端），
+ * 点哪颗就写到哪一档、悬停 / 聚焦即预览 —— 任务详情抽屉的进度区用它（任务表另走 `Tracker` 的「档位文字 + 四格点」）。
+ */
+export function TrackerBar({
+  progress,
+  steps = TRACKER_STEPS,
+  hovered,
+  onHoverChange,
+  onChange,
+  barClassName,
+  dotOnClassName,
+}: {
+  progress: number;
+  steps?: number;
+  /** 悬停 / 聚焦中的档位（0 = 没有）；悬停时填充也预览到该档。 */
+  hovered: number;
+  onHoverChange: (step: number) => void;
+  onChange?: (progress: number) => void;
+  /** 已填充部分的颜色（与任务状态联动：已完成 / 提前完成 = 绿、进行中 = 蓝、其余 = 灰）。 */
+  barClassName: string;
+  /** 点亮那几颗点的样子（实心 + 白描边，跟填充同一色系：绿 / 蓝 / 灰）。 */
+  dotOnClassName: string;
+}) {
+  const filled = trackerStep(progress, steps);
+  const active = hovered > 0 ? hovered : filled;
+  const pct = Math.round((active / steps) * 100);
+
+  return (
+    <span
+      className="relative block h-3.5 w-full"
+      onMouseLeave={() => {
+        onHoverChange(0);
+      }}
+    >
+      <span className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-zinc-100">
+        <span
+          className={"block h-full rounded-full transition-[width] duration-150 " + barClassName}
+          style={{ width: pct + "%" }}
+        />
+      </span>
+      {Array.from({ length: steps }, (_item, index) => {
+        const step = index + 1;
+        const on = step <= filled || step <= hovered;
+        return (
+          <button
+            key={step}
+            type="button"
+            aria-label={"设置进度 " + (TRACKER_LABELS[step] ?? "")}
+            title={"设置进度：" + (TRACKER_LABELS[step] ?? "")}
+            onClick={(event) => {
+              event.stopPropagation();
+              onChange?.(trackerNextProgress(progress, step, steps));
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+            onMouseEnter={() => {
+              onHoverChange(step);
+            }}
+            onFocus={() => {
+              onHoverChange(step);
+            }}
+            onBlur={() => {
+              onHoverChange(0);
+            }}
+            className={
+              "absolute top-1/2 h-2.5 w-2.5 cursor-pointer rounded-full border transition-colors " +
+              (on ? dotOnClassName : "border-zinc-300 bg-white hover:border-zinc-400 hover:bg-zinc-50")
+            }
+            style={
+              step === steps
+                ? { right: 0, transform: "translateY(-50%)" }
+                : { left: (step / steps) * 100 + "%", transform: "translate(-50%, -50%)" }
             }
           />
         );
