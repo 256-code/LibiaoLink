@@ -7,7 +7,7 @@
 | 主责 | wmj（团队分工.md §2） |
 | 对外接口 | TaskService（summary / list / detail / create / update / updateProgress）、TaskStatsService（countStageTasks / stageTaskCounts）、规则纯函数与查询解析（task.rules / task.query）；节点实例的读写仍在 project 模块 flow.service（依赖方向 project → node → task，本模块不反向依赖） |
 
-## 已实现（h4 · Push 88）
+## 已实现（h4 · Push 89）
 
 - 契约：`shared/src/modules/tasks.ts`（列表 / 详情 / 创建 / 编辑 / 进度五组 schema + `TaskListItem` 随行摘要）；错误码新增 `TASK_ALREADY_EXISTS`（409：节点已有未删任务）。
 - 规则口径（纯函数 `task.rules.ts`，来源：系统功能书 A1-06、A12 / A13 / A14（Push 70 定案）、ADR-028 时区）：
