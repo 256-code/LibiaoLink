@@ -86,6 +86,11 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
   /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
   const [taskEdits, setTaskEdits] = useState<Record<string, Partial<ProjectTask>>>({});
+  /**
+   * 看板拖出来的任务顺序（Push 105）：存任务 id 顺序，空数组 = 用默认顺序。
+   * 原型阶段存浏览器内存（与任务覆盖表同一层），换项目 / 刷新即重置 —— 正式版由后端落库（见 `前端功能需求.md` §3.8 A19）。
+   */
+  const [taskOrder, setTaskOrder] = useState<string[]>([]);
 
   /** 原型阶段只有印度项目（`inmu-0010`）带示例任务数据；其余项目为空列表（正式版按项目取数）。 */
   const baseTasks = tasksForProject(project?.id ?? "");
@@ -95,10 +100,26 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
     setAddedTasks([]);
     setProgressOverrides({});
     setTaskEdits({});
+    setTaskOrder([]);
   }, [project?.id]);
   const projectTasks = [...baseTasks, ...addedTasks];
 
-  const tasks = projectTasks.map((task) => {
+  /**
+   * 看板顺序（Push 105）：排过的按 `taskOrder` 走，没排过的（新加的任务等）接在后面、保持原有先后（稳定排序）。
+   * 全套任务共用这一套顺序，两块看板的「列」只是它的子序列 —— 所以列内插入位 = 在这套顺序里插到目标位置。
+   */
+  const orderedTasks =
+    taskOrder.length === 0
+      ? projectTasks
+      : projectTasks
+          .map((task, index) => {
+            const at = taskOrder.indexOf(task.id);
+            return { task, key: at < 0 ? taskOrder.length + index : at };
+          })
+          .sort((left, right) => left.key - right.key)
+          .map((entry) => entry.task);
+
+  const tasks = orderedTasks.map((task) => {
     const edit = taskEdits[task.id];
     const override = progressOverrides[task.id];
     const withEdit = edit === undefined ? task : { ...task, ...edit };
@@ -122,6 +143,28 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
         ...(nextStatus === undefined || isCompleteStatus(nextStatus) ? {} : { doneDate: "" }),
       },
     }));
+  };
+
+  /**
+   * 看板拖动排序（Push 105）：把这张任务插到 `beforeTaskId` 前面；落在列尾时插到 `afterTaskId` 后面（两个都 null = 不动顺序）。
+   * 只动顺序、不动任务字段；顺序表里还没有的任务（新加的 / 从模板加进来的）接到后面，保证顺序表覆盖全部任务。
+   */
+  const handleReorderTask = (taskId: string, beforeTaskId: string | null, afterTaskId: string | null) => {
+    if (project === null || (beforeTaskId === null && afterTaskId === null)) {
+      return;
+    }
+    const known = taskOrder.length === 0 ? projectTasks.map((task) => task.id) : taskOrder;
+    const ids = known.filter((id) => id !== taskId);
+    const afterIndex = afterTaskId === null ? -1 : ids.indexOf(afterTaskId);
+    const at = beforeTaskId === null ? (afterIndex < 0 ? ids.length : afterIndex + 1) : ids.indexOf(beforeTaskId);
+    const next = at < 0 ? [...ids, taskId] : [...ids.slice(0, at), taskId, ...ids.slice(at)];
+    for (const task of projectTasks) {
+      if (!next.includes(task.id)) {
+        next.push(task.id);
+      }
+    }
+    setTaskOrder(next);
+    onTaskEdited?.(project.id);
   };
 
   /** 任务编辑保存：项目经理变化回写项目（项目级），其余字段进任务覆盖表；同时刷新项目时间。 */
@@ -309,6 +352,7 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
               onAddStageTask={handleKanbanAddNode}
               onSubmitTaskEdit={handleSubmitTaskEdit}
               onPatchTask={handlePatchTask}
+              onReorderTask={handleReorderTask}
               onSetProgress={handleSetProgress}
             />
           )}

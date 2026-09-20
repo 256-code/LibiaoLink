@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -22,6 +22,9 @@ import { trackerLabel } from "./Tracker";
  * 列底「添加」固定在列底、不随卡片滚动（Push 86），两种口径：**临时任务**（自己填标题，阶段留空 → 卡片「所属阶段」显示「未分组」、到「项目总览」落在「未分组」组）/ **阶段任务**（先选阶段，再从该阶段的节点池 / 模板里挑节点加进项目，任务自带阶段）。
  * Push 104：**卡片可拖动换列** —— 按住卡片拖到别的列放开即可（负责人看板 = 改任务负责人、拖到「待分配」列 = 清空负责人；进展看板 = 改任务状态），
  * 与任务表行内编辑走同一条 `onPatchTask`（同一张覆盖表），状态那一路同时写四格进度并在改成非完成态时清空实际完成日期 —— 卡片上的进度档位 / 实际完成日期 / 是否按时交付因此同步跟着变。
+ * Push 105（业务反馈「然后要有合适的交互显示拖动后的位置」；「拖动要实体化 / 不要虚化」一条后由业务口径修正为**不做成实体化**）：① 被拖动的卡片**样式保持原样** —— 不加淡出、也不做抬起的实体态、不换自定义拖影，只在拖动中把光标换成抓手；
+ * ② 落点从「整列高亮」升级为**列内插入位** —— 鼠标拖到哪两张卡片之间，那里就浮出一块绿色虚线槽位（换列 = 「放开：移到「X」」、同列 = 「放开：放到这里」），
+ * 放开即插到该位置（**同一列内也能拖着换顺序**）；插入位按鼠标与卡片中线算（某张卡片中线以上 = 插到这张前面，都在上面 = 插到列尾），顺序存 `ProjectDetail` 的看板顺序表（原型内存态，与任务覆盖表同一层；任务表同阶段内顺序跟着走）。
  * 列内滚动条是**隐式**的：原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块（`ScrollArea`，与分类筛选侧栏 / 任务抽屉同一套）。
  * 看板横向滚动条同样**隐式**（Push 87）：列排布交给 `ScrollArea axis="horizontal"`，原生滚动条（Windows 下带箭头那条横杠）隐藏，滑块只在滚动 / 悬停时浮在列底留白里；列高按「铺满视口」重算（`100vh - 12.75rem`），列底与页面底之间不再留下大块空白。
  */
@@ -51,6 +54,12 @@ const CARD_SHELL =
   "relative block w-full rounded-[35px] border border-zinc-900/[0.07] bg-white p-[9px] text-left transition " +
   "[box-shadow:0_18px_40px_-20px_rgba(15,23,42,0.18),0_4px_14px_-8px_rgba(15,23,42,0.06),inset_0_-2px_6px_rgba(15,23,42,0.05)] " +
   "hover:-translate-y-0.5 focus-visible:[outline:2px_solid_rgba(24,24,27,0.3)] focus-visible:[outline-offset:2px]";
+
+/**
+ * 拖动中的卡片（Push 104 / 105）：**样式保持原样** —— 不淡出、也不做「拿起来」的实体态（业务口径「不做成实体化了」），
+ * 只把光标换成抓手，提示「这一张正拿在手上」；拖影用浏览器默认。
+ */
+const CARD_DRAGGING = " cursor-grabbing";
 
 /** 细纹叠加（样张：`repeating-conic-gradient` 细纹 + 对比度 105%；白壳上透明度收到 6%，保持干净）。 */
 const CARD_NOISE =
@@ -110,6 +119,12 @@ type TaskKanbanProps = {
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
   /** 卡片上直接改字段（Push 98：实际完成日期；与表格行内同一套口径）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
+  /**
+   * 看板列内顺序（Push 105）：卡片被放到某两格之间时回调 —— `beforeTaskId` = 插到这张任务前面；
+   * 落在列尾时 `beforeTaskId` 为 null、改用 `afterTaskId`（这一列的最后一张）；两个都为 null = 目标列本来就没有别的卡片，
+   * 这时不动顺序（只换列），免得卡片莫名跳到整个项目任务顺序的末尾。不传 = 只换列、不排顺序。
+   */
+  onReorderTask?: (taskId: string, beforeTaskId: string | null, afterTaskId: string | null) => void;
   /** 抽屉里点四格进度条（Push 98；与任务表 §6.4 同一套联动口径）。 */
   onSetProgress?: (taskId: string, progress: number) => void;
 };
@@ -221,7 +236,7 @@ function KanbanCard({
   onOpen: () => void;
   /** 卡片上直接改的字段（Push 98：实际完成日期；口径同任务表行内编辑）。 */
   onPatch?: (patch: TaskPatch) => void;
-  /** 正在被拖动（Push 104）：拖动中的卡片淡出，提示「这一张正在移动」。 */
+  /** 正在被拖动（Push 104；Push 105 口径：**拖动中卡片样式保持原样** —— 不淡出、也不做抬起的实体态，只换抓手光标）。 */
   dragging?: boolean;
   /** 开始拖动（Push 104）；不传 = 这张卡片不可拖。 */
   onDragStart?: () => void;
@@ -257,6 +272,7 @@ function KanbanCard({
       tabIndex={0}
       aria-label={"任务：" + task.title}
       title={onDragStart === undefined ? undefined : "按住拖到别的列 = 移到那个组（负责人 / 状态跟着改）；点一下看任务详情"}
+      data-kanban-card="true"
       draggable={onDragStart !== undefined}
       onDragStart={(event) => {
         if (onDragStart === undefined) {
@@ -276,7 +292,7 @@ function KanbanCard({
           onOpen();
         }
       }}
-      className={CARD_SHELL + (dragging === true ? " cursor-grabbing opacity-50" : " cursor-pointer")}
+      className={CARD_SHELL + (dragging === true ? CARD_DRAGGING : " cursor-pointer")}
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_INNER}>
@@ -350,8 +366,11 @@ function KanbanColumn({
   onDragTaskStart: (taskId: string) => void;
   /** 拖动结束 —— 放开或 Esc 取消都回到「没在拖」（Push 104）。 */
   onDragTaskEnd: () => void;
-  /** 卡片被放到这一列（Push 104）：负责人看板 = 改负责人、进展看板 = 改状态（联动进度 / 完成日期，口径同任务表行内）。 */
-  onDropTask: (taskId: string, group: KanbanGroup) => void;
+  /**
+   * 卡片被放到这一列（Push 104）：负责人看板 = 改负责人、进展看板 = 改状态（联动进度 / 完成日期，口径同任务表行内）。
+   * `index` = 落在列内第几个位置（Push 105：鼠标拖到哪两张卡片之间就插到那里；同一列 = 只换顺序）。
+   */
+  onDropTask: (taskId: string, group: KanbanGroup, index: number) => void;
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
   onAddStageTask: (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => void;
 }) {
@@ -361,12 +380,33 @@ function KanbanColumn({
   const [titleEn, setTitleEn] = useState("");
   const [templateStage, setTemplateStage] = useState<string | null>(null);
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 112, left: 16 });
-  /** 拖到这一列上方（Push 104）：整列描边高亮 + 列头下方给一句「放开：移到 …」。 */
+  /** 拖到这一列上方（Push 104）：整列描边高亮；Push 105 起列内再按鼠标位置浮出插入槽位。 */
   const [over, setOver] = useState(false);
+  /** 插入位（Push 105）：鼠标落在列内第几格（0 = 最前、`items.length` = 列尾）。 */
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
   const columnRef = useRef<HTMLElement | null>(null);
-  /** 拖动的就是本列的卡片（放回原列 = 没变化，不高亮也不提示）。 */
+  /** 拖动的就是本列的卡片（同列放开 = 只换顺序，不写负责人 / 状态）。 */
   const isOwnColumn = draggingId !== null && group.items.some((task) => task.id === draggingId);
-  const droppable = draggingId !== null && !isOwnColumn;
+  /** 有卡片在拖 = 这一列可以接（同列也可以：拖着换顺序，Push 105）。 */
+  const droppable = draggingId !== null;
+
+  /**
+   * 鼠标落在列内哪个插入位（Push 105）：按卡片中线判断 —— 鼠标在某张卡片中线以上 = 插到这张前面；
+   * 所有中线都在上面 = 插到列尾。浮动的那块虚线槽位不参与计算（它没有 `data-kanban-card`）。
+   */
+  const indexAt = (clientY: number): number => {
+    if (columnRef.current === null) {
+      return group.items.length;
+    }
+    const cards = Array.from(columnRef.current.querySelectorAll("[data-kanban-card='true']"));
+    for (let i = 0; i < cards.length; i++) {
+      const rect = cards[i].getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) {
+        return i;
+      }
+    }
+    return cards.length;
+  };
 
   /** 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
   const context: KanbanAddContext = {
@@ -419,6 +459,17 @@ function KanbanColumn({
     setTemplateStage(stage);
   };
 
+  /** 插入槽位（Push 105）：浮在鼠标算出来的那两格之间 —— 放开就插到这里（同列 = 放到这里、换列 = 移到那一列）。 */
+  const dropSlot =
+    !over || draggingId === null ? null : (
+      <div
+        data-drop-slot="true"
+        className="flex items-center justify-center rounded-[35px] border-2 border-dashed border-emerald-400/70 bg-emerald-50/60 px-3 py-6 text-center text-[11px] font-medium text-emerald-700"
+      >
+        {isOwnColumn ? "放开：放到这里" : "放开：移到「" + group.key + "」"}
+      </div>
+    );
+
   return (
     <section
       ref={columnRef}
@@ -430,14 +481,20 @@ function KanbanColumn({
         // dragover 里必须 preventDefault，浏览器才允许 drop
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
+        // 插入位跟着鼠标走（Push 105）：拖到哪两格之间，槽位就浮在那里
+        const next = indexAt(event.clientY);
         if (!over) {
           setOver(true);
         }
+        if (dropIndex !== next) {
+          setDropIndex(next);
+        }
       }}
       onDragLeave={(event) => {
-        // 只是在列内换个元素时也会触发 dragleave —— 真正离开整列才收起高亮
+        // 只是在列内换个元素时也会触发 dragleave —— 真正离开整列才收起高亮与插入位
         if (columnRef.current !== null && !columnRef.current.contains(event.relatedTarget as Node | null)) {
           setOver(false);
+          setDropIndex(null);
         }
       }}
       onDrop={(event) => {
@@ -445,10 +502,12 @@ function KanbanColumn({
           return;
         }
         event.preventDefault();
+        const index = dropIndex === null ? group.items.length : dropIndex;
         setOver(false);
+        setDropIndex(null);
         const taskId = event.dataTransfer.getData("text/plain");
         if (taskId !== "") {
-          onDropTask(taskId, group);
+          onDropTask(taskId, group, index);
         }
       }}
     >
@@ -464,40 +523,37 @@ function KanbanColumn({
         <span className="shrink-0 text-xs text-zinc-400">{group.items.length}项</span>
       </header>
 
-      {over && droppable ? (
-        <p className="mb-2 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/70 px-2 py-1.5 text-[11px] text-emerald-700">
-          放开：移到「{group.key}」
-        </p>
-      ) : null}
-
       {/* 卡片列表：滚动条隐式（原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块） */}
       <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"任务卡片：" + group.key}>
-        {group.items.map((task) => (
-          <KanbanCard
-            key={task.id}
-            task={task}
-            mode={mode}
-            onOpen={() => {
-              onOpenTask(task);
-            }}
-            onPatch={
-              onPatchTask === undefined
-                ? undefined
-                : (patch) => {
-                    onPatchTask(task.id, patch);
-                  }
-            }
-            dragging={draggingId === task.id}
-            onDragStart={
-              onPatchTask === undefined
-                ? undefined
-                : () => {
-                    onDragTaskStart(task.id);
-                  }
-            }
-            onDragEnd={onDragTaskEnd}
-          />
+        {group.items.map((task, index) => (
+          <Fragment key={task.id}>
+            {dropSlot !== null && dropIndex === index ? dropSlot : null}
+            <KanbanCard
+              task={task}
+              mode={mode}
+              onOpen={() => {
+                onOpenTask(task);
+              }}
+              onPatch={
+                onPatchTask === undefined
+                  ? undefined
+                  : (patch) => {
+                      onPatchTask(task.id, patch);
+                    }
+              }
+              dragging={draggingId === task.id}
+              onDragStart={
+                onPatchTask === undefined
+                  ? undefined
+                  : () => {
+                      onDragTaskStart(task.id);
+                    }
+              }
+              onDragEnd={onDragTaskEnd}
+            />
+          </Fragment>
         ))}
+        {dropSlot !== null && dropIndex === group.items.length ? dropSlot : null}
       </ScrollArea>
 
       <div data-add-root="true" className={COLUMN_FOOTER}>
@@ -580,7 +636,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onSetProgress }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 正在拖动的卡片 id（Push 104；null = 没在拖）。 */
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -591,17 +647,32 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
   const existingTaskIds = new Set(tasks.map((task) => task.id));
 
   /**
-   * 卡片被拖到别的列（Push 104；业务口径「卡片要支持拖动 移动别的组 也相当于编辑 移动后相关的信息要对应」）：
-   * 负责人看板 = 改任务负责人（拖到「待分配」列 = 清空负责人）；进展看板 = 改任务状态 —— 两条路都走任务表行内编辑
-   * 用的同一个 `onPatchTask`（同一张覆盖表），状态那一路同时写四格进度（`progressAfterStatus`）并在改成非完成态时
-   * 清空实际完成日期（Push 67 业务定案）；卡片上的进度档位、实际完成日期、是否按时交付随之同步。
+   * 卡片被拖到某一列的第 `index` 格（Push 104；业务口径「卡片要支持拖动 移动别的组 也相当于编辑 移动后相关的信息要对应」）：
+   * ① **换列 = 编辑** —— 负责人看板 = 改任务负责人（拖到「待分配」列 = 清空负责人）；进展看板 = 改任务状态，
+   * 两条路都走任务表行内编辑用的同一个 `onPatchTask`（同一张覆盖表），状态那一路同时写四格进度（`progressAfterStatus`）
+   * 并在改成非完成态时清空实际完成日期（Push 67 业务定案）；卡片上的进度档位、实际完成日期、是否按时交付随之同步。
+   * ② **落点 = 列内顺序**（Push 105）—— 交给 `onReorderTask` 存进看板顺序表；同列拖动只排顺序（负责人 / 状态不动）。
    */
-  const moveTaskToGroup = (taskId: string, group: KanbanGroup) => {
-    if (onPatchTask === undefined) {
-      return;
-    }
+  const moveTaskToGroup = (taskId: string, group: KanbanGroup, index: number) => {
     const task = tasks.find((item) => item.id === taskId);
     if (task === undefined) {
+      return;
+    }
+    // 落点换算（Push 105）：同列拖动时鼠标算出来的插入位带着被拖的这张卡，先把它摘掉再数位置
+    const ids = group.items.map((item) => item.id);
+    const ownIndex = ids.indexOf(taskId);
+    const withoutIndex = ownIndex >= 0 && index > ownIndex ? index - 1 : index;
+    const idsWithout = ids.filter((id) => id !== taskId);
+    const beforeTaskId = withoutIndex < idsWithout.length ? idsWithout[withoutIndex] : null;
+    // 落在列尾：锚在这一列的最后一张之后（不甩到整个项目顺序的末尾）；目标列没别的卡片时两个锚都是 null = 只换列
+    const afterTaskId = beforeTaskId === null && withoutIndex > 0 ? idsWithout[withoutIndex - 1] : null;
+    /** 同一列里这张卡的下一张（换列时 = undefined）；落点没变就不写顺序。 */
+    const currentNext = ownIndex < 0 ? undefined : ids[ownIndex + 1] ?? null;
+    const sameSpot = ownIndex >= 0 && (beforeTaskId === null ? ownIndex === ids.length - 1 : beforeTaskId === currentNext);
+    if (!sameSpot && (beforeTaskId !== null || afterTaskId !== null) && onReorderTask !== undefined) {
+      onReorderTask(taskId, beforeTaskId, afterTaskId);
+    }
+    if (onPatchTask === undefined) {
       return;
     }
     if (mode === "owner") {
@@ -654,8 +725,8 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
             onDragTaskEnd={() => {
               setDraggingId(null);
             }}
-            onDropTask={(taskId, target) => {
-              moveTaskToGroup(taskId, target);
+            onDropTask={(taskId, target, index) => {
+              moveTaskToGroup(taskId, target, index);
               setDraggingId(null);
             }}
           />
