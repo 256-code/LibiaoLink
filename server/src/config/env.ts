@@ -23,6 +23,20 @@ export const EnvSchema = z
     SESSION_COOKIE_SECURE: z.enum(["auto", "true", "false"]).default("auto"),
     /** 内部作业接口凭证（请求头 X-Internal-Token；docs/开发者接入注意事项(SSO接入标准).md 第五部分）。 */
     INTERNAL_SYNC_TOKEN: z.string().default(""),
+    // ---- 对象存储（ADR-006：S3 协议抽象 + 一期 MinIO 单节点；本地沙箱见 deploy/minio/） ----
+    S3_ENDPOINT: z.string().min(1).default("http://127.0.0.1:9000"),
+    S3_REGION: z.string().min(1).default("us-east-1"),
+    S3_ACCESS_KEY: z.string().default(""),
+    S3_SECRET_KEY: z.string().default(""),
+    S3_BUCKET: z.string().min(1).default("libiaolink"),
+    /** 寻址方式：auto = 非 AWS 端点走 path-style（MinIO / SeaweedFS 必需），AWS 走 virtual-host。 */
+    S3_FORCE_PATH_STYLE: z.enum(["auto", "true", "false"]).default("auto"),
+    /** 分片预签名 URL 有效期（秒）：单个分片的直传窗口（浏览器直传，api 不代理流量）。 */
+    S3_PART_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(604800).default(900),
+    /** 下载预签名 URL 有效期（秒）：ADR-006 要求短时签名，禁止匿名读取。 */
+    S3_DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(300),
+    /** 单文件大小上限（MB）；上传管道（M4-01）据此返回 400 VALIDATION_FAILED。 */
+    UPLOAD_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102400).default(2048),
   })
   .superRefine((value, context) => {
     if (value.NODE_ENV !== "production") {
@@ -39,6 +53,12 @@ export const EnvSchema = z
     }
     if (value.INTERNAL_SYNC_TOKEN === "") {
       context.addIssue({ code: "custom", message: "生产环境必须配置 INTERNAL_SYNC_TOKEN", path: ["INTERNAL_SYNC_TOKEN"] });
+    }
+    if (value.S3_ACCESS_KEY === "") {
+      context.addIssue({ code: "custom", message: "生产环境必须配置 S3_ACCESS_KEY", path: ["S3_ACCESS_KEY"] });
+    }
+    if (value.S3_SECRET_KEY === "") {
+      context.addIssue({ code: "custom", message: "生产环境必须配置 S3_SECRET_KEY", path: ["S3_SECRET_KEY"] });
     }
   });
 

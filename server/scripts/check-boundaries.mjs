@@ -80,8 +80,8 @@ const checkRules = (fromRel, toRel, spec) => {
       });
     }
   }
-  if (/^(common|db|config)\//.test(fromRel) && /^modules\//.test(toRel)) {
-    violations.push({ rule: "common / db / config 不得依赖业务模块", fromRel, toRel, spec });
+  if (/^(common|db|config|storage)\//.test(fromRel) && /^modules\//.test(toRel)) {
+    violations.push({ rule: "common / db / config / storage 不得依赖业务模块", fromRel, toRel, spec });
   }
 };
 
