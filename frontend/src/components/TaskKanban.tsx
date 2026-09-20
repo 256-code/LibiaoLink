@@ -7,7 +7,7 @@ import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
 import { StageAddCard } from "./StageAddCard";
 import { TaskDrawer } from "./TaskDrawer";
-import { TaskEditModal, type TaskEditSubmit } from "./TaskEditModal";
+import type { TaskEditSubmit } from "./TaskDrawer";
 import { STATUS_TAG_CLASS } from "./TaskBoard";
 
 /**
@@ -95,7 +95,7 @@ type TaskKanbanProps = {
   tasks: ProjectTask[];
   /** 项目经理（项目级字段；任务详情抽屉展示用）。 */
   manager: string;
-  /** 项目经理 id（任务编辑弹窗的当前选中项）。 */
+  /** 项目经理 id（任务详情抽屉里「项目经理」字段的当前选中项）。 */
   managerId: string;
   /** 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。 */
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
@@ -437,7 +437,6 @@ function KanbanColumn({
 
 export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
-  const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   const groups = groupTasks(tasks, mode);
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
   const existingTaskIds = new Set(tasks.map((task) => task.id));
@@ -470,27 +469,12 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
       <TaskDrawer
         task={selectedTask}
         manager={manager}
-        onEdit={onSubmitTaskEdit === undefined ? undefined : (task) => {
-          setSelectedTask(null);
-          setEditingTask(task);
-        }}
+        managerId={managerId}
+        onSubmit={onSubmitTaskEdit}
         onClose={() => {
           setSelectedTask(null);
         }}
       />
-      {editingTask !== null && onSubmitTaskEdit !== undefined ? (
-        <TaskEditModal
-          task={editingTask}
-          managerId={managerId}
-          onClose={() => {
-            setEditingTask(null);
-          }}
-          onSubmit={(values) => {
-            onSubmitTaskEdit(values);
-            setEditingTask(null);
-          }}
-        />
-      ) : null}
     </>
   );
 }
