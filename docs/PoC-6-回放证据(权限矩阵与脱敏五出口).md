@@ -4,10 +4,10 @@
 
 | 项 | 值 |
 |---|---|
-| 回放时间 | 2026-09-20 15:57:01 +08:00 |
+| 回放时间 | 2026-09-20 15:57:17 +08:00 |
 | 目标 | http://127.0.0.1:3011 |
 | 数据库 | postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink |
-| 代码版本 | 1359e7d |
+| 代码版本 | ee76d8f |
 | 受限账号 | ea6eff88-4b3e-4df1-9ce0-02ffb14fed69 |
 | 脚本 | server/scripts/poc6-replay.mjs |
 
@@ -25,7 +25,7 @@
   - 说明：账号 lisi（ea6eff88-4b3e-4df1-9ce0-02ffb14fed69）；如需指定其他最小权限账号用 --actor
 | PASS | R1 | 建回放项目（管理员；项目经理 = 管理员本人） | 
   - 期望：201 + 返回项目 id
-  - 实际：201 {"id":"d010c8b9-fe95-4fee-8c78-cf6f9f4fa2b1","stageKey":"presale","version":0}
+  - 实际：201 {"id":"e7900d39-bc4f-4720-9ba3-5d7a87195cab","stageKey":"presale","version":0}
 | PASS | R2 | 记录级·对照：管理员（data_scope=all）列表中可见 | 
   - 期望：200 + q=编号命中 1 条
   - 实际：200 total=1 命中=1
@@ -34,16 +34,16 @@
   - 实际：200 total=1 命中=0
 | PASS | D2 | 记录级·详情：不可见 → 404（防 IDOR，不暴露存在性） | 
   - 期望：404 NOT_FOUND
-  - 实际：404 {"code":"NOT_FOUND","message":"项目不存在或不可见","details":[],"traceId":"9daa2bce-e78b-49a1-b47a-3e3d1a6436fa"}
+  - 实际：404 {"code":"NOT_FOUND","message":"项目不存在或不可见","details":[],"traceId":"544895df-538f-44ea-852b-e48bfedd5a36"}
 | PASS | D3 | 记录级·子资源同一谓词：tasks / flow / summary / members 全 404 | 
   - 期望：四项均 404
   - 实际：404 / 404 / 404 / 404
 | PASS | D4 | 记录级优先于功能权限：不可见项目的写请求也是 404（不是 403） | 
   - 期望：404 NOT_FOUND
-  - 实际：404 {"code":"NOT_FOUND","message":"项目不存在或不可见","details":[],"traceId":"c312fa4c-5aa2-41c4-8ee2-372124deb8e6"}
+  - 实际：404 {"code":"NOT_FOUND","message":"项目不存在或不可见","details":[],"traceId":"b601c59d-40d6-4bfb-97b0-de13d25f0eeb"}
 | PASS | R3 | 记录级·名册即来源：加入名册立即 200（不需等策略缓存 TTL） | 
   - 期望：200 + 同一项目 id
-  - 实际：200 {"id":"d010c8b9-fe95-4fee-8c78-cf6f9f4fa2b1","name":"PoC-6 回放项目"}
+  - 实际：200 {"id":"e7900d39-bc4f-4720-9ba3-5d7a87195cab","name":"PoC-6 回放项目"}
 | PASS | R4 | 记录级·列表与详情同一谓词：加入后列表可见（无两套口径） | 
   - 期望：命中 1 条
   - 实际：200 total=2 命中=1
@@ -52,22 +52,22 @@
   - 实际：200 stages=9 nodes=19
 | PASS | F1 | 功能权限·可见但无权限位 → 403（改项目（project.update）） | 
   - 期望：403 FORBIDDEN
-  - 实际：403 {"code":"FORBIDDEN","message":"无权限：project.update","details":[],"traceId":"e0c5067a-0d94-4674-8c83-501896f0df1c"}
+  - 实际：403 {"code":"FORBIDDEN","message":"无权限：project.update","details":[],"traceId":"7eea3eb8-9ce9-4d32-adb4-6d7c139a7088"}
 | PASS | F2 | 功能权限·可见但无权限位 → 403（管名册（member.manage）） | 
   - 期望：403 FORBIDDEN
-  - 实际：403 {"code":"FORBIDDEN","message":"无权限：member.manage","details":[],"traceId":"3fbb1057-02f1-47e5-943e-e511d66c7991"}
+  - 实际：403 {"code":"FORBIDDEN","message":"无权限：member.manage","details":[],"traceId":"18578f75-2946-46a5-9d4b-b20fa0b33fc7"}
 | PASS | F3 | 功能权限·可见但无权限位 → 403（阶段推进（node.advance）） | 
   - 期望：403 FORBIDDEN
-  - 实际：403 {"code":"FORBIDDEN","message":"无权限：node.advance","details":[],"traceId":"d2d3f3df-f4aa-45db-b9e5-09db00bcaf59"}
+  - 实际：403 {"code":"FORBIDDEN","message":"无权限：node.advance","details":[],"traceId":"92071739-d483-44a7-8abd-98cd292ac8fc"}
 | PASS | F4 | 功能权限·可见但无权限位 → 403（增补节点（node.create）） | 
   - 期望：403 FORBIDDEN
-  - 实际：403 {"code":"FORBIDDEN","message":"无权限：node.create","details":[],"traceId":"8878acc8-9c89-4983-935c-222711ee45ae"}
+  - 实际：403 {"code":"FORBIDDEN","message":"无权限：node.create","details":[],"traceId":"1ed81e86-c6ef-4291-8c30-b27953909a80"}
 | PASS | F5 | 功能权限·可见但无权限位 → 403（删项目（project.delete）） | 
   - 期望：403 FORBIDDEN
-  - 实际：403 {"code":"FORBIDDEN","message":"无权限：project.delete","details":[],"traceId":"efbf4c6b-2349-435b-9159-f75bdd96e5e4"}
+  - 实际：403 {"code":"FORBIDDEN","message":"无权限：project.delete","details":[],"traceId":"6c9714b1-6086-4197-98d7-0af8ab1e5b2f"}
 | PASS | G1 | 准备：管理员建一条回放任务（随项目清理） | 
   - 期望：201 + 返回任务 id
-  - 实际：201 {"id":"a31bcadf-e741-4899-9fce-db4f6f740e57","version":0}
+  - 实际：201 {"id":"10a8bfb2-cf25-4e5c-89e3-978c6b09519b","version":0}
 | PASS | G2 | 成员平权·任务进度：名册成员可更新进度（task.progress） | 
   - 期望：200 + progress=0.5
   - 实际：200 {"progress":0.5,"version":1}
