@@ -78,6 +78,9 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 项目软删（A5） | `DELETE /projects/{id}`：软删；`If-Match` 回传当前 `version` 防误删（缺失或非数字 400、不匹配 409，不用 body 传 version）；列表 / 详情 / facets / 搜索 / 导出统一不可见；`seqNo` 不回收、`code` 唯一性保留（同编号再建仍 409 PROJECT_CODE_EXISTS）；非成员 / 不存在统一 404；仅项目经理 / 管理员并写审计 |
 | 任务列表项（A7） | 列表 `GET /projects/{id}/tasks` 返回 `TaskListItem`（Task 去掉 `changeRef` + 内联 `ownerName` / `changeSummary` / `fileSummary`，免 N+1）；抽屉走 `GET /projects/{id}/tasks/{taskId}`（`TaskDetail`：全字段 + 文件清单）；进度更新响应同 `TaskListItem` 形，前端直接替换行 |
 | 任务排序（A8） | 默认顺序 = 阶段顺序（`STAGE_KEYS` 序）+ 组内 `plannedStart ASC NULLS LAST, created_at ASC, id ASC`（稳定，分页不跳行）；`sort` 白名单 `plannedStart` / `plannedEnd` / `actualEnd` / `progress` / `title` / `createdAt`，白名单外 400；一期不新增 `tasks.seq` |
+| 任务状态可写（A12） | `PATCH /projects/{id}/tasks/{taskId}` 开放可选 `status`（基础三态 `pending` / `active` / `done`）；服务端同事务回填进度与完成日期：done → `progress=1` 且 `actualEnd` 缺省按当天；active → 进度至少 1 格（0 → 0.25、满格 → 0.75）并清 `actualEnd`；pending → 进度 0 并清 `actualEnd`；「已延期 / 提前完成」是派生展示态、不可写（提交 400）且派生优先 |
+| 进度与完成日期（A13） | 进度为离散五档 `0 / 0.25 / 0.5 / 0.75 / 1`（迁移 / 演示数据的任意小数先归一，如 0.49 → 0.5）；`progress<1` 服务端一律清空 `actual_end`（清除完成日期的唯一方式）；`progress=1` 且缺省按当天（Asia/Shanghai）写入；完成日期不进 `PATCH /tasks/{taskId}` |
+| 是否按时交付（A14） | 服务端读时派生 `onTime`：完成且不晚于 `plannedEnd` → true；完成晚于 `plannedEnd`（或完成未填日期且已过 `plannedEnd`）→ false；未完成且已过 `plannedEnd` → false + `displayStatus=overdue`（逾期未交付）；派生不出回落迁移存储值，仍无则 `null`；前端「逾期未交付 / 逾期已交付」标签由 `onTime` + `displayStatus` 渲染，不再本地派生 |
 
 ## 本批范围与后续切片
 
@@ -85,7 +88,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 - 任务节点库与任务模板（A1-16 / A1-17；2026-09-19 定案）：任务模板 CRUD（按阶段）+ 从模板批量生成任务；落库表建议 `task_nodes` / `task_templates` / `task_template_nodes`（见 `前端功能需求.md` §3.8 A11 / `字段对照清单.md` §四）。
 - 第二批（S7·file，i1）：文件与变更（上传 / 版本 / 定档 / 变更 / 回收站）；预览（preview）契约随 i3 补。
 - 认证与会话（g6）：identity 契约（User / MeResponse / /auth/login 与 /auth/callback 查询参数），随会话后端化落地。
-- 对齐清单 A1~A9（Push 49 / 69）：projects（时间区间 / 软删 / 排序白名单补 `createdAt`）、tasks（列表项与详情 / 排序白名单）、users（用户目录 / 用户偏好）、dicts（数据字典下发）—— A1~A8 决议见 PR #40 评审记录，A9 决议见 PR #42 评审；A2 / A3 为 M1 出口（前端移除硬编码）前提。
+- 对齐清单 A1~A14（Push 49 / 69 / 70）：projects（时间区间 / 软删 / 排序白名单补 `createdAt`）、tasks（列表项与详情 / 排序白名单 / 状态可写与进度联动 / 完成日期 / 逾期派生）、users（用户目录 / 用户偏好）、dicts（数据字典下发）—— A1~A8 决议见 PR #40 评审记录，A9~A14 决议见 PR #42 评审；A2 / A3 为 M1 出口（前端移除硬编码）前提。
 - 后续切片（随对应模块落地补契约，仍在本包内）：通知（notify，阶段 8）、
   搜索与统计（search / dashboard，阶段 8）、迁移工具链（阶段 9）、
   自动化规则与日报/问题（automation / report，阶段 7）。

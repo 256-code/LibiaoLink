@@ -2,10 +2,14 @@ import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { DocTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
 
-/** 四格进度：0 / 0.25 / 0.5 / 0.75 / 1（写入即联动状态与完成日期，并写审计）。 */
+/**
+ * 四格进度：0 / 0.25 / 0.5 / 0.75 / 1（写入即联动状态与完成日期，并写审计）。
+ * 离散五档（A13 · Push 70）：写入只收这五个值；迁移 / 演示数据的任意小数先四舍五入到最近档（0.49 → 0.5），
+ * 保证「四格显示 ↔ 进度值」一一对应。
+ */
 export const TaskProgressSchema = z
   .union([z.literal(0), z.literal(0.25), z.literal(0.5), z.literal(0.75), z.literal(1)])
-  .openapi("TaskProgress", { description: "任务进度四格：0 / 25% / 50% / 75% / 100%" });
+  .openapi("TaskProgress", { description: "任务进度四格（离散五档）：0 / 25% / 50% / 75% / 100%；写入即联动状态与完成日期" });
 
 /** 任务（tasks 表；displayStatus 为服务端派生，不写回存储）。 */
 export const TaskSchema = z
@@ -28,13 +32,16 @@ export const TaskSchema = z
     priority: PrioritySchema.nullable(),
     deliverable: DocTypeSchema.nullable(),
     note: z.string().nullable(),
-    onTime: z.boolean().nullable(),
+    onTime: z.boolean().nullable().openapi({
+      description:
+        "是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生",
+    }),
     changeRef: UuidSchema.nullable(),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
-  .openapi("Task", { description: "任务（v0.2 §2.3 tasks；展示态派生规则见 §2.4）" });
+  .openapi("Task", { description: "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）" });
 
 /** 任务随行文件摘要（A7）：列表不下发文件名数组（省载荷、免 N+1），文件名清单只在详情接口给。 */
 export const TaskFileSummarySchema = z
@@ -115,11 +122,15 @@ export const TaskListResponseSchema = z
   })
   .openapi("TaskListResponse", { description: "任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要）" });
 
-/** 进度更新：progress 联动状态与 doneDate；回退同样写审计（前端只做展示）。 */
+/**
+ * 进度更新（A12 / A13 · Push 70）：progress 联动状态与完成日期，回退同样写审计（前端只做展示）。
+ * 联动（服务端裁决）：0 → pending；0.25 / 0.5 / 0.75 → active；1 → done（按 actualEnd 与 plannedEnd 派生「已完成 / 提前完成」）。
+ * 已过 plannedEnd 且未完成时展示态仍为「已延期」（派生优先，A14），不因点进度条改成「待开始 / 进行中」。
+ */
 export const TaskProgressUpdateBodySchema = z
   .object({
     progress: TaskProgressSchema,
-    actualEnd: DateOnlySchema.optional().openapi({ description: "完成日期；progress=1 且缺省时服务端按当天写入" }),
+    actualEnd: DateOnlySchema.optional().openapi({ description: "完成日期（A13）：progress=1 且缺省时服务端按当天（Asia/Shanghai）写入；progress<1 时忽略并清空 —— 清除完成日期的唯一方式是「把进度写回 < 1 档」" }),
     note: z.string().max(2000).optional(),
     version: VersionSchema,
   })
@@ -148,10 +159,14 @@ export const TaskCreateBodySchema = z
   })
   .openapi("TaskCreateBody", { description: "创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径）" });
 
-/** 任务编辑（A10）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度走 /progress。 */
+/** 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。 */
 export const TaskUpdateBodySchema = z
   .object({
     ownerId: UuidSchema.optional(),
+    status: TaskBaseStatusSchema.optional().openapi({
+      description:
+        "任务状态（基础三态，A12）：pending / active / done —— 服务端同事务回填进度与完成日期：done → progress=1 且 actualEnd 缺省按当天；active → progress 至少 1 格（0 → 0.25；满格 → 0.75）并清 actualEnd；pending → progress=0 并清 actualEnd。「已延期 / 提前完成」是派生展示态、不可写（提交返回 400）；已过 plannedEnd 且未完成时展示态保持「已延期」，不因本字段改写",
+    }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
     estimatedDays: z.number().int().min(0).nullable().optional(),
@@ -160,7 +175,7 @@ export const TaskUpdateBodySchema = z
     note: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
   })
-  .openapi("TaskUpdateBody", { description: "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口）" });
+  .openapi("TaskUpdateBody", { description: "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress）" });
 
 /** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
 export const TaskCreateFromTemplateBodySchema = z

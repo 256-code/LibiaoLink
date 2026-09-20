@@ -3431,7 +3431,7 @@ export interface components {
          * @enum {string}
          */
         StageStatus: "pending" | "active" | "done";
-        /** @description 任务（v0.2 §2.3 tasks；展示态派生规则见 §2.4） */
+        /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14） */
         Task: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
@@ -3451,6 +3451,7 @@ export interface components {
             priority: components["schemas"]["Priority"];
             deliverable: components["schemas"]["DocType"];
             note: string | null;
+            /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
             onTime: boolean | null;
             changeRef: components["schemas"]["Uuid"] & (string | null);
             version: components["schemas"]["Version"];
@@ -3508,7 +3509,7 @@ export interface components {
             files: components["schemas"]["TaskFileBrief"][];
         };
         /**
-         * @description 任务展示五态（服务端派生）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；逾期标注落在 actualEnd
+         * @description 任务展示五态（服务端读时派生，A12 / A14 · Push 70）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；派生优先 —— 未完成且已过预计完成日期一律「已延期」，不因状态写入改写；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）
          * @enum {string}
          */
         TaskDisplayStatus: "pending" | "active" | "done" | "overdue" | "early_done";
@@ -3544,6 +3545,7 @@ export interface components {
             priority: components["schemas"]["Priority"];
             deliverable: components["schemas"]["DocType"];
             note: string | null;
+            /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
             onTime: boolean | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
@@ -3582,7 +3584,7 @@ export interface components {
             items: components["schemas"]["TaskNode"][];
             total: number;
         };
-        /** @description 任务进度四格：0 / 25% / 50% / 75% / 100% */
+        /** @description 任务进度四格（离散五档）：0 / 25% / 50% / 75% / 100%；写入即联动状态与完成日期 */
         TaskProgress: 0 | 0.25 | 0.5 | 0.75 | 1;
         TaskProgressUpdateBody: {
             progress: components["schemas"]["TaskProgress"];
@@ -3640,9 +3642,10 @@ export interface components {
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
-        /** @description 编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口） */
+        /** @description 编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress） */
         TaskUpdateBody: {
             ownerId?: components["schemas"]["Uuid"];
+            status?: components["schemas"]["TaskBaseStatus"] & unknown;
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
             estimatedDays?: number | null;
