@@ -423,8 +423,6 @@ function KanbanColumn({
   const [title, setTitle] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [templateStage, setTemplateStage] = useState<string | null>(null);
-  /** 插入位置（Push 111）：默认「该阶段最后」，每次打开阶段任务卡片时重置。 */
-  const [stagePlacement, setStagePlacement] = useState<StagePlacement>({ kind: "last" });
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 112, left: 16 });
   const columnRef = useRef<HTMLElement | null>(null);
   /** 落点就在本列（Push 108）：整列描边高亮 + 列内浮出插入槽位（槽位插到第 `dropIndex` 格）。 */
@@ -472,7 +470,6 @@ function KanbanColumn({
 
   /** 阶段任务：模板卡片开在这一列的右侧、与列顶齐平（位置按列实测算，并夹在视口内）。 */
   const openTemplateCard = (stage: string) => {
-    setStagePlacement({ kind: "last" });
     const rect = columnRef.current === null ? null : columnRef.current.getBoundingClientRect();
     if (rect !== null) {
       setCardPos({
@@ -610,13 +607,8 @@ function KanbanColumn({
         <StageAddCard
           stage={templateStage}
           existingTaskIds={existingTaskIds}
-          placement={{
-            tasks: stageTasksOf(templateStage),
-            value: stagePlacement,
-            onChange: setStagePlacement,
-          }}
-          onAddNode={(stage, node) => { onAddStageTask(context, stage, [node], stagePlacement); }}
-          onAddNodes={(stage, nodes) => { onAddStageTask(context, stage, nodes, stagePlacement); }}
+          placement={{ tasks: stageTasksOf(templateStage) }}
+          onAddNodes={(stage, nodes, placement) => { onAddStageTask(context, stage, nodes, placement); }}
           onClose={() => { setTemplateStage(null); }}
           style={{ position: "fixed", top: cardPos.top, left: cardPos.left }}
         />

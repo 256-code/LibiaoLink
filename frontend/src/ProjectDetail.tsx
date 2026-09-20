@@ -277,6 +277,24 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
   };
 
   /**
+   * 项目总览卡片的「＋ 添加 / 整套添加」（Push 113，业务口径「我要点击这个添加后选择位置」）：
+   * 点添加先弹位置浮层、选完再按这个位置插进看板顺序表 —— 与看板那条路径同一套口径（`insertNewTasksIntoOrder`），
+   * 区别只是任务用预设节点自带的负责人 / 状态（没有看板列的上下文）。
+   */
+  const handleAddNodes = (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => {
+    const knownIds = new Set<string>([...baseTasks.map((task) => task.id), ...addedTasks.map((task) => task.id)]);
+    const fresh = nodes.filter((node) => !knownIds.has(node.id));
+    if (fresh.length === 0) {
+      return;
+    }
+    setAddedTasks((previous) => [...previous, ...fresh.map((node) => taskFromPresetNode(stage, node))]);
+    insertNewTasksIntoOrder(fresh.map((node) => node.id), placement);
+    if (project !== null) {
+      onTaskEdited?.(project.id);
+    }
+  };
+
+  /**
    * 看板「添加 → 阶段任务」：从该阶段的节点池 / 模板里挑的节点加进项目（按节点 id 判重）。
    * 任务自带阶段，并带上所在列的负责人 / 状态（与「临时任务」同一套列上下文）。
    * Push 111：`nodes` 可以一次多个（「整套添加」），`placement` = 该阶段内的插入位置。
@@ -389,7 +407,7 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
           {activeView === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage="项目总览" manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
             </>
           ) : (
             <TaskKanban
