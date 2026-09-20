@@ -1,11 +1,13 @@
 import { Module, type DynamicModule } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
+import { AUDIT_SINK } from "./common/audit/audit-sink.js";
 import { ApiErrorFilter } from "./common/errors/api-error.filter.js";
 import { createLoggerModule } from "./common/logging/logger.module.js";
 import { AppConfigModule } from "./config/config.module.js";
 import type { Env } from "./config/env.js";
 import { DatabaseModule } from "./db/db.module.js";
 import { HealthModule } from "./health/health.module.js";
+import { AdminModule, AuditService } from "./modules/admin/index.js";
 import { IdentityModule } from "./modules/identity/index.js";
 import { PermissionModule } from "./modules/permission/index.js";
 import { ProjectModule } from "./modules/project/index.js";
@@ -26,8 +28,13 @@ export class AppModule {
         PermissionModule,
         ProjectModule,
         TaskModule,
+        AdminModule,
       ],
-      providers: [{ provide: APP_FILTER, useClass: ApiErrorFilter }],
+      providers: [
+        { provide: APP_FILTER, useClass: ApiErrorFilter },
+        // 越权留痕出口：全局异常过滤器经 common 令牌调用 admin 的 AuditService（避免 common → modules 反向依赖）
+        { provide: AUDIT_SINK, useExisting: AuditService },
+      ],
     };
   }
 }

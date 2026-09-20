@@ -9,6 +9,8 @@ import {
 } from "../src/modules/project/project-member.repository.js";
 import { ProjectMemberService, toProjectMemberView } from "../src/modules/project/project-member.service.js";
 import type { ProjectRepository, ProjectViewRow } from "../src/modules/project/project.repository.js";
+import type { DatabaseService } from "../src/db/database.service.js";
+import type { AuditService } from "../src/modules/admin/index.js";
 
 const AT = new Date("2026-09-20T06:00:00.000Z");
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -136,6 +138,16 @@ function projectRow(status = "active"): ProjectViewRow {
   };
 }
 
+/** 审计替身（h7）：只记录写入调用；事务替身把 tx 直接透传给回调。 */
+class FakeAuditService {
+  entries: unknown[] = [];
+  async record(_client: unknown, input: unknown): Promise<void> {
+    this.entries.push(input);
+  }
+}
+
+const FAKE_DB = { db: { transaction: (callback: (tx: unknown) => Promise<unknown>) => callback({}) } };
+
 function makeService(options: { status?: string; members?: ProjectMemberViewRow[] } = {}): {
   service: ProjectMemberService;
   members: FakeProjectMemberRepository;
@@ -146,9 +158,11 @@ function makeService(options: { status?: string; members?: ProjectMemberViewRow[
   const projects = new FakeProjectRepository();
   projects.project = projectRow(options.status ?? "active");
   const service = new ProjectMemberService(
+    FAKE_DB as unknown as DatabaseService,
     members as unknown as ProjectMemberRepository,
     projects as unknown as ProjectRepository,
     new FakeUserService() as unknown as UserService,
+    new FakeAuditService() as unknown as AuditService,
   );
   return { service, members, projects };
 }
@@ -189,7 +203,7 @@ describe("ProjectMemberService（M2-05 名册）", () => {
 
   it("添加成员：upsert + 按 ADR-022 刷新项目 updatedAt；缺省角色 = project_member", async () => {
     const { service, members, projects } = makeService();
-    const added = await service.addMember(PROJECT_ID, { userId: UUID_MEMBER });
+    const added = await service.addMember(PROJECT_ID, { userId: UUID_MEMBER }, UUID_MANAGER);
     expect(added.roleInProject).toBe("project_member");
     expect(members.calls).toEqual(["upsert:" + UUID_MEMBER + ":project_member"]);
     expect(projects.touched.map((entry) => entry.id)).toEqual([PROJECT_ID]);
@@ -197,7 +211,7 @@ describe("ProjectMemberService（M2-05 名册）", () => {
 
   it("添加成员：重复添加幂等（改角色、不动 joinedAt）", async () => {
     const { service, members } = makeService({ members: [memberRow({ userId: UUID_MEMBER })] });
-    const updated = await service.addMember(PROJECT_ID, { userId: UUID_MEMBER, roleInProject: "project_manager" });
+    const updated = await service.addMember(PROJECT_ID, { userId: UUID_MEMBER, roleInProject: "project_manager" }, UUID_MANAGER);
     expect(updated.roleInProject).toBe("project_manager");
     expect(updated.joinedAt).toBe("2026-09-20T06:00:00.000Z");
     expect(members.rows).toHaveLength(1);
@@ -205,27 +219,27 @@ describe("ProjectMemberService（M2-05 名册）", () => {
 
   it("添加成员：用户不存在 404（不写名册、不 touch）", async () => {
     const { service, members, projects } = makeService();
-    await expectAppErrorAsync(() => service.addMember(PROJECT_ID, { userId: UUID_GHOST }), "NOT_FOUND");
+    await expectAppErrorAsync(() => service.addMember(PROJECT_ID, { userId: UUID_GHOST }, UUID_MANAGER), "NOT_FOUND");
     expect(members.calls).toEqual([]);
     expect(projects.touched).toEqual([]);
   });
 
   it("添加 / 移除：归档项目 409 PROJECT_ARCHIVED（ADR-027 写保护，不落任何写入）", async () => {
     const { service, members, projects } = makeService({ status: "archived" });
-    await expectAppErrorAsync(() => service.addMember(PROJECT_ID, { userId: UUID_MEMBER }), "PROJECT_ARCHIVED");
-    await expectAppErrorAsync(() => service.removeMember(PROJECT_ID, UUID_MEMBER), "PROJECT_ARCHIVED");
+    await expectAppErrorAsync(() => service.addMember(PROJECT_ID, { userId: UUID_MEMBER }, UUID_MANAGER), "PROJECT_ARCHIVED");
+    await expectAppErrorAsync(() => service.removeMember(PROJECT_ID, UUID_MEMBER, UUID_MANAGER), "PROJECT_ARCHIVED");
     expect(members.calls).toEqual([]);
     expect(projects.touched).toEqual([]);
   });
 
   it("移除成员：返回被移除行 + touch；不是成员 404（不 touch）", async () => {
     const { service, projects } = makeService({ members: [memberRow({ userId: UUID_MEMBER })] });
-    const removed = await service.removeMember(PROJECT_ID, UUID_MEMBER);
+    const removed = await service.removeMember(PROJECT_ID, UUID_MEMBER, UUID_MANAGER);
     expect(removed.userId).toBe(UUID_MEMBER);
     expect(projects.touched).toHaveLength(1);
 
     const again = makeService({ members: [memberRow({ userId: UUID_MEMBER })] });
-    await expectAppErrorAsync(() => again.service.removeMember(PROJECT_ID, UUID_GHOST), "NOT_FOUND");
+    await expectAppErrorAsync(() => again.service.removeMember(PROJECT_ID, UUID_GHOST, UUID_MANAGER), "NOT_FOUND");
     expect(again.projects.touched).toEqual([]);
   });
 });

@@ -25,4 +25,4 @@
 
 - 项目升级到新蓝图版本（重生成快照）不在 h3：随 M6 归档 / 升级口径（当前「导入即快照」，蓝图变更不影响已生成项目）。
 - 模板管理员角色细分、审批流：键位已随 h6 就绪（`blueprint.view` / `blueprint.manage`），角色细分与界面随 u 系列。
-- 蓝图审计留痕（谁改了什么）：随 h7 `audit_logs`（当前只有 outbox 业务事件与库内 `updated_by` / `published_by`）。
+- 蓝图审计留痕（谁改了什么）：字段级留痕未接线（当前只有 outbox 业务事件与库内 `updated_by` / `published_by`）；h7 已落 `audit_logs` 通道，`assertAdmin` 的 403 由全局过滤器记 denied —— 蓝图写路径接 `AuditService.record()` 随蓝图维护卡片补。

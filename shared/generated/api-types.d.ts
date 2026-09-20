@@ -1333,7 +1333,10 @@ export interface paths {
         /** 全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    includeDisabled?: "true" | "false";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -1347,6 +1350,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["DictListResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
             };
@@ -1369,11 +1381,14 @@ export interface paths {
         /** 单个字典（未知类型返回 404） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    includeDisabled?: "true" | "false";
+                };
                 header?: never;
                 path: {
-                    /** @description 字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404 */
-                    type: components["schemas"]["DictType"];
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
                 };
                 cookie?: never;
             };
@@ -1388,8 +1403,267 @@ export interface paths {
                         "application/json": components["schemas"]["Dict"];
                     };
                 };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
                 /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dicts/{type}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新增字典条目（仅管理员 · dict.manage；变更写审计留痕） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DictItemCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建成功（更新后的整个字典） */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dicts/{type}/items/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 更新字典条目（部分更新；停用替代删除；变更写审计留痕） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
+                    code: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DictItemUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的整个字典 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/audit-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 */
+                    objectType?: components["schemas"]["AuditObjectType"];
+                    /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
+                    objectId?: string;
+                    /** @description 操作人（按人检索 —— h7 验收项②） */
+                    actorId?: components["schemas"]["Uuid"] & unknown;
+                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝 */
+                    action?: components["schemas"]["AuditAction"];
+                    /** @description result=denied 即越权尝试（C7-03） */
+                    result?: components["schemas"]["AuditResult"] & unknown;
+                    /** @description UUID（主键与关联 ID） */
+                    projectId?: components["schemas"]["Uuid"];
+                    /** @description 时间下界（含，ISO8601） */
+                    from?: components["schemas"]["DateTime"] & unknown;
+                    /** @description 时间上界（含，ISO8601） */
+                    to?: components["schemas"]["DateTime"] & unknown;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 审计列表（occurredAt 降序） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuditLogListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3489,6 +3763,65 @@ export interface components {
             /** @example 4f1c2f2e-6f8a-4b1e-9a1f-2f6d6f2c9d10 */
             traceId: string;
         };
+        /**
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝
+         * @enum {string}
+         */
+        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "deny";
+        /** @description 字段级修改条目（C7-02） */
+        AuditChange: {
+            /** @description 字段名（契约口径 camelCase） */
+            field: string;
+            /** @description 修改前值（JSON；无值时为 null） */
+            from?: unknown;
+            /** @description 修改后值（JSON；无值时为 null） */
+            to?: unknown;
+        };
+        /**
+         * @description 审计入口：api / page / system / batch
+         * @enum {string}
+         */
+        AuditEntry: "api" | "page" | "system" | "batch";
+        /** @description 审计日志（C7）：追加写、不可改删、保留 ≥6 个月（C7-05） */
+        AuditLog: {
+            /** @description 审计序号（只增不减） */
+            id: number;
+            occurredAt: components["schemas"]["DateTime"];
+            actorId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 操作人姓名快照（写入时冗余，改名后仍可追溯） */
+            actorName: string | null;
+            action: components["schemas"]["AuditAction"];
+            objectType: components["schemas"]["AuditObjectType"];
+            /** @description 对象 id（uuid 或字典码等业务键） */
+            objectId: string;
+            projectId: components["schemas"]["Uuid"] & (string | null);
+            result: components["schemas"]["AuditResult"];
+            entry: components["schemas"]["AuditEntry"];
+            /** @description 可读摘要（列表直接展示） */
+            summary: string;
+            /** @description 字段级修改（C7-02）；无字段级变化时为 null */
+            changes: components["schemas"]["AuditChange"][] | null;
+            /** @description 附加信息（trace_id / 请求方法路径等） */
+            metadata: {
+                [key: string]: unknown;
+            };
+        };
+        AuditLogListResponse: {
+            items: components["schemas"]["AuditLog"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /**
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图
+         * @enum {string}
+         */
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint";
+        /**
+         * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
+         * @enum {string}
+         */
+        AuditResult: "succeeded" | "denied" | "failed";
         /** @description 自建蓝图 JSON（v0.2 §3.2 + ADR-019）；导入校验 = schema + 引用 + 幂等 */
         Blueprint: {
             /** @enum {number} */
@@ -3647,6 +3980,40 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @description 新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        DictItemCreateBody: {
+            /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
+            code: string;
+            /** @description 显示名 */
+            name: string;
+            /**
+             * @description 展示顺序（升序）；缺省 0
+             * @default 0
+             */
+            sort: number;
+            /**
+             * @description 是否启用；缺省 true
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * @description 字典元数据（projectType 必含 accent）
+             * @default {}
+             */
+            metadata: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description 更新字典条目（只传变更键）；本次变更写审计（含字段级 before / after，C9-02 / C7-02） */
+        DictItemUpdateBody: {
+            name?: string;
+            sort?: number;
+            /** @description 停用（false）替代删除：存量数据仍按原值展示（C9-02） */
+            enabled?: boolean;
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
         /** @description 全量字典（一期两个类型：region / projectType） */
         DictListResponse: {
             items: components["schemas"]["Dict"][];
@@ -3673,7 +4040,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -3845,7 +4212,7 @@ export interface components {
          * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
          * @enum {string}
          */
-        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view";
+        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view";
         /** @description 当前用户授权画像（未登录 401） */
         PermissionMeResponse: {
             permissions: components["schemas"]["ActorPermissions"];

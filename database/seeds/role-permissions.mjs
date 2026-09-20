@@ -10,7 +10,8 @@ export const title = "功能权限矩阵（一期六角色 · v0.2 §4.1）";
 /** 可修订常量区：每条键的授权依据写在角色注释里；调整后重跑本脚本（第二次零变更）。 */
 export const MATRIX = [
   {
-    // 系统管理员：v0.2 §4.1「字典与蓝图、审计、备份恢复、运维」—— 一期口径为全量权限位（管理面端点本身随 u 系列 / h7）。
+    // 系统管理员：v0.2 §4.1「字典与蓝图、审计、备份恢复、运维」—— 一期口径为全量权限位。
+    // h7 起新增 dict.manage（字典维护，C9-02 变更留痕）与 audit.view（审计检索，C7-04）；管理面 UI 随 u12（px 线）。
     roleCode: "admin",
     keys: [
       "project.view",
@@ -32,11 +33,13 @@ export const MATRIX = [
       "node.rollback",
       "blueprint.view",
       "blueprint.manage",
+      "dict.manage",
       "file.upload",
       "file.download",
       "stakeholder.view",
       "stakeholder.manage",
       "stakeholder.contact.view",
+      "audit.view",
     ],
   },
   {

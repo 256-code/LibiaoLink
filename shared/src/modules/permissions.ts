@@ -31,6 +31,8 @@ export const PERMISSION_KEYS = [
   "stakeholder.view",
   "stakeholder.manage",
   "stakeholder.contact.view",
+  "dict.manage",
+  "audit.view",
 ] as const;
 
 export const PermissionKeySchema = z

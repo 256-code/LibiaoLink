@@ -16,6 +16,7 @@ import {
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
+import { AuditService, diffRecords } from "../admin/index.js";
 import { RoleService } from "../identity/index.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
 import {
@@ -60,6 +61,7 @@ export class TaskService {
     private readonly database: DatabaseService,
     private readonly repository: TaskRepository,
     private readonly roles: RoleService,
+    private readonly audit: AuditService,
   ) {}
 
   /** GET /projects/{id}/summary：项目总览四格（当前阶段 / 逾期 / 已完成 / 总数）。 */
@@ -172,6 +174,20 @@ export class TaskService {
         },
       });
       await this.repository.touchProject(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "create",
+        objectType: "task",
+        objectId: created.id,
+        projectId,
+        summary: "创建任务：" + created.title,
+        changes: [
+          { field: "stageKey", from: null, to: created.stageKey },
+          { field: "title", from: null, to: created.title },
+          { field: "ownerId", from: null, to: created.ownerId },
+          { field: "plannedEnd", from: null, to: created.plannedEnd },
+        ],
+      });
       return created;
     });
     return toTaskView(row, shanghaiToday(at));
@@ -224,6 +240,16 @@ export class TaskService {
         },
       });
       await this.repository.touchProject(projectId, at, tx);
+      const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "task",
+        objectId: taskId,
+        projectId,
+        summary: "修改任务：" + updated.title,
+        changes: changes.length > 0 ? changes : null,
+      });
       return updated;
     });
     return toTaskView(row, today);
@@ -273,6 +299,16 @@ export class TaskService {
         },
       });
       await this.repository.touchProject(projectId, at, tx);
+      const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
+      await this.audit.record(tx, {
+        actorId,
+        action: "progress",
+        objectType: "task",
+        objectId: taskId,
+        projectId,
+        summary: "更新任务进度：" + updated.title + "（进度 " + Number(updated.progress) + "）",
+        changes: changes.length > 0 ? changes : null,
+      });
       return updated;
     });
     const listRow = await this.repository.findListRowById(row.id, projectId);
@@ -304,6 +340,33 @@ export class TaskService {
       throw new AppError("FORBIDDEN", "仅管理员可" + action + "（系统功能书 A1-13）");
     }
   }
+}
+
+/** 任务字段级留痕快照（C7-02：负责人 / 状态 / 进度 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */
+function taskAuditSnapshot(row: {
+  ownerId: string;
+  status: string;
+  progress: string | number;
+  plannedStart: string | null;
+  plannedEnd: string | null;
+  actualEnd: string | null;
+  estimatedDays: number | null;
+  headcount: number | null;
+  priority: string | null;
+  note: string | null;
+}): Record<string, unknown> {
+  return {
+    ownerId: row.ownerId,
+    status: row.status,
+    progress: Number(row.progress),
+    plannedStart: row.plannedStart,
+    plannedEnd: row.plannedEnd,
+    actualEnd: row.actualEnd,
+    estimatedDays: row.estimatedDays,
+    headcount: row.headcount,
+    priority: row.priority,
+    note: row.note,
+  };
 }
 
 /** 行 → 契约视图：displayStatus / onTime 读时派生（A12 / A14），不写回存储。 */
