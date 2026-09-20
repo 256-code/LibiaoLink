@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -13,13 +13,14 @@ server/
     entry/worker.ts       # worker 入口（同镜像不同入口；支持 --health-check 一次性探针）
     app.module.ts         # api 进程装配
     worker.module.ts      # worker 进程装配
-    common/               # errors / http（校验管道）/ audit（越权留痕路径解析与 sink 令牌 · h7）/ logging
+    common/               # errors / http（校验管道）/ audit（越权留痕路径解析与 sink 令牌 · h7）/ clock（ClockService · h8）/ logging
     config/               # 环境变量契约（Zod）与全局配置模块
     db/                   # PG 连接 + Drizzle schema（对齐 database/migrations）
     health/               # 垂直样例：controller -> service -> repository
     modules/identity/     # 首个真实实现：/auth/* 会话链路（g6）
     modules/permission/   # 权限策略层（h6 · PoC-6）：记录级 / 功能权限 / 字段级 / 五出口投影
     modules/admin/        # 字典 C9 与审计留痕 C7（h7）：类型 / 条目维护 + 审计写入与检索（其余模块仍为 README 占位）
+    modules/calendar/     # 工作日历 D5（h8 · 横切）：例外维护 / 顺延规则 / T-1·T+1 实时求值
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
@@ -60,13 +61,13 @@ server/
 ## 模块结构约定
 
 - 四层：controller（HTTP）/ service（用例）/ repository（数据访问）/ events（同事务写 Outbox），对外只经 `index.ts`。
-- 13 个模块目录已占位（每个 README 标注类型 / 职责 / 主责 / 预留接口），代码随各自实现卡片落地。
+- 15 个模块目录已占位（每个 README 标注类型 / 职责 / 主责 / 预留接口），代码随各自实现卡片落地；identity / project / blueprint / node / task / permission / admin / calendar 已落地，其余仍为占位 README。
 - DTO 一律用 `@libiaolink/contracts` 的 Zod schema（配 `ZodValidationPipe`），禁止另起一套类型。
 
 | 类型 | 模块 | 主责 |
 |---|---|---|
 | 领域（domain） | identity、project、blueprint、node、task、report-issue、stakeholder | wmj |
-| 领域（domain · 横切） | permission（权限策略层 · h6） | wmj |
+| 领域（domain · 横切） | permission（权限策略层 · h6）、calendar（工作日历 · h8） | wmj |
 | 平台（platform） | file、notify、search、dashboard | lan |
 | 平台（platform） | automation、admin（字典 / 审计 · h7 落地） | wmj |
 
@@ -156,9 +157,19 @@ server/
 - 审计检索（C7-04 服务端）：`GET /api/v1/audit-logs` 仅 `audit.view`；按 objectType + objectId（按对象）/ actorId（按人）/ action / result / projectId / from-to 时间区间筛选，occurredAt 降序（同毫秒按 id 降序）；`result=denied` 即越权尝试筛法。页面 / 导出随 u12（px 线）。
 - 防篡改（C7-05）：`audit_logs` 只 INSERT / SELECT —— 库级收回 api 角色 UPDATE / DELETE（`database/roles/0001_roles.sql` 每次执行显式重放；migrator 保留全量）；保留 ≥6 个月的按月清理由运维 / 迁移器执行（未自动化）。
 
+## 工作日历接口（h8 · S6·工作日历：D5-01 日历维护 / D5-02 顺延规则 / D5-03 T-1·T+1）
+
+- 契约 `shared/src/modules/calendar.ts`（tags=calendar；`calendarDayParams` 路径参数）：读取面 = 某年日历 / 单日判定 / 顺延配置 / 顺延与 T-N·T+N 求值（登录即可）；维护面 = 例外 upsert / 删除 + 顺延规则更新（仅 `calendar.manage`）。实现 `src/modules/calendar/`（controller / service / repository / rules + `index.ts` 出口）；横切模块（`check-boundaries` 的 CROSSCUT_MODULES）—— 领域与平台都可经其 `index.ts` 复用日期求值（i8 规则引擎 / 任务提醒 / 应填未填清单）。
+- 单日判定（D5-01 读）：`GET /api/v1/calendar/day`（`date` 缺省今天，Asia/Shanghai）—— 例外优先（`source=calendar`）、否则默认规则（`source=default`，周一至周五工作日 / 周六周日非工作日）；`kind` 四态 workday / weekend / holiday / makeup_workday；调休上班视为工作日。
+- 年历与维护（D5-01）：`GET /api/v1/calendar/days?year=`（例外清单 + 顺延配置）；`PUT /api/v1/calendar/days/{date}`（幂等 upsert：name / note 缺省保持原值；响应 = 更新后的整年日历）与 `DELETE …/{date}`（回落默认规则；无该例外 404）；写仅 `calendar.manage`，每次变更在同一事务写审计（objectType = calendar_day，字段级 before / after）。
+- 顺延规则（D5-02）：`GET` / `PUT /api/v1/calendar/settings` —— 是否顺延 + 方向（forward 顺延到之后最近工作日 / backward 提前到之前最近工作日）；PUT 为部分更新、仅 `calendar.manage`、写审计（objectType = calendar_settings，objectId = default）。
+- 顺延求值：`GET /api/v1/calendar/shift?date=&direction=` —— 移动到最近工作日（已是工作日原样返回 `shifted=false`）；`skipped[]` 逐条返回中途跳过的日期；`direction` 缺省取配置。
+- T-N / T+N 求值（D5-03）：`GET /api/v1/calendar/offset?date=&days=&time=&shift=` —— 自然日偏移 → 顺延开关（`inherit` 按配置 / `on` / `off` 供规则引擎回放强制覆盖）→ 顺延 → 可选时刻叠加（`at` = 业务日 + HH:mm 按 Asia/Shanghai 转 UTC，如 R03「前 1 天 08:00」）；**实时求值、不缓存、不落库**（改期后按新日期重算）。窗口一次加载基准日 ± 370 天，窗口外 ≠ 非工作日（`exhausted` 防御）。
+- 时钟（v0.3 §4.7）：新增 `src/common/clock/clock.service.ts`（now / today / setSource）—— 求值基准一律经 ClockService（缺省今天），规则 / 调度禁止直接取系统时间（回放与金标测试可注入固定时刻）。
+- 权限：`calendar.manage` 入契约（现 27 键）；种子 #6b 给 admin 补该键（admin 27 键 = 契约全量，其余角色不含）。
 ## 数据访问（Drizzle ↔ 迁移对齐）
 
-- 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0013）。
+- 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0014）。
 - 新增迁移的同一 PR 内同步更新 schema，并跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - file 模块数据层（0005 / 0006）：`files` 补定档 / 回收站 / `purge_after` 列，新增 `upload_sessions`（分片直传会话，分片状态以对象存储 ListParts 为准）与 `idempotency_keys`（只存 sha256(key)；作用域 = 调用方 + 接口指纹），口径见 `database/README.md`。
 - identity 数据层（0007 · h1）：`departments` / `roles` / `role_permissions` / `user_roles` 四表；角色集由 `database/seeds/roles.mjs` 种子维护（`node database/scripts/seed.mjs`），权限矩阵条目随 h6。
@@ -167,6 +178,7 @@ server/
 - 蓝图数据层（0011 · h3）：`blueprints`（`project_type` 唯一 + 草稿 `draft_payload` + `published_version` + 乐观锁 `version`）与 `blueprint_versions`（版本快照 payload + 校验 issues；`unique(blueprint_id, blueprint_version)`）—— 快照版本的唯一来源；发布时草稿同步归一为发布 payload（PG jsonb 会重排键，直比会误判「有变更」导致版本虚增）。
 - 阶段跟踪（0012 · h3）：`project_stages` 增 `advanced_at` / `advanced_by` / `rolled_back_at` / `rolled_back_by` / `rollback_reason`（推进 / 回退留痕；ADR-023）。
 - 字典与审计数据层（0013 · h7）：`dict_types`（类型注册表）/ `dict_items`（条目，`uq_dict_items_type_code` 同类型内码唯一 + 排序索引）/ `audit_logs`（追加写；`changes` / `metadata` jsonb + 按对象 / 操作人 / 项目 / 时间索引）；权限矩阵给 admin 补 `dict.manage` / `audit.view`（种子 #6b，admin = 契约 26 键全量）。
+- 工作日历数据层（0014 · h8）：`calendar_days`（只存例外：date 主键 + day_type 两值 holiday / makeup_workday + name / note + updated_by + 4 CHECK + `(day_type, date)` 索引）与 `calendar_settings`（单行布尔主键：reminder_shift_enabled / shift_direction + 2 CHECK；迁移即建默认行）；权限矩阵给 admin 补 `calendar.manage`（种子 #6b，admin = 契约 27 键全量）。
 - 大文件走 MinIO 直传（api 只签名与元数据）属 file 模块后续卡片。
 
 ## 测试
@@ -185,6 +197,7 @@ server/
 - 门禁拒绝测试（`test/flow-gate-rejection.test.ts` · h5 · PoC-9）：服务端强校验 422 + `details[].code=required_doc`、拒绝留痕 `node.gate_rejected`（含 missing 明细与操作人）、不部分生效（未 `markNodeDone` / 未 touch）、can-complete 预检（缺件 false / 齐备 true / 已完成 false）、门禁通过对照（`node.completed`），共 5 例；**h5 后全量 135 例（12 文件）**。
 - 权限矩阵测试（`test/permission-matrix.test.ts` · h6 · PoC-6）：**记录级 9 例**（六角色数据范围的可见集规格、多角色并集、主数据责任人恒可见、单项目谓词与可见 id 同源）＋**功能权限 7 例**（全局位、任务负责人、项目内项目经理 / 成员平权、非成员先 404、项目上下文外只看全局位、隐含位 ⊆ 且全在契约枚举内）＋**字段级 6 例**（联系方式三字段 / 商务字段 / 备注三级、行投影删字段不落 null、员工邮箱一期全员可见、策略表字段登记校验）＋**五出口 5 例**（四出口投影一致、导出单独授权、导出字段仍按同一策略裁剪、任一出口不含被裁字段、出口集合 = 四类 + 记录级）＋**策略服务 7 例**（projectScope all / ids、resolveProjectAccess 的 404 语义与角色位、软删、assertCan 403、画像缓存单次查库），共 34 例；**h6 后全量 169 例（13 文件）**。
 - 字典与审计测试（`test/admin-audit.test.ts` · h7 · S6·admin）：**纯函数 3 例**（字段级 diff 与稳定序列化）＋**越权判定 3 例**（路径 → 对象解析、403 全记 / 404 白名单、uuid 判定）＋**DictService 5 例**（默认只发启用项 / 未知类型 404 / 同码 409 + 审计入参 / 停用替代删除的字段级留痕 / 无变更仍留痕 changes=null）＋**AuditService 4 例**（写入口径补全、越权写入吞错不抛、按对象与按人检索、人员快照缓存），共 15 例；**h7 后全量 184 例（14 文件）**。
+- 工作日历测试（`test/calendar-rules.test.ts` + `test/calendar-service.test.ts` · h8 · S6·工作日历）：**规则 17 例**（默认规则与例外优先、窗口外 null、日期算术、顺延金标 forward / backward / 已是工作日 / 跨年 / exhausted、T-1·T+N 开关两态与改期重算、上海时刻换算）＋**服务 12 例**（年历与排序、缺省今天走时钟、setDay 审计与幂等、deleteDay 404、updateSettings 空变更、shift 方向覆盖、offset T-1 / T+1），共 29 例；**h8 后全量 213 例（16 文件）**。
 - 任务用例测试（`test/task-service.test.ts` · h4）：带节点创建缺省项目经理 / 节点判重 409 / 手工创建仅管理员 403 / 阶段不一致 400 / 归档 409、状态联动（done 满格补当天、active 退 0.75 清日期、过期保持已延期）、乐观锁 409 / 跨项目 404、进度写回清完成日期、项目总览四格，共 13 例；**h4 后全量 130 例（11 文件）**。
 
 ## PoC-9 回放（h5 · S6·PoC-9）
@@ -211,6 +224,13 @@ server/
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/admin-audit.test.ts` 15 例 + `check:db-schema`（24 表 / 246 列 / 69 索引 / 64 CHECK）+ `check:permission-matrix`（6 角色 / 73 条目 / 26 键）。
 - 回放中发现并修正的契约漂移（h7）：`GET /api/v1/dicts/{type}` 原先用枚举管道硬拦路径参数（未知类型 → 400），与契约「未知类型返回 404」不符 —— 已改为普通路径段校验、未知类型由服务层统一 404（`src/modules/admin/dicts.controller.ts`）；`POST /api/v1/dicts/{type}/items` 的契约响应码 200 → 201（与实际行为一致）。
 
+## PoC-8 回放（h8 · S6·工作日历：D5 日历维护 / 顺延规则 / T-1·T+1）
+
+- 脚本：`scripts/poc8-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、在 **2099 年**合成与国庆同形的日历（10-01~10-07 放假 + 10-10 调休上班）—— 跑完硬删日历行、恢复顺延配置、删除两个会话）。
+  - 复跑：`cd server && node scripts/poc8-replay.mjs --out ../docs/PoC-8-回放证据(工作日历D5).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据、`--actor <userId>` 指定受限账号。
+- 证据入库：`docs/PoC-8-回放证据(工作日历D5).md`（真机 30 项断言：读面登录即可 + 写面受限 403 + 越权落 denied 行 + 单日判定例外优先 + 顺延 forward / backward 金标 + T-1 命中不顺延 + T-7 顺延开 / 关两态 + 08:00 时刻换算 + 删除回落 + 收尾零残留）。
+- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/calendar-rules.test.ts` 17 例 + `test/calendar-service.test.ts` 12 例 + `check:db-schema`（26 表 / 258 列 / 72 索引 / 70 CHECK）+ `check:permission-matrix`（6 角色 / 74 条目 / 27 键）。
+- 差异与后续：节假日 / 调休年历数据待业务回执（种子 #10）；跨天补跑随 i8 / i9（依赖 i5 outbox）；日历视图与前端接入随 u 系列 —— 明细见 `src/modules/calendar/README.md` 差异 1~5。
 ## CI 接线（g5 · px｜已落地）
 
 `.github/` 归 px 线；下方 job 片段已按 g5 落入 `.github/workflows/ci.yml` 的 `server` job（另补 `npm run build` 一步，保证部署产物可构建）：
@@ -259,5 +279,6 @@ server/
 - h5：PoC-9 回放（蓝图 round-trip 与门禁拒绝的证据入库：回放脚本 + `docs/` 证据 + CI 回归测试）—— 已落地（Push 93）；任务侧完成门禁（M3-03）仍为后续卡片。
 - h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。
 - h7：字典 C9 与审计留痕 C7（`dict_types` / `dict_items` / `audit_logs` + 字典读写出口 + 审计写入 / 越权留痕 / 检索 + 种子 #5 + 真机回放）—— 已落地（Push 97）；剩余：前端改读字典（u12 · px 线）、审计页面与导出（u12）、告警推送（M5 通知）、蓝图字段级留痕（随蓝图维护卡片）、按月清理（运维）。
+- h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
 - lan 线：file / preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。

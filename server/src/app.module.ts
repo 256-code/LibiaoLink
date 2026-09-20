@@ -8,6 +8,7 @@ import type { Env } from "./config/env.js";
 import { DatabaseModule } from "./db/db.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { AdminModule, AuditService } from "./modules/admin/index.js";
+import { CalendarModule } from "./modules/calendar/index.js";
 import { IdentityModule } from "./modules/identity/index.js";
 import { PermissionModule } from "./modules/permission/index.js";
 import { ProjectModule } from "./modules/project/index.js";
@@ -29,6 +30,7 @@ export class AppModule {
         ProjectModule,
         TaskModule,
         AdminModule,
+        CalendarModule,
       ],
       providers: [
         { provide: APP_FILTER, useClass: ApiErrorFilter },
