@@ -16,7 +16,9 @@ import { trackerLabel } from "./Tracker";
  * 项目详情页的两块看板（Push 82）：
  * - `owner`「人员任务分配」：列 = 任务负责人（人头维度），看每个人手上接了哪些任务；
  * - `status`「任务进展」：列 = 任务状态（已延期 → 进行中 → 已完成 → 提前完成 → 待开始），看每个状态有哪些任务。
- * 卡片材质按业务样张代码还原（外层壳 + 噪点叠加 + 内层板 + 多层投影），用 Tailwind 任意值实现，不引入 styled-components。
+ * 卡片材质按业务样张代码还原（外层壳 + 噪点叠加 + 多层投影），用 Tailwind 任意值实现，不引入 styled-components。
+ * Push 106（业务反馈「只保留外框 内框不要了」）：卡片**去掉内层板** —— 样张里的内层板（近白面板 + 发丝内边 + 圆角 30px）整块撤掉，内容直接落在外层壳上；
+ * 外层壳的内边距（9px）/ 圆角（35px）/ 白色壳 + 发丝边 + 投影、以及壳上的细纹叠加都保持不变。
  * 卡片只出任务里真实存在的字段（标题 / 所属阶段 / 日期 / 状态 / 负责人 / 进度 / 是否按时交付）；任务字段里没有「里程碑」这一项，所以阶段一栏的口径是「所属阶段」，不写「阶段性里程碑」。
  * Push 98：进度一栏的文字由百分比改成中文档位（与任务表 Tracker 同一套标签），并新增「实际完成日期」一栏 —— 卡片上直接点选小日历就能改（口径同表格行内编辑：填 = 完成、清 = 退回进行中）。
  * 列底「添加」固定在列底、不随卡片滚动（Push 86），两种口径：**临时任务**（自己填标题，阶段留空 → 卡片「所属阶段」显示「未分组」、到「项目总览」落在「未分组」组）/ **阶段任务**（先选阶段，再从该阶段的节点池 / 模板里挑节点加进项目，任务自带阶段）。
@@ -98,8 +100,11 @@ const ADD_STAGE =
 /** 可选阶段 = 9 个施工阶段（顺序同「项目总览」）。 */
 const STAGE_OPTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
-/** 卡片内层板（样张：圆角 30px；白卡口径 = 近白面板 + 发丝内边）。 */
-const CARD_INNER = "relative block overflow-hidden rounded-[30px] bg-[#fcfcfd] px-4 py-3.5 ring-1 ring-zinc-900/[0.04]";
+/**
+ * 卡片内容区（Push 106：业务口径「只保留外框 内框不要了」—— 原来的内层板（近白面板 + 发丝内边 + 圆角 30px）整块去掉，
+ * 内容直接落在外层壳上，只保留原来的内边距，卡片就是「一个框 + 内容」。
+ */
+const CARD_BODY = "relative px-4 py-3.5";
 
 /** 「添加」时的列上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
 export type KanbanAddContext = { owner: string; ownerEn: string; status: TaskStatus };
@@ -295,7 +300,7 @@ function KanbanCard({
       className={CARD_SHELL + (dragging === true ? CARD_DRAGGING : " cursor-pointer")}
     >
       <span aria-hidden="true" className={CARD_NOISE} />
-      <div className={CARD_INNER}>
+      <div className={CARD_BODY}>
         <p className="text-sm font-bold leading-5 text-zinc-900">{task.title}</p>
         {task.titleEn === "" ? null : <p className="mt-0.5 text-[11px] leading-4 text-zinc-500">{task.titleEn}</p>}
 
