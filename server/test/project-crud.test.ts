@@ -8,6 +8,8 @@ import {
   type ProjectViewRow,
 } from "../src/modules/project/project.repository.js";
 import { ProjectService, toProjectView } from "../src/modules/project/project.service.js";
+import { DatabaseService } from "../src/db/database.service.js";
+import { FlowService } from "../src/modules/project/flow.service.js";
 
 const AT = new Date("2026-09-20T06:00:00.000Z");
 const UUID_A = "11111111-1111-4111-8111-111111111111";
@@ -141,12 +143,37 @@ class FakeProjectRepository {
   async touch(id: string, at: Date): Promise<void> {
     this.lastTouched = { id, at };
   }
+
+  async setStageKey(id: string, stageKey: string): Promise<void> {
+    const found = this.rows.find((row) => row.project.id === id);
+    if (found !== undefined) found.project.stageKey = stageKey;
+  }
 }
 
 function makeService(rows: ProjectRow[] = []): { service: ProjectService; repo: FakeProjectRepository } {
   const repo = new FakeProjectRepository();
   repo.rows = rows.map((row) => ({ project: row, managerName: "张工" }));
-  return { service: new ProjectService(repo as unknown as ProjectRepository), repo };
+  const fakeDb = {
+    db: { transaction: (callback: (tx: unknown) => Promise<unknown>) => callback({}) },
+  };
+  const fakeFlow = {
+    importSnapshot: (_tx: unknown, input: { requestedStageKey?: string }) =>
+      Promise.resolve({
+        activeStageKey: input.requestedStageKey ?? "presale",
+        blueprintVersion: 1,
+        stages: 9,
+        nodes: 19,
+        requirements: 8,
+      }),
+  };
+  return {
+    service: new ProjectService(
+      fakeDb as unknown as DatabaseService,
+      repo as unknown as ProjectRepository,
+      fakeFlow as unknown as FlowService,
+    ),
+    repo,
+  };
 }
 
 // ---------- 列表筛选解析（M2-04） ----------

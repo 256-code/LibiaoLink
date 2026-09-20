@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { ProjectFacetsSchema, ProjectListResponseSchema, ProjectSchema, ProjectCreateBodySchema, ProjectUpdateBodySchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { DatabaseService } from "../../db/database.service.js";
+import { FlowService } from "./flow.service.js";
 import { ProjectRepository, type ProjectInsertInput, type ProjectUpdateInput, type ProjectViewRow } from "./project.repository.js";
 import { buildProjectFilter, parseProjectSort, type ProjectListQueryInput } from "./project.query.js";
 
@@ -11,7 +13,7 @@ export type ProjectFacetsResult = z.infer<typeof ProjectFacetsSchema>;
 type ProjectCreateBody = z.infer<typeof ProjectCreateBodySchema>;
 type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 
-/** 创建时未指定阶段的缺省值（按已发布蓝图导入 stages / nodes 的快照事务随 M2-02 · h3）。 */
+/** 创建时未指定阶段的兜底值：导入蓝图后会被前移到蓝图首个阶段（M2-02）。 */
 const DEFAULT_STAGE_KEY = "presale";
 
 /** 行 → 契约视图（camelCase 对齐；managerName 随行下发，A2）。 */
@@ -39,7 +41,11 @@ export function toProjectView(view: ProjectViewRow): ProjectView {
 /** project 用例（M2-01 项目 CRUD + M2-04 首页列表 / facets）。 */
 @Injectable()
 export class ProjectService {
-  constructor(private readonly projects: ProjectRepository) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly projects: ProjectRepository,
+    private readonly flow: FlowService,
+  ) {}
 
   /** 列表（M2-04）：筛选 / 时间区间 / 排序与 facets 同口径；软删项目不可见（A5）。 */
   async listProjects(query: ProjectListQueryInput): Promise<ProjectListResult> {
@@ -64,7 +70,12 @@ export class ProjectService {
     return toProjectView(view);
   }
 
-  /** 创建（M2-01）：code 唯一由数据库唯一约束兜底（23505 → 409）；seq_no 由序列分配，不接受传入。 */
+  /**
+   * 创建（M2-01 + M2-02 导入快照 · 单事务）：
+   * 1) code 唯一由数据库唯一约束兜底（23505 → 409）、seq_no 由序列分配；
+   * 2) 取该项目类型已发布蓝图（缺失回落 default 模板；可显式指定 blueprintVersion）→ 生成 stages / nodes / requirements；
+   * 3) projects.stage_key 前移到蓝图首个阶段（或入参 stageKey 指定阶段）——任一步失败整体回滚。
+   */
   async createProject(body: ProjectCreateBody): Promise<ProjectView> {
     const at = new Date();
     const input: ProjectInsertInput = {
@@ -77,10 +88,23 @@ export class ProjectService {
       stageKey: body.stageKey ?? DEFAULT_STAGE_KEY,
       description: body.description ?? null,
     };
-    // blueprintVersion：入参暂忽略（一期建项目不导入节点）；快照事务随 M2-02 · h3。
-    const row = await this.projects.insert(input, at);
-    const view = await this.projects.findViewById(row.id);
-    return toProjectView(view ?? { project: row, managerName: null });
+    const projectId = await this.database.db.transaction(async (tx) => {
+      const row = await this.projects.insert(input, at, tx);
+      const imported = await this.flow.importSnapshot(tx, {
+        projectId: row.id,
+        projectType: row.projectType,
+        requestedStageKey: body.stageKey,
+        requestedBlueprintVersion: body.blueprintVersion,
+        at,
+      });
+      if (row.stageKey !== imported.activeStageKey) {
+        await this.projects.setStageKey(row.id, imported.activeStageKey, at, tx);
+      }
+      return row.id;
+    });
+    const view = await this.projects.findViewById(projectId);
+    if (view === null) throw new AppError("NOT_FOUND", "项目不存在或不可见");
+    return toProjectView(view);
   }
 
   /** 更新（M2-01）：乐观锁（version 必须回传）；归档写保护（ADR-027）；code 变更同样校验唯一性。 */

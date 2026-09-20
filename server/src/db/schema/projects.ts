@@ -90,6 +90,12 @@ export const projectStages = pgTable(
     actualStart: date("actual_start"),
     actualEnd: date("actual_end"),
     version: integer("version").notNull().default(0),
+    /** 0012 · h3（M2-03）：推进 / 回退留痕（ADR-023）——回退原因必填。 */
+    advancedAt: timestamp("advanced_at", { withTimezone: true }),
+    advancedBy: uuid("advanced_by"),
+    rolledBackAt: timestamp("rolled_back_at", { withTimezone: true }),
+    rolledBackBy: uuid("rolled_back_by"),
+    rollbackReason: text("rollback_reason"),
   },
   (table) => [
     unique("project_stages_project_id_stage_key_key").on(table.projectId, table.stageKey),
