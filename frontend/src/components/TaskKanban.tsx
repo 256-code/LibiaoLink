@@ -11,12 +11,29 @@ import { STATUS_TAG_CLASS } from "./TaskBoard";
  * - `owner`「人员任务分配」：列 = 任务负责人（人头维度），看每个人手上接了哪些任务；
  * - `status`「任务进展」：列 = 任务状态（已延期 → 进行中 → 已完成 → 提前完成 → 待开始），看每个状态有哪些任务。
  * 卡片材质按业务样张代码还原（外层壳 + 噪点叠加 + 内层板 + 多层投影），用 Tailwind 任意值实现，不引入 styled-components。
- * 任务字段里没有「里程碑」这一项，卡片只出真实存在的字段；看板列底部「+ 添加」建的空任务没有阶段，到「项目总览」落在「未分组」组（TaskBoard 兜底）。
+ * 卡片只出任务里真实存在的字段（标题 / 所属阶段 / 日期 / 状态 / 负责人 / 进度 / 是否按时交付）；任务字段里没有「里程碑」这一项，所以阶段一栏的口径是「所属阶段」，不写「阶段性里程碑」。
+ * 看板列底部「+ 添加」建的空任务没有阶段，卡片「所属阶段」显示「未分组」，到「项目总览」落在「未分组」组（TaskBoard 兜底）。
  */
 export type KanbanMode = "owner" | "status";
 
 /** 「任务进展」看板的列顺序（业务定稿：已延期 → 进行中 → 已完成 → 提前完成 → 待开始）。 */
 const STATUS_ORDER: readonly TaskStatus[] = ["已延期", "进行中", "已完成", "提前完成", "待开始"];
+
+/** 阶段色签（卡片「所属阶段」一栏）：按阶段固定色（口径对齐业务样张里的色签）。 */
+const STAGE_TAG_CLASS: Record<string, string> = {
+  售前规划: "bg-violet-100 text-violet-700",
+  设计开发: "bg-sky-100 text-sky-700",
+  加工采购: "bg-zinc-200 text-zinc-600",
+  组装发货: "bg-rose-100 text-rose-700",
+  硬件实施: "bg-emerald-100 text-emerald-700",
+  软件部署: "bg-amber-100 text-amber-800",
+  试运行: "bg-teal-100 text-teal-700",
+  生产阶段: "bg-indigo-100 text-indigo-700",
+  验收: "bg-lime-100 text-lime-700",
+};
+
+/** 没有阶段的任务（直接在看板「添加」出来的）：卡片「所属阶段」显示「未分组」。 */
+const UNGROUPED_STAGE = "未分组";
 
 /** 卡片外壳（样张结构：内边距 9px + 圆角 35px + 壳 + 三层投影）。配色按业务反馈（2026-09-20）改回**白色**：白壳 + 发丝边 + 柔和投影 + 底部内阴影。 */
 const CARD_SHELL =
@@ -112,6 +129,15 @@ function ProgressBar({ progress }: { progress: number }) {
   );
 }
 
+/** 「所属阶段」：任务所属的施工阶段（看板里直接建的任务没有阶段，显示「未分组」）。 */
+function StageChip({ stage }: { stage: string }) {
+  return (
+    <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + (STAGE_TAG_CLASS[stage] ?? "bg-zinc-200 text-zinc-600")}>
+      {stage === "" ? UNGROUPED_STAGE : stage}
+    </span>
+  );
+}
+
 /** 「是否按时交付」：逾期标注优先（与任务表同一口径），其次是数据里的按时交付值。 */
 function OnTimeChip({ task }: { task: ProjectTask }) {
   const late = lateDeliveryLabel(task);
@@ -179,6 +205,9 @@ function KanbanCard({ task, mode, onOpen }: { task: ProjectTask; mode: KanbanMod
         </Field>
         <Field label="是否按时交付">
           <OnTimeChip task={task} />
+        </Field>
+        <Field label="所属阶段">
+          <StageChip stage={task.stage} />
         </Field>
       </div>
     </div>
