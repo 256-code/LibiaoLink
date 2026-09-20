@@ -308,6 +308,8 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
               onAddTask={handleQuickAdd}
               onAddStageTask={handleKanbanAddNode}
               onSubmitTaskEdit={handleSubmitTaskEdit}
+              onPatchTask={handlePatchTask}
+              onSetProgress={handleSetProgress}
             />
           )}
         </div>
