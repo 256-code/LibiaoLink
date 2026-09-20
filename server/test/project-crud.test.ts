@@ -293,18 +293,18 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
     const alive = projectRow({ id: UUID_A, seqNo: 1 });
     const removed = projectRow({ id: UUID_B, seqNo: 2, deletedAt: AT });
     const { service, repo } = makeService([alive, removed]);
-    const page = await service.listProjects({ page: 1, limit: 10 });
+    const page = await service.listProjects({ page: 1, limit: 10 }, { kind: "all" });
     expect(page.total).toBe(1);
     expect(page.page).toBe(1);
     expect(page.limit).toBe(10);
     expect(page.items.map((item) => item.id)).toEqual([UUID_A]);
-    await service.listProjects({ page: 2, limit: 10 });
+    await service.listProjects({ page: 2, limit: 10 }, { kind: "all" });
     expect(repo.lastList?.offset).toBe(10);
   });
 
   it("facets：与列表同筛选口径（同一 buildProjectFilter）", async () => {
     const { service, repo } = makeService([projectRow({ id: UUID_A })]);
-    const facets = await service.getFacets({ "filter[status]": "active", page: 1, limit: 20 });
+    const facets = await service.getFacets({ "filter[status]": "active", page: 1, limit: 20 }, { kind: "all" });
     expect(facets.total).toBe(1);
     expect(facets.region).toEqual({ "华东": 1 });
     expect(repo.lastFacetFilter?.statuses).toEqual(["active"]);
@@ -344,7 +344,7 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
     expect(removed.version).toBe(3);
     expect(repo.lastSoftDelete).toEqual({ id: UUID_A, expectedVersion: 2, deletedBy: UUID_B });
     await expectAppErrorAsync(() => service.getProject(UUID_A), "NOT_FOUND");
-    expect((await service.listProjects({ page: 1, limit: 20 })).total).toBe(0);
+    expect((await service.listProjects({ page: 1, limit: 20 }, { kind: "all" })).total).toBe(0);
   });
 
   it("删除：version 不匹配 409 VERSION_CONFLICT；不存在 404", async () => {

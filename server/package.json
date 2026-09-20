@@ -15,7 +15,8 @@
     "start:worker": "node --env-file-if-exists=.env dist/entry/worker.js",
     "test": "vitest run",
     "check:boundaries": "node scripts/check-boundaries.mjs",
-    "check:db-schema": "node --env-file-if-exists=.env scripts/check-db-schema.mjs"
+    "check:db-schema": "node --env-file-if-exists=.env scripts/check-db-schema.mjs",
+    "check:permission-matrix": "node scripts/check-permission-matrix.mjs"
   },
   "dependencies": {
     "@libiaolink/contracts": "file:../shared",
