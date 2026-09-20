@@ -15,10 +15,14 @@ export const EnvSchema = z
     CASDOOR_CLIENT_SECRET: z.string().default(""),
     CASDOOR_REDIRECT_URI: z.string().min(1).default("http://localhost:3000/auth/callback"),
     CASDOOR_SCOPE: z.string().min(1).default("openid profile email"),
+    /** 目录同步 owner（Casdoor 组织名；本地沙箱 libiaorobot，公司环境 libiaorobot.com）。 */
+    CASDOOR_ORG_NAME: z.string().default(""),
     /** 会话空闲超时（分钟）：接入标准「企业内部系统」档为 30；0 仅测试用（立即超时）。 */
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(0).default(30),
     /** 会话 Cookie Secure 属性：auto = 仅 production 开启（本地 http 调试不受影响）。 */
     SESSION_COOKIE_SECURE: z.enum(["auto", "true", "false"]).default("auto"),
+    /** 内部作业接口凭证（请求头 X-Internal-Token；docs/开发者接入注意事项(SSO接入标准).md 第五部分）。 */
+    INTERNAL_SYNC_TOKEN: z.string().default(""),
   })
   .superRefine((value, context) => {
     if (value.NODE_ENV !== "production") {
@@ -29,6 +33,12 @@ export const EnvSchema = z
     }
     if (value.CASDOOR_CLIENT_SECRET === "") {
       context.addIssue({ code: "custom", message: "生产环境必须配置 CASDOOR_CLIENT_SECRET", path: ["CASDOOR_CLIENT_SECRET"] });
+    }
+    if (value.CASDOOR_ORG_NAME === "") {
+      context.addIssue({ code: "custom", message: "生产环境必须配置 CASDOOR_ORG_NAME", path: ["CASDOOR_ORG_NAME"] });
+    }
+    if (value.INTERNAL_SYNC_TOKEN === "") {
+      context.addIssue({ code: "custom", message: "生产环境必须配置 INTERNAL_SYNC_TOKEN", path: ["INTERNAL_SYNC_TOKEN"] });
     }
   });
 

@@ -77,6 +77,7 @@ function userRow(id: string, profile: DirectoryUserProfile): UserRow {
     email: profile.email,
     owner: null,
     status: profile.status,
+    removedAt: null,
     createdAt: AT,
     updatedAt: AT,
   };

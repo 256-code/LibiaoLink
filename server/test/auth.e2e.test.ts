@@ -124,6 +124,7 @@ class FakeUserRepository {
       email: profile.email,
       owner: profile.owner,
       status: existing?.status ?? "active",
+      removedAt: existing?.removedAt ?? null,
       createdAt: existing?.createdAt ?? new Date(),
       updatedAt: new Date(),
     };
