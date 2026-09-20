@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -29,8 +29,10 @@ import { trackerLabel } from "./Tracker";
  * 放开即插到该位置（**同一列内也能拖着换顺序**）；插入位按鼠标与卡片中线算（某张卡片中线以上 = 插到这张前面，都在上面 = 插到列尾），顺序存 `ProjectDetail` 的看板顺序表（原型内存态，与任务覆盖表同一层；任务表同阶段内顺序跟着走）。
  * 列内滚动条是**隐式**的：原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块（`ScrollArea`，与分类筛选侧栏 / 任务抽屉同一套）。
  * 看板横向滚动条同样**隐式**（Push 87）：列排布交给 `ScrollArea axis="horizontal"`，原生滚动条（Windows 下带箭头那条横杠）隐藏，滑块只在滚动 / 悬停时浮在列底留白里；列高按「铺满视口」重算（`100vh - 12.75rem`），列底与页面底之间不再留下大块空白。
- * Push 107（业务反馈「拖动时支持鼠标滑动」）：**拖动到边缘自动滚动** —— 拖着卡片把鼠标贴到看板左右边（翻列）或列内卡片列表的上下边（翻卡片），容器就自己滚，贴得越近越快，
- * 卡片因此能拖到视口外的列 / 卡片；滚动实现放在 `ScrollArea` 里（两块看板 + 抽屉通用），列内插入槽位在自动滚动期间按帧跟着鼠标重算，不会停在旧位置。
+ * Push 108（业务反馈「我不想要自动滚动，想要鼠标控制」）：拖动改成**指针拖动** —— Push 104 的原生 HTML5 拖拽与 Push 107 的「拖到边缘自动滚动」都撤回，
+ * 因为原生拖拽期间浏览器会把 `wheel` 吞掉（滚轮到不了页面，「自己用鼠标滚」就不成立）。现在的口径：按住卡片、位移超过 `DRAG_THRESHOLD` 才算拖动，拖起来之后**滚轮直接可用** ——
+ * 指针在列上 = 滚这一列的卡片列表（上下翻卡片）、按住 Shift 滚（或触控板左右滑）= 滚看板（左右翻列）；鼠标不动、容器在滚时，插入槽位按帧重算，不会停在旧位置。
+ * 落点仍是「列内插入位」：`data-kanban-column` 认列、卡片中线认格；没过阈值就是「点一下」，照旧打开任务详情抽屉。
  */
 export type KanbanMode = "owner" | "status";
 
@@ -107,6 +109,24 @@ const STAGE_OPTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage 
  * 内容直接落在外层壳上，只保留原来的内边距，卡片就是「一个框 + 内容」。
  */
 const CARD_BODY = "relative px-4 py-3.5";
+
+/** 拖动判定阈值（Push 108）：按下后位移不超过这么多像素 = 「点一下看详情」，不算拖动。 */
+const DRAG_THRESHOLD = 4;
+
+/** 当前落点（Push 108）：`key` = 哪一列（负责人 / 状态 / 待分配）、`index` = 插到列内第几格（0 = 最前、`items.length` = 列尾）。 */
+type DropTarget = { key: string; index: number };
+
+/** 按下卡片、还没到拖动阈值时的暂存（Push 108）。 */
+type PendingDrag = {
+  taskId: string;
+  pointerId: number;
+  /** 按下时的坐标：用来判「过没过阈值」。 */
+  x: number;
+  y: number;
+  /** 卡片 DOM：真拖起来之后把指针捕获在它身上（鼠标滑出窗口再放开也收得到 pointerup）。 */
+  node: HTMLElement;
+  dragging: boolean;
+};
 
 /** 「添加」时的列上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
 export type KanbanAddContext = { owner: string; ownerEn: string; status: TaskStatus };
@@ -235,8 +255,7 @@ function KanbanCard({
   onOpen,
   onPatch,
   dragging,
-  onDragStart,
-  onDragEnd,
+  onPointerDownDrag,
 }: {
   task: ProjectTask;
   mode: KanbanMode;
@@ -245,10 +264,8 @@ function KanbanCard({
   onPatch?: (patch: TaskPatch) => void;
   /** 正在被拖动（Push 104；Push 105 口径：**拖动中卡片样式保持原样** —— 不淡出、也不做抬起的实体态，只换抓手光标）。 */
   dragging?: boolean;
-  /** 开始拖动（Push 104）；不传 = 这张卡片不可拖。 */
-  onDragStart?: () => void;
-  /** 拖动结束（放开 / Esc 取消都算）。 */
-  onDragEnd?: () => void;
+  /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下看详情 / 按住拖动」；不传 = 这张卡片不可拖。 */
+  onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const status = taskStatus(task);
   const owner = memberByName(task.owner);
@@ -278,19 +295,21 @@ function KanbanCard({
       role="button"
       tabIndex={0}
       aria-label={"任务：" + task.title}
-      title={onDragStart === undefined ? undefined : "按住拖到别的列 = 移到那个组（负责人 / 状态跟着改）；点一下看任务详情"}
+      title={onPointerDownDrag === undefined ? undefined : "按住拖到别的列 = 移到那个组（负责人 / 状态跟着改）；拖动中滚轮翻卡片、Shift + 滚轮翻列；点一下看任务详情"}
       data-kanban-card="true"
-      draggable={onDragStart !== undefined}
-      onDragStart={(event) => {
-        if (onDragStart === undefined) {
+      onPointerDown={(event) => {
+        if (onPointerDownDrag === undefined) {
           return;
         }
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", task.id);
-        onDragStart();
-      }}
-      onDragEnd={() => {
-        onDragEnd?.();
+        // 只认左键；卡片里的小日历等可点元素按下时不当拖动（Push 108）
+        if (event.button !== 0) {
+          return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (target !== null && target.closest("button, input, textarea, select, [role=menu]") !== null) {
+          return;
+        }
+        onPointerDownDrag(task.id, event.currentTarget, event);
       }}
       onClick={onOpen}
       onKeyDown={(event) => {
@@ -357,9 +376,8 @@ function KanbanColumn({
   onAddStageTask,
   onPatchTask,
   draggingId,
-  onDragTaskStart,
-  onDragTaskEnd,
-  onDropTask,
+  dropIndex,
+  onPointerDownDrag,
 }: {
   group: KanbanGroup;
   mode: KanbanMode;
@@ -367,17 +385,12 @@ function KanbanColumn({
   onOpenTask: (task: ProjectTask) => void;
   /** 卡片上直接改字段（Push 98）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
-  /** 正在被拖动的卡片 id（Push 104；null = 没有在拖）。 */
+  /** 正在被拖动的卡片 id（Push 108；null = 没有在拖）。 */
   draggingId: string | null;
-  /** 卡片开始拖动（Push 104）。 */
-  onDragTaskStart: (taskId: string) => void;
-  /** 拖动结束 —— 放开或 Esc 取消都回到「没在拖」（Push 104）。 */
-  onDragTaskEnd: () => void;
-  /**
-   * 卡片被放到这一列（Push 104）：负责人看板 = 改负责人、进展看板 = 改状态（联动进度 / 完成日期，口径同任务表行内）。
-   * `index` = 落在列内第几个位置（Push 105：鼠标拖到哪两张卡片之间就插到那里；同一列 = 只换顺序）。
-   */
-  onDropTask: (taskId: string, group: KanbanGroup, index: number) => void;
+  /** 本列是不是当前落点、插到第几格（Push 108；null = 不是落点 —— 高亮与槽位都不出）。 */
+  dropIndex: number | null;
+  /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下 / 拖动」；不传 = 这张卡片不可拖。 */
+  onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
   onAddStageTask: (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => void;
 }) {
@@ -387,65 +400,11 @@ function KanbanColumn({
   const [titleEn, setTitleEn] = useState("");
   const [templateStage, setTemplateStage] = useState<string | null>(null);
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 112, left: 16 });
-  /** 拖到这一列上方（Push 104）：整列描边高亮；Push 105 起列内再按鼠标位置浮出插入槽位。 */
-  const [over, setOver] = useState(false);
-  /** 插入位（Push 105）：鼠标落在列内第几格（0 = 最前、`items.length` = 列尾）。 */
-  const [dropIndex, setDropIndex] = useState<number | null>(null);
   const columnRef = useRef<HTMLElement | null>(null);
-  /** 拖动中鼠标的纵向位置（Push 107）：自动滚动时鼠标可以不动，插入位得按这个位置重算。 */
-  const lastPointerYRef = useRef(0);
+  /** 落点就在本列（Push 108）：整列描边高亮 + 列内浮出插入槽位（槽位插到第 `dropIndex` 格）。 */
+  const isDropTarget = dropIndex !== null;
   /** 拖动的就是本列的卡片（同列放开 = 只换顺序，不写负责人 / 状态）。 */
   const isOwnColumn = draggingId !== null && group.items.some((task) => task.id === draggingId);
-  /** 有卡片在拖 = 这一列可以接（同列也可以：拖着换顺序，Push 105）。 */
-  const droppable = draggingId !== null;
-
-  /**
-   * 鼠标落在列内哪个插入位（Push 105）：按卡片中线判断 —— 鼠标在某张卡片中线以上 = 插到这张前面；
-   * 所有中线都在上面 = 插到列尾。浮动的那块虚线槽位不参与计算（它没有 `data-kanban-card`）。
-   */
-  const indexAt = useCallback(
-    (clientY: number): number => {
-      if (columnRef.current === null) {
-        return group.items.length;
-      }
-      const cards = Array.from(columnRef.current.querySelectorAll("[data-kanban-card='true']"));
-      for (let i = 0; i < cards.length; i++) {
-        const rect = cards[i].getBoundingClientRect();
-        if (clientY < rect.top + rect.height / 2) {
-          return i;
-        }
-      }
-      return cards.length;
-    },
-    [group.items.length],
-  );
-
-  /**
-   * 自动滚动时插入位跟着重算（Push 107）：鼠标贴着列边不动、列内卡片在自动滚，卡片位置一直在变；
-   * 只靠 dragover 重算会慢半拍（Chrome 鼠标不动时 dragover 约 350ms 才来一次），所以拖动落在本列期间按帧重算。
-   */
-  useEffect(() => {
-    if (!over) {
-      return;
-    }
-    let raf = window.requestAnimationFrame(function tick() {
-      const next = indexAt(lastPointerYRef.current);
-      setDropIndex((prev) => (prev === next ? prev : next));
-      raf = window.requestAnimationFrame(tick);
-    });
-    return () => {
-      window.cancelAnimationFrame(raf);
-    };
-  }, [indexAt, over]);
-
-  // 拖动结束（放开 / Esc 取消 / 在别处松手）就把这一列的落点状态清干净（Push 107）：
-  // `dragleave` 在「拖着卡片时按 Esc」这类收尾下不一定派到每一列，免得上一轮的槽位在下一轮拖动刚开始时又冒出来。
-  useEffect(() => {
-    if (draggingId === null) {
-      setOver(false);
-      setDropIndex(null);
-    }
-  }, [draggingId]);
 
   /** 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
   const context: KanbanAddContext = {
@@ -498,9 +457,9 @@ function KanbanColumn({
     setTemplateStage(stage);
   };
 
-  /** 插入槽位（Push 105）：浮在鼠标算出来的那两格之间 —— 放开就插到这里（同列 = 放到这里、换列 = 移到那一列）。 */
+  /** 插入槽位（Push 105 / 108）：浮在鼠标算出来的那两格之间 —— 放开就插到这里（同列 = 放到这里、换列 = 移到那一列）。 */
   const dropSlot =
-    !over || draggingId === null ? null : (
+    !isDropTarget || draggingId === null ? null : (
       <div
         data-drop-slot="true"
         className="flex items-center justify-center rounded-[35px] border-2 border-dashed border-emerald-400/70 bg-emerald-50/60 px-3 py-6 text-center text-[11px] font-medium text-emerald-700"
@@ -512,44 +471,8 @@ function KanbanColumn({
   return (
     <section
       ref={columnRef}
-      className={COLUMN_SHELL + (over && droppable ? " rounded-[28px] ring-2 ring-emerald-400/70 ring-offset-4 ring-offset-white" : "")}
-      onDragOver={(event) => {
-        if (!droppable) {
-          return;
-        }
-        // dragover 里必须 preventDefault，浏览器才允许 drop
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-        // 插入位跟着鼠标走（Push 105）：拖到哪两格之间，槽位就浮在那里
-        lastPointerYRef.current = event.clientY;
-        const next = indexAt(event.clientY);
-        if (!over) {
-          setOver(true);
-        }
-        if (dropIndex !== next) {
-          setDropIndex(next);
-        }
-      }}
-      onDragLeave={(event) => {
-        // 只是在列内换个元素时也会触发 dragleave —— 真正离开整列才收起高亮与插入位
-        if (columnRef.current !== null && !columnRef.current.contains(event.relatedTarget as Node | null)) {
-          setOver(false);
-          setDropIndex(null);
-        }
-      }}
-      onDrop={(event) => {
-        if (!droppable) {
-          return;
-        }
-        event.preventDefault();
-        const index = dropIndex === null ? group.items.length : dropIndex;
-        setOver(false);
-        setDropIndex(null);
-        const taskId = event.dataTransfer.getData("text/plain");
-        if (taskId !== "") {
-          onDropTask(taskId, group, index);
-        }
-      }}
+      data-kanban-column={group.key}
+      className={COLUMN_SHELL + (isDropTarget ? " rounded-[28px] ring-2 ring-emerald-400/70 ring-offset-4 ring-offset-white" : "")}
     >
       <header className="mb-3 flex items-center gap-2 px-1">
         {mode === "owner" ? (
@@ -582,14 +505,7 @@ function KanbanColumn({
                     }
               }
               dragging={draggingId === task.id}
-              onDragStart={
-                onPatchTask === undefined
-                  ? undefined
-                  : () => {
-                      onDragTaskStart(task.id);
-                    }
-              }
-              onDragEnd={onDragTaskEnd}
+              onPointerDownDrag={onPointerDownDrag}
             />
           </Fragment>
         ))}
@@ -678,13 +594,49 @@ function KanbanColumn({
 
 export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
-  /** 正在拖动的卡片 id（Push 104；null = 没在拖）。 */
+  /** 正在拖动的卡片 id（Push 108；null = 没在拖）。 */
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  /** 当前落点（Push 108）：`key` = 哪一列、`index` = 插到第几格；null = 鼠标不在任何列上。 */
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  /** 按下卡片、还没过拖动阈值时的暂存（Push 108）：没过阈值就还是「点一下看详情」。 */
+  const pendingRef = useRef<PendingDrag | null>(null);
+  /** 拖动中鼠标的最后位置（Push 108）：滚轮翻列 / 翻卡片时鼠标可以不动，落点按这个位置重算。 */
+  const pointerRef = useRef({ x: 0, y: 0 });
+  /** 拖动收尾那一下的 `click` 不当成「打开抽屉」（Push 108）。 */
+  const suppressClickRef = useRef(false);
+  /** 任务表最新值 + 两个「最新实现」的 ref（Push 108）：指针 / 每帧回调里读，免得闭包吃到旧值。 */
+  const tasksRef = useRef(tasks);
+  const dropTargetAtRef = useRef<(x: number, y: number) => DropTarget | null>(() => null);
+  const moveTaskRef = useRef<(taskId: string, group: KanbanGroup, index: number) => void>(() => undefined);
   /** 抽屉里的任务按 id 取当前值（Push 98）：卡片 / 抽屉里改完，抽屉要立刻反映最新进度与日期。 */
   const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
   const groups = groupTasks(tasks, mode);
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
   const existingTaskIds = new Set(tasks.map((task) => task.id));
+
+  /**
+   * 鼠标底下是「哪一列的第几格」（Push 108）：`data-kanban-column` 认列、卡片中线认格 —— 口径同 Push 105
+   * （某张卡片中线以上 = 插到这张前面，都在上面 = 插到列尾）；浮动的那块虚线槽位不参与计算（它没有 `data-kanban-card`）。
+   */
+  const dropTargetAt = (x: number, y: number): DropTarget | null => {
+    const under = document.elementFromPoint(x, y);
+    const column = under === null ? null : under.closest("[data-kanban-column]");
+    if (column === null) {
+      return null;
+    }
+    const key = column.getAttribute("data-kanban-column") ?? "";
+    if (!groups.some((group) => group.key === key)) {
+      return null;
+    }
+    const cards = Array.from(column.querySelectorAll("[data-kanban-card='true']"));
+    for (let i = 0; i < cards.length; i++) {
+      const rect = cards[i].getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) {
+        return { key, index: i };
+      }
+    }
+    return { key, index: cards.length };
+  };
 
   /**
    * 卡片被拖到某一列的第 `index` 格（Push 104；业务口径「卡片要支持拖动 移动别的组 也相当于编辑 移动后相关的信息要对应」）：
@@ -735,6 +687,124 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
     });
   };
 
+  // 三个「最新实现」的 ref（Push 108）：指针 / 每帧回调里读最新实现，免得闭包吃到上一轮的函数
+  useEffect(() => {
+    tasksRef.current = tasks;
+    dropTargetAtRef.current = dropTargetAt;
+    moveTaskRef.current = moveTaskToGroup;
+  });
+
+  /**
+   * 指针拖动（Push 108）：① 按下卡片后位移超过 `DRAG_THRESHOLD` 才算真拖动（没过阈值 = 点一下看详情）；
+   * ② 拖动中鼠标动一下就更新落点；③ 放开时落在哪一列的第几格就交给 `moveTaskToGroup`（与表格行内编辑同一张覆盖表）；
+   * ④ Esc / 指针取消 = 原地取消。整段拖动**没有**原生拖拽参与，所以滚轮照常可用（这就是「鼠标自己控制」的实现方式）。
+   */
+  useEffect(() => {
+    /** 收尾（放开 / Esc / 指针取消）：清掉暂存与落点，恢复页面文字选择。 */
+    const endDrag = () => {
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDraggingId(null);
+      setDropTarget(null);
+    };
+    const handleMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+      const pending = pendingRef.current;
+      if (pending === null || pending.dragging) {
+        return;
+      }
+      if (Math.abs(event.clientX - pending.x) + Math.abs(event.clientY - pending.y) < DRAG_THRESHOLD) {
+        return;
+      }
+      pending.dragging = true;
+      try {
+        // 指针捕获在卡片上：鼠标滑出窗口再放开也收得到 pointerup
+        pending.node.setPointerCapture(pending.pointerId);
+      } catch {
+        // 指针已经不在了（例如刚抬起）：忽略，落点照样按下面的逻辑算
+      }
+      document.body.style.userSelect = "none";
+      suppressClickRef.current = true;
+      setDraggingId(pending.taskId);
+      setDropTarget(dropTargetAtRef.current(event.clientX, event.clientY));
+    };
+    const handleUp = (event: PointerEvent) => {
+      const pending = pendingRef.current;
+      if (pending === null) {
+        return;
+      }
+      const wasDragging = pending.dragging;
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDraggingId(null);
+      setDropTarget(null);
+      if (!wasDragging) {
+        return;
+      }
+      const target = dropTargetAtRef.current(event.clientX, event.clientY);
+      if (target === null) {
+        return;
+      }
+      const group = groupTasks(tasksRef.current, mode).find((item) => item.key === target.key);
+      if (group === undefined) {
+        return;
+      }
+      moveTaskRef.current(pending.taskId, group, target.index);
+    };
+    const handleCancel = () => {
+      endDrag();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && pendingRef.current !== null) {
+        endDrag();
+      }
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleCancel);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleCancel);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mode]);
+
+  /**
+   * 拖动中按帧重算落点（Push 108）：鼠标可以不动、容器在滚（滚轮翻列 / 翻卡片），槽位得跟着卡片位置走，
+   * 不能停在按下时算出来的那一格。
+   */
+  useEffect(() => {
+    if (draggingId === null) {
+      return;
+    }
+    let raf = window.requestAnimationFrame(function tick() {
+      const next = dropTargetAtRef.current(pointerRef.current.x, pointerRef.current.y);
+      setDropTarget((prev) => (prev !== null && next !== null && prev.key === next.key && prev.index === next.index ? prev : next));
+      raf = window.requestAnimationFrame(tick);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [draggingId]);
+
+  /** 按下卡片（Push 108）：先只记「可能拖动」，真拖动由上面的指针循环判定。 */
+  const beginCardDrag = (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => {
+    pendingRef.current = { taskId, pointerId: event.pointerId, x: event.clientX, y: event.clientY, node, dragging: false };
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    suppressClickRef.current = false;
+  };
+
+  /** 点一下卡片 = 打开任务详情抽屉；拖动收尾那一下的 `click` 不算（Push 108）。 */
+  const openTask = (task: ProjectTask) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    setSelectedTask(task);
+  };
+
   if (tasks.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center text-sm text-zinc-500">
@@ -752,23 +822,13 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
             group={group}
             mode={mode}
             existingTaskIds={existingTaskIds}
-            onOpenTask={(task) => {
-              setSelectedTask(task);
-            }}
+            onOpenTask={openTask}
             onAddTask={onAddTask}
             onAddStageTask={onAddStageTask}
             onPatchTask={onPatchTask}
             draggingId={onPatchTask === undefined ? null : draggingId}
-            onDragTaskStart={(taskId) => {
-              setDraggingId(taskId);
-            }}
-            onDragTaskEnd={() => {
-              setDraggingId(null);
-            }}
-            onDropTask={(taskId, target, index) => {
-              moveTaskToGroup(taskId, target, index);
-              setDraggingId(null);
-            }}
+            dropIndex={dropTarget !== null && dropTarget.key === group.key ? dropTarget.index : null}
+            onPointerDownDrag={onPatchTask === undefined ? undefined : beginCardDrag}
           />
         ))}
       </ScrollArea>
