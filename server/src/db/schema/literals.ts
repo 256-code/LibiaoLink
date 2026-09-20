@@ -30,3 +30,12 @@ export const DATA_SCOPE_KEYS = [
   "own_stakeholders",
   "granted",
 ] as const;
+
+/** 审计动作（audit_logs.action，h7 · C7）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 越权拒绝。 */
+export const AUDIT_ACTION_KEYS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "deny"] as const;
+
+/** 审计结果（audit_logs.result）：成功 / 越权拒绝 / 执行失败。 */
+export const AUDIT_RESULT_KEYS = ["succeeded", "denied", "failed"] as const;
+
+/** 审计入口（audit_logs.entry）：页面 / API / 系统任务 / 批量。 */
+export const AUDIT_ENTRY_KEYS = ["api", "page", "system", "batch"] as const;

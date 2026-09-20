@@ -78,8 +78,11 @@ export class ProjectsController {
   /** 创建（M2-01）：201；编号重复 409 PROJECT_CODE_EXISTS；seq_no 由服务端分配（不接受传入）。需 project.create。 */
   @Post()
   @RequirePermission("project.create")
-  create(@Body(new ZodValidationPipe(ProjectCreateBodySchema)) body: ProjectCreateBody): Promise<ProjectView> {
-    return this.projects.createProject(body);
+  create(
+    @Body(new ZodValidationPipe(ProjectCreateBodySchema)) body: ProjectCreateBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectView> {
+    return this.projects.createProject(body, actorId);
   }
 
   /** 更新（M2-01）：乐观锁（正文 version）；归档写保护（ADR-027）→ 409 PROJECT_ARCHIVED。需 project.update。 */
@@ -88,8 +91,9 @@ export class ProjectsController {
   update(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(ProjectUpdateBodySchema)) body: ProjectUpdateBody,
+    @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
-    return this.projects.updateProject(id, body);
+    return this.projects.updateProject(id, body, actorId);
   }
 
   /** 软删（M2-01 · A5）：If-Match 回传当前 version 防误删；返回被删项目（此后列表 / 详情 / facets 均不可见）。需 project.delete。 */
@@ -116,8 +120,9 @@ export class ProjectsController {
   addMember(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(ProjectMemberCreateBodySchema)) body: ProjectMemberCreateBody,
+    @CurrentActorId() actorId: string,
   ): Promise<ProjectMemberView> {
-    return this.members.addMember(id, body);
+    return this.members.addMember(id, body, actorId);
   }
 
   /** 移除成员：返回被移除的行；成员不存在 / 项目不存在统一 404。需 member.manage。 */
@@ -126,8 +131,9 @@ export class ProjectsController {
   removeMember(
     @Param("id", uuidParam) id: string,
     @Param("userId", uuidParam) userId: string,
+    @CurrentActorId() actorId: string,
   ): Promise<ProjectMemberView> {
-    return this.members.removeMember(id, userId);
+    return this.members.removeMember(id, userId, actorId);
   }
 }
 

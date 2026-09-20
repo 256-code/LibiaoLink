@@ -49,6 +49,10 @@
       "description": "数据字典下发（A3；region / projectType，含主题色元数据）"
     },
     {
+      "name": "audit",
+      "description": "操作审计（C7）：关键操作留痕、按对象 / 操作人检索与越权尝试（admin 模块）"
+    },
+    {
       "name": "changes",
       "description": "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）"
     }
@@ -122,6 +126,199 @@
           "traceId"
         ],
         "description": "统一错误信封（技术设计v0.2 §7.2）"
+      },
+      "AuditAction": {
+        "type": "string",
+        "enum": [
+          "create",
+          "update",
+          "delete",
+          "progress",
+          "complete",
+          "advance",
+          "rollback",
+          "deny"
+        ],
+        "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝"
+      },
+      "AuditChange": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "字段名（契约口径 camelCase）"
+          },
+          "from": {
+            "description": "修改前值（JSON；无值时为 null）"
+          },
+          "to": {
+            "description": "修改后值（JSON；无值时为 null）"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "description": "字段级修改条目（C7-02）"
+      },
+      "AuditEntry": {
+        "type": "string",
+        "enum": [
+          "api",
+          "page",
+          "system",
+          "batch"
+        ],
+        "description": "审计入口：api / page / system / batch"
+      },
+      "AuditLog": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "审计序号（只增不减）"
+          },
+          "occurredAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "actorId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "操作人 users.id（系统任务为 null）"
+              }
+            ]
+          },
+          "actorName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "操作人姓名快照（写入时冗余，改名后仍可追溯）"
+          },
+          "action": {
+            "$ref": "#/components/schemas/AuditAction"
+          },
+          "objectType": {
+            "$ref": "#/components/schemas/AuditObjectType"
+          },
+          "objectId": {
+            "type": "string",
+            "description": "对象 id（uuid 或字典码等业务键）"
+          },
+          "projectId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "所属项目（非项目对象为 null）"
+              }
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuditResult"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/AuditEntry"
+          },
+          "summary": {
+            "type": "string",
+            "description": "可读摘要（列表直接展示）"
+          },
+          "changes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AuditChange"
+            },
+            "description": "字段级修改（C7-02）；无字段级变化时为 null"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "附加信息（trace_id / 请求方法路径等）"
+          }
+        },
+        "required": [
+          "id",
+          "occurredAt",
+          "actorId",
+          "actorName",
+          "action",
+          "objectType",
+          "objectId",
+          "projectId",
+          "result",
+          "entry",
+          "summary",
+          "changes",
+          "metadata"
+        ],
+        "description": "审计日志（C7）：追加写、不可改删、保留 ≥6 个月（C7-05）"
+      },
+      "AuditLogListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditLog"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "AuditObjectType": {
+        "type": "string",
+        "enum": [
+          "project",
+          "project_member",
+          "task",
+          "node",
+          "stage",
+          "dict_item",
+          "blueprint"
+        ],
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图"
+      },
+      "AuditResult": {
+        "type": "string",
+        "enum": [
+          "succeeded",
+          "denied",
+          "failed"
+        ],
+        "description": "审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）"
       },
       "Blueprint": {
         "type": "object",
@@ -672,6 +869,68 @@
           "metadata"
         ]
       },
+      "DictItemCreateBody": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "显示名"
+          },
+          "sort": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "展示顺序（升序）；缺省 0"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "是否启用；缺省 true"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {},
+            "default": {},
+            "description": "字典元数据（projectType 必含 accent）"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "description": "新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典"
+      },
+      "DictItemUpdateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sort": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "停用（false）替代删除：存量数据仍按原值展示（C9-02）"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "description": "更新字典条目（只传变更键）；本次变更写审计（含字段级 before / after，C9-02 / C7-02）"
+      },
       "DictListResponse": {
         "type": "object",
         "properties": {
@@ -758,6 +1017,7 @@
           "VERSION_CONFLICT",
           "PROJECT_CODE_EXISTS",
           "PROJECT_ARCHIVED",
+          "DICT_ITEM_EXISTS",
           "STAGE_GATE_NOT_PASSED",
           "BLUEPRINT_NOT_PUBLISHED",
           "NODE_REQUIRED_DOC_MISSING",
@@ -1470,7 +1730,9 @@
           "file.download",
           "stakeholder.view",
           "stakeholder.manage",
-          "stakeholder.contact.view"
+          "stakeholder.contact.view",
+          "dict.manage",
+          "audit.view"
         ],
         "description": "功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）"
       },
@@ -5575,6 +5837,22 @@
           "dicts"
         ],
         "summary": "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+            },
+            "required": false,
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "name": "includeDisabled",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "description": "全部字典",
@@ -5582,6 +5860,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DictListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -5598,12 +5886,29 @@
         "parameters": [
           {
             "schema": {
-              "$ref": "#/components/schemas/DictType"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
             },
             "required": true,
-            "description": "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404",
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
             "name": "type",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+            },
+            "required": false,
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "name": "includeDisabled",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5617,8 +5922,378 @@
               }
             }
           },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dicts/{type}/items": {
+      "post": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "新增字典条目（仅管理员 · dict.manage；变更写审计留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+            },
+            "required": true,
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "name": "type",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DictItemCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功（更新后的整个字典）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dicts/{type}/items/{code}": {
+      "patch": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "更新字典条目（部分更新；停用替代删除；变更写审计留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+            },
+            "required": true,
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "name": "type",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "code",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DictItemUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的整个字典",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audit-logs": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/AuditObjectType"
+            },
+            "required": false,
+            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图",
+            "name": "objectType",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②）"
+            },
+            "required": false,
+            "description": "对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②）",
+            "name": "objectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "description": "操作人（按人检索 —— h7 验收项②）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "操作人（按人检索 —— h7 验收项②）",
+            "name": "actorId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/AuditAction"
+            },
+            "required": false,
+            "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝",
+            "name": "action",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/AuditResult"
+                },
+                {
+                  "description": "result=denied 即越权尝试（C7-03）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "result=denied 即越权尝试（C7-03）",
+            "name": "result",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "projectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateTime"
+                },
+                {
+                  "description": "时间下界（含，ISO8601）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "时间下界（含，ISO8601）",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateTime"
+                },
+                {
+                  "description": "时间上界（含，ISO8601）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "时间上界（含，ISO8601）",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "审计列表（occurredAt 降序）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
             "content": {
               "application/json": {
                 "schema": {

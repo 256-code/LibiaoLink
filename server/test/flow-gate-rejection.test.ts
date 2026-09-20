@@ -9,6 +9,7 @@ import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
 import type { BlueprintService } from "../src/modules/blueprint/index.js";
 import type { RoleService } from "../src/modules/identity/index.js";
+import type { AuditService } from "../src/modules/admin/index.js";
 import type { GateService } from "../src/modules/node/index.js";
 import { FlowService } from "../src/modules/project/flow.service.js";
 import type { FlowRepository } from "../src/modules/project/flow.repository.js";
@@ -98,6 +99,14 @@ class FakeGateService {
   }
 }
 
+/** 审计替身（h7）：只记录写入调用（拒绝留痕断言见 test/admin-audit.test.ts / 真机回放）。 */
+class FakeAuditService {
+  entries: unknown[] = [];
+  async record(_client: unknown, input: unknown): Promise<void> {
+    this.entries.push(input);
+  }
+}
+
 function makeService(): {
   service: FlowService;
   db: FakeDatabase;
@@ -117,6 +126,7 @@ function makeService(): {
     {} as unknown as BlueprintService,
     gate as unknown as GateService,
     {} as unknown as RoleService,
+    new FakeAuditService() as unknown as AuditService,
   );
   return { service, db, flow, projects, gate };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
 import type { RoleService } from "../src/modules/identity/index.js";
+import type { AuditService } from "../src/modules/admin/index.js";
 import type {
   TaskEventInput,
   TaskFileSummaryCounts,
@@ -150,9 +151,22 @@ class FakeDatabase {
   }
 }
 
+/** 审计替身（h7）：只记录写入调用。 */
+class FakeAuditService {
+  entries: unknown[] = [];
+  async record(_client: unknown, input: unknown): Promise<void> {
+    this.entries.push(input);
+  }
+}
+
 function makeService(repo: FakeTaskRepository, roles: FakeRoleService = new FakeRoleService()): TaskService {
   const database = new FakeDatabase();
-  return new TaskService(database as unknown as DatabaseService, repo as unknown as TaskRepository, roles as unknown as RoleService);
+  return new TaskService(
+    database as unknown as DatabaseService,
+    repo as unknown as TaskRepository,
+    roles as unknown as RoleService,
+    new FakeAuditService() as unknown as AuditService,
+  );
 }
 
 describe("TaskService.create（A10 / A1-13）", () => {
