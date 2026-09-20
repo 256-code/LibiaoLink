@@ -71,7 +71,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 变更 | 一期申请即通过（status=applied）：提交变更后文件与变更字段，完成上传时同事务写 change_requests + 新版本 + 状态 changed + Outbox（R01 / 通知由消费方处理）；缺变更后文件不允许提交 |
 | 回收站 | 任意状态可回收（默认保留 30 天，可恢复回原状态）；彻底删除仅管理员且留痕（权限模型落地前为临时口径） |
 | 下载与预览地址 | 短时签名 URL + 审计；对象存储禁止匿名读取 |
-| 时间区间（A1） | `filter[timeFrom]` / `filter[timeTo]`：`YYYY-MM-DD` 闭区间，按 Asia/Shanghai 日界截断（下界含当日 00:00、上界按次日 00:00 不含）；一期维度映射 `projects.updated_at`（语义以 v0.3 §7#4 ADR 为准）；只传一端合法，`timeFrom > timeTo` 或格式非法返回 400；列表与 facets 同 schema 同口径；列表 `sort` 缺省 = `updatedAt:desc`（最近活动在前）；白名单 `updatedAt` / `createdAt` / `seqNo`（A9 · Push 68：补 `createdAt`，供前端后续「按创建时间」维度升级） |
+| 时间区间（A1） | `filter[timeFrom]` / `filter[timeTo]`：`YYYY-MM-DD` 闭区间，按 Asia/Shanghai 日界截断（下界含当日 00:00、上界按次日 00:00 不含）；一期维度映射 `projects.updated_at`（语义以 v0.3 §7#4 ADR 为准）；只传一端合法，`timeFrom > timeTo` 或格式非法返回 400；列表与 facets 同 schema 同口径；列表 `sort` 缺省 = `updatedAt:desc`（最近活动在前）；白名单 `updatedAt` / `createdAt` / `seqNo`（A9 · Push 69：补 `createdAt`，供前端后续「按创建时间」维度升级） |
 | 用户目录（A2） | `GET /users`：`q` + 分页，只返回 `status=active`；项为 `{ id, username, displayName, email, status }`（不含 casdoorId / owner / 部门 / 手机号）；默认按 `username` 升序（分页不跳行）；登录用户全员可读，不做数据范围裁剪；项目侧随行下发 `Project.managerName`（列表 / 详情 / 创建与编辑返回；人员停用 / 离职仍返回姓名，取不到为 `null`） |
 | 字典（A3） | `GET /dicts` / `GET /dicts/{type}`：一期只下发可运营数据字典 `region` / `projectType`（项 `{ code, name, sort, enabled, metadata }`，`projectType` 必含 `metadata.accent`）；阶段 / 成果文件类型 / 紧急重要度属契约枚举（`src/common/dicts.ts`），前端直接引用、不走接口（避免同一事实两处来源） |
 | 用户偏好（A4） | `GET / PATCH /users/me/preferences`：PATCH 合并语义（只传变更键），响应回全量 + `updatedAt`；一期键 `taskTableHiddenColumns`（列 key 白名单校验，未知 key 400）；存储 `user_preferences`（与项目视图 `project_views` 分离）；单用户单写者不带 `version` |
@@ -85,7 +85,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 - 任务节点库与任务模板（A1-16 / A1-17；2026-09-19 定案）：任务模板 CRUD（按阶段）+ 从模板批量生成任务；落库表建议 `task_nodes` / `task_templates` / `task_template_nodes`（见 `前端功能需求.md` §3.8 A11 / `字段对照清单.md` §四）。
 - 第二批（S7·file，i1）：文件与变更（上传 / 版本 / 定档 / 变更 / 回收站）；预览（preview）契约随 i3 补。
 - 认证与会话（g6）：identity 契约（User / MeResponse / /auth/login 与 /auth/callback 查询参数），随会话后端化落地。
-- 对齐清单 A1~A9（Push 49 / 68）：projects（时间区间 / 软删 / 排序白名单补 `createdAt`）、tasks（列表项与详情 / 排序白名单）、users（用户目录 / 用户偏好）、dicts（数据字典下发）—— A1~A8 决议见 PR #40 评审记录，A9 决议见 PR #42 评审；A2 / A3 为 M1 出口（前端移除硬编码）前提。
+- 对齐清单 A1~A9（Push 49 / 69）：projects（时间区间 / 软删 / 排序白名单补 `createdAt`）、tasks（列表项与详情 / 排序白名单）、users（用户目录 / 用户偏好）、dicts（数据字典下发）—— A1~A8 决议见 PR #40 评审记录，A9 决议见 PR #42 评审；A2 / A3 为 M1 出口（前端移除硬编码）前提。
 - 后续切片（随对应模块落地补契约，仍在本包内）：通知（notify，阶段 8）、
   搜索与统计（search / dashboard，阶段 8）、迁移工具链（阶段 9）、
   自动化规则与日报/问题（automation / report，阶段 7）。

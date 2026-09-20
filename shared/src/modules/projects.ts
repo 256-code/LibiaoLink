@@ -44,7 +44,7 @@ export const ProjectSummarySchema = z
  * 边界：只传一端合法；timeFrom 晚于 timeTo 或格式非法返回 400 VALIDATION_FAILED（不返回空列表）。
  * 列表与 facets 共用本 schema 与同一 QueryBuilder（禁止两套 SQL）。
  * 缺省排序：updatedAt:desc（项目最近活动在前）；排序白名单 updatedAt / createdAt / seqNo。
- * A9（Push 68）：白名单补 createdAt（sort=createdAt:asc|desc），前端后续把 TIME 升级为「维度（创建时间 / 最近活动时间）× 方向」时无需再动契约；默认序仍为 updatedAt:desc。
+ * A9（Push 69）：白名单补 createdAt（sort=createdAt:asc|desc），前端后续把 TIME 升级为「维度（创建时间 / 最近活动时间）× 方向」时无需再动契约；默认序仍为 updatedAt:desc。
  */
 export const ProjectListQuerySchema = z
   .object({
