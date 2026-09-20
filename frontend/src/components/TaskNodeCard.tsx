@@ -1,14 +1,19 @@
-import type { DragEvent } from "react";
+import type { PointerEvent } from "react";
 
 type TaskNodeCardProps = {
   /** 任务中文名（参考稿的 message-text） */
   title: string;
   /** 任务英文名（参考稿的 sub-text）；没有英文名时只显示中文 */
   subtitle?: string;
-  /** 可拖动（左侧任务节点拖到右侧模板用） */
-  draggable?: boolean;
-  onDragStart?: (event: DragEvent<HTMLElement>) => void;
-  onDragEnd?: () => void;
+  /**
+   * 可拖动（Push 116：**指针拖动**，只负责抓手光标）—— 左侧节点拖到右侧模板、模板内调顺序都用它。
+   * 原生 HTML5 拖拽已撤回：拖动期间浏览器会把 `wheel` 吞掉，「拖着的同时滚轮翻列表」就不成立。
+   */
+  grab?: boolean;
+  /** 按下卡片（指针拖动）：真拖动由调用方按位移阈值判定，没过阈值就是点一下。 */
+  onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  /** 拖动中跟着鼠标走的那一块（半透明 + 轻磨砂，能透出底下的插入线）。 */
+  ghost?: boolean;
   /** 传了就把叉号渲染成「移除」按钮；不传则保持参考稿里的装饰语义（当前原型无点击行为） */
   onRemove?: () => void;
   /** 高亮描边（拖拽时提示「这个节点已经在右侧了」） */
@@ -19,15 +24,15 @@ type TaskNodeCardProps = {
 
 /**
  * 任务节点卡片：按业务给的参考稿用 Tailwind 复刻（左侧波浪 + 圆形图标 + 中英文标题 + 右侧叉形图标），
- * 未引入 styled-components 或新依赖。叉形图标在参考稿里是装饰，这里不做点击行为：
+ * 未引入 styled-components 或新依赖。Push 116 起拖动改指针拖动（见 `grab` / `ghost`）。叉形图标在参考稿里是装饰，这里不做点击行为：
  * 默认隐藏（占位但不可见，避免卡片右侧抖动），只有鼠标移到叉号自己的小区域（28×28 命中区）才显示。
  */
 export function TaskNodeCard({
   title,
   subtitle,
-  draggable,
-  onDragStart,
-  onDragEnd,
+  grab,
+  onPointerDown,
+  ghost,
   onRemove,
   highlighted,
   dimmed,
@@ -35,15 +40,16 @@ export function TaskNodeCard({
   return (
     <article
       className={
-        "relative flex h-20 w-full items-center gap-[15px] overflow-hidden rounded-lg bg-white px-[15px] py-[10px] shadow-[0_8px_24px_rgba(149,157,165,0.2)]" +
-        (draggable === true ? " cursor-grab active:cursor-grabbing" : "") +
+        "relative flex h-20 w-full items-center gap-[15px] overflow-hidden rounded-lg px-[15px] py-[10px] " +
+        (ghost === true
+          ? "bg-white/[0.6] shadow-[0_18px_40px_-18px_rgba(15,23,42,0.35)] backdrop-blur-[5px] backdrop-saturate-150"
+          : "bg-white shadow-[0_8px_24px_rgba(149,157,165,0.2)]") +
+        (grab === true ? " cursor-grab active:cursor-grabbing" : "") +
         (highlighted === true ? " ring-2 ring-amber-400/80" : "") +
         (dimmed === true ? " opacity-40" : "")
       }
       title={subtitle === undefined || subtitle === "" ? title : title + " / " + subtitle}
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      onPointerDown={onPointerDown}
     >
       <svg
         className="absolute -left-[31px] top-[32px] w-20 rotate-90 fill-[#04e4003a]"
