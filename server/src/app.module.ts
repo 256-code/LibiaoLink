@@ -7,6 +7,7 @@ import type { Env } from "./config/env.js";
 import { DatabaseModule } from "./db/db.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { IdentityModule } from "./modules/identity/index.js";
+import { ProjectModule } from "./modules/project/index.js";
 
 /** api 进程：HTTP 入口（无状态、不跑 CPU 密集任务）。 */
 @Module({})
@@ -14,7 +15,7 @@ export class AppModule {
   static forRoot(env: Env): DynamicModule {
     return {
       module: AppModule,
-      imports: [createLoggerModule(env), AppConfigModule.forRoot(env), DatabaseModule, HealthModule, IdentityModule],
+      imports: [createLoggerModule(env), AppConfigModule.forRoot(env), DatabaseModule, HealthModule, IdentityModule, ProjectModule],
       providers: [{ provide: APP_FILTER, useClass: ApiErrorFilter }],
     };
   }

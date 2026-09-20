@@ -681,6 +681,7 @@
           "NOT_FOUND",
           "VERSION_CONFLICT",
           "PROJECT_CODE_EXISTS",
+          "PROJECT_ARCHIVED",
           "NODE_REQUIRED_DOC_MISSING",
           "NODE_ALREADY_DONE",
           "NODE_DELETED",

@@ -16,6 +16,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0006_idempotency_keys.sql` | 写接口幂等（v0.2 §1.3 / §11.1 platform）：`idempotency_keys`（只存 key 哈希；作用域 = 调用方 + 接口指纹） |
 | `migrations/0007_identity_org.sql` | 身份 / 组织与角色（h1 · v0.2 §4.1 / §11.1；ADR-010 / ADR-011）：`departments`（部门树）+ `roles`（数据范围）+ `role_permissions`（功能权限位结构）+ `user_roles`（绑定） |
 | `migrations/0008_identity_removed.sql` | 离职回收软删标记（h1 收口 · 接入标准第五部分）：`users.removed_at`（delete 置位 / enable 清空；不物理删行） |
+| `migrations/0009_projects_soft_delete.sql` | 项目软删（h2 · M2-01 / A5）：`projects.deleted_at` / `deleted_by` + 活跃行局部索引 `ix_projects_active_updated`（列表 / 详情 / facets 统一过滤软删行） |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
@@ -65,10 +66,12 @@ migrate: 已执行 0004_identity.sql（xx ms）
 migrate: 已执行 0005_file_lifecycle.sql（xx ms）
 migrate: 已执行 0006_idempotency_keys.sql（xx ms）
 migrate: 已执行 0007_identity_org.sql（xx ms）
-migrate: 完成，本次执行 7 个迁移
+migrate: 已执行 0008_identity_removed.sql（xx ms）
+migrate: 已执行 0009_projects_soft_delete.sql（xx ms）
+migrate: 完成，本次执行 9 个迁移
 ```
 
-再次执行输出 `migrate: 数据库已是最新（已执行 7 个迁移，无漂移）`；随后执行种子（示例）：
+再次执行输出 `migrate: 数据库已是最新（已执行 9 个迁移，无漂移）`；随后执行种子（示例）：
 
 ```
 seed: 目标 postgres://***:***@host:5432/libiaolink，种子目录 .../seeds
@@ -108,11 +111,12 @@ seed: 完成，本次执行 1 个种子
 - 枚举取值以 §2.5 字典为准（九阶段、十类成果文件、文件五态、任务基础态等）；字典全量落表随后续迁移。
 - identity/org（h1 · Push 74）：`0007_identity_org.sql` 落 `departments`（`source_id` 唯一 + 父自引用 + 非自环 CHECK；不物理删除，缺失置 disabled）、`roles`（`code` 唯一 + `data_scope` 枚举 CHECK）、`role_permissions`（`模块.操作` 键格式 CHECK）、`user_roles`（联合主键 + 反查索引）；角色集为种子维护（`database/seeds/roles.mjs`），权限矩阵条目随 h6。
 - identity/removed（h1 收口 · Push 78）：`0008_identity_removed.sql` 为 `users` 增 `removed_at timestamptz`（可空）。口径：内部离职回收 `POST /internal/users/delete` 置位（`status=disabled` + 撤销全部会话）、`enable` 清空；`disable` 不改动该列；用户行不物理删除（历史引用 / 审计需要，物理删除待数据留存口径确认）。
+- projects/soft-delete（h2 · Push 80）：`0009_projects_soft_delete.sql` 为 `projects` 增 `deleted_at timestamptz` / `deleted_by uuid`（软删落点 + 操作人；审计留痕随 h7）与局部索引 `ix_projects_active_updated (updated_at desc) where deleted_at is null`（首页「最近活动」列表走它，且只见活跃行）；口径：`seq_no` 不回收、`code` 唯一约束保留（同编号再建仍 409 `PROJECT_CODE_EXISTS`），列表 / 详情 / facets 统一 `deleted_at is null`。
 - 一期不含：业务字典表（C9 全量）、问题 / 日报 / 干系人表（随对应模块的切片落地）；种子已按 `seeds/` 规格落地角色一项，其余随各卡片追加。
 
 ## 验证（g3 验收）
 
-- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 8 行、业务表 18 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表）。
+- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 9 行、业务表 18 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表）。
 - **种子幂等**：`node scripts/seed.mjs` 连续执行两次，第二次零变更（`roles` 六个内置角色；`--dry-run` 不改库）。
 - **应用角色可写新表**：新表 / 新列由 `roles/0001` 的 default privileges 自动授权（应用角色无需额外 GRANT 即可读写 `upload_sessions` / `idempotency_keys`）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。

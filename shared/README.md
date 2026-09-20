@@ -101,12 +101,12 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
-| M2-01 项目 CRUD | 已有 CRUD 与软删；补归档写保护错误码 `PROJECT_ARCHIVED`（ADR-027）、`Project.archivedAt` | 错误码 / 字段 |
+| M2-01 项目 CRUD | 已入：CRUD / 软删 / 乐观锁 HTTP 落地（Push 80）+ 本轮补归档写保护错误码 `PROJECT_ARCHIVED`（ADR-027）；`Project.archivedAt` 未加 —— 随归档端点 `/projects/{id}/archive` 与 `archived_at` 列（C4-02 / M6）一并落 | 错误码 / 字段 |
 | M2-02 建项目 + 蓝图快照 | `BlueprintSchema` 增 `projectType`；`BlueprintView` 增所属类型与「默认模板」标识（ADR-019） | 字段 |
 | M2-03 阶段推进 / 回退 | 新增 `GET /projects/{id}/stages`、`POST /projects/{id}/stages/{key}/advance`、`POST /projects/{id}/stages/{key}/rollback`（原因必填）；`422 STAGE_GATE_NOT_PASSED` + 缺项明细结构（ADR-023） | 端点 / 错误码 |
 | M2-05 成员与记录级权限 | 新增 `GET / POST / DELETE /projects/{id}/members`（非成员统一 404） | 端点 |
 | M2-06 视图 / 关注 | 新增 `/views`（个人 / 公共 CRUD）与 `/follows`（关注 / 取关） | 端点 |
-| M2-04 列表 / facets | 已入（A1 / A9），无新增 | 无 |
+| M2-04 列表 / facets | 已入（A1 / A9）并 HTTP 落地（Push 80：列表与 facets 同一 filter 构造器、上海时区日界、排序白名单 `updatedAt` / `createdAt` / `seqNo`），无新增 | 无 |
 
 ### M3 任务纵切（h3 / h4）
 

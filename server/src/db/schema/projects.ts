@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import {
   check,
   date,
@@ -31,12 +31,16 @@ export const projects = pgTable(
     version: integer("version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** deleted_at / deleted_by（0009）：软删（A5）；列表 / 详情 / facets 一律过滤 deleted_at is null。 */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: uuid("deleted_by"),
   },
   (table) => [
     unique("projects_code_key").on(table.code),
     unique("uq_projects_seq_no").on(table.seqNo),
     index("ix_projects_facets").on(table.region, table.projectType, table.managerId),
     index("ix_projects_stage").on(table.status, table.stageKey),
+    index("ix_projects_active_updated").on(desc(table.updatedAt)).where(sql`deleted_at is null`),
     check(
       "ck_projects_stage_key",
       sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,

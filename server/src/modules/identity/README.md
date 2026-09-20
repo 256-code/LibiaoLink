@@ -5,7 +5,7 @@
 | 类型 | 领域模块（domain） |
 | 职责 | SSO 接入、会话、用户、组织同步与角色（h1） |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | getUser、listUsers（用户目录）、listDepartments、SessionGuard + CurrentUser、CsrfGuard、revokeAllForUser、RoleService（授权画像 / 绑定）、OrgSyncService（快照 → 差异报告）、CasdoorDirectorySource（目录拉取）、InternalUserService（离职回收）；HTTP：GET /api/v1/users、POST /internal/users/*、POST /internal/org-sync/run |
+| 对外接口 | getUser、listUsers（用户目录）、listDepartments、SessionGuard + CurrentUser + CurrentActorId、CsrfGuard、revokeAllForUser、RoleService（授权画像 / 绑定）、OrgSyncService（快照 → 差异报告）、CasdoorDirectorySource（目录拉取）、InternalUserService（离职回收）；HTTP：GET /api/v1/users、POST /internal/users/*、POST /internal/org-sync/run |
 
 ## 已实现（g6）
 
@@ -13,7 +13,8 @@
 - 会话：HttpOnly Cookie `ll_sid`（PostgreSQL `sessions` 表只存 sha256 哈希）；空闲超时 `SESSION_IDLE_MINUTES`（默认 30 分钟，接入标准「企业内部系统」档）；绝对上限取 ID Token `exp`；命中后 `last_seen_at` 按 60s 节流刷新。
 - 单点登出：撤销本地会话 + 302 到 Casdoor `/api/logout`（携 `id_token_hint`，仅存于服务端会话行）。
 - 用户：登录时按 `claims.id` upsert `users`（工号 `claims.name`、姓名 `claims.displayName`）；禁用账号登录 403、已登录会话被踢（`revokeAllForUser`）。
-- CSRF：登录下发可读 Cookie `ll_csrf`；写接口叠加 `CsrfGuard`（回传 `X-CSRF-Token`），h2 起随业务接口启用。
+- CSRF：登录下发可读 Cookie `ll_csrf`；写接口叠加 `CsrfGuard`（回传 `X-CSRF-Token`），h2 起随业务接口启用（项目接口已挂）。
+- 请求级用户口径（h2 起）：`@CurrentUser()` 返回 `/auth/me` 同口径的用户（`id` 为 Casdoor 侧标识）；`@CurrentActorId()` 返回本库 `users.id`（uuid）—— 落库外键 / 审计字段用后者（首个使用方：项目软删 `deleted_by`）。
 - 回跳：`/auth/login?returnTo=` 仅允许同源相对路径（`safeReturnTo` 白名单，防开放重定向）。
 - 文件：`auth.controller.ts` / `oidc.service.ts` / `session.service.ts` / `user.service.ts` / `auth.guard.ts` / `csrf.guard.ts` / 两个 repository；四层结构与 index 出口约定见 `server/README.md`。
 
