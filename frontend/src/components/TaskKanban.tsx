@@ -18,6 +18,7 @@ import { STATUS_TAG_CLASS } from "./TaskBoard";
  * 卡片只出任务里真实存在的字段（标题 / 所属阶段 / 日期 / 状态 / 负责人 / 进度 / 是否按时交付）；任务字段里没有「里程碑」这一项，所以阶段一栏的口径是「所属阶段」，不写「阶段性里程碑」。
  * 列底「添加」固定在列底、不随卡片滚动（Push 86），两种口径：**临时任务**（自己填标题，阶段留空 → 卡片「所属阶段」显示「未分组」、到「项目总览」落在「未分组」组）/ **阶段任务**（先选阶段，再从该阶段的节点池 / 模板里挑节点加进项目，任务自带阶段）。
  * 列内滚动条是**隐式**的：原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块（`ScrollArea`，与分类筛选侧栏 / 任务抽屉同一套）。
+ * 看板横向滚动条同样**隐式**（Push 87）：列排布交给 `ScrollArea axis="horizontal"`，原生滚动条（Windows 下带箭头那条横杠）隐藏，滑块只在滚动 / 悬停时浮在列底留白里；列高按「铺满视口」重算（`100vh - 12.75rem`），列底与页面底之间不再留下大块空白。
  */
 export type KanbanMode = "owner" | "status";
 
@@ -52,7 +53,7 @@ const CARD_NOISE =
   "bg-[repeating-conic-gradient(#e8e8e8_0.0000001%,#93a1a1_0.000104%)] [background-position:60%_60%] [background-size:600%_600%]";
 
 /** 看板列：列高随视口封顶，列头固定不动，卡片多时在列内滚动 —— 列不再一直往下延伸（Push 85）。 */
-const COLUMN_SHELL = "flex h-[calc(100vh-15.5rem)] max-h-[52rem] min-h-[22rem] w-[280px] shrink-0 flex-col";
+const COLUMN_SHELL = "flex h-[calc(100vh-12.75rem)] max-h-[52rem] min-h-[22rem] w-[280px] shrink-0 flex-col";
 
 /** 列底「添加」区：在滚动视口之外 —— 按钮固定在列底，不随卡片滚动消失 / 出现（Push 86）。 */
 const COLUMN_FOOTER = "mt-3 shrink-0";
@@ -451,7 +452,7 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
 
   return (
     <>
-      <div className="flex items-start gap-4 overflow-x-auto pb-3">
+      <ScrollArea axis="horizontal" ariaLabel="任务看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
         {groups.map((group) => (
           <KanbanColumn
             key={group.key}
@@ -465,7 +466,7 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
             onAddStageTask={onAddStageTask}
           />
         ))}
-      </div>
+      </ScrollArea>
       <TaskDrawer
         task={selectedTask}
         manager={manager}
