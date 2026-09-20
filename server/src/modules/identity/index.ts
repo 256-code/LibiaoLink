@@ -8,3 +8,18 @@ export { SessionService } from "./session.service.js";
 export { UserService } from "./user.service.js";
 export type { SessionRow, SessionWithUser } from "./session.repository.js";
 export type { UserRow } from "./user.repository.js";
+export { DepartmentService } from "./department.service.js";
+export type { DepartmentRow } from "./department.repository.js";
+export { RoleService } from "./role.service.js";
+export type { ActorAuthorization } from "./role.service.js";
+export { OrgSyncService } from "./org-sync.service.js";
+export type {
+  MissingUserPolicy,
+  OrgDepartmentRecord,
+  OrgDirectorySnapshot,
+  OrgSyncOptions,
+  OrgSyncReport,
+  OrgUserRecord,
+} from "./org-sync.service.js";
+export type { DataScope } from "./data-scope.js";
+export { sortDataScopes, widestDataScope } from "./data-scope.js";

@@ -92,7 +92,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
-| 组织 / 角色 / 通讯录同步 | 组织同步为内部作业（worker），**暂无新端点**；用户目录 `q` 补拼音检索口径（ADR-021）。管理端组织维护（D1-06）若做，另补 /departments、/roles 族 | 说明 |
+| 组织 / 角色 / 通讯录同步 | 组织同步为内部作业（worker），**暂无新端点**（数据面 0007 已落 · Push 74；端点仍未开）；用户目录 `q` 补拼音检索口径（ADR-021）。管理端组织维护（D1-06）若做，另补 /departments、/roles 族 | 说明 |
 | 字典管理（C9-01 / C9-02） | 新增管理员写路径：`POST /dicts/{type}/items`、`PATCH /dicts/{type}/items/{code}`、`DELETE /dicts/{type}/items/{code}`（metadata 校验 + 引用检查；`DICT_VALUE_UNKNOWN` 复用） | 端点 |
 | 高风险重认证（D1-05） | 新增 `POST /auth/mfa/verify` | 端点 |
 | 幂等 / outbox / 权限策略 | 内部实现，无契约变化（`Idempotency-Key` 已在约定层） | 无 |

@@ -14,9 +14,12 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0004_identity.sql` | 身份与会话（v0.2.5 §2.3；ADR-010）：`users`（SSO 归一化用户）+ `sessions`（会话 Cookie 值只存 sha256 哈希；id_token 仅用于单点登出） |
 | `migrations/0005_file_lifecycle.sql` | 文件生命周期与分片上传（v0.2 §5.1-5.3 / §11.1-11.2）：`files` 增 `finalized_at/by`、`recycled_at/by/from_status`、`purge_after`（回收站到期）+ `upload_sessions`（分片直传会话） |
 | `migrations/0006_idempotency_keys.sql` | 写接口幂等（v0.2 §1.3 / §11.1 platform）：`idempotency_keys`（只存 key 哈希；作用域 = 调用方 + 接口指纹） |
-| `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离；清单与执行约定先定，脚本随 M1 落地 |
+| `migrations/0007_identity_org.sql` | 身份 / 组织与角色（h1 · v0.2 §4.1 / §11.1；ADR-010 / ADR-011）：`departments`（部门树）+ `roles`（数据范围）+ `role_permissions`（功能权限位结构）+ `user_roles`（绑定） |
+| `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
+| `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
+| `scripts/seed.mjs` | 种子执行器（h1 · Push 74）：每个种子独立事务、`--dry-run` 全回滚、`--only=<name>`；advisory lock 20260919（与迁移器分开） |
 | `package.json` / `package-lock.json` | 独立 npm 包，唯一依赖 `pg`（不引入根 package.json） |
 
 ## 角色与权限
@@ -41,6 +44,11 @@ cd database
 npm install                    # 仅首次
 DATABASE_URL=postgres://libiaolink_migrator@host:5432/libiaolink node scripts/migrate.mjs
 DATABASE_URL=... node scripts/migrate.mjs --dry-run   # 只列出待执行，不改库
+
+# 种子数据（可重跑、幂等；与迁移分界见 seeds/README.md）
+DATABASE_URL=... node scripts/seed.mjs                 # 全部种子
+DATABASE_URL=... node scripts/seed.mjs --dry-run       # 只打印将执行的变更摘要（全部回滚）
+DATABASE_URL=... node scripts/seed.mjs --only=roles    # 只跑指定种子
 ```
 
 > 连接串：优先 `DATABASE_URL`；未设置时回退 `PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE`（node-postgres 约定）。
@@ -55,10 +63,20 @@ migrate: 已执行 0003_projects_seq_no.sql（xx ms）
 migrate: 已执行 0004_identity.sql（xx ms）
 migrate: 已执行 0005_file_lifecycle.sql（xx ms）
 migrate: 已执行 0006_idempotency_keys.sql（xx ms）
-migrate: 完成，本次执行 6 个迁移
+migrate: 已执行 0007_identity_org.sql（xx ms）
+migrate: 完成，本次执行 7 个迁移
 ```
 
-再次执行输出 `migrate: 数据库已是最新（已执行 6 个迁移，无漂移）`。
+再次执行输出 `migrate: 数据库已是最新（已执行 7 个迁移，无漂移）`；随后执行种子（示例）：
+
+```
+seed: 目标 postgres://***:***@host:5432/libiaolink，种子目录 .../seeds
+seed: roles（角色（一期六个内置角色 · v0.2 §4.1）） 已提交
+  - inserted 6，updated 0，unchanged 0
+seed: 完成，本次执行 1 个种子
+```
+
+复跑同一条命令应输出 `inserted 0，updated 0，unchanged 6`（幂等）。
 
 ## 不变式（迁移器保证）
 
@@ -87,11 +105,13 @@ migrate: 完成，本次执行 6 个迁移
 - 分片上传（v0.2 §5.1 / §11.1）：`upload_sessions` 只登记元数据（目标对象键、分片大小 / 分片数、总量与哈希、有效期、`change` 意图的变更申请负载）；**`upload_parts` 不落表**（评审已定案，2026-09-18）—— 分片状态以对象存储 ListParts 为唯一真相，避免双写漂移；如后续确需落表，以新增迁移补。
 - 幂等（v0.2 §1.3 / §11.1）：`0006_idempotency_keys.sql` 落 `idempotency_keys`；只存 sha256(key)，作用域 = 调用方 + 接口指纹（route），`request_hash` 防同 Key 换请求体重放，记录按 `expires_at` 清理。审计表（`audit_logs`）随 admin 模块切片落地。
 - 枚举取值以 §2.5 字典为准（九阶段、十类成果文件、文件五态、任务基础态等）；字典全量落表随后续迁移。
-- 一期不含：种子数据、业务字典表（C9 全量）、问题 / 日报 / 干系人表（随对应模块的切片落地）。
+- identity/org（h1 · Push 74）：`0007_identity_org.sql` 落 `departments`（`source_id` 唯一 + 父自引用 + 非自环 CHECK；不物理删除，缺失置 disabled）、`roles`（`code` 唯一 + `data_scope` 枚举 CHECK）、`role_permissions`（`模块.操作` 键格式 CHECK）、`user_roles`（联合主键 + 反查索引）；角色集为种子维护（`database/seeds/roles.mjs`），权限矩阵条目随 h6。
+- 一期不含：业务字典表（C9 全量）、问题 / 日报 / 干系人表（随对应模块的切片落地）；种子已按 `seeds/` 规格落地角色一项，其余随各卡片追加。
 
 ## 验证（g3 验收）
 
-- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 6 行、业务表 14 张 + 迁移记录表 1 张。
+- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 7 行、业务表 18 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表）。
+- **种子幂等**：`node scripts/seed.mjs` 连续执行两次，第二次零变更（`roles` 六个内置角色；`--dry-run` 不改库）。
 - **应用角色可写新表**：新表 / 新列由 `roles/0001` 的 default privileges 自动授权（应用角色无需额外 GRANT 即可读写 `upload_sessions` / `idempotency_keys`）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - **已合入迁移不可变**：改文件 / 删文件 / 中间插队三种情形均退出码 1，并给出中文原因（`scripts/migrate.mjs` 的 `verifyNoDrift`）。
