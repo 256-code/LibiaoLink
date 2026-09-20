@@ -140,7 +140,7 @@ function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
-        className={"h-4 w-4 shrink-0 transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[#feca04]/70 " + (checked ? "text-emerald-600" : "text-zinc-400")}
+        className={"h-4 w-4 shrink-0 transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[#feca04]/70 " + (checked ? "text-zinc-900" : "text-zinc-400")}
       >
         <rect
           x="1.5"
@@ -357,9 +357,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
 
       <div className="mt-2 flex shrink-0 items-center justify-between gap-2">
         <span className="text-[11px] text-zinc-500">
-          {isNodesTab
-            ? (sequential || placement === undefined ? "点一条节点就加进项目" : "点一条 → 先选插入位置")
-            : "模板预览（鼠标滚动看全）"} · 已添加 {addedCount}
+          {isNodesTab ? "" : "模板预览 · "}已添加 {addedCount}
         </span>
         <div className="flex shrink-0 items-center gap-2">
           {isNodesTab ? null : (
