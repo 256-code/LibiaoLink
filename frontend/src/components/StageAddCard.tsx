@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "../data/templatePresets";
-import { SelectMenu, type SelectOption } from "./SelectMenu";
+import { ScrollArea } from "./ScrollArea";
+import { usePopover } from "./usePopover";
 
 /**
  * 插入位置（Push 111，业务口径「人员要指定位置放入」）：新加的任务放进该阶段里的哪一格 ——
@@ -8,17 +10,129 @@ import { SelectMenu, type SelectOption } from "./SelectMenu";
  */
 export type StagePlacement = { kind: "last" } | { kind: "before"; taskId: string } | { kind: "after"; taskId: string };
 
-/** 选择器的值编码：`last` / `before:<任务 id>` / `after:<任务 id>`。 */
-function placementValue(placement: StagePlacement): string {
-  return placement.kind === "last" ? "last" : placement.kind + ":" + placement.taskId;
+/** 当前选择的文案（触发器上显示）。 */
+function placementLabel(placement: StagePlacement, tasks: readonly { id: string; title: string }[]): string {
+  if (placement.kind === "last") {
+    return "该阶段最后（默认）";
+  }
+  if (placement.kind === "before") {
+    return "该阶段最前";
+  }
+  const anchor = tasks.find((task) => task.id === placement.taskId);
+  return anchor === undefined ? "该阶段最后（默认）" : "在《" + anchor.title + "》之后";
 }
 
-function placementFromValue(value: string): StagePlacement {
-  if (value === "last") {
-    return { kind: "last" };
-  }
-  const cut = value.indexOf(":");
-  return { kind: value.slice(0, cut) === "before" ? "before" : "after", taskId: value.slice(cut + 1) };
+/** 勾选图标（与普通下拉的勾选态同一枚）。 */
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600">
+      <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/**
+ * 插入位置选择器（Push 112，业务口径「前两项可以 但是下面的太乱了 只要显示当前阶段的顺序即可 然后不要全部展示 要可以滑动 固定尺寸
+ * 鼠标放上去 点击将插入此任务之后」）：触发器 + 浮层 —— 浮层里前两档固定（该阶段最后（默认）/ 该阶段最前），
+ * 下面按**当前阶段的顺序**列出该阶段任务（固定高度、隐式滚动条、可滑动），悬停高亮并浮出「插到它后面」，点一条 = 插到这张任务之后。
+ */
+function PlacementPicker({ tasks, value, onChange, ariaLabel }: {
+  tasks: readonly { id: string; title: string }[];
+  value: StagePlacement;
+  onChange: (next: StagePlacement) => void;
+  ariaLabel: string;
+}) {
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(300, 320);
+  const pick = (next: StagePlacement) => {
+    onChange(next);
+    setOpen(false);
+  };
+  const fixed: readonly { kind: StagePlacement["kind"]; label: string }[] = [
+    { kind: "last", label: "该阶段最后（默认）" },
+    { kind: "before", label: "该阶段最前" },
+  ];
+  return (
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={() => { setOpen((previous) => !previous); }}
+        className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm transition hover:border-zinc-300 hover:bg-zinc-50"
+      >
+        <span className="truncate font-medium text-zinc-800">{placementLabel(value, tasks)}</span>
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
+          <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && position !== null
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              data-select-popover="true"
+              role="dialog"
+              aria-label={ariaLabel}
+              style={{ top: position.top, left: position.left, width: position.width }}
+              className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+            >
+              <div className="p-1">
+                {fixed.map((item) => (
+                  <button
+                    key={item.kind}
+                    type="button"
+                    aria-pressed={value.kind === item.kind}
+                    onClick={() => { pick(item.kind === "before" ? { kind: "before", taskId: tasks[0].id } : { kind: "last" }); }}
+                    className={
+                      "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-100 " +
+                      (value.kind === item.kind ? "bg-zinc-50" : "")
+                    }
+                  >
+                    {item.label}
+                    {value.kind === item.kind ? <CheckIcon /> : null}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2.5 py-1.5">
+                <span className="text-[10px] text-zinc-400">该阶段任务顺序</span>
+                <span className="text-[10px] text-zinc-400">点一条 = 插到它后面</span>
+              </div>
+
+              <ScrollArea ariaLabel="该阶段任务顺序" viewportClassName="h-[176px]" className="px-1 pb-1">
+                {tasks.map((task, index) => {
+                  const selected = value.kind === "after" && value.taskId === task.id;
+                  return (
+                    <button
+                      key={task.id}
+                      type="button"
+                      aria-pressed={selected}
+                      title="点击插到它后面"
+                      onClick={() => { pick({ kind: "after", taskId: task.id }); }}
+                      className={
+                        "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition " +
+                        (selected ? "bg-zinc-100 text-zinc-900" : "text-zinc-700 hover:bg-zinc-100")
+                      }
+                    >
+                      <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-zinc-400">{index + 1}</span>
+                      <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                      {selected ? (
+                        <CheckIcon />
+                      ) : (
+                        <span className="shrink-0 text-[10px] text-zinc-400 opacity-0 transition group-hover:opacity-100">插到它后面</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </ScrollArea>
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
 }
 
 type StageAddCardProps = {
@@ -76,9 +190,14 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
+      if (event.key !== "Escape") {
+        return;
       }
+      // 「插入位置」浮层开着时（Push 112）：Esc 先关浮层，再按一次才关卡片
+      if (document.querySelector("[data-select-popover]") !== null) {
+        return;
+      }
+      onClose();
     };
     // 点卡片外的空白处也关掉（任务行 / 表头 / 汇总卡 / 页面其它地方都算）；
     // 阶段标签（data-stage-pill）除外 —— 点同一个标签由标签自己的点击逻辑开关（再点即关）
@@ -109,16 +228,6 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
   const items = currentPreset?.nodes ?? nodes;
   const pendingCount = items.filter((node) => !existingTaskIds.has(node.id)).length;
   const addedCount = items.length - pendingCount;
-
-  /** 插入位置的可选项：该阶段最后（默认）/ 该阶段最前 / 在《某张任务》之后 —— 该阶段还没有任务时只剩默认那一档。 */
-  const placementOptions: SelectOption[] =
-    placement === undefined || placement.tasks.length === 0
-      ? []
-      : [
-          { value: "last", label: "该阶段最后（默认）" },
-          { value: "before:" + placement.tasks[0].id, label: "该阶段最前" },
-          ...placement.tasks.map((task) => ({ value: "after:" + task.id, label: "在《" + task.title + "》之后" })),
-        ];
 
   return (
     <aside
@@ -213,13 +322,13 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
         <div className="mt-2 flex shrink-0 items-center gap-2">
           <span className="shrink-0 text-[11px] text-zinc-500">插入位置</span>
           <div className="min-w-0 flex-1">
-            {placementOptions.length === 0 ? (
+            {placement.tasks.length === 0 ? (
               <span className="text-[11px] text-zinc-400">该阶段还没有别的任务 —— 只能排在该阶段最后</span>
             ) : (
-              <SelectMenu
-                value={placementValue(placement.value)}
-                options={placementOptions}
-                onChange={(next) => { placement.onChange(placementFromValue(next)); }}
+              <PlacementPicker
+                tasks={placement.tasks}
+                value={placement.value}
+                onChange={placement.onChange}
                 ariaLabel="插入位置：这个阶段里的位置"
               />
             )}
