@@ -10,145 +10,123 @@ import { usePopover } from "./usePopover";
  */
 export type StagePlacement = { kind: "last" } | { kind: "before"; taskId: string } | { kind: "after"; taskId: string };
 
-/** 当前选择的文案（触发器上显示）。 */
-function placementLabel(placement: StagePlacement, tasks: readonly { id: string; title: string }[]): string {
-  if (placement.kind === "last") {
-    return "该阶段最后（默认）";
-  }
-  if (placement.kind === "before") {
-    return "该阶段最前";
-  }
-  const anchor = tasks.find((task) => task.id === placement.taskId);
-  return anchor === undefined ? "该阶段最后（默认）" : "在《" + anchor.title + "》之后";
-}
-
-/** 勾选图标（与普通下拉的勾选态同一枚）。 */
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600">
-      <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 /**
- * 插入位置选择器（Push 112，业务口径「前两项可以 但是下面的太乱了 只要显示当前阶段的顺序即可 然后不要全部展示 要可以滑动 固定尺寸
- * 鼠标放上去 点击将插入此任务之后」）：触发器 + 浮层 —— 浮层里前两档固定（该阶段最后（默认）/ 该阶段最前），
- * 下面按**当前阶段的顺序**列出该阶段任务（固定高度、隐式滚动条、可滑动），悬停高亮并浮出「插到它后面」，点一条 = 插到这张任务之后。
+ * 插入位置浮层（Push 113，业务口径「我要点击这个添加后选择位置」）：点某一条「＋ 添加」时贴这条浮出 ——
+ * 前两档固定（该阶段最后（默认）/ 该阶段最前），下面按**当前阶段的任务顺序**列出该阶段任务
+ * （固定高度、隐式滚动条、可滑动；悬停高亮并浮出「插到它后面」），点一条 = 把这次要加的任务插到它后面。
  */
-function PlacementPicker({ tasks, value, onChange, ariaLabel }: {
+function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
+  /** 贴哪一行浮出（点的那一行 / 整套添加按钮）。 */
+  anchor: HTMLElement;
   tasks: readonly { id: string; title: string }[];
-  value: StagePlacement;
-  onChange: (next: StagePlacement) => void;
-  ariaLabel: string;
+  /** 浮层标题：这条节点的名字 /「整套添加 N 条」。 */
+  heading: string;
+  onPick: (next: StagePlacement) => void;
+  onClose: () => void;
 }) {
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(300, 320);
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(320, 340);
+  useEffect(() => {
+    triggerRef.current = anchor as HTMLButtonElement;
+    setOpen(true);
+  }, [anchor, setOpen, triggerRef]);
+  /**
+   * 挂载时 `open` 还是 false（下一行 effect 里才置 true）：**真的开过之后**再变 false 才算「关掉」——
+   * 否则挂载那一下就会回调 `onClose`，浮层还没显示就被父级清掉了（Push 113 踩过）。
+   */
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (open) {
+      openedRef.current = true;
+      return;
+    }
+    if (openedRef.current) {
+      onClose();
+    }
+  }, [open, onClose]);
   const pick = (next: StagePlacement) => {
-    onChange(next);
+    onPick(next);
     setOpen(false);
   };
   const fixed: readonly { kind: StagePlacement["kind"]; label: string }[] = [
     { kind: "last", label: "该阶段最后（默认）" },
     { kind: "before", label: "该阶段最前" },
   ];
-  return (
-    <div className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={ariaLabel}
-        onClick={() => { setOpen((previous) => !previous); }}
-        className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm transition hover:border-zinc-300 hover:bg-zinc-50"
-      >
-        <span className="truncate font-medium text-zinc-800">{placementLabel(value, tasks)}</span>
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
-          <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+  if (!open || position === null) {
+    return null;
+  }
+  return createPortal(
+    <div
+      ref={popoverRef}
+      data-select-popover="true"
+      role="dialog"
+      aria-label={heading + "：插入位置"}
+      style={{ top: position.top, left: position.left, width: position.width }}
+      className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+    >
+      <div className="border-b border-zinc-100 px-2.5 py-2">
+        <p className="truncate text-xs font-medium text-zinc-800" title={heading}>{heading}</p>
+        <p className="mt-0.5 text-[10px] text-zinc-400">插到哪一格？</p>
+      </div>
 
-      {open && position !== null
-        ? createPortal(
-            <div
-              ref={popoverRef}
-              data-select-popover="true"
-              role="dialog"
-              aria-label={ariaLabel}
-              style={{ top: position.top, left: position.left, width: position.width }}
-              className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
-            >
-              <div className="p-1">
-                {fixed.map((item) => (
-                  <button
-                    key={item.kind}
-                    type="button"
-                    aria-pressed={value.kind === item.kind}
-                    onClick={() => { pick(item.kind === "before" ? { kind: "before", taskId: tasks[0].id } : { kind: "last" }); }}
-                    className={
-                      "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-100 " +
-                      (value.kind === item.kind ? "bg-zinc-50" : "")
-                    }
-                  >
-                    {item.label}
-                    {value.kind === item.kind ? <CheckIcon /> : null}
-                  </button>
-                ))}
-              </div>
+      <div className="p-1">
+        {fixed.map((item) => (
+          <button
+            key={item.kind}
+            type="button"
+            disabled={item.kind === "before" && tasks.length === 0}
+            onClick={() => { pick(item.kind === "before" ? { kind: "before", taskId: tasks[0].id } : { kind: "last" }); }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
 
-              <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2.5 py-1.5">
-                <span className="text-[10px] text-zinc-400">该阶段任务顺序</span>
-                <span className="text-[10px] text-zinc-400">点一条 = 插到它后面</span>
-              </div>
-
-              <ScrollArea ariaLabel="该阶段任务顺序" viewportClassName="h-[176px]" className="px-1 pb-1">
-                {tasks.map((task, index) => {
-                  const selected = value.kind === "after" && value.taskId === task.id;
-                  return (
-                    <button
-                      key={task.id}
-                      type="button"
-                      aria-pressed={selected}
-                      title="点击插到它后面"
-                      onClick={() => { pick({ kind: "after", taskId: task.id }); }}
-                      className={
-                        "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition " +
-                        (selected ? "bg-zinc-100 text-zinc-900" : "text-zinc-700 hover:bg-zinc-100")
-                      }
-                    >
-                      <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-zinc-400">{index + 1}</span>
-                      <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                      {selected ? (
-                        <CheckIcon />
-                      ) : (
-                        <span className="shrink-0 text-[10px] text-zinc-400 opacity-0 transition group-hover:opacity-100">插到它后面</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </ScrollArea>
-            </div>,
-            document.body,
-          )
-        : null}
-    </div>
+      {tasks.length === 0 ? (
+        <p className="border-t border-zinc-100 px-2.5 py-2 text-[11px] text-zinc-400">该阶段还没有别的任务 —— 只能排在该阶段最后</p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2.5 py-1.5">
+            <span className="text-[10px] text-zinc-400">该阶段任务顺序</span>
+            <span className="text-[10px] text-zinc-400">点一条 = 插到它后面</span>
+          </div>
+          <ScrollArea ariaLabel="该阶段任务顺序" viewportClassName="h-[176px]" className="px-1 pb-1">
+            {tasks.map((task, index) => (
+              <button
+                key={task.id}
+                type="button"
+                title="点击插到它后面"
+                onClick={() => { pick({ kind: "after", taskId: task.id }); }}
+                className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-zinc-700 transition hover:bg-zinc-100"
+              >
+                <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-zinc-400">{index + 1}</span>
+                <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                <span className="shrink-0 text-[10px] text-zinc-400 opacity-0 transition group-hover:opacity-100">插到它后面</span>
+              </button>
+            ))}
+          </ScrollArea>
+        </>
+      )}
+    </div>,
+    document.body,
   );
 }
 
 type StageAddCardProps = {
   stage: string;
   existingTaskIds: ReadonlySet<string>;
-  onAddNode: (stage: string, node: TemplatePresetNode) => void;
-  /** 一次加多个（Push 111，「整套添加」按钮用）：不传时退回逐个 `onAddNode`。 */
-  onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[]) => void;
+  /** 点一条节点直接加进项目（没有「插入位置」时走这条 —— 项目总览里点阶段标签加节点）。 */
+  onAddNode?: (stage: string, node: TemplatePresetNode) => void;
+  /** 加一批 + 指定插入位置（看板那条路径）。 */
+  onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
   /**
-   * 插入位置（Push 111）：给了就显示「插入位置」一行 —— 锚点 = 该阶段现有任务（按项目总览里的先后）。
-   * 看板的「添加 → 阶段任务」会传；项目总览里点阶段标签加节点不传（默认排该阶段最后）。
+   * 插入位置（Push 113，业务口径「我要点击这个添加后选择位置」）：给了就「**点 ＋ 添加 → 先弹位置浮层 → 选完才加进项目**」。
+   * 浮层里前两档固定（该阶段最后（默认）/ 该阶段最前），下面按当前阶段的任务顺序列一遍（点一条 = 插到它后面）；
+   * 不传 = 点一条直接加（项目总览那条路径，默认排该阶段最后）。
    */
   placement?: {
+    /** 该阶段现有任务（顺序 = 项目总览里这些任务的先后）；空 = 只有「该阶段最后」可点。 */
     tasks: readonly { id: string; title: string }[];
-    value: StagePlacement;
-    onChange: (next: StagePlacement) => void;
   };
   onClose: () => void;
   /** 卡片落点（由 TaskBoard 量表格算出来：表头正下方、贴表格右边缘）；不传时回落到右上角悬浮。 */
@@ -178,6 +156,8 @@ function presetNodesOf(stage: string): TemplatePresetNode[] {
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
 export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
+  /** 点了「＋ 添加」/「整套添加」之后、还没选位置的那一次（Push 113）：`nodes` = 这次要加的一条 / 一批，`anchor` = 贴哪一行浮出。 */
+  const [armed, setArmed] = useState<{ nodes: readonly TemplatePresetNode[]; anchor: HTMLElement } | null>(null);
   const presets = useMemo(() => STAGE_TEMPLATE_PRESETS[stage] ?? [], [stage]);
   const nodes = useMemo(() => presetNodesOf(stage), [stage]);
   const [activeTab, setActiveTab] = useState("nodes");
@@ -228,6 +208,33 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
   const items = currentPreset?.nodes ?? nodes;
   const pendingCount = items.filter((node) => !existingTaskIds.has(node.id)).length;
   const addedCount = items.length - pendingCount;
+
+  /**
+   * 点「＋ 添加」/「整套添加」（Push 113）：配了「插入位置」就先弹位置浮层（选完才加进项目），没配就直接加。
+   */
+  const startAdd = (picked: readonly TemplatePresetNode[], anchor: HTMLElement) => {
+    if (picked.length === 0) {
+      return;
+    }
+    if (placement === undefined) {
+      for (const node of picked) {
+        onAddNode?.(stage, node);
+      }
+      return;
+    }
+    setArmed({ nodes: picked, anchor });
+  };
+
+  /** 位置选好了（Push 113）：交给上层按这个位置插进项目。 */
+  const commitAdd = (picked: readonly TemplatePresetNode[], next: StagePlacement) => {
+    if (onAddNodes !== undefined) {
+      onAddNodes(stage, picked, next);
+      return;
+    }
+    for (const node of picked) {
+      onAddNode?.(stage, node);
+    }
+  };
 
   return (
     <aside
@@ -300,16 +307,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
           <button
             type="button"
             disabled={pendingCount === 0}
-            onClick={() => {
-              const pending = items.filter((node) => !existingTaskIds.has(node.id));
-              if (onAddNodes === undefined) {
-                for (const node of pending) {
-                  onAddNode(stage, node);
-                }
-                return;
-              }
-              onAddNodes(stage, pending);
-            }}
+            onClick={(event) => { startAdd(items.filter((node) => !existingTaskIds.has(node.id)), event.currentTarget); }}
             title="把这块模板里还没加过的节点一次全加到项目"
             className="shrink-0 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
           >
@@ -317,24 +315,6 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
           </button>
         )}
       </div>
-
-      {placement === undefined ? null : (
-        <div className="mt-2 flex shrink-0 items-center gap-2">
-          <span className="shrink-0 text-[11px] text-zinc-500">插入位置</span>
-          <div className="min-w-0 flex-1">
-            {placement.tasks.length === 0 ? (
-              <span className="text-[11px] text-zinc-400">该阶段还没有别的任务 —— 只能排在该阶段最后</span>
-            ) : (
-              <PlacementPicker
-                tasks={placement.tasks}
-                value={placement.value}
-                onChange={placement.onChange}
-                ariaLabel="插入位置：这个阶段里的位置"
-              />
-            )}
-          </div>
-        </div>
-      )}
 
       <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
         {items.map((node, index) => {
@@ -344,7 +324,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
               <button
                 type="button"
                 disabled={added}
-                onClick={() => onAddNode(stage, node)}
+                onClick={(event) => { startAdd([node], event.currentTarget); }}
                 title={added ? "已经在项目里" : "添加到项目 · " + stage}
                 className={
                   "flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition " +
@@ -369,6 +349,15 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
         })}
       </ul>
 
+      {armed === null ? null : (
+        <PlacementPopover
+          anchor={armed.anchor}
+          tasks={placement?.tasks ?? []}
+          heading={armed.nodes.length === 1 ? armed.nodes[0].title : "整套添加 " + String(armed.nodes.length) + " 条"}
+          onPick={(next) => { commitAdd(armed.nodes, next); }}
+          onClose={() => { setArmed(null); }}
+        />
+      )}
       <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">节点与模板来自「任务模板」的预设；当前原型未接后端，数据存浏览器内存、刷新回到初始数据 —— 正式版（一期）由后端落库。</p>
     </aside>
   );
