@@ -43,7 +43,8 @@ export const ProjectSummarySchema = z
  * 语义以 v0.3 §7 第 4 项「项目时间」ADR 为准（主数据变更 / 阶段推进 / 任务变更触发，文件与日报不触发）。
  * 边界：只传一端合法；timeFrom 晚于 timeTo 或格式非法返回 400 VALIDATION_FAILED（不返回空列表）。
  * 列表与 facets 共用本 schema 与同一 QueryBuilder（禁止两套 SQL）。
- * 缺省排序：updatedAt:desc（项目最近活动在前）；排序白名单 updatedAt / seqNo。
+ * 缺省排序：updatedAt:desc（项目最近活动在前）；排序白名单 updatedAt / createdAt / seqNo。
+ * A9（Push 68）：白名单补 createdAt（sort=createdAt:asc|desc），前端后续把 TIME 升级为「维度（创建时间 / 最近活动时间）× 方向」时无需再动契约；默认序仍为 updatedAt:desc。
  */
 export const ProjectListQuerySchema = z
   .object({
@@ -62,7 +63,7 @@ export const ProjectListQuerySchema = z
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
     sort: SortQuerySchema.optional().openapi({
-      description: "排序（field:asc|desc）；一期白名单 updatedAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+      description: "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
     }),
   })
   .openapi("ProjectListQuery", {

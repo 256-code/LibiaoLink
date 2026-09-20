@@ -1,35 +1,178 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { TableScrollbar } from "./components/TableScrollbar";
-import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type VisibleColumns } from "./components/TaskBoard";
+import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
+import type { TaskEditSubmit } from "./components/TaskEditModal";
 import { PROJECT_STAGES } from "./data/projects";
-import { PROJECT_TASKS } from "./data/tasks";
+import { isCompleteStatus, isPastDue, statusOverrideAfterProgress, tasksForProject, type ProjectTask } from "./data/tasks";
+import type { TemplatePresetNode } from "./data/templatePresets";
+import { managerName } from "./data/managers";
 import type { MeResponse, Project } from "./types";
+
+/** 阶段名（不含「项目总览」汇总视图）。 */
+const STAGE_NAMES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+
+/** 从任务模板预设加进来的任务：字段先给默认值（负责人 / 日期等留空，后续在任务详情里补）。 */
+function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTask {
+  return {
+    id: node.id,
+    stage,
+    title: node.title,
+    titleEn: node.titleEn,
+    owner: "",
+    ownerEn: "",
+    status: "待开始",
+    progress: 0,
+    startDate: "",
+    dueDate: "",
+    doneDate: "",
+    days: 0,
+    deliverable: "",
+    change: "",
+    onTime: "",
+    note: "",
+    headcount: 0,
+    priority: "中",
+    files: [],
+  };
+}
 
 type ProjectDetailProps = {
   me: MeResponse;
   project: Project | null;
-  onEdit: (project: Project) => void;
+  /** 任务编辑里改「项目经理」时回写项目（项目经理是项目级字段）。 */
+  onChangeManager?: (projectId: string, managerId: string) => void;
+  /** 任务字段被编辑（按口径刷新项目时间 updatedAt）。 */
+  onTaskEdited?: (projectId: string) => void;
 };
 
-export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, onChangeManager, onTaskEdited }: ProjectDetailProps) {
   const [activeStage, setActiveStage] = useState<string>(PROJECT_STAGES[0] ?? "项目总览");
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
+  /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
+  const [taskEdits, setTaskEdits] = useState<Record<string, Partial<ProjectTask>>>({});
 
-  const tasks = PROJECT_TASKS.map((task) => {
+  /** 原型阶段只有印度项目（`inmu-0010`）带示例任务数据；其余项目为空列表（正式版按项目取数）。 */
+  const baseTasks = tasksForProject(project?.id ?? "");
+  /** 从任务模板加进来的任务（原型阶段存浏览器内存；换项目 / 刷新即重置 —— 正式版由后端落库）。 */
+  const [addedTasks, setAddedTasks] = useState<ProjectTask[]>([]);
+  useEffect(() => {
+    setAddedTasks([]);
+    setProgressOverrides({});
+    setTaskEdits({});
+  }, [project?.id]);
+  const projectTasks = [...baseTasks, ...addedTasks];
+
+  const tasks = projectTasks.map((task) => {
+    const edit = taskEdits[task.id];
     const override = progressOverrides[task.id];
-    return override === undefined ? task : { ...task, progress: override };
+    const withEdit = edit === undefined ? task : { ...task, ...edit };
+    return override === undefined ? withEdit : { ...withEdit, progress: override };
   });
 
+  /**
+   * 点四格进度条：进度 + 联动状态一起写（0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生，Push 65；
+   * Push 67 修正：已过预计完成日期的任务点进度条保持「已延期」，不会被改成「待开始 / 进行中」）。
+   */
   const handleSetProgress = (taskId: string, progress: number) => {
+    const current = tasks.find((task) => task.id === taskId);
+    const nextStatus = statusOverrideAfterProgress(progress, current !== undefined && isPastDue(current));
     setProgressOverrides((previous) => ({ ...previous, [taskId]: progress }));
+    setTaskEdits((previous) => ({
+      ...previous,
+      [taskId]: {
+        ...previous[taskId],
+        statusOverride: nextStatus,
+        // 进度退回非完成态时，实际完成日期一并清空（Push 67 业务定案）
+        ...(nextStatus === undefined || isCompleteStatus(nextStatus) ? {} : { doneDate: "" }),
+      },
+    }));
   };
+
+  /** 任务编辑保存：项目经理变化回写项目（项目级），其余字段进任务覆盖表；同时刷新项目时间。 */
+  const handleSubmitTaskEdit = (values: TaskEditSubmit) => {
+    if (project === null) {
+      return;
+    }
+    if (values.managerId !== "" && values.managerId !== project.managerId) {
+      onChangeManager?.(project.id, values.managerId);
+    }
+    setTaskEdits((previous) => ({
+      ...previous,
+      [values.taskId]: {
+        owner: values.owner,
+        ownerEn: values.ownerEn,
+        startDate: values.startDate,
+        dueDate: values.dueDate,
+        days: values.days,
+        headcount: values.headcount,
+        priority: values.priority,
+        note: values.note,
+      },
+    }));
+    onTaskEdited?.(project.id);
+  };
+
+  /** 表格行内编辑：只覆盖被改的字段（与弹窗共用同一张覆盖表），并刷新项目时间。 */
+  const handlePatchTask = (taskId: string, patch: TaskPatch) => {
+    if (project === null) {
+      return;
+    }
+    // 行内改状态会同时带进度（四格联动）：进度仍走进度覆盖表，避免被旧值盖回去
+    if (patch.progress !== undefined) {
+      const nextProgress = patch.progress;
+      setProgressOverrides((previous) => ({ ...previous, [taskId]: nextProgress }));
+    }
+    setTaskEdits((previous) => ({ ...previous, [taskId]: { ...previous[taskId], ...patch } }));
+    onTaskEdited?.(project.id);
+  };
+
+  /** 表格行内改「项目经理」：项目级字段，回写项目卡片。 */
+  const handleBoardManagerChange = (nextManagerId: string) => {
+    if (project === null || nextManagerId === project.managerId) {
+      return;
+    }
+    onChangeManager?.(project.id, nextManagerId);
+  };
+
+  /** 从「任务模板」预设加一个节点到项目：模板里已加过的节点按 id 判重，不重复加。 */
+  const handleAddNode = (stage: string, node: TemplatePresetNode) => {
+    setAddedTasks((previous) =>
+      previous.some((task) => task.id === node.id) || baseTasks.some((task) => task.id === node.id)
+        ? previous
+        : [...previous, taskFromPresetNode(stage, node)],
+    );
+  };
+
+  /** 项目经理：项目级字段，取项目卡片上的经理（`managerId` → 姓名），任务表「项目经理」列与任务详情都用它。 */
+  const manager = project === null ? "" : managerName(project.managerId);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [tableOverflow, setTableOverflow] = useState(false);
 
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
+  const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
+  /**
+   * 阶段骨架常显（Push 61 调整）：没有任务的阶段也保留分组头（只有阶段名、组内没有任务行），
+   * 所以点「添加任务」加出任务后，其余阶段的分组头不会消失。
+   */
+  const visibleStageNames = activeStage === "项目总览" ? STAGE_NAMES : [activeStage];
+  const allCollapsed = visibleStageNames.length > 0 && visibleStageNames.every((stage) => collapsedStages[stage] === true);
+  const toggleAllStages = () => {
+    if (allCollapsed) {
+      setCollapsedStages({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const stage of visibleStageNames) {
+      next[stage] = true;
+    }
+    setCollapsedStages(next);
+  };
+  const toggleStage = (stage: string) => {
+    setCollapsedStages((previous) => ({ ...previous, [stage]: previous[stage] !== true }));
+  };
 
   const handleToggleColumn = (key: ColumnKey, checked: boolean) => {
     setVisibleColumns((previous) => ({ ...previous, [key]: checked }));
@@ -45,7 +188,7 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
         <AppHeader me={me} />
         <main className="w-full px-6 py-10">
           <p className="text-sm text-zinc-500">未找到该项目，可能已被删除。</p>
-          <a href="#/" className="mt-4 inline-block text-sm font-medium text-zinc-700 underline underline-offset-4">
+          <a href="#/projects" className="mt-4 inline-block text-sm font-medium text-zinc-700 underline underline-offset-4">
             返回项目列表
           </a>
         </main>
@@ -56,7 +199,7 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
   return (
     <div className="min-h-screen">
       <AppHeader me={me} project={project} />
-      <main className="w-full px-6 pb-10 pt-6">
+      <main className="w-full px-6 pb-10 pt-3">
         <div className="flex items-center gap-3 border-b border-zinc-200">
           <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
             {PROJECT_STAGES.map((stage) => {
@@ -78,18 +221,6 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
               );
             })}
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              onEdit(project);
-            }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-              <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            编辑项目
-          </button>
           <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
         </div>
 
@@ -97,10 +228,10 @@ export default function ProjectDetail({ me, project, onEdit }: ProjectDetailProp
           {activeStage === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
             </>
           ) : (
-            <TaskBoard tasks={tasks.filter((task) => task.stage === activeStage)} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} />
+            <TaskBoard tasks={tasks.filter((task) => task.stage === activeStage)} skeletonStages={[activeStage]} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
           )}
         </div>
 

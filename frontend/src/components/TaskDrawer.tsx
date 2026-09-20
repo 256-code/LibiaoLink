@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, lateDeliveryLabel, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { ScrollArea } from "./ScrollArea";
 import { TRACKER_STEPS, trackerLabel, trackerStep } from "./Tracker";
 
@@ -28,11 +28,15 @@ const STATUS_CHIP_CLASS: Record<TaskStatus, string> = {
 };
 
 type TaskDrawerProps = {
+  /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
+  manager?: string;
   task: ProjectTask | null;
+  /** 「编辑任务」入口（打开任务编辑弹窗）；不传时不显示按钮。 */
+  onEdit?: (task: ProjectTask) => void;
   onClose: () => void;
 };
 
-export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -83,6 +87,8 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
 
   const done = isTaskDone(task);
   const overdue = isTaskOverdue(task);
+  /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期字段）。 */
+  const late = lateDeliveryLabel(task);
   const status = taskStatus(task);
   const step = trackerStep(task.progress);
   const stepPct = Math.round((step / TRACKER_STEPS) * 100);
@@ -96,9 +102,9 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
   const fields: Array<{ label: string; value: ReactNode }> = [
     {
       label: "项目经理",
-      value: <span className="font-medium text-zinc-800">{PROJECT_MANAGER}</span>,
+      value: <span className="font-medium text-zinc-800">{manager ?? PROJECT_MANAGER}</span>,
     },
-    { label: "任务负责人", value: fullOwner },
+    { label: "任务负责人", value: task.owner === "" ? <span className="text-zinc-400">待分配</span> : fullOwner },
     {
       label: "任务状态",
       value: (
@@ -115,7 +121,11 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
     {
       label: "是否按时交付",
       value:
-        task.onTime === "" ? (
+        late === "逾期未交付" ? (
+          <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
+        ) : late === "逾期已交付" ? (
+          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
+        ) : task.onTime === "" ? (
           dash
         ) : (
           <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">{task.onTime}</span>
@@ -145,13 +155,7 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
     {
       label: "实际完成日期",
       value:
-        task.doneDate !== "" ? (
-          task.doneDate
-        ) : overdue ? (
-          <span className="font-medium text-red-600">逾期未完成</span>
-        ) : (
-          dash
-        ),
+        task.doneDate !== "" ? task.doneDate : dash,
     },
     {
       label: "变更关联",
@@ -189,16 +193,32 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage}</span>
               <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
             </div>
-            <button
-              type="button"
-              onClick={requestClose}
-              aria-label="关闭任务详情"
-              className="-mr-1.5 -mt-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
-            >
-              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-                <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {onEdit === undefined ? null : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onEdit(task);
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                  </svg>
+                  编辑任务
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={requestClose}
+                aria-label="关闭任务详情"
+                className="-mr-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
           </div>
           <h2 id="task-drawer-title" className="mt-3.5 text-lg font-semibold leading-7 text-zinc-900">
             {task.title}

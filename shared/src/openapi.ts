@@ -12,7 +12,29 @@ import {
   ProjectSummarySchema,
   ProjectUpdateBodySchema,
 } from "./modules/projects.ts";
-import { TaskDetailSchema, TaskListItemSchema, TaskListQuerySchema, TaskListResponseSchema, TaskProgressUpdateBodySchema } from "./modules/tasks.ts";
+import {
+  TaskCreateBodySchema,
+  TaskCreateFromTemplateBodySchema,
+  TaskCreateFromTemplateResponseSchema,
+  TaskDetailSchema,
+  TaskListItemSchema,
+  TaskListQuerySchema,
+  TaskListResponseSchema,
+  TaskProgressUpdateBodySchema,
+  TaskSchema,
+  TaskUpdateBodySchema,
+} from "./modules/tasks.ts";
+import {
+  TaskNodeListQuerySchema,
+  TaskNodeListResponseSchema,
+  TaskTemplateCreateBodySchema,
+  TaskTemplateDeleteBodySchema,
+  TaskTemplateDeleteResponseSchema,
+  TaskTemplateListQuerySchema,
+  TaskTemplateListResponseSchema,
+  TaskTemplateSchema,
+  TaskTemplateUpdateBodySchema,
+} from "./modules/templates.ts";
 import {
   BlueprintImportBodySchema,
   BlueprintSaveBodySchema,
@@ -65,6 +87,7 @@ const commonErrors = {
   403: errorResponse("无权限（FORBIDDEN）"),
   404: errorResponse("资源不存在或不可见（NOT_FOUND，统一 404 语义）"),
   409: errorResponse("冲突（VERSION_CONFLICT / 状态不允许当前操作）"),
+  410: errorResponse("上传会话已过期（UPLOAD_SESSION_EXPIRED，需重新发起上传）"),
   422: errorResponse("业务校验未通过（门禁 / 蓝图校验，含明细）"),
 } as const;
 
@@ -203,6 +226,118 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "更新后的任务（TaskListItem 同形，前端直接替换行）", ...json(TaskListItemSchema) },
       400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/tasks",
+    tags: ["tasks"],
+    summary: "创建任务（从任务节点库 / 任务模板生成或手工创建；headcount / priority 可空）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(TaskCreateBodySchema) },
+    responses: {
+      201: { description: "创建成功", ...json(TaskSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/projects/{id}/tasks/{taskId}",
+    tags: ["tasks"],
+    summary: "编辑任务（乐观锁；任务描述 / 成果文件按 A1-17 锁定，进度走 /progress）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的任务", ...json(TaskSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/tasks/from-template",
+    tags: ["tasks"],
+    summary: "从任务模板批量生成任务（「整套添加」；按节点判重，已存在的跳过）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(TaskCreateFromTemplateBodySchema) },
+    responses: {
+      201: { description: "创建结果（created + skipped）", ...json(TaskCreateFromTemplateResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  // ---- 任务节点库与任务模板（A1-16 / A1-17；对齐项 A11） ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/task-nodes",
+    tags: ["templates"],
+    summary: "任务节点库（任务模板的节点来源；按阶段过滤）",
+    request: { query: TaskNodeListQuerySchema },
+    responses: { 200: { description: "节点库列表", ...json(TaskNodeListResponseSchema) } },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/task-templates",
+    tags: ["templates"],
+    summary: "任务模板列表（按阶段过滤；含节点顺序与名称摘要）",
+    request: { query: TaskTemplateListQuerySchema },
+    responses: { 200: { description: "模板列表", ...json(TaskTemplateListResponseSchema) } },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/task-templates/{id}",
+    tags: ["templates"],
+    summary: "模板详情",
+    request: { params: idParams },
+    responses: {
+      200: { description: "模板", ...json(TaskTemplateSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/task-templates",
+    tags: ["templates"],
+    summary: "新建任务模板（名称 + 阶段 + 节点顺序）",
+    request: { headers: idempotencyHeader, body: json(TaskTemplateCreateBodySchema) },
+    responses: {
+      201: { description: "创建成功", ...json(TaskTemplateSchema) },
+      400: commonErrors[400],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/task-templates/{id}",
+    tags: ["templates"],
+    summary: "编辑模板（改名 / 节点全量替换；乐观锁）",
+    request: { params: idParams, body: json(TaskTemplateUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的模板", ...json(TaskTemplateSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/task-templates/{id}",
+    tags: ["templates"],
+    summary: "删除模板（即生效；已生成的项目任务不变）",
+    request: { params: idParams, body: json(TaskTemplateDeleteBodySchema) },
+    responses: {
+      200: { description: "已删除", ...json(TaskTemplateDeleteResponseSchema) },
       404: commonErrors[404],
       409: commonErrors[409],
     },
@@ -461,7 +596,7 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "分片预签名 URL", ...json(UploadPartsResponseSchema) },
       404: commonErrors[404],
-      409: commonErrors[409],
+      410: commonErrors[410],
     },
   });
 
@@ -488,6 +623,7 @@ export function buildOpenApiDocument() {
       200: { description: "文件、版本与（change 意图的）变更记录", ...json(UploadCompleteResponseSchema) },
       404: commonErrors[404],
       409: commonErrors[409],
+      410: commonErrors[410],
       422: commonErrors[422],
     },
   });
@@ -649,6 +785,7 @@ export function buildOpenApiDocument() {
     tags: [
       { name: "projects", description: "项目主数据与首页分类（v0.2 §8）" },
       { name: "tasks", description: "任务与进度（v0.2 §2.3 / §2.4）" },
+      { name: "templates", description: "任务节点库与任务模板（A1-16 / A1-17 流程节点模板化）" },
       { name: "flow", description: "流程节点与蓝图（v0.2 §3）" },
       { name: "auth", description: "认证与会话（ADR-010；根路径 /auth/*，OIDC + PKCE）" },
       { name: "files", description: "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）" },
