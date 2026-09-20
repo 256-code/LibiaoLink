@@ -87,6 +87,7 @@ export function SelectMenu({ value, options, onChange, placeholder = "请选择"
         ? createPortal(
             <div
               ref={popoverRef}
+              data-select-popover="true"
               className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
               style={{ top: position.top, left: position.left, width: position.width }}
             >

@@ -6,6 +6,7 @@ import { PROGRESS_STEPS, cnDateFromIso, isCompleteStatus, isoFromCnDate, lateDel
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
+import type { StagePlacement } from "./StageAddCard";
 import { StageAddCard } from "./StageAddCard";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
@@ -154,8 +155,11 @@ type TaskKanbanProps = {
   managerId: string;
   /** 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。 */
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
-  /** 列底「添加 → 阶段任务」：从该阶段节点池 / 模板选的节点加进项目，并带上所在列的负责人 / 状态。 */
-  onAddStageTask: (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => void;
+  /**
+   * 列底「添加 → 阶段任务」：从该阶段节点池 / 模板挑的节点加进项目，并带上所在列的负责人 / 状态。
+   * Push 111：`nodes` 支持一次多个（「整套添加」按列表顺序整段插入），`placement` = 该阶段内的插入位置（业务口径「人员要指定位置放入」）。
+   */
+  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
   /** 任务编辑保存（与表格共用同一张覆盖表）。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
   /** 卡片上直接改字段（Push 98：实际完成日期；与表格行内同一套口径）。 */
@@ -391,6 +395,7 @@ function KanbanColumn({
   onOpenTask,
   onAddTask,
   onAddStageTask,
+  stageTasksOf,
   onPatchTask,
   draggingId,
   dropIndex,
@@ -409,13 +414,17 @@ function KanbanColumn({
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下 / 拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
-  onAddStageTask: (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => void;
+  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
+  /** 该阶段现有任务（Push 111）：给「插入位置」当锚点 —— 顺序 = 项目总览里这些任务的先后。 */
+  stageTasksOf: (stage: string) => readonly { id: string; title: string }[];
 }) {
   const owner = memberByName(group.key);
   const [panel, setPanel] = useState<AddPanel>("none");
   const [title, setTitle] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [templateStage, setTemplateStage] = useState<string | null>(null);
+  /** 插入位置（Push 111）：默认「该阶段最后」，每次打开阶段任务卡片时重置。 */
+  const [stagePlacement, setStagePlacement] = useState<StagePlacement>({ kind: "last" });
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 112, left: 16 });
   const columnRef = useRef<HTMLElement | null>(null);
   /** 落点就在本列（Push 108）：整列描边高亮 + 列内浮出插入槽位（槽位插到第 `dropIndex` 格）。 */
@@ -463,6 +472,7 @@ function KanbanColumn({
 
   /** 阶段任务：模板卡片开在这一列的右侧、与列顶齐平（位置按列实测算，并夹在视口内）。 */
   const openTemplateCard = (stage: string) => {
+    setStagePlacement({ kind: "last" });
     const rect = columnRef.current === null ? null : columnRef.current.getBoundingClientRect();
     if (rect !== null) {
       setCardPos({
@@ -600,7 +610,13 @@ function KanbanColumn({
         <StageAddCard
           stage={templateStage}
           existingTaskIds={existingTaskIds}
-          onAddNode={(stage, node) => { onAddStageTask(context, stage, node); }}
+          placement={{
+            tasks: stageTasksOf(templateStage),
+            value: stagePlacement,
+            onChange: setStagePlacement,
+          }}
+          onAddNode={(stage, node) => { onAddStageTask(context, stage, [node], stagePlacement); }}
+          onAddNodes={(stage, nodes) => { onAddStageTask(context, stage, nodes, stagePlacement); }}
           onClose={() => { setTemplateStage(null); }}
           style={{ position: "fixed", top: cardPos.top, left: cardPos.left }}
         />
@@ -634,6 +650,12 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
   const groups = groupTasks(tasks, mode);
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
   const existingTaskIds = new Set(tasks.map((task) => task.id));
+  /**
+   * 该阶段现有任务（Push 111）：给「添加 → 阶段任务」的插入位置当锚点。
+   * `tasks` 已经是展示顺序（阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
+   */
+  const stageTasksOf = (stage: string) =>
+    tasks.filter((task) => task.stage === stage).map((task) => ({ id: task.id, title: task.title }));
 
   /**
    * 鼠标底下是「哪一列的第几格」（Push 108）：`data-kanban-column` 认列、卡片中线认格 —— 口径同 Push 105
@@ -857,6 +879,7 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
             onOpenTask={openTask}
             onAddTask={onAddTask}
             onAddStageTask={onAddStageTask}
+            stageTasksOf={stageTasksOf}
             onPatchTask={onPatchTask}
             draggingId={onPatchTask === undefined ? null : draggingId}
             dropIndex={dropTarget !== null && dropTarget.key === group.key ? dropTarget.index : null}

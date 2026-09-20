@@ -5,6 +5,7 @@ import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
 import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
+import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { isCompleteStatus, isPastDue, progressAfterStatus, statusOverrideAfterProgress, tasksForProject, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
@@ -13,6 +14,15 @@ import type { MeResponse, Project } from "./types";
 
 /** 阶段名（不含「项目总览」汇总视图）。 */
 const STAGE_NAMES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+
+/**
+ * 阶段序号（Push 111）：展示顺序以**阶段为主键**，顺序就是项目总览的分组顺序（售前规划 → … → 验收）。
+ * 不在九阶段里的（看板「临时任务」建的空任务）= 未分组，垫底 —— 与项目总览里「未分组」固定最后一组的口径一致。
+ */
+function stageRankOf(stage: string): number {
+  const at = STAGE_NAMES.indexOf(stage);
+  return at < 0 ? STAGE_NAMES.length : at;
+}
 
 /** 顶部视图标签（Push 82 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」。 */
 const VIEW_TABS: readonly string[] = ["项目总览", "人员任务分配", "任务进展"];
@@ -119,7 +129,18 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
           .sort((left, right) => left.key - right.key)
           .map((entry) => entry.task);
 
-  const tasks = orderedTasks.map((task) => {
+  /**
+   * 展示顺序（Push 111，业务口径「应该按照项目总览的顺序排 —— 某个工作人员在项目总览下从上到下的任务顺序」）：
+   * **阶段为主键**（项目总览的分组顺序）、**组内按看板顺序表**（拖动 / 插入位置定的先后）。
+   * 三块视图拿到的都是这一份顺序 —— 人员任务分配看板的列内顺序因此与项目总览自上而下一致；
+   * 项目总览本来就是按阶段分组渲染的，组内顺序不受影响。
+   */
+  const stagedTasks = orderedTasks
+    .map((task, index) => ({ task, index }))
+    .sort((left, right) => stageRankOf(left.task.stage) - stageRankOf(right.task.stage) || left.index - right.index)
+    .map((entry) => entry.task);
+
+  const tasks = stagedTasks.map((task) => {
     const edit = taskEdits[task.id];
     const override = progressOverrides[task.id];
     const withEdit = edit === undefined ? task : { ...task, ...edit };
@@ -231,25 +252,53 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
   };
 
   /**
-   * 看板「添加 → 阶段任务」：从该阶段的节点池 / 模板里选的节点加进项目（按节点 id 判重）。
-   * 任务自带阶段，并带上所在列的负责人 / 状态（与「临时任务」同一套列上下文）。
+   * 把新加的任务插进看板顺序表（Push 111，业务口径「人员要指定位置放入」）：
+   * `last`（默认）不动顺序表 —— 顺序表里没有的新任务本来就排最后，按「阶段为主键」的展示顺序落在**该阶段段的末尾**；
+   * `before` / `after` 以某张同阶段任务为锚插进去；一次加多个时按传入顺序**整段**插在锚点位置，不会倒序。
+   * 只动顺序表，卡片上的负责人 / 状态等字段不受影响。
    */
-  const handleKanbanAddNode = (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => {
-    setAddedTasks((previous) =>
-      previous.some((task) => task.id === node.id) || baseTasks.some((task) => task.id === node.id)
-        ? previous
-        : [
-            ...previous,
-            {
-              ...taskFromPresetNode(stage, node),
-              owner: context.owner,
-              ownerEn: context.ownerEn,
-              status: context.status,
-              statusOverride: context.status,
-              progress: progressAfterStatus(context.status, 0),
-            },
-          ],
-    );
+  const insertNewTasksIntoOrder = (taskIds: readonly string[], placement: StagePlacement) => {
+    if (placement.kind === "last" || taskIds.length === 0) {
+      return;
+    }
+    setTaskOrder((previous) => {
+      const known = previous.length === 0 ? projectTasks.map((task) => task.id) : previous;
+      const rest = known.filter((id) => !taskIds.includes(id));
+      const anchorIndex = rest.indexOf(placement.taskId);
+      const at = anchorIndex < 0 ? rest.length : placement.kind === "before" ? anchorIndex : anchorIndex + 1;
+      const next = [...rest.slice(0, at), ...taskIds, ...rest.slice(at)];
+      for (const task of projectTasks) {
+        if (!next.includes(task.id)) {
+          next.push(task.id);
+        }
+      }
+      return next;
+    });
+  };
+
+  /**
+   * 看板「添加 → 阶段任务」：从该阶段的节点池 / 模板里挑的节点加进项目（按节点 id 判重）。
+   * 任务自带阶段，并带上所在列的负责人 / 状态（与「临时任务」同一套列上下文）。
+   * Push 111：`nodes` 可以一次多个（「整套添加」），`placement` = 该阶段内的插入位置。
+   */
+  const handleKanbanAddNode = (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => {
+    const knownIds = new Set<string>([...baseTasks.map((task) => task.id), ...addedTasks.map((task) => task.id)]);
+    const fresh = nodes.filter((node) => !knownIds.has(node.id));
+    if (fresh.length === 0) {
+      return;
+    }
+    setAddedTasks((previous) => [
+      ...previous,
+      ...fresh.map((node) => ({
+        ...taskFromPresetNode(stage, node),
+        owner: context.owner,
+        ownerEn: context.ownerEn,
+        status: context.status,
+        statusOverride: context.status,
+        progress: progressAfterStatus(context.status, 0),
+      })),
+    ]);
+    insertNewTasksIntoOrder(fresh.map((node) => node.id), placement);
     if (project !== null) {
       onTaskEdited?.(project.id);
     }
