@@ -4,6 +4,7 @@ import { IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
 import {
   ProjectCreateBodySchema,
+  ProjectDeleteHeadersSchema,
   ProjectFacetsSchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
@@ -15,6 +16,8 @@ import {
   TaskCreateBodySchema,
   TaskCreateFromTemplateBodySchema,
   TaskCreateFromTemplateResponseSchema,
+  TaskDetailSchema,
+  TaskListItemSchema,
   TaskListQuerySchema,
   TaskListResponseSchema,
   TaskProgressUpdateBodySchema,
@@ -45,6 +48,8 @@ import {
   ProjectNodeSchema,
 } from "./modules/flow.ts";
 import { CallbackQuerySchema, LoginQuerySchema, MeResponseSchema } from "./modules/identity.ts";
+import { UserListQuerySchema, UserListResponseSchema, UserPreferencesSchema, UserPreferencesUpdateBodySchema } from "./modules/users.ts";
+import { DictListResponseSchema, DictSchema, DictTypeSchema } from "./modules/dicts.ts";
 import {
   ChangeRequestDetailSchema,
   ChangeRequestListQuerySchema,
@@ -161,6 +166,19 @@ export function buildOpenApiDocument() {
   });
 
   registry.registerPath({
+    method: "delete",
+    path: "/api/v1/projects/{id}",
+    tags: ["projects"],
+    summary: "删除项目（软删；If-Match 回传当前 version 防误删）",
+    request: { params: idParams, headers: ProjectDeleteHeadersSchema },
+    responses: {
+      200: { description: "已软删项目（列表 / 详情 / facets / 搜索不再返回）", ...json(ProjectSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+  registry.registerPath({
     method: "get",
     path: "/api/v1/projects/{id}/summary",
     tags: ["projects"],
@@ -177,7 +195,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/projects/{id}/tasks",
     tags: ["tasks"],
-    summary: "项目任务列表（表格与抽屉直接渲染的全字段）",
+    summary: "项目任务列表（TaskListItem：表格直接渲染 + 内联摘要）",
     request: { params: idParams, query: TaskListQuerySchema },
     responses: {
       200: { description: "任务列表", ...json(TaskListResponseSchema) },
@@ -185,6 +203,17 @@ export function buildOpenApiDocument() {
     },
   });
 
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/tasks/{taskId}",
+    tags: ["tasks"],
+    summary: "任务详情（抽屉全字段 + 文件清单；列表走 TaskListItem，抽屉打开时按需请求）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }) },
+    responses: {
+      200: { description: "任务详情", ...json(TaskDetailSchema) },
+      404: commonErrors[404],
+    },
+  });
   registry.registerPath({
     method: "patch",
     path: "/api/v1/projects/{id}/tasks/{taskId}/progress",
@@ -195,7 +224,7 @@ export function buildOpenApiDocument() {
       body: json(TaskProgressUpdateBodySchema),
     },
     responses: {
-      200: { description: "更新后的任务", ...json(TaskSchema) },
+      200: { description: "更新后的任务（TaskListItem 同形，前端直接替换行）", ...json(TaskListItemSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
@@ -315,6 +344,65 @@ export function buildOpenApiDocument() {
   });
 
   // ---- 流程节点与蓝图 ----
+  // ---- 用户目录与字典（A2 / A3 / A4）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/users",
+    tags: ["users"],
+    summary: "用户目录（项目经理下拉 / 任务负责人候选 / 姓名解析；只返回启用用户，默认按工号升序）",
+    request: { query: UserListQuerySchema },
+    responses: {
+      200: { description: "用户列表", ...json(UserListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/users/me/preferences",
+    tags: ["users"],
+    summary: "读取当前用户偏好（任务表列显隐等）",
+    responses: {
+      200: { description: "偏好全量", ...json(UserPreferencesSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/users/me/preferences",
+    tags: ["users"],
+    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键）",
+    request: { body: json(UserPreferencesUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的偏好全量", ...json(UserPreferencesSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dicts",
+    tags: ["dicts"],
+    summary: "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+    responses: {
+      200: { description: "全部字典", ...json(DictListResponseSchema) },
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dicts/{type}",
+    tags: ["dicts"],
+    summary: "单个字典（未知类型返回 404）",
+    request: { params: z.object({ type: DictTypeSchema }) },
+    responses: {
+      200: { description: "字典", ...json(DictSchema) },
+      404: commonErrors[404],
+    },
+  });
   registry.registerPath({
     method: "get",
     path: "/api/v1/blueprint",
@@ -701,7 +789,8 @@ export function buildOpenApiDocument() {
       { name: "flow", description: "流程节点与蓝图（v0.2 §3）" },
       { name: "auth", description: "认证与会话（ADR-010；根路径 /auth/*，OIDC + PKCE）" },
       { name: "files", description: "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）" },
-      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
+      { name: "users", description: "用户目录与用户偏好（A2 / A4；M1）" },
+      { name: "dicts", description: "数据字典下发（A3；region / projectType，含主题色元数据）" },      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
     ],
   });
 }
