@@ -2,13 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { lateDeliveryLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, cnDateFromIso, isoFromCnDate, lateDeliveryLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
 import { StageAddCard } from "./StageAddCard";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
-import { STATUS_TAG_CLASS } from "./TaskBoard";
+import { STATUS_TAG_CLASS, type TaskPatch } from "./TaskBoard";
+import { trackerLabel } from "./Tracker";
 
 /**
  * 项目详情页的两块看板（Push 82）：
@@ -16,6 +18,7 @@ import { STATUS_TAG_CLASS } from "./TaskBoard";
  * - `status`「任务进展」：列 = 任务状态（已延期 → 进行中 → 已完成 → 提前完成 → 待开始），看每个状态有哪些任务。
  * 卡片材质按业务样张代码还原（外层壳 + 噪点叠加 + 内层板 + 多层投影），用 Tailwind 任意值实现，不引入 styled-components。
  * 卡片只出任务里真实存在的字段（标题 / 所属阶段 / 日期 / 状态 / 负责人 / 进度 / 是否按时交付）；任务字段里没有「里程碑」这一项，所以阶段一栏的口径是「所属阶段」，不写「阶段性里程碑」。
+ * Push 92：进度一栏的文字由百分比改成中文档位（与任务表 Tracker 同一套标签），并新增「实际完成日期」一栏 —— 卡片上直接点选小日历就能改（口径同表格行内编辑：填 = 完成、清 = 退回进行中）。
  * 列底「添加」固定在列底、不随卡片滚动（Push 86），两种口径：**临时任务**（自己填标题，阶段留空 → 卡片「所属阶段」显示「未分组」、到「项目总览」落在「未分组」组）/ **阶段任务**（先选阶段，再从该阶段的节点池 / 模板里挑节点加进项目，任务自带阶段）。
  * 列内滚动条是**隐式**的：原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块（`ScrollArea`，与分类筛选侧栏 / 任务抽屉同一套）。
  * 看板横向滚动条同样**隐式**（Push 87）：列排布交给 `ScrollArea axis="horizontal"`，原生滚动条（Windows 下带箭头那条横杠）隐藏，滑块只在滚动 / 悬停时浮在列底留白里；列高按「铺满视口」重算（`100vh - 12.75rem`），列底与页面底之间不再留下大块空白。
@@ -103,6 +106,10 @@ type TaskKanbanProps = {
   onAddStageTask: (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => void;
   /** 任务编辑保存（与表格共用同一张覆盖表）。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
+  /** 卡片上直接改字段（Push 92：实际完成日期；与表格行内同一套口径）。 */
+  onPatchTask?: (taskId: string, patch: TaskPatch) => void;
+  /** 抽屉里点四格进度条（Push 92；与任务表 §6.4 同一套联动口径）。 */
+  onSetProgress?: (taskId: string, progress: number) => void;
 };
 
 type KanbanGroup = {
@@ -160,6 +167,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** 卡片进度条（Push 92）：条照旧，右侧文字由百分比改成中文档位（未开始 / 刚开工 / 完成一半 / 快完成了 / 已完成），与任务表 Tracker 同一套口径。 */
 function ProgressBar({ progress }: { progress: number }) {
   const pct = Math.round(progress * 100);
   return (
@@ -167,7 +175,7 @@ function ProgressBar({ progress }: { progress: number }) {
       <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-400/40">
         <div className="h-full rounded-full bg-emerald-500" style={{ width: pct + "%" }} />
       </div>
-      <span className="shrink-0 text-xs font-semibold tabular-nums text-zinc-700">{pct}%</span>
+      <span className="shrink-0 text-xs font-semibold text-zinc-700">{trackerLabel(progress)}</span>
     </div>
   );
 }
@@ -196,11 +204,42 @@ function OnTimeChip({ task }: { task: ProjectTask }) {
   return <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">{task.onTime}</span>;
 }
 
-/** 看板卡片：点开任务详情抽屉（抽屉里可进任务编辑弹窗）。 */
-function KanbanCard({ task, mode, onOpen }: { task: ProjectTask; mode: KanbanMode; onOpen: () => void }) {
+/** 看板卡片：点开任务详情抽屉（要改的字段在抽屉里直接改；Push 92 起卡片上的「实际完成日期」也能直接点选）。 */
+function KanbanCard({
+  task,
+  mode,
+  onOpen,
+  onPatch,
+}: {
+  task: ProjectTask;
+  mode: KanbanMode;
+  onOpen: () => void;
+  /** 卡片上直接改的字段（Push 92：实际完成日期；口径同任务表行内编辑）。 */
+  onPatch?: (patch: TaskPatch) => void;
+}) {
   const status = taskStatus(task);
   const owner = memberByName(task.owner);
   const ownerLabel = task.owner === "" ? "待分配" : task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
+  /** 实际完成日期（Push 92）：空值「—」也带框，点开就是单日期小日历（上 / 下月、清除、今天）。 */
+  const doneField =
+    onPatch === undefined ? (
+      <span className="text-sm text-zinc-800">{task.doneDate === "" ? "—" : task.doneDate}</span>
+    ) : (
+      <InlineDateCell
+        valueIso={isoFromCnDate(task.doneDate)}
+        ariaLabel="修改实际完成日期"
+        triggerClassName="tabular-nums"
+        display={task.doneDate === "" ? <span className="text-zinc-400">—</span> : task.doneDate}
+        onChange={(iso) => {
+          // 填实际完成日期 = 完成（四格全亮、按工期派生 已完成 / 提前完成）；清除 = 退回进行中（进度 3 格）—— 口径同 §6.9
+          onPatch({
+            doneDate: iso === "" ? "" : cnDateFromIso(iso),
+            progress: iso === "" ? (PROGRESS_STEPS - 1) / PROGRESS_STEPS : 1,
+            statusOverride: iso === "" ? "进行中" : undefined,
+          });
+        }}
+      />
+    );
   return (
     <div
       role="button"
@@ -228,6 +267,7 @@ function KanbanCard({ task, mode, onOpen }: { task: ProjectTask; mode: KanbanMod
             <Field label="任务状态">
               <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{status}</span>
             </Field>
+            <Field label="实际完成日期">{doneField}</Field>
           </>
         ) : (
           <>
@@ -240,6 +280,7 @@ function KanbanCard({ task, mode, onOpen }: { task: ProjectTask; mode: KanbanMod
             <Field label="开始日期">
               <span className="text-sm text-zinc-800">{task.startDate === "" ? "—" : task.startDate}</span>
             </Field>
+            <Field label="实际完成日期">{doneField}</Field>
           </>
         )}
 
@@ -267,11 +308,14 @@ function KanbanColumn({
   onOpenTask,
   onAddTask,
   onAddStageTask,
+  onPatchTask,
 }: {
   group: KanbanGroup;
   mode: KanbanMode;
   existingTaskIds: ReadonlySet<string>;
   onOpenTask: (task: ProjectTask) => void;
+  /** 卡片上直接改字段（Push 92）。 */
+  onPatchTask?: (taskId: string, patch: TaskPatch) => void;
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
   onAddStageTask: (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => void;
 }) {
@@ -351,7 +395,21 @@ function KanbanColumn({
       {/* 卡片列表：滚动条隐式（原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块） */}
       <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"任务卡片：" + group.key}>
         {group.items.map((task) => (
-          <KanbanCard key={task.id} task={task} mode={mode} onOpen={() => { onOpenTask(task); }} />
+          <KanbanCard
+            key={task.id}
+            task={task}
+            mode={mode}
+            onOpen={() => {
+              onOpenTask(task);
+            }}
+            onPatch={
+              onPatchTask === undefined
+                ? undefined
+                : (patch) => {
+                    onPatchTask(task.id, patch);
+                  }
+            }
+          />
         ))}
       </ScrollArea>
 
@@ -435,8 +493,10 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+  /** 抽屉里的任务按 id 取当前值（Push 92）：卡片 / 抽屉里改完，抽屉要立刻反映最新进度与日期。 */
+  const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
   const groups = groupTasks(tasks, mode);
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
   const existingTaskIds = new Set(tasks.map((task) => task.id));
@@ -463,14 +523,16 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
             }}
             onAddTask={onAddTask}
             onAddStageTask={onAddStageTask}
+            onPatchTask={onPatchTask}
           />
         ))}
       </ScrollArea>
       <TaskDrawer
-        task={selectedTask}
+        task={drawerTask}
         manager={manager}
         managerId={managerId}
         onSubmit={onSubmitTaskEdit}
+        onProgress={onSetProgress}
         onClose={() => {
           setSelectedTask(null);
         }}

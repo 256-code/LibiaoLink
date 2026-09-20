@@ -18,7 +18,7 @@ import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { MemberSelect } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu } from "./SelectMenu";
-import { TRACKER_STEPS, trackerLabel, trackerStep } from "./Tracker";
+import { TRACKER_LABELS, TRACKER_STEPS, TrackerDots, trackerLabel, trackerStep } from "./Tracker";
 
 const CLOSE_ANIMATION_MS = 170;
 /** 「已保存」提示的停留时间。 */
@@ -107,6 +107,8 @@ type TaskDrawerProps = {
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => void;
+  /** 点四格进度条（Push 92；联动口径同任务表 §6.4：0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生）。 */
+  onProgress?: (taskId: string, progress: number) => void;
   onClose: () => void;
 };
 
@@ -114,10 +116,11 @@ type TaskDrawerProps = {
  * 任务详情抽屉（Push 63）：点任务行 / 看板卡片打开。
  * **要改直接在抽屉里改**（Push 88 业务口径：「编辑任务」弹窗不再需要）—— 项目经理 / 任务负责人 / 紧急重要度选完即存，
  * 日期区间选完即存，施工人数 / 进展描述失焦时存（值没变不写，避免无谓刷新项目时间）；保存后右下角闪一下「已保存」。
- * 只读口径不变：任务状态 / 进度 / 实际完成日期按字段口径派生（要改状态 / 实际完成日期去任务表行内改），
+ * 进度自 Push 92 起也能在抽屉里改：进度条长度不变，右侧四颗点（刚开工 / 完成一半 / 快完成了 / 已完成）点哪档写哪档；
+ * 只读口径不变：任务状态 / 实际完成日期按字段口径派生（要改状态 / 实际完成日期去任务表行内改，看板卡片上也能改实际完成日期），
  * 任务描述 / 输出成果文件按 A1-17 锁定，文件走文件库。
  */
-export function TaskDrawer({ task, manager, managerId = "", onSubmit, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -126,11 +129,14 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onClose }:
   draftRef.current = draft;
   /** 「已保存」提示（非 0 = 展示中）。 */
   const [savedTick, setSavedTick] = useState(0);
+  /** 悬停 / 聚焦中的进度档位（0 = 没有）：悬停时档位文字与进度条一起预览点完的样子。 */
+  const [hoveredStep, setHoveredStep] = useState(0);
 
   useEffect(() => {
     closingRef.current = false;
     setClosing(false);
     setSavedTick(0);
+    setHoveredStep(0);
     setDraft(draftOf(task, managerId));
     // 换任务时把草稿重置成新任务的字段；同一个任务上父级刷新不重置，避免打断正在输入的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -230,8 +236,10 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onClose }:
   const late = lateDeliveryLabel(task);
   const status = taskStatus(task);
   const step = trackerStep(task.progress);
-  const stepPct = Math.round((step / TRACKER_STEPS) * 100);
-  const progressText = trackerLabel(task.progress);
+  /** 悬停预览：还没点就先亮到悬停那一档（进度条长度不变，只有填充随预览走）。 */
+  const shownStep = hoveredStep > 0 ? hoveredStep : step;
+  const stepPct = Math.round((shownStep / TRACKER_STEPS) * 100);
+  const progressText = hoveredStep > 0 ? TRACKER_LABELS[hoveredStep] ?? "" : trackerLabel(task.progress);
   const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
   const barClass = done ? "bg-emerald-500" : task.status === "进行中" ? "bg-blue-500" : "bg-zinc-200";
   const dotClass = STATUS_DOT_CLASS[status];
@@ -493,9 +501,23 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onClose }:
         </header>
 
         <div className="border-b border-zinc-100 px-6 py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <span className="text-xs text-zinc-500">项目进度</span>
-            <span className="text-sm font-semibold text-zinc-900">{progressText}</span>
+            <span className="flex items-center gap-2.5">
+              <span className="text-sm font-semibold text-zinc-900">{progressText}</span>
+              {onProgress === undefined ? null : (
+                <TrackerDots
+                  progress={task.progress}
+                  hovered={hoveredStep}
+                  onHoverChange={setHoveredStep}
+                  onChange={(progress) => {
+                    onProgress(task.id, progress);
+                    setSavedTick(Date.now());
+                    setHoveredStep(0);
+                  }}
+                />
+              )}
+            </span>
           </div>
           <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
             <div className={"h-full rounded-full " + barClass} style={{ width: stepPct + "%" }} />
