@@ -130,7 +130,18 @@ server/
 - 节点增删（ADR-020）：`POST /projects/{id}/nodes`（仅项目经理：`admin` 角色 / `projects.manager_id` / 名册 `role_in_project=project_manager` 三选一，否则 403；`nodeKey` 必须命中**项目导入版本**的模板节点池，否则 422 `BLUEPRINT_REF_UNKNOWN`；`node_key` 在项目内唯一（DB 唯一索引 `project_nodes_project_id_node_key_key`）—— 已有未删节点 409 `NODE_ALREADY_EXISTS`，软删后再增补 = 还原同一行（回 `pending`、清完成留痕）；`seq` 缺省 = 同阶段 max + 10）、`DELETE /projects/{id}/nodes/{nodeId}`（原因必填、软删、乐观锁；节点下有成果文件 409 `NODE_HAS_FILES`）。
 - 完成门禁（v0.2 §3.6）：`POST /api/v1/nodes/{id}/complete`（**成员平权**，服务端事务内强校验；缺 `required_doc` → 422 `NODE_REQUIRED_DOC_MISSING` + `missing[]` 明细；重复完成 409 `NODE_ALREADY_DONE`）、`GET /api/v1/nodes/{id}/can-complete`（预检，只是 UI 置灰依据）。门禁拒绝写 outbox 留痕（`node.gate_rejected` / `stage.gate_rejected`，audit_logs 随 h7）。
 - 写保护与留痕：归档项目（`status=archived`）的流程写操作一律 409 `PROJECT_ARCHIVED`；节点 / 阶段事件同事务写 outbox（`node.added`（还原带 `restored: true`）/ `node.completed` / `node.deleted` / `stage.advanced` / `stage.rolled_back`）。
-- 权限与过渡口径（登记待收口）：① 记录级 404 语义（非成员不可见）与权限矩阵随 h6 策略服务 —— 当前流程读接口登录即可读、完成门禁无成员校验；② `GateService` 直接读 `files` / `tasks` 表（file / task 模块未落地、无对端出口）：文件计入口径 = `deleted_at is null` 且 `status ∈ (final, changed)` 且 `current_version_id is not null`，i1 / h4 落地后改为对端 index 出口；③ 蓝图写权限按角色码 `admin` 判定，待 h6 矩阵换成功能权限 `admin.blueprint.manage`。
+- 权限与过渡口径（登记待收口）：① 记录级 404 语义（非成员不可见）与权限矩阵随 h6 策略服务 —— 当前流程读接口登录即可读、完成门禁无成员校验；② `GateService` 仍直接读 `files` 表（file 模块未落地）：文件计入口径 = `deleted_at is null` 且 `status ∈ (final, changed)` 且 `current_version_id is not null`，i1 落地后改为对端 index 出口；**任务侧计数已随 h4 收口** —— 阶段门禁与阶段完成度的任务计数经 task 模块 `TaskStatsService`（node → task）；③ 蓝图写权限按角色码 `admin` 判定，待 h6 矩阵换成功能权限 `admin.blueprint.manage`。
+## 任务接口（h4 · S6·task：M3-01 列表 / 详情 + M3-02 进度与状态 + 项目总览四格）
+
+- 契约 `shared/src/modules/tasks.ts`（OpenAPI tags=tasks）；实现 `src/modules/task/`（controller / service / repository / rules / query / stats + `index.ts` 出口）；`TaskController` 挂 `api/v1/projects`：`GET /projects/{id}/summary`（项目总览四格：当前阶段 / 逾期 / 已完成 / 总数）、`GET/POST /projects/{id}/tasks`、`GET/PATCH /projects/{id}/tasks/{taskId}`、`PATCH /projects/{id}/tasks/{taskId}/progress`；整组 `SessionGuard + CsrfGuard`。
+- 五态派生（A1-06 / A12 / A14）：`displayStatus` 与 `onTime` 服务端读时派生、不写回存储 —— 完成按实际完成日期与预计完成日期分 已完成 / 提前完成（同日或晚于 = 已完成、逾期补完不回退）；未完成且已过预计完成日期 = 「已延期」（派生优先，人工写状态不改写）；`onTime` 可判定时按真实日期算、判不出回落迁移存储值（仍无 = null）。`filter[status]` 与同一派生口径下推 SQL（overdue / early_done 非存储态；实测 `done,active` 不误收逾期任务）。
+- 状态写入联动（A12，同事务）：`PATCH …/{taskId}` 的 `status` 只收基础三态 —— done → 进度满格 + 缺省按当天补完成日期（已有保留）；active → 至少 1 格（0 → 0.25、满格 → 0.75）并清完成日期；pending → 清进度、清完成日期。「已延期 / 提前完成」提交由契约 Zod 拦为 400。
+- 进度写入联动（A13）：`PATCH …/progress` 只收离散五档 0 / 0.25 / 0.5 / 0.75 / 1；`progress<1` 清完成日期（**清除完成日期的唯一方式**）、`progress=1` 缺省按当天（Asia/Shanghai，ADR-028）、显式 `actualEnd` 采用传入值；响应为 `TaskListItem` 同形（前端直接替换行）。
+- 列表（A7 / A8）：分页 + `stage` / `filter[ownerId]` / `filter[status]`（展示态多值）/ `q`（中英文标题）+ 排序白名单（`plannedStart` / `plannedEnd` / `actualEnd` / `progress` / `title` / `createdAt`）；缺省顺序 = 阶段序（契约 `STAGE_KEYS`）+ 组内 `plannedStart ASC NULLS LAST` → `created_at` → `id`（稳定分页）；非法枚举 / uuid / 排序字段一律 400。`TaskListItem` 随行 `ownerName` / `changeSummary`（变更原因截 40 字；详情用 `changeRef`）/ `fileSummary`（一次分组统计免 N+1；口径 = 排除回收站，`draft` = 未定档、`final` = final + changed）。
+- 创建（A10 / A1-13）：从任务节点生成（`taskNodeId`；校验节点属于本项目且与 `stageKey` 一致，**按项目判重 409 `TASK_ALREADY_EXISTS`**）成员可建；手工创建（无节点）= 非标准任务**仅管理员**（角色码 `admin`，否则 403）。缺省 `ownerId` = 项目经理、状态 pending、进度 0。
+- 写保护与留痕：归档项目写操作一律 409 `PROJECT_ARCHIVED`（ADR-027）；字段级留痕写 `task_events`（status_change / progress_change / date_change / note_change，before / after 为 JSON）；业务事件同事务写 outbox（`task.created` / `task.updated` / `task.progress_changed`，dedupeKey 带版本）；任务变更 touch 项目 `updated_at`（ADR-022 ④）。
+- 收口（h3 过渡口径）：`GateService` 不再直读 `tasks` 表 —— 阶段门禁 `task_not_done` 与 `GET /projects/{id}/stages` 的任务完成度经 task 模块 `TaskStatsService`（node → task；`countStageTasks` / `stageTaskCounts`）。
+- 过渡口径（登记待收口）：① 记录级 404 语义与权限矩阵随 h6 —— 当前任务读 / 编辑 / 进度登录即可（成员平权），手工创建按 A1-13 限管理员；② `progress` 的 `note` 写任务的「项目进展描述」并留痕；③ 任务软删（DELETE，需 `tasks.deleted_at` 迁移）、任务侧完成门禁（M3-03 · `TASK_REQUIRED_DOC_MISSING`）、批量（M3-04）、从模板实例化与任务节点库 / 模板接口（依赖模板表，A11）、快筛参数、1 万行压测与索引调优（M3-06）为后续卡片；④ 列表默认序暂无 (project_id, stage_key, planned_start, created_at, id) 复合索引，随 M3-06。
 ## 数据访问（Drizzle ↔ 迁移对齐）
 
 - 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0012）。
@@ -155,6 +166,8 @@ server/
 
 - 蓝图校验测试（`test/blueprint-validation.test.ts` · h3）：schema / 节点 key 唯一 / seq 递增 / docType 引用命中成果字典 / 引用未知分流 422 `BLUEPRINT_REF_UNKNOWN`，共 7 例；
 - 流程门禁测试（`test/flow-gate.test.ts` · h3）：节点完成缺件明细 `missing[]`、阶段推进三类缺项（`node_not_done` / `task_not_done` / `doc_missing`）、门禁全过分支与阶段完成度派生，共 6 例；**h3 后全量 100 例（9 文件）**。
+- 任务规则测试（`test/task-rules.test.ts` · h4）：五态派生（待开始 / 进行中 / 已延期 / 已完成 / 提前完成）、按时交付派生（含回落存储值）、状态写入联动、进度写入联动（清完成日期 = 唯一方式）、上海日界、列表筛选 / 排序解析（非法值 400），共 17 例；
+- 任务用例测试（`test/task-service.test.ts` · h4）：带节点创建缺省项目经理 / 节点判重 409 / 手工创建仅管理员 403 / 阶段不一致 400 / 归档 409、状态联动（done 满格补当天、active 退 0.75 清日期、过期保持已延期）、乐观锁 409 / 跨项目 404、进度写回清完成日期、项目总览四格，共 13 例；**h4 后全量 130 例（11 文件）**。
 
 ## CI 接线（g5 · px｜已落地）
 
@@ -200,5 +213,6 @@ server/
 - g6：`/auth/*` 会话后端化（identity 模块首个实现）——已落地（Push 43）；前端切换 k6 已合入（Push 46），正式环境 SSO 核对（g7）仍在 px 线。
 - g5：CI 扩展（上方片段 + 契约漂移）——已落地（Push 41：`server` job 入 `.github/workflows/ci.yml`）。
 - h3：流程节点（蓝图版本化 / 建项目快照 / 阶段推进与回退 / 节点增删 / 完成门禁）—— 已落地（Push 83）；记录级 404 与权限矩阵随 h6，文件门禁口径随 i1（file）与 h4（task）。
+- h4：task 模块（任务列表 / 详情 / 创建 / 编辑 / 进度 / 项目总览四格 / 五态与按时交付派生）—— 已落地（Push 86）；任务侧完成门禁（M3-03）、批量（M3-04）、从模板实例化与快筛、1 万行压测（M3-06）为后续卡片，记录级 404 与权限矩阵随 h6。
 - lan 线：file / preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。

@@ -712,6 +712,7 @@
           "NODE_ALREADY_DONE",
           "NODE_ALREADY_EXISTS",
           "NODE_DELETED",
+          "TASK_ALREADY_EXISTS",
           "BLUEPRINT_SCHEMA_INVALID",
           "BLUEPRINT_REF_UNKNOWN",
           "FILE_STATE_INVALID",
@@ -2484,7 +2485,7 @@
                 "$ref": "#/components/schemas/Uuid"
               },
               {
-                "description": "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409）并建立节点关联"
+                "description": "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409 TASK_ALREADY_EXISTS）并建立节点关联；节点必须属于本项目（否则 400）"
               }
             ]
           },
@@ -3042,7 +3043,8 @@
           },
           "note": {
             "type": "string",
-            "maxLength": 2000
+            "maxLength": 2000,
+            "description": "进度更新备注：提供时写入任务的「项目进展描述」（note）并留痕"
           },
           "version": {
             "$ref": "#/components/schemas/Version"
