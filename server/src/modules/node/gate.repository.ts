@@ -5,7 +5,6 @@ import type { DbClient } from "../../db/db-client.js";
 import { files } from "../../db/schema/files.js";
 import { nodeRequirements, projectNodes } from "../../db/schema/flow.js";
 import { projectStages } from "../../db/schema/projects.js";
-import { tasks } from "../../db/schema/tasks.js";
 
 export interface RequirementRow {
   requirementType: string;
@@ -29,13 +28,6 @@ export interface StageProgressRow {
   stageKey: string;
   nodeTotal: number;
   nodeDone: number;
-  taskTotal: number;
-  taskDone: number;
-}
-
-export interface StageTaskCounts {
-  total: number;
-  done: number;
 }
 
 /**
@@ -90,22 +82,6 @@ export class GateRepository {
       );
   }
 
-  async countStageTasks(client: DbClient, projectId: string, stageKey: string): Promise<StageTaskCounts> {
-    const rows = await client
-      .select({ status: tasks.status, value: count() })
-      .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), eq(tasks.stageKey, stageKey)))
-      .groupBy(tasks.status);
-    let total = 0;
-    let done = 0;
-    for (const row of rows) {
-      const value = Number(row.value);
-      total += value;
-      if (row.status === "done") done += value;
-    }
-    return { total, done };
-  }
-
   /** 节点关联成果文件数（删除前置提示：draft / final / changed 计入；v0.2 §3.7）。 */
   async countLinkedFiles(client: DbClient, nodeId: string): Promise<number> {
     const rows = await client
@@ -115,7 +91,7 @@ export class GateRepository {
     return Number(rows[0]?.value ?? 0);
   }
 
-  /** 阶段完成度统计（读时派生）：节点与任务按 stage_key 计数（阶段列表 GET /projects/{id}/stages）。 */
+  /** 阶段节点计数（读时派生）：任务侧计数由 task 模块 TaskStatsService 提供（h4 起本模块不直读 tasks 表）。 */
   async listStageProgress(client: DbClient, projectId: string): Promise<StageProgressRow[]> {
     const nodeRows = await client
       .select({ stageKey: projectStages.stageKey, status: projectNodes.status, value: count() })
@@ -123,28 +99,13 @@ export class GateRepository {
       .innerJoin(projectStages, eq(projectStages.id, projectNodes.stageId))
       .where(and(eq(projectNodes.projectId, projectId), ne(projectNodes.status, "deleted")))
       .groupBy(projectStages.stageKey, projectNodes.status);
-    const taskRows = await client
-      .select({ stageKey: tasks.stageKey, status: tasks.status, value: count() })
-      .from(tasks)
-      .where(eq(tasks.projectId, projectId))
-      .groupBy(tasks.stageKey, tasks.status);
     const map = new Map<string, StageProgressRow>();
-    const pick = (stageKey: string): StageProgressRow => {
-      const found = map.get(stageKey) ?? { stageKey, nodeTotal: 0, nodeDone: 0, taskTotal: 0, taskDone: 0 };
-      map.set(stageKey, found);
-      return found;
-    };
     for (const row of nodeRows) {
-      const entry = pick(row.stageKey);
+      const entry = map.get(row.stageKey) ?? { stageKey: row.stageKey, nodeTotal: 0, nodeDone: 0 };
       const value = Number(row.value);
       entry.nodeTotal += value;
       if (row.status === "done") entry.nodeDone += value;
-    }
-    for (const row of taskRows) {
-      const entry = pick(row.stageKey);
-      const value = Number(row.value);
-      entry.taskTotal += value;
-      if (row.status === "done") entry.taskDone += value;
+      map.set(row.stageKey, entry);
     }
     return [...map.values()];
   }

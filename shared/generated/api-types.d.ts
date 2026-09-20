@@ -3608,7 +3608,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -4161,6 +4161,7 @@ export interface components {
         TaskProgressUpdateBody: {
             progress: components["schemas"]["TaskProgress"];
             actualEnd?: components["schemas"]["DateOnly"] & unknown;
+            /** @description 进度更新备注：提供时写入任务的「项目进展描述」（note）并留痕 */
             note?: string;
             version: components["schemas"]["Version"];
         };

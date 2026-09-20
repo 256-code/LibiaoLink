@@ -90,7 +90,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 ## 契约切片表（M0-02 · Push 73）
 
 > 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
-> 现状（Push 83 · h3）：**paths = 49、schemas = 117**，生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 未新增路径）。
+> 现状（Push 89 · h4）：**paths = 49、schemas = 117**，生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
 > 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更）、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
 
 ### M1 身份与平台底座（h1 + 平台）
@@ -117,8 +117,8 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
-| M3-01 列表 / 详情 | 已入（A7 / A8）；补快筛参数（`filter[mine]` / `dueToday` / `dueThisWeek` / `overdue` / `incomplete` / `missingDeliverable`） | 参数 |
-| M3-02 进度与状态 | 已入（A12~A14）；系统置位无契约变化（ADR-025） | 无 |
+| M3-01 列表 / 详情 | 已入（A7 / A8）并 HTTP 落地（Push 89）；**快筛参数未做**（`filter[mine]` / `dueToday` / `dueThisWeek` / `overdue` / `incomplete` / `missingDeliverable`，随 k4 接线前按前端实际使用补） | 参数 |
+| M3-02 进度与状态 | 已入（A12~A14）并 HTTP 落地（Push 89）；系统置位无契约变化（ADR-025，随调度卡片 i5）；新增 409 `TASK_ALREADY_EXISTS`（`taskNodeId` 判重） | 无 / 错误码 |
 | M3-03 完成门禁 | 新增 `POST /projects/{id}/tasks/{taskId}/complete`；`422 TASK_REQUIRED_DOC_MISSING` + `{ missing[], warnings[] }`（A4-20 / ADR-024） | 端点 / 错误码 |
 | M3-04 批量操作 | 新增 `PATCH /projects/{id}/tasks/batch`（字段白名单 + 逐条校验 + `failures[]`） | 端点 |
 | M3-05 模板锁定与修正 | `deliverable` → `deliverableTypes: DocType[]`（ADR-024）；模板锁定字段修正需原因 | 字段 |
