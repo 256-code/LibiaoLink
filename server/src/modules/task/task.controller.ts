@@ -14,6 +14,7 @@ import {
 } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
 import { TaskService } from "./task.service.js";
 
 type TaskListQuery = z.infer<typeof TaskListQuerySchema>;
@@ -26,10 +27,11 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 /**
  * 任务接口（h4 · S6·task）：契约 shared/src/modules/tasks.ts。
  * summary 挂 /projects/{id}/summary（项目总览四格，数据来源为任务派生；M3 契约已入、随本卡落地）。
- * 读登录即可；写入口径（成员平权 / 手工创建仅管理员）见 TaskService。
+ * 读要求登录 + 记录级可见（非成员 404，h6）；写接口按矩阵键判定（成员平权项在 PROJECT_MEMBER_IMPLIED_KEYS）；
+ * 「手工创建仅管理员」仍是 TaskService 内的业务口径。
  */
 @Controller("api/v1/projects")
-@UseGuards(SessionGuard, CsrfGuard)
+@UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class TaskController {
   constructor(private readonly tasks: TaskService) {}
 
@@ -59,6 +61,7 @@ export class TaskController {
 
   /** 创建任务：从任务节点生成（判重 409 TASK_ALREADY_EXISTS）或手工创建（仅管理员）。 */
   @Post(":id/tasks")
+  @RequirePermission("task.create")
   create(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(TaskCreateBodySchema)) body: TaskCreateBody,
@@ -69,6 +72,7 @@ export class TaskController {
 
   /** 编辑任务（乐观锁；status 基础三态同事务联动进度 / 完成日期；任务描述 / 成果文件锁定不在本接口）。 */
   @Patch(":id/tasks/:taskId")
+  @RequirePermission("task.update")
   update(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
@@ -80,6 +84,7 @@ export class TaskController {
 
   /** 更新四格进度（联动状态与完成日期；progress<1 清完成日期 —— 清除的唯一方式）。 */
   @Patch(":id/tasks/:taskId/progress")
+  @RequirePermission("task.progress")
   updateProgress(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,

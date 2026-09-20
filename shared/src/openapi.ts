@@ -58,6 +58,7 @@ import {
 import { CallbackQuerySchema, LoginQuerySchema, MeResponseSchema } from "./modules/identity.ts";
 import { UserListQuerySchema, UserListResponseSchema, UserPreferencesSchema, UserPreferencesUpdateBodySchema } from "./modules/users.ts";
 import { DictListResponseSchema, DictSchema, DictTypeSchema } from "./modules/dicts.ts";
+import { PermissionMeResponseSchema } from "./modules/permissions.ts";
 import {
   ChangeRequestDetailSchema,
   ChangeRequestListQuerySchema,
@@ -835,6 +836,18 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 权限画像（ADR-011 策略服务；PoC-6 五出口） ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/permissions/me",
+    tags: ["permissions"],
+    summary: "当前用户授权画像（角色 / 数据范围 / 功能权限位；前端据此置灰）",
+    responses: {
+      200: { description: "授权画像", ...json(PermissionMeResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
   // ---- 认证与会话（根路径 /auth/*，浏览器直接导航；ADR-010） ----
   registry.registerPath({
     method: "get",
@@ -893,6 +906,7 @@ export function buildOpenApiDocument() {
       { name: "auth", description: "认证与会话（ADR-010；根路径 /auth/*，OIDC + PKCE）" },
       { name: "files", description: "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）" },
       { name: "users", description: "用户目录与用户偏好（A2 / A4；M1）" },
+      { name: "permissions", description: "权限画像与策略出口（ADR-011；PoC-6 权限矩阵与脱敏五出口）" },
       { name: "dicts", description: "数据字典下发（A3；region / projectType，含主题色元数据）" },      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
     ],
   });

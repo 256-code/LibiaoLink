@@ -1,0 +1,119 @@
+import { Injectable } from "@nestjs/common";
+import type { ActorPermissions, PermissionKey } from "@libiaolink/contracts";
+import { AppError } from "../../common/errors/app-error.js";
+import { RoleService, type ActorAuthorization } from "../identity/index.js";
+import { PermissionRepository, type ProjectAccessContext } from "./permission.repository.js";
+import {
+  can,
+  isProjectVisible,
+  projectScopeSpec,
+  type ProjectResourceContext,
+  type ProjectScopeFilter,
+} from "./permission.rules.js";
+
+/** 缓存条目：ADR-011「策略全量加载内存 + 版本号失效」的一期形态 —— 短 TTL + 显式 invalidate。 */
+interface CacheEntry {
+  at: number;
+  authorization: ActorAuthorization;
+}
+
+/**
+ * 权限策略服务（h6 · ADR-011 落地形态）：can / 记录级可见集 / 项目上下文解析的**唯一出口**，
+ * 供 Manager Guard（HTTP 入口）、project 模块（列表裁剪）与后续导出 / 搜索 / 通知复用。
+ * 判定只在服务端执行（ADR-011 不变量 1）；不可见资源统一 404、无功能权限 403。
+ */
+@Injectable()
+export class PermissionService {
+  private static readonly CACHE_TTL_MS = 10_000;
+
+  private readonly cache = new Map<string, CacheEntry>();
+
+  constructor(
+    private readonly roles: RoleService,
+    private readonly repository: PermissionRepository,
+  ) {}
+
+  /** 授权画像（带缓存）：同一请求内多处判定只查一次库。 */
+  async getAuthorization(actorId: string): Promise<ActorAuthorization> {
+    const now = Date.now();
+    const cached = this.cache.get(actorId);
+    if (cached !== undefined && now - cached.at < PermissionService.CACHE_TTL_MS) {
+      return cached.authorization;
+    }
+    const authorization = await this.roles.getActorAuthorization(actorId);
+    this.cache.set(actorId, { at: now, authorization });
+    return authorization;
+  }
+
+  /** 显式失效（角色 / 授权变更后调用；管理端点在 u12 · C3-09）。 */
+  invalidate(actorId?: string): void {
+    if (actorId === undefined) {
+      this.cache.clear();
+      return;
+    }
+    this.cache.delete(actorId);
+  }
+
+  /** GET /api/v1/permissions/me 的响应投影。 */
+  async permissionsOf(actorId: string): Promise<ActorPermissions> {
+    const authorization = await this.getAuthorization(actorId);
+    return {
+      userId: authorization.userId,
+      roleCodes: authorization.roleCodes,
+      dataScopes: authorization.dataScopes,
+      permissionKeys: authorization.permissionKeys as PermissionKey[],
+    };
+  }
+
+  async can(actorId: string, key: PermissionKey, context?: ProjectResourceContext): Promise<boolean> {
+    return can(await this.getAuthorization(actorId), key, context);
+  }
+
+  /** 403：资源可见但缺少功能权限位（不可见资源的 404 由 assertProjectVisible 负责）。 */
+  async assertCan(
+    actorId: string,
+    key: PermissionKey,
+    context?: ProjectResourceContext,
+    message?: string,
+  ): Promise<void> {
+    if (await this.can(actorId, key, context)) return;
+    throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
+  }
+
+  /** 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。 */
+  async projectScope(actorId: string): Promise<ProjectScopeFilter> {
+    const spec = projectScopeSpec(await this.getAuthorization(actorId));
+    if (spec.all) return { kind: "all" };
+    return { kind: "ids", ids: await this.repository.listVisibleProjectIds(actorId, spec) };
+  }
+
+  /** 解析项目上下文：不可见 / 不存在 / 已软删统一返回 null（调用方转 404）。 */
+  async resolveProjectAccess(actorId: string, projectId: string): Promise<ProjectAccessContext | null> {
+    const spec = projectScopeSpec(await this.getAuthorization(actorId));
+    const ref = await this.repository.findProjectRef(projectId);
+    if (ref === null || ref.deletedAt !== null) return null;
+    const membershipRole = await this.repository.findMembership(actorId, projectId);
+    const rosterMember = membershipRole !== null;
+    const managerOfRecord = ref.managerId === actorId;
+    const projectManager = managerOfRecord || membershipRole === "project_manager";
+    const visible = isProjectVisible(spec, {
+      rosterMember,
+      managerOfRecord,
+      rosterProjectManager: membershipRole === "project_manager",
+    });
+    if (!visible) return null;
+    return { projectId, member: rosterMember || managerOfRecord, projectManager };
+  }
+
+  /** 记录级门禁：不可见 → 404（防 IDOR，ADR-011 不变量 3）。 */
+  async assertProjectVisible(actorId: string, projectId: string): Promise<ProjectAccessContext> {
+    const access = await this.resolveProjectAccess(actorId, projectId);
+    if (access === null) throw new AppError("NOT_FOUND", "项目不存在或不可见");
+    return access;
+  }
+
+  /** 节点 → 项目（/api/v1/nodes/* 的可见性判定用）。 */
+  projectIdOfNode(nodeId: string): Promise<string | null> {
+    return this.repository.findNodeProjectId(nodeId);
+  }
+}

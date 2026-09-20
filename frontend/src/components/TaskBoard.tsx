@@ -528,7 +528,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   const boardCardRef = useRef<HTMLDivElement | null>(null);
   const headerRowRef = useRef<HTMLDivElement | null>(null);
   const closeDrawer = () => setSelectedTask(null);
-  /** 抽屉里的任务按 id 取当前值（Push 94）：抽屉里点四格进度、卡片上改实际完成日期后，抽屉要立刻跟着变 ——
+  /** 抽屉里的任务按 id 取当前值（Push 96）：抽屉里点四格进度、卡片上改实际完成日期后，抽屉要立刻跟着变 ——
    *  不能拿点击那一刻的任务快照，否则父级刷新后抽屉还显示旧进度。 */
   const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);

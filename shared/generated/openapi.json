@@ -41,6 +41,10 @@
       "description": "用户目录与用户偏好（A2 / A4；M1）"
     },
     {
+      "name": "permissions",
+      "description": "权限画像与策略出口（ADR-011；PoC-6 权限矩阵与脱敏五出口）"
+    },
+    {
       "name": "dicts",
       "description": "数据字典下发（A3；region / projectType，含主题色元数据）"
     },
@@ -51,6 +55,45 @@
   ],
   "components": {
     "schemas": {
+      "ActorPermissions": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "roleCodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "project_manager"
+            ],
+            "description": "角色码（roles.code；多角色并集）"
+          },
+          "dataScopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataScope"
+            },
+            "description": "数据范围并集（由宽到窄）"
+          },
+          "permissionKeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionKey"
+            },
+            "description": "功能权限位并集（role_permissions）"
+          }
+        },
+        "required": [
+          "userId",
+          "roleCodes",
+          "dataScopes",
+          "permissionKeys"
+        ],
+        "description": "当前用户授权画像（角色 + 数据范围 + 功能权限位）"
+      },
       "ApiError": {
         "type": "object",
         "properties": {
@@ -551,6 +594,17 @@
           "applied"
         ],
         "description": "变更申请状态；一期申请即通过（唯一终态 applied），多级审批二期可启用"
+      },
+      "DataScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "managed_projects",
+          "involved_projects",
+          "own_stakeholders",
+          "granted"
+        ],
+        "description": "角色数据范围：all > managed_projects > involved_projects > own_stakeholders > granted（多角色并集）"
       },
       "DateOnly": {
         "type": "string",
@@ -1389,6 +1443,48 @@
           "deleted"
         ],
         "description": "节点状态（project_nodes.status）；done 必须过门禁"
+      },
+      "PermissionKey": {
+        "type": "string",
+        "enum": [
+          "project.view",
+          "project.create",
+          "project.update",
+          "project.delete",
+          "project.export",
+          "member.view",
+          "member.manage",
+          "task.view",
+          "task.create",
+          "task.update",
+          "task.progress",
+          "node.view",
+          "node.create",
+          "node.delete",
+          "node.complete",
+          "node.advance",
+          "node.rollback",
+          "blueprint.view",
+          "blueprint.manage",
+          "file.upload",
+          "file.download",
+          "stakeholder.view",
+          "stakeholder.manage",
+          "stakeholder.contact.view"
+        ],
+        "description": "功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）"
+      },
+      "PermissionMeResponse": {
+        "type": "object",
+        "properties": {
+          "permissions": {
+            "$ref": "#/components/schemas/ActorPermissions"
+          }
+        },
+        "required": [
+          "permissions"
+        ],
+        "description": "当前用户授权画像（未登录 401）"
       },
       "Priority": {
         "type": [
@@ -7587,6 +7683,36 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/permissions/me": {
+      "get": {
+        "tags": [
+          "permissions"
+        ],
+        "summary": "当前用户授权画像（角色 / 数据范围 / 功能权限位；前端据此置灰）",
+        "responses": {
+          "200": {
+            "description": "授权画像",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionMeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
             "content": {
               "application/json": {
                 "schema": {

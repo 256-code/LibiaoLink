@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from "@nestjs
 import { NodeCompleteBodySchema, UuidSchema, z } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { ProjectAccess, ProjectAccessGuard } from "../permission/index.js";
 import { FlowService } from "./flow.service.js";
 import type { ProjectNodeView } from "./flow.service.js";
 
@@ -9,9 +10,14 @@ type NodeCompleteBody = z.infer<typeof NodeCompleteBodySchema>;
 
 const uuidParam = new ZodValidationPipe(UuidSchema);
 
-/** 节点接口（h3）：完成门禁经 /api/v1/nodes；服务端事务内强校验，预检不替代判定（v0.2 §3.6）。 */
+/**
+ * 节点接口（h3）：完成门禁经 /api/v1/nodes；服务端事务内强校验，预检不替代判定（v0.2 §3.6）。
+ * 路径 :id 是节点 id，ProjectAccessGuard 先解析到所属项目再做记录级 404（h6）；
+ * 完成 / 预检本身是成员平权（ADR-011 §4.3 例外），故不挂 @RequirePermission。
+ */
 @Controller("api/v1/nodes")
-@UseGuards(SessionGuard, CsrfGuard)
+@UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
+@ProjectAccess("node")
 export class NodesController {
   constructor(private readonly flow: FlowService) {}
 

@@ -3251,6 +3251,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/permissions/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前用户授权画像（角色 / 数据范围 / 功能权限位；前端据此置灰） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 授权画像 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PermissionMeResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -3419,6 +3464,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description 当前用户授权画像（角色 + 数据范围 + 功能权限位） */
+        ActorPermissions: {
+            userId: components["schemas"]["Uuid"];
+            /**
+             * @description 角色码（roles.code；多角色并集）
+             * @example [
+             *       "project_manager"
+             *     ]
+             */
+            roleCodes: string[];
+            /** @description 数据范围并集（由宽到窄） */
+            dataScopes: components["schemas"]["DataScope"][];
+            /** @description 功能权限位并集（role_permissions） */
+            permissionKeys: components["schemas"]["PermissionKey"][];
+        };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
         ApiError: {
             code: components["schemas"]["ErrorCode"];
@@ -3552,6 +3612,11 @@ export interface components {
          * @enum {string}
          */
         ChangeStatus: "applied";
+        /**
+         * @description 角色数据范围：all > managed_projects > involved_projects > own_stakeholders > granted（多角色并集）
+         * @enum {string}
+         */
+        DataScope: "all" | "managed_projects" | "involved_projects" | "own_stakeholders" | "granted";
         /**
          * Format: date
          * @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）
@@ -3776,6 +3841,15 @@ export interface components {
          * @enum {string}
          */
         NodeStatus: "pending" | "active" | "done" | "deleted";
+        /**
+         * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
+         * @enum {string}
+         */
+        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view";
+        /** @description 当前用户授权画像（未登录 401） */
+        PermissionMeResponse: {
+            permissions: components["schemas"]["ActorPermissions"];
+        };
         /**
          * @description 紧急重要度四象限字典
          * @enum {string|null}
