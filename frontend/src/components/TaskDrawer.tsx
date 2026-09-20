@@ -1,9 +1,28 @@
+
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { PROJECT_MANAGER, isTaskDone, isTaskOverdue, lateDeliveryLabel, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberById, memberByName } from "../data/members";
+import {
+  PROJECT_MANAGER,
+  cnDateFromIso,
+  daysBetweenInclusive,
+  isTaskDone,
+  isTaskOverdue,
+  isoFromCnDate,
+  lateDeliveryLabel,
+  taskStatus,
+  type ProjectTask,
+  type TaskPriority,
+  type TaskStatus,
+} from "../data/tasks";
+import { DateRangePicker, type DateRange } from "./DateRangePicker";
+import { MemberSelect } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
+import { SelectMenu } from "./SelectMenu";
 import { TRACKER_STEPS, trackerLabel, trackerStep } from "./Tracker";
 
 const CLOSE_ANIMATION_MS = 170;
+/** 「已保存」提示的停留时间。 */
+const SAVED_FLASH_MS = 1600;
 
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
   高: "bg-rose-50 text-rose-600",
@@ -27,23 +46,94 @@ const STATUS_CHIP_CLASS: Record<TaskStatus, string> = {
   待开始: "bg-zinc-100 text-zinc-500",
 };
 
+const PRIORITY_OPTIONS = [
+  { value: "高", label: "高" },
+  { value: "中", label: "中" },
+  { value: "低", label: "低" },
+];
+
+/** 抽屉里可编辑控件的统一外观（与任务编辑表单同一套）。 */
+const FIELD_CLASS =
+  "block w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-900/10";
+
+const CAPTION_CLASS = "mt-1 block text-[11px] leading-4 text-zinc-400";
+
+/** 任务编辑保存值：可编辑字段 = 项目经理（项目级）/ 负责人 / 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
+export type TaskEditSubmit = {
+  taskId: string;
+  managerId: string;
+  owner: string;
+  ownerEn: string;
+  startDate: string;
+  dueDate: string;
+  days: number;
+  headcount: number;
+  priority: TaskPriority;
+  note: string;
+};
+
+/** 抽屉里的表单草稿（「所见即所存」：抽屉打开期间不随父级刷新重置）。 */
+type Draft = {
+  managerId: string;
+  ownerId: string;
+  range: DateRange | null;
+  headcount: string;
+  priority: TaskPriority;
+  note: string;
+};
+
+function rangeOf(task: ProjectTask): DateRange | null {
+  const from = isoFromCnDate(task.startDate);
+  const to = isoFromCnDate(task.dueDate);
+  return from === "" || to === "" ? null : { from, to };
+}
+
+function draftOf(task: ProjectTask | null, managerId: string): Draft {
+  return {
+    managerId,
+    ownerId: task === null ? "" : memberByName(task.owner)?.id ?? "",
+    range: task === null ? null : rangeOf(task),
+    headcount: task !== null && task.headcount > 0 ? String(task.headcount) : "",
+    priority: task === null ? "中" : task.priority,
+    note: task === null ? "" : task.note,
+  };
+}
+
 type TaskDrawerProps = {
   /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
   manager?: string;
+  /** 当前项目经理 id（项目级字段，人员下拉的选中项）。 */
+  managerId?: string;
   task: ProjectTask | null;
-  /** 「编辑任务」入口（打开任务编辑弹窗）；不传时不显示按钮。 */
-  onEdit?: (task: ProjectTask) => void;
+  /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
+  onSubmit?: (values: TaskEditSubmit) => void;
   onClose: () => void;
 };
 
-export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) {
+/**
+ * 任务详情抽屉（Push 63）：点任务行 / 看板卡片打开。
+ * **要改直接在抽屉里改**（Push 88 业务口径：「编辑任务」弹窗不再需要）—— 项目经理 / 任务负责人 / 紧急重要度选完即存，
+ * 日期区间选完即存，施工人数 / 进展描述失焦时存（值没变不写，避免无谓刷新项目时间）；保存后右下角闪一下「已保存」。
+ * 只读口径不变：任务状态 / 进度 / 实际完成日期按字段口径派生（要改状态 / 实际完成日期去任务表行内改），
+ * 任务描述 / 输出成果文件按 A1-17 锁定，文件走文件库。
+ */
+export function TaskDrawer({ task, manager, managerId = "", onSubmit, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
+  const [draft, setDraft] = useState<Draft>(() => draftOf(task, managerId));
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  /** 「已保存」提示（非 0 = 展示中）。 */
+  const [savedTick, setSavedTick] = useState(0);
 
   useEffect(() => {
     closingRef.current = false;
     setClosing(false);
+    setSavedTick(0);
+    setDraft(draftOf(task, managerId));
+    // 换任务时把草稿重置成新任务的字段；同一个任务上父级刷新不重置，避免打断正在输入的内容
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
   useEffect(() => {
@@ -56,6 +146,18 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
       document.body.style.overflow = previousOverflow;
     };
   }, [taskId]);
+
+  useEffect(() => {
+    if (savedTick === 0) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setSavedTick(0);
+    }, SAVED_FLASH_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [savedTick]);
 
   const requestClose = useCallback(() => {
     if (closingRef.current) {
@@ -81,10 +183,47 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
     };
   }, [taskId, requestClose]);
 
+  /** 改草稿：ref 与 state 一起写 —— 失焦可能与最后一次输入同一批处理，只写 state 会让失焦读到旧值。 */
+  const updateDraft = useCallback((patch: Partial<Draft>) => {
+    const next: Draft = { ...draftRef.current, ...patch };
+    draftRef.current = next;
+    setDraft(next);
+    return next;
+  }, []);
+
+  /** 即时保存：把草稿与改动合成一份完整保存值（字段口径同任务表行内编辑）。 */
+  const commit = useCallback(
+    (patch: Partial<Draft>) => {
+      const current = task;
+      if (current === null || onSubmit === undefined) {
+        return;
+      }
+      const next = updateDraft(patch);
+      const owner = next.ownerId === "" ? null : memberById(next.ownerId) ?? null;
+      const headcountText = next.headcount.trim();
+      const headcountValue = headcountText === "" ? 0 : Number(headcountText);
+      onSubmit({
+        taskId: current.id,
+        managerId: next.managerId,
+        owner: owner?.name ?? "",
+        ownerEn: owner?.handle ?? "",
+        startDate: next.range === null ? "" : cnDateFromIso(next.range.from),
+        dueDate: next.range === null ? "" : cnDateFromIso(next.range.to),
+        days: next.range === null ? 0 : daysBetweenInclusive(next.range.from, next.range.to),
+        headcount: headcountText === "" || Number.isNaN(headcountValue) ? 0 : Math.floor(headcountValue),
+        priority: next.priority,
+        note: next.note.trim(),
+      });
+      setSavedTick(Date.now());
+    },
+    [onSubmit, task, updateDraft],
+  );
+
   if (task === null) {
     return null;
   }
 
+  const editable = onSubmit !== undefined;
   const done = isTaskDone(task);
   const overdue = isTaskOverdue(task);
   /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期字段）。 */
@@ -99,12 +238,72 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
   const statusChipClass = STATUS_CHIP_CLASS[status];
   const dash = <span className="text-zinc-300">—</span>;
 
-  const fields: Array<{ label: string; value: ReactNode }> = [
+  const draftDays = draft.range === null ? 0 : daysBetweenInclusive(draft.range.from, draft.range.to);
+  const shownDays = editable ? draftDays : task.days;
+  const headcountText = draft.headcount.trim();
+  const headcountValue = headcountText === "" ? 0 : Number(headcountText);
+  const headcountInvalid = headcountText !== "" && (Number.isNaN(headcountValue) || headcountValue < 0);
+
+  /** 失焦才存的字段（施工人数 / 进展描述）：值没变就不写；人数不合法时不写（红字提示留着）。
+   *  读 `draftRef` 而不是渲染期的 `draft` —— 失焦可能与最后一次输入同一批处理，渲染期的值会是旧的。 */
+  const commitDraft = () => {
+    if (onSubmit === undefined) {
+      return;
+    }
+    const current = draftRef.current;
+    const text = current.headcount.trim();
+    const value = text === "" ? 0 : Number(text);
+    if (text !== "" && (Number.isNaN(value) || value < 0)) {
+      return;
+    }
+    const nextHeadcount = text === "" ? 0 : Math.floor(value);
+    if (nextHeadcount === task.headcount && current.note.trim() === task.note) {
+      return;
+    }
+    commit({});
+  };
+
+  const rows: Array<{ label: string; value: ReactNode }> = [
     {
       label: "项目经理",
-      value: <span className="font-medium text-zinc-800">{manager ?? PROJECT_MANAGER}</span>,
+      value: editable ? (
+        <>
+          <MemberSelect
+            value={draft.managerId}
+            options={PROJECT_MANAGERS}
+            onChange={(member) => {
+              commit({ managerId: member.id });
+            }}
+            placeholder="选择项目经理"
+            ariaLabel="选择项目经理"
+          />
+          <span className={CAPTION_CLASS}>项目级字段，改后全项目同步</span>
+        </>
+      ) : (
+        <span className="font-medium text-zinc-800">{manager ?? PROJECT_MANAGER}</span>
+      ),
     },
-    { label: "任务负责人", value: task.owner === "" ? <span className="text-zinc-400">待分配</span> : fullOwner },
+    {
+      label: "任务负责人",
+      value: editable ? (
+        <>
+          <MemberSelect
+            value={draft.ownerId}
+            options={MEMBER_DIRECTORY}
+            onChange={(member) => {
+              commit({ ownerId: member.id });
+            }}
+            placeholder="待分配"
+            ariaLabel="选择任务负责人"
+          />
+          <span className={CAPTION_CLASS}>留空 = 待分配</span>
+        </>
+      ) : task.owner === "" ? (
+        <span className="text-zinc-400">待分配</span>
+      ) : (
+        fullOwner
+      ),
+    },
     {
       label: "任务状态",
       value: (
@@ -116,7 +315,20 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
     },
     {
       label: "紧急重要度",
-      value: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>{task.priority}</span>,
+      value: editable ? (
+        <SelectMenu
+          value={draft.priority}
+          options={PRIORITY_OPTIONS}
+          onChange={(value) => {
+            commit({ priority: value as TaskPriority });
+          }}
+          ariaLabel="选择紧急重要度"
+        />
+      ) : (
+        <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
+          {task.priority}
+        </span>
+      ),
     },
     {
       label: "是否按时交付",
@@ -147,15 +359,85 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
           </span>
         ),
     },
-    { label: "项目进展描述", value: task.note === "" ? dash : task.note },
-    { label: "开始日期", value: task.startDate === "" ? dash : task.startDate },
-    { label: "预计完成日期", value: task.dueDate === "" ? dash : task.dueDate },
-    { label: "预计所需天数", value: task.days > 0 ? task.days + " 天" : dash },
-    { label: "预计所需施工人数", value: task.headcount > 0 ? task.headcount + " 人" : dash },
+    {
+      label: "项目进展描述",
+      value: editable ? (
+        <textarea
+          rows={3}
+          value={draft.note}
+          onChange={(event) => {
+            updateDraft({ note: event.target.value });
+          }}
+          onBlur={commitDraft}
+          placeholder="补充当前进展、风险或下一步"
+          aria-label="项目进展描述"
+          className={FIELD_CLASS + " resize-none leading-6"}
+        />
+      ) : task.note === "" ? (
+        dash
+      ) : (
+        task.note
+      ),
+    },
+    {
+      label: "开始 / 预计完成",
+      value: editable ? (
+        <>
+          <DateRangePicker
+            value={draft.range}
+            onChange={(next) => {
+              commit({ range: next });
+            }}
+            hintDate={isoFromCnDate(task.startDate)}
+            placeholder="选择开始与预计完成日期"
+            ariaLabel="选择开始与预计完成日期"
+          />
+          <span className={CAPTION_CLASS}>天数随日期联动（含首尾）</span>
+        </>
+      ) : task.startDate === "" && task.dueDate === "" ? (
+        dash
+      ) : (
+        (task.startDate === "" ? "—" : task.startDate) + " → " + (task.dueDate === "" ? "—" : task.dueDate)
+      ),
+    },
+    { label: "预计所需天数", value: shownDays > 0 ? shownDays + " 天" : dash },
+    {
+      label: "预计所需施工人数",
+      value: editable ? (
+        <>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              inputMode="numeric"
+              value={draft.headcount}
+              onChange={(event) => {
+                updateDraft({ headcount: event.target.value });
+              }}
+              onBlur={commitDraft}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.currentTarget.blur();
+                }
+              }}
+              placeholder="未填"
+              aria-label="预计所需施工人数"
+              className={FIELD_CLASS + (headcountInvalid ? " border-rose-300 focus:border-rose-400 focus:ring-rose-500/15" : "")}
+            />
+            <span className="shrink-0 text-xs text-zinc-400">人</span>
+          </div>
+          {headcountInvalid ? <span className="mt-1 block text-[11px] text-rose-500">请填 0 以上的整数</span> : null}
+        </>
+      ) : task.headcount > 0 ? (
+        task.headcount + " 人"
+      ) : (
+        dash
+      ),
+    },
     {
       label: "实际完成日期",
-      value:
-        task.doneDate !== "" ? task.doneDate : dash,
+      value: task.doneDate !== "" ? task.doneDate : dash,
     },
     {
       label: "变更关联",
@@ -193,32 +475,16 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage}</span>
               <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {onEdit === undefined ? null : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onEdit(task);
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
-                    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-                  </svg>
-                  编辑任务
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={requestClose}
-                aria-label="关闭任务详情"
-                className="-mr-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
-              >
-                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-                  <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={requestClose}
+              aria-label="关闭任务详情"
+              className="-mr-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
           </div>
           <h2 id="task-drawer-title" className="mt-3.5 text-lg font-semibold leading-7 text-zinc-900">
             {task.title}
@@ -241,22 +507,27 @@ export function TaskDrawer({ task, manager, onEdit, onClose }: TaskDrawerProps) 
           ) : null}
         </div>
 
-        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1">
+        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="任务详情字段">
           <dl>
-            {fields.map((field) => (
+            {rows.map((row) => (
               <div
-                key={field.label}
+                key={row.label}
                 className="grid grid-cols-[96px_1fr] items-start gap-x-4 border-b border-zinc-50 py-3 last:border-b-0"
               >
-                <dt className="pt-px text-xs leading-5 text-zinc-400">{field.label}</dt>
-                <dd className="text-sm leading-5 text-zinc-800">{field.value}</dd>
+                <dt className="pt-px text-xs leading-5 text-zinc-400">{row.label}</dt>
+                <dd className="min-w-0 text-sm leading-5 text-zinc-800">{row.value}</dd>
               </div>
             ))}
           </dl>
         </ScrollArea>
 
-        <footer className="border-t border-zinc-100 px-6 py-3">
-          <p className="text-[11px] text-zinc-400">点击空白处或按 Esc 关闭</p>
+        <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
+          <p className="text-[11px] text-zinc-400">点空白处或按 Esc 关闭</p>
+          {savedTick !== 0 ? (
+            <p className="text-[11px] font-medium text-emerald-600">已保存</p>
+          ) : editable ? (
+            <p className="text-[11px] text-zinc-400">改动即时保存（原型暂存浏览器内存）</p>
+          ) : null}
         </footer>
       </aside>
     </div>
