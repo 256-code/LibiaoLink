@@ -1,10 +1,41 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "../data/templatePresets";
+import { SelectMenu, type SelectOption } from "./SelectMenu";
+
+/**
+ * 插入位置（Push 111，业务口径「人员要指定位置放入」）：新加的任务放进该阶段里的哪一格 ——
+ * `last` = 该阶段最后（默认）；`before` / `after` = 以某张同阶段任务为锚，插到它前面 / 后面。
+ */
+export type StagePlacement = { kind: "last" } | { kind: "before"; taskId: string } | { kind: "after"; taskId: string };
+
+/** 选择器的值编码：`last` / `before:<任务 id>` / `after:<任务 id>`。 */
+function placementValue(placement: StagePlacement): string {
+  return placement.kind === "last" ? "last" : placement.kind + ":" + placement.taskId;
+}
+
+function placementFromValue(value: string): StagePlacement {
+  if (value === "last") {
+    return { kind: "last" };
+  }
+  const cut = value.indexOf(":");
+  return { kind: value.slice(0, cut) === "before" ? "before" : "after", taskId: value.slice(cut + 1) };
+}
 
 type StageAddCardProps = {
   stage: string;
   existingTaskIds: ReadonlySet<string>;
   onAddNode: (stage: string, node: TemplatePresetNode) => void;
+  /** 一次加多个（Push 111，「整套添加」按钮用）：不传时退回逐个 `onAddNode`。 */
+  onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[]) => void;
+  /**
+   * 插入位置（Push 111）：给了就显示「插入位置」一行 —— 锚点 = 该阶段现有任务（按项目总览里的先后）。
+   * 看板的「添加 → 阶段任务」会传；项目总览里点阶段标签加节点不传（默认排该阶段最后）。
+   */
+  placement?: {
+    tasks: readonly { id: string; title: string }[];
+    value: StagePlacement;
+    onChange: (next: StagePlacement) => void;
+  };
   onClose: () => void;
   /** 卡片落点（由 TaskBoard 量表格算出来：表头正下方、贴表格右边缘）；不传时回落到右上角悬浮。 */
   style?: CSSProperties;
@@ -32,7 +63,7 @@ function presetNodesOf(stage: string): TemplatePresetNode[] {
  * 其余每个标签 = 这个阶段的一块模板（按预设顺序预览、可鼠标滚动，也能逐条 / 整套加）。
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
-export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose, style }: StageAddCardProps) {
+export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
   const presets = useMemo(() => STAGE_TEMPLATE_PRESETS[stage] ?? [], [stage]);
   const nodes = useMemo(() => presetNodesOf(stage), [stage]);
   const [activeTab, setActiveTab] = useState("nodes");
@@ -56,6 +87,10 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose, style
       if (target !== null && target.closest("[data-stage-pill]") !== null) {
         return;
       }
+      // 「插入位置」下拉是挂到 body 的浮层（Push 111）：点它不算点卡片外面，卡片不关
+      if (target !== null && target.closest("[data-select-popover]") !== null) {
+        return;
+      }
       if (cardRef.current !== null && !cardRef.current.contains(event.target as Node)) {
         onClose();
       }
@@ -74,6 +109,16 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose, style
   const items = currentPreset?.nodes ?? nodes;
   const pendingCount = items.filter((node) => !existingTaskIds.has(node.id)).length;
   const addedCount = items.length - pendingCount;
+
+  /** 插入位置的可选项：该阶段最后（默认）/ 该阶段最前 / 在《某张任务》之后 —— 该阶段还没有任务时只剩默认那一档。 */
+  const placementOptions: SelectOption[] =
+    placement === undefined || placement.tasks.length === 0
+      ? []
+      : [
+          { value: "last", label: "该阶段最后（默认）" },
+          { value: "before:" + placement.tasks[0].id, label: "该阶段最前" },
+          ...placement.tasks.map((task) => ({ value: "after:" + task.id, label: "在《" + task.title + "》之后" })),
+        ];
 
   return (
     <aside
@@ -147,11 +192,14 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose, style
             type="button"
             disabled={pendingCount === 0}
             onClick={() => {
-              for (const node of items) {
-                if (!existingTaskIds.has(node.id)) {
+              const pending = items.filter((node) => !existingTaskIds.has(node.id));
+              if (onAddNodes === undefined) {
+                for (const node of pending) {
                   onAddNode(stage, node);
                 }
+                return;
               }
+              onAddNodes(stage, pending);
             }}
             title="把这块模板里还没加过的节点一次全加到项目"
             className="shrink-0 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
@@ -160,6 +208,24 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onClose, style
           </button>
         )}
       </div>
+
+      {placement === undefined ? null : (
+        <div className="mt-2 flex shrink-0 items-center gap-2">
+          <span className="shrink-0 text-[11px] text-zinc-500">插入位置</span>
+          <div className="min-w-0 flex-1">
+            {placementOptions.length === 0 ? (
+              <span className="text-[11px] text-zinc-400">该阶段还没有别的任务 —— 只能排在该阶段最后</span>
+            ) : (
+              <SelectMenu
+                value={placementValue(placement.value)}
+                options={placementOptions}
+                onChange={(next) => { placement.onChange(placementFromValue(next)); }}
+                ariaLabel="插入位置：这个阶段里的位置"
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
         {items.map((node, index) => {
