@@ -23,6 +23,8 @@ export const users = pgTable(
     email: text("email"),
     owner: text("owner"),
     status: text("status").notNull().default("active"),
+    /** removed_at（0008）：delete 动作置位（目录源已删除）；enable 清空；不物理删除用户行。 */
+    removedAt: timestamp("removed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { eq } from "drizzle-orm";
+import { and, asc, count, eq, ilike, or, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import { users } from "../../db/schema/identity.js";
 
@@ -104,5 +104,64 @@ export class UserRepository {
   async updateStatus(id: string, status: "active" | "disabled", at: Date): Promise<void> {
     await this.database.db.update(users).set({ status, updatedAt: at }).where(eq(users.id, id));
   }
+
+  /** 内部离职回收（h1）：按目标态更新 status / removed_at（removedAt 未提供 = 不改动该列）。 */
+  async updateInternalState(
+    id: string,
+    next: { status: "active" | "disabled"; removedAt?: Date | null },
+    at: Date,
+  ): Promise<void> {
+    const patch: { status: "active" | "disabled"; updatedAt: Date; removedAt?: Date | null } = {
+      status: next.status,
+      updatedAt: at,
+    };
+    if (Object.prototype.hasOwnProperty.call(next, "removedAt")) {
+      patch.removedAt = next.removedAt ?? null;
+    }
+    await this.database.db.update(users).set(patch).where(eq(users.id, id));
+  }
+
+  /** 内部离职回收：按工号定位（name 为准）。 */
+  async findByUsername(username: string): Promise<UserRow | null> {
+    const rows = await this.database.db.select().from(users).where(eq(users.username, username)).limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 内部离职回收：邮箱兜底（大小写不敏感；命中多行时取工号升序首行）。 */
+  async findByEmail(email: string): Promise<UserRow | null> {
+    const rows = await this.database.db
+      .select()
+      .from(users)
+      .where(sqlLowerEmail(email))
+      .orderBy(asc(users.username))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 用户目录（A2 · M1）：只返回启用用户；q 匹配工号 / 姓名 / 邮箱；默认工号升序（分页稳定）。 */
+  async listDirectory(options: { q: string | null; limit: number; offset: number }): Promise<{ rows: UserRow[]; total: number }> {
+    const pattern = options.q === null ? null : "%" + options.q + "%";
+    const where =
+      pattern === null
+        ? eq(users.status, "active")
+        : and(
+            eq(users.status, "active"),
+            or(ilike(users.username, pattern), ilike(users.displayName, pattern), ilike(users.email, pattern)),
+          );
+    const rows = await this.database.db
+      .select()
+      .from(users)
+      .where(where)
+      .orderBy(asc(users.username))
+      .limit(options.limit)
+      .offset(options.offset);
+    const totals = await this.database.db.select({ value: count() }).from(users).where(where);
+    return { rows, total: Number(totals[0]?.value ?? 0) };
+  }
+}
+
+/** 邮箱兜底匹配：lower(email) = lower(入参)（email 可空，null 行自然不命中）。 */
+function sqlLowerEmail(email: string) {
+  return sql`lower(${users.email}) = lower(${email})`;
 }
 
