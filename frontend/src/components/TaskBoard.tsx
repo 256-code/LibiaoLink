@@ -187,7 +187,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
     title: (
       <div className="flex min-w-0 items-center gap-4 self-stretch pr-8">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-zinc-800" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
+          <p className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
             {task.title}
           </p>
           {task.titleEn === "" ? null : (
