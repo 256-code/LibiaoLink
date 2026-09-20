@@ -14,7 +14,7 @@ import type { MeResponse, Project } from "./types";
 /** 阶段名（不含「项目总览」汇总视图）。 */
 const STAGE_NAMES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
-/** 顶部视图标签（Push 69 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」。 */
+/** 顶部视图标签（Push 82 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」。 */
 const VIEW_TABS: readonly string[] = ["项目总览", "人员任务分配", "任务进展"];
 
 /** 从任务模板预设加进来的任务：字段先给默认值（负责人 / 日期等留空，后续在任务详情里补）。 */
@@ -81,7 +81,7 @@ type ProjectDetailProps = {
 };
 
 export default function ProjectDetail({ me, project, onChangeManager, onTaskEdited }: ProjectDetailProps) {
-  /** 顶部视图（Push 69）：阶段标签收进「项目总览」，另两块是看板视图。 */
+  /** 顶部视图（Push 82）：阶段标签收进「项目总览」，另两块是看板视图。 */
   const [activeView, setActiveView] = useState<string>(VIEW_TABS[0]);
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
   /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
