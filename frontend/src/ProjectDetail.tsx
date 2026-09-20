@@ -4,7 +4,7 @@ import { ColumnPicker } from "./components/ColumnPicker";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskEditModal";
-import { TaskKanban } from "./components/TaskKanban";
+import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import { PROJECT_STAGES } from "./data/projects";
 import { isCompleteStatus, isPastDue, progressAfterStatus, statusOverrideAfterProgress, tasksForProject, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
@@ -44,14 +44,14 @@ function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTas
 
 let quickTaskSeq = 0;
 
-/** 看板「+ 添加」直接建的空任务：标题占位「新任务」，负责人 / 状态按所在列给（阶段留空 → 项目总览里落在「未分组」）。 */
-function quickTask(group: { owner: string; ownerEn: string; status: TaskStatus }): ProjectTask {
+/** 看板「添加 → 临时任务」建的任务（Push 86）：标题 / 英文名由用户自己填，负责人 / 状态按所在列给（阶段留空 → 项目总览里落在「未分组」）。 */
+function quickTask(group: { owner: string; ownerEn: string; status: TaskStatus }, title: string, titleEn: string): ProjectTask {
   quickTaskSeq += 1;
   return {
     id: "quick-" + String(quickTaskSeq) + "-" + String(Date.now()),
     stage: "",
-    title: "新任务",
-    titleEn: "",
+    title,
+    titleEn,
     owner: group.owner,
     ownerEn: group.ownerEn,
     status: group.status,
@@ -179,9 +179,34 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
     );
   };
 
-  /** 看板「+ 添加」：建一个空任务挂到该列（负责人 / 状态按列给，阶段留空）；与其它任务编辑一样刷新项目时间。 */
-  const handleQuickAdd = (group: { owner: string; ownerEn: string; status: TaskStatus }) => {
-    setAddedTasks((previous) => [...previous, quickTask(group)]);
+  /** 看板「添加 → 临时任务」：标题由用户自己填，挂到该列（负责人 / 状态按列给，阶段留空）；与其它任务编辑一样刷新项目时间。 */
+  const handleQuickAdd = (context: KanbanAddContext, values: { title: string; titleEn: string }) => {
+    setAddedTasks((previous) => [...previous, quickTask(context, values.title, values.titleEn)]);
+    if (project !== null) {
+      onTaskEdited?.(project.id);
+    }
+  };
+
+  /**
+   * 看板「添加 → 阶段任务」：从该阶段的节点池 / 模板里选的节点加进项目（按节点 id 判重）。
+   * 任务自带阶段，并带上所在列的负责人 / 状态（与「临时任务」同一套列上下文）。
+   */
+  const handleKanbanAddNode = (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => {
+    setAddedTasks((previous) =>
+      previous.some((task) => task.id === node.id) || baseTasks.some((task) => task.id === node.id)
+        ? previous
+        : [
+            ...previous,
+            {
+              ...taskFromPresetNode(stage, node),
+              owner: context.owner,
+              ownerEn: context.ownerEn,
+              status: context.status,
+              statusOverride: context.status,
+              progress: progressAfterStatus(context.status, 0),
+            },
+          ],
+    );
     if (project !== null) {
       onTaskEdited?.(project.id);
     }
@@ -281,6 +306,7 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
               manager={manager}
               managerId={project.managerId}
               onAddTask={handleQuickAdd}
+              onAddStageTask={handleKanbanAddNode}
               onSubmitTaskEdit={handleSubmitTaskEdit}
             />
           )}
