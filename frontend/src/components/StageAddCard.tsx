@@ -11,7 +11,7 @@ import { usePopover } from "./usePopover";
 export type StagePlacement = { kind: "last" } | { kind: "before"; taskId: string } | { kind: "after"; taskId: string };
 
 /**
- * 插入位置浮层（Push 113，业务口径「我要点击这个添加后选择位置」）：点某一条「＋ 添加」时贴这条浮出 ——
+ * 插入位置浮层（Push 113，业务口径「我要点击这个添加后选择位置」；Push 114 起「默认顺序添加」取消勾选后才弹）：点某一条「＋ 添加」时贴这条浮出 ——
  * 前两档固定（该阶段最后（默认）/ 该阶段最前），下面按**当前阶段的任务顺序**列出该阶段任务
  * （固定高度、隐式滚动条、可滑动；悬停高亮并浮出「插到它后面」），点一条 = 把这次要加的任务插到它后面。
  */
@@ -112,6 +112,58 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
   );
 }
 
+/**
+ * 「默认顺序添加」复选框（Push 114，业务口径「影响正常情况下添加任务了 所以默认是顺序添加 要改的话手动改」）：
+ * 勾上（默认）= 点「＋ 添加」直接按顺序加到该阶段末尾；取消勾选 = 点「＋ 添加」后先选插入位置。
+ * 视觉照业务给的样例（方框 + 勾线的 SVG：勾上时方框开一个缺口、勾线画出来）—— 复用 Tailwind，不引 styled-components。
+ */
+function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <label
+      title={
+        checked
+          ? "默认顺序添加（已勾选）：点「＋ 添加」直接按顺序加到该阶段末尾；取消勾选可手动选插入位置"
+          : "已取消勾选：点「＋ 添加」后先弹浮层选插入位置；勾上可回到默认的顺序添加"
+      }
+      className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-[11px] font-medium text-zinc-500 transition hover:text-zinc-700"
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => { onChange(event.target.checked); }}
+        className="peer sr-only"
+      />
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className={"h-4 w-4 shrink-0 transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[#feca04]/70 " + (checked ? "text-emerald-600" : "text-zinc-400")}
+      >
+        <rect
+          x="1.5"
+          y="1.5"
+          width="21"
+          height="21"
+          rx="5"
+          ry="5"
+          strokeWidth="3"
+          className={"transition-[stroke-dasharray] duration-100 " + (checked ? "[stroke-dasharray:80_18]" : "[stroke-dasharray:88_0]")}
+        />
+        <polyline
+          points="7 10 12 16 22 2"
+          strokeWidth="4"
+          className={"transition-[stroke-dasharray] duration-150 " + (checked ? "[stroke-dasharray:30_30]" : "[stroke-dasharray:0_30]")}
+        />
+      </svg>
+      <span>默认顺序添加</span>
+    </label>
+  );
+}
+
+
 type StageAddCardProps = {
   stage: string;
   existingTaskIds: ReadonlySet<string>;
@@ -158,6 +210,11 @@ function presetNodesOf(stage: string): TemplatePresetNode[] {
 export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
   /** 点了「＋ 添加」/「整套添加」之后、还没选位置的那一次（Push 113）：`nodes` = 这次要加的一条 / 一批，`anchor` = 贴哪一行浮出。 */
   const [armed, setArmed] = useState<{ nodes: readonly TemplatePresetNode[]; anchor: HTMLElement } | null>(null);
+  /**
+   * 「默认顺序添加」（Push 114，业务口径「影响正常情况下添加任务了 所以默认是顺序添加 要改的话手动改」）：默认勾选 ——
+   * 勾上 = 点「＋ 添加」直接按顺序加到该阶段末尾（不动顺序表）；取消勾选 = 点「＋ 添加」才弹位置浮层手动选。每次开卡片都回到默认。
+   */
+  const [sequential, setSequential] = useState(true);
   const presets = useMemo(() => STAGE_TEMPLATE_PRESETS[stage] ?? [], [stage]);
   const nodes = useMemo(() => presetNodesOf(stage), [stage]);
   const [activeTab, setActiveTab] = useState("nodes");
@@ -209,23 +266,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
   const pendingCount = items.filter((node) => !existingTaskIds.has(node.id)).length;
   const addedCount = items.length - pendingCount;
 
-  /**
-   * 点「＋ 添加」/「整套添加」（Push 113）：配了「插入位置」就先弹位置浮层（选完才加进项目），没配就直接加。
-   */
-  const startAdd = (picked: readonly TemplatePresetNode[], anchor: HTMLElement) => {
-    if (picked.length === 0) {
-      return;
-    }
-    if (placement === undefined) {
-      for (const node of picked) {
-        onAddNode?.(stage, node);
-      }
-      return;
-    }
-    setArmed({ nodes: picked, anchor });
-  };
-
-  /** 位置选好了（Push 113）：交给上层按这个位置插进项目。 */
+  /** 位置选好了（Push 113）：交给上层按这个位置插进项目；没给批量入口时逐条加。 */
   const commitAdd = (picked: readonly TemplatePresetNode[], next: StagePlacement) => {
     if (onAddNodes !== undefined) {
       onAddNodes(stage, picked, next);
@@ -234,6 +275,21 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
     for (const node of picked) {
       onAddNode?.(stage, node);
     }
+  };
+
+  /**
+   * 点「＋ 添加」/「整套添加」（Push 113 / 114）：勾着「默认顺序添加」时**直接按顺序加**（`last` = 不动顺序表，
+   * 按「阶段为主键」的展示顺序落在这个阶段段的末尾）；取消勾选才按老口径弹位置浮层，选完才加进项目。
+   */
+  const startAdd = (picked: readonly TemplatePresetNode[], anchor: HTMLElement) => {
+    if (picked.length === 0) {
+      return;
+    }
+    if (sequential || placement === undefined) {
+      commitAdd(picked, { kind: "last" });
+      return;
+    }
+    setArmed({ nodes: picked, anchor });
   };
 
   return (
@@ -301,19 +357,24 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
 
       <div className="mt-2 flex shrink-0 items-center justify-between gap-2">
         <span className="text-[11px] text-zinc-500">
-          {isNodesTab ? "点一条节点就加进项目" : "模板预览（鼠标滚动看全）"} · 已添加 {addedCount}
+          {isNodesTab
+            ? (sequential || placement === undefined ? "点一条节点就加进项目" : "点一条 → 先选插入位置")
+            : "模板预览（鼠标滚动看全）"} · 已添加 {addedCount}
         </span>
-        {isNodesTab ? null : (
-          <button
-            type="button"
-            disabled={pendingCount === 0}
-            onClick={(event) => { startAdd(items.filter((node) => !existingTaskIds.has(node.id)), event.currentTarget); }}
-            title="把这块模板里还没加过的节点一次全加到项目"
-            className="shrink-0 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
-          >
-            整套添加（{pendingCount}）
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {isNodesTab ? null : (
+            <button
+              type="button"
+              disabled={pendingCount === 0}
+              onClick={(event) => { startAdd(items.filter((node) => !existingTaskIds.has(node.id)), event.currentTarget); }}
+              title="把这块模板里还没加过的节点一次全加到项目"
+              className="shrink-0 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
+            >
+              整套添加（{pendingCount}）
+            </button>
+          )}
+          <SequentialToggle checked={sequential} onChange={setSequential} />
+        </div>
       </div>
 
       <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
