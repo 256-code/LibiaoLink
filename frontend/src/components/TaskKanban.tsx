@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { PROGRESS_STEPS, cnDateFromIso, isoFromCnDate, lateDeliveryLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, cnDateFromIso, isCompleteStatus, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -20,6 +20,8 @@ import { trackerLabel } from "./Tracker";
  * 卡片只出任务里真实存在的字段（标题 / 所属阶段 / 日期 / 状态 / 负责人 / 进度 / 是否按时交付）；任务字段里没有「里程碑」这一项，所以阶段一栏的口径是「所属阶段」，不写「阶段性里程碑」。
  * Push 98：进度一栏的文字由百分比改成中文档位（与任务表 Tracker 同一套标签），并新增「实际完成日期」一栏 —— 卡片上直接点选小日历就能改（口径同表格行内编辑：填 = 完成、清 = 退回进行中）。
  * 列底「添加」固定在列底、不随卡片滚动（Push 86），两种口径：**临时任务**（自己填标题，阶段留空 → 卡片「所属阶段」显示「未分组」、到「项目总览」落在「未分组」组）/ **阶段任务**（先选阶段，再从该阶段的节点池 / 模板里挑节点加进项目，任务自带阶段）。
+ * Push 104：**卡片可拖动换列** —— 按住卡片拖到别的列放开即可（负责人看板 = 改任务负责人、拖到「待分配」列 = 清空负责人；进展看板 = 改任务状态），
+ * 与任务表行内编辑走同一条 `onPatchTask`（同一张覆盖表），状态那一路同时写四格进度并在改成非完成态时清空实际完成日期 —— 卡片上的进度档位 / 实际完成日期 / 是否按时交付因此同步跟着变。
  * 列内滚动条是**隐式**的：原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块（`ScrollArea`，与分类筛选侧栏 / 任务抽屉同一套）。
  * 看板横向滚动条同样**隐式**（Push 87）：列排布交给 `ScrollArea axis="horizontal"`，原生滚动条（Windows 下带箭头那条横杠）隐藏，滑块只在滚动 / 悬停时浮在列底留白里；列高按「铺满视口」重算（`100vh - 12.75rem`），列底与页面底之间不再留下大块空白。
  */
@@ -210,12 +212,21 @@ function KanbanCard({
   mode,
   onOpen,
   onPatch,
+  dragging,
+  onDragStart,
+  onDragEnd,
 }: {
   task: ProjectTask;
   mode: KanbanMode;
   onOpen: () => void;
   /** 卡片上直接改的字段（Push 98：实际完成日期；口径同任务表行内编辑）。 */
   onPatch?: (patch: TaskPatch) => void;
+  /** 正在被拖动（Push 104）：拖动中的卡片淡出，提示「这一张正在移动」。 */
+  dragging?: boolean;
+  /** 开始拖动（Push 104）；不传 = 这张卡片不可拖。 */
+  onDragStart?: () => void;
+  /** 拖动结束（放开 / Esc 取消都算）。 */
+  onDragEnd?: () => void;
 }) {
   const status = taskStatus(task);
   const owner = memberByName(task.owner);
@@ -245,6 +256,19 @@ function KanbanCard({
       role="button"
       tabIndex={0}
       aria-label={"任务：" + task.title}
+      title={onDragStart === undefined ? undefined : "按住拖到别的列 = 移到那个组（负责人 / 状态跟着改）；点一下看任务详情"}
+      draggable={onDragStart !== undefined}
+      onDragStart={(event) => {
+        if (onDragStart === undefined) {
+          return;
+        }
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", task.id);
+        onDragStart();
+      }}
+      onDragEnd={() => {
+        onDragEnd?.();
+      }}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -252,7 +276,7 @@ function KanbanCard({
           onOpen();
         }
       }}
-      className={CARD_SHELL + " cursor-pointer"}
+      className={CARD_SHELL + (dragging === true ? " cursor-grabbing opacity-50" : " cursor-pointer")}
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_INNER}>
@@ -309,6 +333,10 @@ function KanbanColumn({
   onAddTask,
   onAddStageTask,
   onPatchTask,
+  draggingId,
+  onDragTaskStart,
+  onDragTaskEnd,
+  onDropTask,
 }: {
   group: KanbanGroup;
   mode: KanbanMode;
@@ -316,6 +344,14 @@ function KanbanColumn({
   onOpenTask: (task: ProjectTask) => void;
   /** 卡片上直接改字段（Push 98）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
+  /** 正在被拖动的卡片 id（Push 104；null = 没有在拖）。 */
+  draggingId: string | null;
+  /** 卡片开始拖动（Push 104）。 */
+  onDragTaskStart: (taskId: string) => void;
+  /** 拖动结束 —— 放开或 Esc 取消都回到「没在拖」（Push 104）。 */
+  onDragTaskEnd: () => void;
+  /** 卡片被放到这一列（Push 104）：负责人看板 = 改负责人、进展看板 = 改状态（联动进度 / 完成日期，口径同任务表行内）。 */
+  onDropTask: (taskId: string, group: KanbanGroup) => void;
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
   onAddStageTask: (context: KanbanAddContext, stage: string, node: TemplatePresetNode) => void;
 }) {
@@ -325,7 +361,12 @@ function KanbanColumn({
   const [titleEn, setTitleEn] = useState("");
   const [templateStage, setTemplateStage] = useState<string | null>(null);
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 112, left: 16 });
+  /** 拖到这一列上方（Push 104）：整列描边高亮 + 列头下方给一句「放开：移到 …」。 */
+  const [over, setOver] = useState(false);
   const columnRef = useRef<HTMLElement | null>(null);
+  /** 拖动的就是本列的卡片（放回原列 = 没变化，不高亮也不提示）。 */
+  const isOwnColumn = draggingId !== null && group.items.some((task) => task.id === draggingId);
+  const droppable = draggingId !== null && !isOwnColumn;
 
   /** 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
   const context: KanbanAddContext = {
@@ -379,7 +420,38 @@ function KanbanColumn({
   };
 
   return (
-    <section ref={columnRef} className={COLUMN_SHELL}>
+    <section
+      ref={columnRef}
+      className={COLUMN_SHELL + (over && droppable ? " rounded-[28px] ring-2 ring-emerald-400/70 ring-offset-4 ring-offset-white" : "")}
+      onDragOver={(event) => {
+        if (!droppable) {
+          return;
+        }
+        // dragover 里必须 preventDefault，浏览器才允许 drop
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        if (!over) {
+          setOver(true);
+        }
+      }}
+      onDragLeave={(event) => {
+        // 只是在列内换个元素时也会触发 dragleave —— 真正离开整列才收起高亮
+        if (columnRef.current !== null && !columnRef.current.contains(event.relatedTarget as Node | null)) {
+          setOver(false);
+        }
+      }}
+      onDrop={(event) => {
+        if (!droppable) {
+          return;
+        }
+        event.preventDefault();
+        setOver(false);
+        const taskId = event.dataTransfer.getData("text/plain");
+        if (taskId !== "") {
+          onDropTask(taskId, group);
+        }
+      }}
+    >
       <header className="mb-3 flex items-center gap-2 px-1">
         {mode === "owner" ? (
           <>
@@ -391,6 +463,12 @@ function KanbanColumn({
         )}
         <span className="shrink-0 text-xs text-zinc-400">{group.items.length}项</span>
       </header>
+
+      {over && droppable ? (
+        <p className="mb-2 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/70 px-2 py-1.5 text-[11px] text-emerald-700">
+          放开：移到「{group.key}」
+        </p>
+      ) : null}
 
       {/* 卡片列表：滚动条隐式（原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块） */}
       <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"任务卡片：" + group.key}>
@@ -409,6 +487,15 @@ function KanbanColumn({
                     onPatchTask(task.id, patch);
                   }
             }
+            dragging={draggingId === task.id}
+            onDragStart={
+              onPatchTask === undefined
+                ? undefined
+                : () => {
+                    onDragTaskStart(task.id);
+                  }
+            }
+            onDragEnd={onDragTaskEnd}
           />
         ))}
       </ScrollArea>
@@ -495,11 +582,47 @@ function KanbanColumn({
 
 export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+  /** 正在拖动的卡片 id（Push 104；null = 没在拖）。 */
+  const [draggingId, setDraggingId] = useState<string | null>(null);
   /** 抽屉里的任务按 id 取当前值（Push 98）：卡片 / 抽屉里改完，抽屉要立刻反映最新进度与日期。 */
   const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
   const groups = groupTasks(tasks, mode);
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
   const existingTaskIds = new Set(tasks.map((task) => task.id));
+
+  /**
+   * 卡片被拖到别的列（Push 104；业务口径「卡片要支持拖动 移动别的组 也相当于编辑 移动后相关的信息要对应」）：
+   * 负责人看板 = 改任务负责人（拖到「待分配」列 = 清空负责人）；进展看板 = 改任务状态 —— 两条路都走任务表行内编辑
+   * 用的同一个 `onPatchTask`（同一张覆盖表），状态那一路同时写四格进度（`progressAfterStatus`）并在改成非完成态时
+   * 清空实际完成日期（Push 67 业务定案）；卡片上的进度档位、实际完成日期、是否按时交付随之同步。
+   */
+  const moveTaskToGroup = (taskId: string, group: KanbanGroup) => {
+    if (onPatchTask === undefined) {
+      return;
+    }
+    const task = tasks.find((item) => item.id === taskId);
+    if (task === undefined) {
+      return;
+    }
+    if (mode === "owner") {
+      const nextOwner = group.key === "待分配" ? "" : group.key;
+      const nextOwnerEn = nextOwner === "" ? "" : memberByName(nextOwner)?.handle ?? group.ownerEn;
+      if (task.owner === nextOwner && task.ownerEn === nextOwnerEn) {
+        return;
+      }
+      onPatchTask(task.id, { owner: nextOwner, ownerEn: nextOwnerEn });
+      return;
+    }
+    const nextStatus = group.status;
+    if (taskStatus(task) === nextStatus) {
+      return;
+    }
+    onPatchTask(task.id, {
+      statusOverride: nextStatus,
+      progress: progressAfterStatus(nextStatus, task.progress),
+      doneDate: isCompleteStatus(nextStatus) ? task.doneDate : "",
+    });
+  };
 
   if (tasks.length === 0) {
     return (
@@ -524,6 +647,17 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
             onAddTask={onAddTask}
             onAddStageTask={onAddStageTask}
             onPatchTask={onPatchTask}
+            draggingId={onPatchTask === undefined ? null : draggingId}
+            onDragTaskStart={(taskId) => {
+              setDraggingId(taskId);
+            }}
+            onDragTaskEnd={() => {
+              setDraggingId(null);
+            }}
+            onDropTask={(taskId, target) => {
+              moveTaskToGroup(taskId, target);
+              setDraggingId(null);
+            }}
           />
         ))}
       </ScrollArea>
