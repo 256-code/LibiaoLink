@@ -5,7 +5,7 @@ import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, i
 import { InlineDateCell, InlineMemberCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
-import { TaskEditModal, type TaskEditSubmit } from "./TaskEditModal";
+import type { TaskEditSubmit } from "./TaskDrawer";
 import { Tracker } from "./Tracker";
 import { StageAddCard } from "./StageAddCard";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -520,8 +520,6 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
 
 export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, viewStage, manager, managerId, onSubmitTaskEdit, onPatchTask, onChangeManager }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
-  /** 正在编辑的任务（弹窗；入口 = 任务行铅笔 / 详情抽屉「编辑任务」）。 */
-  const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
   /** 卡片的落点（Push 67：固定在表格表头正下方、左边缘对齐「项目经理」列，不浮在页面右上角、也不跟着点击跑）。 */
@@ -530,10 +528,6 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   const boardCardRef = useRef<HTMLDivElement | null>(null);
   const headerRowRef = useRef<HTMLDivElement | null>(null);
   const closeDrawer = () => setSelectedTask(null);
-  const openEditor = (task: ProjectTask) => {
-    setSelectedTask(null);
-    setEditingTask(task);
-  };
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
@@ -729,7 +723,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                         onSelect={() => setSelectedTask(task)}
                         onProgress={(progress) => onSetProgress?.(task.id, progress)}
                         onEdit={() => {
-                          openEditor(task);
+                          setSelectedTask(task);
                         }}
                         manager={manager ?? PROJECT_MANAGER}
                         managerId={managerId ?? ""}
@@ -758,20 +752,10 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       <TaskDrawer
         task={selectedTask}
         manager={manager ?? PROJECT_MANAGER}
-        onEdit={onSubmitTaskEdit === undefined ? undefined : openEditor}
+        managerId={managerId ?? ""}
+        onSubmit={onSubmitTaskEdit}
         onClose={closeDrawer}
       />
-      {editingTask !== null && onSubmitTaskEdit !== undefined ? (
-        <TaskEditModal
-          task={editingTask}
-          managerId={managerId ?? ""}
-          onClose={() => setEditingTask(null)}
-          onSubmit={(values) => {
-            onSubmitTaskEdit(values);
-            setEditingTask(null);
-          }}
-        />
-      ) : null}
     </>
   );
 }
