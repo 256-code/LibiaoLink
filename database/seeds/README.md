@@ -33,7 +33,7 @@
 | 5 | 地区 / 项目类型 | `dict_items`（type = region / projectType）+ `metadata.accent` / `accentText` | (type, code) | 业务待回执（v0.3 §7.3 #10） | 占位（最小样例，标注可修订） |
 | 6a | 角色（一期六个内置角色） | `roles` | (role code) | v0.2 §4.1；C3-01 / C3-02 | 已落地（h1 · Push 74，`seeds/roles.mjs`） |
 | 6b | 功能权限矩阵（role_permissions 条目） | `role_permissions` | (role_id, permission) | v0.2 §4.1 关键能力列；ADR-011 | 随 h6（PoC-6 权限矩阵与脱敏五出口） |
-| 7 | 蓝图（默认模板 + 项目类型覆盖） | `blueprints` / `blueprint_versions` | (project_type, version) | ADR-019；v0.2 §3.3 首批节点清单 | 结构定稿；节点清单待业务补全 |
+| 7 | 蓝图（默认模板 + 项目类型覆盖） | `blueprints` / `blueprint_versions` | (project_type, version) | ADR-019；v0.2 §3.3 首批节点清单 | 已落地（h3 · Push 83，`seeds/blueprint.mjs`：默认模板 9 阶段 19 节点 + 版本 1）；节点清单仍待业务补全（可修订常量区，库内已修订时不覆盖） |
 | 8 | 任务节点库 / 任务模板 | `task_nodes` / `task_templates` / `task_template_nodes` | (stage_key, node key) | A1-16 / A1-17；对照 `frontend/src/data/templatePresets.ts`（Push 60） | 待业务确认 |
 | 9 | 消息模板（R01~R07 文案） | 消息模板表（M5 建表） | (template code) | `docs/rules/R01-R07-内置规则文案.md` | 文案定稿；表结构随 M5 |
 | 10 | 工作日历（节假日 / 调休） | 日历表（D5 建表） | (日期) | D5-01；业务提供 | 待业务提供 |

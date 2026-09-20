@@ -1414,10 +1414,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 当前蓝图（含版本与发布状态） */
+        /** 当前蓝图（含版本与发布状态；该项目类型尚未建档时 404，default 仅作导入兜底） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -1433,12 +1436,24 @@ export interface paths {
                         "application/json": components["schemas"]["BlueprintView"];
                     };
                 };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
             };
         };
         /** 保存蓝图草稿（必须通过 schema + 引用校验） */
         put: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: {
                     /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
                     "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
@@ -1463,6 +1478,15 @@ export interface paths {
                 };
                 /** @description 契约校验失败（VALIDATION_FAILED） */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1500,7 +1524,10 @@ export interface paths {
         /** 发布蓝图（递增 blueprintVersion；不影响已生成项目） */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: {
                     /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
                     "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
@@ -1521,6 +1548,24 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["BlueprintView"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
                 /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
@@ -1550,7 +1595,10 @@ export interface paths {
         /** 导出蓝图 JSON（自建格式，round-trip 无损） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -1564,6 +1612,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Blueprint"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
             };
@@ -1588,7 +1645,10 @@ export interface paths {
         /** 导入蓝图 JSON（保存为草稿；重复导入幂等） */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: {
                     /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
                     "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
@@ -1609,6 +1669,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["BlueprintView"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
                 /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
@@ -1723,8 +1792,26 @@ export interface paths {
                         "application/json": components["schemas"]["ApiError"];
                     };
                 };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
                 /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1776,6 +1863,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ProjectNode"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
                 /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
@@ -1918,6 +2014,231 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目阶段列表（九阶段状态与完成度；读时派生） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 阶段列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StageListResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/stages/{key}/advance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 推进阶段（服务端门禁：任务 / 节点 / 成果文件；失败 422 + 缺项明细，不部分推进） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
+                    key: components["schemas"]["StageKey"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["StageAdvanceBody"];
+                };
+            };
+            responses: {
+                /** @description 推进后的阶段列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StageListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/stages/{key}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 回退到相邻上一阶段（原因必填并留痕；不做门禁） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
+                    key: components["schemas"]["StageKey"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["StageRollbackBody"];
+                };
+            };
+            responses: {
+                /** @description 回退后的阶段列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StageListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -3108,12 +3429,14 @@ export interface components {
             /** @example 4f1c2f2e-6f8a-4b1e-9a1f-2f6d6f2c9d10 */
             traceId: string;
         };
-        /** @description 自建蓝图 JSON（v0.2 §3.2）；导入校验 = schema + 引用 + 幂等 */
+        /** @description 自建蓝图 JSON（v0.2 §3.2 + ADR-019）；导入校验 = schema + 引用 + 幂等 */
         Blueprint: {
             /** @enum {number} */
             schemaVersion: 1;
             blueprintVersion: number;
             name: string;
+            /** @description 所属项目类型（ADR-019：按项目类型各一份，default 为兜底模板）；缺省 = 通用 */
+            projectType?: string;
             updatedAt: components["schemas"]["DateTime"];
             stages: components["schemas"]["BlueprintStage"][];
         };
@@ -3171,6 +3494,12 @@ export interface components {
         BlueprintView: {
             blueprint: components["schemas"]["Blueprint"];
             status: components["schemas"]["BlueprintStatus"];
+            /** @description 所属项目类型（ADR-019） */
+            projectType: string;
+            /** @description 是否兜底默认模板（project_type = default） */
+            isDefault: boolean;
+            /** @description 已发布版本号（0 = 尚未发布） */
+            publishedVersion: number;
             publishedAt: components["schemas"]["DateTime"] & (string | null);
             publishedBy: components["schemas"]["Uuid"] & (string | null);
         };
@@ -3279,7 +3608,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -3412,13 +3741,17 @@ export interface components {
         /** @description 新增节点（仅模板节点池，留痕） */
         NodeCreateBody: {
             stageId: components["schemas"]["Uuid"];
-            /** @description 模板节点池内的节点稳定键（一期仅允许蓝图内的 key） */
+            /** @description 模板节点池内的节点稳定键（一期仅允许项目导入版本的蓝图 key） */
             nodeKey: string;
             name?: string;
             seq?: number;
+            /** @description 增补原因（留痕；ADR-020） */
+            reason?: string;
         };
         NodeDeleteBody: {
             version: components["schemas"]["Version"];
+            /** @description 删除原因（必填并留痕；ADR-020） */
+            reason: string;
         };
         /** @description 缺件明细（门禁拒绝时会一次性返回） */
         NodeGateMissing: {
@@ -3525,7 +3858,7 @@ export interface components {
         /** @description 项目流程（阶段 + 节点 + 约束 + 状态）；导入即快照 */
         ProjectFlow: {
             projectId: components["schemas"]["Uuid"];
-            /** @description 项目导入时的蓝图版本（快照） */
+            /** @description 项目导入时的蓝图版本（快照）；0 = 尚未导入（h3 之前建的项目） */
             blueprintVersion: number;
             stages: components["schemas"]["ProjectStage"][];
         };
@@ -3589,6 +3922,26 @@ export interface components {
             actualEnd: components["schemas"]["DateOnly"] & (string | null);
             nodes: components["schemas"]["ProjectNode"][];
         };
+        /** @description 阶段状态与完成度（GET /projects/{id}/stages） */
+        ProjectStageSummary: {
+            id: components["schemas"]["Uuid"];
+            stageKey: components["schemas"]["StageKey"];
+            name: string;
+            seq: number;
+            status: components["schemas"]["StageStatus"];
+            plannedStart: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
+            actualStart: components["schemas"]["DateOnly"] & (string | null);
+            actualEnd: components["schemas"]["DateOnly"] & (string | null);
+            nodes: components["schemas"]["StageProgress"];
+            tasks: components["schemas"]["StageProgress"];
+            advancedAt: components["schemas"]["DateTime"] & (string | null);
+            advancedBy: components["schemas"]["Uuid"] & (string | null);
+            rolledBackAt: components["schemas"]["DateTime"] & (string | null);
+            rolledBackBy: components["schemas"]["Uuid"] & (string | null);
+            rollbackReason: string | null;
+            version: components["schemas"]["Version"];
+        };
         /**
          * @description 项目状态（projects.status）
          * @enum {string}
@@ -3620,11 +3973,31 @@ export interface components {
         };
         /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
+        /** @description 推进当前阶段：过门禁才生效；失败 422 STAGE_GATE_NOT_PASSED + 缺项明细（不部分推进） */
+        StageAdvanceBody: {
+            version: components["schemas"]["Version"];
+        };
         /**
          * @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）
          * @enum {string}
          */
         StageKey: "presale" | "design" | "purchase" | "assembly" | "install" | "deploy" | "trial" | "production" | "acceptance";
+        StageListResponse: {
+            projectId: components["schemas"]["Uuid"];
+            stageKey: components["schemas"]["StageKey"];
+            stages: components["schemas"]["ProjectStageSummary"][];
+        };
+        /** @description 阶段完成度（读时派生，不落库）：已完成 ÷ 总数 */
+        StageProgress: {
+            total: number;
+            done: number;
+        };
+        /** @description 回退到相邻上一阶段：仅相邻、无门禁、原因必填；projects.stage_key 回移 */
+        StageRollbackBody: {
+            /** @description 回退原因（必填并留痕；ADR-023） */
+            reason: string;
+            version: components["schemas"]["Version"];
+        };
         /**
          * @description 阶段状态（project_stages.status）
          * @enum {string}

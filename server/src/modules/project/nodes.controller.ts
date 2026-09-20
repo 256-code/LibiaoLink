@@ -1,0 +1,34 @@
+import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
+import { NodeCompleteBodySchema, UuidSchema, z } from "@libiaolink/contracts";
+import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
+import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { FlowService } from "./flow.service.js";
+import type { ProjectNodeView } from "./flow.service.js";
+
+type NodeCompleteBody = z.infer<typeof NodeCompleteBodySchema>;
+
+const uuidParam = new ZodValidationPipe(UuidSchema);
+
+/** 节点接口（h3）：完成门禁经 /api/v1/nodes；服务端事务内强校验，预检不替代判定（v0.2 §3.6）。 */
+@Controller("api/v1/nodes")
+@UseGuards(SessionGuard, CsrfGuard)
+export class NodesController {
+  constructor(private readonly flow: FlowService) {}
+
+  /** 完成节点：缺件 → 422 NODE_REQUIRED_DOC_MISSING + missing；已完成 409 NODE_ALREADY_DONE；已删 409 NODE_DELETED。 */
+  @Post(":id/complete")
+  @HttpCode(200)
+  complete(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(NodeCompleteBodySchema)) body: NodeCompleteBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectNodeView> {
+    return this.flow.completeNode(id, body.version, actorId);
+  }
+
+  /** 完成预检：UI 置灰依据（canComplete + missing）。 */
+  @Get(":id/can-complete")
+  canComplete(@Param("id", uuidParam) id: string): Promise<{ canComplete: boolean; missing: { docType: string; required: number; present: number }[] }> {
+    return this.flow.canComplete(id);
+  }
+}

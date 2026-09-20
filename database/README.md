@@ -18,8 +18,11 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0008_identity_removed.sql` | 离职回收软删标记（h1 收口 · 接入标准第五部分）：`users.removed_at`（delete 置位 / enable 清空；不物理删行） |
 | `migrations/0009_projects_soft_delete.sql` | 项目软删（h2 · M2-01 / A5）：`projects.deleted_at` / `deleted_by` + 活跃行局部索引 `ix_projects_active_updated`（列表 / 详情 / facets 统一过滤软删行） |
 | `migrations/0010_project_members.sql` | 项目成员名册（h2 · M2-05）：`project_members`（`project_id` / `user_id` / `role_in_project` / `joined_at`；联合唯一 + `user_id` 反查索引）——记录级权限（非成员 404）与「我参与的项目」的来源 |
+| `migrations/0011_blueprints.sql` | 蓝图与版本（h3 · M2-02；ADR-019）：`blueprints`（`project_type` 唯一 + 草稿 `draft_payload` + `published_version` + 乐观锁 `version`）与 `blueprint_versions`（版本 payload + 校验 issues，`unique(blueprint_id, blueprint_version)`）——「导入即快照」的版本来源 |
+| `migrations/0012_project_stages_tracking.sql` | 阶段推进 / 回退留痕（h3 · M2-03；ADR-023）：`project_stages` 增 `advanced_at` / `advanced_by` / `rolled_back_at` / `rolled_back_by` / `rollback_reason` |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
+| `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
 | `scripts/seed.mjs` | 种子执行器（h1 · Push 74）：每个种子独立事务、`--dry-run` 全回滚、`--only=<name>`；advisory lock 20260919（与迁移器分开） |
@@ -70,10 +73,12 @@ migrate: 已执行 0007_identity_org.sql（xx ms）
 migrate: 已执行 0008_identity_removed.sql（xx ms）
 migrate: 已执行 0009_projects_soft_delete.sql（xx ms）
 migrate: 已执行 0010_project_members.sql（xx ms）
-migrate: 完成，本次执行 10 个迁移
+migrate: 已执行 0011_blueprints.sql（xx ms）
+migrate: 已执行 0012_project_stages_tracking.sql（xx ms）
+migrate: 完成，本次执行 12 个迁移
 ```
 
-再次执行输出 `migrate: 数据库已是最新（已执行 10 个迁移，无漂移）`；随后执行种子（示例）：
+再次执行输出 `migrate: 数据库已是最新（已执行 12 个迁移，无漂移）`；随后执行种子（示例）：
 
 ```
 seed: 目标 postgres://***:***@host:5432/libiaolink，种子目录 .../seeds
@@ -115,12 +120,14 @@ seed: 完成，本次执行 1 个种子
 - identity/removed（h1 收口 · Push 78）：`0008_identity_removed.sql` 为 `users` 增 `removed_at timestamptz`（可空）。口径：内部离职回收 `POST /internal/users/delete` 置位（`status=disabled` + 撤销全部会话）、`enable` 清空；`disable` 不改动该列；用户行不物理删除（历史引用 / 审计需要，物理删除待数据留存口径确认）。
 - projects/soft-delete（h2 · Push 80）：`0009_projects_soft_delete.sql` 为 `projects` 增 `deleted_at timestamptz` / `deleted_by uuid`（软删落点 + 操作人；审计留痕随 h7）与局部索引 `ix_projects_active_updated (updated_at desc) where deleted_at is null`（首页「最近活动」列表走它，且只见活跃行）；口径：`seq_no` 不回收、`code` 唯一约束保留（同编号再建仍 409 `PROJECT_CODE_EXISTS`），列表 / 详情 / facets 统一 `deleted_at is null`。
 - projects/members（h2 · M2-05）：`0010_project_members.sql` 落 `project_members`（`role_in_project` 一期两值 `project_manager` / `project_member`，CHECK 约束；`uq_project_members_project_user` 保证同项目同用户唯一，支撑「添加成员」幂等 upsert；`ix_project_members_user` 供「我参与的项目」反查，h6 数据范围 involved_projects 消费）。口径：名册是记录级权限（非成员 404 语义）的唯一来源，项目软删不删名册行（项目不可见即接口 404）；`projects.manager_id`（主数据）与名册不自动联动。
+- blueprints（h3 · Push 83）：`0011_blueprints.sql` 落 `blueprints`（`project_type` 唯一 —— ADR-019 按项目类型各一份 + default 兜底；`draft_payload` / `published_version` / `version`）与 `blueprint_versions`（历史版本 payload + 校验 issues；`unique(blueprint_id, blueprint_version)` + 蓝图索引）。口径：发布 = 写新版本并把草稿归一为发布 payload（PG jsonb 重排键，直比会误判变更）；已生成项目按 `project_nodes.source_blueprint_version` 锁定快照，不受后续蓝图变更影响；种子 #7 落 default 模板（9 阶段 19 节点）。
+- project_stages/tracking（h3 · Push 83）：`0012_project_stages_tracking.sql` 为 `project_stages` 增 `advanced_at` / `advanced_by` / `rolled_back_at` / `rolled_back_by` / `rollback_reason`（阶段推进 / 回退留痕；ADR-023）。口径：推进 = 本阶段 `done` + 下一阶段 `active` + `projects.stage_key` 前移；回退 = 本阶段回 `pending`（原因必填）+ 上一阶段回 `active` + `stage_key` 回移；`project_stages.status` 的 `active` 恒等于「当前阶段」。
 - 一期不含：业务字典表（C9 全量）、问题 / 日报 / 干系人表（随对应模块的切片落地）；种子已按 `seeds/` 规格落地角色一项，其余随各卡片追加。
 
 ## 验证（g3 验收）
 
-- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 10 行、业务表 19 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表）。
-- **种子幂等**：`node scripts/seed.mjs` 连续执行两次，第二次零变更（`roles` 六个内置角色；`--dry-run` 不改库）。
+- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 12 行、业务表 21 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表；h3 新增 `blueprints` / `blueprint_versions`）。本地演练库 `check:db-schema`：21 表 / 217 列 / 59 索引（含唯一）/ 51 CHECK。
+- **种子幂等**：`node scripts/seed.mjs` 连续执行两次，第二次零变更（`roles` 六个内置角色 + `blueprint` 的 default 模板 —— 后者按「键序归一化后的 payload 比较」判等，库内已修订时不覆盖；`--dry-run` 不改库）。
 - **应用角色可写新表**：新表 / 新列由 `roles/0001` 的 default privileges 自动授权（应用角色无需额外 GRANT 即可读写 `upload_sessions` / `idempotency_keys`）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - **已合入迁移不可变**：改文件 / 删文件 / 中间插队三种情形均退出码 1，并给出中文原因（`scripts/migrate.mjs` 的 `verifyNoDrift`）。
