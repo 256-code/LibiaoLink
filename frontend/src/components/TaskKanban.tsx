@@ -46,7 +46,7 @@ const CARD_NOISE =
   "pointer-events-none absolute inset-0 rounded-[35px] opacity-[0.06] [filter:contrast(105%)] " +
   "bg-[repeating-conic-gradient(#e8e8e8_0.0000001%,#93a1a1_0.000104%)] [background-position:60%_60%] [background-size:600%_600%]";
 
-/** 看板列：列高随视口封顶，列头固定不动，卡片多时在列内滚动 —— 列不再一直往下延伸（Push 84）。 */
+/** 看板列：列高随视口封顶，列头固定不动，卡片多时在列内滚动 —— 列不再一直往下延伸（Push 85）。 */
 const COLUMN_SHELL = "flex h-[calc(100vh-15.5rem)] max-h-[52rem] min-h-[22rem] w-[280px] shrink-0 flex-col";
 
 /** 列内滚动区（`kanban-scroll` = `app.css` 里的细滚动条）：卡片列表与列底「+ 添加」都在这里滚。 */

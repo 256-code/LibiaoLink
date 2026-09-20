@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
+import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
 import { projects } from "../../db/schema/projects.js";
 import type { ProjectFilter, ProjectSort } from "./project.query.js";
@@ -112,9 +113,9 @@ export class ProjectRepository {
     return rows[0] ?? null;
   }
 
-  async insert(input: ProjectInsertInput, at: Date): Promise<ProjectRow> {
+  async insert(input: ProjectInsertInput, at: Date, client: DbClient = this.database.db): Promise<ProjectRow> {
     try {
-      const rows = await this.database.db
+      const rows = await client
         .insert(projects)
         .values({
           code: input.code,
@@ -160,6 +161,20 @@ export class ProjectRepository {
     }
   }
 
+  /** 事务内读项目行（归档写保护判定；不做软删过滤的调用方自行判断）。 */
+  async findRowById(id: string, client: DbClient = this.database.db): Promise<ProjectRow | null> {
+    const rows = await client.select().from(projects).where(eq(projects.id, id)).limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 阶段推进 / 回退：projects.stage_key 前移 / 回移 + 同事务刷新 updated_at（ADR-022 / ADR-023）。 */
+  async setStageKey(id: string, stageKey: string, at: Date, client: DbClient = this.database.db): Promise<void> {
+    await client
+      .update(projects)
+      .set({ stageKey, updatedAt: at })
+      .where(and(eq(projects.id, id), isNull(projects.deletedAt)));
+  }
+
   async softDeleteWithVersion(id: string, expectedVersion: number, deletedBy: string, at: Date): Promise<ProjectRow | null> {
     const rows = await this.database.db
       .update(projects)
@@ -173,8 +188,8 @@ export class ProjectRepository {
    * ADR-022 触点（ProjectToucher 语义，仓储层单点）：任务 / 成员 / 阶段等「项目聚合视图」变更调用；
    * 主数据变更由 updateWithVersion 一并刷新；文件 / 日报 / 系统调度不调用。
    */
-  async touch(id: string, at: Date): Promise<void> {
-    await this.database.db
+  async touch(id: string, at: Date, client: DbClient = this.database.db): Promise<void> {
+    await client
       .update(projects)
       .set({ updatedAt: at })
       .where(and(eq(projects.id, id), isNull(projects.deletedAt)));

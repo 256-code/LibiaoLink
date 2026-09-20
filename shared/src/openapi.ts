@@ -1,6 +1,7 @@
 import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 import { z } from "./zod.ts";
 import { IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
+import { StageKeySchema } from "./common/dicts.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
 import {
   ProjectCreateBodySchema,
@@ -40,6 +41,7 @@ import {
 } from "./modules/templates.ts";
 import {
   BlueprintImportBodySchema,
+  BlueprintQuerySchema,
   BlueprintSaveBodySchema,
   BlueprintViewSchema,
   CanCompleteResponseSchema,
@@ -49,6 +51,9 @@ import {
   NodeDeleteBodySchema,
   ProjectFlowSchema,
   ProjectNodeSchema,
+  StageAdvanceBodySchema,
+  StageListResponseSchema,
+  StageRollbackBodySchema,
 } from "./modules/flow.ts";
 import { CallbackQuerySchema, LoginQuerySchema, MeResponseSchema } from "./modules/identity.ts";
 import { UserListQuerySchema, UserListResponseSchema, UserPreferencesSchema, UserPreferencesUpdateBodySchema } from "./modules/users.ts";
@@ -95,6 +100,8 @@ const commonErrors = {
 } as const;
 
 const idParams = z.object({ id: UuidSchema });
+const stageParams = z.object({ id: UuidSchema, key: StageKeySchema });
+const blueprintQuery = BlueprintQuerySchema;
 const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
 const idempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema.optional() });
 
@@ -450,8 +457,9 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/blueprint",
     tags: ["flow"],
-    summary: "当前蓝图（含版本与发布状态）",
-    responses: { 200: { description: "蓝图视图", ...json(BlueprintViewSchema) } },
+    summary: "当前蓝图（含版本与发布状态；该项目类型尚未建档时 404，default 仅作导入兜底）",
+    request: { query: blueprintQuery },
+    responses: { 200: { description: "蓝图视图", ...json(BlueprintViewSchema) }, 404: commonErrors[404] },
   });
 
   registry.registerPath({
@@ -459,10 +467,11 @@ export function buildOpenApiDocument() {
     path: "/api/v1/blueprint",
     tags: ["flow"],
     summary: "保存蓝图草稿（必须通过 schema + 引用校验）",
-    request: { headers: idempotencyHeader, body: json(BlueprintSaveBodySchema) },
+    request: { query: blueprintQuery, headers: idempotencyHeader, body: json(BlueprintSaveBodySchema) },
     responses: {
       200: { description: "保存后的蓝图视图", ...json(BlueprintViewSchema) },
       400: commonErrors[400],
+      403: commonErrors[403],
       422: commonErrors[422],
     },
   });
@@ -472,9 +481,11 @@ export function buildOpenApiDocument() {
     path: "/api/v1/blueprint/publish",
     tags: ["flow"],
     summary: "发布蓝图（递增 blueprintVersion；不影响已生成项目）",
-    request: { headers: idempotencyHeader, body: json(BlueprintSaveBodySchema) },
+    request: { query: blueprintQuery, headers: idempotencyHeader, body: json(BlueprintSaveBodySchema) },
     responses: {
       200: { description: "发布后的蓝图视图", ...json(BlueprintViewSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
       422: commonErrors[422],
     },
   });
@@ -484,7 +495,8 @@ export function buildOpenApiDocument() {
     path: "/api/v1/blueprint/export",
     tags: ["flow"],
     summary: "导出蓝图 JSON（自建格式，round-trip 无损）",
-    responses: { 200: { description: "蓝图 JSON", ...json(BlueprintViewSchema.shape.blueprint) } },
+    request: { query: blueprintQuery },
+    responses: { 200: { description: "蓝图 JSON", ...json(BlueprintViewSchema.shape.blueprint) }, 404: commonErrors[404] },
   });
 
   registry.registerPath({
@@ -492,9 +504,10 @@ export function buildOpenApiDocument() {
     path: "/api/v1/blueprint/import",
     tags: ["flow"],
     summary: "导入蓝图 JSON（保存为草稿；重复导入幂等）",
-    request: { headers: idempotencyHeader, body: json(BlueprintImportBodySchema) },
+    request: { query: blueprintQuery, headers: idempotencyHeader, body: json(BlueprintImportBodySchema) },
     responses: {
       200: { description: "导入后的蓝图视图", ...json(BlueprintViewSchema) },
+      403: commonErrors[403],
       422: commonErrors[422],
     },
   });
@@ -520,7 +533,9 @@ export function buildOpenApiDocument() {
     responses: {
       201: { description: "新节点", ...json(ProjectNodeSchema) },
       400: commonErrors[400],
+      403: commonErrors[403],
       409: commonErrors[409],
+      422: commonErrors[422],
     },
   });
 
@@ -532,6 +547,7 @@ export function buildOpenApiDocument() {
     request: { params: z.object({ id: UuidSchema, nodeId: UuidSchema }), body: json(NodeDeleteBodySchema) },
     responses: {
       200: { description: "已删除的节点（status=deleted）", ...json(ProjectNodeSchema) },
+      403: commonErrors[403],
       404: commonErrors[404],
       409: commonErrors[409],
     },
@@ -560,6 +576,50 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "预检结果", ...json(CanCompleteResponseSchema) },
       404: commonErrors[404],
+    },
+  });
+
+  // ---- 阶段推进 / 回退（M2-03 · ADR-023）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/stages",
+    tags: ["flow"],
+    summary: "项目阶段列表（九阶段状态与完成度；读时派生）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "阶段列表", ...json(StageListResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/stages/{key}/advance",
+    tags: ["flow"],
+    summary: "推进阶段（服务端门禁：任务 / 节点 / 成果文件；失败 422 + 缺项明细，不部分推进）",
+    request: { params: stageParams, headers: idempotencyHeader, body: json(StageAdvanceBodySchema) },
+    responses: {
+      200: { description: "推进后的阶段列表", ...json(StageListResponseSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/stages/{key}/rollback",
+    tags: ["flow"],
+    summary: "回退到相邻上一阶段（原因必填并留痕；不做门禁）",
+    request: { params: stageParams, headers: idempotencyHeader, body: json(StageRollbackBodySchema) },
+    responses: {
+      200: { description: "回退后的阶段列表", ...json(StageListResponseSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

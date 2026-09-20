@@ -77,6 +77,9 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 用户偏好（A4） | `GET / PATCH /users/me/preferences`：PATCH 合并语义（只传变更键），响应回全量 + `updatedAt`；一期键 `taskTableHiddenColumns`（列 key 白名单校验，未知 key 400）；存储 `user_preferences`（与项目视图 `project_views` 分离）；单用户单写者不带 `version` |
 | 分类字段（A1-12） | `region` / `projectType`：首页分类侧边栏与统计的来源（facets 五组里的两组）；创建请求缺省「未分类」（服务端 default，前端表单仍必填、空串 400），更新可改；字典取值由 C9 字典维护（`GET /dicts` 已入契约，落表随 h7） |
 | 项目成员（M2-05） | 名册 `project_members`：`role_in_project` 两值 `project_manager` / `project_member`（与全局角色 `roles` 相互独立）；`GET / POST / DELETE /projects/{id}/members`（POST 幂等 upsert：同项目 + 同用户唯一，重复添加 = 覆盖角色且保留 `joinedAt`；`userId` 不存在 404）；不是成员 / 项目不可见统一 404；成员变更按 ADR-022 ② 刷新项目 `updatedAt`；归档项目名册只读（409 PROJECT_ARCHIVED）；记录级**过滤**（非成员 404 裁剪）随 h6 |
+| 蓝图组织（ADR-019） | 蓝图按项目类型各一份（`projectType` 缺省 `default`）+ default 兜底；`GET / PUT /blueprint`、`POST /blueprint/publish`、`GET /blueprint/export`、`POST /blueprint/import` 按 `projectType` **精确取**（未建档 404；PUT 首次保存即建档），default 兜底只发生在**项目侧解析**（建项目快照 / 版本解析 / 模板节点池）；发布 = 版本递增（无变更不递增、幂等，比较前做键序归一化）；导入 / 导出 round-trip 无损；导入即快照 |
+| 阶段推进与回退（ADR-023） | `GET /projects/{id}/stages`：九阶段状态 + 节点 / 任务完成度（读时派生）；`POST …/stages/{key}/advance` 仅当前 `active` 阶段可推进，服务端门禁 = 该阶段节点全 done + 任务全 done + 各节点必交成果文件齐备（失败 422 `STAGE_GATE_NOT_PASSED` + `details[].code = node_not_done / task_not_done / doc_missing`，**整体一次事务、不部分推进**）；`POST …/rollback` 仅相邻上一阶段、原因必填、不做门禁（首阶段 409 `STAGE_STATE_INVALID`）；`projects.stage_key` 随推进前移 / 回退回移，跟踪列 `advanced_at/by`、`rolled_back_at/by`、`rollback_reason` |
+| 节点增删（ADR-020） | `POST /projects/{id}/nodes` 仅项目经理（`admin` 角色 / `projects.manager_id` / 名册 `role_in_project=project_manager`），`nodeKey` 必须命中**项目导入版本**的模板节点池（否则 422 `BLUEPRINT_REF_UNKNOWN`）；`node_key` 项目内唯一：已有未删节点 409 `NODE_ALREADY_EXISTS`，软删后再增补 = 还原同一行（回 `pending`、清完成留痕）；`DELETE …/nodes/{nodeId}` 原因必填 + 软删 + 乐观锁，有成果文件 409 `NODE_HAS_FILES` |
 | 项目软删（A5） | `DELETE /projects/{id}`：软删；`If-Match` 回传当前 `version` 防误删（缺失或非数字 400、不匹配 409，不用 body 传 version）；列表 / 详情 / facets / 搜索 / 导出统一不可见；`seqNo` 不回收、`code` 唯一性保留（同编号再建仍 409 PROJECT_CODE_EXISTS）；非成员 / 不存在统一 404；仅项目经理 / 管理员并写审计 |
 | 任务列表项（A7） | 列表 `GET /projects/{id}/tasks` 返回 `TaskListItem`（Task 去掉 `changeRef` + 内联 `ownerName` / `changeSummary` / `fileSummary`，免 N+1）；抽屉走 `GET /projects/{id}/tasks/{taskId}`（`TaskDetail`：全字段 + 文件清单）；进度更新响应同 `TaskListItem` 形，前端直接替换行 |
 | 任务排序（A8） | 默认顺序 = 阶段顺序（`STAGE_KEYS` 序）+ 组内 `plannedStart ASC NULLS LAST, created_at ASC, id ASC`（稳定，分页不跳行）；`sort` 白名单 `plannedStart` / `plannedEnd` / `actualEnd` / `progress` / `title` / `createdAt`，白名单外 400；一期不新增 `tasks.seq` |
@@ -87,8 +90,8 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 ## 契约切片表（M0-02 · Push 73）
 
 > 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
-> 现状（Push 71 口径）：**paths = 44、schemas = 108**，生成物与源码零漂移。
-> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入 / 项目流程 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更）、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
+> 现状（Push 83 · h3）：**paths = 49、schemas = 117**，生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 未新增路径）。
+> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更）、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
 
 ### M1 身份与平台底座（h1 + 平台）
 
@@ -104,8 +107,8 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
 | M2-01 项目 CRUD | 已入：CRUD / 软删 / 乐观锁 HTTP 落地（Push 80）+ 本轮补归档写保护错误码 `PROJECT_ARCHIVED`（ADR-027）；`Project.archivedAt` 未加 —— 随归档端点 `/projects/{id}/archive` 与 `archived_at` 列（C4-02 / M6）一并落 | 错误码 / 字段 |
-| M2-02 建项目 + 蓝图快照 | `BlueprintSchema` 增 `projectType`；`BlueprintView` 增所属类型与「默认模板」标识（ADR-019） | 字段 |
-| M2-03 阶段推进 / 回退 | 新增 `GET /projects/{id}/stages`、`POST /projects/{id}/stages/{key}/advance`、`POST /projects/{id}/stages/{key}/rollback`（原因必填）；`422 STAGE_GATE_NOT_PASSED` + 缺项明细结构（ADR-023） | 端点 / 错误码 |
+| M2-02 建项目 + 蓝图快照 | 已入（Push 83）：`BlueprintSchema.projectType`（可选）；`BlueprintView` 增 `projectType` / `isDefault` / `publishedVersion`（+ `BlueprintQuerySchema` 按类型取）；`ProjectFlow.blueprintVersion`（0 = 未导入快照）；建项目单事务导入 stages / nodes / requirements | 字段 |
+| M2-03 阶段推进 / 回退 | 已入（Push 83）：`GET /projects/{id}/stages`、`POST …/stages/{key}/advance`（正文仅 `version`）、`POST …/rollback`（`reason` 必填 + `version`）；`StageListResponse` = 阶段状态 + 节点 / 任务完成度 + 留痕字段；新增 422 `STAGE_GATE_NOT_PASSED`（+ `BLUEPRINT_NOT_PUBLISHED`）与 409 `NODE_HAS_FILES` / `STAGE_STATE_INVALID` / `NODE_ALREADY_EXISTS` 错误码（ADR-023） | 端点 / 错误码 |
 | M2-05 成员与记录级权限 | 已入：`GET / POST / DELETE /projects/{id}/members`（幂等 upsert / 不是成员统一 404，Push 81）；记录级**过滤**（列表 / 详情 / facets / 搜索按成员裁剪）随 h6 | 端点 |
 | M2-06 视图 / 关注 | 新增 `/views`（个人 / 公共 CRUD）与 `/follows`（关注 / 取关） | 端点 |
 | M2-04 列表 / facets | 已入（A1 / A9）并 HTTP 落地（Push 80：列表与 facets 同一 filter 构造器、上海时区日界、排序白名单 `updatedAt` / `createdAt` / `seqNo`），无新增 | 无 |
@@ -165,11 +168,11 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | ADR | 契约影响 | 落地卡 |
 |---|---|---|
-| ADR-019 蓝图组织 | `BlueprintSchema.projectType`、`BlueprintView` 类型标识 | M2-02 |
-| ADR-020 节点权限 | 无字段变化；403 / 404 语义与权限矩阵用例 | M2-05 |
+| ADR-019 蓝图组织 | 已入（Push 83）：`BlueprintSchema.projectType`、`BlueprintView` 类型标识与发布版本 | M2-02 |
+| ADR-020 节点权限 | 已入（Push 83）：接口 403 语义（模板写 = 管理员、增删 / 推进 = 项目经理）；权限矩阵用例随 h6 | M2-05 |
 | ADR-021 负责人标识 | Task 族 `ownerId` 可空 + `ownerName`；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
 | ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层） | M2-04 |
-| ADR-023 阶段推进 | stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` | M2-03 |
+| ADR-023 阶段推进 | 已入（Push 83）：stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` + 缺项明细 | M2-03 |
 | ADR-024 成果文件 | `deliverableTypes` 数组；门禁错误语义 | M3-03 / M3-05 |
 | ADR-025 进行中置位 | 无契约变化（系统作业） | M3-02 |
 | ADR-026 问题 SLA | `Issue.dueAt` | M6 |

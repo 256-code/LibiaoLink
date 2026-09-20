@@ -388,7 +388,7 @@ body {
   display: none;
 }
 
-/* 看板列内滚动（项目详情「人员任务分配 / 任务进展」）：列头固定，卡片在列内纵向滚动 —— 列不再一直往下长（Push 84） */
+/* 看板列内滚动（项目详情「人员任务分配 / 任务进展」）：列头固定，卡片在列内纵向滚动 —— 列不再一直往下长（Push 85） */
 .kanban-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(113, 113, 122, 0.45) transparent;
