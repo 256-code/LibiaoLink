@@ -54,3 +54,15 @@ begin
     revoke all on table public.schema_migrations from libiaolink_readonly;
   end if;
 end $$;
+
+-- 审计防篡改（h7 · C7-05）：应用角色对 audit_logs 仅 SELECT / INSERT。
+-- 上面的「全表授权」会给已存在的 audit_logs 重新授予 UPDATE / DELETE，
+-- 因此角色脚本每次执行都要显式收回（表存在时；表不存在则由 0013 迁移内的 revoke 兜底）。
+do $$
+begin
+  if exists (select 1 from pg_class where relname = 'audit_logs' and relnamespace = 'public'::regnamespace) then
+    revoke update, delete on table public.audit_logs from libiaolink_api;
+    grant select, insert on table public.audit_logs to libiaolink_api;
+    grant select on table public.audit_logs to libiaolink_readonly;
+  end if;
+end $$;

@@ -5,6 +5,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { appendOutbox } from "../../db/outbox.js";
+import { AuditService } from "../admin/index.js";
 import { BlueprintService } from "../blueprint/index.js";
 import { GateService, type StageGateMissingItem } from "../node/index.js";
 import { RoleService } from "../identity/index.js";
@@ -39,6 +40,7 @@ export class FlowService {
     private readonly blueprints: BlueprintService,
     private readonly gate: GateService,
     private readonly roles: RoleService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -204,6 +206,20 @@ export class FlowService {
         payload: { projectId, nodeId: row.id, nodeKey: body.nodeKey, stageId: stage.id, actorId, reason: body.reason ?? null, restored: existing !== null, at: at.toISOString() },
       });
       await this.projects.touch(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "create",
+        objectType: "node",
+        objectId: row.id,
+        projectId,
+        summary: (existing === null ? "增补节点：" : "恢复节点：") + row.name + "（" + body.nodeKey + "）",
+        changes: [
+          { field: "nodeKey", from: null, to: body.nodeKey },
+          { field: "name", from: null, to: row.name },
+          { field: "stageId", from: null, to: stage.id },
+          { field: "reason", from: null, to: body.reason ?? null },
+        ],
+      });
       return row;
     });
     return this.loadNodeView(node.id);
@@ -238,6 +254,16 @@ export class FlowService {
         payload: { projectId, nodeId, nodeKey: node.nodeKey, actorId, reason: body.reason, at: at.toISOString() },
       });
       await this.projects.touch(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "node",
+        objectId: nodeId,
+        projectId,
+        summary: "删除节点：" + node.name + "（" + node.nodeKey + "）；原因：" + body.reason,
+        changes: [{ field: "status", from: node.status, to: "deleted" }],
+        metadata: { reason: body.reason },
+      });
       return { ...node, status: "deleted", deletedAt: at, deletedBy: actorId, version };
     });
     void result;
@@ -284,11 +310,32 @@ export class FlowService {
           payload: { nodeId, projectId: node.projectId, nodeKey: node.nodeKey, actorId, at: at.toISOString() },
         });
         await this.projects.touch(node.projectId, at, tx);
+        await this.audit.record(tx, {
+          actorId,
+          action: "complete",
+          objectType: "node",
+          objectId: nodeId,
+          projectId: node.projectId,
+          summary: "完成节点：" + node.name + "（" + node.nodeKey + "）",
+          changes: [{ field: "status", from: node.status, to: "done" }],
+        });
       });
       return await this.loadNodeView(nodeId);
     } catch (error) {
       if (error instanceof GateRejectedSignal) {
         await appendOutbox(this.database.db, error.outbox);
+        const rejectedProjectId =
+          typeof error.outbox.payload["projectId"] === "string" ? error.outbox.payload["projectId"] : null;
+        await this.audit.record(this.database.db, {
+          actorId,
+          action: "complete",
+          objectType: "node",
+          objectId: nodeId,
+          projectId: rejectedProjectId,
+          result: "failed",
+          summary: "完成节点被门禁拒绝：" + error.appError.message,
+          metadata: { errorCode: error.appError.code, details: error.appError.details },
+        });
         throw error.appError;
       }
       throw error;
@@ -351,10 +398,29 @@ export class FlowService {
           dedupeKey: "stage.advanced:" + locked.id + ":" + nextVersion,
           payload: { projectId, stageKey, nextStageKey: next?.stageKey ?? null, actorId, at: at.toISOString() },
         });
+        await this.audit.record(tx, {
+          actorId,
+          action: "advance",
+          objectType: "stage",
+          objectId: stageKey,
+          projectId,
+          summary: "阶段推进：" + stageKey + " → " + (next?.stageKey ?? "（末阶段，流程完成）"),
+          changes: [{ field: "status", from: "active", to: "done" }],
+        });
       });
     } catch (error) {
       if (error instanceof GateRejectedSignal) {
         await appendOutbox(this.database.db, error.outbox);
+        await this.audit.record(this.database.db, {
+          actorId,
+          action: "advance",
+          objectType: "stage",
+          objectId: stageKey,
+          projectId,
+          result: "failed",
+          summary: "阶段推进被门禁拒绝：" + error.appError.message,
+          metadata: { errorCode: error.appError.code, details: error.appError.details },
+        });
         throw error.appError;
       }
       throw error;
@@ -395,6 +461,16 @@ export class FlowService {
         topic: "stage.rolled_back",
         dedupeKey: "stage.rolled_back:" + locked.id + ":" + nextVersion,
         payload: { projectId, stageKey, backTo: previous.stageKey, reason: body.reason, actorId, at: at.toISOString() },
+      });
+      await this.audit.record(tx, {
+        actorId,
+        action: "rollback",
+        objectType: "stage",
+        objectId: stageKey,
+        projectId,
+        summary: "阶段回退：" + stageKey + " → " + previous.stageKey + "（原因：" + body.reason + "）",
+        changes: [{ field: "status", from: "active", to: "pending" }],
+        metadata: { reason: body.reason, backTo: previous.stageKey },
       });
     });
     return this.listStages(projectId);

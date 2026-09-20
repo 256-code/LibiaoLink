@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { ProjectMemberCreateBodySchema, ProjectMemberListResponseSchema, ProjectMemberSchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { DatabaseService } from "../../db/database.service.js";
+import { AuditService } from "../admin/index.js";
 import { UserService } from "../identity/index.js";
 import { ProjectMemberRepository, type ProjectMemberViewRow } from "./project-member.repository.js";
 import { ProjectRepository } from "./project.repository.js";
@@ -31,9 +33,11 @@ export function toProjectMemberView(row: ProjectMemberViewRow): ProjectMemberVie
 @Injectable()
 export class ProjectMemberService {
   constructor(
+    private readonly database: DatabaseService,
     private readonly members: ProjectMemberRepository,
     private readonly projects: ProjectRepository,
     private readonly users: UserService,
+    private readonly audit: AuditService,
   ) {}
 
   async listMembers(projectId: string): Promise<ProjectMemberListResult> {
@@ -42,29 +46,56 @@ export class ProjectMemberService {
     return { items: rows.map(toProjectMemberView), total: rows.length };
   }
 
-  /** 添加 / 更新成员：项目归档后拒绝（与主数据写保护同口径）；用户不存在 → 404（复用用户目录语义）。 */
-  async addMember(projectId: string, body: ProjectMemberCreateBody): Promise<ProjectMemberView> {
+  /** 添加 / 更新成员：项目归档后拒绝（与主数据写保护同口径）；用户不存在 → 404（复用用户目录语义）；变更写审计。 */
+  async addMember(projectId: string, body: ProjectMemberCreateBody, actorId: string): Promise<ProjectMemberView> {
     const project = await this.requireProject(projectId);
     this.assertWritable(project.project.status);
-    await this.users.getUser(body.userId);
+    const user = await this.users.getUser(body.userId);
+    const roleInProject = body.roleInProject ?? "project_member";
     const at = new Date();
-    await this.members.upsert(projectId, body.userId, body.roleInProject ?? "project_member", at);
-    await this.projects.touch(projectId, at);
+    await this.database.db.transaction(async (tx) => {
+      await this.members.upsert(projectId, body.userId, roleInProject, at, tx);
+      await this.projects.touch(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "create",
+        objectType: "project_member",
+        objectId: body.userId,
+        projectId,
+        summary: "添加项目成员：" + user.displayName + "（" + user.username + "，角色 " + roleInProject + "）",
+        changes: [
+          { field: "userId", from: null, to: body.userId },
+          { field: "roleInProject", from: null, to: roleInProject },
+        ],
+      });
+    });
     const row = await this.requireMemberRow(projectId, body.userId);
     return toProjectMemberView(row);
   }
 
   /** 移除成员：不是成员 / 项目不存在统一 404（ADR-011 统一 404 语义）。 */
-  async removeMember(projectId: string, userId: string): Promise<ProjectMemberView> {
+  async removeMember(projectId: string, userId: string, actorId: string): Promise<ProjectMemberView> {
     const project = await this.requireProject(projectId);
     this.assertWritable(project.project.status);
-    const at = new Date();
-    const removed = await this.members.remove(projectId, userId);
-    if (removed === null) {
-      throw new AppError("NOT_FOUND", "该用户不在项目成员中");
-    }
-    await this.projects.touch(projectId, at);
     const user = await this.users.getUser(userId);
+    const at = new Date();
+    const removed = await this.database.db.transaction(async (tx) => {
+      const row = await this.members.remove(projectId, userId, tx);
+      if (row === null) {
+        throw new AppError("NOT_FOUND", "该用户不在项目成员中");
+      }
+      await this.projects.touch(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "project_member",
+        objectId: userId,
+        projectId,
+        summary: "移除项目成员：" + user.displayName + "（" + user.username + "）",
+        changes: [{ field: "roleInProject", from: row.roleInProject, to: null }],
+      });
+      return row;
+    });
     return toProjectMemberView({ member: removed, username: user.username, displayName: user.displayName });
   }
 

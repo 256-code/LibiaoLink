@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { and, asc, eq } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
+import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
 import { projectMembers } from "../../db/schema/projects.js";
 
@@ -45,8 +46,14 @@ export class ProjectMemberRepository {
   }
 
   /** 添加 / 更新成员（幂等 upsert）：同项目 + 同用户唯一；改角色不动 joined_at（加入时间保持首次）。 */
-  async upsert(projectId: string, userId: string, roleInProject: string, at: Date): Promise<ProjectMemberRow> {
-    const rows = await this.database.db
+  async upsert(
+    projectId: string,
+    userId: string,
+    roleInProject: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectMemberRow> {
+    const rows = await client
       .insert(projectMembers)
       .values({ projectId, userId, roleInProject, joinedAt: at })
       .onConflictDoUpdate({
@@ -62,8 +69,8 @@ export class ProjectMemberRepository {
   }
 
   /** 移除成员：返回被删行（不存在返回 null，由服务层落 404）。 */
-  async remove(projectId: string, userId: string): Promise<ProjectMemberRow | null> {
-    const rows = await this.database.db
+  async remove(projectId: string, userId: string, client: DbClient = this.database.db): Promise<ProjectMemberRow | null> {
+    const rows = await client
       .delete(projectMembers)
       .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)))
       .returning();

@@ -57,7 +57,14 @@ import {
 } from "./modules/flow.ts";
 import { CallbackQuerySchema, LoginQuerySchema, MeResponseSchema } from "./modules/identity.ts";
 import { UserListQuerySchema, UserListResponseSchema, UserPreferencesSchema, UserPreferencesUpdateBodySchema } from "./modules/users.ts";
-import { DictListResponseSchema, DictSchema, DictTypeSchema } from "./modules/dicts.ts";
+import {
+  DictItemCreateBodySchema,
+  DictItemUpdateBodySchema,
+  DictListResponseSchema,
+  DictReadQuerySchema,
+  DictSchema,
+} from "./modules/dicts.ts";
+import { AuditLogListQuerySchema, AuditLogListResponseSchema } from "./modules/audits.ts";
 import { PermissionMeResponseSchema } from "./modules/permissions.ts";
 import {
   ChangeRequestDetailSchema,
@@ -105,6 +112,8 @@ const stageParams = z.object({ id: UuidSchema, key: StageKeySchema });
 const blueprintQuery = BlueprintQuerySchema;
 const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
 const idempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema.optional() });
+// 字典类型路径参数：一期取值 region / projectType；未知类型返回 404（非 400）——与 DictsController 行为一致
+const dictTypeParams = z.object({ type: z.string().min(1).max(64).openapi({ description: "字典类型（一期：region / projectType）；未知类型返回 404" }) });
 
 /**
  * /api/v1 契约唯一入口：由各模块 Zod schema 注册而来。
@@ -438,8 +447,10 @@ export function buildOpenApiDocument() {
     path: "/api/v1/dicts",
     tags: ["dicts"],
     summary: "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+    request: { query: DictReadQuerySchema },
     responses: {
       200: { description: "全部字典", ...json(DictListResponseSchema) },
+      401: commonErrors[401],
     },
   });
 
@@ -448,12 +459,59 @@ export function buildOpenApiDocument() {
     path: "/api/v1/dicts/{type}",
     tags: ["dicts"],
     summary: "单个字典（未知类型返回 404）",
-    request: { params: z.object({ type: DictTypeSchema }) },
+    request: { params: dictTypeParams, query: DictReadQuerySchema },
     responses: {
       200: { description: "字典", ...json(DictSchema) },
+      401: commonErrors[401],
       404: commonErrors[404],
     },
   });
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/dicts/{type}/items",
+    tags: ["dicts"],
+    summary: "新增字典条目（仅管理员 · dict.manage；变更写审计留痕）",
+    request: { params: dictTypeParams, body: json(DictItemCreateBodySchema) },
+    responses: {
+      201: { description: "创建成功（更新后的整个字典）", ...json(DictSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/dicts/{type}/items/{code}",
+    tags: ["dicts"],
+    summary: "更新字典条目（部分更新；停用替代删除；变更写审计留痕）",
+    request: { params: dictTypeParams.extend({ code: z.string() }), body: json(DictItemUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的整个字典", ...json(DictSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  // ---- 操作审计（C7；admin 模块：按对象 / 操作人检索） ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/audit-logs",
+    tags: ["audit"],
+    summary: "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view）",
+    request: { query: AuditLogListQuerySchema },
+    responses: {
+      200: { description: "审计列表（occurredAt 降序）", ...json(AuditLogListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
   registry.registerPath({
     method: "get",
     path: "/api/v1/blueprint",
@@ -907,7 +965,8 @@ export function buildOpenApiDocument() {
       { name: "files", description: "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）" },
       { name: "users", description: "用户目录与用户偏好（A2 / A4；M1）" },
       { name: "permissions", description: "权限画像与策略出口（ADR-011；PoC-6 权限矩阵与脱敏五出口）" },
-      { name: "dicts", description: "数据字典下发（A3；region / projectType，含主题色元数据）" },      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
+      { name: "dicts", description: "数据字典下发（A3；region / projectType，含主题色元数据）" },
+      { name: "audit", description: "操作审计（C7）：关键操作留痕、按对象 / 操作人检索与越权尝试（admin 模块）" },      { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
     ],
   });
 }

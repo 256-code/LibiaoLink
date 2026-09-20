@@ -10,5 +10,6 @@ export * from "./modules/files.ts";
 export * from "./modules/identity.ts";
 export * from "./modules/users.ts";
 export * from "./modules/dicts.ts";
+export * from "./modules/audits.ts";
 export * from "./modules/permissions.ts";
 export { buildOpenApiDocument } from "./openapi.ts";

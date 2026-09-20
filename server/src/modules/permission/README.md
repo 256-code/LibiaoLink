@@ -26,7 +26,7 @@
 
 - 依赖方向：permission → identity（角色画像）。project / task / blueprint 反向依赖本模块（守卫与策略出口），**本模块不 import project / task**（可见性判定直接读名册与节点表，避免循环；check:boundaries 无违规）。
 - 名册维护（增删改）与节点维护仍属 project 模块；本模块只读这两张表做判定。
-- 一期不做的事：临时授权（C3-06）、授权管理界面与权限自检报告（C3-09 · u12）、越权尝试告警留痕（h7 审计）。
+- 一期不做的事：临时授权（C3-06）、授权管理界面与权限自检报告（C3-09 · u12）。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
 
 ## 差异与后续（待复核）
 

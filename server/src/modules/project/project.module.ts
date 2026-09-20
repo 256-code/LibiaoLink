@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AdminModule } from "../admin/index.js";
 import { BlueprintModule } from "../blueprint/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { NodeModule } from "../node/index.js";
@@ -19,7 +20,7 @@ import { ProjectService } from "./project.service.js";
  * 依赖方向：project → { blueprint, node(GateService), identity, permission(策略守卫) }（node 不反依赖 project，避免循环）。
  */
 @Module({
-  imports: [IdentityModule, BlueprintModule, NodeModule, PermissionModule],
+  imports: [IdentityModule, BlueprintModule, NodeModule, PermissionModule, AdminModule],
   controllers: [ProjectsController, FlowController, NodesController],
   providers: [
     ProjectRepository,

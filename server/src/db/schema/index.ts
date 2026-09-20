@@ -6,3 +6,4 @@ export * from "./tasks.js";
 export * from "./files.js";
 export * from "./change.js";
 export * from "./platform.js";
+export * from "./admin.js";

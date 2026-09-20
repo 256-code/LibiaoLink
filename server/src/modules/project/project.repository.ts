@@ -152,10 +152,16 @@ export class ProjectRepository {
     }
   }
 
-  async updateWithVersion(id: string, patch: ProjectUpdateInput, expectedVersion: number, at: Date): Promise<ProjectRow | null> {
+  async updateWithVersion(
+    id: string,
+    patch: ProjectUpdateInput,
+    expectedVersion: number,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectRow | null> {
     const set: Record<string, unknown> = { ...patch, version: sql`${projects.version} + 1`, updatedAt: at };
     try {
-      const rows = await this.database.db
+      const rows = await client
         .update(projects)
         .set(set)
         .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNull(projects.deletedAt)))
@@ -183,8 +189,14 @@ export class ProjectRepository {
       .where(and(eq(projects.id, id), isNull(projects.deletedAt)));
   }
 
-  async softDeleteWithVersion(id: string, expectedVersion: number, deletedBy: string, at: Date): Promise<ProjectRow | null> {
-    const rows = await this.database.db
+  async softDeleteWithVersion(
+    id: string,
+    expectedVersion: number,
+    deletedBy: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectRow | null> {
+    const rows = await client
       .update(projects)
       .set({ deletedAt: at, deletedBy, version: sql`${projects.version} + 1` })
       .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNull(projects.deletedAt)))
