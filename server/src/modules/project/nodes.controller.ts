@@ -15,15 +15,15 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 export class NodesController {
   constructor(private readonly flow: FlowService) {}
 
-  /** 完成节点：缺件 → 422 NODE_REQUIRED_DOC_MISSING + missing；已完成 409 NODE_ALREADY_DONE；已删 409 NODE_DELETED。 */
+  /** 完成节点：缺件 → 422 NODE_REQUIRED_DOC_MISSING + missing；已完成 409 NODE_ALREADY_DONE；已删 409 NODE_DELETED。响应按契约 NodeCompleteResponse（{ node }）。 */
   @Post(":id/complete")
   @HttpCode(200)
-  complete(
+  async complete(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(NodeCompleteBodySchema)) body: NodeCompleteBody,
     @CurrentActorId() actorId: string,
-  ): Promise<ProjectNodeView> {
-    return this.flow.completeNode(id, body.version, actorId);
+  ): Promise<{ node: ProjectNodeView }> {
+    return { node: await this.flow.completeNode(id, body.version, actorId) };
   }
 
   /** 完成预检：UI 置灰依据（canComplete + missing）。 */
