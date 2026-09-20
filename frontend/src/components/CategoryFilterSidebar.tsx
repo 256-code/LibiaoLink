@@ -6,6 +6,15 @@ import { managerName } from "../data/managers";
 import { PROJECT_TYPES } from "../types";
 import type { Project } from "../types";
 
+/** 「液态玻璃」材质（与任务表行内编辑单元格同口径，Push 66 / 67 定稿）：白底 + 发丝描边 + 顶部内高光 + 极轻投影。 */
+const GLASS_SURFACE =
+  "border-zinc-200/90 bg-white/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(15,23,42,0.04)] backdrop-blur-[3px] hover:border-zinc-300 hover:bg-white hover:shadow-[0_2px_6px_rgba(15,23,42,0.08)]";
+
+/** 侧栏玻璃底板（液态玻璃，与页面浮层同口径）：半透明白渐变 + 白色发丝边 + 顶缘高光 + 柔和投影 + 背景虚化。 */
+const GLASS_PANEL =
+  "border-r border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.72),rgba(255,255,255,0.5))] " +
+  "shadow-[inset_1px_0_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150";
+
 type CategoryFilterSidebarProps = {
   open: boolean;
   projects: Project[];
@@ -89,8 +98,8 @@ export function CategoryFilterSidebar({
             className={
               "rounded-full border px-3 py-1 text-xs transition " +
               (isSelected
-                ? "border-zinc-900 bg-zinc-900 text-white"
-                : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50")
+                ? "border-zinc-900 bg-zinc-900 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_2px_8px_rgba(15,23,42,0.18)]"
+                : GLASS_SURFACE + " text-zinc-600")
             }
           >
             {option.label ?? option.value}
@@ -116,10 +125,10 @@ export function CategoryFilterSidebar({
         aria-label="分类筛选"
         className={
           (open ? "translate-x-0" : "-translate-x-full") +
-          " fixed bottom-0 left-0 top-16 z-20 flex w-[280px] flex-col border-r border-zinc-200 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)] transition-transform duration-300 ease-out"
+          " fixed bottom-0 left-0 top-16 z-20 flex w-[280px] flex-col transition-transform duration-300 ease-out " + GLASS_PANEL
         }
       >
-        <div className="flex items-start justify-between border-b border-zinc-100 px-5 py-4">
+        <div className="flex items-start justify-between border-b border-zinc-200/70 px-5 py-4">
           <div>
             <p className="text-sm font-semibold text-zinc-900">分类筛选</p>
             <p className="mt-0.5 text-xs text-zinc-400">按地区、项目类型、项目经理、项目时间筛选项目</p>
@@ -163,12 +172,12 @@ export function CategoryFilterSidebar({
               </span>
             </p>
             <div className="mt-3">
-              <DateRangePicker value={dateRange} onChange={onDateRangeChange} hintDate={newestDay} />
+              <DateRangePicker value={dateRange} onChange={onDateRangeChange} hintDate={newestDay} triggerClassName={GLASS_SURFACE} />
             </div>
           </section>
         </ScrollArea>
 
-        <div className="flex items-center justify-between border-t border-zinc-100 px-5 py-3">
+        <div className="flex items-center justify-between border-t border-zinc-200/70 px-5 py-3">
           <span className="text-xs text-zinc-400">{activeCount === 0 ? "未选择筛选条件" : "已选 " + activeCount + " 项"}</span>
           <button
             type="button"

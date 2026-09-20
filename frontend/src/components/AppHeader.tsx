@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
-import { goBackToList, listHref } from "../useHashRoute";
+import { goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import type { MeResponse, Project } from "../types";
 
 type AppHeaderProps = {
@@ -18,6 +18,7 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const homeHref = listHref();
+  const upHref = upLevelHref();
   const seqNoText = project ? String(project.seqNo).padStart(2, "0") : "";
 
   useEffect(() => {
@@ -42,19 +43,19 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
     };
   }, [menuOpen]);
 
-  // 回到「项目空间」：列表页原地保留筛选态，详情页回退到进入前的列表地址；带修饰键点击交给浏览器（新标签打开）
-  const handleHomeClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+  // 站内跳转统一拦截：带修饰键点击（新标签 / 新窗口）交给浏览器默认行为
+  const interceptNav = (action: () => void) => (event: ReactMouseEvent<HTMLAnchorElement>) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
     }
     event.preventDefault();
-    goBackToList();
+    action();
   };
 
   return (
     <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/90 backdrop-blur">
       <div className="flex h-16 items-center gap-3 px-6">
-        <a href={homeHref} onClick={handleHomeClick} className="flex shrink-0 items-center gap-3">
+        <a href={upHref} onClick={interceptNav(goUpLevel)} title="返回上一层级" className="flex shrink-0 items-center gap-3">
           <img src="/libiaolink-logo.svg" alt="LibiaoLink" className="h-11 w-auto" />
           <div className="leading-tight">
             <p className="text-base font-semibold text-zinc-900">LibiaoLink</p>
@@ -64,7 +65,7 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
         {project ? (
           <div className="mx-1 hidden min-w-0 border-l border-zinc-200 pl-4 lg:block">
             <p className="truncate text-xs text-zinc-500">
-              <a href={homeHref} onClick={handleHomeClick} className="transition hover:text-zinc-800">项目空间</a>
+              <a href={homeHref} onClick={interceptNav(goBackToList)} className="transition hover:text-zinc-800">项目空间</a>
               <span className="mx-1.5 text-zinc-300">/</span>
               <span className="text-zinc-500">
                 序号{" "}

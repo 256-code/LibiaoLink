@@ -9,6 +9,11 @@ import { ApiErrorFilter } from "../src/common/errors/api-error.filter.js";
 import { AppConfigModule } from "../src/config/config.module.js";
 import { loadEnv } from "../src/config/env.js";
 import { IdentityModule } from "../src/modules/identity/index.js";
+import { DepartmentRepository } from "../src/modules/identity/department.repository.js";
+import { DepartmentService } from "../src/modules/identity/department.service.js";
+import { OrgSyncService } from "../src/modules/identity/org-sync.service.js";
+import { RoleRepository } from "../src/modules/identity/role.repository.js";
+import { RoleService } from "../src/modules/identity/role.service.js";
 import { SessionRepository, type SessionRow, type SessionWithUser } from "../src/modules/identity/session.repository.js";
 import { UserRepository, type SsoProfile, type UserRow } from "../src/modules/identity/user.repository.js";
 import { CsrfGuard } from "../src/modules/identity/csrf.guard.js";
@@ -119,6 +124,7 @@ class FakeUserRepository {
       email: profile.email,
       owner: profile.owner,
       status: existing?.status ?? "active",
+      removedAt: existing?.removedAt ?? null,
       createdAt: existing?.createdAt ?? new Date(),
       updatedAt: new Date(),
     };
@@ -241,6 +247,17 @@ async function createApp(idleMinutes: number): Promise<TestContext> {
     .useValue(fakeUsers)
     .overrideProvider(SessionRepository)
     .useValue(fakeSessions)
+    // h1 新增的组织 / 角色 provider 与 /auth/* 无关：以空对象替身避免测试依赖真实数据库
+    .overrideProvider(DepartmentRepository)
+    .useValue({})
+    .overrideProvider(DepartmentService)
+    .useValue({})
+    .overrideProvider(RoleRepository)
+    .useValue({})
+    .overrideProvider(RoleService)
+    .useValue({})
+    .overrideProvider(OrgSyncService)
+    .useValue({})
     .compile();
   const app = moduleRef.createNestApplication();
   app.useLogger(false);

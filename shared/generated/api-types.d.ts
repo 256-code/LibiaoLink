@@ -24,11 +24,15 @@ export interface paths {
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
                     "filter[status]"?: string;
-                    /** @description 关键字（编号 / 名称 / 客户） */
+                    /** @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00） */
+                    "filter[timeFrom]"?: components["schemas"]["DateOnly"];
+                    /** @description 项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
+                    "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序：sort=field:asc,field2:desc（v0.2 §7.1） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
                     sort?: string;
                 };
                 header?: never;
@@ -131,11 +135,15 @@ export interface paths {
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
                     "filter[status]"?: string;
-                    /** @description 关键字（编号 / 名称 / 客户） */
+                    /** @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00） */
+                    "filter[timeFrom]"?: components["schemas"]["DateOnly"];
+                    /** @description 项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
+                    "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序：sort=field:asc,field2:desc（v0.2 §7.1） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
                     sort?: string;
                 };
                 header?: never;
@@ -214,7 +222,60 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** 删除项目（软删；If-Match 回传当前 version 防误删） */
+        delete: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description 项目当前 version（防误删）；缺失或非数字 → 400 VALIDATION_FAILED，不匹配 → 409 VERSION_CONFLICT */
+                    "If-Match": string;
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已软删项目（列表 / 详情 / facets / 搜索不再返回） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Project"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         /** 更新项目（乐观锁：必须回传 version） */
@@ -274,6 +335,170 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/projects/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目成员名册（记录级权限来源） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 成员列表（项目经理在前，同角色按工号升序） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMemberListResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 添加 / 更新成员（幂等：同项目 + 同用户唯一） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectMemberCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 成员行（重复添加 = 覆盖角色） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMember"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 移除成员（返回被移除的成员行；项目归档后拒绝） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    userId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 被移除的成员 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMember"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/summary": {
         parameters: {
             query?: never;
@@ -329,7 +554,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 项目任务列表（表格与抽屉直接渲染的全字段） */
+        /** 项目任务列表（TaskListItem：表格直接渲染 + 内联摘要） */
         get: {
             parameters: {
                 query?: {
@@ -343,7 +568,7 @@ export interface paths {
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序：sort=field:asc,field2:desc（v0.2 §7.1） */
+                    /** @description 排序：sort=field:asc,field2:desc；字段白名单 plannedStart / plannedEnd / actualEnd / progress / title / createdAt（白名单外 400） */
                     sort?: string;
                 };
                 header?: never;
@@ -376,27 +601,118 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** 创建任务（从任务节点库 / 任务模板生成或手工创建；headcount / priority 可空） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建成功 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects/{id}/tasks/{taskId}/progress": {
+    "/api/v1/projects/{id}/tasks/{taskId}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 任务详情（抽屉全字段 + 文件清单；列表走 TaskListItem，抽屉打开时按需请求） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 任务详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskDetail"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新任务进度（联动状态与完成日期，写审计；回退同样留痕） */
+        /** 编辑任务（乐观锁；任务描述 / 成果文件按 A1-17 锁定，进度走 /progress） */
         patch: {
             parameters: {
                 query?: never;
@@ -411,7 +727,7 @@ export interface paths {
             };
             requestBody?: {
                 content: {
-                    "application/json": components["schemas"]["TaskProgressUpdateBody"];
+                    "application/json": components["schemas"]["TaskUpdateBody"];
                 };
             };
             responses: {
@@ -455,6 +771,642 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/projects/{id}/tasks/{taskId}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 更新任务进度（联动状态与完成日期，写审计；回退同样留痕） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskProgressUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的任务（TaskListItem 同形，前端直接替换行） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskListItem"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/tasks/from-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从任务模板批量生成任务（「整套添加」；按节点判重，已存在的跳过） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskCreateFromTemplateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建结果（created + skipped） */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskCreateFromTemplateResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/task-nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 任务节点库（任务模板的节点来源；按阶段过滤） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 按阶段过滤；缺省 = 全部阶段 */
+                    stage?: components["schemas"]["StageKey"] & unknown;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 节点库列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskNodeListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/task-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 任务模板列表（按阶段过滤；含节点顺序与名称摘要） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 按阶段过滤；缺省 = 全部阶段 */
+                    stage?: components["schemas"]["StageKey"] & unknown;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 模板列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplateListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 新建任务模板（名称 + 阶段 + 节点顺序） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskTemplateCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建成功 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplate"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/task-templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 模板详情 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 模板 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplate"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** 删除模板（即生效；已生成的项目任务不变） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskTemplateDeleteBody"];
+                };
+            };
+            responses: {
+                /** @description 已删除 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplateDeleteResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** 编辑模板（改名 / 节点全量替换；乐观锁） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskTemplateUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的模板 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplate"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 用户目录（项目经理下拉 / 任务负责人候选 / 姓名解析；只返回启用用户，默认按工号升序） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 关键字（工号 / 姓名 / 邮箱） */
+                    q?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 用户列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取当前用户偏好（任务表列显隐等） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 偏好全量 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserPreferences"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["UserPreferencesUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的偏好全量 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserPreferences"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/dicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 全部字典 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DictListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dicts/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 单个字典（未知类型返回 404） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404 */
+                    type: components["schemas"]["DictType"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 字典 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/blueprint": {
         parameters: {
             query?: never;
@@ -462,10 +1414,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 当前蓝图（含版本与发布状态） */
+        /** 当前蓝图（含版本与发布状态；该项目类型尚未建档时 404，default 仅作导入兜底） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -481,12 +1436,24 @@ export interface paths {
                         "application/json": components["schemas"]["BlueprintView"];
                     };
                 };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
             };
         };
         /** 保存蓝图草稿（必须通过 schema + 引用校验） */
         put: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: {
                     /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
                     "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
@@ -511,6 +1478,15 @@ export interface paths {
                 };
                 /** @description 契约校验失败（VALIDATION_FAILED） */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -548,7 +1524,10 @@ export interface paths {
         /** 发布蓝图（递增 blueprintVersion；不影响已生成项目） */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: {
                     /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
                     "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
@@ -569,6 +1548,24 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["BlueprintView"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
                 /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
@@ -598,7 +1595,10 @@ export interface paths {
         /** 导出蓝图 JSON（自建格式，round-trip 无损） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -612,6 +1612,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Blueprint"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
             };
@@ -636,7 +1645,10 @@ export interface paths {
         /** 导入蓝图 JSON（保存为草稿；重复导入幂等） */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 项目类型（ADR-019）；缺省 = default 兜底模板 */
+                    projectType?: string;
+                };
                 header?: {
                     /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
                     "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
@@ -657,6 +1669,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["BlueprintView"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
                 /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
@@ -771,8 +1792,26 @@ export interface paths {
                         "application/json": components["schemas"]["ApiError"];
                     };
                 };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
                 /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -824,6 +1863,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ProjectNode"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
                 /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
@@ -966,6 +2014,231 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目阶段列表（九阶段状态与完成度；读时派生） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 阶段列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StageListResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/stages/{key}/advance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 推进阶段（服务端门禁：任务 / 节点 / 成果文件；失败 422 + 缺项明细，不部分推进） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
+                    key: components["schemas"]["StageKey"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["StageAdvanceBody"];
+                };
+            };
+            responses: {
+                /** @description 推进后的阶段列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StageListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/stages/{key}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 回退到相邻上一阶段（原因必填并留痕；不做门禁） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
+                    key: components["schemas"]["StageKey"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["StageRollbackBody"];
+                };
+            };
+            responses: {
+                /** @description 回退后的阶段列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StageListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2156,12 +3429,14 @@ export interface components {
             /** @example 4f1c2f2e-6f8a-4b1e-9a1f-2f6d6f2c9d10 */
             traceId: string;
         };
-        /** @description 自建蓝图 JSON（v0.2 §3.2）；导入校验 = schema + 引用 + 幂等 */
+        /** @description 自建蓝图 JSON（v0.2 §3.2 + ADR-019）；导入校验 = schema + 引用 + 幂等 */
         Blueprint: {
             /** @enum {number} */
             schemaVersion: 1;
             blueprintVersion: number;
             name: string;
+            /** @description 所属项目类型（ADR-019：按项目类型各一份，default 为兜底模板）；缺省 = 通用 */
+            projectType?: string;
             updatedAt: components["schemas"]["DateTime"];
             stages: components["schemas"]["BlueprintStage"][];
         };
@@ -2219,6 +3494,12 @@ export interface components {
         BlueprintView: {
             blueprint: components["schemas"]["Blueprint"];
             status: components["schemas"]["BlueprintStatus"];
+            /** @description 所属项目类型（ADR-019） */
+            projectType: string;
+            /** @description 是否兜底默认模板（project_type = default） */
+            isDefault: boolean;
+            /** @description 已发布版本号（0 = 尚未发布） */
+            publishedVersion: number;
             publishedAt: components["schemas"]["DateTime"] & (string | null);
             publishedBy: components["schemas"]["Uuid"] & (string | null);
         };
@@ -2273,14 +3554,43 @@ export interface components {
         ChangeStatus: "applied";
         /**
          * Format: date
-         * @description 业务日期 YYYY-MM-DD（不携带时区）
+         * @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）
          */
-        DateOnly: string | null;
+        DateOnly: string;
         /**
          * Format: date-time
          * @description ISO8601 时间戳（UTC 存储，前端按 Asia/Shanghai 展示）
          */
         DateTime: string;
+        /** @description 单个字典（含元数据）；响应带 ETag，前端启动拉一次、登出清缓存 */
+        Dict: {
+            type: components["schemas"]["DictType"];
+            items: components["schemas"]["DictItem"][];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        DictItem: {
+            /** @description 字典码（projects.region / projects.projectType 存该值） */
+            code: string;
+            /** @description 显示名 */
+            name: string;
+            /** @description 展示顺序（升序） */
+            sort: number;
+            /** @description 普通用户只见 enabled=true 的项；管理员可见全集（二期） */
+            enabled: boolean;
+            /** @description 字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码 */
+            metadata: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description 全量字典（一期两个类型：region / projectType） */
+        DictListResponse: {
+            items: components["schemas"]["Dict"][];
+        };
+        /**
+         * @description 字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404
+         * @enum {string}
+         */
+        DictType: "region" | "projectType";
         /**
          * @description 十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）
          * @enum {string|null}
@@ -2298,7 +3608,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "NODE_REQUIRED_DOC_MISSING" | "NODE_ALREADY_DONE" | "NODE_DELETED" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -2431,13 +3741,17 @@ export interface components {
         /** @description 新增节点（仅模板节点池，留痕） */
         NodeCreateBody: {
             stageId: components["schemas"]["Uuid"];
-            /** @description 模板节点池内的节点稳定键（一期仅允许蓝图内的 key） */
+            /** @description 模板节点池内的节点稳定键（一期仅允许项目导入版本的蓝图 key） */
             nodeKey: string;
             name?: string;
             seq?: number;
+            /** @description 增补原因（留痕；ADR-020） */
+            reason?: string;
         };
         NodeDeleteBody: {
             version: components["schemas"]["Version"];
+            /** @description 删除原因（必填并留痕；ADR-020） */
+            reason: string;
         };
         /** @description 缺件明细（门禁拒绝时会一次性返回） */
         NodeGateMissing: {
@@ -2488,6 +3802,8 @@ export interface components {
             /** @description 项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码） */
             projectType: string;
             managerId: components["schemas"]["Uuid"];
+            /** @description 项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」） */
+            managerName: string | null;
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
             description: string | null;
@@ -2504,7 +3820,15 @@ export interface components {
             code: string;
             name: string;
             customer?: string;
+            /**
+             * @description 项目落地地区（字典 region）；未填写归入「未分类」（A1-12 定档）
+             * @default 未分类
+             */
             region: string;
+            /**
+             * @description 项目类型（字典 project_type）；未填写归入「未分类」（A1-12 定档）
+             * @default 未分类
+             */
             projectType: string;
             managerId: components["schemas"]["Uuid"];
             stageKey?: components["schemas"]["StageKey"];
@@ -2512,7 +3836,7 @@ export interface components {
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
             blueprintVersion?: number;
         };
-        /** @description 首页分类计数；计数与列表同口径（同筛选条件） */
+        /** @description 首页分类计数；计数与列表同口径（同筛选条件）；五组固定返回，前端按需展示（A6） */
         ProjectFacets: {
             total: number;
             region: {
@@ -2534,7 +3858,7 @@ export interface components {
         /** @description 项目流程（阶段 + 节点 + 约束 + 状态）；导入即快照 */
         ProjectFlow: {
             projectId: components["schemas"]["Uuid"];
-            /** @description 项目导入时的蓝图版本（快照） */
+            /** @description 项目导入时的蓝图版本（快照）；0 = 尚未导入（h3 之前建的项目） */
             blueprintVersion: number;
             stages: components["schemas"]["ProjectStage"][];
         };
@@ -2544,6 +3868,33 @@ export interface components {
             limit: number;
             total: number;
         };
+        /** @description 项目成员（名册行） */
+        ProjectMember: {
+            userId: components["schemas"]["Uuid"];
+            /**
+             * @description 工号（users.username）
+             * @example 10086
+             */
+            username: string;
+            /** @description 姓名（users.display_name；账号停用 / 离职后仍返回） */
+            displayName: string;
+            roleInProject: components["schemas"]["ProjectMemberRole"];
+            joinedAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 添加成员：重复添加（同 project + user）幂等并覆盖角色；项目归档后拒绝（409 PROJECT_ARCHIVED） */
+        ProjectMemberCreateBody: {
+            userId: components["schemas"]["Uuid"];
+            roleInProject?: components["schemas"]["ProjectMemberRole"] & unknown;
+        };
+        ProjectMemberListResponse: {
+            items: components["schemas"]["ProjectMember"][];
+            total: number;
+        };
+        /**
+         * @description 项目内角色：project_manager（项目经理）/ project_member（项目成员）；只作用于项目名册，不改变全局功能权限
+         * @enum {string}
+         */
+        ProjectMemberRole: "project_manager" | "project_member";
         ProjectNode: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
@@ -2565,11 +3916,31 @@ export interface components {
             name: string;
             seq: number;
             status: components["schemas"]["StageStatus"];
-            plannedStart: components["schemas"]["DateOnly"];
-            plannedEnd: components["schemas"]["DateOnly"];
-            actualStart: components["schemas"]["DateOnly"];
-            actualEnd: components["schemas"]["DateOnly"];
+            plannedStart: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
+            actualStart: components["schemas"]["DateOnly"] & (string | null);
+            actualEnd: components["schemas"]["DateOnly"] & (string | null);
             nodes: components["schemas"]["ProjectNode"][];
+        };
+        /** @description 阶段状态与完成度（GET /projects/{id}/stages） */
+        ProjectStageSummary: {
+            id: components["schemas"]["Uuid"];
+            stageKey: components["schemas"]["StageKey"];
+            name: string;
+            seq: number;
+            status: components["schemas"]["StageStatus"];
+            plannedStart: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
+            actualStart: components["schemas"]["DateOnly"] & (string | null);
+            actualEnd: components["schemas"]["DateOnly"] & (string | null);
+            nodes: components["schemas"]["StageProgress"];
+            tasks: components["schemas"]["StageProgress"];
+            advancedAt: components["schemas"]["DateTime"] & (string | null);
+            advancedBy: components["schemas"]["Uuid"] & (string | null);
+            rolledBackAt: components["schemas"]["DateTime"] & (string | null);
+            rolledBackBy: components["schemas"]["Uuid"] & (string | null);
+            rollbackReason: string | null;
+            version: components["schemas"]["Version"];
         };
         /**
          * @description 项目状态（projects.status）
@@ -2602,17 +3973,37 @@ export interface components {
         };
         /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
+        /** @description 推进当前阶段：过门禁才生效；失败 422 STAGE_GATE_NOT_PASSED + 缺项明细（不部分推进） */
+        StageAdvanceBody: {
+            version: components["schemas"]["Version"];
+        };
         /**
          * @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）
          * @enum {string}
          */
         StageKey: "presale" | "design" | "purchase" | "assembly" | "install" | "deploy" | "trial" | "production" | "acceptance";
+        StageListResponse: {
+            projectId: components["schemas"]["Uuid"];
+            stageKey: components["schemas"]["StageKey"];
+            stages: components["schemas"]["ProjectStageSummary"][];
+        };
+        /** @description 阶段完成度（读时派生，不落库）：已完成 ÷ 总数 */
+        StageProgress: {
+            total: number;
+            done: number;
+        };
+        /** @description 回退到相邻上一阶段：仅相邻、无门禁、原因必填；projects.stage_key 回移 */
+        StageRollbackBody: {
+            /** @description 回退原因（必填并留痕；ADR-023） */
+            reason: string;
+            version: components["schemas"]["Version"];
+        };
         /**
          * @description 阶段状态（project_stages.status）
          * @enum {string}
          */
         StageStatus: "pending" | "active" | "done";
-        /** @description 任务（v0.2 §2.3 tasks；展示态派生规则见 §2.4） */
+        /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14） */
         Task: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
@@ -2624,14 +4015,15 @@ export interface components {
             status: components["schemas"]["TaskBaseStatus"];
             displayStatus: components["schemas"]["TaskDisplayStatus"];
             progress: components["schemas"]["TaskProgress"];
-            plannedStart: components["schemas"]["DateOnly"];
-            plannedEnd: components["schemas"]["DateOnly"];
-            actualEnd: components["schemas"]["DateOnly"];
+            plannedStart: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
+            actualEnd: components["schemas"]["DateOnly"] & (string | null);
             estimatedDays: number | null;
             headcount: number | null;
             priority: components["schemas"]["Priority"];
             deliverable: components["schemas"]["DocType"];
             note: string | null;
+            /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
             onTime: boolean | null;
             changeRef: components["schemas"]["Uuid"] & (string | null);
             version: components["schemas"]["Version"];
@@ -2643,23 +4035,196 @@ export interface components {
          * @enum {string}
          */
         TaskBaseStatus: "pending" | "active" | "done";
+        /** @description 创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径） */
+        TaskCreateBody: {
+            stageKey: components["schemas"]["StageKey"];
+            /**
+             * @description 任务描述（节点名称）
+             * @example 货架组装
+             */
+            title: string;
+            titleEn?: string | null;
+            taskNodeId?: components["schemas"]["Uuid"] & unknown;
+            ownerId?: components["schemas"]["Uuid"] & unknown;
+            plannedStart?: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
+            estimatedDays?: number | null;
+            headcount?: number | null;
+            priority?: components["schemas"]["Priority"];
+            deliverable?: components["schemas"]["DocType"];
+            note?: string | null;
+        };
+        /** @description 从任务模板生成任务（批量；同一节点在项目里只留一份） */
+        TaskCreateFromTemplateBody: {
+            templateId: components["schemas"]["Uuid"];
+            /** @description 只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400 */
+            nodeIds?: components["schemas"]["Uuid"][];
+            /**
+             * @description 已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409
+             * @default true
+             */
+            skipExisting: boolean;
+            ownerId?: components["schemas"]["Uuid"] & unknown;
+        };
+        TaskCreateFromTemplateResponse: {
+            created: components["schemas"]["Task"][];
+            /** @description skipExisting=true 时跳过的节点及其已存在的任务 */
+            skipped: {
+                nodeId: components["schemas"]["Uuid"];
+                taskId: components["schemas"]["Uuid"];
+            }[];
+        };
+        /** @description 任务详情（M3-01；列表 → 详情不再依赖列表随行数据） */
+        TaskDetail: components["schemas"]["Task"] & {
+            ownerName: string;
+            changeSummary: string | null;
+            files: components["schemas"]["TaskFileBrief"][];
+        };
         /**
-         * @description 任务展示五态（服务端派生）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；逾期标注落在 actualEnd
+         * @description 任务展示五态（服务端读时派生，A12 / A14 · Push 70）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；派生优先 —— 未完成且已过预计完成日期一律「已延期」，不因状态写入改写；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）
          * @enum {string}
          */
         TaskDisplayStatus: "pending" | "active" | "done" | "overdue" | "early_done";
+        TaskFileBrief: {
+            id: components["schemas"]["Uuid"];
+            name: string;
+            status: components["schemas"]["FileStatus"];
+            docType: components["schemas"]["DocType"];
+        };
+        TaskFileSummary: {
+            total: number;
+            /** @description 未定档（draft）数量；>0 时完成门禁放行但返回 warning 并触发 R02 */
+            draft: number;
+            /** @description 已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计 */
+            final: number;
+        };
+        TaskListItem: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            stageKey: components["schemas"]["StageKey"];
+            nodeId: components["schemas"]["Uuid"] & (string | null);
+            title: string;
+            titleEn: string | null;
+            ownerId: components["schemas"]["Uuid"];
+            status: components["schemas"]["TaskBaseStatus"];
+            displayStatus: components["schemas"]["TaskDisplayStatus"];
+            progress: components["schemas"]["TaskProgress"];
+            plannedStart: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
+            actualEnd: components["schemas"]["DateOnly"] & (string | null);
+            estimatedDays: number | null;
+            headcount: number | null;
+            priority: components["schemas"]["Priority"];
+            deliverable: components["schemas"]["DocType"];
+            note: string | null;
+            /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
+            onTime: boolean | null;
+            version: components["schemas"]["Version"];
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+            /** @description 负责人姓名（users.display_name 随行下发） */
+            ownerName: string;
+            /** @description 变更摘要（列表用短文本；详情用 changeRef 跳变更记录） */
+            changeSummary: string | null;
+            fileSummary: components["schemas"]["TaskFileSummary"];
+        };
+        /** @description 任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要） */
         TaskListResponse: {
-            items: components["schemas"]["Task"][];
+            items: components["schemas"]["TaskListItem"][];
             page: number;
             limit: number;
             total: number;
         };
-        /** @description 任务进度四格：0 / 25% / 50% / 75% / 100% */
+        /** @description 任务节点库条目（任务模板的节点来源） */
+        TaskNode: {
+            id: components["schemas"]["Uuid"];
+            stageKey: components["schemas"]["StageKey"];
+            /** @description 库内排序（建议 10/20/30 步长，便于插入） */
+            seq: number;
+            /**
+             * @description 节点名称（生成任务时写入任务描述）
+             * @example 货架组装
+             */
+            title: string;
+            /** @example Shelf Assembly */
+            titleEn: string | null;
+            version: components["schemas"]["Version"];
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        TaskNodeListResponse: {
+            items: components["schemas"]["TaskNode"][];
+            total: number;
+        };
+        /** @description 任务进度四格（离散五档）：0 / 25% / 50% / 75% / 100%；写入即联动状态与完成日期 */
         TaskProgress: 0 | 0.25 | 0.5 | 0.75 | 1;
         TaskProgressUpdateBody: {
             progress: components["schemas"]["TaskProgress"];
             actualEnd?: components["schemas"]["DateOnly"] & unknown;
+            /** @description 进度更新备注：提供时写入任务的「项目进展描述」（note）并留痕 */
             note?: string;
+            version: components["schemas"]["Version"];
+        };
+        /** @description 任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点） */
+        TaskTemplate: {
+            id: components["schemas"]["Uuid"];
+            /**
+             * @description 模板名称（列头可直接改名）
+             * @example 英国订单
+             */
+            name: string;
+            stageKey: components["schemas"]["StageKey"];
+            /** @description 节点顺序 = 数组顺序；同一模板内按 nodeId 去重 */
+            nodes: components["schemas"]["TaskTemplateNode"][];
+            version: components["schemas"]["Version"];
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        TaskTemplateCreateBody: {
+            name: string;
+            stageKey: components["schemas"]["StageKey"];
+            /**
+             * @description 任务节点库内的节点 id，顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400
+             * @default []
+             */
+            nodeIds: components["schemas"]["Uuid"][];
+        };
+        TaskTemplateDeleteBody: {
+            version: components["schemas"]["Version"];
+        };
+        /** @description 删除即生效；已生成的受影响项目任务不变 */
+        TaskTemplateDeleteResponse: {
+            id: components["schemas"]["Uuid"];
+            deletedAt: components["schemas"]["DateTime"];
+        };
+        TaskTemplateListResponse: {
+            items: components["schemas"]["TaskTemplate"][];
+            total: number;
+        };
+        /** @description 模板内节点（引用任务节点库 + 模板内顺序 + 名称摘要） */
+        TaskTemplateNode: {
+            nodeId: components["schemas"]["Uuid"];
+            seq: number;
+            title: string;
+            titleEn: string | null;
+        };
+        /** @description 编辑模板（改名 / 节点全量替换；乐观锁 version 必传） */
+        TaskTemplateUpdateBody: {
+            name?: string;
+            /** @description 全量替换节点顺序（含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
+            nodeIds?: components["schemas"]["Uuid"][];
+            version: components["schemas"]["Version"];
+        };
+        /** @description 编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress） */
+        TaskUpdateBody: {
+            ownerId?: components["schemas"]["Uuid"];
+            status?: components["schemas"]["TaskBaseStatus"] & unknown;
+            plannedStart?: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
+            estimatedDays?: number | null;
+            headcount?: number | null;
+            priority?: components["schemas"]["Priority"];
+            note?: string | null;
             version: components["schemas"]["Version"];
         };
         UploadAbortResponse: {
@@ -2773,6 +4338,42 @@ export interface components {
              * @example libiaorobot.com
              */
             owner: string | null;
+        };
+        UserListResponse: {
+            items: components["schemas"]["UserSummary"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /** @description 用户偏好（全量；GET 返回当前值） */
+        UserPreferences: {
+            /** @description 任务表隐藏列 key 列表；key 白名单与前端任务表列一致，未知 key 返回 400 VALIDATION_FAILED */
+            taskTableHiddenColumns: string[];
+            updatedAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description PATCH 合并语义：只传变更键；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400） */
+        UserPreferencesUpdateBody: {
+            taskTableHiddenColumns?: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description 用户状态；非 active 时该用户全部会话被撤销
+         * @enum {string}
+         */
+        UserStatus: "active" | "disabled";
+        /** @description 用户目录项（M1：项目经理下拉 / 任务负责人候选 / 姓名解析） */
+        UserSummary: {
+            id: components["schemas"]["Uuid"];
+            /**
+             * @description 工号（users.username，唯一）
+             * @example 10086
+             */
+            username: string;
+            /** @description 姓名（users.display_name） */
+            displayName: string;
+            email: string | null;
+            status: components["schemas"]["UserStatus"];
         };
         /**
          * Format: uuid

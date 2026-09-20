@@ -85,7 +85,7 @@ export const TaskDisplayStatusSchema = z
   .enum(["pending", "active", "done", "overdue", "early_done"])
   .openapi("TaskDisplayStatus", {
     description:
-      "任务展示五态（服务端派生）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；逾期标注落在 actualEnd",
+      "任务展示五态（服务端读时派生，A12 / A14 · Push 70）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；派生优先 —— 未完成且已过预计完成日期一律「已延期」，不因状态写入改写；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）",
   });
 
 export const FileStatusSchema = z

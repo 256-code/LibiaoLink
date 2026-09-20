@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type DateRange = {
   from: string;
@@ -9,6 +10,12 @@ type DateRangePickerProps = {
   value: DateRange | null;
   onChange: (value: DateRange | null) => void;
   hintDate?: string;
+  /** 未选日期时触发器上的文案（默认「全部时间」，分类筛选用；任务编辑表单传业务文案）。 */
+  placeholder?: string;
+  /** 触发器的无障碍名称（默认「选择日期范围」）。 */
+  ariaLabel?: string;
+  /** 触发器附加类名（分类筛选侧栏传「液态玻璃」材质；不传保持默认白底描边）。 */
+  triggerClassName?: string;
 };
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
@@ -25,7 +32,7 @@ const toDate = (key: string) => {
 
 const formatKey = (key: string) => key.replace(/-/g, "/");
 
-export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerProps) {
+export function DateRangePicker({ value, onChange, hintDate, placeholder = "全部时间", ariaLabel = "选择日期范围", triggerClassName }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | null>(value);
   const [view, setView] = useState(() => {
@@ -91,7 +98,7 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
     });
   }, [view]);
 
-  const label = value === null ? "全部时间" : formatKey(value.from) + " – " + formatKey(value.to);
+  const label = value === null ? placeholder : formatKey(value.from) + " – " + formatKey(value.to);
 
   const pick = (key: string) => {
     setDraft((previous) => {
@@ -112,10 +119,14 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
         ref={triggerRef}
         type="button"
         aria-expanded={open}
+        aria-label={ariaLabel}
         onClick={() => {
           setOpen((previous) => !previous);
         }}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-xs transition hover:border-zinc-300 hover:bg-zinc-50"
+        className={
+          "flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-xs transition " +
+          (triggerClassName === undefined ? "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50" : triggerClassName)
+        }
       >
         <span className={"truncate " + (value === null ? "text-zinc-400" : "font-medium text-zinc-700")}>{label}</span>
         <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true">
@@ -124,12 +135,13 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
         </svg>
       </button>
 
-      {open && position !== null ? (
-        <div
-          ref={popoverRef}
-          className="fixed z-40 w-[264px] rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_16px_40px_rgba(0,0,0,0.18)]"
-          style={{ top: position.top, left: position.left }}
-        >
+      {open && position !== null
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="fixed z-50 w-[264px] rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_16px_40px_rgba(0,0,0,0.18)]"
+              style={{ top: position.top, left: position.left }}
+            >
           <div className="flex items-center justify-between">
             <button
               type="button"
@@ -209,8 +221,10 @@ export function DateRangePicker({ value, onChange, hintDate }: DateRangePickerPr
               确定
             </button>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

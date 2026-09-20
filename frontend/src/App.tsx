@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import Hub from "./Hub";
 import Home from "./Home";
+import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
 import { apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
@@ -105,6 +107,18 @@ export default function App() {
     );
   };
 
+  /** 任务编辑里改「项目经理」：项目经理是项目级字段（projects.manager_id），回写后本项目所有任务行与项目卡片同步，并刷新项目时间。 */
+  const handleChangeManager = (id: string, managerId: string) => {
+    setProjects((previous) =>
+      previous.map((project) => (project.id === id ? { ...project, managerId, updatedAt: nowText() } : project)),
+    );
+  };
+
+  /** 任务字段被编辑：按「任务变更刷新项目时间」口径刷新最近活动（updatedAt）。 */
+  const handleTaskEdited = (id: string) => {
+    setProjects((previous) => previous.map((project) => (project.id === id ? { ...project, updatedAt: nowText() } : project)));
+  };
+
   if (state.kind === "loading") {
     return (
       <main className="page">
@@ -165,11 +179,19 @@ export default function App() {
       />
     );
 
+  if (route.kind === "hub") {
+    return <Hub me={state.me} />;
+  }
+
+  if (route.kind === "placeholder") {
+    return <PlaceholderPage me={state.me} page={route.page} section={route.section} />;
+  }
+
   if (route.kind === "project") {
     const project = projects.find((item) => item.id === route.id) ?? null;
     return (
       <>
-        <ProjectDetail me={state.me} project={project} />
+        <ProjectDetail me={state.me} project={project} onChangeManager={handleChangeManager} onTaskEdited={handleTaskEdited} />
         {editModal}
       </>
     );

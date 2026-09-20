@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import {
   check,
   date,
@@ -11,7 +11,8 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
-import { STAGE_KEYS, sqlValueList } from "./literals.js";
+import { users } from "./identity.js";
+import { PROJECT_MEMBER_ROLES, STAGE_KEYS, sqlValueList } from "./literals.js";
 
 /** projects（0001 基线 + 0002 收敛：唯一责任人为 manager_id，无 owner_id）。 */
 export const projects = pgTable(
@@ -31,12 +32,16 @@ export const projects = pgTable(
     version: integer("version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** deleted_at / deleted_by（0009）：软删（A5）；列表 / 详情 / facets 一律过滤 deleted_at is null。 */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: uuid("deleted_by"),
   },
   (table) => [
     unique("projects_code_key").on(table.code),
     unique("uq_projects_seq_no").on(table.seqNo),
     index("ix_projects_facets").on(table.region, table.projectType, table.managerId),
     index("ix_projects_stage").on(table.status, table.stageKey),
+    index("ix_projects_active_updated").on(desc(table.updatedAt)).where(sql`deleted_at is null`),
     check(
       "ck_projects_stage_key",
       sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,
@@ -44,6 +49,30 @@ export const projects = pgTable(
     check("ck_projects_status", sql`${table.status} in ${sql.raw(sqlValueList(["active", "paused", "done", "archived"]))}`),
     check("ck_projects_version", sql`${table.version} >= 0`),
     check("ck_projects_seq_no", sql`${table.seqNo} > 0`),
+  ],
+);
+
+/** project_members（0010 · h2）：项目成员名册 —— 记录级权限与「我参与的项目」的来源（h6 消费）；项目软删不删行。 */
+export const projectMembers = pgTable(
+  "project_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    roleInProject: text("role_in_project").notNull().default("project_member"),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("uq_project_members_project_user").on(table.projectId, table.userId),
+    index("ix_project_members_user").on(table.userId),
+    check(
+      "ck_project_members_role",
+      sql`${table.roleInProject} in ${sql.raw(sqlValueList(PROJECT_MEMBER_ROLES))}`,
+    ),
   ],
 );
 
@@ -61,6 +90,12 @@ export const projectStages = pgTable(
     actualStart: date("actual_start"),
     actualEnd: date("actual_end"),
     version: integer("version").notNull().default(0),
+    /** 0012 · h3（M2-03）：推进 / 回退留痕（ADR-023）——回退原因必填。 */
+    advancedAt: timestamp("advanced_at", { withTimezone: true }),
+    advancedBy: uuid("advanced_by"),
+    rolledBackAt: timestamp("rolled_back_at", { withTimezone: true }),
+    rolledBackBy: uuid("rolled_back_by"),
+    rollbackReason: text("rollback_reason"),
   },
   (table) => [
     unique("project_stages_project_id_stage_key_key").on(table.projectId, table.stageKey),
