@@ -131,7 +131,7 @@ export const TaskProgressUpdateBodySchema = z
   .object({
     progress: TaskProgressSchema,
     actualEnd: DateOnlySchema.optional().openapi({ description: "完成日期（A13）：progress=1 且缺省时服务端按当天（Asia/Shanghai）写入；progress<1 时忽略并清空 —— 清除完成日期的唯一方式是「把进度写回 < 1 档」" }),
-    note: z.string().max(2000).optional(),
+    note: z.string().max(2000).optional().openapi({ description: "进度更新备注：提供时写入任务的「项目进展描述」（note）并留痕" }),
     version: VersionSchema,
   })
   .openapi("TaskProgressUpdateBody");
@@ -146,7 +146,8 @@ export const TaskCreateBodySchema = z
     title: z.string().min(1).max(200).openapi({ example: "货架组装", description: "任务描述（节点名称）" }),
     titleEn: z.string().max(200).nullable().optional(),
     taskNodeId: UuidSchema.optional().openapi({
-      description: "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409）并建立节点关联",
+      description:
+        "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409 TASK_ALREADY_EXISTS）并建立节点关联；节点必须属于本项目（否则 400）",
     }),
     ownerId: UuidSchema.optional().openapi({ description: "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底" }),
     plannedStart: DateOnlySchema.nullable().optional(),

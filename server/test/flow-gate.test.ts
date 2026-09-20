@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DbClient } from "../src/db/db-client.js";
-import { GateRepository, type DocCountRow, type RequirementRow, type StageNodeRow, type StageTaskCounts } from "../src/modules/node/gate.repository.js";
+import { GateRepository, type DocCountRow, type RequirementRow, type StageNodeRow } from "../src/modules/node/gate.repository.js";
+import type { TaskStatsService } from "../src/modules/task/index.js";
 import { GateService } from "../src/modules/node/gate.service.js";
 
 const TX = {} as unknown as DbClient;
@@ -10,7 +11,6 @@ class FakeGateRepository {
   requirements: RequirementRow[] = [];
   files: DocCountRow[] = [];
   nodes: StageNodeRow[] = [];
-  tasks: StageTaskCounts = { total: 0, done: 0 };
   async listRequirements(): Promise<RequirementRow[]> {
     return this.requirements;
   }
@@ -20,9 +20,6 @@ class FakeGateRepository {
   async listStageNodes(): Promise<StageNodeRow[]> {
     return this.nodes;
   }
-  async countStageTasks(): Promise<StageTaskCounts> {
-    return this.tasks;
-  }
   async listStageProgress(): Promise<never[]> {
     return [];
   }
@@ -31,8 +28,18 @@ class FakeGateRepository {
   }
 }
 
-function makeService(repo: FakeGateRepository): GateService {
-  return new GateService(repo as unknown as GateRepository);
+class FakeTaskStats {
+  tasks: { total: number; done: number } = { total: 0, done: 0 };
+  async countStageTasks(): Promise<{ total: number; done: number }> {
+    return this.tasks;
+  }
+  async stageTaskCounts(): Promise<never[]> {
+    return [];
+  }
+}
+
+function makeService(repo: FakeGateRepository, stats: FakeTaskStats = new FakeTaskStats()): GateService {
+  return new GateService(repo as unknown as GateRepository, stats as unknown as TaskStatsService);
 }
 
 describe("GateService.evaluateNode（v0.2 §3.6 完成门禁）", () => {
@@ -72,9 +79,10 @@ describe("GateService.evaluateStageAdvance（ADR-023 阶段推进门禁）", () 
 
   it("节点未完成 → node_not_done；任务未完成 → task_not_done", async () => {
     const repo = new FakeGateRepository();
+    const stats = new FakeTaskStats();
     repo.nodes = [{ id: "node-1", nodeKey: "presale.requirement", name: "需求澄清", status: "active" }];
-    repo.tasks = { total: 3, done: 1 };
-    const result = await makeService(repo).evaluateStageAdvance(TX, PROJECT, STAGE);
+    stats.tasks = { total: 3, done: 1 };
+    const result = await makeService(repo, stats).evaluateStageAdvance(TX, PROJECT, STAGE);
     expect(result.ok).toBe(false);
     expect(result.missing[0]).toMatchObject({ type: "node_not_done", nodeId: "node-1", status: "active" });
     expect(result.missing[1]).toEqual({ type: "task_not_done", total: 3, done: 1 });
@@ -94,11 +102,12 @@ describe("GateService.evaluateStageAdvance（ADR-023 阶段推进门禁）", () 
 
   it("节点与任务全通过 → ok（无缺项）", async () => {
     const repo = new FakeGateRepository();
+    const stats = new FakeTaskStats();
     repo.nodes = [{ id: "node-1", nodeKey: "presale.contract", name: "合同评审", status: "done" }];
     repo.requirements = [{ requirementType: "required_doc", docType: "合同", minCount: 1 }];
     repo.files = [{ docType: "合同", present: 1 }];
-    repo.tasks = { total: 2, done: 2 };
-    const result = await makeService(repo).evaluateStageAdvance(TX, PROJECT, STAGE);
+    stats.tasks = { total: 2, done: 2 };
+    const result = await makeService(repo, stats).evaluateStageAdvance(TX, PROJECT, STAGE);
     expect(result.ok).toBe(true);
     expect(result.missing).toEqual([]);
   });

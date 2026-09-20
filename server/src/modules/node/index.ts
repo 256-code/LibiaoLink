@@ -2,4 +2,4 @@
 export { NodeModule } from "./node.module.js";
 export { GateService } from "./gate.service.js";
 export type { NodeGateMissing, StageGateMissingItem } from "./gate.service.js";
-export type { RequirementRow, DocCountRow, StageNodeRow, StageTaskCounts } from "./gate.repository.js";
+export type { RequirementRow, DocCountRow, StageNodeRow, StageProgressRow } from "./gate.repository.js";

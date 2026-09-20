@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { DbClient } from "../../db/db-client.js";
 import { GateRepository } from "./gate.repository.js";
+import { TaskStatsService } from "../task/index.js";
 
 /** 节点完成门禁缺件明细（契约 NodeGateMissing；422 NODE_REQUIRED_DOC_MISSING 的 details.missing）。 */
 export interface NodeGateMissing {
@@ -21,7 +22,10 @@ export type StageGateMissingItem =
  */
 @Injectable()
 export class GateService {
-  constructor(private readonly gate: GateRepository) {}
+  constructor(
+    private readonly gate: GateRepository,
+    private readonly taskStats: TaskStatsService,
+  ) {}
 
   /** 节点完成门禁：required_doc 逐 doc_type 统计 files（status ∈ final / changed 且已定档）。 */
   async evaluateNode(client: DbClient, nodeId: string): Promise<{ missing: NodeGateMissing[] }> {
@@ -70,7 +74,7 @@ export class GateService {
         });
       }
     }
-    const taskCounts = await this.gate.countStageTasks(client, projectId, stageKey);
+    const taskCounts = await this.taskStats.countStageTasks(client, projectId, stageKey);
     if (taskCounts.done < taskCounts.total) {
       missing.push({ type: "task_not_done", total: taskCounts.total, done: taskCounts.done });
     }
@@ -82,18 +86,28 @@ export class GateService {
     return this.gate.countLinkedFiles(client, nodeId);
   }
 
-  /** 阶段完成度（读时派生，不落库）：节点 / 任务计数；缺省补零由调用方处理。 */
+  /** 阶段完成度（读时派生，不落库）：节点 / 任务计数；缺省补零由调用方处理，任务计数经 task 模块（h4 收口）。 */
   async stageProgress(
     client: DbClient,
     projectId: string,
   ): Promise<Record<string, { nodes: { total: number; done: number }; tasks: { total: number; done: number } }>> {
-    const rows = await this.gate.listStageProgress(client, projectId);
+    const nodeRows = await this.gate.listStageProgress(client, projectId);
+    const taskRows = await this.taskStats.stageTaskCounts(client, projectId);
     const result: Record<string, { nodes: { total: number; done: number }; tasks: { total: number; done: number } }> = {};
-    for (const row of rows) {
-      result[row.stageKey] = {
-        nodes: { total: row.nodeTotal, done: row.nodeDone },
-        tasks: { total: row.taskTotal, done: row.taskDone },
-      };
+    const pick = (stageKey: string) => {
+      const entry = result[stageKey] ?? { nodes: { total: 0, done: 0 }, tasks: { total: 0, done: 0 } };
+      result[stageKey] = entry;
+      return entry;
+    };
+    for (const row of nodeRows) {
+      const entry = pick(row.stageKey);
+      entry.nodes.total = row.nodeTotal;
+      entry.nodes.done = row.nodeDone;
+    }
+    for (const row of taskRows) {
+      const entry = pick(row.stageKey);
+      entry.tasks.total += row.value;
+      if (row.status === "done") entry.tasks.done += row.value;
     }
     return result;
   }
