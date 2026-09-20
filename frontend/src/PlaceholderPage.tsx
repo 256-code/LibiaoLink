@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DragEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { TaskNodeCard } from "./components/TaskNodeCard";
 import { PROJECT_STAGES } from "./data/projects";
@@ -90,6 +90,27 @@ const TEMPLATE_NODE_BY_ID = new Map<string, TemplateNode>(
   TEMPLATE_NODES.flatMap((section) => section.items.map((item) => [item.id, item] as const)),
 );
 
+/** 按住卡片后位移超过这个数才算「拖动」（没过阈值就是点一下，什么都不改）。 */
+const DRAG_THRESHOLD = 4;
+
+/** 正在拖的节点（Push 116）：左侧节点池拖过来 = 复制一份；模板面板里的卡片 = 在同面板内调顺序。 */
+type DragInfo = { nodeId: string; source: "left" | "right"; fromTemplateId: string | null; width: number };
+
+/** 按下卡片、还没过拖动阈值时的暂存（Push 116）。 */
+type PendingDrag = {
+  info: Omit<DragInfo, "width">;
+  pointerId: number;
+  /** 按下时的坐标：用来判「过没过阈值」。 */
+  x: number;
+  y: number;
+  /** 卡片 DOM：真拖起来之后把指针捕获在它身上（鼠标滑出窗口再放开也收得到 pointerup）。 */
+  node: HTMLElement;
+  dragging: boolean;
+};
+
+/** 落点（Push 116）：`templateId` = 哪块模板面板、`index` = 插到面板里第几张卡片前面（0 = 最前、卡片数 = 末尾）。 */
+type DropSpot = { templateId: string; index: number };
+
 type PlaceholderPageProps = {
   me: MeResponse;
   page: PlaceholderPageKey;
@@ -111,6 +132,14 @@ function PlaceholderCard({ title, note }: { title: string; note: string }) {
 }
 
 /** 占位页：入口页的按钮先各自落地，页面内容后续迭代；任务模板先出阶段板块标签栏 + 左侧任务节点卡片区。 */
+/**
+ * 拖动（Push 116，业务口径「这里拖动卡片也要可以滑动鼠标」）：改成**指针拖动** —— 原生 HTML5 拖拽在拖动期间会把 `wheel` 吞掉,
+ * 「拖着的同时用滚轮翻列表」就不成立。现在的口径：按住卡片、位移超过 `DRAG_THRESHOLD` 才算拖动，拖起来之后**滚轮直接可用**（指针在页面上 = 滚页面），
+ * 拖动中另有一块跟着鼠标走的**半透明拖动卡片**（`data-drag-ghost`，`pointer-events-none`，不挡 `elementFromPoint` 的落点判定），
+ * 插入线（`InsertLine`）按「落在哪块面板的第几格」实时跟着走；没过阈值 = 点一下，什么都不改；Esc / 指针取消 = 原地取消。
+ * 左侧节点池拖过来 = 复制一份（同面板按节点 id 去重），模板面板里的卡片 = 在同面板内调顺序。
+ */
+
 /**
  * 右侧调顺序时的插入位置指示线：绝对定位、且不接收鼠标事件。
  * 一旦让它占位，线一出现就把后面的卡片顶开，鼠标底下的元素跟着换、落点又变，拖动时就会来回频闪。
@@ -144,16 +173,24 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
   const nextTemplateSeq = useRef(INITIAL_TEMPLATE_COUNT + 1);
   /** 当前阶段的模板面板。 */
   const templates = templatesByStage[activeSection] ?? EMPTY_TEMPLATE_LIST;
-  /** 当前悬停的模板面板 id（高亮 / 重复提示都按面板算）。 */
-  const [dragOverTemplateId, setDragOverTemplateId] = useState<string | null>(null);
-  /** 正在拖的节点 id（拖拽中读不到 dataTransfer，用它判断「这块面板里是不是已经有了」）。 */
-  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
-  /** 拖拽来源：左侧任务节点 = 复制一份；右侧已选卡片 = 调顺序。 */
-  const [dragSource, setDragSource] = useState<"left" | "right" | null>(null);
-  /** 右侧拖拽来自哪块模板面板（调顺序只在同一块面板内生效）。 */
-  const [dragFromTemplateId, setDragFromTemplateId] = useState<string | null>(null);
-  /** 落点：哪块面板 + 插到第几张卡片前面（0..N）。 */
-  const [dropTarget, setDropTarget] = useState<{ templateId: string; index: number } | null>(null);
+  /**
+   * 正在拖的节点（Push 116）：`source` 区分「左侧节点池 → 复制一份」与「模板面板里 → 同面板调顺序」，
+   * `fromTemplateId` 是后者的来源面板、`width` 给跟着鼠标走的那块拖动卡片对齐宽度。
+   */
+  const [drag, setDrag] = useState<DragInfo | null>(null);
+  /** 落点：哪块面板 + 插到第几张卡片前面（0..N）；null = 鼠标不在任何面板上。 */
+  const [dropTarget, setDropTarget] = useState<DropSpot | null>(null);
+  /** 按下卡片、还没过拖动阈值时的暂存（Push 116）。 */
+  const pendingRef = useRef<PendingDrag | null>(null);
+  /** 拖动中鼠标的最后位置：鼠标可以不动、只用滚轮，落点得按这个位置重算。 */
+  const pointerRef = useRef({ x: 0, y: 0 });
+  /** 抓取偏移（按下时鼠标在卡片内的位置 + 卡片宽度）：拖动卡片按这个对齐鼠标。 */
+  const grabRef = useRef({ dx: 0, dy: 0, width: 0 });
+  /** 跟着鼠标走的拖动卡片（Push 116）：直接用 DOM 改 `transform`，不走 state（每帧都要动）。 */
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  /** 最新的落点计算 / 落地实现（每帧回调里读，免得闭包吃到旧值）。 */
+  const dropTargetAtRef = useRef<(x: number, y: number) => DropSpot | null>(() => null);
+  const commitDropRef = useRef<(info: DragInfo, spot: DropSpot | null) => void>(() => undefined);
   const activeNodes = TEMPLATE_NODES.find((section) => section.stage === activeSection)?.items ?? [];
   /** 左列「任务节点」的搜索词：按中 / 英文名过滤当前板块的节点卡片。 */
   const [nodeQuery, setNodeQuery] = useState("");
@@ -171,9 +208,12 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
           (node.title + "\n" + node.titleEn).toLowerCase().includes(normalizedQuery),
         );
 
+  /** 拖动中的那个节点（Push 116）：用来画跟着鼠标走的拖动卡片。 */
+  const dragNode = drag === null ? null : TEMPLATE_NODE_BY_ID.get(drag.nodeId) ?? null;
+
   /** 这块面板里是不是已经有正在拖的那个节点（只有从左侧拖过来才可能重复）。 */
   const isDuplicateIn = (template: TemplateDraft): boolean =>
-    dragSource === "left" && draggingNodeId !== null && template.nodes.some((node) => node.id === draggingNodeId);
+    drag !== null && drag.source === "left" && template.nodes.some((node) => node.id === drag.nodeId);
 
   /** 只改「当前阶段」的模板面板，其它阶段原样不动。 */
   const updateTemplates = (updater: (list: TemplateDraft[]) => TemplateDraft[]): void => {
@@ -183,11 +223,11 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
     }));
   };
 
+  /** 清掉拖动状态（删面板 / 拖动取消时用）。 */
   const resetDrag = (): void => {
-    setDraggingNodeId(null);
-    setDragSource(null);
-    setDragFromTemplateId(null);
-    setDragOverTemplateId(null);
+    pendingRef.current = null;
+    document.body.style.userSelect = "";
+    setDrag(null);
     setDropTarget(null);
   };
 
@@ -224,51 +264,56 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
   };
 
   /**
-   * 模板面板里的落点：按卡片的实际位置算 —— 落在某张卡片上半就打在它前面，
-   * 落在下半（以及卡片之间、所有卡片之下）就落到它后面。
-   * 用几何位置判定而不是看事件目标是谁：指示线 / 间隙出现在鼠标底下时结果不变，
-   * 配合不占位的指示线，拖动过程中布局不会来回抖。
+   * 鼠标底下是「哪块面板的第几格」（Push 116）：`data-template-panel` 认面板、卡片中线认格 ——
+   * 落在某张卡片中线以上 = 插到它前面，都在上面 = 插到面板末尾；空面板 = 第 0 格。
+   * 用 `elementFromPoint` 而不是看事件目标是谁：拖动卡片与插入线都不接收鼠标事件，结果不受它们影响。
    */
-  const handleListDragOver = (templateId: string, event: DragEvent<HTMLDivElement>): void => {
-    event.preventDefault();
-    const cards = Array.from(event.currentTarget.querySelectorAll("article"));
-    let insertAt = cards.length;
-    for (const [index, card] of cards.entries()) {
-      const rect = card.getBoundingClientRect();
-      if (event.clientY < rect.top + rect.height / 2) {
-        insertAt = index;
-        break;
+  const dropTargetAt = (x: number, y: number): DropSpot | null => {
+    const under = document.elementFromPoint(x, y);
+    const panel = under === null ? null : under.closest("[data-template-panel]");
+    if (panel === null) {
+      return null;
+    }
+    const templateId = panel.getAttribute("data-template-panel") ?? "";
+    if (!templates.some((template) => template.id === templateId)) {
+      return null;
+    }
+    const cards = Array.from(panel.querySelectorAll("article"));
+    for (let index = 0; index < cards.length; index++) {
+      const rect = cards[index].getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) {
+        return { templateId, index };
       }
     }
-    setDropTarget({ templateId, index: insertAt });
+    return { templateId, index: cards.length };
   };
 
-  const handleDrop = (templateId: string, event: DragEvent<HTMLElement>): void => {
-    event.preventDefault();
-    const id = event.dataTransfer.getData("text/plain");
-    const insertAt = dropTarget !== null && dropTarget.templateId === templateId ? dropTarget.index : null;
-    const fromRight = dragSource === "right";
-    const fromTemplateId = dragFromTemplateId;
-    resetDrag();
-
-    if (fromRight) {
-      // 面板内调顺序：把这张卡片挪到落点位置（原位置后面的下标要减 1）；拖到别的模板面板上不处理。
-      if (fromTemplateId !== templateId) {
+  /**
+   * 放开落点（Push 116）：左侧拖过来 = **复制一份**进面板（同一块面板里按节点 id 去重，重复拖入不生效）；
+   * 面板里的卡片 = **在同面板内调顺序**（原位置后面的下标要减 1）；拖到别的面板上不处理（与原生拖拽那版口径一致）。
+   */
+  const commitDrop = (info: DragInfo, spot: DropSpot | null): void => {
+    if (spot === null) {
+      return;
+    }
+    const insertAt = spot.index;
+    if (info.source === "right") {
+      if (info.fromTemplateId !== spot.templateId) {
         return;
       }
       updateTemplates((previous) =>
         previous.map((template) => {
-          if (template.id !== templateId) {
+          if (template.id !== spot.templateId) {
             return template;
           }
-          const from = template.nodes.findIndex((node) => node.id === id);
+          const from = template.nodes.findIndex((node) => node.id === info.nodeId);
           const moved = from === -1 ? undefined : template.nodes[from];
           if (moved === undefined) {
             return template;
           }
           const next = template.nodes.slice();
           next.splice(from, 1);
-          let target = insertAt ?? next.length;
+          let target = insertAt;
           if (from < target) {
             target -= 1;
           }
@@ -278,24 +323,143 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
       );
       return;
     }
-
-    const node = TEMPLATE_NODE_BY_ID.get(id);
+    const node = TEMPLATE_NODE_BY_ID.get(info.nodeId);
     if (node === undefined) {
       return;
     }
-    // 左侧拖过来 = 复制一份；去重：同一个任务节点在同一块面板里只保留一份，重复拖入不生效。
     updateTemplates((previous) =>
       previous.map((template) => {
-        if (template.id !== templateId || template.nodes.some((item) => item.id === node.id)) {
+        if (template.id !== spot.templateId || template.nodes.some((item) => item.id === node.id)) {
           return template;
         }
         const next = template.nodes.slice();
-        next.splice(Math.max(0, Math.min(insertAt ?? next.length, next.length)), 0, node);
+        next.splice(Math.max(0, Math.min(insertAt, next.length)), 0, node);
         return { ...template, nodes: next };
       }),
     );
   };
 
+  // 指针 / 每帧回调里读最新实现，免得闭包吃到上一轮的函数
+  useEffect(() => {
+    dropTargetAtRef.current = dropTargetAt;
+    commitDropRef.current = commitDrop;
+  });
+
+  /**
+   * 指针拖动（Push 116，业务口径「这里拖动卡片也要可以滑动鼠标」）：① 按下卡片、位移超过 `DRAG_THRESHOLD` 才算真拖动；
+   * ② 拖动中**滚轮照常可用**（整段拖动没有原生拖拽参与，浏览器不会吞滚轮 —— 指针在页面上就是滚页面）；
+   * ③ 放开时落在哪块面板的第几格就交给 `commitDrop`；④ Esc / 指针取消 = 原地取消；没过阈值 = 点一下，什么都不改。
+   */
+  useEffect(() => {
+    /** 收尾（放开 / Esc / 指针取消）：清掉暂存与落点，恢复页面文字选择。 */
+    const endDrag = () => {
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDrag(null);
+      setDropTarget(null);
+    };
+    const handleMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+      const pending = pendingRef.current;
+      if (pending === null || pending.dragging) {
+        return;
+      }
+      if (Math.abs(event.clientX - pending.x) + Math.abs(event.clientY - pending.y) < DRAG_THRESHOLD) {
+        return;
+      }
+      pending.dragging = true;
+      try {
+        // 指针捕获在卡片上：鼠标滑出窗口再放开也收得到 pointerup
+        pending.node.setPointerCapture(pending.pointerId);
+      } catch {
+        // 指针已经不在了（例如刚抬起）：忽略，落点照样按下面的逻辑算
+      }
+      const rect = pending.node.getBoundingClientRect();
+      grabRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top, width: rect.width };
+      document.body.style.userSelect = "none";
+      setDrag({ ...pending.info, width: rect.width });
+      setDropTarget(dropTargetAtRef.current(event.clientX, event.clientY));
+    };
+    const handleUp = (event: PointerEvent) => {
+      const pending = pendingRef.current;
+      if (pending === null) {
+        return;
+      }
+      const wasDragging = pending.dragging;
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDrag(null);
+      setDropTarget(null);
+      if (!wasDragging) {
+        return;
+      }
+      commitDropRef.current({ ...pending.info, width: grabRef.current.width }, dropTargetAtRef.current(event.clientX, event.clientY));
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && pendingRef.current !== null) {
+        endDrag();
+      }
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", endDrag);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", endDrag);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  /**
+   * 拖动中按帧重算落点（Push 116）：鼠标可以不动、页面在滚（滚轮），拖动卡片与插入线得跟着走，
+   * 不能停在按下时算出来的那一格。
+   */
+  useEffect(() => {
+    if (drag === null) {
+      return;
+    }
+    let raf = window.requestAnimationFrame(function tick() {
+      const ghost = ghostRef.current;
+      if (ghost !== null) {
+        const grab = grabRef.current;
+        ghost.style.transform = "translate(" + String(pointerRef.current.x - grab.dx) + "px," + String(pointerRef.current.y - grab.dy) + "px)";
+      }
+      const next = dropTargetAtRef.current(pointerRef.current.x, pointerRef.current.y);
+      setDropTarget((previous) =>
+        previous !== null && next !== null && previous.templateId === next.templateId && previous.index === next.index ? previous : next,
+      );
+      raf = window.requestAnimationFrame(tick);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [drag]);
+
+  /** 按下卡片（Push 116）：先只记「可能拖动」，真拖动由上面的指针循环按位移阈值判定。 */
+  const beginDrag = (
+    info: { nodeId: string; source: "left" | "right"; fromTemplateId: string | null },
+    event: ReactPointerEvent<HTMLElement>,
+  ): void => {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target as Element | null;
+    // 卡片上的按钮（模板里的「移除」叉号）不参与拖动
+    if (target !== null && target.closest("button") !== null) {
+      return;
+    }
+    pendingRef.current = {
+      info,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      node: event.currentTarget,
+      dragging: false,
+    };
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+  };
   if (page === "templates") {
     return (
       <div className="min-h-screen">
@@ -408,15 +572,10 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                       key={item.id}
                       title={item.title}
                       subtitle={item.titleEn}
-                      draggable
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData("text/plain", item.id);
-                        event.dataTransfer.effectAllowed = "copy";
-                        setDragSource("left");
-                        setDraggingNodeId(item.id);
-                        setDropTarget(null);
+                      grab
+                      onPointerDown={(event) => {
+                        beginDrag({ nodeId: item.id, source: "left", fromTemplateId: null }, event);
                       }}
-                      onDragEnd={resetDrag}
                     />
                   ))}
                   {visibleNodes.length === 0 && (
@@ -430,13 +589,14 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
               {/* 同一行的面板拉成等高，换行后各自成行 */}
               <div className="flex w-full min-w-0 flex-1 flex-wrap gap-8">
                 {templates.map((template) => {
-                  const hovered = dragOverTemplateId === template.id;
+                  const hovered = dropTarget !== null && dropTarget.templateId === template.id;
                   const duplicate = hovered && isDuplicateIn(template);
                   const nodeCount = template.nodes.length;
                   const savedOk = template.saved === snapshotOf(template);
                   return (
                     <section
                       key={template.id}
+                      data-template-panel={template.id}
                       aria-label={"模板 " + template.name}
                       className={
                         "flex w-full flex-col rounded-2xl border bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 transition lg:w-[370px] lg:shrink-0 " +
@@ -446,20 +606,6 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                             : "border-zinc-900/30 ring-2 ring-zinc-900/10"
                           : "border-white/80")
                       }
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = duplicate ? "none" : dragSource === "right" ? "move" : "copy";
-                        setDragOverTemplateId(template.id);
-                      }}
-                      onDragLeave={(event) => {
-                        // 在面板内部子元素之间移动也会触发 dragleave，这里只在真正离开面板时复位。
-                        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                          return;
-                        }
-                        setDragOverTemplateId((previous) => (previous === template.id ? null : previous));
-                        setDropTarget((previous) => (previous?.templateId === template.id ? null : previous));
-                      }}
-                      onDrop={(event) => handleDrop(template.id, event)}
                     >
                       <div className="mb-3">
                         <div className="flex items-center justify-between gap-2 text-sm">
@@ -517,7 +663,7 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                             把左侧「任务节点」拖到这里
                           </p>
                         ) : (
-                          <div className="space-y-3 p-3" onDragOver={(event) => handleListDragOver(template.id, event)}>
+                          <div className="space-y-3 p-3">
                             {template.nodes.map((item, index) => (
                               <div key={item.id} className="relative">
                                 {dropTarget?.templateId === template.id && dropTarget.index === index ? (
@@ -531,17 +677,12 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                                 <TaskNodeCard
                                   title={item.title}
                                   subtitle={item.titleEn}
-                                  draggable
-                                  highlighted={duplicate && item.id === draggingNodeId}
-                                  dimmed={dragSource === "right" && item.id === draggingNodeId}
-                                  onDragStart={(event) => {
-                                    event.dataTransfer.setData("text/plain", item.id);
-                                    event.dataTransfer.effectAllowed = "move";
-                                    setDragSource("right");
-                                    setDragFromTemplateId(template.id);
-                                    setDraggingNodeId(item.id);
+                                  grab
+                                  highlighted={duplicate && item.id === drag?.nodeId}
+                                  dimmed={drag?.source === "right" && item.id === drag.nodeId}
+                                  onPointerDown={(event) => {
+                                    beginDrag({ nodeId: item.id, source: "right", fromTemplateId: template.id }, event);
                                   }}
-                                  onDragEnd={resetDrag}
                                   onRemove={() =>
                                     updateTemplates((previous) =>
                                       previous.map((entry) =>
@@ -569,6 +710,17 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
             </div>
           </div>
         </main>
+        {dragNode === null || drag === null ? null : (
+          <div
+            ref={ghostRef}
+            data-drag-ghost="true"
+            aria-hidden="true"
+            className="pointer-events-none fixed left-0 top-0 z-50"
+            style={{ width: drag.width }}
+          >
+            <TaskNodeCard title={dragNode.title} subtitle={dragNode.titleEn} ghost />
+          </div>
+        )}
       </div>
     );
   }  return (
