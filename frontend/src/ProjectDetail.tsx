@@ -4,14 +4,18 @@ import { ColumnPicker } from "./components/ColumnPicker";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskEditModal";
+import { TaskKanban } from "./components/TaskKanban";
 import { PROJECT_STAGES } from "./data/projects";
-import { isCompleteStatus, isPastDue, statusOverrideAfterProgress, tasksForProject, type ProjectTask } from "./data/tasks";
+import { isCompleteStatus, isPastDue, progressAfterStatus, statusOverrideAfterProgress, tasksForProject, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { managerName } from "./data/managers";
 import type { MeResponse, Project } from "./types";
 
 /** 阶段名（不含「项目总览」汇总视图）。 */
 const STAGE_NAMES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+
+/** 顶部视图标签（Push 69 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」。 */
+const VIEW_TABS: readonly string[] = ["项目总览", "人员任务分配", "任务进展"];
 
 /** 从任务模板预设加进来的任务：字段先给默认值（负责人 / 日期等留空，后续在任务详情里补）。 */
 function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTask {
@@ -38,6 +42,35 @@ function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTas
   };
 }
 
+let quickTaskSeq = 0;
+
+/** 看板「+ 添加」直接建的空任务：标题占位「新任务」，负责人 / 状态按所在列给（阶段留空 → 项目总览里落在「未分组」）。 */
+function quickTask(group: { owner: string; ownerEn: string; status: TaskStatus }): ProjectTask {
+  quickTaskSeq += 1;
+  return {
+    id: "quick-" + String(quickTaskSeq) + "-" + String(Date.now()),
+    stage: "",
+    title: "新任务",
+    titleEn: "",
+    owner: group.owner,
+    ownerEn: group.ownerEn,
+    status: group.status,
+    statusOverride: group.status,
+    progress: progressAfterStatus(group.status, 0),
+    startDate: "",
+    dueDate: "",
+    doneDate: "",
+    days: 0,
+    deliverable: "",
+    change: "",
+    onTime: "",
+    note: "",
+    headcount: 0,
+    priority: "中",
+    files: [],
+  };
+}
+
 type ProjectDetailProps = {
   me: MeResponse;
   project: Project | null;
@@ -48,7 +81,8 @@ type ProjectDetailProps = {
 };
 
 export default function ProjectDetail({ me, project, onChangeManager, onTaskEdited }: ProjectDetailProps) {
-  const [activeStage, setActiveStage] = useState<string>(PROJECT_STAGES[0] ?? "项目总览");
+  /** 顶部视图（Push 69）：阶段标签收进「项目总览」，另两块是看板视图。 */
+  const [activeView, setActiveView] = useState<string>(VIEW_TABS[0]);
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
   /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
   const [taskEdits, setTaskEdits] = useState<Record<string, Partial<ProjectTask>>>({});
@@ -145,6 +179,14 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
     );
   };
 
+  /** 看板「+ 添加」：建一个空任务挂到该列（负责人 / 状态按列给，阶段留空）；与其它任务编辑一样刷新项目时间。 */
+  const handleQuickAdd = (group: { owner: string; ownerEn: string; status: TaskStatus }) => {
+    setAddedTasks((previous) => [...previous, quickTask(group)]);
+    if (project !== null) {
+      onTaskEdited?.(project.id);
+    }
+  };
+
   /** 项目经理：项目级字段，取项目卡片上的经理（`managerId` → 姓名），任务表「项目经理」列与任务详情都用它。 */
   const manager = project === null ? "" : managerName(project.managerId);
 
@@ -157,7 +199,7 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
    * 阶段骨架常显（Push 61 调整）：没有任务的阶段也保留分组头（只有阶段名、组内没有任务行），
    * 所以点「添加任务」加出任务后，其余阶段的分组头不会消失。
    */
-  const visibleStageNames = activeStage === "项目总览" ? STAGE_NAMES : [activeStage];
+  const visibleStageNames = STAGE_NAMES;
   const allCollapsed = visibleStageNames.length > 0 && visibleStageNames.every((stage) => collapsedStages[stage] === true);
   const toggleAllStages = () => {
     if (allCollapsed) {
@@ -202,13 +244,13 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
       <main className="w-full px-6 pb-10 pt-3">
         <div className="flex items-center gap-3 border-b border-zinc-200">
           <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-            {PROJECT_STAGES.map((stage) => {
-              const active = stage === activeStage;
+            {VIEW_TABS.map((view) => {
+              const active = view === activeView;
               return (
                 <button
-                  key={stage}
+                  key={view}
                   type="button"
-                  onClick={() => setActiveStage(stage)}
+                  onClick={() => setActiveView(view)}
                   className={
                     "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
                     (active
@@ -216,25 +258,35 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
                       : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                   }
                 >
-                  {stage}
+                  {view}
                 </button>
               );
             })}
           </div>
-          <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+          {activeView === "项目总览" ? (
+            <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+          ) : null}
         </div>
 
         <div className="mt-6 space-y-4">
-          {activeStage === "项目总览" ? (
+          {activeView === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage="项目总览" manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
             </>
           ) : (
-            <TaskBoard tasks={tasks.filter((task) => task.stage === activeStage)} skeletonStages={[activeStage]} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} viewStage={activeStage} manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
+            <TaskKanban
+              mode={activeView === "人员任务分配" ? "owner" : "status"}
+              tasks={tasks}
+              manager={manager}
+              managerId={project.managerId}
+              onAddTask={handleQuickAdd}
+              onSubmitTaskEdit={handleSubmitTaskEdit}
+            />
           )}
         </div>
 
+        {activeView === "项目总览" ? (
         <div
           id="table-scrollbar-bar"
           className={
@@ -244,6 +296,7 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
         >
           <TableScrollbar scrollRef={tableScrollRef} onOverflowChange={setTableOverflow} />
         </div>
+        ) : null}
       </main>
     </div>
   );
