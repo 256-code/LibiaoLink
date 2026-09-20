@@ -33,6 +33,9 @@ import { trackerLabel } from "./Tracker";
  * 因为原生拖拽期间浏览器会把 `wheel` 吞掉（滚轮到不了页面，「自己用鼠标滚」就不成立）。现在的口径：按住卡片、位移超过 `DRAG_THRESHOLD` 才算拖动，拖起来之后**滚轮直接可用** ——
  * 指针在列上 = 滚这一列的卡片列表（上下翻卡片）、按住 Shift 滚（或触控板左右滑）= 滚看板（左右翻列）；鼠标不动、容器在滚时，插入槽位按帧重算，不会停在旧位置。
  * 落点仍是「列内插入位」：`data-kanban-column` 认列、卡片中线认格；没过阈值就是「点一下」，照旧打开任务详情抽屉。
+ * Push 109（业务反馈「卡片阴影也没了 这个不符合原本的效果」）：指针拖动期间补一块**跟着鼠标走的拖动卡片**（`data-drag-ghost`）——
+ * 内容就是这张卡本身（同一套外壳材质：白壳 + 发丝边 + 三层投影 + 细纹），按抓取点对齐鼠标、`pointer-events-none`（不挡 `elementFromPoint` 的落点判定），
+ * 位置每帧更新（与落点同一个 rAF 循环）；原地那张卡片照旧不动、不淡出、不抬起。
  */
 export type KanbanMode = "owner" | "status";
 
@@ -604,6 +607,10 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
   const pointerRef = useRef({ x: 0, y: 0 });
   /** 拖动收尾那一下的 `click` 不当成「打开抽屉」（Push 108）。 */
   const suppressClickRef = useRef(false);
+  /** 跟着鼠标走的拖动卡片（Push 109）：直接用 DOM 改 `transform`，不走 state（每帧都要动）。 */
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  /** 抓取偏移（Push 109）：按下时鼠标在卡片内的位置 + 卡片宽度，拖动卡片按这个对齐。 */
+  const grabRef = useRef({ dx: 0, dy: 0, width: 0 });
   /** 任务表最新值 + 两个「最新实现」的 ref（Push 108）：指针 / 每帧回调里读，免得闭包吃到旧值。 */
   const tasksRef = useRef(tasks);
   const dropTargetAtRef = useRef<(x: number, y: number) => DropTarget | null>(() => null);
@@ -723,6 +730,8 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
       } catch {
         // 指针已经不在了（例如刚抬起）：忽略，落点照样按下面的逻辑算
       }
+      const rect = pending.node.getBoundingClientRect();
+      grabRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top, width: rect.width };
       document.body.style.userSelect = "none";
       suppressClickRef.current = true;
       setDraggingId(pending.taskId);
@@ -780,6 +789,12 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
       return;
     }
     let raf = window.requestAnimationFrame(function tick() {
+      // 拖动卡片跟着鼠标（Push 109）：按抓取偏移对齐，跟落点同一个循环、同一帧
+      const ghost = ghostRef.current;
+      if (ghost !== null) {
+        const grab = grabRef.current;
+        ghost.style.transform = "translate(" + (pointerRef.current.x - grab.dx) + "px," + (pointerRef.current.y - grab.dy) + "px)";
+      }
       const next = dropTargetAtRef.current(pointerRef.current.x, pointerRef.current.y);
       setDropTarget((prev) => (prev !== null && next !== null && prev.key === next.key && prev.index === next.index ? prev : next));
       raf = window.requestAnimationFrame(tick);
@@ -795,6 +810,9 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
     pointerRef.current = { x: event.clientX, y: event.clientY };
     suppressClickRef.current = false;
   };
+
+  /** 拖动中的那张任务（Push 109）：用来画跟着鼠标走的拖动卡片。 */
+  const draggingTask = draggingId === null ? null : tasks.find((task) => task.id === draggingId) ?? null;
 
   /** 点一下卡片 = 打开任务详情抽屉；拖动收尾那一下的 `click` 不算（Push 108）。 */
   const openTask = (task: ProjectTask) => {
@@ -832,6 +850,17 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
           />
         ))}
       </ScrollArea>
+      {draggingTask === null ? null : (
+        <div
+          ref={ghostRef}
+          data-drag-ghost="true"
+          aria-hidden="true"
+          style={{ width: grabRef.current.width === 0 ? undefined : grabRef.current.width }}
+          className="pointer-events-none fixed left-0 top-0 z-50 will-change-transform"
+        >
+          <KanbanCard task={draggingTask} mode={mode} onOpen={() => undefined} />
+        </div>
+      )}
       <TaskDrawer
         task={drawerTask}
         manager={manager}
