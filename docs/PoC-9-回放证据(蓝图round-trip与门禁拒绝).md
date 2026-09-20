@@ -4,10 +4,10 @@
 
 | 项 | 值 |
 |---|---|
-| 回放时间 | 2026-09-20 15:26:06 +08:00 |
+| 回放时间 | 2026-09-20 15:27:27 +08:00 |
 | 目标 | http://127.0.0.1:3011 | 
 | 数据库 | postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink |
-| 代码版本 | d4eb56c |
+| 代码版本 | 00d9f99 |
 | 执行账号 | caa8d763-4b6a-4967-9b26-7d1086272c9c（管理员） |
 | 脚本 | server/scripts/poc9-replay.mjs |
 
@@ -30,7 +30,7 @@
   - 实际：publishedVersion=4 {"status":"published"}
 | PASS | P1 | 建项目（导入即快照） | 
   - 期望：201 + 项目可见
-  - 实际：201 {"id":"a6984134-efb0-4343-84f2-81f515a699cb","stageKey":"presale","version":0}
+  - 实际：201 {"id":"4a302a12-fa52-4be8-bfa4-0e56bcd11ed1","stageKey":"presale","version":0}
 | PASS | P2 | 快照含「必交成果文件」节点 | 
   - 期望：blueprintVersion >= 1 且存在 required_doc 节点
   - 实际：blueprintVersion=4 stages=9 必交节点=10
@@ -42,7 +42,7 @@
   - 实际：422 {"code":"NODE_REQUIRED_DOC_MISSING","detail":{"docType":"技术协议","required":1,"present":0}}
 | PASS | G3 | 拒绝留痕：outbox node.gate_rejected（事务回滚后补写） | 
   - 期望：存在一条留痕且 payload.missing 非空
-  - 实际：id=46 missing=[{"docType":"技术协议","present":0,"required":1},{"docType":"合同","present":0,"required":1}] actor=caa8d763-4b6a-4967-9b26-7d1086272c9c
+  - 实际：id=49 missing=[{"docType":"技术协议","present":0,"required":1},{"docType":"合同","present":0,"required":1}] actor=caa8d763-4b6a-4967-9b26-7d1086272c9c
 | PASS | G4 | 不部分生效：拒绝后节点未完成（status 未变 done、无完成时间、version 未推进） | 
   - 期望：status != done / done_at is null / version 未变
   - 实际：{"status":"active","done_at":null,"version":0} 期望 version=0
@@ -52,7 +52,7 @@
   - 实际：{"canComplete":true,"missing":[]}
 | PASS | G6 | 补齐后完成 200（拒绝只因缺件） | 
   - 期望：200 + 节点 done + doneAt 非空
-  - 实际：200 {"status":"done","doneAt":"2026-09-20T07:26:06.629Z"}
+  - 实际：200 {"status":"done","doneAt":"2026-09-20T07:27:27.446Z"}
 | PASS | G7 | 完成事件入 outbox（node.completed） | 
   - 期望：存在 >= 1 条
   - 实际：count=1
