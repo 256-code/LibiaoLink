@@ -14,6 +14,8 @@ type DateRangePickerProps = {
   placeholder?: string;
   /** 触发器的无障碍名称（默认「选择日期范围」）。 */
   ariaLabel?: string;
+  /** 触发器附加类名（分类筛选侧栏传「液态玻璃」材质；不传保持默认白底描边）。 */
+  triggerClassName?: string;
 };
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
@@ -30,7 +32,7 @@ const toDate = (key: string) => {
 
 const formatKey = (key: string) => key.replace(/-/g, "/");
 
-export function DateRangePicker({ value, onChange, hintDate, placeholder = "全部时间", ariaLabel = "选择日期范围" }: DateRangePickerProps) {
+export function DateRangePicker({ value, onChange, hintDate, placeholder = "全部时间", ariaLabel = "选择日期范围", triggerClassName }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | null>(value);
   const [view, setView] = useState(() => {
@@ -121,7 +123,10 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
         onClick={() => {
           setOpen((previous) => !previous);
         }}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-xs transition hover:border-zinc-300 hover:bg-zinc-50"
+        className={
+          "flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-xs transition " +
+          (triggerClassName === undefined ? "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50" : triggerClassName)
+        }
       >
         <span className={"truncate " + (value === null ? "text-zinc-400" : "font-medium text-zinc-700")}>{label}</span>
         <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true">
