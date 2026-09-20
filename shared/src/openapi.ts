@@ -8,6 +8,9 @@ import {
   ProjectFacetsSchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
+  ProjectMemberCreateBodySchema,
+  ProjectMemberListResponseSchema,
+  ProjectMemberSchema,
   ProjectSchema,
   ProjectSummarySchema,
   ProjectUpdateBodySchema,
@@ -92,6 +95,7 @@ const commonErrors = {
 } as const;
 
 const idParams = z.object({ id: UuidSchema });
+const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
 const idempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema.optional() });
 
 /**
@@ -178,6 +182,45 @@ export function buildOpenApiDocument() {
       409: commonErrors[409],
     },
   });
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/members",
+    tags: ["projects"],
+    summary: "项目成员名册（记录级权限来源）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "成员列表（项目经理在前，同角色按工号升序）", ...json(ProjectMemberListResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/members",
+    tags: ["projects"],
+    summary: "添加 / 更新成员（幂等：同项目 + 同用户唯一）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(ProjectMemberCreateBodySchema) },
+    responses: {
+      200: { description: "成员行（重复添加 = 覆盖角色）", ...json(ProjectMemberSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/projects/{id}/members/{userId}",
+    tags: ["projects"],
+    summary: "移除成员（返回被移除的成员行；项目归档后拒绝）",
+    request: { params: memberParams },
+    responses: {
+      200: { description: "被移除的成员", ...json(ProjectMemberSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
   registry.registerPath({
     method: "get",
     path: "/api/v1/projects/{id}/summary",

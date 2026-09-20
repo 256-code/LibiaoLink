@@ -75,6 +75,8 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 用户目录（A2） | `GET /users`：`q` + 分页，只返回 `status=active`；项为 `{ id, username, displayName, email, status }`（不含 casdoorId / owner / 部门 / 手机号）；默认按 `username` 升序（分页不跳行）；登录用户全员可读，不做数据范围裁剪；项目侧随行下发 `Project.managerName`（列表 / 详情 / 创建与编辑返回；人员停用 / 离职仍返回姓名，取不到为 `null`） |
 | 字典（A3） | `GET /dicts` / `GET /dicts/{type}`：一期只下发可运营数据字典 `region` / `projectType`（项 `{ code, name, sort, enabled, metadata }`，`projectType` 必含 `metadata.accent`）；阶段 / 成果文件类型 / 紧急重要度属契约枚举（`src/common/dicts.ts`），前端直接引用、不走接口（避免同一事实两处来源） |
 | 用户偏好（A4） | `GET / PATCH /users/me/preferences`：PATCH 合并语义（只传变更键），响应回全量 + `updatedAt`；一期键 `taskTableHiddenColumns`（列 key 白名单校验，未知 key 400）；存储 `user_preferences`（与项目视图 `project_views` 分离）；单用户单写者不带 `version` |
+| 分类字段（A1-12） | `region` / `projectType`：首页分类侧边栏与统计的来源（facets 五组里的两组）；创建请求缺省「未分类」（服务端 default，前端表单仍必填、空串 400），更新可改；字典取值由 C9 字典维护（`GET /dicts` 已入契约，落表随 h7） |
+| 项目成员（M2-05） | 名册 `project_members`：`role_in_project` 两值 `project_manager` / `project_member`（与全局角色 `roles` 相互独立）；`GET / POST / DELETE /projects/{id}/members`（POST 幂等 upsert：同项目 + 同用户唯一，重复添加 = 覆盖角色且保留 `joinedAt`；`userId` 不存在 404）；不是成员 / 项目不可见统一 404；成员变更按 ADR-022 ② 刷新项目 `updatedAt`；归档项目名册只读（409 PROJECT_ARCHIVED）；记录级**过滤**（非成员 404 裁剪）随 h6 |
 | 项目软删（A5） | `DELETE /projects/{id}`：软删；`If-Match` 回传当前 `version` 防误删（缺失或非数字 400、不匹配 409，不用 body 传 version）；列表 / 详情 / facets / 搜索 / 导出统一不可见；`seqNo` 不回收、`code` 唯一性保留（同编号再建仍 409 PROJECT_CODE_EXISTS）；非成员 / 不存在统一 404；仅项目经理 / 管理员并写审计 |
 | 任务列表项（A7） | 列表 `GET /projects/{id}/tasks` 返回 `TaskListItem`（Task 去掉 `changeRef` + 内联 `ownerName` / `changeSummary` / `fileSummary`，免 N+1）；抽屉走 `GET /projects/{id}/tasks/{taskId}`（`TaskDetail`：全字段 + 文件清单）；进度更新响应同 `TaskListItem` 形，前端直接替换行 |
 | 任务排序（A8） | 默认顺序 = 阶段顺序（`STAGE_KEYS` 序）+ 组内 `plannedStart ASC NULLS LAST, created_at ASC, id ASC`（稳定，分页不跳行）；`sort` 白名单 `plannedStart` / `plannedEnd` / `actualEnd` / `progress` / `title` / `createdAt`，白名单外 400；一期不新增 `tasks.seq` |
@@ -101,12 +103,12 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
-| M2-01 项目 CRUD | 已有 CRUD 与软删；补归档写保护错误码 `PROJECT_ARCHIVED`（ADR-027）、`Project.archivedAt` | 错误码 / 字段 |
+| M2-01 项目 CRUD | 已入：CRUD / 软删 / 乐观锁 HTTP 落地（Push 80）+ 本轮补归档写保护错误码 `PROJECT_ARCHIVED`（ADR-027）；`Project.archivedAt` 未加 —— 随归档端点 `/projects/{id}/archive` 与 `archived_at` 列（C4-02 / M6）一并落 | 错误码 / 字段 |
 | M2-02 建项目 + 蓝图快照 | `BlueprintSchema` 增 `projectType`；`BlueprintView` 增所属类型与「默认模板」标识（ADR-019） | 字段 |
 | M2-03 阶段推进 / 回退 | 新增 `GET /projects/{id}/stages`、`POST /projects/{id}/stages/{key}/advance`、`POST /projects/{id}/stages/{key}/rollback`（原因必填）；`422 STAGE_GATE_NOT_PASSED` + 缺项明细结构（ADR-023） | 端点 / 错误码 |
-| M2-05 成员与记录级权限 | 新增 `GET / POST / DELETE /projects/{id}/members`（非成员统一 404） | 端点 |
+| M2-05 成员与记录级权限 | 已入：`GET / POST / DELETE /projects/{id}/members`（幂等 upsert / 不是成员统一 404，Push 81）；记录级**过滤**（列表 / 详情 / facets / 搜索按成员裁剪）随 h6 | 端点 |
 | M2-06 视图 / 关注 | 新增 `/views`（个人 / 公共 CRUD）与 `/follows`（关注 / 取关） | 端点 |
-| M2-04 列表 / facets | 已入（A1 / A9），无新增 | 无 |
+| M2-04 列表 / facets | 已入（A1 / A9）并 HTTP 落地（Push 80：列表与 facets 同一 filter 构造器、上海时区日界、排序白名单 `updatedAt` / `createdAt` / `seqNo`），无新增 | 无 |
 
 ### M3 任务纵切（h3 / h4）
 
