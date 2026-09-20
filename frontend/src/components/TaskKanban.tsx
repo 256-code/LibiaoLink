@@ -33,19 +33,19 @@ const STAGE_TAG_CLASS: Record<string, string> = {
 /** 没有阶段的任务（直接在看板「添加」出来的）：到「项目总览」的表里落在「未分组」组。 */
 const UNGROUPED_STAGE = "未分组";
 
-/** 卡片外壳（样张：内边距 9px + 圆角 35px + `#e8e8e8` + 三层投影）。 */
+/** 卡片外壳（样张结构：内边距 9px + 圆角 35px + 壳 + 三层投影）。配色按业务反馈（2026-09-20）改回**白色**：白壳 + 发丝边 + 柔和投影 + 底部内阴影。 */
 const CARD_SHELL =
-  "relative block w-full rounded-[35px] bg-[#e8e8e8] p-[9px] text-left transition " +
-  "[box-shadow:rgba(50,50,93,0.25)_0px_50px_100px_-20px,rgba(0,0,0,0.3)_0px_30px_60px_-30px,rgba(10,37,64,0.35)_0px_-2px_6px_0px_inset] " +
-  "hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/25";
+  "relative block w-full rounded-[35px] border border-zinc-900/[0.07] bg-white p-[9px] text-left transition " +
+  "[box-shadow:0_18px_40px_-20px_rgba(15,23,42,0.18),0_4px_14px_-8px_rgba(15,23,42,0.06),inset_0_-2px_6px_rgba(15,23,42,0.05)] " +
+  "hover:-translate-y-0.5 focus-visible:[outline:2px_solid_rgba(24,24,27,0.3)] focus-visible:[outline-offset:2px]";
 
-/** 噪点叠加（样张：`repeating-conic-gradient` 细纹 + 透明度 10% + 对比度 105%）。 */
+/** 细纹叠加（样张：`repeating-conic-gradient` 细纹 + 对比度 105%；白壳上透明度收到 6%，保持干净）。 */
 const CARD_NOISE =
-  "pointer-events-none absolute inset-0 rounded-[35px] opacity-10 [filter:contrast(105%)] " +
+  "pointer-events-none absolute inset-0 rounded-[35px] opacity-[0.06] [filter:contrast(105%)] " +
   "bg-[repeating-conic-gradient(#e8e8e8_0.0000001%,#93a1a1_0.000104%)] [background-position:60%_60%] [background-size:600%_600%]";
 
-/** 卡片内层板（样张：圆角 30px + `#e2e0e0`）。 */
-const CARD_INNER = "relative block overflow-hidden rounded-[30px] bg-[#e2e0e0] px-4 py-3.5";
+/** 卡片内层板（样张：圆角 30px；白卡口径 = 近白面板 + 发丝内边）。 */
+const CARD_INNER = "relative block overflow-hidden rounded-[30px] bg-[#fcfcfd] px-4 py-3.5 ring-1 ring-zinc-900/[0.04]";
 
 type TaskKanbanProps = {
   mode: KanbanMode;
