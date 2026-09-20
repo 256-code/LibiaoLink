@@ -14,6 +14,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0004_identity.sql` | 身份与会话（v0.2.5 §2.3；ADR-010）：`users`（SSO 归一化用户）+ `sessions`（会话 Cookie 值只存 sha256 哈希；id_token 仅用于单点登出） |
 | `migrations/0005_file_lifecycle.sql` | 文件生命周期与分片上传（v0.2 §5.1-5.3 / §11.1-11.2）：`files` 增 `finalized_at/by`、`recycled_at/by/from_status`、`purge_after`（回收站到期）+ `upload_sessions`（分片直传会话） |
 | `migrations/0006_idempotency_keys.sql` | 写接口幂等（v0.2 §1.3 / §11.1 platform）：`idempotency_keys`（只存 key 哈希；作用域 = 调用方 + 接口指纹） |
+| `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离；清单与执行约定先定，脚本随 M1 落地 |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
 | `package.json` / `package-lock.json` | 独立 npm 包，唯一依赖 `pg`（不引入根 package.json） |
@@ -73,6 +74,7 @@ migrate: 完成，本次执行 6 个迁移
 - 新增结构变更 = 新增 `migrations/000N_xxx.sql`，**不要修改已合入的文件**；采用 expand / contract（先扩展、后收敛）。
 - 迁移只由部署 / 运维手工触发；**应用进程不得在启动时自动迁移**（后端落地后同样适用）。
 - 迁移属高风险变更（CONTRIBUTING §15）：需要另一名评审人（lan / px）批准后才能合并。
+- 种子数据（字典 / 模板）走 `seeds/`，与迁移分离、可重跑（规格见 `seeds/README.md`）；CONTRIBUTING §14 的只追加约束只作用于 `migrations/`。
 
 ## 与 v0.2 §2.3 的对应
 
