@@ -46,6 +46,12 @@ const CARD_NOISE =
   "pointer-events-none absolute inset-0 rounded-[35px] opacity-[0.06] [filter:contrast(105%)] " +
   "bg-[repeating-conic-gradient(#e8e8e8_0.0000001%,#93a1a1_0.000104%)] [background-position:60%_60%] [background-size:600%_600%]";
 
+/** 看板列：列高随视口封顶，列头固定不动，卡片多时在列内滚动 —— 列不再一直往下延伸（Push 84）。 */
+const COLUMN_SHELL = "flex h-[calc(100vh-15.5rem)] max-h-[52rem] min-h-[22rem] w-[280px] shrink-0 flex-col";
+
+/** 列内滚动区（`kanban-scroll` = `app.css` 里的细滚动条）：卡片列表与列底「+ 添加」都在这里滚。 */
+const COLUMN_BODY = "kanban-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1";
+
 /** 卡片内层板（样张：圆角 30px；白卡口径 = 近白面板 + 发丝内边）。 */
 const CARD_INNER = "relative block overflow-hidden rounded-[30px] bg-[#fcfcfd] px-4 py-3.5 ring-1 ring-zinc-900/[0.04]";
 
@@ -217,7 +223,7 @@ function KanbanCard({ task, mode, onOpen }: { task: ProjectTask; mode: KanbanMod
 function KanbanColumn({ group, mode, onOpenTask, onAdd }: { group: KanbanGroup; mode: KanbanMode; onOpenTask: (task: ProjectTask) => void; onAdd: () => void }) {
   const owner = memberByName(group.key);
   return (
-    <section className="flex w-[280px] shrink-0 flex-col">
+    <section className={COLUMN_SHELL}>
       <header className="mb-3 flex items-center gap-2 px-1">
         {mode === "owner" ? (
           <>
@@ -229,7 +235,7 @@ function KanbanColumn({ group, mode, onOpenTask, onAdd }: { group: KanbanGroup; 
         )}
         <span className="shrink-0 text-xs text-zinc-400">{group.items.length}项</span>
       </header>
-      <div className="flex flex-col gap-3">
+      <div className={COLUMN_BODY}>
         {group.items.map((task) => (
           <KanbanCard key={task.id} task={task} mode={mode} onOpen={() => { onOpenTask(task); }} />
         ))}
