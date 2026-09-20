@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -99,22 +99,47 @@ server/
 
 - 路由（根路径，不进 /api/v1）：`GET /auth/login`（302 SSO 授权页）、`/auth/callback`（state + PKCE 换令牌建会话）、`/auth/me`（401 = 需重新认证）、`/auth/logout`（撤销本地会话 + Casdoor 单点登出）；契约见 `shared/src/modules/identity.ts`、ADR-010。
 - Cookie：`ll_sid`（HttpOnly 会话；DB 只存 sha256 哈希）、`ll_oidc`（PKCE 转场 10 分钟）、`ll_csrf`（可读；写接口叠加 `CsrfGuard` 回传 `X-CSRF-Token`）。
-- 环境变量：`CASDOOR_ISSUER` / `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET`（生产必填，启动即校验）/ `CASDOOR_REDIRECT_URI` / `CASDOOR_SCOPE` / `SESSION_IDLE_MINUTES`（默认 30，接入标准「企业内部系统」档；0 仅测试）/ `SESSION_COOKIE_SECURE`（auto = 仅生产 Secure）。
+- 环境变量：`CASDOOR_ISSUER` / `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET`（生产必填，启动即校验）/ `CASDOOR_REDIRECT_URI` / `CASDOOR_SCOPE` / `SESSION_IDLE_MINUTES`（默认 30，接入标准「企业内部系统」档；0 仅测试）/ `SESSION_COOKIE_SECURE`（auto = 仅生产 Secure）/ `CASDOOR_ORG_NAME`（目录同步 owner；生产必填）/ `INTERNAL_SYNC_TOKEN`（内部作业凭证；生产必填）。
 - 会话超时：空闲 > `SESSION_IDLE_MINUTES` 或超过 ID Token `exp` → 401 并撤销；命中时 `last_seen_at` 按 60s 节流刷新。
-- 供他人使用：`SessionGuard` + `@CurrentUser()`（identity index 出口）；`revokeAllForUser` 供组织同步（h1）踢线；细节见 `src/modules/identity/README.md`。
+- 供他人使用：`SessionGuard` + `@CurrentUser()`（identity index 出口）；`revokeAllForUser` 供组织同步（h1）踢线；h1 新增 `listDepartments`（DepartmentService）、`RoleService`（授权画像 / 角色绑定）、`OrgSyncService`（目录快照 → 差异报告）；细节见 `src/modules/identity/README.md`。
+
+## 用户目录与内部作业（h1 收口）
+
+- `GET /api/v1/users`（业务接口，首个 `/api/v1` 路由）：用户目录（A2），已登录全员可读、只返回启用用户；`q` 命中工号 / 姓名 / 邮箱，默认工号升序（契约 `shared/src/modules/users.ts`）。
+- 内部作业（根路径，不进 `/api/v1`；统一 `X-Internal-Token` 鉴权，生产必填、缺失 / 不匹配 401）：
+  - `POST /internal/users/disable` / `/enable` / `/delete`：离职回收（接入标准第五部分）；入参 `{"name","email"}`（name 为准、email 兜底），幂等 200（目录中不存在也成功）；disable / delete 撤销该用户全部在线会话（`affectedSessions`）；delete 为软删（`removed_at` 置位 + `status=disabled`，不物理删行）。
+  - `POST /internal/org-sync/run`：手动触发一次 Casdoor 目录拉取 + 差异应用（`{"missingUserPolicy":"report|disable"}`，默认 report）；定时调度随 i5 接 worker。
+
+## 项目接口（h2 · S6·project：M2-01 / M2-04 / M2-05）
+
+- 契约 `shared/src/modules/projects.ts`（OpenAPI tags=projects）；实现 `src/modules/project/`（controller / service / repository / query + `index.ts` 唯一出口）；整组路由挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`），`GET /facets` 注册在 `GET /{id}` 之前。
+- `GET /api/v1/projects`：分页 + 多维筛选（`filter[region|projectType|managerId|stageKey|status]` 多值英文逗号分隔）+ 关键字 `q`（编号 / 名称 / 客户 / 序号）+ 时间闭区间（`filter[timeFrom]` / `filter[timeTo]`，Asia/Shanghai 日界，映射 `updated_at`）+ 排序白名单（`updatedAt` / `createdAt` / `seqNo`，缺省 `updatedAt:desc`）；非法枚举 / 非法 uuid / 区间反向一律 400（不返回静默空列表）。
+- `GET /api/v1/projects/facets`：与列表共用同一个 filter 构造器（五组计数 + `total`），计数与列表同口径（v0.2 §8.2 / A6）。
+- `POST /api/v1/projects`（201）：编号 `code` 由创建人填写、唯一性由数据库约束兜底（409 `PROJECT_CODE_EXISTS`）；`seq_no` 由序列分配（不接受传入）；缺省 `stageKey=presale`。`PATCH`（乐观锁：正文 `version`，409 `VERSION_CONFLICT`）、`DELETE`（`If-Match` 回传当前 `version`，缺头 400；软删落 `deleted_at` / `deleted_by`）。
+- 归档写保护（ADR-027）：`status=archived` 的项目 PATCH / DELETE 一律 409 `PROJECT_ARCHIVED`（错误码随本批入契约与映射表）。软删（A5）：列表 / 详情 / facets 统一 `deleted_at is null`；`seq_no` 不回收、同编号再建仍 409。
+- 成员名册（M2-05）：`GET /api/v1/projects/{id}/members`（项目经理在前，同角色按工号升序，姓名随行）、`POST`（200；幂等 upsert —— 同项目 + 同用户唯一，重复添加 = 覆盖角色且保留 `joinedAt`；目标用户不存在 404）、`DELETE /api/v1/projects/{id}/members/{userId}`（返回被移除行；不是成员 404）。名册是记录级权限（非成员 404）与「我参与的项目」的数据来源；成员变更按 ADR-022 ② touch 项目 `updated_at`；归档项目名册只读（409 PROJECT_ARCHIVED）。
+- 分类字段口径（A1-12）：`region` / `projectType` 为 facets 两组计数来源；创建缺省「未分类」（契约 default），更新可改。
+- 会话侧新增出口：`@CurrentActorId()`（identity index）—— 当前用户在本库 `users.id`（uuid），供落库外键 / 审计字段使用；`@CurrentUser()` 仍是 Casdoor 侧口径。
 
 ## 数据访问（Drizzle ↔ 迁移对齐）
 
-- 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0006）。
+- 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0009）。
 - 新增迁移的同一 PR 内同步更新 schema，并跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - file 模块数据层（0005 / 0006）：`files` 补定档 / 回收站 / `purge_after` 列，新增 `upload_sessions`（分片直传会话，分片状态以对象存储 ListParts 为准）与 `idempotency_keys`（只存 sha256(key)；作用域 = 调用方 + 接口指纹），口径见 `database/README.md`。
+- identity 数据层（0007 · h1）：`departments` / `roles` / `role_permissions` / `user_roles` 四表；角色集由 `database/seeds/roles.mjs` 种子维护（`node database/scripts/seed.mjs`），权限矩阵条目随 h6。
+- project 成员数据层（0010 · h2）：`project_members`（`project_id` / `user_id` / `role_in_project` / `joined_at`；联合唯一 + `user_id` 反查索引），角色两值 `project_manager` / `project_member` 与全局角色相互独立。
+- project 数据层（0009 · h2）：`projects` 增 `deleted_at` / `deleted_by` 与局部索引 `ix_projects_active_updated (updated_at desc) where deleted_at is null`；唯一约束违例经 drizzle 包装（`DrizzleQueryError`，原始驱动错误挂在 `cause`）——repository 逐层解包后按 `code=23505 + constraint` 映射业务错误码（编号重复 → 409 `PROJECT_CODE_EXISTS`）。
 - 大文件走 MinIO 直传（api 只签名与元数据）属 file 模块后续卡片。
 
 ## 测试
 
 - `npm run test`：vitest；端到端用 `@nestjs/testing` + supertest，PG 用替身（测试不依赖数据库）。
 - 骨架测试：/healthz、/readyz（ok / degraded）、未知路由信封、ZodValidationPipe。
-- 会话链路测试（`test/auth.e2e.test.ts`）：login 302 + PKCE 参数 → 回调建会话（用户 upsert / 只存哈希 / CSRF Cookie）→ 会话超时 / 登出 / 禁用踢线 / 开放重定向 / CsrfGuard，共 10 例。
+- 会话链路测试（`test/auth.e2e.test.ts`）：login 302 + PKCE 参数 → 回调建会话（用户 upsert / 只存哈希 / CSRF Cookie）→ 会话超时 / 登出 / 禁用踢线 / 开放重定向 / CsrfGuard，共 10 例（h1 新增 provider 以空替身隔离，不引数据库）。
+- identity/org 测试（`test/identity-org.test.ts` · h1）：六角色数据范围用例 + 组织同步差异语义（父序 / 缺失停用 / 离职踢线 / 安全阀 / 复职），共 23 例（Push 74 时全量 39 例）。
+
+- project 测试（`test/project-crud.test.ts` · h2）：筛选解析（多值 / 非法枚举 400 / 上海日界 / 区间反向 400）、排序白名单、行 → 契约视图映射、创建缺省阶段与撞号 409、乐观锁冲突与归档写保护、软删可见性与操作人透传、唯一违例解包，共 21 例；
+- project 成员测试（`test/project-members.test.ts` · h2）：视图映射 / 列表顺序 / 添加 upsert + touch / 重复添加改角色 / 目标用户 404 / 归档写保护 / 移除与不是成员 404，共 7 例；`npm run test` 全部 87 例。
 
 ## CI 接线（g5 · px｜已落地）
 
@@ -153,11 +178,11 @@ server/
         run: npm run check:boundaries
 ```
 
-（可选）数据库漂移 job：起 `postgres:18` service → 跑 `database` 迁移 → `npm run check:db-schema`；建议与 g5 的「空库迁移」job 合并设计。
+数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。
 
 ## 后续卡片衔接
 
-- g6：`/auth/*` 会话后端化（identity 模块首个实现）——已落地（Push 43；前端切换 k6、正式环境切换 g7 仍在 px 线）。
+- g6：`/auth/*` 会话后端化（identity 模块首个实现）——已落地（Push 43）；前端切换 k6 已合入（Push 46），正式环境 SSO 核对（g7）仍在 px 线。
 - g5：CI 扩展（上方片段 + 契约漂移）——已落地（Push 41：`server` job 入 `.github/workflows/ci.yml`）。
 - lan 线：file / preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。

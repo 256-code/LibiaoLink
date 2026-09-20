@@ -1,11 +1,15 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
-import { DocTypeSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
+import { DocTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
 
-/** 四格进度：0 / 0.25 / 0.5 / 0.75 / 1（写入即联动状态与完成日期，并写审计）。 */
+/**
+ * 四格进度：0 / 0.25 / 0.5 / 0.75 / 1（写入即联动状态与完成日期，并写审计）。
+ * 离散五档（A13 · Push 70）：写入只收这五个值；迁移 / 演示数据的任意小数先四舍五入到最近档（0.49 → 0.5），
+ * 保证「四格显示 ↔ 进度值」一一对应。
+ */
 export const TaskProgressSchema = z
   .union([z.literal(0), z.literal(0.25), z.literal(0.5), z.literal(0.75), z.literal(1)])
-  .openapi("TaskProgress", { description: "任务进度四格：0 / 25% / 50% / 75% / 100%" });
+  .openapi("TaskProgress", { description: "任务进度四格（离散五档）：0 / 25% / 50% / 75% / 100%；写入即联动状态与完成日期" });
 
 /** 任务（tasks 表；displayStatus 为服务端派生，不写回存储）。 */
 export const TaskSchema = z
@@ -28,38 +32,105 @@ export const TaskSchema = z
     priority: PrioritySchema.nullable(),
     deliverable: DocTypeSchema.nullable(),
     note: z.string().nullable(),
-    onTime: z.boolean().nullable(),
+    onTime: z.boolean().nullable().openapi({
+      description:
+        "是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生",
+    }),
     changeRef: UuidSchema.nullable(),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
-  .openapi("Task", { description: "任务（v0.2 §2.3 tasks；展示态派生规则见 §2.4）" });
+  .openapi("Task", { description: "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）" });
 
-export const TaskListQuerySchema = z.object({
-  stage: StageKeySchema.optional(),
-  "filter[ownerId]": UuidSchema.optional(),
-  "filter[status]": z.string().optional().openapi({ description: "展示态（多值逗号分隔）：pending / active / done / overdue / early_done" }),
-  q: z.string().optional().openapi({ description: "关键字（中英文任务描述）" }),
-  page: PageQuerySchema.shape.page,
-  limit: PageQuerySchema.shape.limit,
-  sort: SortQuerySchema.optional(),
-});
+/** 任务随行文件摘要（A7）：列表不下发文件名数组（省载荷、免 N+1），文件名清单只在详情接口给。 */
+export const TaskFileSummarySchema = z
+  .object({
+    total: z.number().int().min(0),
+    draft: z.number().int().min(0).openapi({ description: "未定档（draft）数量；>0 时完成门禁放行但返回 warning 并触发 R02" }),
+    final: z.number().int().min(0).openapi({ description: "已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计" }),
+  })
+  .openapi("TaskFileSummary");
+
+/** 任务文件摘要项（详情接口随行下发；列表不带）。 */
+export const TaskFileBriefSchema = z
+  .object({
+    id: UuidSchema,
+    name: z.string(),
+    status: FileStatusSchema,
+    docType: DocTypeSchema.nullable(),
+  })
+  .openapi("TaskFileBrief");
+
+/**
+ * 任务列表项（A7）：表格 15 列 + 内联摘要（负责人姓名 / 变更摘要 / 文件摘要）。
+ * 前端不再逐行反查 /users 或 /files，避免 N+1；changeRef 只在详情给。
+ */
+export const TaskListItemSchema = TaskSchema.omit({ changeRef: true })
+  .extend({
+    ownerName: z.string().openapi({ description: "负责人姓名（users.display_name 随行下发）" }),
+    changeSummary: z.string().nullable().openapi({ description: "变更摘要（列表用短文本；详情用 changeRef 跳变更记录）" }),
+    fileSummary: TaskFileSummarySchema,
+  })
+  .openapi("TaskListItem");
+
+/** 任务详情（抽屉全字段，A7）：含变更指针与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
+export const TaskDetailSchema = TaskSchema.extend({
+  ownerName: z.string(),
+  changeSummary: z.string().nullable(),
+  files: z.array(TaskFileBriefSchema),
+}).openapi("TaskDetail", { description: "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）" });
+
+/** 任务排序白名单（A8）：字段白名单 + asc / desc，多项逗号分隔；白名单外字段返回 400（不静默降级）。 */
+export const TaskSortSchema = z
+  .string()
+  .regex(
+    /^(plannedStart|plannedEnd|actualEnd|progress|title|createdAt)(:(asc|desc))?(,(plannedStart|plannedEnd|actualEnd|progress|title|createdAt)(:(asc|desc))?)*$/,
+  )
+  .openapi({
+    description:
+      "排序：sort=field:asc,field2:desc；字段白名单 plannedStart / plannedEnd / actualEnd / progress / title / createdAt（白名单外 400）",
+    example: "plannedEnd:asc",
+  });
+
+/**
+ * 任务列表查询。
+ * A8 排序：sort 字段白名单 plannedStart / plannedEnd / actualEnd / progress / title / createdAt，白名单外返回 400；
+ * 不传 sort 时为默认顺序 —— 阶段顺序（STAGE_KEYS 序）+ 组内 plannedStart ASC NULLS LAST, created_at ASC, id ASC
+ * （id 兜底保证稳定，分页不跳行；一期不新增 tasks.seq）。
+ */
+export const TaskListQuerySchema = z
+  .object({
+    stage: StageKeySchema.optional(),
+    "filter[ownerId]": UuidSchema.optional(),
+    "filter[status]": z.string().optional().openapi({ description: "展示态（多值逗号分隔）：pending / active / done / overdue / early_done" }),
+    q: z.string().optional().openapi({ description: "关键字（中英文任务描述）" }),
+    page: PageQuerySchema.shape.page,
+    limit: PageQuerySchema.shape.limit,
+    sort: TaskSortSchema.optional(),
+  })
+  .openapi("TaskListQuery", {
+    description: "任务列表查询（分页 + 单阶段 / 负责人 / 展示态筛选 + 白名单排序）；缺省顺序 = 阶段序 + plannedStart ASC NULLS LAST, created_at ASC, id ASC",
+  });
 
 export const TaskListResponseSchema = z
   .object({
-    items: z.array(TaskSchema),
+    items: z.array(TaskListItemSchema),
     page: z.number().int().min(1),
     limit: z.number().int().min(1),
     total: z.number().int().min(0),
   })
-  .openapi("TaskListResponse");
+  .openapi("TaskListResponse", { description: "任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要）" });
 
-/** 进度更新：progress 联动状态与 doneDate；回退同样写审计（前端只做展示）。 */
+/**
+ * 进度更新（A12 / A13 · Push 70）：progress 联动状态与完成日期，回退同样写审计（前端只做展示）。
+ * 联动（服务端裁决）：0 → pending；0.25 / 0.5 / 0.75 → active；1 → done（按 actualEnd 与 plannedEnd 派生「已完成 / 提前完成」）。
+ * 已过 plannedEnd 且未完成时展示态仍为「已延期」（派生优先，A14），不因点进度条改成「待开始 / 进行中」。
+ */
 export const TaskProgressUpdateBodySchema = z
   .object({
     progress: TaskProgressSchema,
-    actualEnd: DateOnlySchema.optional().openapi({ description: "完成日期；progress=1 且缺省时服务端按当天写入" }),
+    actualEnd: DateOnlySchema.optional().openapi({ description: "完成日期（A13）：progress=1 且缺省时服务端按当天（Asia/Shanghai）写入；progress<1 时忽略并清空 —— 清除完成日期的唯一方式是「把进度写回 < 1 档」" }),
     note: z.string().max(2000).optional(),
     version: VersionSchema,
   })
@@ -88,10 +159,14 @@ export const TaskCreateBodySchema = z
   })
   .openapi("TaskCreateBody", { description: "创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径）" });
 
-/** 任务编辑（A10）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度走 /progress。 */
+/** 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。 */
 export const TaskUpdateBodySchema = z
   .object({
     ownerId: UuidSchema.optional(),
+    status: TaskBaseStatusSchema.optional().openapi({
+      description:
+        "任务状态（基础三态，A12）：pending / active / done —— 服务端同事务回填进度与完成日期：done → progress=1 且 actualEnd 缺省按当天；active → progress 至少 1 格（0 → 0.25；满格 → 0.75）并清 actualEnd；pending → progress=0 并清 actualEnd。「已延期 / 提前完成」是派生展示态、不可写（提交返回 400）；已过 plannedEnd 且未完成时展示态保持「已延期」，不因本字段改写",
+    }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
     estimatedDays: z.number().int().min(0).nullable().optional(),
@@ -100,7 +175,7 @@ export const TaskUpdateBodySchema = z
     note: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
   })
-  .openapi("TaskUpdateBody", { description: "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口）" });
+  .openapi("TaskUpdateBody", { description: "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress）" });
 
 /** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
 export const TaskCreateFromTemplateBodySchema = z

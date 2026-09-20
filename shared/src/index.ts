@@ -8,4 +8,6 @@ export * from "./modules/templates.ts";
 export * from "./modules/flow.ts";
 export * from "./modules/files.ts";
 export * from "./modules/identity.ts";
+export * from "./modules/users.ts";
+export * from "./modules/dicts.ts";
 export { buildOpenApiDocument } from "./openapi.ts";
