@@ -256,7 +256,7 @@ function KanbanCard({
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_INNER}>
-        <p className="text-sm leading-5 font-medium text-zinc-800">{task.title}</p>
+        <p className="text-sm font-bold leading-5 text-zinc-900">{task.title}</p>
         {task.titleEn === "" ? null : <p className="mt-0.5 text-[11px] leading-4 text-zinc-500">{task.titleEn}</p>}
 
         {mode === "owner" ? (
