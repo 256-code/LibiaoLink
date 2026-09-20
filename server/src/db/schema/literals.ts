@@ -15,3 +15,12 @@ export const STAGE_KEYS = [
   "production",
   "acceptance",
 ] as const;
+
+/** 角色数据范围（roles.data_scope，v0.2 §4.1）：由宽到窄，多角色取并集。 */
+export const DATA_SCOPE_KEYS = [
+  "all",
+  "managed_projects",
+  "involved_projects",
+  "own_stakeholders",
+  "granted",
+] as const;

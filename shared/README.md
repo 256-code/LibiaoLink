@@ -82,16 +82,104 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 进度与完成日期（A13） | 进度为离散五档 `0 / 0.25 / 0.5 / 0.75 / 1`（迁移 / 演示数据的任意小数先归一，如 0.49 → 0.5）；`progress<1` 服务端一律清空 `actual_end`（清除完成日期的唯一方式）；`progress=1` 且缺省按当天（Asia/Shanghai）写入；完成日期不进 `PATCH /tasks/{taskId}` |
 | 是否按时交付（A14） | 服务端读时派生 `onTime`：完成且不晚于 `plannedEnd` → true；完成晚于 `plannedEnd`（或完成未填日期且已过 `plannedEnd`）→ false；未完成且已过 `plannedEnd` → false + `displayStatus=overdue`（逾期未交付）；派生不出回落迁移存储值，仍无则 `null`；前端「逾期未交付 / 逾期已交付」标签由 `onTime` + `displayStatus` 渲染，不再本地派生 |
 
-## 本批范围与后续切片
+## 契约切片表（M0-02 · Push 73）
 
-- 第一批（g2）：项目、任务、流程节点与蓝图（对应阶段 6 纵切的 h1~h4）。
-- 任务节点库与任务模板（A1-16 / A1-17；2026-09-19 定案）：任务模板 CRUD（按阶段）+ 从模板批量生成任务；落库表建议 `task_nodes` / `task_templates` / `task_template_nodes`（见 `前端功能需求.md` §3.8 A11 / `字段对照清单.md` §四）。
-- 第二批（S7·file，i1）：文件与变更（上传 / 版本 / 定档 / 变更 / 回收站）；预览（preview）契约随 i3 补。
-- 认证与会话（g6）：identity 契约（User / MeResponse / /auth/login 与 /auth/callback 查询参数），随会话后端化落地。
-- 对齐清单 A1~A14（Push 49 / 69 / 70）：projects（时间区间 / 软删 / 排序白名单补 `createdAt`）、tasks（列表项与详情 / 排序白名单 / 状态可写与进度联动 / 完成日期 / 逾期派生）、users（用户目录 / 用户偏好）、dicts（数据字典下发）—— A1~A8 决议见 PR #40 评审记录，A9~A14 决议见 PR #42 评审；A2 / A3 为 M1 出口（前端移除硬编码）前提。
-- 后续切片（随对应模块落地补契约，仍在本包内）：通知（notify，阶段 8）、
-  搜索与统计（search / dashboard，阶段 8）、迁移工具链（阶段 9）、
-  自动化规则与日报/问题（automation / report，阶段 7）。
+> 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
+> 现状（Push 71 口径）：**paths = 44、schemas = 108**，生成物与源码零漂移。
+> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入 / 项目流程 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更）、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
+
+### M1 身份与平台底座（h1 + 平台）
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| 组织 / 角色 / 通讯录同步 | 组织同步为内部作业（worker），**暂无新端点**（数据面 0007 已落 · Push 74；端点仍未开）；用户目录 `q` 补拼音检索口径（ADR-021）。管理端组织维护（D1-06）若做，另补 /departments、/roles 族 | 说明 |
+| 字典管理（C9-01 / C9-02） | 新增管理员写路径：`POST /dicts/{type}/items`、`PATCH /dicts/{type}/items/{code}`、`DELETE /dicts/{type}/items/{code}`（metadata 校验 + 引用检查；`DICT_VALUE_UNKNOWN` 复用） | 端点 |
+| 高风险重认证（D1-05） | 新增 `POST /auth/mfa/verify` | 端点 |
+| 幂等 / outbox / 权限策略 | 内部实现，无契约变化（`Idempotency-Key` 已在约定层） | 无 |
+
+### M2 项目纵切（h2）
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| M2-01 项目 CRUD | 已有 CRUD 与软删；补归档写保护错误码 `PROJECT_ARCHIVED`（ADR-027）、`Project.archivedAt` | 错误码 / 字段 |
+| M2-02 建项目 + 蓝图快照 | `BlueprintSchema` 增 `projectType`；`BlueprintView` 增所属类型与「默认模板」标识（ADR-019） | 字段 |
+| M2-03 阶段推进 / 回退 | 新增 `GET /projects/{id}/stages`、`POST /projects/{id}/stages/{key}/advance`、`POST /projects/{id}/stages/{key}/rollback`（原因必填）；`422 STAGE_GATE_NOT_PASSED` + 缺项明细结构（ADR-023） | 端点 / 错误码 |
+| M2-05 成员与记录级权限 | 新增 `GET / POST / DELETE /projects/{id}/members`（非成员统一 404） | 端点 |
+| M2-06 视图 / 关注 | 新增 `/views`（个人 / 公共 CRUD）与 `/follows`（关注 / 取关） | 端点 |
+| M2-04 列表 / facets | 已入（A1 / A9），无新增 | 无 |
+
+### M3 任务纵切（h3 / h4）
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| M3-01 列表 / 详情 | 已入（A7 / A8）；补快筛参数（`filter[mine]` / `dueToday` / `dueThisWeek` / `overdue` / `incomplete` / `missingDeliverable`） | 参数 |
+| M3-02 进度与状态 | 已入（A12~A14）；系统置位无契约变化（ADR-025） | 无 |
+| M3-03 完成门禁 | 新增 `POST /projects/{id}/tasks/{taskId}/complete`；`422 TASK_REQUIRED_DOC_MISSING` + `{ missing[], warnings[] }`（A4-20 / ADR-024） | 端点 / 错误码 |
+| M3-04 批量操作 | 新增 `PATCH /projects/{id}/tasks/batch`（字段白名单 + 逐条校验 + `failures[]`） | 端点 |
+| M3-05 模板锁定与修正 | `deliverable` → `deliverableTypes: DocType[]`（ADR-024）；模板锁定字段修正需原因 | 字段 |
+| 任务软删 | 新增 `DELETE /projects/{id}/tasks/{taskId}`（被日报 / 问题 / 变更引用时拒绝） | 端点 |
+| 流程节点（h3） | 节点增删已入；权限口径按 ADR-020（403 语义声明，无字段变化） | 说明 |
+
+### M4 文件与预览（i1 / i3）
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| i1 文件管道 | files 族已入（Push 41）：上传会话 / 分片 / 完成 / 中止 / 定档 / 回滚 / 回收站 / 下载；落地时复核错误码（`UPLOAD_INCOMPLETE` / `UPLOAD_SESSION_EXPIRED` / `FILE_HASH_MISMATCH` / `CHANGE_FILE_REQUIRED` 已登记） | 复核 |
+| i3 预览 | 预览鉴权与产物字段复核（preview schema 已就位）；无新增路径预期 | 复核 |
+
+### M5 自动化与通知（i8 / notify）
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| i8 规则引擎 | 新增 `/automation/rules` 族（CRUD + 启停 + 试运行）与命中留痕查询；`RATE_LIMITED` 复用 | 端点 |
+| notify | 新增 `/notifications`、`/notifications/stream`（SSE）、免打扰与消息偏好 | 端点 |
+| R01~R07 文案 | 非契约；文案入仓 `docs/rules/R01-R07-内置规则文案.md`，消息模板表随 M5 | 无 |
+
+### M6 日报 / 问题 / 干系人 / 工作台 / 归档
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| 日报 | 新增 `/reports` 族（草稿 / 提交 / 补填 / 关联任务） | 端点 |
+| 问题 | 新增 `/issues` 族（四态流转 + 看板 + 统计）；`Issue.dueAt`（ADR-026）；`ISSUE_TRANSITION_INVALID` 复用 | 端点 / 字段 |
+| 干系人 | 新增 `/stakeholders`（台账 + 批量导入 + 导出；隐私字段走字段级权限） | 端点 |
+| 待办（C2-06） | 新增 `/todos` | 端点 |
+| 归档（C4-02 / C4-03） | 新增 `POST /projects/{id}/archive` 与 `GET /projects/{id}/archive`（清单）；写保护 `PROJECT_ARCHIVED`（ADR-027） | 端点 / 错误码 |
+
+### M7 搜索 / 仪表盘 / 导出
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| 搜索 | 新增 `/search`（对象类型过滤 + 高亮；分词先行 pg_trgm，ADR-029） | 端点 |
+| 仪表盘 | 新增 dashboard 统计端点（按对象类型聚合） | 端点 |
+| 导出 | 新增 `/exports` + 进度查询 | 端点 |
+
+### M8 迁移与上线
+
+| 卡片 | 契约增量 | 类型 |
+|---|---|---|
+| 迁移工具链 | 内部作业；仅需冻结历史映射字段（ADR-021 用户映射、v0.3 §7.3 #8 阶段映射） | 无 |
+
+### ADR → 契约影响索引（M0 决议 · Push 71）
+
+| ADR | 契约影响 | 落地卡 |
+|---|---|---|
+| ADR-019 蓝图组织 | `BlueprintSchema.projectType`、`BlueprintView` 类型标识 | M2-02 |
+| ADR-020 节点权限 | 无字段变化；403 / 404 语义与权限矩阵用例 | M2-05 |
+| ADR-021 负责人标识 | Task 族 `ownerId` 可空 + `ownerName`；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
+| ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层） | M2-04 |
+| ADR-023 阶段推进 | stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` | M2-03 |
+| ADR-024 成果文件 | `deliverableTypes` 数组；门禁错误语义 | M3-03 / M3-05 |
+| ADR-025 进行中置位 | 无契约变化（系统作业） | M3-02 |
+| ADR-026 问题 SLA | `Issue.dueAt` | M6 |
+| ADR-027 归档 | archive 端点 + `PROJECT_ARCHIVED` | M6 / M7 |
+| ADR-028 时区口径 | 无字段变化（展示与日界口径写入公约，见「已定案口径」） | 约定 |
+| ADR-029 搜索分词 | 无契约变化（索引与实现） | M7 |
+
+### 维护规则
+
+- 每张卡开工前更新本表（「已入（Push N）」），并在同一 PR 内执行 `npm run generate` + `npm run check`；
+- 契约变更属高风险（CONTRIBUTING §15）：需非作者评审；
+- 生成物禁止手改（CONTRIBUTING §14）；本表与 `技术设计v0.3-实施与验收.md` §3 的接口表保持同口径，冲突时以本包 src 为准。
 
 ## 边界与注意事项
 
