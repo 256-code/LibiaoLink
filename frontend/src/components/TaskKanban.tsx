@@ -36,6 +36,8 @@ import { trackerLabel } from "./Tracker";
  * Push 109（业务反馈「卡片阴影也没了 这个不符合原本的效果」）：指针拖动期间补一块**跟着鼠标走的拖动卡片**（`data-drag-ghost`）——
  * 内容就是这张卡本身（同一套外壳材质：白壳 + 发丝边 + 三层投影 + 细纹），按抓取点对齐鼠标、`pointer-events-none`（不挡 `elementFromPoint` 的落点判定），
  * 位置每帧更新（与落点同一个 rAF 循环）；原地那张卡片照旧不动、不淡出、不抬起。
+ * Push 110（业务反馈「还是要透明的吧」）：拖动卡片改成**半透明**（壳从实心白换成半透明白 + 轻磨砂 `backdrop-blur`），
+ * 压住落点槽位 / 列内卡片时能透出去（`pointer-events-none` 不变）；投影保持原样不淡，原地那张卡片仍不动、不淡出。
  */
 export type KanbanMode = "owner" | "status";
 
@@ -69,6 +71,15 @@ const CARD_SHELL =
  * 只把光标换成抓手，提示「这一张正拿在手上」；拖影用浏览器默认。
  */
 const CARD_DRAGGING = " cursor-grabbing";
+
+/**
+ * 拖动卡片外壳（Push 110）：业务口径「还是要透明的」—— 实心白壳换成**半透明白 + 轻磨砂**（`backdrop-blur` / `backdrop-saturate`，
+ * 与本应用浮层的液态玻璃同一套手感），压住底下的落点槽位时能透出去；投影保持卡片本体同一条（不因透明而减淡）。
+ * 不带 `transition` / 悬停位移 —— 拖动卡片由指针循环逐帧摆位，`pointer-events-none` 也拿不到悬停。
+ */
+const CARD_SHELL_GHOST =
+  "relative block w-full rounded-[35px] border border-zinc-900/[0.07] bg-white/[0.6] p-[9px] text-left backdrop-blur-[5px] backdrop-saturate-150 " +
+  "[box-shadow:0_18px_40px_-20px_rgba(15,23,42,0.18),0_4px_14px_-8px_rgba(15,23,42,0.06),inset_0_-2px_6px_rgba(15,23,42,0.05)]";
 
 /** 细纹叠加（样张：`repeating-conic-gradient` 细纹 + 对比度 105%；白壳上透明度收到 6%，保持干净）。 */
 const CARD_NOISE =
@@ -258,6 +269,7 @@ function KanbanCard({
   onOpen,
   onPatch,
   dragging,
+  ghost,
   onPointerDownDrag,
 }: {
   task: ProjectTask;
@@ -267,6 +279,8 @@ function KanbanCard({
   onPatch?: (patch: TaskPatch) => void;
   /** 正在被拖动（Push 104；Push 105 口径：**拖动中卡片样式保持原样** —— 不淡出、也不做抬起的实体态，只换抓手光标）。 */
   dragging?: boolean;
+  /** 拖动卡片（Push 110）：只给跟着鼠标走的那一块用 —— 半透明壳（`CARD_SHELL_GHOST`），本体卡片永远是实心白。 */
+  ghost?: boolean;
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下看详情 / 按住拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
@@ -296,7 +310,7 @@ function KanbanCard({
   return (
     <div
       role="button"
-      tabIndex={0}
+      tabIndex={ghost === true ? -1 : 0}
       aria-label={"任务：" + task.title}
       title={onPointerDownDrag === undefined ? undefined : "按住拖到别的列 = 移到那个组（负责人 / 状态跟着改）；拖动中滚轮翻卡片、Shift + 滚轮翻列；点一下看任务详情"}
       data-kanban-card="true"
@@ -321,7 +335,7 @@ function KanbanCard({
           onOpen();
         }
       }}
-      className={CARD_SHELL + (dragging === true ? CARD_DRAGGING : " cursor-pointer")}
+      className={(ghost === true ? CARD_SHELL_GHOST : CARD_SHELL) + (dragging === true ? CARD_DRAGGING : " cursor-pointer")}
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
@@ -858,7 +872,7 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
           style={{ width: grabRef.current.width === 0 ? undefined : grabRef.current.width }}
           className="pointer-events-none fixed left-0 top-0 z-50 will-change-transform"
         >
-          <KanbanCard task={draggingTask} mode={mode} onOpen={() => undefined} />
+          <KanbanCard task={draggingTask} mode={mode} ghost onOpen={() => undefined} />
         </div>
       )}
       <TaskDrawer
