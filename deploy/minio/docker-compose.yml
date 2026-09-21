@@ -1,0 +1,41 @@
+# ============================================================
+# 对象存储本地沙箱（ADR-006：S3 协议抽象 + MinIO 单节点）
+# ------------------------------------------------------------
+# 用法：
+#   cp .env.example .env    # 改成本地口令（不要用示例值）
+#   docker compose up -d
+#   cd ../../server && npm run storage:init   # 建桶 + 版本控制 + CORS + 分片清理
+#   npm run storage:it                        # 真机回放（上传管道全链路）
+#
+# 说明：
+#   - 镜像按 **tag@digest 双锁**：tag 便于人读，digest 保证内容不可变（上游已归档，见 README.md）；
+#   - 这是**本地 / 联调沙箱**，不是生产部署模板；生产要求独立数据盘 + 每日异地同步 + 定期恢复抽检（ADR-006）。
+# ============================================================
+name: libiaolink-minio
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    container_name: libiaolink-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+      # CORS 在本版本 MinIO 里是**服务端配置**，不是桶级 S3 API（PutBucketCors 返回 NotImplemented，mc cors 同样失败）。
+      # 浏览器直传（前端来源 -> 预签名 PUT）依赖这里；多个来源用逗号分隔。
+      MINIO_API_CORS_ALLOW_ORIGIN: "${MINIO_CORS_ALLOW_ORIGIN:-http://localhost:5173}"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"       # S3 API（预签名直传走这里，host 必须对客户端可达）
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"   # 控制台（社区版控制台能力有限，运维以 mc / 脚本为准）
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  minio-data:
