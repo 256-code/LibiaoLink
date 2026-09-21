@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -22,9 +22,11 @@ server/
     modules/permission/   # 权限策略层（h6 · PoC-6）：记录级 / 功能权限 / 字段级 / 五出口投影
     modules/admin/        # 字典 C9 与审计留痕 C7（h7）：类型 / 条目维护 + 审计写入与检索（其余模块仍为 README 占位）
     modules/calendar/     # 工作日历 D5（h8 · 横切）：例外维护 / 顺延规则 / T-1·T+1 实时求值
+    modules/file/         # 文件与版本 / 上传管道（S7·file · M4-01）：发起上传 / 分片预签名 / 断点续传 / 完成落版本 / 取消（定档 / 回溯 / 回收 / 变更按 M4-02~M4-04 接入）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
+  scripts/m4-upload-replay.mjs   # M4-01 上传管道真机回放（真 PG + 真对象存储 + 真 api；断言全过退出码 0）
   test/                          # vitest（health / auth 端到端 + 校验管道单测；auth 用进程内桩 IdP，不依赖 PG 与 Casdoor）
 ```
 
@@ -186,6 +188,20 @@ server/
 - T-N / T+N 求值（D5-03）：`GET /api/v1/calendar/offset?date=&days=&time=&shift=` —— 自然日偏移 → 顺延开关（`inherit` 按配置 / `on` / `off` 供规则引擎回放强制覆盖）→ 顺延 → 可选时刻叠加（`at` = 业务日 + HH:mm 按 Asia/Shanghai 转 UTC，如 R03「前 1 天 08:00」）；**实时求值、不缓存、不落库**（改期后按新日期重算）。窗口一次加载基准日 ± 370 天，窗口外 ≠ 非工作日（`exhausted` 防御）。
 - 时钟（v0.3 §4.7）：新增 `src/common/clock/clock.service.ts`（now / today / setSource）—— 求值基准一律经 ClockService（缺省今天），规则 / 调度禁止直接取系统时间（回放与金标测试可注入固定时刻）。
 - 权限：`calendar.manage` 入契约（现 27 键）；种子 #6b 给 admin 补该键（admin 27 键 = 契约全量，其余角色不含）。
+
+## 文件上传接口（S7·file · M4-01：上传管道）
+
+- 契约 `shared/src/modules/files.ts`（tags=files）：`POST /api/v1/files/uploads`（发起，201）、`POST /api/v1/files/{id}/uploads/{uploadId}/parts`（取分片预签名 URL，200）、`GET /api/v1/files/{id}/uploads/{uploadId}`（会话状态，200）、`POST …/complete`（完成，200）、`POST …/abort`（取消，200）。实现 `src/modules/file/`（controller / service / repository + `index.ts` 出口），装配进 api（`app.module.ts`）与 worker（`worker.module.ts`：过期清理）。
+- 发起上传（`intent=version`）：建 `files` 行（status=draft、version=0）+ 上传会话（先写**暂存键** `…/staging/{sessionId}`，ADR-006），返回分片计划（`partSizeBytes` / `totalParts`，服务端算）、`expiresAt`（`UPLOAD_SESSION_TTL_HOURS`，默认 24h）与 `duplicateHint`（带 `contentHash` 且命中同项目既有内容时回提示，A4-04，不强阻断）。
+- **`intent=change` 本切片直接 400**（契约 `UploadCreateBody` 的 change 分支只有 reason / 摘要 / stageKey，没有指向既有文件的 `fileId` 入口）→ 变更上传随 M4-04 落地；同缺口也包括「对既有 draft 文件追加版本」（同理无 fileId 入口）——**已登记待 wmj（契约主责）定案**：需要给上传入口补 `fileId`（或另开 `POST /files/{id}/versions`），定案前本切片不开放这两条路径。
+- 分片直传 / 断点续传：`parts` 批量签名（首次调用登记存储侧 `storage_upload_id`，行锁防并发双建；分片号越界 400）；`GET` 会话状态回 `uploadedPartNumbers` / `missingPartNumbers`（**以对象存储 ListParts 为唯一真相**，不落 `upload_parts` 表），续传只补缺失片。
+- 完成（`complete`）：ListParts 校验齐全（缺片 409 `UPLOAD_INCOMPLETE` + `details.missing`）→ 合并（按编号升序）→ HEAD 校大小（与声明不符 409 `size_mismatch`，不信客户端声明）→ `contentHash` 一致性（与 init 声明不符 422 `FILE_HASH_MISMATCH`；init 未给则以 complete 为准）→ `copyObject` 到契约键 `…/v{seq}/{contentHash}.{ext}` → 事务内锁会话 + 锁文件 + 复核位次 → 写 `file_versions` + 更新 `files.current_version_id` / `version` + 会话 completed + 审计 + outbox `file.version.created` → 按版本清暂存（失败只告警，过期清理兜底）。位次被并发完成抢占 → 500 `INTERNAL`（不写半份版本）。
+- 取消（`abort`）：中止分片 + 清暂存 + 置 aborted + 审计；**幂等**（重复取消回 200，已结束会话不再动存储），已完成会话 409 `FILE_STATE_INVALID`（回退走 M4-02 版本回溯）。
+- 过期：访问时惰性判定（分片 / 完成路径 410 `UPLOAD_SESSION_EXPIRED`；会话状态读 409 `FILE_STATE_INVALID`）+ worker 定时清理（`entry/worker.ts`：启动即跑一轮，之后每 10 分钟一批 ≤ 200 条 —— 中止分片 + 按版本清暂存 + 置 expired + system 审计）。
+- 权限：创建 / 分片 / 完成 / 取消 = `file.upload`（项目成员平权，ADR-011 平权例外）；读取会话状态 = 项目可见即可；不可见项目统一 404（防 IDOR）。`nodeId` / `taskId` 必须属于该项目（跨项目 400，防挂接）。文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」）。
+- 环境变量：`UPLOAD_MAX_SIZE_MB`（默认 2048，启动校验 ≤ 5120 —— 单次 CopyObject 上限）、`UPLOAD_SESSION_TTL_HOURS`（默认 24）。
+- 审计口径：`audit_logs.object_type = "file"`（objectId = fileId），上传会话事件经 `metadata.uploadId` 定位（契约枚举 `AUDIT_OBJECT_TYPES` 随之增 `file` —— PR-4 跨线改动，请 wmj 评审）。
+
 ## 数据访问（Drizzle ↔ 迁移对齐）
 
 - 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0014）。
@@ -219,6 +235,7 @@ server/
 - 工作日历测试（`test/calendar-rules.test.ts` + `test/calendar-service.test.ts` · h8 · S6·工作日历）：**规则 17 例**（默认规则与例外优先、窗口外 null、日期算术、顺延金标 forward / backward / 已是工作日 / 跨年 / exhausted、T-1·T+N 开关两态与改期重算、上海时刻换算）＋**服务 12 例**（年历与排序、缺省今天走时钟、setDay 审计与幂等、deleteDay 404、updateSettings 空变更、shift 方向覆盖、offset T-1 / T+1），共 29 例；**h8 后全量 213 例（16 文件）**。
 - 任务用例测试（`test/task-service.test.ts` · h4）：带节点创建缺省项目经理 / 节点判重 409 / 手工创建仅管理员 403 / 阶段不一致 400 / 归档 409、状态联动（done 满格补当天、active 退 0.75 清日期、过期保持已延期）、乐观锁 409 / 跨项目 404、进度写回清完成日期、项目总览四格，共 18 例（含 w2 · Push 124 追加 5 例：未分组 / 位次顺延 / 显式置空 / 组内重排）；**w2 后全量 222 例（17 文件）**。
 - 任务顺序测试（`test/task-order.test.ts` · w2）：位次夹取 / 插入计划（组尾 / 组首 / 中间）/ 移动计划（越界 = 组尾）/ 读序稳定，共 4 例（纯函数，不连库）；
+- 文件上传测试（`test/file-service.test.ts` · M4-01 · S7·file）：仓储 / 存储 / 权限 / 审计替身直测服务层 —— 发起上传（draft + 暂存键 + 分片计划 + TTL + 秒传提示 + 小写归一）、`intent=change` 400、超上限 400（details.limitBytes）、归档 409 / 不存在 404、nodeId / taskId 跨项目 400；取分片（首建登记 + 复用 + 越界 400 + 过期惰性 410 + 非本文件会话 404）；会话状态（已传 / 缺失、未建存储侧会话、过期 409、已完成 409）；完成（成功链路 = 合并升序 + 复制契约键 + 版本 / 文件 / 会话 + 审计 + outbox + 清暂存、缺片 409 带 missing、未上传任何分片、HEAD size_mismatch 409、合并结果不存在、哈希不符 422、init 无哈希以 complete 为准、过期 410、存储侧会话丢失 410、位次被抢占 500、copy 失败映射、清暂存失败只告警）；取消（成功 + 幂等 + 已完成 409）；过期清理（批量 + 单条失败不阻断），共 33 例；**M4-01 后全量 280 例（19 文件）**。
 
 ## PoC-9 回放（h5 · S6·PoC-9）
 
@@ -258,6 +275,15 @@ server/
 - 证据入库：`docs/w2-回放证据(任务落库口径A15A18A19).md`（真机 33 项断言：未分组落库 + 待分配可空 + 组内位次持久化（插入 / 拖动 / 越界 / 乐观锁 / 组隔离）+ 节点来源口径 + 阶段完成度剔除未分组 + 字段级留痕）。
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/task-order.test.ts` 4 例 + `test/task-service.test.ts` 18 例 + `check:db-schema`（26 表 / 259 列 / 73 索引 / 71 CHECK）。
 - 迁移与回填：`database/migrations/0015_task_order_and_nullable_scope.sql`（回填按迁移前默认读序 `planned_start ASC NULLS LAST, created_at, id`，迁移前后读序一致）。
+
+## M4-01 回放（S7·file 上传管道）
+
+- 脚本：`scripts/m4-upload-replay.mjs`（真 PG + 真对象存储 + 真 api；铸管理员与名册成员两个临时会话 / 跑完撤销，建 `M4-xxx` 回放项目 / 跑完硬删项目及其文件 / 版本 / 会话 / 审计 / outbox 事件 + 清桶内前缀）。
+  - 复跑：`cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m4-upload-replay.mjs --out "../docs/m4-01-回放证据(上传管道S7file).md"`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据。
+  - `M4_DATABASE_URL` 优先于 `DATABASE_URL`：脚本侧断言 SQL 与收尾需要迁移器权限（`audit_logs` 对应用角色只授 SELECT / INSERT）。
+- 证据入库：`docs/m4-01-回放证据(上传管道S7file).md`（真机 27 项断言：发起上传与落库口径 / 分片直传与断点续传 / 完成落版本（契约键 + 暂存清理）/ 留痕与 outbox / 失败面（缺片 / 大小 / 哈希 / 已完成 / 取消幂等）/ 过期清理（惰性 + worker 定时）/ 权限平权与跨项目反例）。
+- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/file-service.test.ts` 33 例（服务层替身直测）；`check:boundaries` / `check:permission-matrix` 覆盖新增模块与权限键用法。
+- 覆盖范围提示：本卡只落「上传管道」（发起 / 分片 / 状态 / 完成 / 取消 + 过期清理）；文件详情 / 版本链 / 定档 / 回溯 / 回收站 / 变更按 M4-02~M4-04 接入同一控制器。
 
 ## CI 接线（g5 · px｜已落地）
 
@@ -308,5 +334,6 @@ server/
 - h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。
 - h7：字典 C9 与审计留痕 C7（`dict_types` / `dict_items` / `audit_logs` + 字典读写出口 + 审计写入 / 越权留痕 / 检索 + 种子 #5 + 真机回放）—— 已落地（Push 97）；剩余：前端改读字典（u12 · px 线）、审计页面与导出（u12）、告警推送（M5 通知）、蓝图字段级留痕（随蓝图维护卡片）、按月清理（运维）。
 - h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
-- lan 线：file / preview / notify / outbox 调度 / search / dashboard。
+- S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**跨线待定案**：上传入口缺 `fileId`（`intent=change` 与「既有 draft 文件追加版本」都无处指定目标文件）请 wmj（契约主责）定案后随 M4-04 落地；M4-02 定档 / 回溯、M4-03 回收站、M4-05 预览编排为后续卡片。
+- lan 线：file（进行中：M4-01 已落地）/ preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。
