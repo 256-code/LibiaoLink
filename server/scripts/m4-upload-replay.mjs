@@ -9,7 +9,8 @@
  *           （与 init 声明不一致 422 FILE_HASH_MISMATCH）→ copyObject 到契约键 …/v{seq}/{contentHash}.{ext}
  *           → 事务写 file_versions + files.current_version_id/version + 会话 completed + 审计 + outbox → 按版本清暂存。
  *   证据四（失败面）：缺片 409 UPLOAD_INCOMPLETE（details.missing）/ 大小不符 409 / 哈希不符 422 / 已完成会话 409 /
- *           取消幂等（重复取消 200）；跨项目 nodeId 400；intent=change 400（契约上传入口无 fileId，已登记待 wmj 定案）。
+ *           取消幂等（重复取消 200）；跨项目 nodeId 400；intent=change 400；带 fileId 的请求 400（Push 130 定案后
+ *           的显式守卫：zod 放行 fileId，切片内不守卫会静默新建文件；实现随 M4-02 / M4-04）。
  *   证据五（过期与清理）：过期会话访问即 410（惰性置 expired + 清暂存 + system 审计）；worker 启动即跑一轮定时清理并留痕。
  *   证据六（权限）：file.upload 项目成员平权（非成员 404 防 IDOR）。
  *
@@ -542,7 +543,7 @@ try {
   const foreignChange = await createUpload({ projectId: projectA, name: "变更上传（登记项）.docx", sizeBytes: MI_B, intent: "change", change: { reason: "设计变更" } });
   check(
     "U21",
-    "跨项目 nodeId → 400（防跨项目挂接）；intent=change → 400（契约上传入口无 fileId，已登记待 wmj 定案 / M4-04）",
+    "跨项目 nodeId → 400（防跨项目挂接）；intent=change → 400（Push 130 定案：change 必填 fileId，本请求缺 fileId 被契约拒；实现随 M4-04）",
     "400 VALIDATION_FAILED（invalid_node）/ 400 VALIDATION_FAILED",
     crossNode.status + " " + short({ code: crossNode.body?.code, detail: crossNode.body?.details?.[0]?.code }, 120) + " / " + foreignChange.status + " " + String(foreignChange.body?.code),
     crossNode.status === 400 &&
@@ -550,6 +551,36 @@ try {
       crossNode.body?.details?.[0]?.code === "invalid_node" &&
       foreignChange.status === 400 &&
       foreignChange.body?.code === "VALIDATION_FAILED",
+  );
+
+  const existingDraft = await createUpload({ projectId: projectA, name: "既有文件（draft）", sizeBytes: MI_B, intent: "version" });
+  const guardAppend = await createUpload({
+    projectId: projectA,
+    name: "追加版本反例.docx",
+    sizeBytes: MI_B,
+    intent: "version",
+    fileId: existingDraft.body?.file?.id,
+  });
+  const guardChange = await createUpload({
+    projectId: projectA,
+    name: "变更反例.docx",
+    sizeBytes: MI_B,
+    intent: "change",
+    fileId: existingDraft.body?.file?.id,
+    change: { reason: "设计变更" },
+  });
+  check(
+    "U22",
+    "带 fileId 一律显式 400（Push 130 显式守卫：zod 放行后不守卫会静默新建文件）：version + fileId / change + fileId",
+    "400 VALIDATION_FAILED（file_id_not_supported）/ 400 VALIDATION_FAILED（intent_change_not_open）",
+    guardAppend.status + " " + short({ code: guardAppend.body?.code, detail: guardAppend.body?.details?.[0]?.code }, 120) + " / " + guardChange.status + " " + short({ code: guardChange.body?.code, detail: guardChange.body?.details?.[0]?.code }, 120),
+    existingDraft.status === 201 &&
+      guardAppend.status === 400 &&
+      guardAppend.body?.code === "VALIDATION_FAILED" &&
+      guardAppend.body?.details?.[0]?.code === "file_id_not_supported" &&
+      guardChange.status === 400 &&
+      guardChange.body?.code === "VALIDATION_FAILED" &&
+      guardChange.body?.details?.[0]?.code === "intent_change_not_open",
   );
 } catch (error) {
   failures += 1;
@@ -621,8 +652,8 @@ lines.push("- 分片直传 / 断点续传 = U3 ~ U7：预签名 URL 由浏览器
 lines.push("- 完成上传 = U8 ~ U11：合并 → HEAD 校大小 → 哈希一致性 → copyObject 到契约键 → 事务写版本 / 文件 / 会话 + 审计 + outbox → 按版本清暂存。");
 lines.push("- 失败面 = U13 ~ U17：缺片 409 / 大小不符 409 / 哈希不符 422 / 已完成 409 / 取消幂等 + 取消后 410。");
 lines.push("- 过期与清理 = U18 / U19：访问时惰性置 expired（410 + system 审计）；worker 启动一轮即清理未完成分片与暂存对象。");
-lines.push("- 权限与登记项 = U20 / U21：非成员 404（防 IDOR）→ 名册成员 201；跨项目 nodeId 400；intent=change 400（契约上传入口无 fileId，已登记待 wmj 定案，M4-04 落地）。");
-lines.push("- 单测回归（不连库）：server/test/file-service.test.ts（33 例）随 npm test 常跑：成功链路 / 缺片 / 哈希 / 大小 / 过期 / 秒传 / 越界 / 完成位次竞态。");
+lines.push("- 权限与守卫 = U20 / U21 / U22：非成员 404（防 IDOR）→ 名册成员 201；跨项目 nodeId 400；intent=change 400；带 fileId（version / change）一律显式 400（Push 130 定案后的切片守卫，M4-02 / M4-04 放开）。");
+lines.push("- 单测回归（不连库）：server/test/file-service.test.ts（34 例）随 npm test 常跑：成功链路 / 缺片 / 哈希 / 大小 / 过期 / 秒传 / 越界 / 完成位次竞态。");
 lines.push("- 复跑：cd server && node --env-file-if-exists=.env scripts/m4-upload-replay.mjs --out \"./../docs/m4-01-回放证据(上传管道S7file).md\"");
 lines.push("");
 

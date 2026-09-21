@@ -459,14 +459,36 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     expect(h.repo.duplicateQueries[0]).toMatchObject({ projectId: PROJECT, contentHash: HASH, excludeFileId: FILE });
   });
 
-  it("intent=change → 400（契约上传入口没有 fileId，随 M4-04 落地前直接拒绝）", async () => {
+  // 「intent=change 缺 fileId」在契约层（zod）即被拒、到不了服务层 —— 该面由契约回放
+  // （shared/scripts/upload-intent-replay.mjs）与真机回放 U21 兜住；服务层只测切片守卫本身。
+  it("intent=change + fileId → 400（Push 130 定案：目标路径随 M4-04 落地，切片内显式拒绝）", async () => {
     const h = makeService();
     await expect(
       h.service.createUpload(
-        { projectId: PROJECT, name: "变更.pdf", sizeBytes: MI_B, intent: "change", change: { reason: "设计变更" } },
+        { projectId: PROJECT, name: "变更.pdf", sizeBytes: MI_B, intent: "change", fileId: FILE, change: { reason: "设计变更" } },
         ACTOR,
       ),
-    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+      details: [{ code: "intent_change_not_open", path: "intent" }],
+    });
+    expect(h.repo.insertedSessions).toHaveLength(0);
+  });
+
+  it("intent=version + fileId → 400（显式守卫：不静默新建文件；目标文件路径随 M4-02 落地）", async () => {
+    const h = makeService();
+    await expect(
+      h.service.createUpload(
+        { projectId: PROJECT, name: "追加版本.pdf", sizeBytes: MI_B, intent: "version", fileId: OTHER_FILE },
+        ACTOR,
+      ),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+      details: [{ code: "file_id_not_supported", path: "fileId" }],
+    });
+    expect(h.repo.insertedFiles).toHaveLength(0);
     expect(h.repo.insertedSessions).toHaveLength(0);
   });
 

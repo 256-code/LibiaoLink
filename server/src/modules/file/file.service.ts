@@ -56,7 +56,8 @@ export const EXPIRE_SWEEP_BATCH = 200;
  * - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
  *
  * 权限：创建 / 分片 / 完成 / 取消 = `file.upload`（项目成员平权）｜读取会话状态 = 项目可见即可。
- * 本切片只开放 `intent=version`（新建 draft 文件上传）；`intent=change` 属 M4-04，见 `createUpload` 内的说明。
+ * 本切片只开放「新建文件」上传（`intent=version` 且不带 `fileId`）；`intent=change`（M4-04）与带 `fileId` 的
+ * 对既有 draft 文件替换 / 追加版本（M4-02）见 `createUpload` 内的显式守卫。
  */
 @Injectable()
 export class FileService {
@@ -79,12 +80,23 @@ export class FileService {
       member: access.member,
       projectManager: access.projectManager,
     });
-    if (body.intent === "change") {
-      // 变更上传必须指向既有定档文件，但契约 `UploadCreateBody` 没有 fileId 入口（见本切片 README / PR 说明，
-      // 已登记待 wmj 定案）。M4-04 落地前直接拒绝，避免静默建成一个「凭空的文件」。
+    // 契约（Push 130 · wmj 定案）：version 分支 `fileId` 可选（给出 = 对既有 draft 文件替换 / 追加版本）、
+    // change 分支必填。本切片（M4-01）尚未实现这两条路径 —— zod 放行后不再拦截，不守卫会静默把
+    // 「追加版本」当成新建文件，故对「带 fileId」与 `intent=change` 一律显式 400。
+    if (body.intent === "change" || body.fileId !== undefined) {
+      const isChange = body.intent === "change";
       throw new AppError(
         "VALIDATION_FAILED",
-        "intent=change（定档后变更上传）随 M4-04 变更申请落地；当前契约的上传入口没有指向既有文件的 fileId，本切片只开放 intent=version",
+        isChange
+          ? "intent=change（定档后变更上传）随 M4-04 变更申请落地；本切片（M4-01）只开放「新建文件」上传"
+          : "带 fileId 的上传（对既有 draft 文件替换 / 追加版本）随 M4-02 版本链 / 定档落地；本切片（M4-01）只开放「新建文件」上传",
+        [
+          {
+            code: isChange ? "intent_change_not_open" : "file_id_not_supported",
+            message: "M4-01 只开放「新建文件」上传（intent=version 且不带 fileId）",
+            path: isChange ? "intent" : "fileId",
+          },
+        ],
       );
     }
     const project = await this.repository.findProjectBrief(body.projectId);

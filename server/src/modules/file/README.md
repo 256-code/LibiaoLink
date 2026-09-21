@@ -30,7 +30,7 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 
 - 实现口径（键形态 / 校验顺序 / 错误码 / 过期语义 / worker 清理）见 `server/README.md`「文件上传接口」与 `src/storage/README.md`；真机回放见 `docs/m4-01-回放证据(上传管道S7file).md`。
 - 审计：`object_type = "file"`（objectId = fileId），上传会话事件经 `metadata.uploadId` 定位；过期清理为 system 审计（actorId = null）。
-- **本切片未开放**：`intent=change`（定档后变更）与「对既有 draft 文件追加版本」——契约上传入口没有指向既有文件的 `fileId`；当前均 400 `VALIDATION_FAILED`，已登记待 wmj（契约主责）定案，随 M4-04 落地。
+- **本切片未开放（Push 130 定案 · wmj）**：契约 `UploadCreateBody` 已补 `fileId` —— `version` 可选（给出 = 对既有 draft 文件替换 / 追加版本）、`change` 必填（目标须 final / changed）。zod 放行后不再拦截，本切片对 **`intent=change` 与任何带 `fileId` 的请求一律显式 400 `VALIDATION_FAILED`**（守卫：不守卫会把「追加版本」静默当新建文件；details `intent_change_not_open` / `file_id_not_supported`），随 M4-02（版本 / 定档）/ M4-04（变更）放开。
 - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
 
 ## 上游（直接复用，不重复造）
@@ -41,8 +41,8 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 
 ## 待落地（按卡片）
 
-- **M4-02**：文件详情 / 版本链（`GET /files/{id}`、`GET /files/{id}/versions`）/ 定档锁版 / 回溯（生成新版本，不删历史）。
+- **M4-02**：文件详情 / 版本链（`GET /files/{id}`、`GET /files/{id}/versions`）/ 定档锁版 / 回溯（生成新版本，不删历史）；放开 `intent=version` + `fileId`（对既有 draft 文件替换 / 追加版本 —— Push 130 定案），同步去掉该路径的切片守卫。
 - **M4-03**：回收站（移入 / 恢复原状态 / 彻底删除仅管理员，对象与元数据一并清理、留痕）。
-- **M4-04**：变更（申请即通过）——同一事务写 `change_requests` + 新版本 + 状态 changed + Outbox；依赖上传入口 `fileId` 定案。
+- **M4-04**：变更（申请即通过）——同一事务写 `change_requests` + 新版本 + 状态 changed + Outbox；上传入口 `fileId` 已定案（Push 130），放开时去掉切片守卫并把回放 U21 断言切换为「change 接受」。
 - **M4-05**：预览编排（预览鉴权与产物，preview 模块）。
 - 列表面：`GET /api/v1/projects/{id}/files`（合同已就位，随 M4 后续卡片接入）。
