@@ -3,6 +3,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import {
   FileDetailSchema,
   FileFinalizeBodySchema,
+  FileListResponseSchema,
   FilePurgeBodySchema,
   FilePurgeResponseSchema,
   FileRecycleBodySchema,
@@ -39,7 +40,14 @@ import {
 } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import { PermissionService } from "../permission/index.js";
-import { FileRepository, type FileRow, type FileVersionRow, type UploadSessionRow } from "./file.repository.js";
+import {
+  FileRepository,
+  type FileLinkInsertInput,
+  type FileRow,
+  type FileVersionRow,
+  type UploadSessionRow,
+} from "./file.repository.js";
+import { parseFileListFilter, parseFileListSort, type FileListQueryInput } from "./file.query.js";
 
 type UploadCreateBody = z.infer<typeof UploadCreateBodySchema>;
 type UploadPartsBody = z.infer<typeof UploadPartsBodySchema>;
@@ -59,6 +67,7 @@ type FileRecycleBody = z.infer<typeof FileRecycleBodySchema>;
 type FileRestoreBody = z.infer<typeof FileRestoreBodySchema>;
 type FilePurgeBody = z.infer<typeof FilePurgeBodySchema>;
 type FilePurgeResponse = z.infer<typeof FilePurgeResponseSchema>;
+type FileListResponse = z.infer<typeof FileListResponseSchema>;
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -88,6 +97,11 @@ export const RECYCLE_SWEEP_BATCH = 100;
  * - 生命周期写操作一律带乐观锁 `version`（409 VERSION_CONFLICT；「并发定档 409」为 M4 出口标准）；
  * - 回溯生成新版本（复制目标版对象到新版本契约键），不删历史；定档后回溯走变更流（随 M4-04）；
  * - `intent=change`（M4-04）与「定档后回溯」见各方法内的暂缓说明；到期清理由 worker 定时档执行（system 审计 actorId=null）。
+ *
+ * M4-03 增补（多态关联与文件库查询）：
+ * - complete 时在事务内写 `file_links`（project 必写、node / task 有则写；唯一（file, object_type, object_id）保证幂等）；
+ * - 文件库列表 `GET /projects/{id}/files`：状态 / 类型 / 节点 / 任务 / 上传人筛选 + 关键字 + 白名单排序 + 分页
+ *   （默认排除 recycled —— 回收站文件走显式 `filter[status]=recycled`）。
  */
 @Injectable()
 export class FileService {
@@ -406,6 +420,8 @@ export class FileService {
         { status: "completed", completedAt: at, updatedAt: at },
         tx,
       );
+      // M4-03 多态关联：上传成功即建立关联（project 必写，node / task 有则写；on conflict do nothing 幂等）。
+      await this.repository.insertFileLinks(buildFileLinkInputs(lockedFile, actorId, at), tx);
       await this.audit.record(tx, {
         actorId,
         action: "complete",
@@ -814,6 +830,18 @@ export class FileService {
   }
 
   /**
+   * GET /projects/{id}/files：文件库列表（M4-03 · A4-01）—— 筛选 / 关键字 / 白名单排序 / 分页。
+   * 读 = 项目可见即可（不可见 404 由 ProjectAccessGuard 在入口判定）；默认排除 recycled。
+   */
+  async listProjectFiles(projectId: string, query: FileListQueryInput): Promise<FileListResponse> {
+    const filter = parseFileListFilter(query);
+    const sorts = parseFileListSort(query.sort);
+    const offset = (query.page - 1) * query.limit;
+    const { items, total } = await this.repository.listProjectFiles(projectId, filter, sorts, query.limit, offset);
+    return { items: items.map(toFileView), page: query.page, limit: query.limit, total };
+  }
+
+  /**
    * POST /files/{id}/finalize：定档锁版（draft → final；至少 1 个版本）。
    * 乐观锁 `version` 不匹配 → 409 VERSION_CONFLICT（M4 出口标准「并发定档 409」）；非 draft → 409 FILE_STATE_INVALID。
    * 定档后不可覆盖 / 替换，修改必须走变更（M4-04）。
@@ -1141,4 +1169,18 @@ function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSchema> {
     uploadedAt: row.uploadedAt.toISOString(),
     changeRequestId: row.changeRequestId,
   };
+}
+
+/** complete 的关联写入（M4-03）：project 必写，node / task 有则写（唯一约束兜底幂等）。 */
+function buildFileLinkInputs(file: FileRow, actorId: string, at: Date): FileLinkInsertInput[] {
+  const rows: FileLinkInsertInput[] = [
+    { fileId: file.id, objectType: "project", objectId: file.projectId, createdBy: actorId, createdAt: at },
+  ];
+  if (file.nodeId !== null) {
+    rows.push({ fileId: file.id, objectType: "node", objectId: file.nodeId, createdBy: actorId, createdAt: at });
+  }
+  if (file.taskId !== null) {
+    rows.push({ fileId: file.id, objectType: "task", objectId: file.taskId, createdBy: actorId, createdAt: at });
+  }
+  return rows;
 }

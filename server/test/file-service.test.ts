@@ -9,6 +9,7 @@ import type {
   DuplicateFileRow,
   FileCompletePatch,
   FileInsertInput,
+  FileLinkInsertInput,
   FileNodeBriefRow,
   FileProjectBriefRow,
   FileRow,
@@ -21,6 +22,7 @@ import type {
   UploadSessionRow,
 } from "../src/modules/file/file.repository.js";
 import type { FileRepository } from "../src/modules/file/file.repository.js";
+import type { FileListFilter, FileListSort } from "../src/modules/file/file.query.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
 import { ObjectStorage, StorageError } from "../src/storage/index.js";
 import type {
@@ -332,6 +334,36 @@ class FakeFileRepository {
     this.deletedFiles.push(fileId);
     if (this.file !== null && this.file.id === fileId) this.file = null;
     this.otherFiles = this.otherFiles.filter((row) => row.id !== fileId);
+  }
+
+  // ---------- M4-03：多态关联与文件库查询 ----------
+
+  /** complete 幂等写入的关联（project 必写；node / task 有则写）。 */
+  insertedLinks: FileLinkInsertInput[] = [];
+  /** 文件库列表返回（SQL 条件与排序由真机回放覆盖，替身只验证解析与映射）。 */
+  libraryItems: FileRow[] = [];
+  libraryTotal = 0;
+  libraryQueries: { projectId: string; filter: FileListFilter; sorts: FileListSort[]; limit: number; offset: number }[] = [];
+
+  async insertFileLinks(rows: readonly FileLinkInsertInput[]): Promise<void> {
+    const seen = new Set(this.insertedLinks.map((row) => row.fileId + "|" + row.objectType + "|" + row.objectId));
+    for (const row of rows) {
+      const key = row.fileId + "|" + row.objectType + "|" + row.objectId;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      this.insertedLinks.push(row);
+    }
+  }
+
+  async listProjectFiles(
+    projectId: string,
+    filter: FileListFilter,
+    sorts: FileListSort[],
+    limit: number,
+    offset: number,
+  ): Promise<{ items: FileRow[]; total: number }> {
+    this.libraryQueries.push({ projectId, filter, sorts, limit, offset });
+    return { items: this.libraryItems.slice(offset, offset + limit), total: this.libraryTotal };
   }
 }
 
@@ -1418,5 +1450,132 @@ describe("FileService.finalizeFile（定档锁版）", () => {
       details: [{ code: "no_version", path: "version" }],
     });
     expect(h.database.outbox).toHaveLength(0);
+  });
+});
+
+describe("FileService.listProjectFiles（M4-03 文件库查询）", () => {
+  it("筛选解析下推：多值状态 / 类型 + UUID + 关键字 trim + 分页 offset + 排序", async () => {
+    const h = makeService();
+    h.repo.libraryItems = [makeFileRow()];
+    h.repo.libraryTotal = 7;
+
+    const result = await h.service.listProjectFiles(PROJECT, {
+      "filter[nodeId]": NODE,
+      "filter[status]": "draft, final",
+      "filter[docType]": "CAD图纸,合同",
+      "filter[uploadedBy]": ACTOR,
+      q: "  图纸  ",
+      page: 1,
+      limit: 50,
+      sort: "createdAt:desc",
+    });
+
+    const query = h.repo.libraryQueries[0]!;
+    expect(query.projectId).toBe(PROJECT);
+    expect(query.filter).toEqual({
+      nodeId: NODE,
+      taskId: null,
+      statuses: ["draft", "final"],
+      docTypes: ["CAD图纸", "合同"],
+      uploadedBy: ACTOR,
+      keyword: "图纸",
+    });
+    expect(query.sorts).toEqual([{ field: "createdAt", direction: "desc" }]);
+    expect(query.limit).toBe(50);
+    expect(query.offset).toBe(0);
+    expect(result).toMatchObject({ page: 1, limit: 50, total: 7 });
+    expect(result.items[0]).toMatchObject({ id: FILE, projectId: PROJECT, status: "draft", name: "机械设计图纸.pdf" });
+    expect(result.items[0]!.createdAt).toBe(NOW.toISOString());
+
+    // 分页 offset 下推（page 3 / limit 10 → offset = 20）
+    await h.service.listProjectFiles(PROJECT, { page: 3, limit: 10 });
+    expect(h.repo.libraryQueries[1]!.offset).toBe(20);
+  });
+
+  it("默认口径：不带筛选 = 全 null（仓储默认排除 recycled）；空排序 = 默认时间倒序", async () => {
+    const h = makeService();
+    await h.service.listProjectFiles(PROJECT, { page: 1, limit: 50 });
+    const query = h.repo.libraryQueries[0]!;
+    expect(query.filter).toEqual({
+      nodeId: null,
+      taskId: null,
+      statuses: null,
+      docTypes: null,
+      uploadedBy: null,
+      keyword: null,
+    });
+    expect(query.sorts).toEqual([]);
+    expect(query.offset).toBe(0);
+  });
+
+  it("非法输入一律 400 且不落查询：sort 白名单外 / 非法状态 / 非法类型 / 非 UUID / 非法方向", async () => {
+    const h = makeService();
+    await expect(h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, sort: "sizeBytes:desc" })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    await expect(
+      h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, "filter[status]": "draft,pending" }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    await expect(
+      h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, "filter[docType]": "CAD图纸,发票" }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    await expect(
+      h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, "filter[taskId]": "not-a-uuid" }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    await expect(h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, sort: "createdAt:up" })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    expect(h.repo.libraryQueries).toHaveLength(0);
+  });
+});
+
+describe("FileService.completeUpload 关联写入（M4-03 file_links）", () => {
+  function readyHarness(): Harness {
+    const h = makeService();
+    h.repo.file = makeFileRow({ nodeId: NODE, taskId: TASK });
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/pdf" });
+    h.storage.parts = [part(1, 8 * MI_B), part(2, 4 * MI_B)];
+    h.storage.head = {
+      objectKey: STAGING_KEY,
+      sizeBytes: 12 * MI_B,
+      etag: "\"merged-etag\"",
+      contentType: "application/pdf",
+      lastModified: NOW,
+    };
+    return h;
+  }
+
+  it("上传成功写 file_links：project 必写 + node / task 有则写", async () => {
+    const h = readyHarness();
+    await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(h.repo.insertedLinks.map((row) => [row.objectType, row.objectId])).toEqual([
+      ["project", PROJECT],
+      ["node", NODE],
+      ["task", TASK],
+    ]);
+    expect(
+      h.repo.insertedLinks.every(
+        (row) => row.fileId === FILE && row.createdBy === ACTOR && row.createdAt.getTime() === NOW.getTime(),
+      ),
+    ).toBe(true);
+  });
+
+  it("无节点 / 任务挂接 = 只写 project 一行", async () => {
+    const h = readyHarness();
+    h.repo.file = makeFileRow();
+    await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(h.repo.insertedLinks.map((row) => row.objectType)).toEqual(["project"]);
+  });
+
+  it("重复完成（追加版本 / 重试）幂等：同一 (file, object) 不产生重复行", async () => {
+    const h = readyHarness();
+    await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    const first = h.repo.insertedLinks.length;
+    h.repo.file = makeFileRow({ nodeId: NODE, taskId: TASK, version: 1, currentVersionId: VERSION });
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/pdf" });
+    await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(h.repo.insertedLinks).toHaveLength(first);
   });
 });

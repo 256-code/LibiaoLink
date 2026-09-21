@@ -18,7 +18,7 @@ shared/
 │   │   ├── tasks.ts            任务 + 四格进度（含创建 / 编辑 / 从模板生成）
 │   │   ├── templates.ts        任务节点库 + 任务模板（A1-16 / A1-17）
 │   │   ├── flow.ts             蓝图 JSON + 流程节点 + 完成门禁
-│   │   ├── files.ts            文件与变更（上传 / 版本 / 定档 / 回收站；v0.2 §5）
+│   │   ├── files.ts            文件与变更（上传 / 版本 / 定档 / 回收站 / 文件库查询与多态关联；v0.2 §5）
 │   │   ├── identity.ts         登录用户 + /auth/me（ADR-010；g6）
 │   │   ├── users.ts            用户目录 + 用户偏好（A2 / A4；M1）
 │   │   ├── dicts.ts            数据字典下发（A3；region / projectType）
@@ -95,7 +95,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 > 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
 > 现状（Push 89 · h4）：**paths = 49、schemas = 117**，生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
-> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更）、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
+> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更 / 文件库列表 GET /projects/{id}/files（M4-03 起用））、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
 
 ### M1 身份与平台底座（h1 + 平台）
 
@@ -133,7 +133,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
-| i1 文件管道 | files 族已入（Push 41）：上传会话 / 分片 / 完成 / 中止 / 定档 / 回滚 / 回收站 / 下载；落地时复核错误码（`UPLOAD_INCOMPLETE` / `UPLOAD_SESSION_EXPIRED` / `FILE_HASH_MISMATCH` / `CHANGE_FILE_REQUIRED` 已登记）；**M4-01 复核（PR-4 · Push 129，跨线请 wmj 评审）**：错误码沿用既有（V0.3 命名），`AUDIT_OBJECT_TYPES` 增 `file`（审计对象 id = fileId，上传会话事件经 metadata.uploadId 定位）；**上传入口 `fileId` 定案（Push 130 · wmj）**：`intent=change` 必填 `fileId`、`intent=version` + `fileId` = 既有 draft 文件替换 / 追加版本（见上「上传」行）；M4-01 切片内 `change` / 带 `fileId` 一律显式 400（守卫），**M4-02 落地（PR-5 · Push 131）**：`version + fileId` 已放开（对既有 draft 文件替换 / 追加版本；非 draft → 409 `FILE_STATE_INVALID`、名称 / 归属不一致 → 400），`change + fileId` 仍 400（随 M4-04） | 复核 |
+| i1 文件管道 | files 族已入（Push 41）：上传会话 / 分片 / 完成 / 中止 / 定档 / 回滚 / 回收站 / 下载；落地时复核错误码（`UPLOAD_INCOMPLETE` / `UPLOAD_SESSION_EXPIRED` / `FILE_HASH_MISMATCH` / `CHANGE_FILE_REQUIRED` 已登记）；**M4-01 复核（PR-4 · Push 129，跨线请 wmj 评审）**：错误码沿用既有（V0.3 命名），`AUDIT_OBJECT_TYPES` 增 `file`（审计对象 id = fileId，上传会话事件经 metadata.uploadId 定位）；**上传入口 `fileId` 定案（Push 130 · wmj）**：`intent=change` 必填 `fileId`、`intent=version` + `fileId` = 既有 draft 文件替换 / 追加版本（见上「上传」行）；M4-01 切片内 `change` / 带 `fileId` 一律显式 400（守卫），**M4-02 落地（PR-5 · Push 131）**：`version + fileId` 已放开（对既有 draft 文件替换 / 追加版本；非 draft → 409 `FILE_STATE_INVALID`、名称 / 归属不一致 → 400），`change + fileId` 仍 400（随 M4-04）；**M4-03 落地（PR-6 · Push 132）**：`GET /projects/{id}/files` 起用（查询 / 响应契约零改动），`file_links` 六类关联表随 0016 迁移落地，写入口径 = 上传完成（project 必写 / node / task 有则写 / 幂等），读面 = 项目可见即可 + 默认排除 recycled | 复核 |
 | i3 预览 | 预览鉴权与产物字段复核（preview schema 已就位）；无新增路径预期 | 复核 |
 
 ### M5 自动化与通知（i8 / notify）
