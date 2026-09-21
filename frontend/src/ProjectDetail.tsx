@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
+import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
@@ -24,8 +25,11 @@ function stageRankOf(stage: string): number {
   return at < 0 ? STAGE_NAMES.length : at;
 }
 
-/** 顶部视图标签（Push 82 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」。 */
-const VIEW_TABS: readonly string[] = ["项目总览", "人员任务分配", "任务进展"];
+/**
+ * 顶部视图标签（Push 82 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」；
+ * Push 128：再往后加第四个视图「日报及问题」（口径见 components/ReportIssuePanel.tsx）。
+ */
+const VIEW_TABS: readonly string[] = ["项目总览", "人员任务分配", "任务进展", "日报及问题"];
 
 /** 从任务模板预设加进来的任务：字段先给默认值（负责人 / 日期等留空，后续在任务详情里补）。 */
 function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTask {
@@ -91,7 +95,7 @@ type ProjectDetailProps = {
 };
 
 export default function ProjectDetail({ me, project, onChangeManager, onTaskEdited }: ProjectDetailProps) {
-  /** 顶部视图（Push 82）：阶段标签收进「项目总览」，另两块是看板视图。 */
+  /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」。 */
   const [activeView, setActiveView] = useState<string>(VIEW_TABS[0]);
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
   /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
@@ -409,6 +413,9 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
               <ProjectSummary tasks={tasks} />
               <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
             </>
+          ) : activeView === "日报及问题" ? (
+            // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
+            <ReportIssuePanel key={project.id} project={project} me={me} tasks={tasks} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}
