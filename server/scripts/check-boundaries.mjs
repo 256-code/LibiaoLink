@@ -27,6 +27,9 @@ const options = parsed.options;
 
 const DOMAIN_MODULES = ["identity", "project", "blueprint", "node", "task", "report-issue", "stakeholder"];
 const PLATFORM_MODULES = ["file", "notify", "search", "dashboard", "automation", "admin"];
+// 横切模块：领域与平台都可依赖，不参与「平台不得反依赖领域」判定（都不在两个列表里即豁免）。
+//   permission —— 权限策略层（h6）；calendar —— 工作日历（h8：平台侧 i8 规则引擎与领域侧任务提醒共用同一出口）。
+const CROSSCUT_MODULES = ["permission", "calendar"];
 
 const files = ts.sys
   .readDirectory(srcRoot, [".ts"], undefined, undefined)
@@ -62,9 +65,19 @@ const checkRules = (fromRel, toRel, spec) => {
     PLATFORM_MODULES.includes(fromModule) &&
     DOMAIN_MODULES.includes(toModule)
   ) {
-    const allowed = fromModule === "file" && toModule === "project" && toRel === "modules/project/index.ts";
+    // 豁免 1：file → project 仅限项目快照出口（v0.2 §1.2）。
+    // 豁免 2：平台模块 → identity 仅限 index.ts —— 会话 / 鉴权是横切基础设施，平台模块的 HTTP 入口同样要挂
+    //         SessionGuard / CsrfGuard（h7 admin 起）；平台模块仍不得 import 其它业务模块。
+    const allowed =
+      (fromModule === "file" && toModule === "project" && toRel === "modules/project/index.ts") ||
+      (toModule === "identity" && toRel === "modules/identity/index.ts");
     if (!allowed) {
-      violations.push({ rule: "平台模块不得反依赖业务模块（file → project 仅限项目快照出口）", fromRel, toRel, spec });
+      violations.push({
+        rule: "平台模块不得反依赖业务模块（file → project 仅限项目快照出口；platform → identity 仅限会话 / 鉴权出口）",
+        fromRel,
+        toRel,
+        spec,
+      });
     }
   }
   if (/^(common|db|config)\//.test(fromRel) && /^modules\//.test(toRel)) {
@@ -138,6 +151,12 @@ const uniqueCycles = cycles.filter((cycle) => {
   seen.add(key);
   return true;
 });
+
+const crosscut = CROSSCUT_MODULES.filter((name) => DOMAIN_MODULES.includes(name) || PLATFORM_MODULES.includes(name));
+if (crosscut.length > 0) {
+  console.error("check:boundaries: 横切模块不得同时登记为领域 / 平台模块：" + crosscut.join(", "));
+  process.exit(1);
+}
 
 const depCount = [...edges.values()].reduce((total, set) => total + set.size, 0);
 

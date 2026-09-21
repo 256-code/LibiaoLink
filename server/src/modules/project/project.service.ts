@@ -2,8 +2,16 @@ import { Injectable } from "@nestjs/common";
 import { ProjectFacetsSchema, ProjectListResponseSchema, ProjectSchema, ProjectCreateBodySchema, ProjectUpdateBodySchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
+import { AuditService, diffRecords } from "../admin/index.js";
+import type { ProjectScopeFilter } from "../permission/index.js";
 import { FlowService } from "./flow.service.js";
-import { ProjectRepository, type ProjectInsertInput, type ProjectUpdateInput, type ProjectViewRow } from "./project.repository.js";
+import {
+  ProjectRepository,
+  type ProjectInsertInput,
+  type ProjectRow,
+  type ProjectUpdateInput,
+  type ProjectViewRow,
+} from "./project.repository.js";
 import { buildProjectFilter, parseProjectSort, type ProjectListQueryInput } from "./project.query.js";
 
 export type ProjectView = z.infer<typeof ProjectSchema>;
@@ -38,6 +46,21 @@ export function toProjectView(view: ProjectViewRow): ProjectView {
   };
 }
 
+/** 项目字段级留痕快照（C7-02；字段口径与契约一致，diff 由 AuditService 侧的 diffRecords 完成）。 */
+function projectAuditSnapshot(row: ProjectRow): Record<string, unknown> {
+  return {
+    code: row.code,
+    name: row.name,
+    customer: row.customer,
+    region: row.region,
+    projectType: row.projectType,
+    managerId: row.managerId,
+    stageKey: row.stageKey,
+    status: row.status,
+    description: row.description,
+  };
+}
+
 /** project 用例（M2-01 项目 CRUD + M2-04 首页列表 / facets）。 */
 @Injectable()
 export class ProjectService {
@@ -45,21 +68,22 @@ export class ProjectService {
     private readonly database: DatabaseService,
     private readonly projects: ProjectRepository,
     private readonly flow: FlowService,
+    private readonly audit: AuditService,
   ) {}
 
-  /** 列表（M2-04）：筛选 / 时间区间 / 排序与 facets 同口径；软删项目不可见（A5）。 */
-  async listProjects(query: ProjectListQueryInput): Promise<ProjectListResult> {
+  /** 列表（M2-04）：筛选 / 时间区间 / 排序与 facets 同口径；软删不可见（A5）+ 记录级可见集（h6）。 */
+  async listProjects(query: ProjectListQueryInput, scope: ProjectScopeFilter): Promise<ProjectListResult> {
     const filter = buildProjectFilter(query);
     const sorts = parseProjectSort(query.sort);
-    const { items, total } = await this.projects.listPage(filter, sorts, query.limit, (query.page - 1) * query.limit);
+    const { items, total } = await this.projects.listPage(filter, sorts, query.limit, (query.page - 1) * query.limit, scope);
     return { items: items.map(toProjectView), page: query.page, limit: query.limit, total };
   }
 
   /** 首页分类计数（M2-04 · A6）：五组固定返回，与列表同筛选口径。 */
-  async getFacets(query: ProjectListQueryInput): Promise<ProjectFacetsResult> {
+  async getFacets(query: ProjectListQueryInput, scope: ProjectScopeFilter): Promise<ProjectFacetsResult> {
     const filter = buildProjectFilter(query);
     parseProjectSort(query.sort);
-    return this.projects.facets(filter);
+    return this.projects.facets(filter, scope);
   }
 
   async getProject(id: string): Promise<ProjectView> {
@@ -76,7 +100,7 @@ export class ProjectService {
    * 2) 取该项目类型已发布蓝图（缺失回落 default 模板；可显式指定 blueprintVersion）→ 生成 stages / nodes / requirements；
    * 3) projects.stage_key 前移到蓝图首个阶段（或入参 stageKey 指定阶段）——任一步失败整体回滚。
    */
-  async createProject(body: ProjectCreateBody): Promise<ProjectView> {
+  async createProject(body: ProjectCreateBody, actorId: string): Promise<ProjectView> {
     const at = new Date();
     const input: ProjectInsertInput = {
       code: body.code,
@@ -100,6 +124,23 @@ export class ProjectService {
       if (row.stageKey !== imported.activeStageKey) {
         await this.projects.setStageKey(row.id, imported.activeStageKey, at, tx);
       }
+      await this.audit.record(tx, {
+        actorId,
+        action: "create",
+        objectType: "project",
+        objectId: row.id,
+        projectId: row.id,
+        summary: "创建项目：" + row.code + "（" + row.name + "）",
+        changes: [
+          { field: "code", from: null, to: row.code },
+          { field: "name", from: null, to: row.name },
+          { field: "customer", from: null, to: row.customer },
+          { field: "region", from: null, to: row.region },
+          { field: "projectType", from: null, to: row.projectType },
+          { field: "managerId", from: null, to: row.managerId },
+          { field: "stageKey", from: null, to: imported.activeStageKey },
+        ],
+      });
       return row.id;
     });
     const view = await this.projects.findViewById(projectId);
@@ -107,8 +148,8 @@ export class ProjectService {
     return toProjectView(view);
   }
 
-  /** 更新（M2-01）：乐观锁（version 必须回传）；归档写保护（ADR-027）；code 变更同样校验唯一性。 */
-  async updateProject(id: string, body: ProjectUpdateBody): Promise<ProjectView> {
+  /** 更新（M2-01）：乐观锁（version 必须回传）；归档写保护（ADR-027）；code 变更同样校验唯一性；变更写审计（字段级）。 */
+  async updateProject(id: string, body: ProjectUpdateBody, actorId: string): Promise<ProjectView> {
     const current = await this.projects.findViewById(id);
     if (current === null) {
       throw new AppError("NOT_FOUND", "项目不存在或不可见");
@@ -126,14 +167,28 @@ export class ProjectService {
     if (body.stageKey !== undefined) patch.stageKey = body.stageKey;
     if (body.status !== undefined) patch.status = body.status;
     if (body.description !== undefined) patch.description = body.description;
-    const updated = await this.projects.updateWithVersion(id, patch, body.version, new Date());
-    if (updated === null) {
-      const again = await this.projects.findViewById(id);
-      if (again === null) {
-        throw new AppError("NOT_FOUND", "项目不存在或不可见");
+    const at = new Date();
+    const updated = await this.database.db.transaction(async (tx) => {
+      const row = await this.projects.updateWithVersion(id, patch, body.version, at, tx);
+      if (row === null) {
+        const again = await this.projects.findViewById(id);
+        if (again === null) {
+          throw new AppError("NOT_FOUND", "项目不存在或不可见");
+        }
+        throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
       }
-      throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
-    }
+      const changes = diffRecords(projectAuditSnapshot(current.project), projectAuditSnapshot(row));
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "project",
+        objectId: id,
+        projectId: id,
+        summary: "修改项目：" + row.code + "（" + row.name + "）",
+        changes: changes.length > 0 ? changes : null,
+      });
+      return row;
+    });
     const view = await this.projects.findViewById(id);
     return toProjectView(view ?? { project: updated, managerName: current.managerName });
   }
@@ -147,14 +202,27 @@ export class ProjectService {
     if (current.project.status === "archived") {
       throw new AppError("PROJECT_ARCHIVED", "项目已归档，禁止删除");
     }
-    const deleted = await this.projects.softDeleteWithVersion(id, version, actorId, new Date());
-    if (deleted === null) {
-      const again = await this.projects.findViewById(id);
-      if (again === null) {
-        throw new AppError("NOT_FOUND", "项目不存在或不可见");
+    const at = new Date();
+    const deleted = await this.database.db.transaction(async (tx) => {
+      const row = await this.projects.softDeleteWithVersion(id, version, actorId, at, tx);
+      if (row === null) {
+        const again = await this.projects.findViewById(id);
+        if (again === null) {
+          throw new AppError("NOT_FOUND", "项目不存在或不可见");
+        }
+        throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
       }
-      throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
-    }
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "project",
+        objectId: id,
+        projectId: id,
+        summary: "删除项目（软删）：" + row.code + "（" + row.name + "）",
+        changes: [{ field: "deletedAt", from: null, to: row.deletedAt }],
+      });
+      return row;
+    });
     return toProjectView({ project: deleted, managerName: current.managerName });
   }
 }

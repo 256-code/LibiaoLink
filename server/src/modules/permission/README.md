@@ -1,0 +1,37 @@
+# permission 模块（h6 · S6·PoC-6：权限矩阵与脱敏五出口）
+
+| 字段 | 内容 |
+|---|---|
+| 类型 | 领域模块（domain，横切策略层） |
+| 职责 | ADR-011 策略服务落地形态：功能权限（can）/ 记录级可见集 / 字段级策略 / 五出口（页面 · 导出 · 搜索 · 通知）投影统一出口 |
+| 主责 | wmj（团队分工.md §2 / §6 第 6 行） |
+| 对外接口 | PermissionService（getAuthorization / can / assertCan / projectScope / resolveProjectAccess / assertProjectVisible / permissionsOf / invalidate / projectIdOfNode）、ProjectAccessGuard + @ProjectAccess / @RequirePermission / @ProjectScope、纯函数策略（permission.rules.ts：projectScopeSpec / can / visibleFields / hiddenFields / projectFields / planExit / exitsConsistent）；HTTP：GET /api/v1/permissions/me |
+
+## 已实现（h6）
+
+- 策略层纯函数（permission.rules.ts，不碰数据库，CI 用例主对象）：
+  - 记录级：`projectScopeSpec`（数据范围 → all / managed / member 三开关；own_stakeholders 与 granted 未落地、无角色兜底名册，见下「差异」）；
+  - 功能权限：`can(actor, key, ctx)` = 全局权限位 ∪ 项目内项目经理隐含位 ∪ 项目内成员隐含位（ADR-011 §4.3 平权例外 + ADR-020 / ADR-023 既有口径）；
+  - 字段级：表驱动 `FIELD_POLICIES`（干系人联系方式三个字段 → stakeholder.contact.view；公司 / 职务 → stakeholder.view；备注 → stakeholder.manage；员工邮箱一期全员可见）；无权字段**不返回**（服务端裁剪，不做前端打码 · C3-08）；
+  - 五出口：`planExit(actor, exit, entity)`（page / export / search / notify）与 `exitsConsistent`（同一实体下四出口投影必须一致）；导出出口额外要求 `project.export`（C3-05 单独授权 + 审计）。
+- 数据面（permission.repository.ts）：只读名册（project_members）、项目主数据引用（manager_id / deleted_at）、节点 → 项目（project_nodes）。名册与节点的写路径仍归 project 模块（本模块不写库）。
+- 服务（permission.service.ts）：授权画像缓存（TTL 10s + 显式 `invalidate`，ADR-011「内存 + 失效」一期形态）、`projectScope`（列表过滤：all / ids，空集 = 无可见项目）、`resolveProjectAccess` / `assertProjectVisible`（不可见 / 不存在 / 已软删统一 404）、`assertCan`（403）。
+- HTTP 入口（project-access.guard.ts）：ProjectAccessGuard 挂 SessionGuard 之后，一次解析项目上下文与可见过滤：
+  - `:id` 为项目（默认）或节点（@ProjectAccess("node")，先解析到项目）的读路由 → 记录级 404；
+  - 标 @RequirePermission(key) 的写路由 → can 判定，缺权限 403；
+  - 无项目路径参数的路由（列表 / facets / 创建）→ 过滤挂到 request，由 @ProjectScope() 取用。
+- 矩阵种子：#6b `database/seeds/role-permissions.mjs`（六角色 × 24 键，键唯一来源 = 契约 `PERMISSION_KEYS`；移除键会删除 —— 权限吊销必须生效）。
+
+## 与其它模块的边界
+
+- 依赖方向：permission → identity（角色画像）。project / task / blueprint 反向依赖本模块（守卫与策略出口），**本模块不 import project / task**（可见性判定直接读名册与节点表，避免循环；check:boundaries 无违规）。
+- 名册维护（增删改）与节点维护仍属 project 模块；本模块只读这两张表做判定。
+- 一期不做的事：临时授权（C3-06）、授权管理界面与权限自检报告（C3-09 · u12）。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
+
+## 差异与后续（待复核）
+
+1. `own_stakeholders` / `granted` 两个数据范围**未落地**（干系人表随 j6 · S8·stakeholder；临时授权随 C3-06）：当前不贡献可见集，等价于「只看得到自己名册上的项目 ∪（managed_projects 下）自己管理的项目」。
+2. 字段级的真实出口随干系人卡片（j6）：一期落地的是策略表 + 五出口投影 + 用例；干系人接口接入时直接调用 `planExit` / `projectFields`，不需要再改策略层。
+3. 「隐藏脱敏」的位形打码档（masked）与「只读」档留待 j6 / C3-09 定稿：一期按 C3-08「无权字段一律不返回」执行。
+4. 列表可见集按 id 集合过滤（一次查询取可见项目 id，再 `inArray`）—— 一期规模够用；项目量级上来后随 M2-06 / 压测评估改视图或子查询。
+5. 导出 / 搜索 / 通知模块本身（i 系列 / M7 的 search、notify、jobs）尚未落地：本模块已给出统一投影入口，落地时按出口调用即可。

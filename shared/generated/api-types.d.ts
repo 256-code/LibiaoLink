@@ -1333,7 +1333,10 @@ export interface paths {
         /** 全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    includeDisabled?: "true" | "false";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -1347,6 +1350,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["DictListResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
             };
@@ -1369,11 +1381,14 @@ export interface paths {
         /** 单个字典（未知类型返回 404） */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    includeDisabled?: "true" | "false";
+                };
                 header?: never;
                 path: {
-                    /** @description 字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404 */
-                    type: components["schemas"]["DictType"];
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
                 };
                 cookie?: never;
             };
@@ -1388,8 +1403,267 @@ export interface paths {
                         "application/json": components["schemas"]["Dict"];
                     };
                 };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
                 /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dicts/{type}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新增字典条目（仅管理员 · dict.manage；变更写审计留痕） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DictItemCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建成功（更新后的整个字典） */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dicts/{type}/items/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 更新字典条目（部分更新；停用替代删除；变更写审计留痕） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
+                    code: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DictItemUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的整个字典 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/audit-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） */
+                    objectType?: components["schemas"]["AuditObjectType"];
+                    /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
+                    objectId?: string;
+                    /** @description 操作人（按人检索 —— h7 验收项②） */
+                    actorId?: components["schemas"]["Uuid"] & unknown;
+                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝 */
+                    action?: components["schemas"]["AuditAction"];
+                    /** @description result=denied 即越权尝试（C7-03） */
+                    result?: components["schemas"]["AuditResult"] & unknown;
+                    /** @description UUID（主键与关联 ID） */
+                    projectId?: components["schemas"]["Uuid"];
+                    /** @description 时间下界（含，ISO8601） */
+                    from?: components["schemas"]["DateTime"] & unknown;
+                    /** @description 时间上界（含，ISO8601） */
+                    to?: components["schemas"]["DateTime"] & unknown;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 审计列表（occurredAt 降序） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuditLogListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3251,6 +3525,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/permissions/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前用户授权画像（角色 / 数据范围 / 功能权限位；前端据此置灰） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 授权画像 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PermissionMeResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -3415,10 +3734,477 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calendar/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 某年工作日历：例外清单（放假 / 调休上班）+ 顺延配置（登录即可读） */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 公历年份（2000 ~ 2100） */
+                    year: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 某年日历 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarYear"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calendar/day": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 某天的工作日判定（缺省今天；顺延与 T-1/T+1 的输入口径） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai） */
+                    date?: components["schemas"]["DateOnly"] & unknown;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 某天判定 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarDayView"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calendar/days/{date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 设置某天为放假 / 调休上班（仅管理员 · calendar.manage；幂等 upsert，变更写审计留痕） */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 业务日期 YYYY-MM-DD（不携带时区） */
+                    date: components["schemas"]["DateOnly"] & unknown;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CalendarDayUpsertBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的整年日历 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarYear"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 删除某天的例外（回落默认规则：周一至周五工作日 / 周六周日非工作日；仅管理员 · calendar.manage） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 业务日期 YYYY-MM-DD（不携带时区） */
+                    date: components["schemas"]["DateOnly"] & unknown;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 更新后的整年日历 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarYear"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calendar/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 顺延规则配置（D5-02：提醒日期落在非工作日时是否顺延 + 方向；登录即可读） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 顺延配置 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarShiftSettings"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        /** 更新顺延规则（仅管理员 · calendar.manage；变更写审计留痕） */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CalendarSettingsUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的顺延配置 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarShiftSettings"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calendar/shift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 顺延求值：非工作日按方向移动到最近工作日（金标：节假日顺延开 / 关两态） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 业务日期；缺省 = 今天（Asia/Shanghai） */
+                    date?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 顺延方向；缺省 = 按日历配置 */
+                    direction?: components["schemas"]["CalendarShiftDirection"] & unknown;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 顺延结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarShiftResult"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calendar/offset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** T-N / T+N 求值：自然日偏移 + 可选顺延 + 提醒时刻（如 R03 的「前 1 天 08:00」） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 基准业务日期（任务的当前日期）；缺省 = 今天（Asia/Shanghai） */
+                    date?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 自然日偏移：T-1 = -1，T+1 = +1，T+3 / T+7 同理 */
+                    days?: number | null;
+                    /** @description 提醒时刻 HH:mm（Asia/Shanghai，如 R03 / R05 的 08:00）；缺省 = 只回业务日期，不回时刻 */
+                    time?: string;
+                    /** @description 是否顺延：缺省 inherit（按日历配置） */
+                    shift?: components["schemas"]["CalendarShiftMode"] & unknown;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description T-N / T+N 结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarOffsetResult"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description 当前用户授权画像（角色 + 数据范围 + 功能权限位） */
+        ActorPermissions: {
+            userId: components["schemas"]["Uuid"];
+            /**
+             * @description 角色码（roles.code；多角色并集）
+             * @example [
+             *       "project_manager"
+             *     ]
+             */
+            roleCodes: string[];
+            /** @description 数据范围并集（由宽到窄） */
+            dataScopes: components["schemas"]["DataScope"][];
+            /** @description 功能权限位并集（role_permissions） */
+            permissionKeys: components["schemas"]["PermissionKey"][];
+        };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
         ApiError: {
             code: components["schemas"]["ErrorCode"];
@@ -3429,6 +4215,65 @@ export interface components {
             /** @example 4f1c2f2e-6f8a-4b1e-9a1f-2f6d6f2c9d10 */
             traceId: string;
         };
+        /**
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝
+         * @enum {string}
+         */
+        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "deny";
+        /** @description 字段级修改条目（C7-02） */
+        AuditChange: {
+            /** @description 字段名（契约口径 camelCase） */
+            field: string;
+            /** @description 修改前值（JSON；无值时为 null） */
+            from?: unknown;
+            /** @description 修改后值（JSON；无值时为 null） */
+            to?: unknown;
+        };
+        /**
+         * @description 审计入口：api / page / system / batch
+         * @enum {string}
+         */
+        AuditEntry: "api" | "page" | "system" | "batch";
+        /** @description 审计日志（C7）：追加写、不可改删、保留 ≥6 个月（C7-05） */
+        AuditLog: {
+            /** @description 审计序号（只增不减） */
+            id: number;
+            occurredAt: components["schemas"]["DateTime"];
+            actorId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 操作人姓名快照（写入时冗余，改名后仍可追溯） */
+            actorName: string | null;
+            action: components["schemas"]["AuditAction"];
+            objectType: components["schemas"]["AuditObjectType"];
+            /** @description 对象 id（uuid 或字典码等业务键） */
+            objectId: string;
+            projectId: components["schemas"]["Uuid"] & (string | null);
+            result: components["schemas"]["AuditResult"];
+            entry: components["schemas"]["AuditEntry"];
+            /** @description 可读摘要（列表直接展示） */
+            summary: string;
+            /** @description 字段级修改（C7-02）；无字段级变化时为 null */
+            changes: components["schemas"]["AuditChange"][] | null;
+            /** @description 附加信息（trace_id / 请求方法路径等） */
+            metadata: {
+                [key: string]: unknown;
+            };
+        };
+        AuditLogListResponse: {
+            items: components["schemas"]["AuditLog"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /**
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default）
+         * @enum {string}
+         */
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings";
+        /**
+         * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
+         * @enum {string}
+         */
+        AuditResult: "succeeded" | "denied" | "failed";
         /** @description 自建蓝图 JSON（v0.2 §3.2 + ADR-019）；导入校验 = schema + 引用 + 幂等 */
         Blueprint: {
             /** @enum {number} */
@@ -3503,6 +4348,107 @@ export interface components {
             publishedAt: components["schemas"]["DateTime"] & (string | null);
             publishedBy: components["schemas"]["Uuid"] & (string | null);
         };
+        /** @description 日历例外条目；维护动作写审计留痕（object_type = calendar_day） */
+        CalendarDay: {
+            date: components["schemas"]["DateOnly"] & unknown;
+            dayType: components["schemas"]["CalendarDayType"];
+            /** @description 名称（如「国庆节」「春节调休上班」）；可空 */
+            name: string | null;
+            /** @description 说明 / 来源（可空） */
+            note: string | null;
+            updatedAt: components["schemas"]["DateTime"];
+            updatedBy: components["schemas"]["Uuid"] & (string | null);
+        };
+        /**
+         * @description 日期判定结果：workday 工作日 / weekend 周末 / holiday 放假 / makeup_workday 调休上班（isWorkday 为 false 的三种一律参与顺延判断）
+         * @enum {string}
+         */
+        CalendarDayKind: "workday" | "weekend" | "holiday" | "makeup_workday";
+        /**
+         * @description 日历例外类型：holiday 放假 / makeup_workday 调休上班（周末补班）；未登记的日期按默认规则判定
+         * @enum {string}
+         */
+        CalendarDayType: "holiday" | "makeup_workday";
+        /** @description 设置某天为放假 / 调休上班（幂等）：变更写审计留痕；响应为更新后的整年日历 */
+        CalendarDayUpsertBody: {
+            dayType: components["schemas"]["CalendarDayType"];
+            /** @description 名称（如「国庆节」）；不传则保持原值（新建时可空） */
+            name?: string;
+            /** @description 说明 / 来源；不传则保持原值 */
+            note?: string;
+        };
+        /** @description 某一天的工作日判定（登录即可读，D5-03 为规则引擎提供日期依据） */
+        CalendarDayView: {
+            date: components["schemas"]["DateOnly"] & unknown;
+            kind: components["schemas"]["CalendarDayKind"];
+            isWorkday: boolean;
+            name: string | null;
+            note: string | null;
+            /**
+             * @description 判定来源：calendar = 命中例外表 / default = 默认规则（周末或普通工作日）
+             * @enum {string}
+             */
+            source: "default" | "calendar";
+        };
+        /** @description T-N / T+N 求值结果（业务日期 + 可选时刻；跨年自动扩窗） */
+        CalendarOffsetResult: {
+            baseDate: components["schemas"]["DateOnly"] & unknown;
+            days: number;
+            time: string | null;
+            shift: components["schemas"]["CalendarShiftMode"];
+            rawDate: components["schemas"]["DateOnly"] & unknown;
+            date: components["schemas"]["DateOnly"] & unknown;
+            shifted: boolean;
+            shiftDirection: components["schemas"]["CalendarShiftDirection"] & (string | null);
+            kind: components["schemas"]["CalendarDayKind"];
+            name: string | null;
+            at: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 更新顺延规则（只传变更键）：变更写审计留痕 */
+        CalendarSettingsUpdateBody: {
+            reminderShiftEnabled?: boolean;
+            shiftDirection?: components["schemas"]["CalendarShiftDirection"];
+        };
+        /**
+         * @description 顺延方向：forward 顺延到之后最近工作日（节假日期间不提醒，节后补） / backward 提前到之前最近工作日（节前提醒）
+         * @enum {string}
+         */
+        CalendarShiftDirection: "forward" | "backward";
+        /**
+         * @description 顺延开关：inherit 按日历配置（缺省） / on 本次强制顺延 / off 本次强制不顺延
+         * @enum {string}
+         */
+        CalendarShiftMode: "inherit" | "on" | "off";
+        /** @description 顺延求值结果：基准日状态 + 顺延去向 + 跳过的非工作日 */
+        CalendarShiftResult: {
+            baseDate: components["schemas"]["DateOnly"] & unknown;
+            direction: components["schemas"]["CalendarShiftDirection"];
+            date: components["schemas"]["DateOnly"] & unknown;
+            shifted: boolean;
+            /** @description 被跳过的非工作日（按移动顺序；未顺延为空） */
+            skipped: (components["schemas"]["DateOnly"] & unknown)[];
+            baseKind: components["schemas"]["CalendarDayKind"] & unknown;
+            /** @description 基准日期是否工作日（false = 本次发生了顺延 / 提前） */
+            baseIsWorkday: boolean;
+            kind: components["schemas"]["CalendarDayKind"] & unknown;
+            /** @description 结果日期命中的例外名称（可空） */
+            name: string | null;
+        };
+        /** @description 顺延规则配置（单行）：是否顺延 + 顺延方向 */
+        CalendarShiftSettings: {
+            /** @description 提醒日期落在非工作日时是否顺延（可配置，D5-02） */
+            reminderShiftEnabled: boolean;
+            shiftDirection: components["schemas"]["CalendarShiftDirection"];
+            updatedAt: components["schemas"]["DateTime"];
+            updatedBy: components["schemas"]["Uuid"] & (string | null);
+        };
+        /** @description 某年工作日历（例外清单 + 顺延配置） */
+        CalendarYear: {
+            year: number;
+            /** @description 该年例外清单（放假 / 调休上班），按日期升序；未列出的日期按默认规则 */
+            days: components["schemas"]["CalendarDay"][];
+            settings: components["schemas"]["CalendarShiftSettings"];
+        };
         /** @description 完成预检（UI 置灰依据；服务端仍在事务内强校验） */
         CanCompleteResponse: {
             canComplete: boolean;
@@ -3553,6 +4499,11 @@ export interface components {
          */
         ChangeStatus: "applied";
         /**
+         * @description 角色数据范围：all > managed_projects > involved_projects > own_stakeholders > granted（多角色并集）
+         * @enum {string}
+         */
+        DataScope: "all" | "managed_projects" | "involved_projects" | "own_stakeholders" | "granted";
+        /**
          * Format: date
          * @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）
          */
@@ -3582,6 +4533,40 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @description 新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        DictItemCreateBody: {
+            /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
+            code: string;
+            /** @description 显示名 */
+            name: string;
+            /**
+             * @description 展示顺序（升序）；缺省 0
+             * @default 0
+             */
+            sort: number;
+            /**
+             * @description 是否启用；缺省 true
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * @description 字典元数据（projectType 必含 accent）
+             * @default {}
+             */
+            metadata: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description 更新字典条目（只传变更键）；本次变更写审计（含字段级 before / after，C9-02 / C7-02） */
+        DictItemUpdateBody: {
+            name?: string;
+            sort?: number;
+            /** @description 停用（false）替代删除：存量数据仍按原值展示（C9-02） */
+            enabled?: boolean;
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
         /** @description 全量字典（一期两个类型：region / projectType） */
         DictListResponse: {
             items: components["schemas"]["Dict"][];
@@ -3608,7 +4593,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -3776,6 +4761,15 @@ export interface components {
          * @enum {string}
          */
         NodeStatus: "pending" | "active" | "done" | "deleted";
+        /**
+         * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
+         * @enum {string}
+         */
+        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage";
+        /** @description 当前用户授权画像（未登录 401） */
+        PermissionMeResponse: {
+            permissions: components["schemas"]["ActorPermissions"];
+        };
         /**
          * @description 紧急重要度四象限字典
          * @enum {string|null}

@@ -32,7 +32,7 @@
 - 角色口径：`role_in_project` 一期两值 `project_manager` / `project_member`（与全局角色 `roles` / `user_roles` 相互独立：前者管项目名册与记录级可见性，后者管功能权限）。`projects.manager_id`（主数据：首页 `filter[managerId]` / 卡片展示）与名册**不自动联动**：建项目时的成员初始化随 M2-02 建项目事务（h3），管理界面（u 系列）落地时收敛。
 - ADR-022 触点：成员增删 / 改角色后调用 `ProjectRepository.touch`，项目 `updated_at` 前移（「人来动、视图可见的变更才触发」②）。
 - 归档写保护（ADR-027）同样覆盖名册：归档项目的 POST / DELETE 成员 → 409 `PROJECT_ARCHIVED`（名册读仍可用）。
-- 分类字段口径（A1-12 定档）：`region` / `projectType` 是首页分类侧边栏（facets 五组里的两组，A6）与统计的来源；创建请求缺省「**未分类**」（契约 `default("未分类")`，前端表单仍必填、空串 400）；更新可改。字典取值由 C9 字典维护（`GET /dicts` 已入契约，落表随 h7；在此之前前端提示 + 服务端不封锁取值）。
+- 分类字段口径（A1-12 定档）：`region` / `projectType` 是首页分类侧边栏（facets 五组里的两组，A6）与统计的来源；创建请求缺省「**未分类**」（契约 `default("未分类")`，前端表单仍必填、空串 400）；更新可改。字典取值由 C9 字典维护（h7 已落地：`dict_types` / `dict_items` 表 + `GET /dicts` 下发；前端改读字典随 u12，服务端不封锁取值）。
 - 单测：`test/project-members.test.ts` —— 视图映射、列表顺序与项目不可见 404、添加 upsert + touch、重复添加改角色保留 joinedAt、目标用户 404、归档写保护（不落任何写入）、移除与「不是成员」404（7 例，不连库）。
 
 ## 已实现（h3 · S6·blueprint/node：M2-02 建项目快照 + M2-03 阶段推进 / 回退 + 节点增删 · Push 83）
@@ -42,12 +42,12 @@
 - 阶段推进 / 回退（ADR-023）：`advanceStage` / `rollbackStage` —— 门禁失败 = 事务回滚后补写 outbox 留痕（`stage.gate_rejected`）再转 422；回退只认相邻上一阶段、原因必填、不做门禁；跟踪列（`advanced_at/by`、`rolled_back_at/by`、`rollback_reason`）见迁移 `0012`。
 - 节点增删（ADR-020，仅项目经理）：`createNode`（模板节点池校验 → `node_key` 项目内唯一：已有未删节点 409 `NODE_ALREADY_EXISTS`；软删后再增补 = 还原同一行；`seq` 缺省 = 同阶段 max + 10）、`deleteNode`（原因必填、软删、乐观锁、有成果文件 409 `NODE_HAS_FILES`）。
 - 完成门禁：`completeNode` / `canComplete`（复用 `NodeModule` 的 GateService；`/api/v1/nodes/*` 路由在本模块 `nodes.controller.ts`，按功能面而非 project 前缀）；拒绝同样先回滚事务、再补写 `node.gate_rejected` 留痕、最后 422。`complete` 响应按契约 `NodeCompleteResponse`（{ node }）（h5 修正：原先返回裸节点视图）。
-- 权限：`assertProjectManager` = `admin` 角色 / `projects.manager_id` / 名册 `role_in_project=project_manager` 三选一；记录级 404 与矩阵消费随 h6。归档项目一律 409 `PROJECT_ARCHIVED`。
+- 权限（h6 落地）：读路由的记录级可见性与写路由的功能权限位统一走 `ProjectAccessGuard` —— 不可见 / 不存在 / 已软删一律 404（防 IDOR）；写路由缺位 403（`project.create` / `project.update` / `project.delete` / `member.manage`）；列表与 facets 取 `@ProjectScope()` 过滤。节点增删的 `assertProjectManager`（`admin` 角色 / `projects.manager_id` / 名册 `role_in_project=project_manager`）保留为服务内业务口径。归档项目一律 409 `PROJECT_ARCHIVED`。
 - 留痕与触点：节点 / 阶段事件同事务写 outbox（`node.added`（还原带 `restored: true`）/ `node.completed` / `node.deleted` / `stage.advanced` / `stage.rolled_back`）；节点增删后调用 `ProjectRepository.touch`（ADR-022 ② 触点）。
 - 单测：`test/project-crud.test.ts` 的 `makeService` 已注入 fake DB（`transaction` 直通）+ fake Flow（`importSnapshot`），创建用例覆盖快照调用；流程用例见 `test/blueprint-validation.test.ts` / `test/flow-gate.test.ts` 与本地实机演练记录。
 ## 边界与后续
 
-- 不做：名册的**记录级过滤**（列表 / 详情 / facets / 搜索按成员裁剪、非成员 404）随 h6 策略服务（ADR-011）——本批只落名册数据面与维护接口；`projects.manager_id` 与名册的自动联动随 M2-02 建项目事务（h3）/ 管理界面（u 系列）。
-- 不做（收口后剩余）：`blueprintVersion` 入参仍忽略（建项目固定取「已发布蓝图」；指定版本 / 项目升级蓝图随 M6）；项目记录级权限的**过滤**（非成员 404 语义随 h6 策略服务）、视图 / 关注 / 偏好（M2-06）、写接口幂等键 `Idempotency-Key`（随 i5）、CRUD 与流程的审计留痕（随 h7 audit_logs）。已随 h3 落地：建项目蓝图快照（M2-02）、阶段推进 / 回退（M2-03）、节点增删与完成门禁。
-- 权限现状：本批读接口登录即可读、写接口登录即可写（数据范围裁剪与「仅项目经理 / 管理员可写」随 h6）；前端在此之前的按钮可见性只做体验，不作为安全边界（ADR-011）。
+- 已随 h6 落地：名册的**记录级过滤**（列表 / 详情 / facets 按成员裁剪、非成员 404）由权限策略层（ADR-011）承担 —— 本模块只保留名册数据面与维护接口（搜索出口的同一策略入口已就绪，实现随 M7）；`projects.manager_id` 与名册的自动联动随 M2-02 建项目事务（h3）/ 管理界面（u 系列）。
+- 不做（收口后剩余）：`blueprintVersion` 入参仍忽略（建项目固定取「已发布蓝图」；指定版本 / 项目升级蓝图随 M6）；项目记录级权限的过滤已随 h6 落地（策略层 `ProjectAccessGuard` + `@ProjectScope()`）、视图 / 关注 / 偏好（M2-06）、写接口幂等键 `Idempotency-Key`（随 i5）；CRUD 与流程的审计留痕已随 h7 接线（项目创建 / 修改 / 归档、名册增删、节点增删与完成、阶段推进 / 回退，同事务写 `audit_logs`）。已随 h3 落地：建项目蓝图快照（M2-02）、阶段推进 / 回退（M2-03）、节点增删与完成门禁。
+- 权限现状（h6 后）：读接口登录 + 记录级可见；写接口按功能权限位判定（项目内成员平权项见 `modules/permission/README.md`）；前端按钮可见性由 `GET /api/v1/permissions/me` 驱动，只做体验、不作为安全边界（ADR-011）。
 - 待接：⓪ 成员批量维护（导入 / 变更）随 u 系列管理界面；① 项目总览四格 `GET /api/v1/projects/{id}/summary`（契约已入，依赖任务派生口径，随 M3 任务卡片）；② 搜索 / 导出复用本模块 filter 构造器（随 M5 检索卡片）；③ 归档动作 `status = archived` 的专门端点（`PATCH` 即可置位，前端确认流随 u 系列）。

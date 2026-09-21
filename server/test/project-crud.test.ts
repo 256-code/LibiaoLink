@@ -10,6 +10,7 @@ import {
 import { ProjectService, toProjectView } from "../src/modules/project/project.service.js";
 import { DatabaseService } from "../src/db/database.service.js";
 import { FlowService } from "../src/modules/project/flow.service.js";
+import type { AuditService } from "../src/modules/admin/index.js";
 
 const AT = new Date("2026-09-20T06:00:00.000Z");
 const UUID_A = "11111111-1111-4111-8111-111111111111";
@@ -150,6 +151,14 @@ class FakeProjectRepository {
   }
 }
 
+/** 审计替身（h7）：只记录写入调用；审计内容断言见 test/admin-audit.test.ts。 */
+class FakeAuditService {
+  entries: unknown[] = [];
+  async record(_client: unknown, input: unknown): Promise<void> {
+    this.entries.push(input);
+  }
+}
+
 function makeService(rows: ProjectRow[] = []): { service: ProjectService; repo: FakeProjectRepository } {
   const repo = new FakeProjectRepository();
   repo.rows = rows.map((row) => ({ project: row, managerName: "张工" }));
@@ -171,6 +180,7 @@ function makeService(rows: ProjectRow[] = []): { service: ProjectService; repo: 
       fakeDb as unknown as DatabaseService,
       repo as unknown as ProjectRepository,
       fakeFlow as unknown as FlowService,
+      new FakeAuditService() as unknown as AuditService,
     ),
     repo,
   };
@@ -270,7 +280,7 @@ describe("toProjectView", () => {
 describe("ProjectService（M2-01 项目 CRUD）", () => {
   it("创建：缺省 stageKey = presale；seq_no 由仓储分配；返回随行 managerName", async () => {
     const { service, repo } = makeService();
-    const created = await service.createProject({ code: "CNBJ-20260708-0002", name: "新项目", region: "华东", projectType: "分拣", managerId: UUID_A });
+    const created = await service.createProject({ code: "CNBJ-20260708-0002", name: "新项目", region: "华东", projectType: "分拣", managerId: UUID_A }, UUID_A);
     expect(created.stageKey).toBe("presale");
     expect(created.status).toBe("active");
     expect(created.seqNo).toBe(1);
@@ -281,10 +291,10 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
 
   it("创建：显式 stageKey 生效；编号重复 409 PROJECT_CODE_EXISTS", async () => {
     const { service } = makeService([projectRow({ id: UUID_A })]);
-    const created = await service.createProject({ code: "X-2", name: "新项目", region: "华东", projectType: "分拣", managerId: UUID_A, stageKey: "install" });
+    const created = await service.createProject({ code: "X-2", name: "新项目", region: "华东", projectType: "分拣", managerId: UUID_A, stageKey: "install" }, UUID_A);
     expect(created.stageKey).toBe("install");
     await expectAppErrorAsync(
-      () => service.createProject({ code: "CNBJ-20260708-0001", name: "撞号", region: "华东", projectType: "分拣", managerId: UUID_A }),
+      () => service.createProject({ code: "CNBJ-20260708-0001", name: "撞号", region: "华东", projectType: "分拣", managerId: UUID_A }, UUID_A),
       "PROJECT_CODE_EXISTS",
     );
   });
@@ -293,18 +303,18 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
     const alive = projectRow({ id: UUID_A, seqNo: 1 });
     const removed = projectRow({ id: UUID_B, seqNo: 2, deletedAt: AT });
     const { service, repo } = makeService([alive, removed]);
-    const page = await service.listProjects({ page: 1, limit: 10 });
+    const page = await service.listProjects({ page: 1, limit: 10 }, { kind: "all" });
     expect(page.total).toBe(1);
     expect(page.page).toBe(1);
     expect(page.limit).toBe(10);
     expect(page.items.map((item) => item.id)).toEqual([UUID_A]);
-    await service.listProjects({ page: 2, limit: 10 });
+    await service.listProjects({ page: 2, limit: 10 }, { kind: "all" });
     expect(repo.lastList?.offset).toBe(10);
   });
 
   it("facets：与列表同筛选口径（同一 buildProjectFilter）", async () => {
     const { service, repo } = makeService([projectRow({ id: UUID_A })]);
-    const facets = await service.getFacets({ "filter[status]": "active", page: 1, limit: 20 });
+    const facets = await service.getFacets({ "filter[status]": "active", page: 1, limit: 20 }, { kind: "all" });
     expect(facets.total).toBe(1);
     expect(facets.region).toEqual({ "华东": 1 });
     expect(repo.lastFacetFilter?.statuses).toEqual(["active"]);
@@ -318,7 +328,7 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
 
   it("更新：version 匹配则 +1 并落 updatedAt；返回更新后视图", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, version: 3 })]);
-    const updated = await service.updateProject(UUID_A, { name: "改名", version: 3 });
+    const updated = await service.updateProject(UUID_A, { name: "改名", version: 3 }, UUID_A);
     expect(updated.name).toBe("改名");
     expect(updated.version).toBe(4);
     expect(updated.managerName).toBe("张工");
@@ -326,14 +336,14 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
 
   it("更新：version 不匹配 409 VERSION_CONFLICT；期间被删则 404", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, version: 3 })]);
-    await expectAppErrorAsync(() => service.updateProject(UUID_A, { name: "改名", version: 2 }), "VERSION_CONFLICT");
+    await expectAppErrorAsync(() => service.updateProject(UUID_A, { name: "改名", version: 2 }, UUID_A), "VERSION_CONFLICT");
     const { service: gone } = makeService([projectRow({ id: UUID_A, version: 3, deletedAt: AT })]);
-    await expectAppErrorAsync(() => gone.updateProject(UUID_A, { name: "改名", version: 3 }), "NOT_FOUND");
+    await expectAppErrorAsync(() => gone.updateProject(UUID_A, { name: "改名", version: 3 }, UUID_A), "NOT_FOUND");
   });
 
   it("更新 / 删除：归档项目写保护 409 PROJECT_ARCHIVED（ADR-027）", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, status: "archived" })]);
-    await expectAppErrorAsync(() => service.updateProject(UUID_A, { name: "改名", version: 0 }), "PROJECT_ARCHIVED");
+    await expectAppErrorAsync(() => service.updateProject(UUID_A, { name: "改名", version: 0 }, UUID_A), "PROJECT_ARCHIVED");
     await expectAppErrorAsync(() => service.deleteProject(UUID_A, 0, UUID_B), "PROJECT_ARCHIVED");
   });
 
@@ -344,7 +354,7 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
     expect(removed.version).toBe(3);
     expect(repo.lastSoftDelete).toEqual({ id: UUID_A, expectedVersion: 2, deletedBy: UUID_B });
     await expectAppErrorAsync(() => service.getProject(UUID_A), "NOT_FOUND");
-    expect((await service.listProjects({ page: 1, limit: 20 })).total).toBe(0);
+    expect((await service.listProjects({ page: 1, limit: 20 }, { kind: "all" })).total).toBe(0);
   });
 
   it("删除：version 不匹配 409 VERSION_CONFLICT；不存在 404", async () => {

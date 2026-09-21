@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
+import { AdminModule } from "../admin/index.js";
 import { IdentityModule } from "../identity/index.js";
+import { PermissionModule } from "../permission/index.js";
 import { TaskController } from "./task.controller.js";
 import { TaskRepository } from "./task.repository.js";
 import { TaskService } from "./task.service.js";
@@ -10,7 +12,7 @@ import { TaskStatsService } from "./task.stats.js";
  * 统计出口（TaskStatsService）供 node 门禁复用；不依赖 project / node，避免循环（project → node → task）。
  */
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, PermissionModule, AdminModule],
   controllers: [TaskController],
   providers: [TaskRepository, TaskService, TaskStatsService],
   exports: [TaskService, TaskStatsService],

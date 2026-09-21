@@ -8,6 +8,7 @@ import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { Tracker } from "./Tracker";
 import { StageAddCard } from "./StageAddCard";
+import type { StagePlacement } from "./StageAddCard";
 import type { TemplatePresetNode } from "../data/templatePresets";
 
 const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
@@ -130,6 +131,8 @@ type TaskBoardProps = {
   skeletonStages?: readonly string[];
   /** 「添加任务」：从任务模板预设里挑节点加进项目（不传 = 阶段标签点不开右侧卡片）。 */
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
+  /** 加一条 / 一批并指定插入位置（Push 113：点「＋ 添加」先弹位置浮层，选完才加进项目）。不传 = 点一条直接加到该阶段最后。 */
+  onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
   /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
   manager?: string;
   /** 项目经理 id（项目级字段：编辑弹窗「项目经理」下拉的当前选中项）。 */
@@ -187,7 +190,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
     title: (
       <div className="flex min-w-0 items-center gap-4 self-stretch pr-8">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-zinc-800" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
+          <p className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
             {task.title}
           </p>
           {task.titleEn === "" ? null : (
@@ -518,7 +521,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, viewStage, manager, managerId, onSubmitTaskEdit, onPatchTask, onChangeManager }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, manager, managerId, onSubmitTaskEdit, onPatchTask, onChangeManager }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -528,11 +531,20 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   const boardCardRef = useRef<HTMLDivElement | null>(null);
   const headerRowRef = useRef<HTMLDivElement | null>(null);
   const closeDrawer = () => setSelectedTask(null);
+  /** 抽屉里的任务按 id 取当前值（Push 98）：抽屉里点四格进度、卡片上改实际完成日期后，抽屉要立刻跟着变 ——
+   *  不能拿点击那一刻的任务快照，否则父级刷新后抽屉还显示旧进度。 */
+  const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
   /** 项目里已有的任务 id：添加任务时用来判断节点是不是已经加过。 */
   const existingTaskIds = new Set(tasks.map((task) => task.id));
+  /**
+   * 该阶段现有任务（Push 113）：给「点 ＋ 添加 → 选位置」当锚点 —— `tasks` 已经是展示顺序
+   * （阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
+   */
+  const stageTasksOf = (stage: string) =>
+    tasks.filter((task) => task.stage === stage).map((task) => ({ id: task.id, title: task.title }));
   // 换阶段标签（顶部）时把卡片关掉，避免卡片停在上一个阶段的上下文里
   useEffect(() => {
     setCardStage(null);
@@ -739,21 +751,25 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
         </div>
       </div>
       </div>
-      {cardStage !== null && onAddNode !== undefined ? (
+      {cardStage !== null && (onAddNode !== undefined || onAddNodes !== undefined) ? (
         <StageAddCard
           stage={cardStage}
           existingTaskIds={existingTaskIds}
           onAddNode={onAddNode}
+          placement={onAddNodes === undefined ? undefined : { tasks: stageTasksOf(cardStage) }}
+          onAddNodes={onAddNodes}
           onClose={() => setCardStage(null)}
           style={cardBox === null ? { top: 10, left: 24 } : cardBox}
         />
       ) : null}
       </div>
       <TaskDrawer
-        task={selectedTask}
+        task={drawerTask}
         manager={manager ?? PROJECT_MANAGER}
         managerId={managerId ?? ""}
         onSubmit={onSubmitTaskEdit}
+        onProgress={onSetProgress}
+        onPatch={onPatchTask}
         onClose={closeDrawer}
       />
     </>

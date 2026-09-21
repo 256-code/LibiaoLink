@@ -30,3 +30,18 @@ export const DATA_SCOPE_KEYS = [
   "own_stakeholders",
   "granted",
 ] as const;
+
+/** 审计动作（audit_logs.action，h7 · C7）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 越权拒绝。 */
+export const AUDIT_ACTION_KEYS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "deny"] as const;
+
+/** 审计结果（audit_logs.result）：成功 / 越权拒绝 / 执行失败。 */
+export const AUDIT_RESULT_KEYS = ["succeeded", "denied", "failed"] as const;
+
+/** 审计入口（audit_logs.entry）：页面 / API / 系统任务 / 批量。 */
+export const AUDIT_ENTRY_KEYS = ["api", "page", "system", "batch"] as const;
+
+/** 工作日历例外类型（calendar_days.day_type，h8 · D5-01）：holiday 放假 / makeup_workday 调休上班。 */
+export const CALENDAR_DAY_TYPE_KEYS = ["holiday", "makeup_workday"] as const;
+
+/** 顺延方向（calendar_settings.shift_direction，h8 · D5-02）：forward 顺延到之后 / backward 提前到之前最近工作日。 */
+export const CALENDAR_SHIFT_DIRECTION_KEYS = ["forward", "backward"] as const;

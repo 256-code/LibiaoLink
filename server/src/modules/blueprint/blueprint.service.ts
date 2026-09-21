@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { BlueprintViewSchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
-import { RoleService } from "../identity/index.js";
+import { PermissionService } from "../permission/index.js";
 import { BlueprintRepository, type BlueprintRow } from "./blueprint.repository.js";
 import { validateBlueprint, type Blueprint } from "./blueprint.validation.js";
 
@@ -22,15 +22,12 @@ export interface BlueprintSnapshot {
 export class BlueprintService {
   constructor(
     private readonly blueprints: BlueprintRepository,
-    private readonly roles: RoleService,
+    private readonly permission: PermissionService,
   ) {}
 
-  /** 管理员校验：h6 功能权限矩阵就位前，按角色码 admin 判定（口径记录在 README）。 */
+  /** 蓝图写权限：矩阵键 blueprint.manage（种子 #6b 仅授系统管理员 · ADR-019 / ADR-020）。 */
   async assertAdmin(actorId: string): Promise<void> {
-    const authorization = await this.roles.getActorAuthorization(actorId);
-    if (!authorization.roleCodes.includes("admin")) {
-      throw new AppError("FORBIDDEN", "蓝图维护仅限管理员（ADR-019 / ADR-020）");
-    }
+    await this.permission.assertCan(actorId, "blueprint.manage", undefined, "蓝图维护仅限管理员（ADR-019 / ADR-020）");
   }
 
   /** GET /blueprint：projectType 缺省 = default 兜底模板；未创建 → 404。 */

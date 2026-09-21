@@ -5,6 +5,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
 import { projects } from "../../db/schema/projects.js";
+import type { ProjectScopeFilter } from "../permission/index.js";
 import type { ProjectFilter, ProjectSort } from "./project.query.js";
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -63,8 +64,12 @@ export class ProjectRepository {
     sorts: readonly ProjectSort[],
     limit: number,
     offset: number,
+    scope: ProjectScopeFilter,
   ): Promise<{ items: ProjectViewRow[]; total: number }> {
-    const where = and(...projectConditions(filter));
+    if (scope.kind === "ids" && scope.ids.length === 0) {
+      return { items: [], total: 0 };
+    }
+    const where = and(...projectConditions(filter, scope));
     const items = await this.database.db
       .select({ project: projects, managerName: users.displayName })
       .from(projects)
@@ -77,7 +82,10 @@ export class ProjectRepository {
     return { items, total: Number(totals[0]?.value ?? 0) };
   }
 
-  async facets(filter: ProjectFilter): Promise<ProjectFacetsResult> {
+  async facets(filter: ProjectFilter, scope: ProjectScopeFilter): Promise<ProjectFacetsResult> {
+    if (scope.kind === "ids" && scope.ids.length === 0) {
+      return { total: 0, region: {}, projectType: {}, managerId: {}, stageKey: {}, status: {} };
+    }
     const rows = await this.database.db
       .select({
         region: projects.region,
@@ -88,7 +96,7 @@ export class ProjectRepository {
         value: count(),
       })
       .from(projects)
-      .where(and(...projectConditions(filter)))
+      .where(and(...projectConditions(filter, scope)))
       .groupBy(projects.region, projects.projectType, projects.managerId, projects.stageKey, projects.status);
     const facets: ProjectFacetsResult = { total: 0, region: {}, projectType: {}, managerId: {}, stageKey: {}, status: {} };
     for (const row of rows) {
@@ -144,10 +152,16 @@ export class ProjectRepository {
     }
   }
 
-  async updateWithVersion(id: string, patch: ProjectUpdateInput, expectedVersion: number, at: Date): Promise<ProjectRow | null> {
+  async updateWithVersion(
+    id: string,
+    patch: ProjectUpdateInput,
+    expectedVersion: number,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectRow | null> {
     const set: Record<string, unknown> = { ...patch, version: sql`${projects.version} + 1`, updatedAt: at };
     try {
-      const rows = await this.database.db
+      const rows = await client
         .update(projects)
         .set(set)
         .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNull(projects.deletedAt)))
@@ -175,8 +189,14 @@ export class ProjectRepository {
       .where(and(eq(projects.id, id), isNull(projects.deletedAt)));
   }
 
-  async softDeleteWithVersion(id: string, expectedVersion: number, deletedBy: string, at: Date): Promise<ProjectRow | null> {
-    const rows = await this.database.db
+  async softDeleteWithVersion(
+    id: string,
+    expectedVersion: number,
+    deletedBy: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectRow | null> {
+    const rows = await client
       .update(projects)
       .set({ deletedAt: at, deletedBy, version: sql`${projects.version} + 1` })
       .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNull(projects.deletedAt)))
@@ -196,9 +216,10 @@ export class ProjectRepository {
   }
 }
 
-/** 列表 / facets 共用的 WHERE 条件（同一 filter 构造器，禁止两套 SQL）。 */
-function projectConditions(filter: ProjectFilter): SQL[] {
+/** 列表 / facets 共用的 WHERE 条件（同一 filter 构造器，禁止两套 SQL）。scope 为记录级可见集（h6）。 */
+function projectConditions(filter: ProjectFilter, scope: ProjectScopeFilter): SQL[] {
   const conditions: SQL[] = [isNull(projects.deletedAt)];
+  if (scope.kind === "ids") conditions.push(inArray(projects.id, scope.ids));
   if (filter.regions !== null) conditions.push(inArray(projects.region, filter.regions));
   if (filter.projectTypes !== null) conditions.push(inArray(projects.projectType, filter.projectTypes));
   if (filter.managerIds !== null) conditions.push(inArray(projects.managerId, filter.managerIds));

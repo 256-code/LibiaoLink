@@ -41,8 +41,20 @@
       "description": "用户目录与用户偏好（A2 / A4；M1）"
     },
     {
+      "name": "permissions",
+      "description": "权限画像与策略出口（ADR-011；PoC-6 权限矩阵与脱敏五出口）"
+    },
+    {
       "name": "dicts",
       "description": "数据字典下发（A3；region / projectType，含主题色元数据）"
+    },
+    {
+      "name": "audit",
+      "description": "操作审计（C7）：关键操作留痕、按对象 / 操作人检索与越权尝试（admin 模块）"
+    },
+    {
+      "name": "calendar",
+      "description": "工作日历（D5）：日历维护 / 顺延规则配置 / T-1·T+1 求值（h8）"
     },
     {
       "name": "changes",
@@ -51,6 +63,45 @@
   ],
   "components": {
     "schemas": {
+      "ActorPermissions": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "roleCodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "project_manager"
+            ],
+            "description": "角色码（roles.code；多角色并集）"
+          },
+          "dataScopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataScope"
+            },
+            "description": "数据范围并集（由宽到窄）"
+          },
+          "permissionKeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionKey"
+            },
+            "description": "功能权限位并集（role_permissions）"
+          }
+        },
+        "required": [
+          "userId",
+          "roleCodes",
+          "dataScopes",
+          "permissionKeys"
+        ],
+        "description": "当前用户授权画像（角色 + 数据范围 + 功能权限位）"
+      },
       "ApiError": {
         "type": "object",
         "properties": {
@@ -79,6 +130,201 @@
           "traceId"
         ],
         "description": "统一错误信封（技术设计v0.2 §7.2）"
+      },
+      "AuditAction": {
+        "type": "string",
+        "enum": [
+          "create",
+          "update",
+          "delete",
+          "progress",
+          "complete",
+          "advance",
+          "rollback",
+          "deny"
+        ],
+        "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝"
+      },
+      "AuditChange": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "字段名（契约口径 camelCase）"
+          },
+          "from": {
+            "description": "修改前值（JSON；无值时为 null）"
+          },
+          "to": {
+            "description": "修改后值（JSON；无值时为 null）"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "description": "字段级修改条目（C7-02）"
+      },
+      "AuditEntry": {
+        "type": "string",
+        "enum": [
+          "api",
+          "page",
+          "system",
+          "batch"
+        ],
+        "description": "审计入口：api / page / system / batch"
+      },
+      "AuditLog": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "审计序号（只增不减）"
+          },
+          "occurredAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "actorId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "操作人 users.id（系统任务为 null）"
+              }
+            ]
+          },
+          "actorName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "操作人姓名快照（写入时冗余，改名后仍可追溯）"
+          },
+          "action": {
+            "$ref": "#/components/schemas/AuditAction"
+          },
+          "objectType": {
+            "$ref": "#/components/schemas/AuditObjectType"
+          },
+          "objectId": {
+            "type": "string",
+            "description": "对象 id（uuid 或字典码等业务键）"
+          },
+          "projectId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "所属项目（非项目对象为 null）"
+              }
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuditResult"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/AuditEntry"
+          },
+          "summary": {
+            "type": "string",
+            "description": "可读摘要（列表直接展示）"
+          },
+          "changes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AuditChange"
+            },
+            "description": "字段级修改（C7-02）；无字段级变化时为 null"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "附加信息（trace_id / 请求方法路径等）"
+          }
+        },
+        "required": [
+          "id",
+          "occurredAt",
+          "actorId",
+          "actorName",
+          "action",
+          "objectType",
+          "objectId",
+          "projectId",
+          "result",
+          "entry",
+          "summary",
+          "changes",
+          "metadata"
+        ],
+        "description": "审计日志（C7）：追加写、不可改删、保留 ≥6 个月（C7-05）"
+      },
+      "AuditLogListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditLog"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "AuditObjectType": {
+        "type": "string",
+        "enum": [
+          "project",
+          "project_member",
+          "task",
+          "node",
+          "stage",
+          "dict_item",
+          "blueprint",
+          "calendar_day",
+          "calendar_settings"
+        ],
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default）"
+      },
+      "AuditResult": {
+        "type": "string",
+        "enum": [
+          "succeeded",
+          "denied",
+          "failed"
+        ],
+        "description": "审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）"
       },
       "Blueprint": {
         "type": "object",
@@ -329,6 +575,435 @@
           "publishedBy"
         ]
       },
+      "CalendarDay": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "dayType": {
+            "$ref": "#/components/schemas/CalendarDayType"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "名称（如「国庆节」「春节调休上班」）；可空"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "说明 / 来源（可空）"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "最近维护人 users.id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "date",
+          "dayType",
+          "name",
+          "note",
+          "updatedAt",
+          "updatedBy"
+        ],
+        "description": "日历例外条目；维护动作写审计留痕（object_type = calendar_day）"
+      },
+      "CalendarDayKind": {
+        "type": "string",
+        "enum": [
+          "workday",
+          "weekend",
+          "holiday",
+          "makeup_workday"
+        ],
+        "description": "日期判定结果：workday 工作日 / weekend 周末 / holiday 放假 / makeup_workday 调休上班（isWorkday 为 false 的三种一律参与顺延判断）"
+      },
+      "CalendarDayType": {
+        "type": "string",
+        "enum": [
+          "holiday",
+          "makeup_workday"
+        ],
+        "description": "日历例外类型：holiday 放假 / makeup_workday 调休上班（周末补班）；未登记的日期按默认规则判定"
+      },
+      "CalendarDayUpsertBody": {
+        "type": "object",
+        "properties": {
+          "dayType": {
+            "$ref": "#/components/schemas/CalendarDayType"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "名称（如「国庆节」）；不传则保持原值（新建时可空）"
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "说明 / 来源；不传则保持原值"
+          }
+        },
+        "required": [
+          "dayType"
+        ],
+        "description": "设置某天为放假 / 调休上班（幂等）：变更写审计留痕；响应为更新后的整年日历"
+      },
+      "CalendarDayView": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CalendarDayKind"
+          },
+          "isWorkday": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "default",
+              "calendar"
+            ],
+            "description": "判定来源：calendar = 命中例外表 / default = 默认规则（周末或普通工作日）"
+          }
+        },
+        "required": [
+          "date",
+          "kind",
+          "isWorkday",
+          "name",
+          "note",
+          "source"
+        ],
+        "description": "某一天的工作日判定（登录即可读，D5-03 为规则引擎提供日期依据）"
+      },
+      "CalendarOffsetResult": {
+        "type": "object",
+        "properties": {
+          "baseDate": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "days": {
+            "type": "integer"
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shift": {
+            "$ref": "#/components/schemas/CalendarShiftMode"
+          },
+          "rawDate": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "自然日偏移结果（未顺延）"
+              }
+            ]
+          },
+          "date": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "最终业务日期（顺延后）"
+              }
+            ]
+          },
+          "shifted": {
+            "type": "boolean"
+          },
+          "shiftDirection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CalendarShiftDirection"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "实际执行的顺延方向；未顺延为 null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CalendarDayKind"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "最终日期 + time 的 UTC 时间戳（Asia/Shanghai 换算）；未传 time 为 null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "baseDate",
+          "days",
+          "time",
+          "shift",
+          "rawDate",
+          "date",
+          "shifted",
+          "shiftDirection",
+          "kind",
+          "name",
+          "at"
+        ],
+        "description": "T-N / T+N 求值结果（业务日期 + 可选时刻；跨年自动扩窗）"
+      },
+      "CalendarSettingsUpdateBody": {
+        "type": "object",
+        "properties": {
+          "reminderShiftEnabled": {
+            "type": "boolean"
+          },
+          "shiftDirection": {
+            "$ref": "#/components/schemas/CalendarShiftDirection"
+          }
+        },
+        "description": "更新顺延规则（只传变更键）：变更写审计留痕"
+      },
+      "CalendarShiftDirection": {
+        "type": "string",
+        "enum": [
+          "forward",
+          "backward"
+        ],
+        "description": "顺延方向：forward 顺延到之后最近工作日（节假日期间不提醒，节后补） / backward 提前到之前最近工作日（节前提醒）"
+      },
+      "CalendarShiftMode": {
+        "type": "string",
+        "enum": [
+          "inherit",
+          "on",
+          "off"
+        ],
+        "description": "顺延开关：inherit 按日历配置（缺省） / on 本次强制顺延 / off 本次强制不顺延"
+      },
+      "CalendarShiftResult": {
+        "type": "object",
+        "properties": {
+          "baseDate": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CalendarShiftDirection"
+          },
+          "date": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "顺延后的业务日期（已是工作日时为 baseDate 本身）"
+              }
+            ]
+          },
+          "shifted": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "业务日期 YYYY-MM-DD（不携带时区）"
+                }
+              ]
+            },
+            "description": "被跳过的非工作日（按移动顺序；未顺延为空）"
+          },
+          "baseKind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CalendarDayKind"
+              },
+              {
+                "description": "基准日期的判定结果（weekday / weekend / holiday / makeup_workday）"
+              }
+            ]
+          },
+          "baseIsWorkday": {
+            "type": "boolean",
+            "description": "基准日期是否工作日（false = 本次发生了顺延 / 提前）"
+          },
+          "kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CalendarDayKind"
+              },
+              {
+                "description": "结果日期的判定结果（顺延到位后必为工作日）"
+              }
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "结果日期命中的例外名称（可空）"
+          }
+        },
+        "required": [
+          "baseDate",
+          "direction",
+          "date",
+          "shifted",
+          "skipped",
+          "baseKind",
+          "baseIsWorkday",
+          "kind",
+          "name"
+        ],
+        "description": "顺延求值结果：基准日状态 + 顺延去向 + 跳过的非工作日"
+      },
+      "CalendarShiftSettings": {
+        "type": "object",
+        "properties": {
+          "reminderShiftEnabled": {
+            "type": "boolean",
+            "description": "提醒日期落在非工作日时是否顺延（可配置，D5-02）"
+          },
+          "shiftDirection": {
+            "$ref": "#/components/schemas/CalendarShiftDirection"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "reminderShiftEnabled",
+          "shiftDirection",
+          "updatedAt",
+          "updatedBy"
+        ],
+        "description": "顺延规则配置（单行）：是否顺延 + 顺延方向"
+      },
+      "CalendarYear": {
+        "type": "object",
+        "properties": {
+          "year": {
+            "type": "integer",
+            "minimum": 2000,
+            "maximum": 2100
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalendarDay"
+            },
+            "description": "该年例外清单（放假 / 调休上班），按日期升序；未列出的日期按默认规则"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/CalendarShiftSettings"
+          }
+        },
+        "required": [
+          "year",
+          "days",
+          "settings"
+        ],
+        "description": "某年工作日历（例外清单 + 顺延配置）"
+      },
       "CanCompleteResponse": {
         "type": "object",
         "properties": {
@@ -552,6 +1227,17 @@
         ],
         "description": "变更申请状态；一期申请即通过（唯一终态 applied），多级审批二期可启用"
       },
+      "DataScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "managed_projects",
+          "involved_projects",
+          "own_stakeholders",
+          "granted"
+        ],
+        "description": "角色数据范围：all > managed_projects > involved_projects > own_stakeholders > granted（多角色并集）"
+      },
       "DateOnly": {
         "type": "string",
         "format": "date",
@@ -617,6 +1303,68 @@
           "enabled",
           "metadata"
         ]
+      },
+      "DictItemCreateBody": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "显示名"
+          },
+          "sort": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "展示顺序（升序）；缺省 0"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "是否启用；缺省 true"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {},
+            "default": {},
+            "description": "字典元数据（projectType 必含 accent）"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "description": "新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典"
+      },
+      "DictItemUpdateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sort": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "停用（false）替代删除：存量数据仍按原值展示（C9-02）"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "description": "更新字典条目（只传变更键）；本次变更写审计（含字段级 before / after，C9-02 / C7-02）"
       },
       "DictListResponse": {
         "type": "object",
@@ -704,6 +1452,7 @@
           "VERSION_CONFLICT",
           "PROJECT_CODE_EXISTS",
           "PROJECT_ARCHIVED",
+          "DICT_ITEM_EXISTS",
           "STAGE_GATE_NOT_PASSED",
           "BLUEPRINT_NOT_PUBLISHED",
           "NODE_REQUIRED_DOC_MISSING",
@@ -1389,6 +2138,51 @@
           "deleted"
         ],
         "description": "节点状态（project_nodes.status）；done 必须过门禁"
+      },
+      "PermissionKey": {
+        "type": "string",
+        "enum": [
+          "project.view",
+          "project.create",
+          "project.update",
+          "project.delete",
+          "project.export",
+          "member.view",
+          "member.manage",
+          "task.view",
+          "task.create",
+          "task.update",
+          "task.progress",
+          "node.view",
+          "node.create",
+          "node.delete",
+          "node.complete",
+          "node.advance",
+          "node.rollback",
+          "blueprint.view",
+          "blueprint.manage",
+          "file.upload",
+          "file.download",
+          "stakeholder.view",
+          "stakeholder.manage",
+          "stakeholder.contact.view",
+          "dict.manage",
+          "audit.view",
+          "calendar.manage"
+        ],
+        "description": "功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）"
+      },
+      "PermissionMeResponse": {
+        "type": "object",
+        "properties": {
+          "permissions": {
+            "$ref": "#/components/schemas/ActorPermissions"
+          }
+        },
+        "required": [
+          "permissions"
+        ],
+        "description": "当前用户授权画像（未登录 401）"
       },
       "Priority": {
         "type": [
@@ -5479,6 +6273,22 @@
           "dicts"
         ],
         "summary": "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+            },
+            "required": false,
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "name": "includeDisabled",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "description": "全部字典",
@@ -5486,6 +6296,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DictListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -5502,12 +6322,29 @@
         "parameters": [
           {
             "schema": {
-              "$ref": "#/components/schemas/DictType"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
             },
             "required": true,
-            "description": "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404",
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
             "name": "type",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+            },
+            "required": false,
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "name": "includeDisabled",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5521,8 +6358,378 @@
               }
             }
           },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dicts/{type}/items": {
+      "post": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "新增字典条目（仅管理员 · dict.manage；变更写审计留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+            },
+            "required": true,
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "name": "type",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DictItemCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功（更新后的整个字典）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dicts/{type}/items/{code}": {
+      "patch": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "更新字典条目（部分更新；停用替代删除；变更写审计留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+            },
+            "required": true,
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "name": "type",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "code",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DictItemUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的整个字典",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audit-logs": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/AuditObjectType"
+            },
+            "required": false,
+            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default）",
+            "name": "objectType",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②）"
+            },
+            "required": false,
+            "description": "对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②）",
+            "name": "objectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "description": "操作人（按人检索 —— h7 验收项②）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "操作人（按人检索 —— h7 验收项②）",
+            "name": "actorId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/AuditAction"
+            },
+            "required": false,
+            "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝",
+            "name": "action",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/AuditResult"
+                },
+                {
+                  "description": "result=denied 即越权尝试（C7-03）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "result=denied 即越权尝试（C7-03）",
+            "name": "result",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": false,
+            "description": "UUID（主键与关联 ID）",
+            "name": "projectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateTime"
+                },
+                {
+                  "description": "时间下界（含，ISO8601）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "时间下界（含，ISO8601）",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateTime"
+                },
+                {
+                  "description": "时间上界（含，ISO8601）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "时间上界（含，ISO8601）",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "审计列表（occurredAt 降序）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
             "content": {
               "application/json": {
                 "schema": {
@@ -7598,6 +8805,36 @@
         }
       }
     },
+    "/api/v1/permissions/me": {
+      "get": {
+        "tags": [
+          "permissions"
+        ],
+        "summary": "当前用户授权画像（角色 / 数据范围 / 功能权限位；前端据此置灰）",
+        "responses": {
+          "200": {
+            "description": "授权画像",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionMeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/login": {
       "get": {
         "tags": [
@@ -7720,6 +8957,522 @@
         "responses": {
           "302": {
             "description": "跳转 SSO 登出（本地会话已撤销）"
+          }
+        }
+      }
+    },
+    "/api/v1/calendar/days": {
+      "get": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "某年工作日历：例外清单（放假 / 调休上班）+ 顺延配置（登录即可读）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 2000,
+              "maximum": 2100,
+              "description": "公历年份（2000 ~ 2100）"
+            },
+            "required": true,
+            "description": "公历年份（2000 ~ 2100）",
+            "name": "year",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "某年日历",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarYear"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar/day": {
+      "get": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "某天的工作日判定（缺省今天；顺延与 T-1/T+1 的输入口径）",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）",
+            "name": "date",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "某天判定",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarDayView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar/days/{date}": {
+      "put": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "设置某天为放假 / 调休上班（仅管理员 · calendar.manage；幂等 upsert，变更写审计留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "业务日期 YYYY-MM-DD（不携带时区）"
+                }
+              ]
+            },
+            "required": true,
+            "description": "业务日期 YYYY-MM-DD（不携带时区）",
+            "name": "date",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarDayUpsertBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的整年日历",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarYear"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "删除某天的例外（回落默认规则：周一至周五工作日 / 周六周日非工作日；仅管理员 · calendar.manage）",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "业务日期 YYYY-MM-DD（不携带时区）"
+                }
+              ]
+            },
+            "required": true,
+            "description": "业务日期 YYYY-MM-DD（不携带时区）",
+            "name": "date",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "更新后的整年日历",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarYear"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar/settings": {
+      "get": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "顺延规则配置（D5-02：提醒日期落在非工作日时是否顺延 + 方向；登录即可读）",
+        "responses": {
+          "200": {
+            "description": "顺延配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarShiftSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "更新顺延规则（仅管理员 · calendar.manage；变更写审计留痕）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarSettingsUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的顺延配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarShiftSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar/shift": {
+      "get": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "顺延求值：非工作日按方向移动到最近工作日（金标：节假日顺延开 / 关两态）",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "业务日期；缺省 = 今天（Asia/Shanghai）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "业务日期；缺省 = 今天（Asia/Shanghai）",
+            "name": "date",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/CalendarShiftDirection"
+                },
+                {
+                  "description": "顺延方向；缺省 = 按日历配置"
+                }
+              ]
+            },
+            "required": false,
+            "description": "顺延方向；缺省 = 按日历配置",
+            "name": "direction",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "顺延结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarShiftResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar/offset": {
+      "get": {
+        "tags": [
+          "calendar"
+        ],
+        "summary": "T-N / T+N 求值：自然日偏移 + 可选顺延 + 提醒时刻（如 R03 的「前 1 天 08:00」）",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "基准业务日期（任务的当前日期）；缺省 = 今天（Asia/Shanghai）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "基准业务日期（任务的当前日期）；缺省 = 今天（Asia/Shanghai）",
+            "name": "date",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -366,
+              "maximum": 366,
+              "description": "自然日偏移：T-1 = -1，T+1 = +1，T+3 / T+7 同理"
+            },
+            "required": false,
+            "description": "自然日偏移：T-1 = -1，T+1 = +1，T+3 / T+7 同理",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+              "description": "提醒时刻 HH:mm（Asia/Shanghai，如 R03 / R05 的 08:00）；缺省 = 只回业务日期，不回时刻"
+            },
+            "required": false,
+            "description": "提醒时刻 HH:mm（Asia/Shanghai，如 R03 / R05 的 08:00）；缺省 = 只回业务日期，不回时刻",
+            "name": "time",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/CalendarShiftMode"
+                },
+                {
+                  "description": "是否顺延：缺省 inherit（按日历配置）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "是否顺延：缺省 inherit（按日历配置）",
+            "name": "shift",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "T-N / T+N 结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarOffsetResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
