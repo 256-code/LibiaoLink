@@ -14,10 +14,12 @@ import {
   z,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
 import { RoleService } from "../identity/index.js";
+import { clampSortIndex } from "./task.order.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
 import {
   applyProgressWrite,
@@ -104,7 +106,7 @@ export class TaskService {
     const today = shanghaiToday(new Date());
     return {
       ...toTaskView(row.task, today),
-      ownerName: row.ownerName ?? "",
+      ownerName: row.ownerName ?? null,
       changeSummary: shortenChangeSummary(row.changeSummary),
       files: files.map((file) => ({
         id: file.id,
@@ -115,23 +117,28 @@ export class TaskService {
     };
   }
 
-  /** POST /projects/{id}/tasks：从任务节点生成（成员）或手工创建（仅管理员，A1-13）；按节点判重 409。 */
+  /**
+   * POST /projects/{id}/tasks：从任务节点生成（成员）或手工创建（仅管理员，A1-13）；按节点判重 409。
+   * w2 · Push 122：stageKey 可选（缺省 / null = 「未分组」；带节点时缺省取节点阶段）、ownerId 显式 null = 「待分配」、
+   * sortIndex = 插入位次（越界 / 缺省 = 组尾），组内其余任务位次顺延。
+   */
   async create(projectId: string, body: TaskCreateBody, actorId: string): Promise<Task> {
     const project = await this.loadProjectForWrite(projectId);
     const nodeId = body.taskNodeId ?? null;
-    const stageKey = body.stageKey as string;
+    let stageKey: string | null = body.stageKey ?? null;
     if (nodeId !== null) {
       const node = await this.repository.findProjectNode(projectId, nodeId);
       if (node === null || node.status === "deleted") {
         throw new AppError("VALIDATION_FAILED", "taskNodeId 不属于该项目或节点已删除");
       }
-      if (node.stageKey !== stageKey) {
+      if (stageKey !== null && node.stageKey !== stageKey) {
         throw new AppError("VALIDATION_FAILED", "stageKey 与来源节点所属阶段不一致（节点阶段：" + node.stageKey + "）");
       }
+      stageKey = node.stageKey;
     } else {
       await this.assertAdmin(actorId, "手工创建非标准任务");
     }
-    const ownerId = body.ownerId ?? project.managerId;
+    const ownerId = body.ownerId !== undefined ? body.ownerId : project.managerId;
     const at = new Date();
     const row = await this.database.db.transaction(async (tx) => {
       if (nodeId !== null) {
@@ -139,6 +146,11 @@ export class TaskService {
         if (existing !== null) {
           throw new AppError("TASK_ALREADY_EXISTS", "该项目已存在该节点生成的任务：" + existing);
         }
+      }
+      const groupSize = await this.repository.countGroup(projectId, stageKey, tx);
+      const sortIndex = clampSortIndex(body.sortIndex ?? groupSize, groupSize);
+      if (sortIndex < groupSize) {
+        await this.repository.shiftGroupIndexes(projectId, stageKey, sortIndex, null, 1, tx);
       }
       const created = await this.repository.insert(
         {
@@ -148,6 +160,7 @@ export class TaskService {
           title: body.title,
           titleEn: body.titleEn ?? null,
           ownerId,
+          sortIndex,
           plannedStart: body.plannedStart ?? null,
           plannedEnd: body.plannedEnd ?? null,
           estimatedDays: body.estimatedDays ?? null,
@@ -186,19 +199,29 @@ export class TaskService {
           { field: "title", from: null, to: created.title },
           { field: "ownerId", from: null, to: created.ownerId },
           { field: "plannedEnd", from: null, to: created.plannedEnd },
-        ],
+        ].filter((change) => change.to !== null),
       });
       return created;
     });
     return toTaskView(row, shanghaiToday(at));
   }
 
-  /** PATCH /projects/{id}/tasks/{taskId}：字段编辑 +（可选）基础三态写入联动（A12）；乐观锁 + 字段留痕。 */
+  /**
+   * PATCH /projects/{id}/tasks/{taskId}：字段编辑 +（可选）基础三态写入联动（A12）+ 组内重排（A19 / A20，Push 122）；
+   * 乐观锁 + 字段留痕。ownerId 显式 null = 「待分配」；sortIndex = 移到该组第 N 位（越界 = 组尾）。
+   */
   async update(projectId: string, taskId: string, body: TaskUpdateBody, actorId: string): Promise<Task> {
     await this.loadProjectForWrite(projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
+      if (body.sortIndex !== undefined) {
+        const brief = await this.repository.findTaskBrief(taskId, tx);
+        if (brief === null || brief.projectId !== projectId) {
+          throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
+        }
+        await this.repository.listGroupOrder(projectId, brief.stageKey, tx, true);
+      }
       const before = await this.repository.lockTask(tx, taskId);
       if (before === null || before.projectId !== projectId) {
         throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
@@ -206,12 +229,15 @@ export class TaskService {
       if (before.version !== body.version) {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
       }
+      const sortIndex =
+        body.sortIndex === undefined ? before.sortIndex : await this.moveWithinGroup(tx, projectId, before, body.sortIndex);
       const current = { status: before.status, progress: Number(before.progress), actualEnd: before.actualEnd };
       const linked = body.status === undefined ? null : applyStatusWrite(current, body.status, today);
       const patch: TaskUpdatePatch = {
-        ownerId: body.ownerId ?? before.ownerId,
+        ownerId: body.ownerId !== undefined ? body.ownerId : before.ownerId,
         status: linked === null ? before.status : linked.status,
         progress: String(linked === null ? current.progress : linked.progress),
+        sortIndex,
         plannedStart: body.plannedStart !== undefined ? body.plannedStart : before.plannedStart,
         plannedEnd: body.plannedEnd !== undefined ? body.plannedEnd : before.plannedEnd,
         actualEnd: linked === null ? before.actualEnd : linked.actualEnd,
@@ -317,6 +343,25 @@ export class TaskService {
     return toListItem(listRow, summaries.get(row.id) ?? EMPTY_FILE_SUMMARY, today);
   }
 
+  /**
+   * 组内重排（A19 / A20 · Push 122）：把任务移到该组第 N 位（越界 = 组尾），返回落定位次。
+   * 调用方必须已锁住该组（listGroupOrder lock=true）—— 只平移其余任务的位次，不逐个改版本 / updated_at。
+   */
+  private async moveWithinGroup(tx: DbClient, projectId: string, task: TaskRow, requested: number): Promise<number> {
+    const rows = await this.repository.listGroupOrder(projectId, task.stageKey, tx);
+    const currentIndex = rows.findIndex((row) => row.id === task.id);
+    const from = currentIndex >= 0 ? currentIndex : Number(task.sortIndex);
+    const target = clampSortIndex(requested, rows.length - 1);
+    if (target !== from) {
+      if (target < from) {
+        await this.repository.shiftGroupIndexes(projectId, task.stageKey, target, from - 1, 1, tx);
+      } else {
+        await this.repository.shiftGroupIndexes(projectId, task.stageKey, from + 1, target, -1, tx);
+      }
+    }
+    return target;
+  }
+
   /** 项目可见性：软删 / 不存在统一 404（记录级 404 语义随 h6 策略服务）。 */
   private async loadProjectOrFail(projectId: string): Promise<TaskProjectRow> {
     const project = await this.repository.findProject(projectId);
@@ -342,11 +387,12 @@ export class TaskService {
   }
 }
 
-/** 任务字段级留痕快照（C7-02：负责人 / 状态 / 进度 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */
+/** 任务字段级留痕快照（C7-02：负责人 / 状态 / 进度 / 组内位次 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */
 function taskAuditSnapshot(row: {
-  ownerId: string;
+  ownerId: string | null;
   status: string;
   progress: string | number;
+  sortIndex: number;
   plannedStart: string | null;
   plannedEnd: string | null;
   actualEnd: string | null;
@@ -359,6 +405,7 @@ function taskAuditSnapshot(row: {
     ownerId: row.ownerId,
     status: row.status,
     progress: Number(row.progress),
+    sortIndex: row.sortIndex,
     plannedStart: row.plannedStart,
     plannedEnd: row.plannedEnd,
     actualEnd: row.actualEnd,
@@ -382,6 +429,7 @@ function toTaskView(row: TaskRow, today: string): Task {
     id: row.id,
     projectId: row.projectId,
     stageKey: row.stageKey as Task["stageKey"],
+    sortIndex: row.sortIndex,
     nodeId: row.nodeId,
     title: row.title,
     titleEn: row.titleEn,
@@ -412,6 +460,7 @@ function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today:
     id: view.id,
     projectId: view.projectId,
     stageKey: view.stageKey,
+    sortIndex: view.sortIndex,
     nodeId: view.nodeId,
     title: view.title,
     titleEn: view.titleEn,
@@ -431,7 +480,7 @@ function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today:
     version: view.version,
     createdAt: view.createdAt,
     updatedAt: view.updatedAt,
-    ownerName: row.ownerName ?? "",
+    ownerName: row.ownerName ?? null,
     changeSummary: shortenChangeSummary(row.changeSummary),
     fileSummary,
   };

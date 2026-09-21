@@ -3083,7 +3083,23 @@
             "$ref": "#/components/schemas/Uuid"
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StageKey"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "所属阶段；null = 「未分组」（A15 · Push 122：临时任务允许没有阶段）"
+              }
+            ]
+          },
+          "sortIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "组内位次（A19 / A20 · Push 122）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它"
           },
           "nodeId": {
             "allOf": [
@@ -3108,7 +3124,18 @@
             ]
           },
           "ownerId": {
-            "$ref": "#/components/schemas/Uuid"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "任务负责人；null = 「待分配」（A18 · Push 122：负责人为空是合法中间状态）"
+              }
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/TaskBaseStatus"
@@ -3221,6 +3248,7 @@
           "id",
           "projectId",
           "stageKey",
+          "sortIndex",
           "nodeId",
           "title",
           "titleEn",
@@ -3242,7 +3270,7 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）"
+        "description": "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 122）"
       },
       "TaskBaseStatus": {
         "type": "string",
@@ -3257,7 +3285,28 @@
         "type": "object",
         "properties": {
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "presale",
+              "design",
+              "purchase",
+              "assembly",
+              "install",
+              "deploy",
+              "trial",
+              "production",
+              "acceptance",
+              null
+            ],
+            "description": "所属阶段（A15 · Push 122：可选）—— 缺省 / null = 「未分组」（看板「＋ 添加 → 临时任务」）；带 taskNodeId 时缺省取来源节点所属阶段，显式给出且与节点不一致返回 400"
+          },
+          "sortIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "插入位次（A20 · Push 122）：「插入位置」用 —— 0 起（0 = 组内最前）；越界 / 缺省 = 追加到组尾；同组其余任务顺延"
           },
           "title": {
             "type": "string",
@@ -3284,14 +3333,12 @@
             ]
           },
           "ownerId": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "description": "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底"
-              }
-            ]
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 122：不兜底项目经理）"
           },
           "plannedStart": {
             "allOf": [
@@ -3350,7 +3397,6 @@
           }
         },
         "required": [
-          "stageKey",
           "title"
         ],
         "description": "创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径）"
@@ -3432,7 +3478,10 @@
             "type": "object",
             "properties": {
               "ownerName": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "changeSummary": {
                 "type": [
@@ -3524,7 +3573,23 @@
             "$ref": "#/components/schemas/Uuid"
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StageKey"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "所属阶段；null = 「未分组」（A15 · Push 122：临时任务允许没有阶段）"
+              }
+            ]
+          },
+          "sortIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "组内位次（A19 / A20 · Push 122）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它"
           },
           "nodeId": {
             "allOf": [
@@ -3549,7 +3614,18 @@
             ]
           },
           "ownerId": {
-            "$ref": "#/components/schemas/Uuid"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "任务负责人；null = 「待分配」（A18 · Push 122：负责人为空是合法中间状态）"
+              }
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/TaskBaseStatus"
@@ -3645,8 +3721,11 @@
             "$ref": "#/components/schemas/DateTime"
           },
           "ownerName": {
-            "type": "string",
-            "description": "负责人姓名（users.display_name 随行下发）"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "负责人姓名（users.display_name 随行下发）；「待分配」= null"
           },
           "changeSummary": {
             "type": [
@@ -3663,6 +3742,7 @@
           "id",
           "projectId",
           "stageKey",
+          "sortIndex",
           "nodeId",
           "title",
           "titleEn",
@@ -4018,7 +4098,17 @@
         "type": "object",
         "properties": {
           "ownerId": {
-            "$ref": "#/components/schemas/Uuid"
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "任务负责人（A18 · Push 122）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）"
+          },
+          "sortIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "组内位次（A19 / A20 · Push 122）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序"
           },
           "status": {
             "allOf": [
@@ -4089,7 +4179,7 @@
         "required": [
           "version"
         ],
-        "description": "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress）"
+        "description": "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerId 显式 null = 待分配，sortIndex = 组内重排）"
       },
       "UploadAbortResponse": {
         "type": "object",

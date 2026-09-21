@@ -14,8 +14,8 @@ export class TaskStatsService {
     return this.repository.countStageTasks(client, projectId, stageKey);
   }
 
-  /** 全项目任务按阶段 / 状态的计数（调用方按阶段聚合）。 */
-  async stageTaskCounts(client: DbClient, projectId: string): Promise<{ stageKey: string; status: string; value: number }[]> {
+  /** 全项目任务按阶段 / 状态的计数（调用方按阶段聚合；stage_key 可空，A15：未分组任务自成一组）。 */
+  async stageTaskCounts(client: DbClient, projectId: string): Promise<{ stageKey: string | null; status: string; value: number }[]> {
     return this.repository.taskCountsByStage(client, projectId);
   }
 }

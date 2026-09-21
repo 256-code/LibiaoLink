@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { STAGE_KEYS } from "@libiaolink/contracts";
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -47,11 +47,15 @@ export interface TaskProjectNodeRow {
 
 export interface TaskInsertInput {
   projectId: string;
-  stageKey: string;
+  /** null = 「未分组」（A15 · Push 122）。 */
+  stageKey: string | null;
   nodeId: string | null;
   title: string;
   titleEn: string | null;
-  ownerId: string;
+  /** null = 「待分配」（A18 · Push 122）。 */
+  ownerId: string | null;
+  /** 组内位次（A19 / A20：插入位置由 service 计算，本层落列）。 */
+  sortIndex: number;
   plannedStart: string | null;
   plannedEnd: string | null;
   estimatedDays: number | null;
@@ -62,9 +66,10 @@ export interface TaskInsertInput {
 }
 
 export interface TaskUpdatePatch {
-  ownerId?: string;
+  ownerId?: string | null;
   status?: string;
   progress?: string;
+  sortIndex?: number;
   plannedStart?: string | null;
   plannedEnd?: string | null;
   actualEnd?: string | null;
@@ -72,6 +77,19 @@ export interface TaskUpdatePatch {
   headcount?: number | null;
   priority?: string | null;
   note?: string | null;
+}
+
+export interface TaskOrderRow {
+  id: string;
+  sortIndex: number;
+}
+
+/** 任务精简读（无锁）：重排前取所属阶段 —— 组行锁（listGroupOrder lock=true）要早于任务行锁。 */
+export interface TaskOrderBrief {
+  id: string;
+  projectId: string;
+  stageKey: string | null;
+  sortIndex: number;
 }
 
 export interface TaskEventInput {
@@ -90,7 +108,7 @@ const SORT_COLUMNS = {
   createdAt: tasks.createdAt,
 } as const;
 
-/** 默认排序：阶段序（STAGE_KEYS 契约顺序）→ 组内 plannedStart ASC NULLS LAST → created_at → id（A8，稳定分页）。 */
+/** 默认排序（A19 / A20 · Push 122）：阶段序（STAGE_KEYS 契约顺序，「未分组」落在最后）→ 组内位次 sort_index → id（稳定分页）。 */
 const STAGE_ORDER = sql`case ${tasks.stageKey} ${sql.join(
   STAGE_KEYS.map((key, index) => sql`when ${key} then ${index}`),
   sql` `,
@@ -203,6 +221,60 @@ export class TaskRepository {
     return rows[0]?.id ?? null;
   }
 
+  /** 任务精简读（无锁；只取重排需要的字段）。 */
+  async findTaskBrief(taskId: string, client: DbClient = this.database.db): Promise<TaskOrderBrief | null> {
+    const rows = await client
+      .select({ id: tasks.id, projectId: tasks.projectId, stageKey: tasks.stageKey, sortIndex: tasks.sortIndex })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 组内任务数（插入位次夹取用）：同一项目 + 同一阶段（null = 未分组）。 */
+  async countGroup(projectId: string, stageKey: string | null, client: DbClient = this.database.db): Promise<number> {
+    const rows = await client
+      .select({ value: count() })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), groupCondition(stageKey)));
+    return Number(rows[0]?.value ?? 0);
+  }
+
+  /**
+   * 组内顺序（读）：同一项目 + 同一阶段的全部位次（按位次 + id 稳定排序）。
+   * lock=true：同一语句内 for update 加行锁（重排事务先锁组、后锁任务行，避免并发移动互相等待）。
+   */
+  async listGroupOrder(
+    projectId: string,
+    stageKey: string | null,
+    client: DbClient = this.database.db,
+    lock = false,
+  ): Promise<TaskOrderRow[]> {
+    const base = client
+      .select({ id: tasks.id, sortIndex: tasks.sortIndex })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), groupCondition(stageKey)))
+      .orderBy(asc(tasks.sortIndex), asc(tasks.id));
+    return lock ? base.for("update") : base;
+  }
+
+  /** 组内位次平移（插入 / 移动用）：位次落在 [from, to]（to = null 无上界）的任务整体 +delta；只写位次，不动 updated_at / version。 */
+  async shiftGroupIndexes(
+    projectId: string,
+    stageKey: string | null,
+    from: number,
+    to: number | null,
+    delta: number,
+    client: DbClient,
+  ): Promise<void> {
+    const conditions: SQL[] = [eq(tasks.projectId, projectId), groupCondition(stageKey), gte(tasks.sortIndex, from)];
+    if (to !== null) conditions.push(lte(tasks.sortIndex, to));
+    await client
+      .update(tasks)
+      .set({ sortIndex: sql`${tasks.sortIndex} + ${delta}` })
+      .where(and(...conditions));
+  }
+
   async lockTask(client: DbClient, taskId: string): Promise<TaskRow | null> {
     const rows = await client.select().from(tasks).where(eq(tasks.id, taskId)).for("update");
     return rows[0] ?? null;
@@ -218,6 +290,7 @@ export class TaskRepository {
         title: input.title,
         titleEn: input.titleEn,
         ownerId: input.ownerId,
+        sortIndex: input.sortIndex,
         status: "pending",
         progress: "0",
         plannedStart: input.plannedStart,
@@ -310,7 +383,7 @@ export class TaskRepository {
   async taskCountsByStage(
     client: DbClient,
     projectId: string,
-  ): Promise<{ stageKey: string; status: string; value: number }[]> {
+  ): Promise<{ stageKey: string | null; status: string; value: number }[]> {
     const rows = await client
       .select({ stageKey: tasks.stageKey, status: tasks.status, value: count() })
       .from(tasks)
@@ -335,6 +408,11 @@ function taskConditions(projectId: string, filter: TaskListFilter, today: string
   return conditions;
 }
 
+/** 组条件：stage_key 为 null 时用 is null（SQL 的 = null 恒不成立）——「未分组」自成一组（A15 · Push 122）。 */
+function groupCondition(stageKey: string | null): SQL {
+  return stageKey === null ? (isNull(tasks.stageKey) as SQL) : (eq(tasks.stageKey, stageKey) as SQL);
+}
+
 /** 展示态筛选下推（与 task.rules 的读时派生同口径；overdue / early_done 由存储态 + 日期判定）。 */
 function displayStatusCondition(status: string, today: string): SQL {
   switch (status) {
@@ -354,10 +432,10 @@ function displayStatusCondition(status: string, today: string): SQL {
   }
 }
 
-/** 排序：显式 sort 走白名单列；缺省 = 阶段序 + 组内 plannedStart ASC NULLS LAST, created_at ASC, id ASC（A8）。 */
+/** 排序：显式 sort 走白名单列；缺省 = 阶段序 + 组内位次 + id（A8 / A19 / A20 · Push 122，与看板列内顺序同口径）。 */
 function taskOrderBy(sorts: readonly TaskSort[]): SQL[] {
   if (sorts.length === 0) {
-    return [sql`${STAGE_ORDER} asc`, asc(tasks.plannedStart), asc(tasks.createdAt), asc(tasks.id)];
+    return [sql`${STAGE_ORDER} asc`, asc(tasks.sortIndex), asc(tasks.id)];
   }
   return sorts.map((item) =>
     item.direction === "desc" ? desc(SORT_COLUMNS[item.field]) : asc(SORT_COLUMNS[item.field]),

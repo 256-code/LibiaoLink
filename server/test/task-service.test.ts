@@ -34,6 +34,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     ownerId: MANAGER,
     status: "pending",
     progress: "0",
+    sortIndex: 0,
     plannedStart: null,
     plannedEnd: null,
     actualEnd: null,
@@ -88,8 +89,12 @@ class FakeTaskRepository {
   async lockTask(): Promise<TaskRow | null> {
     return this.task;
   }
+  group: { id: string; sortIndex: number }[] = [];
+  groupSize = 0;
+  shifted: { from: number; to: number | null; delta: number }[] = [];
+
   async insert(input: TaskInsertInput): Promise<TaskRow> {
-    const row = makeRow({ id: TASK, status: "pending", progress: "0", version: 0, title: input.title, stageKey: input.stageKey, nodeId: input.nodeId, ownerId: input.ownerId });
+    const row = makeRow({ id: TASK, status: "pending", progress: "0", version: 0, title: input.title, stageKey: input.stageKey, nodeId: input.nodeId, ownerId: input.ownerId, sortIndex: input.sortIndex });
     this.inserted = row;
     return row;
   }
@@ -98,9 +103,10 @@ class FakeTaskRepository {
     if (current === null || current.version !== expectedVersion) return null;
     const next: TaskRow = {
       ...current,
-      ownerId: patch.ownerId ?? current.ownerId,
+      ownerId: patch.ownerId !== undefined ? patch.ownerId : current.ownerId,
       status: patch.status ?? current.status,
       progress: patch.progress ?? current.progress,
+      sortIndex: patch.sortIndex !== undefined ? patch.sortIndex : current.sortIndex,
       plannedStart: patch.plannedStart !== undefined ? patch.plannedStart : current.plannedStart,
       plannedEnd: patch.plannedEnd !== undefined ? patch.plannedEnd : current.plannedEnd,
       actualEnd: patch.actualEnd !== undefined ? patch.actualEnd : current.actualEnd,
@@ -122,6 +128,29 @@ class FakeTaskRepository {
   }
   async countStageTasks(): Promise<{ total: number; done: number }> {
     return { total: 0, done: 0 };
+  }
+  async findTaskBrief(): Promise<{ id: string; projectId: string; stageKey: string | null; sortIndex: number } | null> {
+    return this.task === null
+      ? null
+      : { id: this.task.id, projectId: this.task.projectId, stageKey: this.task.stageKey, sortIndex: this.task.sortIndex };
+  }
+  async countGroup(): Promise<number> {
+    return this.groupSize;
+  }
+  async listGroupOrder(): Promise<{ id: string; sortIndex: number }[]> {
+    return this.group;
+  }
+  async shiftGroupIndexes(
+    _projectId: string,
+    _stageKey: string | null,
+    from: number,
+    to: number | null,
+    delta: number,
+  ): Promise<void> {
+    this.shifted.push({ from, to, delta });
+    for (const row of this.group) {
+      if (row.sortIndex >= from && (to === null || row.sortIndex <= to)) row.sortIndex += delta;
+    }
   }
   async taskCountsByStage(): Promise<never[]> {
     return [];
@@ -305,6 +334,73 @@ describe("TaskService.updateProgress（A13 清除完成日期的唯一方式）"
     expect(updated.status).toBe("done");
     expect(updated.actualEnd).toBe("2026-09-15");
     expect(updated.displayStatus).toBe("early_done");
+  });
+});
+
+describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 122）", () => {
+  it("临时任务：stageKey 缺省 = 「未分组」、ownerId 显式 null = 「待分配」（不兜底项目经理）", async () => {
+    const repo = new FakeTaskRepository();
+    const roles = new FakeRoleService();
+    roles.roleCodes = ["admin"];
+    const service = makeService(repo, roles);
+    const created = await service.create(PROJECT, { title: "临时任务", ownerId: null }, ACTOR);
+    expect(created.stageKey).toBeNull();
+    expect(created.ownerId).toBeNull();
+  });
+
+  it("带节点创建：stageKey 缺省取来源节点阶段；sortIndex 缺省 = 组尾（不平移）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.groupSize = 3;
+    const service = makeService(repo);
+    const created = await service.create(PROJECT, { title: "货架组装", taskNodeId: NODE }, ACTOR);
+    expect(created.stageKey).toBe("install");
+    expect(created.sortIndex).toBe(3);
+    expect(repo.shifted).toEqual([]);
+  });
+
+  it("插入位置：sortIndex=0 → 同组其余任务位次顺延（+1），新任务落 0 位", async () => {
+    const repo = new FakeTaskRepository();
+    repo.groupSize = 3;
+    const roles = new FakeRoleService();
+    roles.roleCodes = ["admin"];
+    const service = makeService(repo, roles);
+    const created = await service.create(PROJECT, { title: "临时任务", sortIndex: 0 }, ACTOR);
+    expect(created.sortIndex).toBe(0);
+    expect(repo.shifted).toEqual([{ from: 0, to: null, delta: 1 }]);
+  });
+
+  it("负责人显式置空：PATCH ownerId=null → 待分配（不保留原值）", async () => {
+    const repo = new FakeTaskRepository();
+    const service = makeService(repo);
+    const updated = await service.update(PROJECT, TASK, { ownerId: null, version: 3 }, ACTOR);
+    expect(updated.ownerId).toBeNull();
+  });
+
+  it("拖动排序：移到组首 → 同组其余顺延；越界 = 组尾", async () => {
+    const repo = new FakeTaskRepository();
+    const other1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const other2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    repo.task = makeRow({ sortIndex: 1 });
+    repo.group = [
+      { id: other1, sortIndex: 0 },
+      { id: TASK, sortIndex: 1 },
+      { id: other2, sortIndex: 2 },
+    ];
+    const service = makeService(repo);
+    const moved = await service.update(PROJECT, TASK, { sortIndex: 0, version: 3 }, ACTOR);
+    expect(moved.sortIndex).toBe(0);
+    expect(repo.shifted).toEqual([{ from: 0, to: 0, delta: 1 }]);
+
+    repo.task = makeRow({ sortIndex: 0 });
+    repo.shifted = [];
+    repo.group = [
+      { id: TASK, sortIndex: 0 },
+      { id: other1, sortIndex: 1 },
+      { id: other2, sortIndex: 2 },
+    ];
+    const toEnd = await service.update(PROJECT, TASK, { sortIndex: 99, version: 3 }, ACTOR);
+    expect(toEnd.sortIndex).toBe(2);
+    expect(repo.shifted).toEqual([{ from: 1, to: 2, delta: -1 }]);
   });
 });
 
