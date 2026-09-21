@@ -115,7 +115,10 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
 /**
  * 「默认顺序添加」复选框（Push 114，业务口径「影响正常情况下添加任务了 所以默认是顺序添加 要改的话手动改」）：
  * 勾上（默认）= 点「＋ 添加」直接按顺序加到该阶段末尾；取消勾选 = 点「＋ 添加」后先选插入位置。
- * 视觉照业务给的样例（方框 + 勾线的 SVG：勾上时方框开一个缺口、勾线画出来）—— 复用 Tailwind，不引 styled-components。
+ * 视觉照业务给的样例（方框 + 勾线的 SVG：勾上时方框在右上角开一个缺口、勾线画出来；未勾选 = 一个完整的圆角方框，没有多余的点）
+ * —— 复用 Tailwind，不引 styled-components。**Push 117**（业务反馈「你做的效果不对啊」）：① 把样例里写死的两个 `stroke-dashoffset` 补上，缺了它们
+ * 未勾选会多出一个小圆点、勾上时缺口也不会落在右上角；② 去掉键盘焦点圈（原来 `peer-focus-visible:ring-2 ring-[#feca04]/70`）
+ * —— 样例里没有它，而且它盖在 16px 的勾选框上就是一圈很扎眼的黄框（业务截图里的黄框就是它）；键盘用户仍可用 Tab 聚焦、空格切换。
  */
 function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
   return (
@@ -140,8 +143,14 @@ function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
-        className={"h-4 w-4 shrink-0 transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[#feca04]/70 " + (checked ? "text-zinc-900" : "text-zinc-400")}
+        className={"h-4 w-4 shrink-0 transition-colors " + (checked ? "text-zinc-900" : "text-zinc-400")}
       >
+        {/*
+          两边都要带 `stroke-dashoffset`（Push 117 修的就是这个，样例里也是写死的）：方框的虚线图案整体前移 73 个单位
+          （方框周长约 75.4），勾上时 `80 18` 里那 18 个单位的缺口才会正好落在**右上角** —— 也就是勾线尾巴穿出去的位置；
+          少了它缺口会被推到路径末尾（等于不画），方框看起来就是闭合的。
+          勾线同理：未勾选时 `0 30` 会在路径起点留一个圆点（0 长虚线 + 圆头），`dashoffset 1` 把这个点推到路径起点之前，等于不画。
+        */}
         <rect
           x="1.5"
           y="1.5"
@@ -150,12 +159,12 @@ function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (
           rx="5"
           ry="5"
           strokeWidth="3"
-          className={"transition-[stroke-dasharray] duration-100 " + (checked ? "[stroke-dasharray:80_18]" : "[stroke-dasharray:88_0]")}
+          className={"transition-[stroke-dasharray] duration-100 [stroke-dashoffset:73] " + (checked ? "[stroke-dasharray:80_18]" : "[stroke-dasharray:88_0]")}
         />
         <polyline
           points="7 10 12 16 22 2"
           strokeWidth="4"
-          className={"transition-[stroke-dasharray] duration-150 " + (checked ? "[stroke-dasharray:30_30]" : "[stroke-dasharray:0_30]")}
+          className={"transition-[stroke-dasharray] duration-150 [stroke-dashoffset:1] " + (checked ? "[stroke-dasharray:30_30]" : "[stroke-dasharray:0_30]")}
         />
       </svg>
       <span>默认顺序添加</span>
