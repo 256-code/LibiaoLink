@@ -4268,6 +4268,16 @@
                 "enum": [
                   "version"
                 ]
+              },
+              "fileId": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "description": "目标文件（可选）：省略 = 新建文件；给出 = 对既有未定档（draft）文件替换 / 追加新版本（系统功能书 A2-10「未定档文件可直接替换」）。目标非 draft → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；给出时名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空"
+                  }
+                ]
               }
             },
             "required": [
@@ -4315,6 +4325,16 @@
                   "change"
                 ]
               },
+              "fileId": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "description": "变更目标文件（必填，A4-13）：须为已定档（final / changed）状态；非该状态 → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空"
+                  }
+                ]
+              },
               "change": {
                 "$ref": "#/components/schemas/ChangeIntentBody"
               }
@@ -4324,11 +4344,12 @@
               "name",
               "sizeBytes",
               "intent",
+              "fileId",
               "change"
             ]
           }
         ],
-        "description": "发起上传（分片直传；返回预签名分片 URL 的获取入口）"
+        "description": "发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效）"
       },
       "UploadCreateResponse": {
         "type": "object",
