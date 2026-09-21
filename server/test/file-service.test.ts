@@ -12,6 +12,7 @@ import type {
   FileNodeBriefRow,
   FileProjectBriefRow,
   FileRow,
+  FileStatePatch,
   FileTaskBriefRow,
   FileVersionInsertInput,
   FileVersionRow,
@@ -45,6 +46,9 @@ const NODE = "33333333-3333-4333-8333-333333333333";
 const TASK = "44444444-4444-4444-8444-444444444444";
 const SESSION = "55555555-5555-4555-8555-555555555555";
 const VERSION = "66666666-6666-4666-8666-666666666666";
+const VERSION_A = "66666666-6666-4666-8666-66666666666a";
+const VERSION_B = "66666666-6666-4666-8666-66666666666b";
+const VERSION_C = "66666666-6666-4666-8666-66666666666c";
 const ACTOR = "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69";
 const OTHER_ACTOR = "caa8d763-4b6a-4967-9b26-7d1086272c9c";
 const HASH = "a".repeat(64);
@@ -53,9 +57,12 @@ const NOW = new Date("2026-09-21T08:00:00Z");
 const MI_B = 1024 * 1024;
 const STAGING_KEY = `projects/${PROJECT}/files/${FILE}/staging/${SESSION}`;
 const CONTRACT_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`;
+const CONTRACT_KEY_V2 = `projects/${PROJECT}/files/${FILE}/v2/${OTHER_HASH}.pdf`;
+const CONTRACT_KEY_V3 = `projects/${PROJECT}/files/${FILE}/v3/${HASH}.pdf`;
 const ENV = {
   UPLOAD_MAX_SIZE_MB: 2048,
   UPLOAD_SESSION_TTL_HOURS: 24,
+  FILE_RECYCLE_RETENTION_DAYS: 30,
 } as unknown as Env;
 
 function makeFileRow(overrides: Partial<FileRow> = {}): FileRow {
@@ -205,7 +212,7 @@ class FakeFileRepository {
   }
 
   async findFileById(fileId: string): Promise<FileRow | null> {
-    return this.file !== null && this.file.id === fileId ? this.file : null;
+    return this.findFile(fileId);
   }
 
   async findSessionById(sessionId: string): Promise<UploadSessionRow | null> {
@@ -237,8 +244,8 @@ class FakeFileRepository {
     return next;
   }
 
-  async lockFile(): Promise<FileRow | null> {
-    return this.file;
+  async lockFile(_tx: unknown, fileId: string): Promise<FileRow | null> {
+    return this.findFile(fileId);
   }
 
   async updateFileOnComplete(fileId: string, patch: FileCompletePatch): Promise<FileRow> {
@@ -254,7 +261,8 @@ class FakeFileRepository {
 
   async insertVersion(input: FileVersionInsertInput): Promise<FileVersionRow> {
     this.insertedVersions.push(input);
-    return makeVersionRow({
+    const row = makeVersionRow({
+      id: this.nextVersionId ?? VERSION,
       fileId: input.fileId,
       seq: input.seq,
       objectKey: input.objectKey,
@@ -264,10 +272,66 @@ class FakeFileRepository {
       uploadedBy: input.uploadedBy,
       uploadedAt: input.uploadedAt,
     });
+    this.versions.push(row);
+    return row;
   }
 
   async listExpiredActiveSessions(): Promise<(UploadSessionRow & { projectId: string })[]> {
     return this.expiredRows;
+  }
+
+  // ---------- M4-02：版本 / 定档 / 回溯 / 回收站 ----------
+
+  /** 版本链（含 complete / rollback 新插入的版本）。 */
+  versions: FileVersionRow[] = [];
+  /** 下一次 insertVersion 的返回 id（默认 VERSION；多版本场景由用例指定）。 */
+  nextVersionId: string | null = null;
+  /** 回收站到期清理入口（worker 批量）。 */
+  expiredRecycledRows: FileRow[] = [];
+  /** 记录状态流转 patch（定档 / 回溯 / 回收 / 恢复 / 彻底删除）。 */
+  filePatches: { id: string; patch: FileStatePatch }[] = [];
+  /** 记录彻底删除的文件（purge / 到期清理）。 */
+  deletedFiles: string[] = [];
+  /** 多文件场景（回收站批量清理）：`file` 为主，`otherFiles` 为补充。 */
+  otherFiles: FileRow[] = [];
+
+  private findFile(fileId: string): FileRow | null {
+    if (this.file !== null && this.file.id === fileId) return this.file;
+    return this.otherFiles.find((row) => row.id === fileId) ?? null;
+  }
+
+  async findVersionById(fileId: string, versionId: string): Promise<FileVersionRow | null> {
+    return this.versions.find((row) => row.fileId === fileId && row.id === versionId) ?? null;
+  }
+
+  async listVersions(fileId: string): Promise<FileVersionRow[]> {
+    return this.versions.filter((row) => row.fileId === fileId).sort((left, right) => left.seq - right.seq);
+  }
+
+  async updateFileState(fileId: string, patch: FileStatePatch): Promise<FileRow> {
+    this.filePatches.push({ id: fileId, patch });
+    const target = this.findFile(fileId);
+    if (target === null) throw new Error("fake: 文件不存在");
+    const next = { ...target, ...patch } as FileRow;
+    if (this.file !== null && this.file.id === fileId) this.file = next;
+    else this.otherFiles = this.otherFiles.map((row) => (row.id === fileId ? next : row));
+    return next;
+  }
+
+  async listExpiredRecycledFiles(): Promise<FileRow[]> {
+    return this.expiredRecycledRows;
+  }
+
+  async deleteVersionsByFile(fileId: string): Promise<number> {
+    const before = this.versions.length;
+    this.versions = this.versions.filter((row) => row.fileId !== fileId);
+    return before - this.versions.length;
+  }
+
+  async deleteFile(fileId: string): Promise<void> {
+    this.deletedFiles.push(fileId);
+    if (this.file !== null && this.file.id === fileId) this.file = null;
+    this.otherFiles = this.otherFiles.filter((row) => row.id !== fileId);
   }
 }
 
@@ -336,6 +400,8 @@ class FakeObjectStorage extends ObjectStorage {
 class FakePermissionService {
   visible = true;
   canUpload = true;
+  /** 彻底删除（purge）仅系统管理员：默认非管理员，用例按需提到 admin。 */
+  roleCodes: string[] = ["project_member"];
 
   async assertProjectVisible(_actorId: string, projectId: string): Promise<{ projectId: string; member: boolean; projectManager: boolean }> {
     if (!this.visible) throw new Error("fake: 项目不可见");
@@ -344,6 +410,10 @@ class FakePermissionService {
 
   async assertCan(): Promise<void> {
     if (!this.canUpload) throw new Error("fake: 无权限");
+  }
+
+  async permissionsOf(actorId: string): Promise<{ userId: string; roleCodes: string[]; dataScopes: unknown[]; permissionKeys: string[] }> {
+    return { userId: actorId, roleCodes: this.roleCodes, dataScopes: [], permissionKeys: [] };
   }
 }
 
@@ -476,19 +546,58 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     expect(h.repo.insertedSessions).toHaveLength(0);
   });
 
-  it("intent=version + fileId → 400（显式守卫：不静默新建文件；目标文件路径随 M4-02 落地）", async () => {
+  it("intent=version + fileId（目标 draft）→ 追加版本：复用文件行（不新建）+ 审计 update + 秒传提示恒空", async () => {
     const h = makeService();
-    await expect(
-      h.service.createUpload(
-        { projectId: PROJECT, name: "追加版本.pdf", sizeBytes: MI_B, intent: "version", fileId: OTHER_FILE },
-        ACTOR,
-      ),
-    ).rejects.toMatchObject({
-      code: "VALIDATION_FAILED",
-      httpStatus: 400,
-      details: [{ code: "file_id_not_supported", path: "fileId" }],
-    });
+    h.repo.file = makeFileRow({ status: "draft", version: 2, currentVersionId: VERSION });
+    h.repo.duplicate = { fileId: OTHER_FILE, name: "旧版本.pdf", sizeBytes: MI_B, uploadedBy: OTHER_ACTOR, uploadedAt: NOW };
+    const result = await h.service.createUpload(
+      { projectId: PROJECT, name: "机械设计图纸.pdf", sizeBytes: MI_B, contentHash: HASH, intent: "version", fileId: FILE },
+      ACTOR,
+    );
+
+    expect(result.file.id).toBe(FILE);
+    expect(result.duplicateHint).toBeNull();
+    expect(h.repo.duplicateQueries).toHaveLength(0);
     expect(h.repo.insertedFiles).toHaveLength(0);
+    expect(h.repo.insertedSessions).toHaveLength(1);
+    expect(h.repo.insertedSessions[0]!.fileId).toBe(FILE);
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "update",
+      objectType: "file",
+      objectId: FILE,
+      metadata: { targetFileId: FILE },
+    });
+  });
+
+  it("intent=version + fileId 反例：目标非 draft 409 / 跨项目与名称不一致 400 / 不存在 404", async () => {
+    const h = makeService();
+    const append = (overrides: Record<string, unknown> = {}) =>
+      h.service.createUpload(
+        { projectId: PROJECT, name: "机械设计图纸.pdf", sizeBytes: MI_B, intent: "version", fileId: FILE, ...overrides },
+        ACTOR,
+      );
+
+    h.repo.file = makeFileRow({ status: "final" });
+    await expect(append()).rejects.toMatchObject({ code: "FILE_STATE_INVALID", httpStatus: 409 });
+
+    h.repo.file = makeFileRow({ status: "draft", projectId: OTHER_PROJECT });
+    await expect(append()).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: [{ code: "invalid_file", path: "fileId" }],
+    });
+
+    h.repo.file = makeFileRow({ status: "draft" });
+    await expect(append({ name: "改名.pdf" })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: [{ code: "name_mismatch", path: "name" }],
+    });
+    await expect(append({ docType: "合同" })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: [{ code: "doc_type_mismatch", path: "docType" }],
+    });
+
+    h.repo.file = null;
+    await expect(append()).rejects.toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
     expect(h.repo.insertedSessions).toHaveLength(0);
   });
 
@@ -884,5 +993,430 @@ describe("FileService.sweepExpiredSessions（worker 定时清理）", () => {
     const result = await h.service.sweepExpiredSessions();
     expect(result.scanned).toBe(2);
     expect(result.expired).toBe(1);
+  });
+});
+
+describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
+  function recycledHarness(): Harness {
+    const h = makeService();
+    h.repo.file = makeFileRow({
+      status: "recycled",
+      version: 7,
+      currentVersionId: VERSION_B,
+      recycledAt: NOW,
+      recycledBy: ACTOR,
+      recycledFromStatus: "draft",
+      purgeAfter: new Date(NOW.getTime() + 86_400_000),
+    });
+    h.repo.versions = [
+      makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH }),
+      makeVersionRow({ id: VERSION_B, seq: 2, objectKey: CONTRACT_KEY_V2, contentHash: OTHER_HASH }),
+    ];
+    return h;
+  }
+
+  it("非管理员 → 403 FORBIDDEN（对象与元数据都不动）", async () => {
+    const h = recycledHarness();
+    await expect(h.service.purgeFile(FILE, { version: 7 }, ACTOR)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      httpStatus: 403,
+    });
+    expect(h.storage.purged).toHaveLength(0);
+    expect(h.repo.deletedFiles).toHaveLength(0);
+  });
+
+  it("管理员 + 回收站文件：按版本清对象 + 清 current_version_id + 删版本与文件行 + 留痕", async () => {
+    const h = recycledHarness();
+    h.permission.roleCodes = ["admin"];
+    const result = await h.service.purgeFile(FILE, { version: 7, reason: "合规要求" }, ACTOR);
+
+    expect(result).toEqual({ fileId: FILE, purgedAt: NOW.toISOString() });
+    expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2]);
+    expect(h.repo.filePatches.at(-1)!.patch).toEqual({ currentVersionId: null });
+    expect(h.repo.deletedFiles).toEqual([FILE]);
+    expect(h.repo.versions).toHaveLength(0);
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      actorId: ACTOR,
+      action: "delete",
+      objectType: "file",
+      objectId: FILE,
+      metadata: { source: "api", deletedVersions: 2, reason: "合规要求" },
+    });
+  });
+
+  it("非回收站 → 409 FILE_STATE_INVALID；乐观锁不匹配 → 409（不清对象）", async () => {
+    const h = recycledHarness();
+    h.permission.roleCodes = ["admin"];
+    h.repo.file = makeFileRow({ status: "final", version: 2 });
+    await expect(h.service.purgeFile(FILE, { version: 2 }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_STATE_INVALID",
+      httpStatus: 409,
+    });
+
+    const h2 = recycledHarness();
+    h2.permission.roleCodes = ["admin"];
+    await expect(h2.service.purgeFile(FILE, { version: 6 }, ACTOR)).rejects.toMatchObject({
+      code: "VERSION_CONFLICT",
+      httpStatus: 409,
+    });
+    expect(h2.storage.purged).toHaveLength(0);
+    expect(h2.repo.deletedFiles).toHaveLength(0);
+  });
+
+  it("对象清理失败 → 映射契约错误且元数据不删（重试收敛）", async () => {
+    const h = recycledHarness();
+    h.permission.roleCodes = ["admin"];
+    h.storage.purgeObject = async () => {
+      throw new StorageError("unavailable", "S3 不可用");
+    };
+    await expect(h.service.purgeFile(FILE, { version: 7 }, ACTOR)).rejects.toMatchObject({
+      code: "INTERNAL",
+      httpStatus: 500,
+    });
+    expect(h.repo.deletedFiles).toHaveLength(0);
+    expect(h.repo.versions).toHaveLength(2);
+  });
+});
+
+describe("FileService.sweepExpiredRecycled（回收站到期清理 · worker）", () => {
+  const FILE_B = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const VERSION_B1 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const KEY_B = `projects/${PROJECT}/files/${FILE_B}/v1/${HASH}.pdf`;
+
+  function recycledRow(overrides: Partial<FileRow> = {}): FileRow {
+    return makeFileRow({
+      status: "recycled",
+      version: 2,
+      recycledAt: new Date(NOW.getTime() - 31 * 86_400_000),
+      recycledBy: ACTOR,
+      recycledFromStatus: "draft",
+      purgeAfter: new Date(NOW.getTime() - 86_400_000),
+      ...overrides,
+    });
+  }
+
+  it("批量彻底删除到期文件：对象按版本清 + 元数据删 + system 留痕（actorId = null）", async () => {
+    const h = makeService();
+    const rowA = recycledRow();
+    const rowB = recycledRow({ id: FILE_B });
+    h.repo.file = rowA;
+    h.repo.otherFiles = [rowB];
+    h.repo.versions = [
+      makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH }),
+      makeVersionRow({ id: VERSION_B1, fileId: FILE_B, seq: 1, objectKey: KEY_B, contentHash: HASH }),
+    ];
+    h.repo.expiredRecycledRows = [rowA, rowB];
+
+    const result = await h.service.sweepExpiredRecycled();
+    expect(result).toEqual({ scanned: 2, purged: 2 });
+    expect(h.storage.purged).toEqual([CONTRACT_KEY, KEY_B]);
+    expect(h.repo.deletedFiles).toEqual([FILE, FILE_B]);
+    expect(h.audit.entries).toHaveLength(2);
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      actorId: null,
+      action: "delete",
+      objectId: FILE_B,
+      metadata: { source: "system", deletedVersions: 1 },
+    });
+  });
+
+  it("单条失败不阻断后续（下轮重试）；并发恢复的文件在锁下复核后跳过（不删对象）", async () => {
+    const h = makeService();
+    h.storage.purgeObject = async (objectKey: string) => {
+      if (objectKey === CONTRACT_KEY) throw new StorageError("unavailable", "S3 不可用");
+      return { deletedVersions: 1, deleteMarkers: 0 };
+    };
+    const rowA = recycledRow();
+    const rowB = recycledRow({ id: FILE_B });
+    h.repo.file = rowA;
+    h.repo.otherFiles = [rowB];
+    h.repo.versions = [
+      makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH }),
+      makeVersionRow({ id: VERSION_B1, fileId: FILE_B, seq: 1, objectKey: KEY_B, contentHash: HASH }),
+    ];
+    h.repo.expiredRecycledRows = [rowA, rowB];
+    const result = await h.service.sweepExpiredRecycled();
+    expect(result).toEqual({ scanned: 2, purged: 1 });
+    expect(h.repo.deletedFiles).toEqual([FILE_B]);
+
+    const restored = makeService();
+    const row = recycledRow();
+    restored.repo.file = makeFileRow({ status: "draft", version: 9 });
+    restored.repo.versions = [makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH })];
+    restored.repo.expiredRecycledRows = [row];
+    expect(await restored.service.sweepExpiredRecycled()).toEqual({ scanned: 1, purged: 0 });
+    expect(restored.storage.purged).toHaveLength(0);
+    expect(restored.repo.deletedFiles).toHaveLength(0);
+  });
+});
+
+describe("FileService.recycleFile / restoreFile（回收站：保留 30 天可恢复）", () => {
+  it("回收：status=recycled + recycled 三列成对写 + purgeAfter = 保留期 + 乐观锁 + 审计", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", version: 6, finalizedAt: NOW, finalizedBy: ACTOR, currentVersionId: VERSION });
+    const result = await h.service.recycleFile(FILE, { version: 6, reason: "现场作废" }, ACTOR);
+
+    expect(result.status).toBe("recycled");
+    expect(result.recycledAt).toBe(NOW.toISOString());
+    expect(result.recycledBy).toBe(ACTOR);
+    expect(result.recycledFromStatus).toBe("final");
+    expect(h.repo.filePatches.at(-1)!.patch).toMatchObject({
+      status: "recycled",
+      recycledFromStatus: "final",
+      purgeAfter: new Date(NOW.getTime() + 30 * 86_400_000),
+      version: 7,
+    });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "delete",
+      objectType: "file",
+      objectId: FILE,
+      metadata: { fromStatus: "final", retainedDays: 30, reason: "现场作废" },
+    });
+  });
+
+  it("保留期可配置：FILE_RECYCLE_RETENTION_DAYS = 7 → purgeAfter = 7 天后", async () => {
+    const h = makeService({ FILE_RECYCLE_RETENTION_DAYS: 7 } as Partial<Env>);
+    h.repo.file = makeFileRow({ status: "draft", version: 1 });
+    await h.service.recycleFile(FILE, { version: 1 }, ACTOR);
+    expect(h.repo.filePatches.at(-1)!.patch.purgeAfter).toEqual(new Date(NOW.getTime() + 7 * 86_400_000));
+  });
+
+  it("重复回收 → 409；乐观锁不匹配 → 409（不写状态）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "recycled", version: 7 });
+    await expect(h.service.recycleFile(FILE, { version: 7 }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_STATE_INVALID",
+      httpStatus: 409,
+    });
+
+    h.repo.file = makeFileRow({ status: "draft", version: 7 });
+    await expect(h.service.recycleFile(FILE, { version: 6 }, ACTOR)).rejects.toMatchObject({
+      code: "VERSION_CONFLICT",
+      httpStatus: 409,
+    });
+    expect(h.repo.filePatches).toHaveLength(0);
+  });
+
+  it("恢复：回到进入前状态 + 清回收站三列与 purgeAfter + 审计 update", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({
+      status: "recycled",
+      version: 7,
+      finalizedAt: NOW,
+      finalizedBy: ACTOR,
+      recycledAt: NOW,
+      recycledBy: ACTOR,
+      recycledFromStatus: "final",
+      purgeAfter: new Date(NOW.getTime() + 86_400_000),
+    });
+    const result = await h.service.restoreFile(FILE, { version: 7 }, ACTOR);
+
+    expect(result.status).toBe("final");
+    expect(result.recycledAt).toBeNull();
+    expect(result.recycledBy).toBeNull();
+    expect(result.recycledFromStatus).toBeNull();
+    expect(result.version).toBe(8);
+    expect(h.repo.filePatches.at(-1)!.patch).toMatchObject({
+      status: "final",
+      recycledAt: null,
+      recycledBy: null,
+      recycledFromStatus: null,
+      purgeAfter: null,
+      version: 8,
+    });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "update",
+      objectId: FILE,
+      changes: [{ field: "status", from: "recycled", to: "final" }],
+    });
+  });
+
+  it("未回收的文件恢复 → 409 FILE_STATE_INVALID（不写状态）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", version: 2 });
+    await expect(h.service.restoreFile(FILE, { version: 2 }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_STATE_INVALID",
+      httpStatus: 409,
+    });
+    expect(h.repo.filePatches).toHaveLength(0);
+  });
+});
+
+describe("FileService.rollbackFile（版本回溯 · 生成新版本不删历史）", () => {
+  function draftWithTwoVersions(): Harness {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION_B, version: 4 });
+    h.repo.versions = [
+      makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH }),
+      makeVersionRow({ id: VERSION_B, seq: 2, objectKey: CONTRACT_KEY_V2, contentHash: OTHER_HASH }),
+    ];
+    h.repo.nextSeqBase = 3;
+    h.repo.nextVersionId = VERSION_C;
+    return h;
+  }
+
+  it("成功：复制目标版对象到新版本契约键 + 新版本行 + current 指向新版本 + 审计 + outbox", async () => {
+    const h = draftWithTwoVersions();
+    const result = await h.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "现场按 v1 施工", version: 4 }, ACTOR);
+
+    expect(h.storage.copied).toHaveLength(1);
+    expect(h.storage.copied[0]).toMatchObject({ sourceKey: CONTRACT_KEY, destinationKey: CONTRACT_KEY_V3, contentType: null });
+    expect(result.version).toMatchObject({ id: VERSION_C, seq: 3, contentHash: HASH, uploadedBy: ACTOR });
+    expect(result.file.currentVersionId).toBe(VERSION_C);
+    expect(result.file.version).toBe(5);
+    expect(result.changeRequest).toBeNull();
+    expect(h.repo.insertedVersions[0]).toMatchObject({ seq: 3, objectKey: CONTRACT_KEY_V3, contentHash: HASH });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "rollback",
+      objectType: "file",
+      objectId: FILE,
+      metadata: { toVersionId: VERSION_A, fromSeq: 1, newSeq: 3, reason: "现场按 v1 施工" },
+    });
+    expect(h.database.outbox.at(-1)).toMatchObject({
+      topic: "file.version.created",
+      dedupeKey: "file.version.created:" + VERSION_C,
+      status: "pending",
+    });
+  });
+
+  it("定档后回溯 → 400（details change_flow_not_open，随 M4-04 变更流）；recycled → 409", async () => {
+    const h = draftWithTwoVersions();
+    h.repo.file = makeFileRow({ status: "final", currentVersionId: VERSION_B, version: 4 });
+    await expect(h.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "回退", version: 4 }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+      details: [{ code: "change_flow_not_open", path: "toVersionId" }],
+    });
+
+    h.repo.file = makeFileRow({
+      status: "recycled",
+      version: 5,
+      recycledAt: NOW,
+      recycledBy: ACTOR,
+      recycledFromStatus: "draft",
+      purgeAfter: new Date(NOW.getTime() + 86_400_000),
+    });
+    await expect(h.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "回退", version: 5 }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_STATE_INVALID",
+      httpStatus: 409,
+    });
+    expect(h.storage.copied).toHaveLength(0);
+    expect(h.repo.insertedVersions).toHaveLength(0);
+  });
+
+  it("目标版本不存在 → 404；目标即当前版本 → 400 already_current（均不复制对象）", async () => {
+    const h = draftWithTwoVersions();
+    await expect(h.service.rollbackFile(FILE, { toVersionId: VERSION_C, reason: "回退", version: 4 }, ACTOR)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      httpStatus: 404,
+    });
+    await expect(h.service.rollbackFile(FILE, { toVersionId: VERSION_B, reason: "回退", version: 4 }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+      details: [{ code: "already_current", path: "toVersionId" }],
+    });
+    expect(h.storage.copied).toHaveLength(0);
+  });
+
+  it("乐观锁不匹配 → 409（对象已复制但事务不落版本）；位次被并发占用 → 500 INTERNAL", async () => {
+    const h = draftWithTwoVersions();
+    await expect(h.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "回退", version: 3 }, ACTOR)).rejects.toMatchObject({
+      code: "VERSION_CONFLICT",
+      httpStatus: 409,
+    });
+    expect(h.repo.insertedVersions).toHaveLength(0);
+    expect(h.database.outbox).toHaveLength(0);
+
+    const h2 = draftWithTwoVersions();
+    h2.repo.seqDriftOnLock = true;
+    await expect(h2.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "回退", version: 4 }, ACTOR)).rejects.toMatchObject({
+      code: "INTERNAL",
+      httpStatus: 500,
+    });
+    expect(h2.repo.insertedVersions).toHaveLength(0);
+  });
+});
+
+describe("FileService.getFile / listFileVersions（M4-02 读面）", () => {
+  it("详情：含当前版本；无版本时 currentVersion = null", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 1 });
+    h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    const detail = await h.service.getFile(FILE, ACTOR);
+    expect(detail.id).toBe(FILE);
+    expect(detail.currentVersion).toMatchObject({ id: VERSION, seq: 1, contentHash: HASH });
+
+    h.repo.file = makeFileRow({ currentVersionId: null });
+    expect((await h.service.getFile(FILE, ACTOR)).currentVersion).toBeNull();
+  });
+
+  it("版本链：按 seq 升序回 items / total；文件不存在 → 404", async () => {
+    const h = makeService();
+    h.repo.versions = [
+      makeVersionRow({ id: VERSION_B, seq: 2, objectKey: CONTRACT_KEY_V2, contentHash: OTHER_HASH }),
+      makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY }),
+    ];
+    const list = await h.service.listFileVersions(FILE, ACTOR);
+    expect(list.total).toBe(2);
+    expect(list.items.map((item) => item.seq)).toEqual([1, 2]);
+
+    h.repo.file = null;
+    await expect(h.service.getFile(FILE, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
+    await expect(h.service.listFileVersions(FILE, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
+  });
+});
+
+describe("FileService.finalizeFile（定档锁版）", () => {
+  it("成功：draft → final + finalized 成对字段 + 乐观锁递增 + 审计 + outbox", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 5 });
+    h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    const result = await h.service.finalizeFile(FILE, { version: 5 }, ACTOR);
+
+    expect(result.status).toBe("final");
+    expect(result.finalizedAt).toBe(NOW.toISOString());
+    expect(result.finalizedBy).toBe(ACTOR);
+    expect(result.version).toBe(6);
+    expect(h.repo.filePatches.at(-1)!.patch).toMatchObject({ status: "final", finalizedBy: ACTOR, version: 6 });
+    expect(h.audit.entries.at(-1)).toMatchObject({ action: "complete", objectType: "file", objectId: FILE });
+    expect(h.database.outbox.at(-1)).toMatchObject({
+      topic: "file.finalized",
+      dedupeKey: "file.finalized:" + FILE + ":6",
+      status: "pending",
+    });
+  });
+
+  it("并发定档（version 不匹配）→ 409 VERSION_CONFLICT（details 带 current / expected）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", version: 5 });
+    await expect(h.service.finalizeFile(FILE, { version: 4 }, ACTOR)).rejects.toMatchObject({
+      code: "VERSION_CONFLICT",
+      httpStatus: 409,
+      details: [{ code: "version_conflict", meta: { expected: 4, current: 5 } }],
+    });
+    expect(h.repo.filePatches).toHaveLength(0);
+  });
+
+  it("状态不允许（final / recycled）→ 409 FILE_STATE_INVALID；无版本 → 400 no_version", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", currentVersionId: VERSION, version: 6 });
+    await expect(h.service.finalizeFile(FILE, { version: 6 }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_STATE_INVALID",
+      httpStatus: 409,
+    });
+
+    h.repo.file = makeFileRow({ status: "recycled", version: 3 });
+    await expect(h.service.finalizeFile(FILE, { version: 3 }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_STATE_INVALID",
+      httpStatus: 409,
+    });
+
+    h.repo.file = makeFileRow({ status: "draft", version: 0 });
+    await expect(h.service.finalizeFile(FILE, { version: 0 }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+      details: [{ code: "no_version", path: "version" }],
+    });
+    expect(h.database.outbox).toHaveLength(0);
   });
 });

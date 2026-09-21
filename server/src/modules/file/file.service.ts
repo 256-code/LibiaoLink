@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  FileDetailSchema,
+  FileFinalizeBodySchema,
+  FilePurgeBodySchema,
+  FilePurgeResponseSchema,
+  FileRecycleBodySchema,
+  FileRestoreBodySchema,
+  FileRollbackBodySchema,
+  FileRollbackResponseSchema,
   FileSchema,
+  FileVersionListResponseSchema,
   FileVersionSchema,
   UploadAbortResponseSchema,
   UploadCompleteBodySchema,
@@ -17,6 +26,7 @@ import {
 import { ClockService } from "../../common/clock/clock.service.js";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
+import type { DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import {
@@ -39,10 +49,23 @@ type UploadPartsResponse = z.infer<typeof UploadPartsResponseSchema>;
 type UploadSessionView = z.infer<typeof UploadSessionViewSchema>;
 type UploadCompleteResponse = z.infer<typeof UploadCompleteResponseSchema>;
 type UploadAbortResponse = z.infer<typeof UploadAbortResponseSchema>;
+type FileDetail = z.infer<typeof FileDetailSchema>;
+type FileVersionList = z.infer<typeof FileVersionListResponseSchema>;
+type FileView = z.infer<typeof FileSchema>;
+type FileFinalizeBody = z.infer<typeof FileFinalizeBodySchema>;
+type FileRollbackBody = z.infer<typeof FileRollbackBodySchema>;
+type FileRollbackResponse = z.infer<typeof FileRollbackResponseSchema>;
+type FileRecycleBody = z.infer<typeof FileRecycleBodySchema>;
+type FileRestoreBody = z.infer<typeof FileRestoreBodySchema>;
+type FilePurgeBody = z.infer<typeof FilePurgeBodySchema>;
+type FilePurgeResponse = z.infer<typeof FilePurgeResponseSchema>;
 
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 /** 过期会话清理单批上限（worker 每轮；避免长事务与大对象清理拖住心跳）。 */
 export const EXPIRE_SWEEP_BATCH = 200;
+/** 回收站到期清理单批上限（worker 每轮；彻底删除含对象清理，批更小）。 */
+export const RECYCLE_SWEEP_BATCH = 100;
 
 /**
  * 文件上传管道（M4-01 · S7·file）：发起上传 → 分片预签名 → 会话状态 → 完成 → 取消。
@@ -55,9 +78,16 @@ export const EXPIRE_SWEEP_BATCH = 200;
  * - 会话过期：访问时惰性判定（410，契约 `UPLOAD_SESSION_EXPIRED`）+ worker 定时清理（中止分片 + 清暂存 + 置 expired）；
  * - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
  *
- * 权限：创建 / 分片 / 完成 / 取消 = `file.upload`（项目成员平权）｜读取会话状态 = 项目可见即可。
- * 本切片只开放「新建文件」上传（`intent=version` 且不带 `fileId`）；`intent=change`（M4-04）与带 `fileId` 的
- * 对既有 draft 文件替换 / 追加版本（M4-02）见 `createUpload` 内的显式守卫。
+ * 权限：创建 / 分片 / 完成 / 取消 / 定档 / 回溯 / 回收 / 恢复 = `file.upload`（项目成员平权，ADR-011 平权例外）；
+ * 读取（详情 / 版本链 / 会话状态）= 项目可见即可；彻底删除 = 仅系统管理员（权限模型落地前临时口径）；
+ * 不可见资源统一 404（防 IDOR）。
+ *
+ * M4-02 增补（版本 / 定档 / 回溯 / 回收站 + 到期清理）：
+ * - 状态机：draft → final（定档锁版）→ changed（M4-04 变更）→ archived；任意态可 recycled（回收站，保留 30 天可恢复）；
+ * - 放开 `intent=version` + `fileId`（Push 130 定案）：对既有 draft 文件追加 / 替换版本（版本链只追加，当前版本指向新版本）；
+ * - 生命周期写操作一律带乐观锁 `version`（409 VERSION_CONFLICT；「并发定档 409」为 M4 出口标准）；
+ * - 回溯生成新版本（复制目标版对象到新版本契约键），不删历史；定档后回溯走变更流（随 M4-04）；
+ * - `intent=change`（M4-04）与「定档后回溯」见各方法内的暂缓说明；到期清理由 worker 定时档执行（system 审计 actorId=null）。
  */
 @Injectable()
 export class FileService {
@@ -80,25 +110,28 @@ export class FileService {
       member: access.member,
       projectManager: access.projectManager,
     });
-    // 契约（Push 130 · wmj 定案）：version 分支 `fileId` 可选（给出 = 对既有 draft 文件替换 / 追加版本）、
-    // change 分支必填。本切片（M4-01）尚未实现这两条路径 —— zod 放行后不再拦截，不守卫会静默把
-    // 「追加版本」当成新建文件，故对「带 fileId」与 `intent=change` 一律显式 400。
-    if (body.intent === "change" || body.fileId !== undefined) {
-      const isChange = body.intent === "change";
+    // `intent=change`（定档后变更上传）随 M4-04 变更申请落地：zod 已按契约放行（change 必填 fileId + change 体），
+    // 本切片显式 400 —— 不处理会把变更误当「新建 / 追加版本」写库。
+    if (body.intent === "change") {
       throw new AppError(
         "VALIDATION_FAILED",
-        isChange
-          ? "intent=change（定档后变更上传）随 M4-04 变更申请落地；本切片（M4-01）只开放「新建文件」上传"
-          : "带 fileId 的上传（对既有 draft 文件替换 / 追加版本）随 M4-02 版本链 / 定档落地；本切片（M4-01）只开放「新建文件」上传",
+        "intent=change（定档后变更上传）随 M4-04 变更申请落地；当前只开放 intent=version（省略 fileId = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本）",
         [
           {
-            code: isChange ? "intent_change_not_open" : "file_id_not_supported",
-            message: "M4-01 只开放「新建文件」上传（intent=version 且不带 fileId）",
-            path: isChange ? "intent" : "fileId",
+            code: "intent_change_not_open",
+            message: "change 意图随 M4-04 变更申请落地",
+            path: "intent",
           },
         ],
       );
     }
+    // 目标文件（Push 130 定案 · M4-02 放开）：给出 fileId = 对既有 draft 文件替换 / 追加新版本。
+    const target = body.fileId === undefined ? null : await this.resolveUploadTarget(body, actorId);
+    const effectiveName = target === null ? body.name : target.name;
+    const effectiveDocType = target === null ? body.docType ?? null : target.docType;
+    const effectiveNodeId = target === null ? body.nodeId : target.nodeId ?? undefined;
+    const effectiveTaskId = target === null ? body.taskId : target.taskId ?? undefined;
+
     const project = await this.repository.findProjectBrief(body.projectId);
     if (project === null) {
       throw new AppError("NOT_FOUND", "项目不存在或不可见");
@@ -112,7 +145,7 @@ export class FileService {
         { code: "too_large", message: "sizeBytes 不得超过 " + maxBytes, path: "sizeBytes", meta: { limitBytes: maxBytes } },
       ]);
     }
-    await this.assertLinksInProject(body.projectId, body.nodeId, body.taskId);
+    await this.assertLinksInProject(body.projectId, effectiveNodeId, effectiveTaskId);
 
     const at = this.clock.now();
     const expiresAt = new Date(at.getTime() + this.config.env.UPLOAD_SESSION_TTL_HOURS * HOUR_MS);
@@ -120,18 +153,21 @@ export class FileService {
     const sessionId = randomUUID();
 
     const created = await this.database.db.transaction(async (tx) => {
-      const file = await this.repository.insertFile(
-        {
-          projectId: body.projectId,
-          nodeId: body.nodeId ?? null,
-          taskId: body.taskId ?? null,
-          docType: body.docType ?? null,
-          name: body.name,
-          status: "draft",
-          createdBy: actorId,
-        },
-        tx,
-      );
+      const file =
+        target === null
+          ? await this.repository.insertFile(
+              {
+                projectId: body.projectId,
+                nodeId: effectiveNodeId ?? null,
+                taskId: effectiveTaskId ?? null,
+                docType: effectiveDocType,
+                name: effectiveName,
+                status: "draft",
+                createdBy: actorId,
+              },
+              tx,
+            )
+          : target;
       const session = await this.repository.insertSession(
         {
           id: sessionId,
@@ -151,15 +187,18 @@ export class FileService {
       );
       await this.audit.record(tx, {
         actorId,
-        action: "create",
+        action: target === null ? "create" : "update",
         objectType: "file",
         objectId: file.id,
         projectId: body.projectId,
-        summary: "发起上传：" + body.name,
-        changes: [
-          { field: "name", from: null, to: body.name },
-          { field: "status", from: null, to: file.status },
-        ],
+        summary: (target === null ? "发起上传：" : "发起上传（既有 draft 文件追加版本）：") + effectiveName,
+        changes:
+          target === null
+            ? [
+                { field: "name", from: null, to: effectiveName },
+                { field: "status", from: null, to: file.status },
+              ]
+            : [{ field: "pendingVersion", from: null, to: String(target.version + 1) }],
         metadata: {
           uploadId: session.id,
           intent: session.intent,
@@ -167,13 +206,15 @@ export class FileService {
           partSizeBytes: plan.partSizeBytes,
           totalParts: plan.totalParts,
           expiresAt: expiresAt.toISOString(),
+          targetFileId: target === null ? null : target.id,
         },
       });
       return { file, session };
     });
 
+    // 秒传提示：仅新建文件（Push 130 定案：给出 fileId 时 duplicateHint 恒空 —— 目标文件已经确定）。
     const duplicateHint =
-      body.contentHash === undefined
+      target !== null || body.contentHash === undefined
         ? null
         : await this.repository.findDuplicateByHash(body.projectId, body.contentHash.toLowerCase(), created.file.id);
 
@@ -331,6 +372,13 @@ export class FileService {
       if (lockedFile === null) {
         throw new AppError("NOT_FOUND", "文件不存在");
       }
+      // 目标文件在会话期间被定档 / 回收时不得再追加版本（Push 130 定案：version 意图目标须 draft）。
+      if (lockedFile.status !== "draft") {
+        throw new AppError(
+          "FILE_STATE_INVALID",
+          "目标文件已不是未定档状态（" + lockedFile.status + "），不能追加版本；定档后修改请走变更（M4-04）",
+        );
+      }
       const currentSeq = await this.repository.nextVersionSeq(fileId, tx);
       if (currentSeq !== seq) {
         throw new AppError("INTERNAL", "文件版本位次被并发上传占用，请重试完成上传");
@@ -464,6 +512,414 @@ export class FileService {
 
   // ---------- 内部 ----------
 
+  /** 文件装载（读路径）：不存在 / 不可见 → 404（防 IDOR；读取面 = 项目可见即可）。 */
+  private async loadFileForRead(fileId: string, actorId: string): Promise<FileRow> {
+    const file = await this.repository.findFileById(fileId);
+    if (file === null) {
+      throw new AppError("NOT_FOUND", "文件不存在");
+    }
+    await this.permission.assertProjectVisible(actorId, file.projectId);
+    return file;
+  }
+
+  /** 文件装载（生命周期写路径）：可见性之后加判 `file.upload`（项目成员平权，ADR-011 平权例外）。 */
+  private async loadFileForWrite(fileId: string, actorId: string): Promise<FileRow> {
+    const file = await this.repository.findFileById(fileId);
+    if (file === null) {
+      throw new AppError("NOT_FOUND", "文件不存在");
+    }
+    const access = await this.permission.assertProjectVisible(actorId, file.projectId);
+    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager });
+    return file;
+  }
+
+  /** 锁行装载：生命周期写路径一律在事务内 `for update`（乐观锁校验的基准行）。 */
+  private async lockFileOr404(tx: DbTransaction, fileId: string): Promise<FileRow> {
+    const locked = await this.repository.lockFile(tx, fileId);
+    if (locked === null) {
+      throw new AppError("NOT_FOUND", "文件不存在");
+    }
+    return locked;
+  }
+
+  /** 乐观锁：`version` 不匹配 → 409 VERSION_CONFLICT（details 带 current / expected，前端刷新后重试）。 */
+  private assertOptimisticVersion(expected: number, actual: number): void {
+    if (expected === actual) return;
+    throw new AppError("VERSION_CONFLICT", "文件已被他人更新，请刷新后重试", [
+      { code: "version_conflict", message: "version 不匹配", path: "version", meta: { expected, current: actual } },
+    ]);
+  }
+
+  /** 回溯准入：仅未定档（draft）可回溯；final / changed 走变更流（M4-04），recycled / archived 状态不允许。 */
+  private assertRollbackAllowed(status: string): void {
+    if (status === "final" || status === "changed") {
+      throw new AppError("VALIDATION_FAILED", "文件已定档，回溯必须走变更（申请即通过，随 M4-04 落地）；当前仅支持未定档文件回溯", [
+        { code: "change_flow_not_open", message: "定档后回溯随 M4-04 变更流落地", path: "toVersionId" },
+      ]);
+    }
+    if (status !== "draft") {
+      throw new AppError(
+        "FILE_STATE_INVALID",
+        "文件当前状态（" + status + "）不允许回溯" + (status === "recycled" ? "；请先从回收站恢复" : ""),
+      );
+    }
+  }
+
+  /** 彻底删除仅系统管理员（权限模型落地前的临时口径，A4-12）。 */
+  private async assertAdmin(actorId: string, action: string): Promise<void> {
+    const permissions = await this.permission.permissionsOf(actorId);
+    if (!permissions.roleCodes.includes("admin")) {
+      throw new AppError("FORBIDDEN", "仅系统管理员可" + action);
+    }
+  }
+
+  /**
+   * POST /files/{id}/purge：彻底删除（仅系统管理员 —— 权限模型落地前的临时口径，A4-12）。
+   * 仅回收站中的文件可彻底删除（先 `recycle`）；对象按版本清 + 元数据删 + 留痕，乐观锁同其它生命周期写操作。
+   */
+  async purgeFile(fileId: string, body: FilePurgeBody, actorId: string): Promise<FilePurgeResponse> {
+    const file = await this.loadFileForWrite(fileId, actorId);
+    await this.assertAdmin(actorId, "彻底删除文件");
+    if (file.status !== "recycled") {
+      throw new AppError("FILE_STATE_INVALID", "仅回收站中的文件可彻底删除（当前 " + file.status + "）；请先移入回收站");
+    }
+    const at = this.clock.now();
+    await this.purgeRecycled(file, at, { actorId, expectedVersion: body.version, reason: body.reason ?? null });
+    return { fileId, purgedAt: at.toISOString() };
+  }
+
+  /**
+   * 回收站到期清理（M4-02 · worker 定时调用）：`purge_after ≤ now` 的文件按批彻底删除
+   * （对象按版本清 + 元数据删 + system 留痕）。单条失败只告警不阻断（下轮重试）；
+   * 并发恢复 / 并发彻底删除在事务内复核后跳过。
+   */
+  async sweepExpiredRecycled(limit: number = RECYCLE_SWEEP_BATCH): Promise<{ scanned: number; purged: number }> {
+    const at = this.clock.now();
+    const rows = await this.repository.listExpiredRecycledFiles(at, limit);
+    let purged = 0;
+    for (const row of rows) {
+      try {
+        const result = await this.purgeRecycled(row, at, { actorId: null, reason: "回收站到期自动清理" });
+        if (result !== null) purged += 1;
+      } catch (error) {
+        this.logger.warn("回收站到期清理失败：" + row.id + " / " + String(error));
+      }
+    }
+    return { scanned: rows.length, purged };
+  }
+
+  /**
+   * POST /files/{id}/recycle：移入回收站（任意状态可删）。记 `recycled_from_status` 供恢复回退，
+   * `purge_after = recycled_at + FILE_RECYCLE_RETENTION_DAYS`（默认 30 天，到期由 worker 彻底删除）。
+   */
+  async recycleFile(fileId: string, body: FileRecycleBody, actorId: string): Promise<FileView> {
+    const file = await this.loadFileForWrite(fileId, actorId);
+    const at = this.clock.now();
+    const retainedDays = this.config.env.FILE_RECYCLE_RETENTION_DAYS;
+    const purgeAfter = new Date(at.getTime() + retainedDays * DAY_MS);
+    return this.database.db.transaction(async (tx) => {
+      const locked = await this.lockFileOr404(tx, fileId);
+      this.assertOptimisticVersion(body.version, locked.version);
+      if (locked.status === "recycled") {
+        throw new AppError("FILE_STATE_INVALID", "文件已在回收站，不能重复回收");
+      }
+      const updated = await this.repository.updateFileState(
+        fileId,
+        {
+          status: "recycled",
+          recycledAt: at,
+          recycledBy: actorId,
+          recycledFromStatus: locked.status,
+          purgeAfter,
+          version: locked.version + 1,
+          updatedAt: at,
+        },
+        tx,
+      );
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "file",
+        objectId: fileId,
+        projectId: file.projectId,
+        summary: "移入回收站：" + locked.name + "（保留 " + retainedDays + " 天）",
+        changes: [{ field: "status", from: locked.status, to: "recycled" }],
+        metadata: {
+          reason: body.reason ?? null,
+          fromStatus: locked.status,
+          retainedDays,
+          purgeAfter: purgeAfter.toISOString(),
+        },
+      });
+      return toFileView(updated);
+    });
+  }
+
+  /** POST /files/{id}/restore：从回收站恢复（回到进入前状态；清空回收站三列与到期时间）。 */
+  async restoreFile(fileId: string, body: FileRestoreBody, actorId: string): Promise<FileView> {
+    const file = await this.loadFileForWrite(fileId, actorId);
+    const at = this.clock.now();
+    return this.database.db.transaction(async (tx) => {
+      const locked = await this.lockFileOr404(tx, fileId);
+      this.assertOptimisticVersion(body.version, locked.version);
+      if (locked.status !== "recycled") {
+        throw new AppError("FILE_STATE_INVALID", "文件不在回收站（当前 " + locked.status + "），无需恢复");
+      }
+      const restored = locked.recycledFromStatus ?? "draft";
+      const updated = await this.repository.updateFileState(
+        fileId,
+        {
+          status: restored,
+          recycledAt: null,
+          recycledBy: null,
+          recycledFromStatus: null,
+          purgeAfter: null,
+          version: locked.version + 1,
+          updatedAt: at,
+        },
+        tx,
+      );
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "file",
+        objectId: fileId,
+        projectId: file.projectId,
+        summary: "回收站恢复：" + locked.name + "（回退到 " + restored + "）",
+        changes: [{ field: "status", from: "recycled", to: restored }],
+        metadata: { restoredFrom: "recycled", purgeAfter: locked.purgeAfter?.toISOString() ?? null },
+      });
+      return toFileView(updated);
+    });
+  }
+
+  /**
+   * POST /files/{id}/rollback：版本回溯 —— 生成新版本（复制目标版对象到新版本契约键），不删除历史。
+   * 定档（final / changed）后回溯按变更流处理（A4-13 申请即通过），随 M4-04 落地：
+   * 本切片显式 400（details `change_flow_not_open`，同 M4-01 `intent_change_not_open` 的切片守卫口径）。
+   */
+  async rollbackFile(fileId: string, body: FileRollbackBody, actorId: string): Promise<FileRollbackResponse> {
+    const file = await this.loadFileForWrite(fileId, actorId);
+    this.assertRollbackAllowed(file.status);
+    const target = await this.repository.findVersionById(fileId, body.toVersionId);
+    if (target === null) {
+      throw new AppError("NOT_FOUND", "回溯目标版本不存在或不属于该文件");
+    }
+    if (file.currentVersionId === target.id) {
+      throw new AppError("VALIDATION_FAILED", "目标版本已是当前版本，无需回溯", [
+        { code: "already_current", message: "toVersionId 即当前版本", path: "toVersionId" },
+      ]);
+    }
+    const at = this.clock.now();
+    // 与 complete 同序：先把目标版对象复制到新版本契约键（事务外），事务内锁行复核位次，防并发抢同一位次。
+    const seq = await this.repository.nextVersionSeq(fileId);
+    const objectKey = buildObjectKey({
+      projectId: file.projectId,
+      fileId,
+      seq,
+      contentHash: target.contentHash,
+      fileName: file.name,
+    });
+    try {
+      await this.storage.copyObject({
+        sourceKey: target.objectKey,
+        destinationKey: objectKey,
+        contentType: target.mime,
+        metadata: { "file-name": encodeURIComponent(file.name) },
+      });
+    } catch (error) {
+      throw toApiError(error);
+    }
+
+    const committed = await this.database.db.transaction(async (tx) => {
+      const locked = await this.lockFileOr404(tx, fileId);
+      this.assertOptimisticVersion(body.version, locked.version);
+      this.assertRollbackAllowed(locked.status);
+      if (locked.currentVersionId === target.id) {
+        throw new AppError("VALIDATION_FAILED", "目标版本已是当前版本，无需回溯", [
+          { code: "already_current", message: "toVersionId 即当前版本", path: "toVersionId" },
+        ]);
+      }
+      const currentSeq = await this.repository.nextVersionSeq(fileId, tx);
+      if (currentSeq !== seq) {
+        throw new AppError("INTERNAL", "文件版本位次被并发上传占用，请重试回溯");
+      }
+      const version = await this.repository.insertVersion(
+        {
+          fileId,
+          seq,
+          objectKey,
+          sizeBytes: target.sizeBytes,
+          contentHash: target.contentHash,
+          mime: target.mime,
+          uploadedBy: actorId,
+          uploadedAt: at,
+        },
+        tx,
+      );
+      const updated = await this.repository.updateFileState(
+        fileId,
+        { currentVersionId: version.id, version: locked.version + 1, updatedAt: at },
+        tx,
+      );
+      await this.audit.record(tx, {
+        actorId,
+        action: "rollback",
+        objectType: "file",
+        objectId: fileId,
+        projectId: file.projectId,
+        summary: "版本回溯：" + locked.name + " v" + target.seq + " → 新版本 v" + version.seq + "（不删历史）",
+        changes: [{ field: "currentVersionId", from: locked.currentVersionId, to: version.id }],
+        metadata: { toVersionId: target.id, fromSeq: target.seq, newSeq: version.seq, reason: body.reason, objectKey },
+      });
+      await appendOutbox(tx, {
+        topic: "file.version.created",
+        dedupeKey: "file.version.created:" + version.id,
+        payload: {
+          projectId: file.projectId,
+          fileId,
+          versionId: version.id,
+          seq: version.seq,
+          objectKey,
+          contentHash: target.contentHash,
+          sizeBytes: target.sizeBytes,
+          mime: target.mime,
+          rollbackOf: target.id,
+          reason: body.reason,
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+      return { file: updated, version };
+    });
+    return { file: toFileView(committed.file), version: toVersionView(committed.version), changeRequest: null };
+  }
+
+  /**
+   * GET /files/{id}：文件详情（含当前版本）。读取面 = 项目可见即可（不可见 404，防 IDOR）。
+   * 回收站中的文件同样可读（回收站列表 / 详情与恢复入口）。
+   */
+  async getFile(fileId: string, actorId: string): Promise<FileDetail> {
+    const file = await this.loadFileForRead(fileId, actorId);
+    const currentVersion =
+      file.currentVersionId === null ? null : await this.repository.findVersionById(file.id, file.currentVersionId);
+    return { ...toFileView(file), currentVersion: currentVersion === null ? null : toVersionView(currentVersion) };
+  }
+
+  /** GET /files/{id}/versions：版本链（按 seq 升序；含已回收文件与历史版本，只读不删）。 */
+  async listFileVersions(fileId: string, actorId: string): Promise<FileVersionList> {
+    const file = await this.loadFileForRead(fileId, actorId);
+    const items = await this.repository.listVersions(file.id);
+    return { items: items.map(toVersionView), total: items.length };
+  }
+
+  /**
+   * POST /files/{id}/finalize：定档锁版（draft → final；至少 1 个版本）。
+   * 乐观锁 `version` 不匹配 → 409 VERSION_CONFLICT（M4 出口标准「并发定档 409」）；非 draft → 409 FILE_STATE_INVALID。
+   * 定档后不可覆盖 / 替换，修改必须走变更（M4-04）。
+   */
+  async finalizeFile(fileId: string, body: FileFinalizeBody, actorId: string): Promise<FileView> {
+    const file = await this.loadFileForWrite(fileId, actorId);
+    const at = this.clock.now();
+    return this.database.db.transaction(async (tx) => {
+      const locked = await this.lockFileOr404(tx, fileId);
+      this.assertOptimisticVersion(body.version, locked.version);
+      if (locked.status !== "draft") {
+        throw new AppError(
+          "FILE_STATE_INVALID",
+          "文件当前状态（" + locked.status + "）不允许定档；定档后修改请走变更（M4-04）",
+        );
+      }
+      const versions = await this.repository.listVersions(fileId, tx);
+      if (versions.length === 0) {
+        throw new AppError("VALIDATION_FAILED", "文件没有任何版本，不能定档；请先完成一次上传", [
+          { code: "no_version", message: "定档至少需要 1 个版本", path: "version" },
+        ]);
+      }
+      const updated = await this.repository.updateFileState(
+        fileId,
+        { status: "final", finalizedAt: at, finalizedBy: actorId, version: locked.version + 1, updatedAt: at },
+        tx,
+      );
+      await this.audit.record(tx, {
+        actorId,
+        action: "complete",
+        objectType: "file",
+        objectId: fileId,
+        projectId: file.projectId,
+        summary: "定档锁版：" + locked.name + "（" + versions.length + " 个版本，此后修改走变更）",
+        changes: [
+          { field: "status", from: locked.status, to: "final" },
+          { field: "finalizedAt", from: null, to: at.toISOString() },
+        ],
+        metadata: { versions: versions.length, currentVersionId: locked.currentVersionId },
+      });
+      await appendOutbox(tx, {
+        topic: "file.finalized",
+        dedupeKey: "file.finalized:" + fileId + ":" + updated.version,
+        payload: {
+          projectId: file.projectId,
+          fileId,
+          currentVersionId: locked.currentVersionId,
+          versions: versions.length,
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+      return toFileView(updated);
+    });
+  }
+
+  /**
+   * 目标文件解析（`intent=version` + `fileId`，Push 130 定案 · M4-02 放开）：
+   * 不存在 / 不可见 → 404；与 projectId 不一致 / 名称与归属（name / docType / nodeId / taskId）与现状不符 → 400；
+   * 非 draft → 409 FILE_STATE_INVALID（定档后修改走变更 M4-04）。生效字段一律以目标文件现状为准。
+   */
+  private async resolveUploadTarget(body: Extract<UploadCreateBody, { intent: "version" }>, actorId: string): Promise<FileRow> {
+    const fileId = body.fileId;
+    if (fileId === undefined) {
+      throw new AppError("INTERNAL", "内部错误：resolveUploadTarget 需要 fileId");
+    }
+    const file = await this.repository.findFileById(fileId);
+    if (file === null) {
+      throw new AppError("NOT_FOUND", "目标文件不存在或不可见");
+    }
+    const access = await this.permission.assertProjectVisible(actorId, file.projectId);
+    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager });
+    if (file.projectId !== body.projectId) {
+      throw new AppError("VALIDATION_FAILED", "目标文件不属于该项目（projectId 与目标文件不一致）", [
+        { code: "invalid_file", message: "fileId 与 projectId 不一致", path: "fileId" },
+      ]);
+    }
+    if (file.status !== "draft") {
+      throw new AppError(
+        "FILE_STATE_INVALID",
+        "目标文件当前状态（" + file.status + "）不允许追加版本；定档后修改请走变更（M4-04）",
+      );
+    }
+    if (body.name !== file.name) {
+      throw new AppError("VALIDATION_FAILED", "name 与目标文件现状不一致（以目标文件为准，可原样回填）", [
+        { code: "name_mismatch", message: "name 与目标文件不一致", path: "name", meta: { current: file.name } },
+      ]);
+    }
+    if (body.docType !== undefined && body.docType !== file.docType) {
+      throw new AppError("VALIDATION_FAILED", "docType 与目标文件现状不一致", [
+        { code: "doc_type_mismatch", message: "docType 与目标文件不一致", path: "docType", meta: { current: file.docType } },
+      ]);
+    }
+    if (body.nodeId !== undefined && body.nodeId !== file.nodeId) {
+      throw new AppError("VALIDATION_FAILED", "nodeId 与目标文件现状不一致（防静默改挂接）", [
+        { code: "node_mismatch", message: "nodeId 与目标文件不一致", path: "nodeId", meta: { current: file.nodeId } },
+      ]);
+    }
+    if (body.taskId !== undefined && body.taskId !== file.taskId) {
+      throw new AppError("VALIDATION_FAILED", "taskId 与目标文件现状不一致（防静默改挂接）", [
+        { code: "task_mismatch", message: "taskId 与目标文件不一致", path: "taskId", meta: { current: file.taskId } },
+      ]);
+    }
+    return file;
+  }
+
   /** 文件 + 会话的公共装载（可见性 → 404；会话不属于该文件 → 404；写路径再判 `file.upload`）。 */
   private async loadUploadContext(
     fileId: string,
@@ -515,6 +971,60 @@ export class FileService {
     } catch (error) {
       throw toApiError(error);
     }
+  }
+
+  /**
+   * 彻底删除公共实现（admin 手动 / worker 到期清理）：事务内**先锁行复核**，再按版本清对象
+   * （ADR-006：不依赖存储 lifecycle）→ 清 current_version_id → 删版本 → 删文件行（upload_sessions 外键 cascade）→ 留痕。
+   * 对象清理放在持锁事务内（而非「先清对象后开事务」）：防「清理快照过期 + 并发恢复」把已恢复文件的对象误删；
+   * 删除对象是幂等空操作 —— 事务中途失败时元数据回滚、下轮重试收敛（对象多删一次无副作用）。
+   */
+  private async purgeRecycled(
+    file: FileRow,
+    at: Date,
+    options: { actorId: string | null; expectedVersion?: number; reason: string | null },
+  ): Promise<{ deletedVersions: number } | null> {
+    return this.database.db.transaction(async (tx) => {
+      const locked = await this.repository.lockFile(tx, file.id);
+      if (locked === null) return null;
+      if (options.expectedVersion !== undefined) {
+        this.assertOptimisticVersion(options.expectedVersion, locked.version);
+      }
+      if (locked.status !== "recycled") {
+        if (options.expectedVersion !== undefined) {
+          throw new AppError("FILE_STATE_INVALID", "文件已不在回收站（当前 " + locked.status + "），不能彻底删除");
+        }
+        return null;
+      }
+      const versions = await this.repository.listVersions(file.id, tx);
+      for (const version of versions) {
+        try {
+          await this.storage.purgeObject(version.objectKey);
+        } catch (error) {
+          throw toApiError(error);
+        }
+      }
+      await this.repository.updateFileState(file.id, { currentVersionId: null }, tx);
+      const deletedVersions = await this.repository.deleteVersionsByFile(file.id, tx);
+      await this.repository.deleteFile(file.id, tx);
+      await this.audit.record(tx, {
+        actorId: options.actorId,
+        action: "delete",
+        objectType: "file",
+        objectId: file.id,
+        projectId: locked.projectId,
+        summary: "彻底删除：" + locked.name + "（" + deletedVersions + " 个版本与对象一并清理）",
+        changes: [{ field: "status", from: "recycled", to: null }],
+        metadata: {
+          source: options.actorId === null ? "system" : "api",
+          reason: options.reason,
+          deletedVersions,
+          purgedAt: at.toISOString(),
+          objectKeys: versions.map((version) => version.objectKey),
+        },
+      });
+      return { deletedVersions };
+    });
   }
 
   /** nodeId / taskId 归属校验：不属于该项目一律 400（防跨项目挂接）。 */
