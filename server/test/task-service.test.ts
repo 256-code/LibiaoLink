@@ -337,7 +337,7 @@ describe("TaskService.updateProgress（A13 清除完成日期的唯一方式）"
   });
 });
 
-describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 122）", () => {
+describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 124）", () => {
   it("临时任务：stageKey 缺省 = 「未分组」、ownerId 显式 null = 「待分配」（不兜底项目经理）", async () => {
     const repo = new FakeTaskRepository();
     const roles = new FakeRoleService();

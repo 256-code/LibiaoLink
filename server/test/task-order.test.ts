@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { clampSortIndex, currentGroupOrder, planInsertOrder, planMoveOrder } from "../src/modules/task/task.order.js";
 
-/** 组内顺序纯函数（A19 / A20 · w2 · Push 122）：位次夹取 / 插入计划 / 移动计划 / 读序稳定。 */
-describe("任务组内顺序（A19 / A20 · Push 122）", () => {
+/** 组内顺序纯函数（A19 / A20 · w2 · Push 124）：位次夹取 / 插入计划 / 移动计划 / 读序稳定。 */
+describe("任务组内顺序（A19 / A20 · Push 124）", () => {
   it("clampSortIndex：0 起；越界夹到组尾；负数 / 非整数按 0", () => {
     expect(clampSortIndex(0, 3)).toBe(0);
     expect(clampSortIndex(2, 3)).toBe(2);

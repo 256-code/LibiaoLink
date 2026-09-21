@@ -4997,12 +4997,12 @@ export interface components {
          * @enum {string}
          */
         StageStatus: "pending" | "active" | "done";
-        /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 122） */
+        /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124） */
         Task: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
             stageKey: components["schemas"]["StageKey"] & (string | null);
-            /** @description 组内位次（A19 / A20 · Push 122）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它 */
+            /** @description 组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它 */
             sortIndex: number;
             nodeId: components["schemas"]["Uuid"] & (string | null);
             title: string;
@@ -5034,11 +5034,11 @@ export interface components {
         /** @description 创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径） */
         TaskCreateBody: {
             /**
-             * @description 所属阶段（A15 · Push 122：可选）—— 缺省 / null = 「未分组」（看板「＋ 添加 → 临时任务」）；带 taskNodeId 时缺省取来源节点所属阶段，显式给出且与节点不一致返回 400
+             * @description 所属阶段（A15 · Push 124：可选）—— 缺省 / null = 「未分组」（看板「＋ 添加 → 临时任务」）；带 taskNodeId 时缺省取来源节点所属阶段，显式给出且与节点不一致返回 400
              * @enum {string|null}
              */
             stageKey?: "presale" | "design" | "purchase" | "assembly" | "install" | "deploy" | "trial" | "production" | "acceptance" | null;
-            /** @description 插入位次（A20 · Push 122）：「插入位置」用 —— 0 起（0 = 组内最前）；越界 / 缺省 = 追加到组尾；同组其余任务顺延 */
+            /** @description 插入位次（A20 · Push 124）：「插入位置」用 —— 0 起（0 = 组内最前）；越界 / 缺省 = 追加到组尾；同组其余任务顺延 */
             sortIndex?: number;
             /**
              * @description 任务描述（节点名称）
@@ -5049,7 +5049,7 @@ export interface components {
             taskNodeId?: components["schemas"]["Uuid"] & unknown;
             /**
              * Format: uuid
-             * @description 任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 122：不兜底项目经理）
+             * @description 任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 124：不兜底项目经理）
              */
             ownerId?: string | null;
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
@@ -5108,7 +5108,7 @@ export interface components {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
             stageKey: components["schemas"]["StageKey"] & (string | null);
-            /** @description 组内位次（A19 / A20 · Push 122）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它 */
+            /** @description 组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它 */
             sortIndex: number;
             nodeId: components["schemas"]["Uuid"] & (string | null);
             title: string;
@@ -5227,10 +5227,10 @@ export interface components {
         TaskUpdateBody: {
             /**
              * Format: uuid
-             * @description 任务负责人（A18 · Push 122）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）
+             * @description 任务负责人（A18 · Push 124）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）
              */
             ownerId?: string | null;
-            /** @description 组内位次（A19 / A20 · Push 122）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
+            /** @description 组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
             sortIndex?: number;
             status?: components["schemas"]["TaskBaseStatus"] & unknown;
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);

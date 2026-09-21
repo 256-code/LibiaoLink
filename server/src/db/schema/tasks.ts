@@ -25,12 +25,12 @@ export const tasks = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     projectId: uuid("project_id").notNull().references(() => projects.id),
-    /** 可空（A15 · Push 122）：看板「＋ 添加 → 临时任务」先不带阶段，前端显示「未分组」。 */
+    /** 可空（A15 · Push 124）：看板「＋ 添加 → 临时任务」先不带阶段，前端显示「未分组」。 */
     stageKey: text("stage_key"),
     nodeId: uuid("node_id").references(() => projectNodes.id),
     title: text("title").notNull(),
     titleEn: text("title_en"),
-    /** 可空（A18 · Push 122）：「待分配」是合法中间状态（拖进「待分配」列 = 清空负责人）。 */
+    /** 可空（A18 · Push 124）：「待分配」是合法中间状态（拖进「待分配」列 = 清空负责人）。 */
     ownerId: uuid("owner_id"),
     status: text("status").notNull(),
     progress: numeric("progress", { precision: 3, scale: 2 }).notNull().default("0"),
@@ -49,7 +49,7 @@ export const tasks = pgTable(
     version: integer("version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-    /** 组内位次（A19 / A20 · Push 122）：一组 = 同一项目 + 同一阶段（null = 未分组）；0 起、密集。 */
+    /** 组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组）；0 起、密集。 */
     sortIndex: integer("sort_index").notNull().default(0),
   },
   (table) => [

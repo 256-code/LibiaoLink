@@ -16,15 +16,15 @@ export const TaskSchema = z
   .object({
     id: UuidSchema,
     projectId: UuidSchema,
-    stageKey: StageKeySchema.nullable().openapi({ description: "所属阶段；null = 「未分组」（A15 · Push 122：临时任务允许没有阶段）" }),
+    stageKey: StageKeySchema.nullable().openapi({ description: "所属阶段；null = 「未分组」（A15 · Push 124：临时任务允许没有阶段）" }),
     sortIndex: z.number().int().min(0).openapi({
       description:
-        "组内位次（A19 / A20 · Push 122）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它",
+        "组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它",
     }),
     nodeId: UuidSchema.nullable(),
     title: z.string(),
     titleEn: z.string().nullable(),
-    ownerId: UuidSchema.nullable().openapi({ description: "任务负责人；null = 「待分配」（A18 · Push 122：负责人为空是合法中间状态）" }),
+    ownerId: UuidSchema.nullable().openapi({ description: "任务负责人；null = 「待分配」（A18 · Push 124：负责人为空是合法中间状态）" }),
     status: TaskBaseStatusSchema,
     displayStatus: TaskDisplayStatusSchema,
     progress: TaskProgressSchema,
@@ -47,7 +47,7 @@ export const TaskSchema = z
   })
   .openapi("Task", {
     description:
-      "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 122）",
+      "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124）",
   });
 
 /** 任务随行文件摘要（A7）：列表不下发文件名数组（省载荷、免 N+1），文件名清单只在详情接口给。 */
@@ -104,7 +104,7 @@ export const TaskSortSchema = z
  * 任务列表查询。
  * A8 排序：sort 字段白名单 plannedStart / plannedEnd / actualEnd / progress / title / createdAt，白名单外返回 400；
  * 不传 sort 时为默认顺序 —— 阶段顺序（STAGE_KEYS 序；「未分组」落在最后）+ 组内位次 sort_index ASC + id ASC
- * （A19 / A20 · Push 122：与看板列内顺序同口径；id 兜底保证稳定，分页不跳行）。
+ * （A19 / A20 · Push 124：与看板列内顺序同口径；id 兜底保证稳定，分页不跳行）。
  */
 export const TaskListQuerySchema = z
   .object({
@@ -152,11 +152,11 @@ export const TaskCreateBodySchema = z
   .object({
     stageKey: StageKeySchema.nullable().optional().openapi({
       description:
-        "所属阶段（A15 · Push 122：可选）—— 缺省 / null = 「未分组」（看板「＋ 添加 → 临时任务」）；带 taskNodeId 时缺省取来源节点所属阶段，显式给出且与节点不一致返回 400",
+        "所属阶段（A15 · Push 124：可选）—— 缺省 / null = 「未分组」（看板「＋ 添加 → 临时任务」）；带 taskNodeId 时缺省取来源节点所属阶段，显式给出且与节点不一致返回 400",
     }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description:
-        "插入位次（A20 · Push 122）：「插入位置」用 —— 0 起（0 = 组内最前）；越界 / 缺省 = 追加到组尾；同组其余任务顺延",
+        "插入位次（A20 · Push 124）：「插入位置」用 —— 0 起（0 = 组内最前）；越界 / 缺省 = 追加到组尾；同组其余任务顺延",
     }),
     title: z.string().min(1).max(200).openapi({ example: "货架组装", description: "任务描述（节点名称）" }),
     titleEn: z.string().max(200).nullable().optional(),
@@ -166,7 +166,7 @@ export const TaskCreateBodySchema = z
     }),
     ownerId: UuidSchema.nullable().optional().openapi({
       description:
-        "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 122：不兜底项目经理）",
+        "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 124：不兜底项目经理）",
     }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
@@ -182,11 +182,11 @@ export const TaskCreateBodySchema = z
 export const TaskUpdateBodySchema = z
   .object({
     ownerId: UuidSchema.nullable().optional().openapi({
-      description: "任务负责人（A18 · Push 122）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）",
+      description: "任务负责人（A18 · Push 124）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）",
     }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description:
-        "组内位次（A19 / A20 · Push 122）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序",
+        "组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序",
     }),
     status: TaskBaseStatusSchema.optional().openapi({
       description:

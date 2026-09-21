@@ -47,12 +47,12 @@ export interface TaskProjectNodeRow {
 
 export interface TaskInsertInput {
   projectId: string;
-  /** null = 「未分组」（A15 · Push 122）。 */
+  /** null = 「未分组」（A15 · Push 124）。 */
   stageKey: string | null;
   nodeId: string | null;
   title: string;
   titleEn: string | null;
-  /** null = 「待分配」（A18 · Push 122）。 */
+  /** null = 「待分配」（A18 · Push 124）。 */
   ownerId: string | null;
   /** 组内位次（A19 / A20：插入位置由 service 计算，本层落列）。 */
   sortIndex: number;
@@ -108,7 +108,7 @@ const SORT_COLUMNS = {
   createdAt: tasks.createdAt,
 } as const;
 
-/** 默认排序（A19 / A20 · Push 122）：阶段序（STAGE_KEYS 契约顺序，「未分组」落在最后）→ 组内位次 sort_index → id（稳定分页）。 */
+/** 默认排序（A19 / A20 · Push 124）：阶段序（STAGE_KEYS 契约顺序，「未分组」落在最后）→ 组内位次 sort_index → id（稳定分页）。 */
 const STAGE_ORDER = sql`case ${tasks.stageKey} ${sql.join(
   STAGE_KEYS.map((key, index) => sql`when ${key} then ${index}`),
   sql` `,
@@ -408,7 +408,7 @@ function taskConditions(projectId: string, filter: TaskListFilter, today: string
   return conditions;
 }
 
-/** 组条件：stage_key 为 null 时用 is null（SQL 的 = null 恒不成立）——「未分组」自成一组（A15 · Push 122）。 */
+/** 组条件：stage_key 为 null 时用 is null（SQL 的 = null 恒不成立）——「未分组」自成一组（A15 · Push 124）。 */
 function groupCondition(stageKey: string | null): SQL {
   return stageKey === null ? (isNull(tasks.stageKey) as SQL) : (eq(tasks.stageKey, stageKey) as SQL);
 }
@@ -432,7 +432,7 @@ function displayStatusCondition(status: string, today: string): SQL {
   }
 }
 
-/** 排序：显式 sort 走白名单列；缺省 = 阶段序 + 组内位次 + id（A8 / A19 / A20 · Push 122，与看板列内顺序同口径）。 */
+/** 排序：显式 sort 走白名单列；缺省 = 阶段序 + 组内位次 + id（A8 / A19 / A20 · Push 124，与看板列内顺序同口径）。 */
 function taskOrderBy(sorts: readonly TaskSort[]): SQL[] {
   if (sorts.length === 0) {
     return [sql`${STAGE_ORDER} asc`, asc(tasks.sortIndex), asc(tasks.id)];

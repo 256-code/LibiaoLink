@@ -119,7 +119,7 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks：从任务节点生成（成员）或手工创建（仅管理员，A1-13）；按节点判重 409。
-   * w2 · Push 122：stageKey 可选（缺省 / null = 「未分组」；带节点时缺省取节点阶段）、ownerId 显式 null = 「待分配」、
+   * w2 · Push 124：stageKey 可选（缺省 / null = 「未分组」；带节点时缺省取节点阶段）、ownerId 显式 null = 「待分配」、
    * sortIndex = 插入位次（越界 / 缺省 = 组尾），组内其余任务位次顺延。
    */
   async create(projectId: string, body: TaskCreateBody, actorId: string): Promise<Task> {
@@ -207,7 +207,7 @@ export class TaskService {
   }
 
   /**
-   * PATCH /projects/{id}/tasks/{taskId}：字段编辑 +（可选）基础三态写入联动（A12）+ 组内重排（A19 / A20，Push 122）；
+   * PATCH /projects/{id}/tasks/{taskId}：字段编辑 +（可选）基础三态写入联动（A12）+ 组内重排（A19 / A20，Push 124）；
    * 乐观锁 + 字段留痕。ownerId 显式 null = 「待分配」；sortIndex = 移到该组第 N 位（越界 = 组尾）。
    */
   async update(projectId: string, taskId: string, body: TaskUpdateBody, actorId: string): Promise<Task> {
@@ -344,7 +344,7 @@ export class TaskService {
   }
 
   /**
-   * 组内重排（A19 / A20 · Push 122）：把任务移到该组第 N 位（越界 = 组尾），返回落定位次。
+   * 组内重排（A19 / A20 · Push 124）：把任务移到该组第 N 位（越界 = 组尾），返回落定位次。
    * 调用方必须已锁住该组（listGroupOrder lock=true）—— 只平移其余任务的位次，不逐个改版本 / updated_at。
    */
   private async moveWithinGroup(tx: DbClient, projectId: string, task: TaskRow, requested: number): Promise<number> {
