@@ -16,7 +16,9 @@
     "test": "vitest run",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:db-schema": "node --env-file-if-exists=.env scripts/check-db-schema.mjs",
-    "check:permission-matrix": "node scripts/check-permission-matrix.mjs"
+    "check:permission-matrix": "node scripts/check-permission-matrix.mjs",
+    "storage:init": "node --env-file-if-exists=.env scripts/storage-init.mjs",
+    "storage:it": "node --env-file-if-exists=.env scripts/storage-it.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",

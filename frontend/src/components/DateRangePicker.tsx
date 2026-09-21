@@ -16,6 +16,11 @@ type DateRangePickerProps = {
   ariaLabel?: string;
   /** 触发器附加类名（分类筛选侧栏传「液态玻璃」材质；不传保持默认白底描边）。 */
   triggerClassName?: string;
+  /**
+   * 选择模式（Push 128）：`range` = 选一段（默认，筛选 / 任务开始预计完成用）；
+   * `single` = 单选一天（日报「时间」这类单日期字段用）——点哪天就只选哪天，触发器只显示一个日期。
+   */
+  mode?: "range" | "single";
 };
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
@@ -32,7 +37,8 @@ const toDate = (key: string) => {
 
 const formatKey = (key: string) => key.replace(/-/g, "/");
 
-export function DateRangePicker({ value, onChange, hintDate, placeholder = "全部时间", ariaLabel = "选择日期范围", triggerClassName }: DateRangePickerProps) {
+export function DateRangePicker({ value, onChange, hintDate, placeholder = "全部时间", ariaLabel = "选择日期范围", triggerClassName, mode = "range" }: DateRangePickerProps) {
+  const single = mode === "single";
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | null>(value);
   const [view, setView] = useState(() => {
@@ -98,10 +104,13 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
     });
   }, [view]);
 
-  const label = value === null ? placeholder : formatKey(value.from) + " – " + formatKey(value.to);
+  const label = value === null ? placeholder : single ? formatKey(value.from) : formatKey(value.from) + " – " + formatKey(value.to);
 
   const pick = (key: string) => {
     setDraft((previous) => {
+      if (single) {
+        return { from: key, to: key };
+      }
       if (previous === null || previous.from !== previous.to) {
         return { from: key, to: key };
       }

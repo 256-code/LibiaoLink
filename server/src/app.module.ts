@@ -13,6 +13,7 @@ import { IdentityModule } from "./modules/identity/index.js";
 import { PermissionModule } from "./modules/permission/index.js";
 import { ProjectModule } from "./modules/project/index.js";
 import { TaskModule } from "./modules/task/index.js";
+import { StorageModule } from "./storage/index.js";
 
 /** api 进程：HTTP 入口（无状态、不跑 CPU 密集任务）。 */
 @Module({})
@@ -24,6 +25,7 @@ export class AppModule {
         createLoggerModule(env),
         AppConfigModule.forRoot(env),
         DatabaseModule,
+        StorageModule,
         HealthModule,
         IdentityModule,
         PermissionModule,
