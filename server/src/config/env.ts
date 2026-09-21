@@ -37,6 +37,8 @@ export const EnvSchema = z
     S3_DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(300),
     /** 单文件大小上限（MB）；上传管道（M4-01）据此返回 400 VALIDATION_FAILED。 */
     UPLOAD_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102400).default(2048),
+    /** 上传会话有效期（小时）：过期不可续传，需重新发起（契约 UploadSession.expiresAt）。 */
+    UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   })
   .superRefine((value, context) => {
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
