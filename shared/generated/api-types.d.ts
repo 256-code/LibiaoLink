@@ -5252,7 +5252,7 @@ export interface components {
             version: components["schemas"]["FileVersion"];
             changeRequest: components["schemas"]["ChangeRequest"];
         };
-        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口） */
+        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效） */
         UploadCreateBody: {
             projectId: components["schemas"]["Uuid"];
             name: string;
@@ -5265,6 +5265,7 @@ export interface components {
             taskId?: components["schemas"]["Uuid"];
             /** @enum {string} */
             intent: "version";
+            fileId?: components["schemas"]["Uuid"] & unknown;
         } | {
             projectId: components["schemas"]["Uuid"];
             name: string;
@@ -5277,6 +5278,7 @@ export interface components {
             taskId?: components["schemas"]["Uuid"];
             /** @enum {string} */
             intent: "change";
+            fileId: components["schemas"]["Uuid"] & unknown;
             change: components["schemas"]["ChangeIntentBody"];
         };
         UploadCreateResponse: {
