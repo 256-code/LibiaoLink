@@ -31,6 +31,11 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # 脚本语法门禁：scripts/**/*.mjs 不在 typecheck / build 覆盖内；`node --check` 一次只检查第一个文件，必须逐个跑。
+      - name: Script syntax gate (*.mjs)
+        run: |
+          set -euo pipefail
+          find scripts -type f -name "*.mjs" -print0 | xargs -0 -r -n1 node --check
       - name: Install (locked)
         run: npm ci
       - name: Typecheck
@@ -74,6 +79,13 @@ jobs:
           cache-dependency-path: |
             shared/package-lock.json
             server/package-lock.json
+      # 脚本语法门禁：scripts/**/*.mjs 不在 typecheck / vitest / build / 边界规则覆盖内（PR-3b 复验教训）。
+      # `node --check` 一次只检查第一个文件，多文件必须逐个跑。
+      - name: Script syntax gate (*.mjs)
+        working-directory: server
+        run: |
+          set -euo pipefail
+          find scripts -type f -name "*.mjs" -print0 | xargs -0 -r -n1 node --check
       - name: Install shared (locked)
         working-directory: shared
         run: npm ci
@@ -128,6 +140,12 @@ jobs:
             shared/package-lock.json
             server/package-lock.json
             database/package-lock.json
+      # 脚本语法门禁：scripts/ 与 seeds/ 下的 .mjs 不在 typecheck / 迁移门禁覆盖内；`node --check` 必须逐个跑。
+      - name: Script syntax gate (*.mjs)
+        working-directory: database
+        run: |
+          set -euo pipefail
+          find scripts seeds -type f -name "*.mjs" -print0 | xargs -0 -r -n1 node --check
       - name: Install shared (locked)
         working-directory: shared
         run: npm ci
