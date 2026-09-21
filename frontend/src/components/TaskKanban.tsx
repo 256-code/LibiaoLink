@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -39,6 +39,9 @@ import { trackerLabel } from "./Tracker";
  * 位置每帧更新（与落点同一个 rAF 循环）；原地那张卡片照旧不动、不淡出、不抬起。
  * Push 110（业务反馈「还是要透明的吧」）：拖动卡片改成**半透明**（壳从实心白换成半透明白 + 轻磨砂 `backdrop-blur`），
  * 压住落点槽位 / 列内卡片时能透出去（`pointer-events-none` 不变）；投影保持原样不淡，原地那张卡片仍不动、不淡出。
+ * Push 118（业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」）：「添加」浮层的打开态原来是**每列一份**（列内局部 state），
+ * 六列互不感知、能同时开着菜单；现在提到 `TaskKanban` 一层，整块看板共用**单值**状态（`AddOverlay`）——
+ * 点别的列的「添加」= 那一列接管，上一列的菜单 / 临时任务表单 / 阶段选择 / 模板卡片应声关掉；`Esc` / 点外面仍是关。
  */
 export type KanbanMode = "owner" | "status";
 
@@ -388,10 +391,26 @@ function KanbanCard({
 /** 「添加」的浮层：菜单 → 临时任务表单 / 阶段选择（选完阶段再开该阶段的模板卡片）。 */
 type AddPanel = "none" | "menu" | "temp" | "stage";
 
+/**
+ * 「添加」浮层的打开态（Push 118）：整块看板只有这一份状态，`key` = 开在哪一列 —— 每列拿自己的 `key` 比对，
+ * 所以**同一时刻只会有一个浮层**（点别的列的「添加」= 那一列直接接管，上一列的浮层应声关掉）。
+ * `template` = 「阶段任务」选完阶段后开出来的那张模板卡片（同一条链路、同一份状态）。
+ */
+type AddOverlay = {
+  /** 开在哪一列（`group.key`）。 */
+  key: string;
+  /** 开的是哪一种浮层（`template` = 阶段任务的模板卡片）。 */
+  kind: "menu" | "temp" | "stage" | "template";
+  /** `kind === "template"` 时 = 模板卡片开的是哪个阶段（其余时候是 null）。 */
+  stage: string | null;
+};
+
 function KanbanColumn({
   group,
   mode,
   existingTaskIds,
+  overlay,
+  setOverlay,
   onOpenTask,
   onAddTask,
   onAddStageTask,
@@ -404,6 +423,10 @@ function KanbanColumn({
   group: KanbanGroup;
   mode: KanbanMode;
   existingTaskIds: ReadonlySet<string>;
+  /** 整块看板共用的浮层状态（Push 118）：只有 `key` 是本列时，浮层才归本列渲染。 */
+  overlay: AddOverlay | null;
+  /** 改浮层状态（Push 118）：点本列的「添加」= 本列接管，上一列的浮层自然被顶掉。 */
+  setOverlay: Dispatch<SetStateAction<AddOverlay | null>>;
   onOpenTask: (task: ProjectTask) => void;
   /** 卡片上直接改字段（Push 98）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
@@ -419,11 +442,15 @@ function KanbanColumn({
   stageTasksOf: (stage: string) => readonly { id: string; title: string }[];
 }) {
   const owner = memberByName(group.key);
-  const [panel, setPanel] = useState<AddPanel>("none");
   const [title, setTitle] = useState("");
   const [titleEn, setTitleEn] = useState("");
-  const [templateStage, setTemplateStage] = useState<string | null>(null);
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 112, left: 16 });
+  /** 本列的浮层（Push 118）：浮层状态是整块看板共用的，只有 `key` 是本列时才归本列。 */
+  const mine = overlay !== null && overlay.key === group.key ? overlay : null;
+  /** 本列开的是三种「列内浮层」里的哪一种（模板卡片不算 —— 它自带一套关闭逻辑）。 */
+  const panel: AddPanel = mine === null || mine.kind === "template" ? "none" : mine.kind;
+  /** 本列的「阶段任务」模板卡片开的是哪个阶段（没开 = null）。 */
+  const templateStage = mine !== null && mine.kind === "template" ? mine.stage : null;
   const columnRef = useRef<HTMLElement | null>(null);
   /** 落点就在本列（Push 108）：整列描边高亮 + 列内浮出插入槽位（槽位插到第 `dropIndex` 格）。 */
   const isDropTarget = dropIndex !== null;
@@ -437,28 +464,47 @@ function KanbanColumn({
     status: mode === "status" ? group.status : "待开始",
   };
 
-  const closePanels = () => {
-    setPanel("none");
-    setTitle("");
-    setTitleEn("");
+  /**
+   * 开 / 关本列的浮层（Push 118）：写的是**整块看板共用的那一份**状态 —— 点别的列的「添加」= 那一列直接接管，
+   * 上一列的浮层应声关掉（业务口径「不能同时打开 点击别的应该关闭另一个吧」）。
+   */
+  const openPanel = (next: AddPanel) => {
+    setOverlay(next === "none" ? null : { key: group.key, kind: next, stage: null });
   };
+
+  /** 关本列的浮层（「取消」按钮）。 */
+  const closePanels = () => {
+    openPanel("none");
+  };
+
+  /** 本列开着的是不是「列内浮层」（菜单 / 临时任务表单 / 阶段选择）：模板卡片自带一套关闭逻辑，不算在内。 */
+  const panelActive = mine !== null && mine.kind !== "template";
+
+  // 浮层关掉之后清掉临时任务表单里没提交的内容（下次打开是空表单）
+  useEffect(() => {
+    if (!panelActive) {
+      setTitle("");
+      setTitleEn("");
+    }
+  }, [panelActive]);
 
   // `Esc` / 点浮层外的空白处关掉（阶段任务的模板卡片自带同一套关闭逻辑）
   useEffect(() => {
-    if (panel === "none") {
+    if (!panelActive) {
       return;
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        closePanels();
+        setOverlay(null);
       }
     };
     const onDown = (event: MouseEvent) => {
       const target = event.target as Element | null;
+      // 点「添加」区（按钮 / 浮层本身）不算点外面；点别的列的「添加」由那一列接管、本列照旧关掉（Push 118）
       if (target !== null && target.closest("[data-add-root]") !== null) {
         return;
       }
-      closePanels();
+      setOverlay(null);
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDown);
@@ -466,7 +512,7 @@ function KanbanColumn({
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onDown);
     };
-  }, [panel]);
+  }, [panelActive, setOverlay]);
 
   /** 阶段任务：模板卡片开在这一列的右侧、与列顶齐平（位置按列实测算，并夹在视口内）。 */
   const openTemplateCard = (stage: string) => {
@@ -477,8 +523,7 @@ function KanbanColumn({
         left: Math.max(16, Math.min(rect.right + 12, window.innerWidth - 416)),
       });
     }
-    setPanel("none");
-    setTemplateStage(stage);
+    setOverlay({ key: group.key, kind: "template", stage });
   };
 
   /** 插入槽位（Push 105 / 108）：浮在鼠标算出来的那两格之间 —— 放开就插到这里（同列 = 放到这里、换列 = 移到那一列）。 */
@@ -541,11 +586,11 @@ function KanbanColumn({
           {panel === "menu" ? (
             <div className={ADD_POPOVER} role="menu" aria-label={"添加任务：" + group.key}>
               <p className="px-1 pb-1 text-[11px] text-zinc-400">添加任务</p>
-              <button type="button" role="menuitem" onClick={() => { setPanel("temp"); }} className={ADD_ENTRY}>
+              <button type="button" role="menuitem" onClick={() => { openPanel("temp"); }} className={ADD_ENTRY}>
                 临时任务
                 <span className={ADD_ENTRY_HINT}>自己填内容</span>
               </button>
-              <button type="button" role="menuitem" onClick={() => { setPanel("stage"); }} className={ADD_ENTRY + " mt-1"}>
+              <button type="button" role="menuitem" onClick={() => { openPanel("stage"); }} className={ADD_ENTRY + " mt-1"}>
                 阶段任务
                 <span className={ADD_ENTRY_HINT}>从模板里选</span>
               </button>
@@ -589,7 +634,7 @@ function KanbanColumn({
 
           <button
             type="button"
-            onClick={() => { setPanel(panel === "none" ? "menu" : "none"); }}
+            onClick={() => { openPanel(panel === "none" ? "menu" : "none"); }}
             aria-label={"添加任务：" + group.key}
             aria-expanded={panel !== "none"}
             className={ADD_BUTTON}
@@ -609,7 +654,10 @@ function KanbanColumn({
           existingTaskIds={existingTaskIds}
           placement={{ tasks: stageTasksOf(templateStage) }}
           onAddNodes={(stage, nodes, placement) => { onAddStageTask(context, stage, nodes, placement); }}
-          onClose={() => { setTemplateStage(null); }}
+          onClose={() => {
+            // 只关「本列这张模板卡片」（Push 118）：卡片自己关得比点别处晚时，不误伤刚打开的那个浮层
+            setOverlay((prev) => (prev !== null && prev.kind === "template" && prev.key === group.key ? null : prev));
+          }}
           style={{ position: "fixed", top: cardPos.top, left: cardPos.left }}
         />
       )}
@@ -619,6 +667,11 @@ function KanbanColumn({
 
 export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+  /**
+   * 「添加」浮层（Push 118）：整块看板共用的**单值**状态 —— 业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」。
+   * 原来这份状态是每列一份（列内局部 state），六列互不感知、能同时开着菜单；提到这一层之后同一时刻只会有一个。
+   */
+  const [addOverlay, setAddOverlay] = useState<AddOverlay | null>(null);
   /** 正在拖动的卡片 id（Push 108；null = 没在拖）。 */
   const [draggingId, setDraggingId] = useState<string | null>(null);
   /** 当前落点（Push 108）：`key` = 哪一列、`index` = 插到第几格；null = 鼠标不在任何列上。 */
@@ -868,6 +921,8 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
             group={group}
             mode={mode}
             existingTaskIds={existingTaskIds}
+            overlay={addOverlay}
+            setOverlay={setAddOverlay}
             onOpenTask={openTask}
             onAddTask={onAddTask}
             onAddStageTask={onAddStageTask}
