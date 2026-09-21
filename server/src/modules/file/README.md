@@ -1,4 +1,4 @@
-# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站已落地）
+# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联已落地）
 
 | 字段 | 内容 |
 |---|---|
@@ -12,8 +12,10 @@
 
 ```text
 file.controller.ts   # HTTP 面：/api/v1/files（会话 + CSRF 守卫；权限在服务层判定）
+file-library.controller.ts  # HTTP 面：/api/v1/projects/{id}/files 文件库列表（会话 + CSRF + ProjectAccessGuard）
+file.query.ts        # 文件库查询解析（纯函数）：筛选（多值 / UUID）/ 关键字 / 排序白名单；非法一律 400
 file.service.ts      # 业务：上传管道（发起 / 分片 / 状态 / 完成 / 取消 / 过期清理 EXPIRE_SWEEP_BATCH）+ 生命周期（详情 / 版本链 / 定档 / 回溯 / 回收 / 恢复 / 彻底删除 / 到期清理 RECYCLE_SWEEP_BATCH）
-file.repository.ts   # 数据访问：files / file_versions / upload_sessions（写路径由服务层开事务传 tx；关键路径 for update）
+file.repository.ts   # 数据访问：files / file_versions / upload_sessions / file_links（写路径由服务层开事务传 tx；关键路径 for update）
 file.module.ts       # DI 装配（identity 守卫 / permission / admin 审计；ClockService）
 index.ts             # 唯一公开出口（跨模块只允许 import 本文件）
 ```
@@ -34,22 +36,23 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 | `POST /api/v1/files/{id}/recycle` | 移入回收站（任意状态可删；保留 30 天可恢复） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/restore` | 恢复（回到进入前状态） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/purge` | 彻底删除（仅管理员；仅回收站文件；对象 + 元数据一并清） | 200 / 403 | 仅系统管理员 |
+| `GET /api/v1/projects/{id}/files` | 文件库列表（筛选 / 关键字 / 白名单排序 / 分页；默认排除 recycled） | 200 | 项目可见即可 |
 
 - 实现口径（键形态 / 校验顺序 / 错误码 / 过期语义 / worker 清理）见 `server/README.md`「文件上传接口」与 `src/storage/README.md`；真机回放见 `docs/m4-01-回放证据(上传管道S7file).md`。
 - 审计：`object_type = "file"`（objectId = fileId），上传会话事件经 `metadata.uploadId` 定位；过期清理为 system 审计（actorId = null）。
 - **上传入口 `fileId` 分派（Push 130 定案 · wmj）**：`intent=version` 省略 `fileId` = 新建文件；**给出 = 对既有 draft 文件替换 / 追加版本（M4-02 已放开）**——目标 404（不存在 / 不可见）/ 与 `projectId` 不一致 400（`invalid_file`）/ `name` 与归属字段与现状不一致 400（`name_mismatch` / `doc_type_mismatch` / `node_mismatch` / `task_mismatch`）/ 非 draft 409 `FILE_STATE_INVALID`；`duplicateHint` 恒空。`intent=change` 仍为切片守卫：**显式 400 `VALIDATION_FAILED`（details `intent_change_not_open`），随 M4-04 变更流放开**。
 - **M4-02 生命周期口径**：状态机 `draft → final → changed → archived`，任意态可 `recycled`；写操作一律带乐观锁 `version`（不匹配 409 `VERSION_CONFLICT`）；定档落 `finalized_*` 成对字段 + 审计 + outbox `file.finalized`；回溯生成新版本（复制对象到新契约键，不删历史），定档后回溯 400（`change_flow_not_open`，随 M4-04）；回收落 `recycled_*` 三列 + `purge_after`（`FILE_RECYCLE_RETENTION_DAYS`，默认 30 天）；彻底删除仅管理员、仅回收站文件，对象按版本清 + 元数据删 + 留痕（`metadata.deletedVersions`），对象清理在持锁事务内（防并发恢复误删）。详见 `server/README.md`「文件生命周期接口」。
+- **M4-03 文件库口径（PR-6）**：完成上传在同一事务写 `file_links`（**project 必写，node / task 有则写**；report / issue / change 随对应模块落地），唯一 `（file_id, object_type, object_id）` + `on conflict do nothing` 保证追加版本幂等；列表读 = 项目可见即可（`ProjectAccessGuard`，非成员 404），**默认排除 recycled**（显式 `filter[status]=recycled` 可查回收站），`filter[uploadedBy]` 口径 = `files.created_by`（追加版本的 `uploaded_by` 不作为筛选口径），非法输入 400 `VALIDATION_FAILED`。详见 `server/README.md`「文件库接口」；真机回放见 `docs/m4-03-回放证据(多态关联与文件库查询).md`。
 - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
 
 ## 上游（直接复用，不重复造）
 
 - `src/storage/`（经 `ObjectStorage` 端口注入，不直接碰 S3 SDK）：`createMultipartUpload` / `signPartUploadUrl` / `listParts` / `completeMultipartUpload` / `abortMultipartUpload` / `headObject` / `copyObject`（暂存键 → 契约键）/ `purgeObject`（**按版本**彻底删除）/ `probe`；`buildObjectKey` + `buildUploadStagingKey` + `planUpload` / `missingPartNumbers` + `toApiError`。
-- 数据层：`files` / `file_versions` / `upload_sessions`（`database/migrations/0005_file_lifecycle.sql`；**分片状态不落表**，以 ListParts 为唯一真相）+ `idempotency_keys`（0006）。
+- 数据层：`files` / `file_versions` / `upload_sessions`（`database/migrations/0005_file_lifecycle.sql`；**分片状态不落表**，以 ListParts 为唯一真相）+ `idempotency_keys`（0006）+ `file_links`（`0016_file_links.sql` · M4-03：多态关联，`object_type` 六值 CHECK / 联合唯一幂等 / `(object_type, object_id)` 反查索引）。
 - 横切：`AuditService`（同事务留痕）、`PermissionService`（`file.upload` / `file.download` 与记录级 404）、`ClockService`（会话到期判定，禁止直接取系统时间）。
 
 ## 待落地（按卡片）
 
-- **M4-03**：文件库查询与多态关联（`GET /api/v1/projects/{id}/files` 列表 / `file_links` 双向跳转；合同已就位）。
-- **M4-04**：变更（申请即通过）——同一事务写 `change_requests` + 新版本 + 状态 changed + Outbox；上传入口 `intent=change` 放开时去掉切片守卫，并把「定档后回溯」切换到变更流（当前 400 `change_flow_not_open`）。
+- **M4-04**：变更（申请即通过）——同一事务写 `change_requests` + 新版本 + 状态 changed + Outbox；上传入口 `intent=change` 放开时去掉切片守卫，并把「定档后回溯」切换到变更流（当前 400 `change_flow_not_open`）；同时把 change 关联写入 `file_links`（object_type = change）。
 - **M4-05**：预览编排（预览鉴权与产物，preview 模块）。
 - 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。

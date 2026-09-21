@@ -1,11 +1,12 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, isNull, lt, lte, ne, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, lte, ne, notInArray, sql, type SQL } from "drizzle-orm";
 import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
-import { files, fileVersions, uploadSessions } from "../../db/schema/files.js";
+import { fileLinks, files, fileVersions, uploadSessions } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
+import type { FileListFilter, FileListSort } from "./file.query.js";
 
 /**
  * file 模块数据访问（M4-01 上传管道 · M4-02 版本 / 定档 / 回溯 / 回收站）。
@@ -118,6 +119,18 @@ export interface FileStatePatch {
   recycledFromStatus?: string | null;
   purgeAfter?: Date | null;
   updatedAt?: Date;
+}
+
+/** file_links 行（M4-03 多态关联：project / task / node / report / issue / change）。 */
+export type FileLinkRow = typeof fileLinks.$inferSelect;
+
+/** 关联写入（唯一 (file_id, object_type, object_id)：重复写幂等忽略）。 */
+export interface FileLinkInsertInput {
+  fileId: string;
+  objectType: string;
+  objectId: string;
+  createdBy: string;
+  createdAt: Date;
 }
 
 @Injectable()
@@ -355,4 +368,109 @@ export class FileRepository {
   async deleteFile(fileId: string, client: DbClient): Promise<void> {
     await client.delete(files).where(eq(files.id, fileId));
   }
+
+  /**
+   * 文件库列表（M4-03 · A4-01）：项目 + 多值筛选 + 关键字 + 白名单排序 + 分页；
+   * `total` 与 items 同一 where（分页元数据一致）。默认排除 recycled（口径见 file.query.ts）。
+   */
+  async listProjectFiles(
+    projectId: string,
+    filter: FileListFilter,
+    sorts: readonly FileListSort[],
+    limit: number,
+    offset: number,
+    client: DbClient = this.database.db,
+  ): Promise<{ items: FileRow[]; total: number }> {
+    const where = and(...fileLibraryConditions(projectId, filter));
+    const items = await client
+      .select()
+      .from(files)
+      .where(where)
+      .orderBy(...fileLibraryOrderBy(sorts))
+      .limit(limit)
+      .offset(offset);
+    const totals = await client.select({ value: count() }).from(files).where(where);
+    return { items, total: Number(totals[0]?.value ?? 0) };
+  }
+
+  /** 文件 → 关联（双向跳转读面；供日报 / 问题 / 变更模块与内部核对使用）。 */
+  async listFileLinks(fileId: string, client: DbClient = this.database.db): Promise<FileLinkRow[]> {
+    return client
+      .select()
+      .from(fileLinks)
+      .where(eq(fileLinks.fileId, fileId))
+      .orderBy(asc(fileLinks.createdAt), asc(fileLinks.id));
+  }
+
+  /** 关联 → 文件（从任务 / 节点 / 日报 / 问题 / 变更侧反查 file_id）。 */
+  async listFileIdsByObject(objectType: string, objectId: string, client: DbClient = this.database.db): Promise<string[]> {
+    const rows = await client
+      .select({ fileId: fileLinks.fileId })
+      .from(fileLinks)
+      .where(and(eq(fileLinks.objectType, objectType), eq(fileLinks.objectId, objectId)))
+      .orderBy(asc(fileLinks.createdAt), asc(fileLinks.id));
+    return rows.map((row) => row.fileId);
+  }
+
+  /** 幂等写关联（on conflict do nothing：同一 (file, object) 重复写不报错、不重复行）。 */
+  async insertFileLinks(rows: readonly FileLinkInsertInput[], client: DbClient): Promise<void> {
+    if (rows.length === 0) return;
+    await client
+      .insert(fileLinks)
+      .values(
+        rows.map((row) => ({
+          fileId: row.fileId,
+          objectType: row.objectType,
+          objectId: row.objectId,
+          createdBy: row.createdBy,
+          createdAt: row.createdAt,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+}
+
+/** 文件库列表条件（M4-03）：默认排除回收站（显式给出 statuses 时以给出为准）。 */
+function fileLibraryConditions(projectId: string, filter: FileListFilter): SQL[] {
+  const conditions: SQL[] = [eq(files.projectId, projectId)];
+  if (filter.nodeId !== null) conditions.push(eq(files.nodeId, filter.nodeId));
+  if (filter.taskId !== null) conditions.push(eq(files.taskId, filter.taskId));
+  if (filter.statuses !== null) conditions.push(inArray(files.status, filter.statuses));
+  else conditions.push(notInArray(files.status, ["recycled"]));
+  if (filter.docTypes !== null) conditions.push(inArray(files.docType, filter.docTypes));
+  if (filter.uploadedBy !== null) conditions.push(eq(files.createdBy, filter.uploadedBy));
+  if (filter.keyword !== null) {
+    conditions.push(ilike(files.name, "%" + escapeLikePattern(filter.keyword) + "%"));
+  }
+  return conditions;
+}
+
+/** 排序映射（白名单与 file.query.ts 一致）+ 稳定 tie-breaker（id 全库唯一，分页不跳行）。 */
+const FILE_SORT_COLUMNS = {
+  createdAt: files.createdAt,
+  updatedAt: files.updatedAt,
+  finalizedAt: files.finalizedAt,
+  name: files.name,
+  status: files.status,
+} as const;
+
+function fileLibraryOrderBy(sorts: readonly FileListSort[]): SQL[] {
+  const clauses: SQL[] = sorts.map((sort) =>
+    sort.direction === "desc" ? desc(FILE_SORT_COLUMNS[sort.field]) : asc(FILE_SORT_COLUMNS[sort.field]),
+  );
+  if (sorts.length === 0) clauses.push(desc(files.createdAt));
+  clauses.push(asc(files.id));
+  return clauses;
+}
+
+/** LIKE 通配符转义（PG 默认转义符为反斜杠；避开字面反斜杠，用字符码构造）。 */
+function escapeLikePattern(value: string): string {
+  const backslash = String.fromCharCode(92);
+  return value
+    .split(backslash)
+    .join(backslash + backslash)
+    .split("%")
+    .join(backslash + "%")
+    .split("_")
+    .join(backslash + "_");
 }
