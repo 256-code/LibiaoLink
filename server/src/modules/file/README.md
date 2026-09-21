@@ -1,4 +1,4 @@
-# file 模块（S7·file：上传管道已落地）
+# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站已落地）
 
 | 字段 | 内容 |
 |---|---|
@@ -12,13 +12,13 @@
 
 ```text
 file.controller.ts   # HTTP 面：/api/v1/files（会话 + CSRF 守卫；权限在服务层判定）
-file.service.ts      # 业务：发起 / 分片 / 状态 / 完成 / 取消 / 过期清理（EXPIRE_SWEEP_BATCH）
+file.service.ts      # 业务：上传管道（发起 / 分片 / 状态 / 完成 / 取消 / 过期清理 EXPIRE_SWEEP_BATCH）+ 生命周期（详情 / 版本链 / 定档 / 回溯 / 回收 / 恢复 / 彻底删除 / 到期清理 RECYCLE_SWEEP_BATCH）
 file.repository.ts   # 数据访问：files / file_versions / upload_sessions（写路径由服务层开事务传 tx；关键路径 for update）
 file.module.ts       # DI 装配（identity 守卫 / permission / admin 审计；ClockService）
 index.ts             # 唯一公开出口（跨模块只允许 import 本文件）
 ```
 
-## 已落接口（M4-01 上传管道 · PR-4 · Push 129）
+## 已落接口（M4-01 上传管道 · PR-4 · Push 129；M4-02 版本 / 定档 / 回溯 / 回收站 · PR-5）
 
 | 路径 | 说明 | 响应码 | 权限 |
 |---|---|---|---|
@@ -27,10 +27,18 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 | `GET /api/v1/files/{id}/uploads/{uploadId}` | 会话状态（已传 / 缺失分片；续传依据） | 200 | 项目可见即可 |
 | `POST /api/v1/files/{id}/uploads/{uploadId}/complete` | 完成（合并 → 校验 → 复制契约键 → 落版本） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/uploads/{uploadId}/abort` | 取消（幂等） | 200 | `file.upload` |
+| `GET /api/v1/files/{id}` | 文件详情（含当前版本；回收站文件也可读） | 200 | 项目可见即可 |
+| `GET /api/v1/files/{id}/versions` | 版本链（按 seq 升序；只读不删历史） | 200 | 项目可见即可 |
+| `POST /api/v1/files/{id}/finalize` | 定档锁版（draft → final；至少 1 个版本；乐观锁） | 200 | `file.upload` |
+| `POST /api/v1/files/{id}/rollback` | 回溯生成新版本（复制目标版对象；定档后走变更 M4-04） | 200 | `file.upload` |
+| `POST /api/v1/files/{id}/recycle` | 移入回收站（任意状态可删；保留 30 天可恢复） | 200 | `file.upload` |
+| `POST /api/v1/files/{id}/restore` | 恢复（回到进入前状态） | 200 | `file.upload` |
+| `POST /api/v1/files/{id}/purge` | 彻底删除（仅管理员；仅回收站文件；对象 + 元数据一并清） | 200 / 403 | 仅系统管理员 |
 
 - 实现口径（键形态 / 校验顺序 / 错误码 / 过期语义 / worker 清理）见 `server/README.md`「文件上传接口」与 `src/storage/README.md`；真机回放见 `docs/m4-01-回放证据(上传管道S7file).md`。
 - 审计：`object_type = "file"`（objectId = fileId），上传会话事件经 `metadata.uploadId` 定位；过期清理为 system 审计（actorId = null）。
-- **本切片未开放（Push 130 定案 · wmj）**：契约 `UploadCreateBody` 已补 `fileId` —— `version` 可选（给出 = 对既有 draft 文件替换 / 追加版本）、`change` 必填（目标须 final / changed）。zod 放行后不再拦截，本切片对 **`intent=change` 与任何带 `fileId` 的请求一律显式 400 `VALIDATION_FAILED`**（守卫：不守卫会把「追加版本」静默当新建文件；details `intent_change_not_open` / `file_id_not_supported`），随 M4-02（版本 / 定档）/ M4-04（变更）放开。
+- **上传入口 `fileId` 分派（Push 130 定案 · wmj）**：`intent=version` 省略 `fileId` = 新建文件；**给出 = 对既有 draft 文件替换 / 追加版本（M4-02 已放开）**——目标 404（不存在 / 不可见）/ 与 `projectId` 不一致 400（`invalid_file`）/ `name` 与归属字段与现状不一致 400（`name_mismatch` / `doc_type_mismatch` / `node_mismatch` / `task_mismatch`）/ 非 draft 409 `FILE_STATE_INVALID`；`duplicateHint` 恒空。`intent=change` 仍为切片守卫：**显式 400 `VALIDATION_FAILED`（details `intent_change_not_open`），随 M4-04 变更流放开**。
+- **M4-02 生命周期口径**：状态机 `draft → final → changed → archived`，任意态可 `recycled`；写操作一律带乐观锁 `version`（不匹配 409 `VERSION_CONFLICT`）；定档落 `finalized_*` 成对字段 + 审计 + outbox `file.finalized`；回溯生成新版本（复制对象到新契约键，不删历史），定档后回溯 400（`change_flow_not_open`，随 M4-04）；回收落 `recycled_*` 三列 + `purge_after`（`FILE_RECYCLE_RETENTION_DAYS`，默认 30 天）；彻底删除仅管理员、仅回收站文件，对象按版本清 + 元数据删 + 留痕（`metadata.deletedVersions`），对象清理在持锁事务内（防并发恢复误删）。详见 `server/README.md`「文件生命周期接口」。
 - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
 
 ## 上游（直接复用，不重复造）
@@ -41,8 +49,7 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 
 ## 待落地（按卡片）
 
-- **M4-02**：文件详情 / 版本链（`GET /files/{id}`、`GET /files/{id}/versions`）/ 定档锁版 / 回溯（生成新版本，不删历史）；放开 `intent=version` + `fileId`（对既有 draft 文件替换 / 追加版本 —— Push 130 定案），同步去掉该路径的切片守卫。
-- **M4-03**：回收站（移入 / 恢复原状态 / 彻底删除仅管理员，对象与元数据一并清理、留痕）。
-- **M4-04**：变更（申请即通过）——同一事务写 `change_requests` + 新版本 + 状态 changed + Outbox；上传入口 `fileId` 已定案（Push 130），放开时去掉切片守卫并把回放 U21 断言切换为「change 接受」。
+- **M4-03**：文件库查询与多态关联（`GET /api/v1/projects/{id}/files` 列表 / `file_links` 双向跳转；合同已就位）。
+- **M4-04**：变更（申请即通过）——同一事务写 `change_requests` + 新版本 + 状态 changed + Outbox；上传入口 `intent=change` 放开时去掉切片守卫，并把「定档后回溯」切换到变更流（当前 400 `change_flow_not_open`）。
 - **M4-05**：预览编排（预览鉴权与产物，preview 模块）。
-- 列表面：`GET /api/v1/projects/{id}/files`（合同已就位，随 M4 后续卡片接入）。
+- 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。

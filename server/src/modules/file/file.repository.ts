@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { files, fileVersions, uploadSessions } from "../../db/schema/files.js";
@@ -8,7 +8,7 @@ import { projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
 
 /**
- * file 模块数据访问（M4-01 上传管道）。
+ * file 模块数据访问（M4-01 上传管道 · M4-02 版本 / 定档 / 回溯 / 回收站）。
  *
  * 事务约定（对齐 task 模块）：写路径由服务层开事务并把 `tx` 传进来（审计 / Outbox 同事务）；
  * 会话与文件行在关键路径用 `for update` 串行化（防并发 complete / abort / 首次取分片 URL 竞态）。
@@ -101,6 +101,23 @@ export interface FileCompletePatch {
   currentVersionId: string;
   version: number;
   updatedAt: Date;
+}
+
+/**
+ * 文件状态流转 patch（M4-02：定档 / 回溯 / 回收 / 恢复 / 彻底删除）。
+ * 成对字段（finalized_ 两列、recycled_ 三列 + purge_after）由服务层保证同写同清（库侧有 CHECK）。
+ */
+export interface FileStatePatch {
+  status?: string;
+  currentVersionId?: string | null;
+  version?: number;
+  finalizedAt?: Date | null;
+  finalizedBy?: string | null;
+  recycledAt?: Date | null;
+  recycledBy?: string | null;
+  recycledFromStatus?: string | null;
+  purgeAfter?: Date | null;
+  updatedAt?: Date;
 }
 
 @Injectable()
@@ -293,5 +310,49 @@ export class FileRepository {
       .from(uploadSessions)
       .where(and(eq(uploadSessions.fileId, fileId), eq(uploadSessions.status, "active"), isNull(uploadSessions.completedAt)));
     return Number(rows[0]?.total ?? 0);
+  }
+
+  /** 状态流转写入（调用方持锁：定档 / 回溯 / 回收 / 恢复 / 彻底删除）。 */
+  async updateFileState(fileId: string, patch: FileStatePatch, client: DbClient): Promise<FileRow> {
+    const rows = await client.update(files).set(patch).where(eq(files.id, fileId)).returning();
+    return rows[0]!;
+  }
+
+  /** 指定版本行（回溯目标 / 版本详情；带 fileId 限定防跨文件越权）。 */
+  async findVersionById(
+    fileId: string,
+    versionId: string,
+    client: DbClient = this.database.db,
+  ): Promise<FileVersionRow | null> {
+    const rows = await client
+      .select()
+      .from(fileVersions)
+      .where(and(eq(fileVersions.fileId, fileId), eq(fileVersions.id, versionId)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 回收站到期文件（worker 清理入口；按到期时间升序先进先出）。 */
+  async listExpiredRecycledFiles(
+    now: Date,
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<FileRow[]> {
+    return client
+      .select()
+      .from(files)
+      .where(and(eq(files.status, "recycled"), lte(files.purgeAfter, now)))
+      .orderBy(asc(files.purgeAfter))
+      .limit(limit);
+  }
+
+  /** 彻底删除元数据：先版本后文件（upload_sessions 由外键 cascade；调用方先清 current_version_id）。 */
+  async deleteVersionsByFile(fileId: string, client: DbClient): Promise<number> {
+    const rows = await client.delete(fileVersions).where(eq(fileVersions.fileId, fileId)).returning({ id: fileVersions.id });
+    return rows.length;
+  }
+
+  async deleteFile(fileId: string, client: DbClient): Promise<void> {
+    await client.delete(files).where(eq(files.id, fileId));
   }
 }
