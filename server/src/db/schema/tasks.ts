@@ -25,11 +25,13 @@ export const tasks = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     projectId: uuid("project_id").notNull().references(() => projects.id),
-    stageKey: text("stage_key").notNull(),
+    /** 可空（A15 · Push 124）：看板「＋ 添加 → 临时任务」先不带阶段，前端显示「未分组」。 */
+    stageKey: text("stage_key"),
     nodeId: uuid("node_id").references(() => projectNodes.id),
     title: text("title").notNull(),
     titleEn: text("title_en"),
-    ownerId: uuid("owner_id").notNull(),
+    /** 可空（A18 · Push 124）：「待分配」是合法中间状态（拖进「待分配」列 = 清空负责人）。 */
+    ownerId: uuid("owner_id"),
     status: text("status").notNull(),
     progress: numeric("progress", { precision: 3, scale: 2 }).notNull().default("0"),
     plannedStart: date("planned_start"),
@@ -47,9 +49,12 @@ export const tasks = pgTable(
     version: integer("version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组）；0 起、密集。 */
+    sortIndex: integer("sort_index").notNull().default(0),
   },
   (table) => [
     index("ix_tasks_project_stage").on(table.projectId, table.stageKey),
+    index("ix_tasks_project_stage_order").on(table.projectId, table.stageKey, table.sortIndex),
     index("ix_tasks_owner_due").on(table.ownerId, table.plannedEnd),
     index("ix_tasks_due").on(table.projectId, table.actualEnd, table.plannedEnd),
     check(
@@ -63,6 +68,7 @@ export const tasks = pgTable(
       "ck_tasks_estimated_days",
       sql`${table.estimatedDays} is null or ${table.estimatedDays} >= 0`,
     ),
+    check("ck_tasks_sort_index", sql`${table.sortIndex} >= 0`),
   ],
 );
 
