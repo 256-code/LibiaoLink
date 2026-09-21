@@ -86,7 +86,7 @@ export class GateService {
     return this.gate.countLinkedFiles(client, nodeId);
   }
 
-  /** 阶段完成度（读时派生，不落库）：节点 / 任务计数；缺省补零由调用方处理，任务计数经 task 模块（h4 收口）。 */
+  /** 阶段完成度（读时派生，不落库）：节点 / 任务计数；缺省补零由调用方处理，任务计数经 task 模块（h4 收口；未分组任务不计入，A15）。 */
   async stageProgress(
     client: DbClient,
     projectId: string,
@@ -105,6 +105,8 @@ export class GateService {
       entry.nodes.done = row.nodeDone;
     }
     for (const row of taskRows) {
+      // 未分组任务（stage_key 为 null，A15）不属于九阶段任一段：不计入阶段完成度。
+      if (row.stageKey === null) continue;
       const entry = pick(row.stageKey);
       entry.tasks.total += row.value;
       if (row.status === "done") entry.tasks.done += row.value;
