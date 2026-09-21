@@ -16,11 +16,15 @@ export const TaskSchema = z
   .object({
     id: UuidSchema,
     projectId: UuidSchema,
-    stageKey: StageKeySchema,
+    stageKey: StageKeySchema.nullable().openapi({ description: "所属阶段；null = 「未分组」（A15 · Push 124：临时任务允许没有阶段）" }),
+    sortIndex: z.number().int().min(0).openapi({
+      description:
+        "组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它",
+    }),
     nodeId: UuidSchema.nullable(),
     title: z.string(),
     titleEn: z.string().nullable(),
-    ownerId: UuidSchema,
+    ownerId: UuidSchema.nullable().openapi({ description: "任务负责人；null = 「待分配」（A18 · Push 124：负责人为空是合法中间状态）" }),
     status: TaskBaseStatusSchema,
     displayStatus: TaskDisplayStatusSchema,
     progress: TaskProgressSchema,
@@ -41,7 +45,10 @@ export const TaskSchema = z
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
-  .openapi("Task", { description: "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）" });
+  .openapi("Task", {
+    description:
+      "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124）",
+  });
 
 /** 任务随行文件摘要（A7）：列表不下发文件名数组（省载荷、免 N+1），文件名清单只在详情接口给。 */
 export const TaskFileSummarySchema = z
@@ -68,7 +75,7 @@ export const TaskFileBriefSchema = z
  */
 export const TaskListItemSchema = TaskSchema.omit({ changeRef: true })
   .extend({
-    ownerName: z.string().openapi({ description: "负责人姓名（users.display_name 随行下发）" }),
+    ownerName: z.string().nullable().openapi({ description: "负责人姓名（users.display_name 随行下发）；「待分配」= null" }),
     changeSummary: z.string().nullable().openapi({ description: "变更摘要（列表用短文本；详情用 changeRef 跳变更记录）" }),
     fileSummary: TaskFileSummarySchema,
   })
@@ -76,7 +83,7 @@ export const TaskListItemSchema = TaskSchema.omit({ changeRef: true })
 
 /** 任务详情（抽屉全字段，A7）：含变更指针与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
 export const TaskDetailSchema = TaskSchema.extend({
-  ownerName: z.string(),
+  ownerName: z.string().nullable(),
   changeSummary: z.string().nullable(),
   files: z.array(TaskFileBriefSchema),
 }).openapi("TaskDetail", { description: "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）" });
@@ -96,8 +103,8 @@ export const TaskSortSchema = z
 /**
  * 任务列表查询。
  * A8 排序：sort 字段白名单 plannedStart / plannedEnd / actualEnd / progress / title / createdAt，白名单外返回 400；
- * 不传 sort 时为默认顺序 —— 阶段顺序（STAGE_KEYS 序）+ 组内 plannedStart ASC NULLS LAST, created_at ASC, id ASC
- * （id 兜底保证稳定，分页不跳行；一期不新增 tasks.seq）。
+ * 不传 sort 时为默认顺序 —— 阶段顺序（STAGE_KEYS 序；「未分组」落在最后）+ 组内位次 sort_index ASC + id ASC
+ * （A19 / A20 · Push 124：与看板列内顺序同口径；id 兜底保证稳定，分页不跳行）。
  */
 export const TaskListQuerySchema = z
   .object({
@@ -110,7 +117,8 @@ export const TaskListQuerySchema = z
     sort: TaskSortSchema.optional(),
   })
   .openapi("TaskListQuery", {
-    description: "任务列表查询（分页 + 单阶段 / 负责人 / 展示态筛选 + 白名单排序）；缺省顺序 = 阶段序 + plannedStart ASC NULLS LAST, created_at ASC, id ASC",
+    description:
+      "任务列表查询（分页 + 单阶段 / 负责人 / 展示态筛选 + 白名单排序）；缺省顺序 = 阶段序（「未分组」在最后）+ 组内位次 sort_index ASC + id ASC",
   });
 
 export const TaskListResponseSchema = z
@@ -142,14 +150,24 @@ export const TaskProgressUpdateBodySchema = z
  */
 export const TaskCreateBodySchema = z
   .object({
-    stageKey: StageKeySchema,
+    stageKey: StageKeySchema.nullable().optional().openapi({
+      description:
+        "所属阶段（A15 · Push 124：可选）—— 缺省 / null = 「未分组」（看板「＋ 添加 → 临时任务」）；带 taskNodeId 时缺省取来源节点所属阶段，显式给出且与节点不一致返回 400",
+    }),
+    sortIndex: z.number().int().min(0).optional().openapi({
+      description:
+        "插入位次（A20 · Push 124）：「插入位置」用 —— 0 起（0 = 组内最前）；越界 / 缺省 = 追加到组尾；同组其余任务顺延",
+    }),
     title: z.string().min(1).max(200).openapi({ example: "货架组装", description: "任务描述（节点名称）" }),
     titleEn: z.string().max(200).nullable().optional(),
     taskNodeId: UuidSchema.optional().openapi({
       description:
         "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409 TASK_ALREADY_EXISTS）并建立节点关联；节点必须属于本项目（否则 400）",
     }),
-    ownerId: UuidSchema.optional().openapi({ description: "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底" }),
+    ownerId: UuidSchema.nullable().optional().openapi({
+      description:
+        "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 124：不兜底项目经理）",
+    }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
     estimatedDays: z.number().int().min(0).nullable().optional(),
@@ -163,7 +181,13 @@ export const TaskCreateBodySchema = z
 /** 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。 */
 export const TaskUpdateBodySchema = z
   .object({
-    ownerId: UuidSchema.optional(),
+    ownerId: UuidSchema.nullable().optional().openapi({
+      description: "任务负责人（A18 · Push 124）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）",
+    }),
+    sortIndex: z.number().int().min(0).optional().openapi({
+      description:
+        "组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序",
+    }),
     status: TaskBaseStatusSchema.optional().openapi({
       description:
         "任务状态（基础三态，A12）：pending / active / done —— 服务端同事务回填进度与完成日期：done → progress=1 且 actualEnd 缺省按当天；active → progress 至少 1 格（0 → 0.25；满格 → 0.75）并清 actualEnd；pending → progress=0 并清 actualEnd。「已延期 / 提前完成」是派生展示态、不可写（提交返回 400）；已过 plannedEnd 且未完成时展示态保持「已延期」，不因本字段改写",
@@ -176,7 +200,10 @@ export const TaskUpdateBodySchema = z
     note: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
   })
-  .openapi("TaskUpdateBody", { description: "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress）" });
+  .openapi("TaskUpdateBody", {
+    description:
+      "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerId 显式 null = 待分配，sortIndex = 组内重排）",
+  });
 
 /** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
 export const TaskCreateFromTemplateBodySchema = z
