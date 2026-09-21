@@ -21,9 +21,10 @@ type ThumbMetrics = {
 const HIDE_DELAY = 900;
 const TRACK_INSET = 4;
 const MIN_THUMB_SIZE = 28;
-
 // 原生滚动条在 Chrome 下不会随样式变化重绘，也无法做到「滚动才浮现」，
 // 因此隐藏原生滚动条，改由本组件自绘悬浮滑块（默认透明，滚动 / 悬停滑块时浮现）。
+// Push 108（业务反馈「我不想要自动滚动，想要鼠标控制」）：Push 107 的「拖到边缘自动滚动」已撤回 —— 看板卡片改成指针拖动（见 TaskKanban），
+// 拖动中直接用滚轮翻列 / 翻卡片；`data-scroll-area` 标记保留（自动化走查按它定位横向 / 纵向滚动容器）。
 export function ScrollArea({ children, className = "", viewportClassName = "", ariaLabel, thumbAlwaysVisible = false, axis = "vertical" }: ScrollAreaProps) {
   const horizontal = axis === "horizontal";
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -123,6 +124,7 @@ export function ScrollArea({ children, className = "", viewportClassName = "", a
       <div
         ref={scrollRef}
         aria-label={ariaLabel}
+        data-scroll-area={horizontal ? "horizontal" : "vertical"}
         className={"scrollbar-hidden min-h-0 flex-1 " + (horizontal ? "overflow-x-auto " : "overflow-y-auto ") + className}
       >
         {children}
