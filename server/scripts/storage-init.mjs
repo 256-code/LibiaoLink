@@ -138,14 +138,12 @@ if (exists) {
     }
   }
 
-  const lifecycleRules = [
-    {
-      ID: "abort-incomplete-multipart",
-      Status: "Enabled",
-      Filter: { Prefix: "" },
-      AbortIncompleteMultipartUpload: { DaysAfterInitiation: abortIncompleteDays },
-    },
-  ];
+  const abortRule = {
+    ID: "abort-incomplete-multipart",
+    Status: "Enabled",
+    Filter: { Prefix: "" },
+    AbortIncompleteMultipartUpload: { DaysAfterInitiation: abortIncompleteDays },
+  };
   let lifecycleRules = [];
   let lifecycleUnsupported = "";
   try {
@@ -154,7 +152,7 @@ if (exists) {
   } catch (error) {
     lifecycleUnsupported = NOT_IMPLEMENTED.has(error?.name) ? error.name : "";
   }
-  const current = lifecycleRules.find((rule) => rule.ID === "abort-incomplete-multipart");
+  const current = lifecycleRules.find((rule) => rule.ID === abortRule.ID);
   if (current?.AbortIncompleteMultipartUpload?.DaysAfterInitiation === abortIncompleteDays) {
     record("未完成分片清理", true, `${abortIncompleteDays} 天`);
   } else if (lifecycleUnsupported !== "") {
@@ -167,7 +165,11 @@ if (exists) {
   } else {
     try {
       await client.send(
-        new s3Module.PutBucketLifecycleConfigurationCommand({ Bucket: bucket, LifecycleConfiguration: { Rules: lifecycleRules } }),
+        // 整份配置是「替换」语义：保留桶上其它规则，只增 / 改本脚本这一条（幂等）。
+        new s3Module.PutBucketLifecycleConfigurationCommand({
+          Bucket: bucket,
+          LifecycleConfiguration: { Rules: [...lifecycleRules.filter((rule) => rule.ID !== abortRule.ID), abortRule] },
+        }),
       );
       record("未完成分片清理", true, `${abortIncompleteDays} 天`);
     } catch (error) {
