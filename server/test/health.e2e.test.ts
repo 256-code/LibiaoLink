@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { loadEnv } from "../src/config/env.js";
 import { DatabaseService } from "../src/db/database.service.js";
+import { ObjectStorage } from "../src/storage/index.js";
 
 const env = loadEnv({
   NODE_ENV: "test",
@@ -24,12 +25,20 @@ const createFakeDatabase = (failOnSqlFragment?: string) => ({
   ping: async () => undefined,
 });
 
-async function createApp(fakeDatabase: unknown) {
+const createFakeStorage = (reachable = true) => ({
+  probe: reachable
+    ? () => Promise.resolve()
+    : () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:9000")),
+});
+
+async function createApp(fakeDatabase: unknown, fakeStorage: unknown = createFakeStorage()) {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule.forRoot(env)],
   })
     .overrideProvider(DatabaseService)
     .useValue(fakeDatabase)
+    .overrideProvider(ObjectStorage)
+    .useValue(fakeStorage)
     .compile();
   const app = moduleRef.createNestApplication();
   app.useLogger(false);
@@ -51,7 +60,18 @@ describe("health 端点（骨架验收：本地起服务并过健康检查）", 
     const response = await request(app.getHttpServer()).get("/readyz");
     expect(response.status).toBe(200);
     expect(response.body.ok).toBe(true);
-    expect(response.body.checks).toHaveLength(3);
+    expect(response.body.checks).toHaveLength(4);
+    await app.close();
+  });
+
+  it("GET /readyz 对象存储不可达时返回 503 degraded（数据库通不等于文件可用）", async () => {
+    const app = await createApp(createFakeDatabase(), createFakeStorage(false));
+    const response = await request(app.getHttpServer()).get("/readyz");
+    expect(response.status).toBe(503);
+    expect(response.body.status).toBe("degraded");
+    const failed = response.body.checks.filter((check: { ok: boolean }) => !check.ok);
+    expect(failed).toHaveLength(1);
+    expect(failed[0].name).toBe("object-storage:head-bucket");
     await app.close();
   });
 
