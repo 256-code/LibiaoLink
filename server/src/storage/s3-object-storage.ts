@@ -2,27 +2,34 @@ import { Logger } from "@nestjs/common";
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectVersionsCommand,
   ListPartsCommand,
   S3Client,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Env } from "../config/env.js";
+import { SINGLE_COPY_MAX_BYTES } from "./part-plan.js";
 import {
   ObjectStorage,
   StorageError,
   type CompleteMultipartUploadInput,
+  type CopyObjectInput,
+  type CopyObjectResult,
   type CreateMultipartUploadInput,
   type DownloadUrlInput,
   type MultipartUploadKeyInput,
   type MultipartUploadRef,
   type ObjectHead,
   type PartUploadUrlInput,
+  type PurgeObjectResult,
   type SignedUrl,
   type UploadedPart,
 } from "./object-storage.js";
@@ -53,6 +60,10 @@ const PART_CONFLICT_S3_ERRORS = new Set([
 /** 单页 ListParts 上限（S3 协议最大值）；最多翻 20 页，防异常响应下的死循环。 */
 const LIST_PARTS_PAGE_SIZE = 1000;
 const LIST_PARTS_MAX_PAGES = 20;
+
+/** 按版本删除的批量上限（S3 DeleteObjects 单请求上限）与 ListObjectVersions 翻页上限。 */
+const DELETE_VERSIONS_BATCH = 1000;
+const LIST_VERSIONS_MAX_PAGES = 20;
 
 export class S3ObjectStorage extends ObjectStorage {
   readonly bucket: string;
@@ -214,10 +225,112 @@ export class S3ObjectStorage extends ObjectStorage {
     return { url, expiresAt: new Date(Date.now() + ttl * 1000) };
   }
 
-  async deleteObject(objectKey: string): Promise<void> {
-    await this.call("DeleteObject", () =>
-      this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey })),
+  async copyObject(input: CopyObjectInput): Promise<CopyObjectResult> {
+    const source = await this.headObject(input.sourceKey);
+    if (source === null) {
+      throw new StorageError("object_not_found", `源对象不存在（CopyObject / ${input.sourceKey}）`);
+    }
+    if (source.sizeBytes > SINGLE_COPY_MAX_BYTES) {
+      throw new StorageError(
+        "object_too_large",
+        `源对象 ${source.sizeBytes} 字节超过单次复制上限 ${SINGLE_COPY_MAX_BYTES} 字节（需 UploadPartCopy）`,
+      );
+    }
+    const replaceMetadata = input.contentType !== undefined || input.metadata !== undefined;
+    const output = await this.call("CopyObject", () =>
+      this.client.send(
+        new CopyObjectCommand({
+          Bucket: this.bucket,
+          Key: input.destinationKey,
+          CopySource: `${this.bucket}/${input.sourceKey}`,
+          ContentType: replaceMetadata ? input.contentType ?? undefined : undefined,
+          Metadata: replaceMetadata ? input.metadata : undefined,
+          MetadataDirective: replaceMetadata ? "REPLACE" : "COPY",
+        }),
+      ),
     );
+    return {
+      etag: output.CopyObjectResult?.ETag?.trim() ?? null,
+      versionId: output.VersionId ?? null,
+    };
+  }
+
+  async purgeObject(objectKey: string): Promise<PurgeObjectResult> {
+    const listed = await this.listVersionEntries(objectKey);
+    const versioned = listed.filter((entry) => entry.versionId !== "null");
+    if (versioned.length === 0) {
+      // 未开启版本控制（或该键只剩 delete marker）：确认对象在不在，在则普通删除 —— 不无脑调
+      // DeleteObject，避免在版本化桶里给不存在的键写一个 delete marker。
+      const head = await this.headObject(objectKey);
+      if (head === null) {
+        return { deletedVersions: 0, deleteMarkers: 0 };
+      }
+      await this.call("DeleteObject", () =>
+        this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey })),
+      );
+      return { deletedVersions: 1, deleteMarkers: 0 };
+    }
+    let deletedVersions = 0;
+    let deleteMarkers = 0;
+    for (let start = 0; start < versioned.length; start += DELETE_VERSIONS_BATCH) {
+      const batch = versioned.slice(start, start + DELETE_VERSIONS_BATCH);
+      const output = await this.call("DeleteObjectVersions", () =>
+        this.client.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: {
+              Objects: batch.map((entry) => ({ Key: objectKey, VersionId: entry.versionId })),
+              Quiet: true,
+            },
+          }),
+        ),
+      );
+      if (output.Errors && output.Errors.length > 0) {
+        throw new StorageError(
+          "unavailable",
+          `按版本删除失败：${output.Errors[0]?.Code ?? "unknown"}`,
+        );
+      }
+      deletedVersions += batch.filter((entry) => !entry.isDeleteMarker).length;
+      deleteMarkers += batch.filter((entry) => entry.isDeleteMarker).length;
+    }
+    return { deletedVersions, deleteMarkers };
+  }
+
+  /** 该键的所有版本与 delete marker（版本化桶）；未开启版本控制时 VersionId 为字符串 `null`。 */
+  private async listVersionEntries(objectKey: string): Promise<{ versionId: string; isDeleteMarker: boolean }[]> {
+    const entries: { versionId: string; isDeleteMarker: boolean }[] = [];
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    for (let page = 0; page < LIST_VERSIONS_MAX_PAGES; page += 1) {
+      const output = await this.call("ListObjectVersions", () =>
+        this.client.send(
+          new ListObjectVersionsCommand({
+            Bucket: this.bucket,
+            // Prefix 只是粗筛：同前缀的其它键（`staging/{id}` 与 `staging/{id}.bak`）必须按 Key 精确比对。
+            Prefix: objectKey,
+            KeyMarker: keyMarker,
+            VersionIdMarker: versionIdMarker,
+          }),
+        ),
+      );
+      for (const version of output.Versions ?? []) {
+        if (version.Key === objectKey && version.VersionId !== undefined) {
+          entries.push({ versionId: version.VersionId, isDeleteMarker: false });
+        }
+      }
+      for (const marker of output.DeleteMarkers ?? []) {
+        if (marker.Key === objectKey && marker.VersionId !== undefined) {
+          entries.push({ versionId: marker.VersionId, isDeleteMarker: true });
+        }
+      }
+      if (!output.IsTruncated) {
+        break;
+      }
+      keyMarker = output.NextKeyMarker;
+      versionIdMarker = output.NextVersionIdMarker;
+    }
+    return entries;
   }
 
   async probe(): Promise<void> {

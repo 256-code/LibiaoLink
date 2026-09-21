@@ -3,9 +3,9 @@
 | 字段 | 内容 |
 |---|---|
 | 类型 | 基础设施层（与 `common/` / `db/` / `config/` 同级） |
-| 职责 | 对象存储端口与 S3 适配器：分片会话、预签名直传 / 下载、ListParts、合并 / 中止、HEAD |
+| 职责 | 对象存储端口与 S3 适配器：分片会话、预签名直传 / 下载、ListParts、合并 / 中止、HEAD、服务端复制、按版本彻底删除 |
 | 主责 | lan（团队分工.md §2 后端平台） |
-| 依据 | ADR-006（S3 协议抽象 + MinIO 单节点）；技术设计v0.2 §5.1；契约 `shared/src/modules/files.ts` |
+| 依据 | ADR-006（S3 协议抽象 + 可替换实现；2026-09-21 阶段 0 修订，沙箱 MinIO pinned）；技术设计v0.2 §5.1；契约 `shared/src/modules/files.ts` |
 
 ## 文件
 
@@ -24,6 +24,8 @@ index.ts              # 唯一公开出口
 - **本层不得依赖 `modules/`**：已纳入 `npm run check:boundaries` 规则 3（`common` / `db` / `config` / `storage` 不得依赖业务模块）。
 - **分片状态不落表**：以对象存储 ListParts 为唯一真相（2026-09-18 评审定案）；`upload_sessions` 只登记元数据。
 - **定档不覆盖物理对象**：版本与内容哈希进键（`object-key.ts`），历史对象天然不可变。
+- **键形态（ADR-006 定案 2026-09-21）**：会话先写暂存键 `…/staging/{sessionId}`，complete 时 `copyObject` 一次复制到契约键 `…/v{seq}/{contentHash}.{ext}`，再 `purgeObject` 清理暂存；落库 `file_versions.object_key` 始终是契约形态。单对象 > 5 GiB 需 UploadPartCopy —— 一期由 `UPLOAD_MAX_SIZE_MB`（默认 2048，启动校验 ≤ 5120）挡在 5 GiB 以内。
+- **彻底删除按版本删**：桶开启版本控制后，不带 `versionId` 的 `DeleteObject` 只写 delete marker、数据版本永不回收（lifecycle 已不作为清理手段）→ 一律走 `purgeObject`（`ListObjectVersions` + 批量 `DeleteObjects` 带 `VersionId`）；暂存清理与 M4-02 回收站同口径。
 - **api 不代理大文件流量**：分片与下载都走预签名 URL（短时）。
 
 ## 错误映射（`toApiError`）
@@ -33,6 +35,7 @@ index.ts              # 唯一公开出口
 | `NoSuchUpload`（会话已中止 / 已清理） | `upload_not_found` | `UPLOAD_SESSION_EXPIRED` | 410 |
 | `InvalidPart` / `InvalidPartOrder` / `EntityTooSmall` / `EntityTooLarge` | `part_conflict` | `UPLOAD_INCOMPLETE` | 409 |
 | `NoSuchKey` / 404 | `object_not_found` | `NOT_FOUND` | 404 |
+| 源对象超过单次复制上限（5 GiB） | `object_too_large` | `INTERNAL` | 500 |
 | 网络 / 凭据 / 桶配置 / 其它 | `unavailable` | `INTERNAL` | 500 |
 
 客户端只拿到统一信封；原始 S3 错误留在服务端日志，且经 `scrub()` 脱敏（预签名 URL、访问密钥、签名值不进日志，CONTRIBUTING §12）。
@@ -43,6 +46,13 @@ index.ts              # 唯一公开出口
 2. **寻址方式**：`S3_FORCE_PATH_STYLE=auto` 时非 AWS 端点自动走 path-style（MinIO / SeaweedFS 必需）。
 3. **`entityTooSmall` 是协议约束不是 bug**：非末片必须 ≥ 5 MiB，服务端分片计划（`planUpload`）负责保证。
 
-## 待复核（ADR-006 阶段 0）
+## 实现选型（ADR-006 阶段 0 修订 · 定案 Push 126）
 
-MinIO 社区版上游已归档、官方下载渠道 410、Docker Hub 镜像下架；本版本实测 `PutBucketCors` 返回 `NotImplemented`（CORS 走服务端配置）、lifecycle 规则被拒（内置 stale uploads 清理兜底）。是否切换实现属 ADR 变更（wmj 主责），证据与本目录口径见 `deploy/minio/README.md`。
+MinIO 社区版上游已归档、官方下载渠道 410、Docker Hub 镜像下架；本版本实测 `PutBucketCors` 返回 `NotImplemented`、lifecycle 规则被拒 —— ADR-006 自写的切换触发条件已触发，wmj 已定案（[PR #96](https://github.com/256-code/LibiaoLink/pull/96) / Push 126，评审 lan / px）：
+
+- **接口层不变**：本目录的 S3 协议抽象继续有效（「能退得回去」的兑现），换实现只改 `createS3Client` 的 endpoint 与凭据。
+- **一期实现 = 可替换绑定**：沙箱继续用 pinned 的 `RELEASE.2025-09-07T16-13-09Z`（**仅沙箱，不代表生产选型**）；生产按候选顺序 ① 公司内网既有对象存储 / 既有 MinIO 集群 → ② SeaweedFS 等自建 S3 兼容 → ③ 云 OSS（待云策略结论）。
+- **关闭责任与时点**：px（运维）+ lan（平台），M8 生产部署形态验证前关闭；关闭验收 = `storage:init -- --check` + `storage:it` 在目标实现上全绿。
+- **任何替代实现都必须满足的行为面**：CORS 不得只依赖存储 API（走服务端配置 / 反向代理补响应头）；清理不依赖 lifecycle 规则（未完成分片由存储侧兜底，如内置 `stale_uploads_expiry`；草稿 30 天走 `files.purge_after` → worker）。
+
+阶段 0 证据（许可 / 版本 / 镜像 / 官方下载 / 上游仓库 / 功能缺口）见 `deploy/minio/README.md`。

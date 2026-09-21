@@ -8,6 +8,12 @@
 export const MIN_PART_SIZE_BYTES = 5 * 1024 * 1024;
 export const MAX_PART_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
 export const MAX_PARTS = 10_000;
+/**
+ * 单次 CopyObject / UploadPart 的大小上限（S3 协议 5 GiB）：complete 时 暂存键 → 契约键 走一次复制，
+ * 超过这个大小就要 UploadPartCopy —— 一期用 `UPLOAD_MAX_SIZE_MB`（默认 2048，校验 ≤ 5120）挡在下面
+ * （ADR-006 定案：放开上限时再补分片复制）。
+ */
+export const SINGLE_COPY_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 /** 默认分片大小：8 MiB（重传代价与请求数的折中；大文件按需翻倍）。 */
 export const DEFAULT_PART_SIZE_BYTES = 8 * 1024 * 1024;
 

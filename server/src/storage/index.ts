@@ -6,12 +6,15 @@ export {
 } from "./object-storage.js";
 export type {
   CompleteMultipartUploadInput,
+  CopyObjectInput,
+  CopyObjectResult,
   CreateMultipartUploadInput,
   DownloadUrlInput,
   MultipartUploadKeyInput,
   MultipartUploadRef,
   ObjectHead,
   PartUploadUrlInput,
+  PurgeObjectResult,
   SignedUrl,
   StorageFailureCode,
   UploadedPart,
@@ -25,6 +28,7 @@ export {
   MIN_PART_SIZE_BYTES,
   missingPartNumbers,
   planUpload,
+  SINGLE_COPY_MAX_BYTES,
 } from "./part-plan.js";
 export type { UploadPlan } from "./part-plan.js";
 export { contentDisposition, createS3Client, createS3ObjectStorage, resolveForcePathStyle, S3ObjectStorage } from "./s3-object-storage.js";

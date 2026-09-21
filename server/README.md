@@ -110,11 +110,13 @@ server/
 - **本层不得依赖 `modules/`**：`storage/` 与 `common` / `db` / `config` 同级，已纳入 `check:boundaries` 规则 3。
 - 对象键 `projects/{projectId}/files/{fileId}/v{seq}/{contentHash}.{ext}`：版本与哈希进键（定档不覆盖物理对象），原文件名（含中文）只进元数据，片段严格校验防路径穿越。
 - 分片计划 `part-plan.ts`：非末片 ≥ 5 MiB、单片 ≤ 5 GiB、总片数 ≤ 10000（客户端不传 `partSizeBytes`，由服务端算并随 `UploadCreateResponse` 返回）。**分片状态以对象存储 ListParts 为唯一真相，不落 `upload_parts` 表**。
-- 错误映射：`NoSuchUpload` → 410 `UPLOAD_SESSION_EXPIRED`；`InvalidPart` / `EntityTooSmall` → 409 `UPLOAD_INCOMPLETE`；对象缺失 → 404；其余 → 500 `INTERNAL`。
+- **键形态（ADR-006 定案 · 2026-09-21）**：会话先按暂存键 `…/staging/{sessionId}` 直传，complete 时校验内容哈希 + `copyObject` 复制到契约键，落库 `file_versions.object_key` 始终是契约形态；单次复制上限 5 GiB 由 `UPLOAD_MAX_SIZE_MB`（默认 2048，启动校验 ≤ 5120）保证。
+- **彻底删除必须按版本删**：桶开启版本控制后，不带 `versionId` 的 `DeleteObject` 只写 delete marker、数据版本永不回收（lifecycle 已不作为清理手段）→ 端口提供 `purgeObject`（列版本 + 批量按版本删），暂存清理与 M4-02 回收站都走它。
+- 错误映射：`NoSuchUpload` → 410 `UPLOAD_SESSION_EXPIRED`；`InvalidPart` / `InvalidPartOrder` / `EntityTooSmall` / `EntityTooLarge` → 409 `UPLOAD_INCOMPLETE`；对象缺失 → 404；源对象超过单次复制上限（5 GiB）→ 500 `INTERNAL`；其余 → 500 `INTERNAL`。
 - 预签名：分片直传与下载均为短时签名（`S3_PART_URL_TTL_SECONDS` 默认 900 / `S3_DOWNLOAD_URL_TTL_SECONDS` 默认 300）；中文文件名下载头走 RFC 5987。
 - 环境变量：`S3_ENDPOINT` / `S3_REGION` / `S3_ACCESS_KEY` / `S3_SECRET_KEY`（生产必填，启动即校验）/ `S3_BUCKET` / `S3_FORCE_PATH_STYLE`（auto = 非 AWS 端点走 path-style）/ 两个 TTL / `UPLOAD_MAX_SIZE_MB`。
-- 真机回放（`npm run storage:it`，沙箱见 `deploy/minio/`）：**20 项断言全过** —— 建会话 → 3 片预签名直传（8 / 8 / 4 MiB）→ ListParts 一致 → 乱序合并 → HEAD 大小校验 → 签名下载 → SHA-256 哈希比对 → 匿名 GET 403 → 中止幂等且会话即失效（映射 410）。跑后清理回放对象。
-- 待复核（ADR-006 阶段 0）：MinIO 社区版**上游已归档**、官方下载 410、Docker Hub 镜像下架；本版本 `PutBucketCors` 返回 `NotImplemented`（CORS 走服务端 `MINIO_API_CORS_ALLOW_ORIGIN`）、lifecycle 规则被拒（内置 `stale_uploads_expiry` 兜底）。是否切换实现属 ADR 变更，提请 wmj 定案；证据见 `deploy/minio/README.md`。
+- 真机回放（`npm run storage:it`，沙箱见 `deploy/minio/`）：**24 项断言全过** —— 上传上限不变式 → 建会话（暂存键）→ 3 片预签名直传（8 / 8 / 4 MiB）→ ListParts 一致 → 乱序合并 → HEAD 大小校验 → **复制到契约键** → 签名下载 → SHA-256 哈希比对 → 匿名 GET 403 → **普通删除只留 delete marker、`purgeObject` 回收版本** → 中止幂等且会话即失效（映射 410）。跑后按版本清理回放对象。
+- 实现选型（ADR-006 阶段 0 修订 · [PR #96](https://github.com/256-code/LibiaoLink/pull/96) / Push 126）：接口层不变（S3 协议抽象继续有效）；一期实现改为**可替换绑定** —— 沙箱继续用 pinned 的 `RELEASE.2025-09-07T16-13-09Z`（**仅沙箱，不代表生产选型**），生产按候选顺序 ① 公司内网既有对象存储 / MinIO 集群 → ② SeaweedFS 等自建 S3 兼容 → ③ 云 OSS；关闭责任 px + lan，时点 = M8 生产部署形态验证前，验收 = `storage:init -- --check` + `storage:it` 在目标实现上全绿。实测的两条能力缺口（CORS 只能服务端配置、lifecycle 被拒）登记为「任何替代实现都必须满足的行为面」；证据见 `deploy/minio/README.md`。
 
 ## 会话链路（/auth/*，g6）
 

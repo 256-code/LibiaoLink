@@ -68,6 +68,27 @@ export interface DownloadUrlInput {
   expiresInSeconds?: number;
 }
 
+export interface CopyObjectInput {
+  sourceKey: string;
+  destinationKey: string;
+  /** 目标对象的内容类型与元数据；不传则继承源对象（MetadataDirective: COPY）。 */
+  contentType?: string | null;
+  metadata?: Record<string, string>;
+}
+
+export interface CopyObjectResult {
+  etag: string | null;
+  /** 目标对象的版本号（版本化桶返回；未开启版本控制为 null）。 */
+  versionId: string | null;
+}
+
+export interface PurgeObjectResult {
+  /** 删掉的数据版本数（不含 delete marker）。 */
+  deletedVersions: number;
+  /** 顺带清掉的 delete marker 数。 */
+  deleteMarkers: number;
+}
+
 export abstract class ObjectStorage {
   abstract readonly bucket: string;
 
@@ -85,7 +106,19 @@ export abstract class ObjectStorage {
   abstract headObject(objectKey: string): Promise<ObjectHead | null>;
   /** 短时签名下载地址（ADR-006：对象存储禁止匿名读取）。 */
   abstract signDownloadUrl(input: DownloadUrlInput): Promise<SignedUrl>;
-  abstract deleteObject(objectKey: string): Promise<void>;
+  /**
+   * **彻底删除**：删掉该键的所有版本（含 delete marker）。
+   *
+   * 不能只调 `DeleteObject`：桶开了版本控制后，不带 `versionId` 的删除只写一个 delete marker，
+   * 数据版本永远留在桶里 —— 暂存对象清理与 M4-02「彻底删除」都必须按版本删（px 复核提出，
+   * 2026-09-21 真机确认）。
+   */
+  abstract purgeObject(objectKey: string): Promise<PurgeObjectResult>;
+  /**
+   * 服务端复制（complete 时 `…/staging/{sessionId}` → 契约键）；源对象超过单次复制上限时
+   * 抛 `object_too_large`（一期由 `UPLOAD_MAX_SIZE_MB` 校验挡在上限内）。
+   */
+  abstract copyObject(input: CopyObjectInput): Promise<CopyObjectResult>;
 
   /** 就绪探针：桶可达（/readyz 使用）。 */
   abstract probe(): Promise<void>;
@@ -99,6 +132,8 @@ export type StorageFailureCode =
   | "object_not_found"
   /** 分片缺失 / 编号非法 / 大小不合法（重传可解）→ 409 补传。 */
   | "part_conflict"
+  /** 源对象超过单次复制上限（5 GiB）→ 500（一期由 UPLOAD_MAX_SIZE_MB 挡住，属实现 / 配置限制）。 */
+  | "object_too_large"
   /** 网络、凭据、桶配置等存储侧不可用 → 500。 */
   | "unavailable";
 
@@ -116,6 +151,7 @@ const API_ERROR_BY_FAILURE: Record<StorageFailureCode, { code: ErrorCode; messag
   upload_not_found: { code: "UPLOAD_SESSION_EXPIRED", message: "上传会话已过期，请重新发起上传" },
   object_not_found: { code: "NOT_FOUND", message: "文件对象不存在" },
   part_conflict: { code: "UPLOAD_INCOMPLETE", message: "上传分片未齐或不可用，请补传后重试" },
+  object_too_large: { code: "INTERNAL", message: "对象超过单次复制上限（5 GiB），需改用分片复制" },
   unavailable: { code: "INTERNAL", message: "对象存储暂不可用，请稍后重试" },
 };
 

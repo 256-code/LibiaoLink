@@ -39,6 +39,15 @@ export const EnvSchema = z
     UPLOAD_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102400).default(2048),
   })
   .superRefine((value, context) => {
+    // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
+    // 见 src/storage/part-plan.ts 的 SINGLE_COPY_MAX_BYTES）。放开这个上限必须先补 UploadPartCopy。
+    if (value.UPLOAD_MAX_SIZE_MB * 1024 * 1024 > 5 * 1024 * 1024 * 1024) {
+      context.addIssue({
+        code: "custom",
+        message: "UPLOAD_MAX_SIZE_MB 不得超过 5120（S3 单次 CopyObject 上限 5 GiB；放开需先补分片复制）",
+        path: ["UPLOAD_MAX_SIZE_MB"],
+      });
+    }
     if (value.NODE_ENV !== "production") {
       return;
     }

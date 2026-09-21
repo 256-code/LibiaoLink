@@ -206,8 +206,102 @@ describe("S3 适配器：读取与错误映射", () => {
     expect(toApiError(new StorageError("upload_not_found", "x"))).toMatchObject({ code: "UPLOAD_SESSION_EXPIRED", httpStatus: 410 });
     expect(toApiError(new StorageError("part_conflict", "x"))).toMatchObject({ code: "UPLOAD_INCOMPLETE", httpStatus: 409 });
     expect(toApiError(new StorageError("object_not_found", "x"))).toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
+    expect(toApiError(new StorageError("object_too_large", "x"))).toMatchObject({ code: "INTERNAL", httpStatus: 500 });
     expect(toApiError(new StorageError("unavailable", "x"))).toMatchObject({ code: "INTERNAL", httpStatus: 500 });
     expect(toApiError(new Error("boom"))).toMatchObject({ code: "INTERNAL" });
+  });
+});
+
+const STAGING_KEY = `projects/${PROJECT_ID}/files/${FILE_ID}/staging/33333333-3333-4333-8333-333333333333`;
+
+describe("S3 适配器：复制与版本回收（ADR-006 定案：暂存键 → 契约键；彻底删除含版本）", () => {
+  it("copyObject：先 HEAD 校验源对象，再按元数据复制到契约键", async () => {
+    const { storage, commands } = createStorage((command) =>
+      command.constructor.name === "HeadObjectCommand"
+        ? { ContentLength: 20 * 1024 * 1024 }
+        : { CopyObjectResult: { ETag: " \"copied\" " }, VersionId: "v-2" },
+    );
+    const result = await storage.copyObject({
+      sourceKey: STAGING_KEY,
+      destinationKey: OBJECT_KEY,
+      contentType: "application/pdf",
+      metadata: { "file-name": "a.pdf" },
+    });
+    expect(commands.map((command) => command.constructor.name)).toEqual(["HeadObjectCommand", "CopyObjectCommand"]);
+    expect(commands[1]?.input).toMatchObject({
+      Bucket: "libiaolink",
+      Key: OBJECT_KEY,
+      CopySource: `libiaolink/${STAGING_KEY}`,
+      MetadataDirective: "REPLACE",
+      ContentType: "application/pdf",
+    });
+    expect(result).toEqual({ etag: "\"copied\"", versionId: "v-2" });
+  });
+
+  it("copyObject：源对象缺失 404；超过单次复制上限按 object_too_large 拒绝", async () => {
+    const missing = createStorage(() => {
+      throw s3Error("NotFound", 404);
+    });
+    await expect(missing.storage.copyObject({ sourceKey: STAGING_KEY, destinationKey: OBJECT_KEY })).rejects.toMatchObject({
+      code: "object_not_found",
+    });
+
+    const oversized = createStorage(() => ({ ContentLength: 5 * 1024 * 1024 * 1024 + 1 }));
+    await expect(oversized.storage.copyObject({ sourceKey: STAGING_KEY, destinationKey: OBJECT_KEY })).rejects.toMatchObject({
+      code: "object_too_large",
+    });
+    expect(oversized.commands.map((command) => command.constructor.name)).toEqual(["HeadObjectCommand"]);
+  });
+
+  it("purgeObject：按版本删（含 delete marker），同前缀的其它键不动", async () => {
+    const { storage, commands } = createStorage((command) =>
+      command.constructor.name === "ListObjectVersionsCommand"
+        ? {
+            Versions: [
+              { Key: STAGING_KEY, VersionId: "v-1" },
+              { Key: `${STAGING_KEY}.bak`, VersionId: "v-9" },
+            ],
+            DeleteMarkers: [{ Key: STAGING_KEY, VersionId: "m-1" }],
+          }
+        : {},
+    );
+    await expect(storage.purgeObject(STAGING_KEY)).resolves.toEqual({ deletedVersions: 1, deleteMarkers: 1 });
+    expect(commands.map((command) => command.constructor.name)).toEqual(["ListObjectVersionsCommand", "DeleteObjectsCommand"]);
+    expect(commands[1]?.input).toMatchObject({
+      Delete: {
+        Objects: [
+          { Key: STAGING_KEY, VersionId: "v-1" },
+          { Key: STAGING_KEY, VersionId: "m-1" },
+        ],
+      },
+    });
+  });
+
+  it("purgeObject：未开启版本控制退回普通删除；键不存在时不写 delete marker", async () => {
+    const unversioned = createStorage((command) => {
+      if (command.constructor.name === "ListObjectVersionsCommand") {
+        return { Versions: [{ Key: OBJECT_KEY, VersionId: "null" }] };
+      }
+      if (command.constructor.name === "HeadObjectCommand") {
+        return { ContentLength: 10 };
+      }
+      return {};
+    });
+    await expect(unversioned.storage.purgeObject(OBJECT_KEY)).resolves.toEqual({ deletedVersions: 1, deleteMarkers: 0 });
+    expect(unversioned.commands.map((command) => command.constructor.name)).toEqual([
+      "ListObjectVersionsCommand",
+      "HeadObjectCommand",
+      "DeleteObjectCommand",
+    ]);
+
+    const absent = createStorage((command) => {
+      if (command.constructor.name === "ListObjectVersionsCommand") {
+        return { Versions: [], DeleteMarkers: [] };
+      }
+      throw s3Error("NotFound", 404);
+    });
+    await expect(absent.storage.purgeObject(OBJECT_KEY)).resolves.toEqual({ deletedVersions: 0, deleteMarkers: 0 });
+    expect(absent.commands.map((command) => command.constructor.name)).toEqual(["ListObjectVersionsCommand", "HeadObjectCommand"]);
   });
 });
 
@@ -233,5 +327,11 @@ describe("环境变量契约（对象存储）", () => {
     const base = { NODE_ENV: "production", DATABASE_URL: "postgres://x/y", CASDOOR_CLIENT_ID: "a", CASDOOR_CLIENT_SECRET: "b", CASDOOR_ORG_NAME: "c", INTERNAL_SYNC_TOKEN: "d" };
     expect(() => loadEnv(base)).toThrow(/S3_ACCESS_KEY/);
     expect(loadEnv({ ...base, S3_ACCESS_KEY: "k", S3_SECRET_KEY: "s" }).S3_BUCKET).toBe("libiaolink");
+  });
+
+  it("上传上限必须挡在单次复制上限（5 GiB）以内", () => {
+    expect(() => loadEnv({ DATABASE_URL: "postgres://x/y", UPLOAD_MAX_SIZE_MB: "5121" })).toThrow(/UPLOAD_MAX_SIZE_MB/);
+    expect(loadEnv({ DATABASE_URL: "postgres://x/y", UPLOAD_MAX_SIZE_MB: "5120" }).UPLOAD_MAX_SIZE_MB).toBe(5120);
+    expect(loadEnv({ DATABASE_URL: "postgres://x/y" }).UPLOAD_MAX_SIZE_MB).toBe(2048);
   });
 });
