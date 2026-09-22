@@ -640,7 +640,7 @@ lines.push("## 验收对照（M4-04 写入切片）");
 lines.push("");
 lines.push("- 变更入口 = C1 / C2：`intent=change` 随上传管道提交（技术设计v0.3 §3.5 口径），`ChangeIntentBody` 落 `upload_sessions.change_payload`；目标须 final / changed，其余状态 409 / 不存在 404 / 跨项目 400 / 无可见性 404。");
 lines.push("- 变更生效 = C3 / C4 / C5 / C7：完成上传同一事务写 `change_requests`（status=applied、stage_key 缺省取节点阶段）+ 版本挂 `change_request_id` + `files.status=changed` + `file_links`(change) + 审计（object_type=change）+ outbox `change.applied`。");
-lines.push("- R01 自动关联 = C6 / C6b / C6c / C8 / C9：按「变更文件成果类型 ∈ 任务输出成果文件（`deliverable_types` 多值）」命中全部**追加 + 去重**回写 `tasks.change_refs`（A1-07「一条任务可关联多条变更」，数组顺序 = 追加序；迁移 0019）；无匹配只记日志、不阻断（提示申请人随 M5 通知）。");
+lines.push("- R01 自动关联 = C6 / C6b / C6c / C8 / C9：按「变更文件成果类型 ∈ 任务输出成果文件（`deliverable_types` 多值）」命中全部**追加 + 去重**回写 `tasks.change_refs`（A1-07「一条任务可关联多条变更」，数组顺序 = 追加序；迁移 0020）；无匹配只记日志、不阻断（提示申请人随 M5 通知）。");
 lines.push("- 定档后回溯 = C9（A4-13）：`POST /files/{id}/rollback` 对 final 文件即变更（生成新版本 + 变更记录 + 状态 changed），不再 400。");
 lines.push("- 定档后管控 = C10：`intent=version` 对非 draft 文件 409 `FILE_STATE_INVALID`（修改须走变更）。");
 lines.push("- 单测回归（不连库）：server/test/file-service.test.ts 随 npm test 常跑：change 入口（载荷规范化 / 目标门禁 / 不新建文件）、change 完成链路（变更记录 / 版本挂接 / 状态 / 关联 / R01 / 审计 / outbox）、R01 无匹配只告警、定档后回溯 = 变更。");

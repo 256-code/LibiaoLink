@@ -23,6 +23,7 @@ server/
     modules/admin/        # 字典 C9 与审计留痕 C7（h7）：类型 / 条目维护 + 审计写入与检索（其余模块仍为 README 占位）
     modules/calendar/     # 工作日历 D5（h8 · 横切）：例外维护 / 顺延规则 / T-1·T+1 实时求值
     modules/file/         # 文件与版本（S7·file · M4-01 上传管道 + M4-02 版本 / 定档 / 回溯 / 回收站 + M4-03 文件库查询与多态关联 + M4-04 变更（申请即通过））：发起上传 / 分片预签名 / 断点续传 / 完成落版本（写 file_links）/ 取消 / 详情 / 版本链 / 定档 / 回溯 / 回收 / 恢复 / 彻底删除 / 项目文件库列表（筛选 / 关键字 / 排序 / 分页 / 双向跳转）（变更申请即通过已随 M4-04 接入；预览随 M4-05）
+    modules/stakeholder/  # 干系人台账（S8·stakeholder · j6）：台账 CRUD + 项目关联与反查 + 字段级脱敏（导入随 M8-01、导出随 M7-03；见 src/modules/stakeholder/README.md）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
@@ -43,7 +44,7 @@ server/
 | `npm run test` | vitest run |
 | `npm run check:boundaries` | 依赖方向规则（违规退出码 1） |
 | `npm run check:permission-matrix` | 权限矩阵自检：种子 #6b ↔ 契约 `PermissionKey` 枚举 ↔ 角色集（admin 必须全量；不连库，退出码 1） |
-| `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build；当前 27 表 / 265 列 / 78 索引 / 77 CHECK） |
+| `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build；当前 29 表 / 284 列 / 88 索引·唯一 / 86 CHECK） |
 | `npm run storage:init` | 对象存储初始化（建桶 / 版本控制 / CORS / 分片清理；`-- --check` 只读校验） |
 | `npm run storage:it` | 对象存储真机回放（需真实对象存储 + 先 `npm run build`） |
 | `node dist/entry/worker.js --health-check` | worker 一次性健康检查 |
@@ -215,8 +216,8 @@ server/
 - R01（ADR-024 / `docs/rules/R01-R07-内置规则文案.md`）：按「变更文件成果类型 ∈ 任务输出成果文件」（`tasks.deliverable_types @> array[doc_type]`，ADR-024 多值命中、走 GIN `ix_tasks_deliverable_types`）匹配**同项目**任务，命中多条**全部**回写 `tasks.change_refs`（**追加 + 去重**：已关联过同一变更不重复、否则追加到数组末位 —— **一条任务可关联多条变更**，业务要求「变更关联」列展示多条；数组顺序 = 关联先后，末位 = 最近一次变更）。注意：`file_links`(change) 记的是**文件 ↔ 变更**，不承担「任务 ↔ 变更」明细（PR #111 评审订正）；0 命中只记 `logger.warn`、**不阻断变更生效**（提示申请人由通知承担，随 M5）。回写**不递增**任务乐观锁 `version`（变更关联不视为任务编辑）。
 - 留痕：审计 `action = create` / `object_type = change`（objectId = changeRequestId；`changes` = status `final|changed → changed`，`metadata` = fileId / versionId / versionSeq / nodeId / stageKey / deliverableType / matchedTasks / linkedTasks）+ outbox `change.applied`（dedupeKey `change.applied:{changeRequestId}`，同事务）。
 - 错误码沿用 V0.3 既有：409 `FILE_STATE_INVALID`（目标状态不允许 / 会话期间状态变化）、404 `NOT_FOUND`（不存在 / 不可见）、400 `VALIDATION_FAILED`（跨项目 / 名称与归属不一致 / 载荷非法）、409 `VERSION_CONFLICT`（回溯乐观锁）；切片守卫 `intent_change_not_open` / `change_flow_not_open` 已随本卡删除，仓库内不再出现。
-- 迁移：**本批新增 `0019_task_change_refs.sql`** —— `tasks.change_ref`（单值 + 外键 `fk_tasks_change_ref`）→ `tasks.change_refs uuid[]`（回填单值 → 非空 + `ck_tasks_change_refs_no_null` → GIN `ix_tasks_change_refs` → drop 旧列与旧外键；多值后不再有数组外键 —— `change_requests` 为只追加表、无删除路径，原 `on delete set null` 不会被触发）。其余沿用既有：`change_requests`（`0001_baseline.sql`）、`file_versions.change_request_id`、`upload_sessions.change_payload`（`0005`）、`file_links` 六值 CHECK（`0016`）；权限沿用 `file.upload`（项目成员平权，ADR-011）。
-- R01 多条落库（**业务定案 · Push 144**）：`系统功能书.md` A1-07 / A4-13 的「追加＋去重」（一条任务可关联多条变更）已按**落库多值**实现（`tasks.change_refs` + 读面 `Task.changeLinks` 多条），不再走「写面单列 + 读面派生」的折中；`技术设计v0.2` §5.3 / `技术设计v0.3` / `docs/adr/ADR-024` 里「单列覆盖 + 读面派生」的表述待 **wmj 线回写**（属 wmj 线文件，本线不动）。变更读面（下一切片）按 `change_refs` 直接取任务关联，无需再按 doc_type 派生。
+- 迁移：**本批新增 `0020_task_change_refs.sql`**（原 0019，撞 main j6 的 `0019_stakeholders.sql` 后顺延） —— `tasks.change_ref`（单值 + 外键 `fk_tasks_change_ref`）→ `tasks.change_refs uuid[]`（回填单值 → 非空 + `ck_tasks_change_refs_no_null` → GIN `ix_tasks_change_refs` → drop 旧列与旧外键；多值后不再有数组外键 —— `change_requests` 为只追加表、无删除路径，原 `on delete set null` 不会被触发）。其余沿用既有：`change_requests`（`0001_baseline.sql`）、`file_versions.change_request_id`、`upload_sessions.change_payload`（`0005`）、`file_links` 六值 CHECK（`0016`）；权限沿用 `file.upload`（项目成员平权，ADR-011）。
+- R01 多条落库（**业务定案 · Push 145**）：`系统功能书.md` A1-07 / A4-13 的「追加＋去重」（一条任务可关联多条变更）已按**落库多值**实现（`tasks.change_refs` + 读面 `Task.changeLinks` 多条），不再走「写面单列 + 读面派生」的折中；`技术设计v0.2` §5.3 / `技术设计v0.3` / `docs/adr/ADR-024` 里「单列覆盖 + 读面派生」的表述待 **wmj 线回写**（属 wmj 线文件，本线不动）。变更读面（下一切片）按 `change_refs` 直接取任务关联，无需再按 doc_type 派生。
 - 不在本卡：变更读面（`GET /projects/{id}/change-requests` / `GET /change-requests/{id}`）与统计（A4-17）随 M4-04 下一切片；通知（A4-18）随 M5。
 
 ## 文件生命周期接口（S7·file · M4-02：版本 / 定档 / 回溯 / 回收站 + 到期清理任务）
@@ -245,7 +246,7 @@ server/
 
 ## 数据访问（Drizzle ↔ 迁移对齐）
 
-- 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0017）。
+- 迁移是唯一 DDL 来源（`database/migrations/`，只追加）；`src/db/schema/` 的 Drizzle 定义必须与迁移后的最终结构一致（当前 0001 ~ 0020）。
 - 新增迁移的同一 PR 内同步更新 schema，并跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - file 模块数据层（0005 / 0006）：`files` 补定档 / 回收站 / `purge_after` 列，新增 `upload_sessions`（分片直传会话，分片状态以对象存储 ListParts 为准）与 `idempotency_keys`（只存 sha256(key)；作用域 = 调用方 + 接口指纹），口径见 `database/README.md`。
 - identity 数据层（0007 · h1）：`departments` / `roles` / `role_permissions` / `user_roles` 四表；角色集由 `database/seeds/roles.mjs` 种子维护（`node database/scripts/seed.mjs`），权限矩阵条目随 h6。
@@ -275,9 +276,11 @@ server/
 - 权限矩阵测试（`test/permission-matrix.test.ts` · h6 · PoC-6）：**记录级 9 例**（六角色数据范围的可见集规格、多角色并集、主数据责任人恒可见、单项目谓词与可见 id 同源）＋**功能权限 7 例**（全局位、任务负责人、项目内项目经理 / 成员平权、非成员先 404、项目上下文外只看全局位、隐含位 ⊆ 且全在契约枚举内）＋**字段级 6 例**（联系方式三字段 / 商务字段 / 备注三级、行投影删字段不落 null、员工邮箱一期全员可见、策略表字段登记校验）＋**五出口 5 例**（四出口投影一致、导出单独授权、导出字段仍按同一策略裁剪、任一出口不含被裁字段、出口集合 = 四类 + 记录级）＋**策略服务 7 例**（projectScope all / ids、resolveProjectAccess 的 404 语义与角色位、软删、assertCan 403、画像缓存单次查库），共 34 例；**h6 后全量 169 例（13 文件）**。
 - 字典与审计测试（`test/admin-audit.test.ts` · h7 · S6·admin）：**纯函数 3 例**（字段级 diff 与稳定序列化）＋**越权判定 3 例**（路径 → 对象解析、403 全记 / 404 白名单、uuid 判定）＋**DictService 5 例**（默认只发启用项 / 未知类型 404 / 同码 409 + 审计入参 / 停用替代删除的字段级留痕 / 无变更仍留痕 changes=null）＋**AuditService 4 例**（写入口径补全、越权写入吞错不抛、按对象与按人检索、人员快照缓存），共 15 例；**h7 后全量 184 例（14 文件）**。
 - 工作日历测试（`test/calendar-rules.test.ts` + `test/calendar-service.test.ts` · h8 · S6·工作日历）：**规则 17 例**（默认规则与例外优先、窗口外 null、日期算术、顺延金标 forward / backward / 已是工作日 / 跨年 / exhausted、T-1·T+N 开关两态与改期重算、上海时刻换算）＋**服务 12 例**（年历与排序、缺省今天走时钟、setDay 审计与幂等、deleteDay 404、updateSettings 空变更、shift 方向覆盖、offset T-1 / T+1），共 29 例；**h8 后全量 213 例（16 文件）**。
-- 任务用例测试（`test/task-service.test.ts` · h4 + **Push 144 变更关联多条 3 例**）：带节点创建缺省项目经理 / 节点判重 409 / 手工创建仅管理员 403 / 阶段不一致 400 / 归档 409、状态联动（done 满格补当天、active 退 0.75 清日期、过期保持已延期）、乐观锁 409 / 跨项目 404、进度写回清完成日期、项目总览四格，共 **22 例**（含 w2 · Push 124 追加 5 例：未分组 / 位次顺延 / 显式置空 / 组内重排；Push 136 追加 1 例：`ownerIds` 缺省兜底项目全部经理）；**w2 后全量 222 例（17 文件）**、**Push 136 后全量 310 例（19 文件）**、**Push 143（M3-03）后全量 318 例（20 文件）**、**Push 144 后全量 326 例（20 文件）**（新增 `test/task-gate.test.ts` 8 例：预检缺件明细 / 无节点 `deliverable_types` 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done` 与 `progress=1` 同一门禁）。
+- 任务用例测试（`test/task-service.test.ts` · h4 + **Push 145 变更关联多条 3 例**）：带节点创建缺省项目经理 / 节点判重 409 / 手工创建仅管理员 403 / 阶段不一致 400 / 归档 409、状态联动（done 满格补当天、active 退 0.75 清日期、过期保持已延期）、乐观锁 409 / 跨项目 404、进度写回清完成日期、项目总览四格，共 **22 例**（含 w2 · Push 124 追加 5 例：未分组 / 位次顺延 / 显式置空 / 组内重排；Push 136 追加 1 例：`ownerIds` 缺省兜底项目全部经理）；**w2 后全量 222 例（17 文件）**、**Push 136 后全量 310 例（19 文件）**、**Push 143（M3-03）后全量 318 例（20 文件）**、**Push 144（j6 干系人）后 345 例（22 文件）**、**Push 145 后全量 353 例（22 文件）**（新增 `test/task-gate.test.ts` 8 例：预检缺件明细 / 无节点 `deliverable_types` 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done` 与 `progress=1` 同一门禁）。
 - 任务顺序测试（`test/task-order.test.ts` · w2）：位次夹取 / 插入计划（组尾 / 组首 / 中间）/ 移动计划（越界 = 组尾）/ 读序稳定，共 4 例（纯函数，不连库）；
-- 文件上传测试（`test/file-service.test.ts` · M4-01 · S7·file）：仓储 / 存储 / 权限 / 审计替身直测服务层 —— 发起上传（draft + 暂存键 + 分片计划 + TTL + 秒传提示 + 小写归一）、`intent=change` + `fileId` 目标门禁（随 M4-04 放开：201 会话 + `change_payload` 落库；非定档 409 / 不存在 404 / 跨项目 400）、`intent=version` + `fileId` 400（M4-01 时期切片守卫，details `file_id_not_supported`；M4-02 已放开，见下）、超上限 400（details.limitBytes）、归档 409 / 不存在 404、nodeId / taskId 跨项目 400；取分片（首建登记 + 复用 + 越界 400 + 过期惰性 410 + 非本文件会话 404）；会话状态（已传 / 缺失、未建存储侧会话、过期 409、已完成 409）；完成（成功链路 = 合并升序 + 复制契约键 + 版本 / 文件 / 会话 + 审计 + outbox + 清暂存、缺片 409 带 missing、未上传任何分片、HEAD size_mismatch 409、合并结果不存在、哈希不符 422、init 无哈希以 complete 为准、过期 410、存储侧会话丢失 410、位次被抢占 500、copy 失败映射、清暂存失败只告警）；取消（成功 + 幂等 + 已完成 409）；过期清理（批量 + 单条失败不阻断）；**M4-02（版本 / 定档 / 回溯 / 回收站）**：详情与版本链（无版本时 currentVersion=null / 不存在 404）、`intent=version + fileId` 追加版本（复用文件行不新建 + 审计 update + 秒传提示恒空）与反例（非 draft 409 / 跨项目 invalid_file 400 / 名称 name_mismatch 400 / 不存在 404）、定档（成功链路 = 成对字段 + 乐观锁递增 + 审计 + outbox、并发 409 VERSION_CONFLICT（details current/expected）、状态不允许 409、无版本 400 no_version）、回溯（成功 = 复制目标版对象到新版本契约键 + 新版本行 + 审计 rollback + outbox、定档后走变更流（changeRequest 非空 + 版本挂 change_request_id + 状态 changed）、回收站 409、目标不存在 404、already_current 400、乐观锁 409、位次竞态 500）、回收（成对写 + purgeAfter = 保留期 + 保留期可配置 + 重复回收 409 + 乐观锁 409）、恢复（回退原状态 + 清三列 + 未回收 409）、彻底删除（非管理员 403 / 非回收站 409 / 乐观锁 409 / 按版本清对象 + 删元数据 + 留痕 / 对象失败不删元数据）、到期清理（批量两条 + 单条失败不阻断 + 并发恢复跳过），共 **55 例**；**M4-03（多态关联与文件库查询）**：关联写入（project+node+task 三行 / 仅 project / 重复完成幂等不再写）、文件库列表（筛选解析下推（多值 trim / 分页 offset）+ 默认口径（排除 recycled）+ 非法输入 400），共 6 例；**M4-04（变更写入切片）**：`intent=change` 放开（201 会话 + `change_payload` 落库 + 不新建文件行）与反例（目标 draft / recycled 409、跨项目 400、不存在 404）、变更完成全链路（`change_requests` = applied + 版本挂 `change_request_id` + 文件 `changed` + `file_links`(change) + R01 多命中全部回写 + 审计 + outbox `change.applied`）、R01 无匹配只告警不阻断、会话期间目标被改回 draft → 409、定档后回溯走变更流，共 5 例（本文件 61 → **66 例**）；**M4-03 后全量 308 例（19 文件）**、**Push 136 后全量 310 例（19 文件）**、**M4-04 后全量 315 例（19 文件）**、**Push 143（M3-03）并入后全量 318 例（20 文件）**、**Push 144（变更关联多条）后全量 326 例（20 文件）**。
+- 干系人策略测试（`test/stakeholder-rules.test.ts` · j6）：记录级可见集 4 例（管理员全量 / 我录入的 ∪ 可见项目关联 / 销售无可见项目仍见我录入的 / 可见集副本不可变）+ 过滤解析 3 例（空查询 / 公司分类多值 + 非法 400 / 项目筛选透传）+ 排序白名单 3 例 + 关键词 2 例，共 12 例；
+- 干系人服务测试（`test/stakeholder-service.test.ts` · j6 · S8·stakeholder）：**字段级脱敏为核心验收**（销售全可见 / 任务负责人联系方式与备注**键不存在** / 只读无备注 / 未登记字段恒返回）＋记录级 5 例（我录入的兜底 / 他人录入且项目不可见 404 / 项目可见即可见 / 管理员全量 / 列表三类筛选）＋用例与留痕 6 例（新建八字段留痕 / 关联不存在项目 404 不写审计 / 更新只记变化字段 / 重复关联幂等不重复留痕 / 解除关联 404 与留痕 / 软删后详情 404），共 15 例；
+- 文件上传测试（`test/file-service.test.ts` · M4-01 · S7·file）：仓储 / 存储 / 权限 / 审计替身直测服务层 —— 发起上传（draft + 暂存键 + 分片计划 + TTL + 秒传提示 + 小写归一）、`intent=change` + `fileId` 目标门禁（随 M4-04 放开：201 会话 + `change_payload` 落库；非定档 409 / 不存在 404 / 跨项目 400）、`intent=version` + `fileId` 400（M4-01 时期切片守卫，details `file_id_not_supported`；M4-02 已放开，见下）、超上限 400（details.limitBytes）、归档 409 / 不存在 404、nodeId / taskId 跨项目 400；取分片（首建登记 + 复用 + 越界 400 + 过期惰性 410 + 非本文件会话 404）；会话状态（已传 / 缺失、未建存储侧会话、过期 409、已完成 409）；完成（成功链路 = 合并升序 + 复制契约键 + 版本 / 文件 / 会话 + 审计 + outbox + 清暂存、缺片 409 带 missing、未上传任何分片、HEAD size_mismatch 409、合并结果不存在、哈希不符 422、init 无哈希以 complete 为准、过期 410、存储侧会话丢失 410、位次被抢占 500、copy 失败映射、清暂存失败只告警）；取消（成功 + 幂等 + 已完成 409）；过期清理（批量 + 单条失败不阻断）；**M4-02（版本 / 定档 / 回溯 / 回收站）**：详情与版本链（无版本时 currentVersion=null / 不存在 404）、`intent=version + fileId` 追加版本（复用文件行不新建 + 审计 update + 秒传提示恒空）与反例（非 draft 409 / 跨项目 invalid_file 400 / 名称 name_mismatch 400 / 不存在 404）、定档（成功链路 = 成对字段 + 乐观锁递增 + 审计 + outbox、并发 409 VERSION_CONFLICT（details current/expected）、状态不允许 409、无版本 400 no_version）、回溯（成功 = 复制目标版对象到新版本契约键 + 新版本行 + 审计 rollback + outbox、定档后走变更流（changeRequest 非空 + 版本挂 change_request_id + 状态 changed）、回收站 409、目标不存在 404、already_current 400、乐观锁 409、位次竞态 500）、回收（成对写 + purgeAfter = 保留期 + 保留期可配置 + 重复回收 409 + 乐观锁 409）、恢复（回退原状态 + 清三列 + 未回收 409）、彻底删除（非管理员 403 / 非回收站 409 / 乐观锁 409 / 按版本清对象 + 删元数据 + 留痕 / 对象失败不删元数据）、到期清理（批量两条 + 单条失败不阻断 + 并发恢复跳过），共 **55 例**；**M4-03（多态关联与文件库查询）**：关联写入（project+node+task 三行 / 仅 project / 重复完成幂等不再写）、文件库列表（筛选解析下推（多值 trim / 分页 offset）+ 默认口径（排除 recycled）+ 非法输入 400），共 6 例；**M4-04（变更写入切片）**：`intent=change` 放开（201 会话 + `change_payload` 落库 + 不新建文件行）与反例（目标 draft / recycled 409、跨项目 400、不存在 404）、变更完成全链路（`change_requests` = applied + 版本挂 `change_request_id` + 文件 `changed` + `file_links`(change) + R01 多命中全部回写 + 审计 + outbox `change.applied`）、R01 无匹配只告警不阻断、会话期间目标被改回 draft → 409、定档后回溯走变更流，共 5 例（本文件 61 → **66 例**）；**M4-03 后全量 308 例（19 文件）**、**Push 136 后全量 310 例（19 文件）**、**M4-04 后全量 315 例（19 文件）**、**Push 143（M3-03）并入后 318 例（20 文件）**、**Push 144（j6 干系人）后 345 例（22 文件）**、**Push 145（变更关联多条）后全量 353 例（22 文件）**。
 
 ## PoC-9 回放（h5 · S6·PoC-9）
 
@@ -300,7 +303,7 @@ server/
 - 脚本：`scripts/poc7-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、建 `POC7-xxx` 字典条目 —— 跑完硬删字典条目与本次审计行（api 角色无权删审计，用 migrator 连接）与两个会话）。
   - 复跑：`cd server && node scripts/poc7-replay.mjs --out ../docs/PoC-7-回放证据(字典C9与审计留痕C7).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据、`--actor <userId>` 指定受限账号。
 - 证据入库：`docs/PoC-7-回放证据(字典C9与审计留痕C7).md`（真机 23 项断言：默认只下发启用项 + 管理口径 403 + 新增 / 停用 200 且同码 409 + 未知类型 404 无噪声 + 审计按对象 / 按人命中 + 越权 403 落 denied 行 + 收尾零残留）。
-- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/admin-audit.test.ts` 15 例 + `check:db-schema`（**Push 144：27 表 / 265 列 / 79 索引·唯一 / 78 CHECK**）+ `check:permission-matrix`（6 角色 / 74 条目 / 27 键）。
+- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/admin-audit.test.ts` 15 例 + `check:db-schema`（**Push 145：29 表 / 284 列 / 88 索引·唯一 / 86 CHECK**）+ `check:permission-matrix`（6 角色 / 74 条目 / 27 键）。
 - 回放中发现并修正的契约漂移（h7）：`GET /api/v1/dicts/{type}` 原先用枚举管道硬拦路径参数（未知类型 → 400），与契约「未知类型返回 404」不符 —— 已改为普通路径段校验、未知类型由服务层统一 404（`src/modules/admin/dicts.controller.ts`）；`POST /api/v1/dicts/{type}/items` 的契约响应码 200 → 201（与实际行为一致）。
 
 ## PoC-8 回放（h8 · S6·工作日历：D5 日历维护 / 顺延规则 / T-1·T+1）
@@ -308,14 +311,14 @@ server/
 - 脚本：`scripts/poc8-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、在 **2099 年**合成与国庆同形的日历（10-01~10-07 放假 + 10-10 调休上班）—— 跑完硬删日历行、恢复顺延配置、删除两个会话）。
   - 复跑：`cd server && node scripts/poc8-replay.mjs --out ../docs/PoC-8-回放证据(工作日历D5).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据、`--actor <userId>` 指定受限账号。
 - 证据入库：`docs/PoC-8-回放证据(工作日历D5).md`（真机 30 项断言：读面登录即可 + 写面受限 403 + 越权落 denied 行 + 单日判定例外优先 + 顺延 forward / backward 金标 + T-1 命中不顺延 + T-7 顺延开 / 关两态 + 08:00 时刻换算 + 删除回落 + 收尾零残留）。
-- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/calendar-rules.test.ts` 17 例 + `test/calendar-service.test.ts` 12 例 + `check:db-schema`（**Push 144：27 表 / 265 列 / 79 索引·唯一 / 78 CHECK**）+ `check:permission-matrix`（6 角色 / 74 条目 / 27 键）。
+- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/calendar-rules.test.ts` 17 例 + `test/calendar-service.test.ts` 12 例 + `check:db-schema`（**Push 145：29 表 / 284 列 / 88 索引·唯一 / 86 CHECK**）+ `check:permission-matrix`（6 角色 / 74 条目 / 27 键）。
 - 差异与后续：节假日 / 调休年历数据待业务回执（种子 #10）；跨天补跑随 i8 / i9（依赖 i5 outbox）；日历视图与前端接入随 u 系列 —— 明细见 `src/modules/calendar/README.md` 差异 1~5。
 ## w2 落库口径回放（w2 · A15 / A18 / A19 / A20）
 
 - 脚本：`scripts/w2-replay.mjs`（连真 PG + 真 api；铸管理员会话 / 跑完撤销，建 `W2-xxx` 回放项目与 6 条任务 / 跑完硬删回放项目及其节点 / 阶段 / 任务 / outbox 事件）。
   - 复跑：`cd server && node scripts/w2-replay.mjs --out ../docs/w2-回放证据(任务落库口径A15A18A19).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据。
 - 证据入库：`docs/w2-回放证据(任务落库口径A15A18A19).md`（真机 33 项断言：未分组落库 + 待分配可空 + 组内位次持久化（插入 / 拖动 / 越界 / 乐观锁 / 组隔离）+ 节点来源口径 + 阶段完成度剔除未分组 + 字段级留痕）。
-- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/task-order.test.ts` 4 例 + `test/task-service.test.ts` 19 例 + `check:db-schema`（**Push 144：27 表 / 265 列 / 79 索引·唯一 / 78 CHECK**）。
+- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/task-order.test.ts` 4 例 + `test/task-service.test.ts` 19 例 + `check:db-schema`（**Push 145：29 表 / 284 列 / 88 索引·唯一 / 86 CHECK**）。
 - 迁移与回填：`database/migrations/0015_task_order_and_nullable_scope.sql`（回填按迁移前默认读序 `planned_start ASC NULLS LAST, created_at, id`，迁移前后读序一致）。
 
 ## 多位项目经理 / 多位任务负责人（A22 / A23 · Push 136）
@@ -347,7 +350,7 @@ server/
   - 复跑：`cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m4-library-replay.mjs --out "../docs/m4-03-回放证据(多态关联与文件库查询).md"`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据。
   - `M4_DATABASE_URL` 优先于 `DATABASE_URL`：脚本侧断言 SQL 与收尾需要迁移器权限（`audit_logs` 对应用角色只授 SELECT / INSERT）。
 - 证据入库：`docs/m4-03-回放证据(多态关联与文件库查询).md`（真机 19 项断言：多态关联写入与幂等（project / node / task 三行 + 追加版本不重复写）/ 文件库筛选（节点 / 任务 / 类型 / 状态 / 上传人 / 关键字）/ 白名单排序与分页 / 回收站口径（默认排除 + 显式可查 + 多值混排）/ `file_links` 反查与列表同源 / 非法输入 400 / 权限 404）。
-- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/file-service.test.ts` 66 例（服务层替身直测，含 M4-03 / M4-04 变更写入）；`check:db-schema`（**Push 144：27 表 / 265 列 / 79 索引·唯一 / 78 CHECK**）；`check:boundaries` / `check:permission-matrix` 覆盖新增文件与权限键用法。
+- 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/file-service.test.ts` 66 例（服务层替身直测，含 M4-03 / M4-04 变更写入）；`check:db-schema`（**Push 145：29 表 / 284 列 / 88 索引·唯一 / 86 CHECK**）；`check:boundaries` / `check:permission-matrix` 覆盖新增文件与权限键用法。
 - 落点说明：`docs/` 属 px 线；证据文件由 lan 随 M4-03 卡片代记（回放脚本与断言同 PR），请 px 复核。
 
 ## M4-04 回放（S7·file 变更 · 申请即通过）
@@ -409,6 +412,7 @@ server/
 - h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。
 - h7：字典 C9 与审计留痕 C7（`dict_types` / `dict_items` / `audit_logs` + 字典读写出口 + 审计写入 / 越权留痕 / 检索 + 种子 #5 + 真机回放）—— 已落地（Push 97）；剩余：前端改读字典（u12 · px 线）、审计页面与导出（u12）、告警推送（M5 通知）、蓝图字段级留痕（随蓝图维护卡片）、按月清理（运维）。
 - h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
-- S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0019）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；M4-05 预览编排为后续卡片。
+- j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、「干系人角色」列（口径未定）、前端台账页与项目「干系人」面板（u 系列 · px 线）。
+- S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0020）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；M4-05 预览编排为后续卡片。
 - lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入已落地；M4-04 变更读面与统计、M4-05 预览编排待落）/ preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。

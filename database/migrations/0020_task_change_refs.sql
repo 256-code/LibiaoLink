@@ -1,4 +1,5 @@
--- LibiaoLink · 0019 任务「变更关联」单值 → 多条（A1-07 / R01「追加＋去重」· Push 144）
+-- LibiaoLink · 0020 任务「变更关联」单值 → 多条（A1-07 / R01「追加＋去重」· Push 145）
+--   编号说明：原为 0019，与 j6 的 0019_stakeholders.sql 撞号（main 先落地），按只追加规则顺延为 0020。
 -- 口径来源：系统功能书.md A1-07（变更关联由 R01 自动写入，追加＋去重）、A4-13（新增变更记录自动回写任务「变更关联」）、
 --   docs/rules/R01-R07-内置规则文案.md（R01 执行动作 + 待确认项 1「追加 + 去重」）、技术设计v0.2 §2.3（tasks）。
 --   1. tasks.change_ref（uuid 单值、可空、外键 fk_tasks_change_ref → change_requests，on delete set null）

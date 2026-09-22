@@ -301,7 +301,7 @@ class FakeFileRepository {
   deliverableTaskIds: string[] = [];
   /** R01 查询记录。 */
   deliverableQueries: { projectId: string; deliverable: string }[] = [];
-  /** R01 回写记录（任务 change_refs 追加 + 去重，A1-07 多条 · 迁移 0019）。 */
+  /** R01 回写记录（任务 change_refs 追加 + 去重，A1-07 多条 · 迁移 0020）。 */
   changeRefAppends: { taskIds: string[]; changeRequestId: string }[] = [];
 
   async insertChangeRequest(input: ChangeRequestInsertInput): Promise<ChangeRequestRow> {

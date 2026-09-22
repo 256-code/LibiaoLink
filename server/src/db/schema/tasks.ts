@@ -49,7 +49,7 @@ export const tasks = pgTable(
     note: text("note"),
     onTime: boolean("on_time"),
     /**
-     * 变更关联（A1-07 / R01「追加＋去重」· 迁移 0019）：一条任务可关联多条变更 —— 数组顺序 = 关联先后
+     * 变更关联（A1-07 / R01「追加＋去重」· 迁移 0020）：一条任务可关联多条变更 —— 数组顺序 = 关联先后
      * （追加序，末位 = 最近一次变更）；空数组 = 无变更。多值后不再保留单列外键（Postgres 无数组外键；
      * change_requests 为只追加表、无删除路径），「无 NULL 元素」由 ck_tasks_change_refs_no_null 兜底。
      */

@@ -126,7 +126,7 @@ export const RECYCLE_SWEEP_BATCH = 100;
  *   + 文件状态置 `changed` + `file_links`(change) + R01 回写任务 `change_refs` + 变更审计 + outbox `change.applied`；
  * - R01（`docs/rules/R01-R07-内置规则文案.md`）：按「任务输出成果文件（多值）命中变更文件成果类型」匹配任务，
  *   命中多条全部关联、无匹配只记日志（不阻断变更生效）；`tasks.change_refs` 落「追加 + 去重」的多条关联
- *   （A1-07 / A4-13「一条任务可关联多条变更」；数组顺序 = 关联先后，末位 = 最近一次变更，迁移 0019）。
+ *   （A1-07 / A4-13「一条任务可关联多条变更」；数组顺序 = 关联先后，末位 = 最近一次变更，迁移 0020）。
  */
 @Injectable()
 export class FileService {

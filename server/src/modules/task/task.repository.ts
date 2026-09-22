@@ -130,7 +130,7 @@ const OWNER_NAMES_SQL = sql<(string | null)[] | null>`(
 )`;
 
 /**
- * 变更关联（A1-07 / R01 多条 · 迁移 0019 `tasks.change_refs` uuid[]）：一次聚合出任务的全部关联变更，
+ * 变更关联（A1-07 / R01 多条 · 迁移 0020 `tasks.change_refs` uuid[]）：一次聚合出任务的全部关联变更，
  * 列 = id / 原因 / 生效时间；排序按 `array_position`（= 追加序，末位 = 最近一次变更）；空数组 → `[]`。
  * 时间在 SQL 侧按 ISO8601 UTC 格式化（`to_char` 带 Z 后缀），与 JS `toISOString()` 同形。
  */
