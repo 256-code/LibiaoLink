@@ -692,6 +692,30 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
     };
   }, [cardStage, scrollRef]);
 
+  /**
+   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下，
+   * 左右滚动（含底部滑块）时用 translateX 跟随 #task-board-scroll 的 scrollLeft，保证表头与各列始终对齐。
+   */
+  useEffect(() => {
+    const scroller = scrollRef?.current ?? null;
+    if (scroller === null) {
+      return;
+    }
+    const sync = () => {
+      const header = headerRowRef.current;
+      if (header !== null) {
+        header.style.transform = "translateX(" + String(-scroller.scrollLeft) + "px)";
+      }
+    };
+    sync();
+    scroller.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      scroller.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+    };
+  }, [scrollRef]);
+
   /** 阶段不在九阶段里的任务（看板「添加」直接建的空任务）归到「未分组」组，依旧能在表里看到。 */
   const stageOf = (task: ProjectTask) => (task.stage === "" ? "未分组" : task.stage);
   const groups = [...STAGE_ORDER, "未分组"]
@@ -706,14 +730,15 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   return (
     <>
       <div ref={boardWrapRef} className="relative">
-      <div ref={boardCardRef} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-      <div id="task-board-scroll" ref={scrollRef} className="overflow-x-auto">
-        <div style={{ minWidth: minWidth }}>
-          <div
-            ref={headerRowRef}
-            className="grid items-center border-b border-zinc-200 bg-zinc-50/70 px-5 py-2.5 text-xs font-medium text-zinc-400"
-            style={{ gridTemplateColumns: gridTemplate }}
-          >
+      <div ref={boardCardRef} className="rounded-xl border border-zinc-200 bg-white">
+      {/* 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下；
+          横向偏移由下方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。 */}
+      <div className="sticky top-16 z-20 overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
+        <div
+          ref={headerRowRef}
+          className="grid items-center px-5 py-2.5 text-xs font-medium text-zinc-400"
+          style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
+        >
             {columns.map((column) =>
               column.key === "title" ? (
                 <span key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-2.5">
@@ -747,7 +772,10 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                 </span>
               ),
             )}
-          </div>
+        </div>
+      </div>
+      <div id="task-board-scroll" ref={scrollRef} className="overflow-x-auto rounded-b-xl">
+        <div style={{ minWidth: minWidth }}>
           {groups.map((group) => {
             const done = group.items.filter(isTaskDone).length;
             const pct = group.items.length === 0 ? 0 : Math.round((done / group.items.length) * 100);
