@@ -34,6 +34,7 @@ const THRESHOLDS = { list: 800, filter: 800, summary: 500, stages: 800, ganttBat
 const STAGES = ["presale", "design", "purchase", "assembly", "install", "deploy", "trial", "production", "acceptance"];
 const KEYWORD = "M3K-777";
 const OLD_INDEX = "ix_tasks_project_stage_order";
+const SHAPE_BUDGET = { S1: THRESHOLDS.filter, S2: THRESHOLDS.filter, S3: THRESHOLDS.filter, S4: THRESHOLDS.filter, S5: THRESHOLDS.filter, S6: THRESHOLDS.filter, S7: THRESHOLDS.summary, S8: THRESHOLDS.stages, S9: THRESHOLDS.ganttBatch };
 const NEW_INDEX = "ix_tasks_active_group";
 
 const report = [];
@@ -41,6 +42,7 @@ const evidence = { shapes: [], api: [], index: {} };
 let failures = 0;
 let db;
 let token = "";
+let legacyIndexPresent = false;
 const CSRF = randomBytes(16).toString("hex");
 const cleanup = { projectId: null, userId: null, syntheticUserIds: [], syntheticRoleName: "" };
 
@@ -266,31 +268,50 @@ try {
   note("");
   note("| 形状 | 说明 | p50 | p95 | 命中索引 / 计划 |");
   note("|---|---|---|---|---|");
+  const legacyExisted = await db.query("select count(*)::int as n from pg_class where relname = $1 and relkind = $$i$$", [OLD_INDEX]);
+  const legacyPresent = legacyExisted.rows[0].n === 1;
+  legacyIndexPresent = legacyPresent;
   const baseline = [];
-  for (const shape of SHAPES) {
-    baseline.push(await measureSql(shape.id, shape.title, shape.sql, shape.params()));
+  if (legacyPresent) {
+    for (const shape of SHAPES) {
+      baseline.push(await measureSql(shape.id, shape.title, shape.sql, shape.params()));
+    }
   }
   const indexSizes = await db.query("select indexrelname as name, pg_relation_size(indexrelid)::bigint as bytes, pg_size_pretty(pg_relation_size(indexrelid)) as size from pg_stat_user_indexes where relname = $$tasks$$ and indexrelname = any($1::text[]) order by indexrelname", [[OLD_INDEX, NEW_INDEX]]);
   for (const row of indexSizes.rows) note("- 索引 " + row.name + "：" + row.size + "（" + row.bytes + " bytes）");
-  const existed = await db.query("select count(*)::int as n from pg_class where relname = $1 and relkind = $$i$$", [OLD_INDEX]);
-  check("A12", "对照前旧索引存在（迁移 0015 建立）", "n=1", "n=" + existed.rows[0].n, existed.rows[0].n === 1, "马上 DROP 做前后对照");
-  await db.query("drop index if exists " + OLD_INDEX);
-  await db.query("analyze tasks");
-  note("");
-  note("- 已 DROP " + OLD_INDEX + "（对照态：任务表只用部分索引 " + NEW_INDEX + " 兜底）");
+  check("A12", legacyPresent ? "对照前旧索引存在（迁移 0015 建立）" : "旧索引已下线（迁移 0024 落库后 · 直接按下线态跑）", legacyPresent ? "n=1" : "n=0（下线态）", "n=" + legacyExisted.rows[0].n, true, legacyPresent ? "马上 DROP 做前后对照" : "无对照基线：改为逐形状压预算 + 记录计划");
   const after = [];
-  for (const shape of SHAPES) {
-    after.push(await measureSql("D" + shape.id, shape.title + " · 下线旧索引后", shape.sql, shape.params()));
+  if (legacyPresent) {
+    await db.query("drop index if exists " + OLD_INDEX);
+    await db.query("analyze tasks");
+    note("");
+    note("- 已 DROP " + OLD_INDEX + "（对照态：任务表只用部分索引 " + NEW_INDEX + " 兜底）");
+    for (const shape of SHAPES) {
+      after.push(await measureSql("D" + shape.id, shape.title + " · 下线旧索引后", shape.sql, shape.params()));
+    }
+  } else {
+    note("");
+    note("- 旧索引不存在（迁移 0024 已下线）：直接按「部分索引 " + NEW_INDEX + " 兜底态」跑 9 形状");
+    for (const shape of SHAPES) {
+      after.push(await measureSql("D" + shape.id, shape.title + " · 下线态", shape.sql, shape.params()));
+    }
   }
   const ratioOf = (item) => item.next / Math.max(item.base, 0.05);
-  const ratios = SHAPES.map((shape, index) => ({ id: shape.id, base: baseline[index].p50, next: after[index].p50 }));
-  const worst = ratios.reduce((max, item) => (ratioOf(item) > ratioOf(max) ? item : max), ratios[0]);
+  const ratios = legacyPresent ? SHAPES.map((shape, index) => ({ id: shape.id, base: baseline[index].p50, next: after[index].p50 })) : [];
+  const worst = ratios.length > 0 ? ratios.reduce((max, item) => (ratioOf(item) > ratioOf(max) ? item : max), ratios[0]) : null;
   note("");
-  note("- p50 倍率（下线后 / 基线）：" + ratios.map((item) => item.id + " " + ratioOf(item).toFixed(2) + "x").join(" / "));
-  evidence.index = { oldIndex: OLD_INDEX, newIndex: NEW_INDEX, sizes: indexSizes.rows, ratios: ratios.map((item) => ({ id: item.id, baseP50: item.base, afterP50: item.next, ratio: Number(ratioOf(item).toFixed(3)) })), afterIndexes: after.map((item) => ({ id: item.id, indexes: item.indexes, nodes: item.nodes })), keptDropped: args.dropIndex === true };
-  check("A13", "下线旧索引后最差形状的 p50 倍率 <= 1.5x", "worst <= 1.5x", worst.id + " " + ratioOf(worst).toFixed(2) + "x", ratioOf(worst) <= 1.5);
+  if (legacyPresent) {
+    note("- p50 倍率（下线后 / 基线）：" + ratios.map((item) => item.id + " " + ratioOf(item).toFixed(2) + "x").join(" / "));
+  } else {
+    note("- 旧索引已下线（无基线对照）：逐形状 p50 / 预算 —— " + after.map((item) => item.id + " " + fmt(item.p50) + " ms / " + SHAPE_BUDGET[item.id] + " ms").join(" / "));
+  }
+  evidence.index = { oldIndex: OLD_INDEX, newIndex: NEW_INDEX, legacyIndexPresent: legacyPresent, sizes: indexSizes.rows, ratios: ratios.map((item) => ({ id: item.id, baseP50: item.base, afterP50: item.next, ratio: Number(ratioOf(item).toFixed(3)) })), afterIndexes: after.map((item) => ({ id: item.id, indexes: item.indexes, nodes: item.nodes })), keptDropped: args.dropIndex === true || !legacyPresent };
+  check("A13", legacyPresent ? "下线旧索引后最差形状的 p50 倍率 <= 1.5x" : "旧索引已下线（0024）：9 形状逐条压预算", legacyPresent ? "worst <= 1.5x" : "各形状 p50 <= 预算", legacyPresent ? worst.id + " " + ratioOf(worst).toFixed(2) + "x" : after.map((item) => item.id + " " + fmt(item.p50)).join(" / "), legacyPresent ? ratioOf(worst) <= 1.5 : after.every((item) => item.p50 <= SHAPE_BUDGET[item.id]));
   check("A14", "下线旧索引后默认读序（S1）p50 阈值", "<= " + THRESHOLDS.list + " ms", fmt(after[0].p50) + " ms", after[0].p50 <= THRESHOLDS.list);
-  if (args.dropIndex === true) {
+  if (!legacyPresent) {
+    note("");
+    note("- 旧索引本就不存在（迁移 0024 已下线），无需建回");
+  } else if (args.dropIndex === true) {
     note("");
     note("- 按命令行要求保持 DROP 状态（供迁移 0024 复核），本次不建回：" + OLD_INDEX);
   } else {
@@ -320,7 +341,7 @@ try {
         await db.query("delete from project_members where user_id = any($1::uuid[])", [cleanup.syntheticUserIds]);
         await db.query("delete from users where id = any($1::uuid[])", [cleanup.syntheticUserIds]);
       }
-      if (args.dropIndex !== true) await db.query("create index if not exists " + OLD_INDEX + " on tasks (project_id, stage_key, sort_index)");
+      if (args.dropIndex !== true && legacyIndexPresent) await db.query("create index if not exists " + OLD_INDEX + " on tasks (project_id, stage_key, sort_index)");
     } catch (error) {
       report.push("| WARN | 收尾未完全成功：" + (error instanceof Error ? error.message : String(error)) + " |");
     }
@@ -356,7 +377,7 @@ lines.push("## 验收对照（M3-06）");
 lines.push("");
 lines.push("- 「1 万行数据集」= A1 / A2：单项目 1 万行任务落库（九阶段 + 未分组 · 8 位负责人 · 200 条软删），关键字与分布可复现。");
 lines.push("- 「列表 / 筛选 / 总览 / 甘特取数性能」= A3 ~ A11：默认读序 50 条分页、阶段 / 负责人 / 关键字（全量与稀疏）/ 展示态筛选、项目总览四格、阶段完成度、甘特 10 页 x 200 条取数，p95 全部在阈值内。");
-lines.push("- 「索引调优评估」= A12 ~ A15：DROP " + OLD_INDEX + " 前后 9 个形状逐一对齐（p50 倍率 + EXPLAIN 命中计划），评估由部分索引 " + NEW_INDEX + " 取代旧索引的可行性；对照结束把旧索引建回（默认与迁移结构一致）。");
+lines.push("- 「索引调优评估」= A12 ~ A15：DROP " + OLD_INDEX + " 前后 9 个形状逐一对齐（p50 倍率 + EXPLAIN 命中计划），评估由部分索引 " + NEW_INDEX + " 取代旧索引的可行性；对照结束把旧索引建回（默认与迁移结构一致）；迁移 0024 之后旧索引已不存在，则直接按下线态逐形状压预算并记录命中计划）。");
 lines.push("- 复跑：cd server && M3_STRESS_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node scripts/m3-06-stress.mjs --out ../docs/m3-06-压测证据.md");
 lines.push("");
 lines.push("");

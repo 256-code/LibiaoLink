@@ -72,7 +72,10 @@ export const tasks = pgTable(
   },
   (table) => [
     index("ix_tasks_project_stage").on(table.projectId, table.stageKey),
-    index("ix_tasks_project_stage_order").on(table.projectId, table.stageKey, table.sortIndex),
+    /**
+     * 历史排序索引（0015 · w2）：M3-06 真机对照定案（p50 倍率 0.94x ~ 1.02x）后由迁移 `0024` 下线 ——
+     *  读面恒带 `deleted_at is null`，由下方部分索引 ix_tasks_active_group 完整覆盖，双索引只剩写放大。
+     */
     index("ix_tasks_owner_ids").using("gin", table.ownerIds),
     index("ix_tasks_deliverable_types").using("gin", table.deliverableTypes),
     index("ix_tasks_change_refs").using("gin", table.changeRefs),

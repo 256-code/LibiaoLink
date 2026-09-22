@@ -178,7 +178,7 @@ server/
 
 - 收口（h3 过渡口径）：`GateService` 不再直读 `tasks` 表 —— 阶段门禁 `task_not_done` 与 `GET /projects/{id}/stages` 的任务完成度经 task 模块 `TaskStatsService`（node → task；`countStageTasks` / `stageTaskCounts`）；阶段完成度只统计带阶段任务，未分组（`stage_key` 为空）不计入（A15 · Push 124）。
 - 落库口径（A15 / A18 / A19 / A20 · Push 124）：迁移 `0015_task_order_and_nullable_scope.sql` 给 `tasks` 加 `sort_index`（组内 0 起、密集，回填按迁移前默认读序）、`stage_key` 放宽可空；迁移 `0017_multi_manager_and_owner.sql` 把 `tasks.owner_id` 改为 `owner_ids` uuid[]（空数组 = 待分配，回填 `array[owner_id]` / 空数组）；一组 = 同一项目 + 同一阶段（null = 未分组，自成一组）；编辑的 `sortIndex` = 移到组内第 N 位（越界 = 组尾），同组顺延只写位次列、不逐个 bump `version`，并发靠组行锁（`select … for update`）；契约 `Task` / `TaskCreateBody` / `TaskUpdateBody` 同步。
-- 过渡口径（登记待收口）：① 记录级 404 语义与权限矩阵随 h6 —— 当前任务读 / 编辑 / 进度登录即可（成员平权），手工创建按 A1-13 限管理员；② `progress` 的 `note` 写任务的「项目进展描述」并留痕；③ 从模板实例化与任务节点库 / 模板接口（依赖模板表，A11）、快筛参数、1 万行压测与索引调优（M3-06）为后续卡片（任务侧完成门禁 M3-03 · Push 143、批量 M3-04 · Push 150、软删 M3-05 · Push 152、锁定字段例外调整 A1-17 / C9-07 · Push 153 均已落地；M3-05 只剩模板实例化与快筛）；④ 列表默认序已有 `ix_tasks_project_stage_order (project_id, stage_key, sort_index)` 复合索引（0015 · Push 124），1 万行压测与索引调优仍随 M3-06。
+- 过渡口径（登记待收口）：① 记录级 404 语义与权限矩阵随 h6 —— 当前任务读 / 编辑 / 进度登录即可（成员平权），手工创建按 A1-13 限管理员；② `progress` 的 `note` 写任务的「项目进展描述」并留痕；③ 从模板实例化与任务节点库 / 模板接口（依赖模板表，A11）、快筛参数、1 万行压测与索引调优（M3-06）为后续卡片（任务侧完成门禁 M3-03 · Push 143、批量 M3-04 · Push 150、软删 M3-05 · Push 152、锁定字段例外调整 A1-17 / C9-07 · Push 153 均已落地；M3-05 只剩模板实例化与快筛）；④ 列表默认序索引：0015 的 `ix_tasks_project_stage_order (project_id, stage_key, sort_index)` 与 0022 的部分索引 `ix_tasks_active_group` 重叠，M3-06 真机对照达标后由 0024 下线（Push 158），只留部分索引。
 ## 字典与审计接口（h7 · S6·admin：C9 字典 + C7 审计留痕）
 
 - 契约 `shared/src/modules/dicts.ts`（读取参数 / 维护请求，tags=dicts）与 `shared/src/modules/audits.ts`（审计读取面，tags=audit）；实现 `src/modules/admin/`（dicts.controller / audit.controller + dict.service / audit.service + repository + audit.rules + `index.ts` 出口）；`AdminModule` 导入 identity（守卫）/ permission（统一判定出口），业务模块反向 import 其 `AuditService` 注入留痕。
@@ -394,9 +394,9 @@ server/
 ## M3-06 压测（1 万行任务数据集 + 索引调优评估）
 
 - 脚本：`scripts/m3-06-stress.mjs`（真 PG + 真 api；自建合成项目 `M3STRESS-` 与 8 位合成负责人，插 1 万行任务（其中 200 条软删，避开各组头部与关键字行）—— 跑完硬删任务 / 事件 / 阶段 / 成员 / 项目 / 合成用户与会话）。
-- 证据面：① 数据集（1 万行 · 九阶段 + 未分组 · 8 位负责人 · 稀疏关键字可复现）；② API 时延（列表默认读序 / 阶段 / 负责人 / 关键字 / 展示态筛选、项目总览四格、阶段完成度、甘特 10 页 x 200 条取数 —— p50 / p95 阈值断言）；③ SQL 计划（`EXPLAIN (ANALYZE, BUFFERS)` 逐形状记录命中索引）；④ **索引对照（本卡核心）**：同一组查询在「保留 `ix_tasks_project_stage_order`」与「同库 DROP 后」两种状态逐形状对照（p50 倍率 <= 1.5x + 默认读序阈值），评估由部分索引 `ix_tasks_active_group`（0022 · `where deleted_at is null`）取代旧索引的可行性；对照结束默认把旧索引建回（库结构与迁移一致），`--drop-index` 时保持删除态（供迁移复核）。
+- 证据面：① 数据集（1 万行 · 九阶段 + 未分组 · 8 位负责人 · 稀疏关键字可复现）；② API 时延（列表默认读序 / 阶段 / 负责人 / 关键字 / 展示态筛选、项目总览四格、阶段完成度、甘特 10 页 x 200 条取数 —— p50 / p95 阈值断言）；③ SQL 计划（`EXPLAIN (ANALYZE, BUFFERS)` 逐形状记录命中索引）；④ **索引对照（本卡核心）**：同一组查询在「保留 `ix_tasks_project_stage_order`」与「同库 DROP 后」两种状态逐形状对照（p50 倍率 <= 1.5x + 默认读序阈值），评估由部分索引 `ix_tasks_active_group`（0022 · `where deleted_at is null`）取代旧索引的可行性；对照结束默认把旧索引建回（库结构与迁移一致），`--drop-index` 时保持删除态；迁移 0024 之后旧索引已下线，脚本自动转「下线态」逐形状压预算并记录计划。
 - 复跑：`cd server && M3_STRESS_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m3-06-stress.mjs [--tasks 10000] [--rounds 6] [--out <报告.md>]`；退出码 0 = 断言全过（可当门禁），`--no-api` 只跑 SQL 面、`--keep` 保留回放数据。
-- 索引结论（待真机证据定案）：若对照达标，旧索引 `ix_tasks_project_stage_order` 由迁移 0024 下线（Drizzle schema 同步，避免双索引写放大）；未达标则维持双索引并把差异登记到 `技术设计v0.2-架构与数据模型.md` §2.3。
+- 索引结论（已定案 · Push 158）：真机对照达标（最差 p50 倍率 1.02x / 阈值 1.5x；下线后默认读序 4.1 ms / 阈值 800 ms）→ 旧索引 `ix_tasks_project_stage_order` 由迁移 `0024_drop_tasks_legacy_order_index.sql` 下线（Drizzle schema 同步移除，避免双索引写放大），读面由部分索引 `ix_tasks_active_group` 兜底；证据：`docs/m3-06-压测证据(CI).md`。
 
 ## M6 回放（S6·report-issue：日报 / 问题）
 
