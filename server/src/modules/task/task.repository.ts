@@ -374,7 +374,7 @@ export class TaskRepository {
     const rows = await client
       .select({ value: sql<number>`count(*)::int` })
       .from(dailyReports)
-      .where(sql`${dailyReports.taskIds} @> ${[taskId]}::uuid[]`);
+      .where(sql`${dailyReports.taskIds} @> array[${taskId}]::uuid[]`);
     return Number(rows[0]?.value ?? 0);
   }
 
