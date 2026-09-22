@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROGRESS_STEPS, TASK_DATE_YEAR, cnDateFromIso, daysBetweenInclusive, displayStatusOf, isCompleteStatus, isTaskDone, isoFromCnDate, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, TASK_DATE_YEAR, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, ownersLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
 
@@ -374,7 +374,7 @@ function buildBar(task: ProjectTask): GanttBar {
   // 两个日期都齐才画条（只填一个 = 未排期）；数据反了（开始晚于预计完成）按小 → 大画。
   const start = rawStart === null || rawEnd === null ? null : Math.min(rawStart, rawEnd);
   const end = rawStart === null || rawEnd === null ? null : Math.max(rawStart, rawEnd);
-  const status = displayStatusOf(task);
+  const status = taskStatus(task);
   const percent = Math.max(0, Math.min(100, Math.round(task.progress * 100)));
   const owners = ownersLabel(task.owners, task.ownersEn);
   const label = [
@@ -657,7 +657,7 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
       if (!matchesOwner) {
         return false;
       }
-      if (rowFilter === "overdue" && displayStatusOf(task) !== "已延期") {
+      if (rowFilter === "overdue" && taskStatus(task) !== "已延期") {
         return false;
       }
       // 未排期 = 没填齐「开始 + 预计完成」（与条、左表日期列同一口径）—— 只看未排期时反过来：排期齐了的都筛掉。

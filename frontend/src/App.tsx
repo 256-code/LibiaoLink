@@ -149,8 +149,6 @@ export default function App() {
         region: draft.region,
         projectType: draft.projectType,
         managerIds: draft.managerIds,
-        customer: draft.customer.trim() === "" ? undefined : draft.customer.trim(),
-        description: draft.note.trim() === "" ? undefined : draft.note.trim(),
       });
       setDataVersion((value) => value + 1);
       return null;
@@ -170,8 +168,6 @@ export default function App() {
           region: draft.region,
           projectType: draft.projectType,
           managerIds: draft.managerIds,
-          customer: draft.customer.trim() === "" ? null : draft.customer.trim(),
-          description: draft.note.trim() === "" ? null : draft.note.trim(),
         },
         project.version,
       );
@@ -209,12 +205,10 @@ export default function App() {
   };
 
   /**
-   * 任务字段被编辑（M3-07 起走真接口）：+1 让详情（项目 updatedAt）与列表重新取数 ——
-   * 任务写路径已经把服务端结果贴回任务列表，这里只负责项目时间这类项目级口径。
+   * 任务字段被编辑：任务域仍是内存态原型（M3-07 接线），服务端没有变化，故只留口子不刷新。
    */
   const handleTaskEdited = (_id: string): void => {
     void _id;
-    setDataVersion((value) => value + 1);
   };
 
   if (state.kind === "loading") {
@@ -283,8 +277,6 @@ export default function App() {
         initial={{
           code: editingProject.code,
           description: editingProject.description,
-          customer: editingProject.customer ?? "",
-          note: editingProject.note ?? "",
           managerIds: editingProject.managerIds,
           projectType: editingProject.projectType,
           region: editingProject.region,
@@ -333,7 +325,7 @@ export default function App() {
     }
     return (
       <>
-        <ProjectDetail me={state.me} project={detail} view={route.view} directory={directory} onNotice={setNotice} onChangeManagers={handleChangeManagers} onTaskEdited={handleTaskEdited} />
+        <ProjectDetail me={state.me} project={detail} view={route.view} onChangeManagers={handleChangeManagers} onTaskEdited={handleTaskEdited} />
         {editModal}
         {noticeBar}
       </>

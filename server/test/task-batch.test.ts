@@ -183,7 +183,7 @@ describe("M3-04 · 任务批量操作（A1-08）", () => {
       PROJECT,
       {
         ids: [TASK_A, TASK_B],
-        changes: { ownerIds: [OWNER], priority: "高", plannedEnd: "2026-10-01" },
+        changes: { ownerIds: [OWNER], priority: "重要且紧急", plannedEnd: "2026-10-01" },
       },
       ACTOR,
     );
@@ -193,7 +193,7 @@ describe("M3-04 · 任务批量操作（A1-08）", () => {
     expect(result.failures).toEqual([]);
     expect(result.succeeded.map((task) => task.id)).toEqual([TASK_A, TASK_B]);
     expect(result.succeeded[0]?.ownerIds).toEqual([OWNER]);
-    expect(result.succeeded[0]?.priority).toBe("高");
+    expect(result.succeeded[0]?.priority).toBe("重要且紧急");
     expect(repo.tasks.get(TASK_A)?.plannedEnd).toBe("2026-10-01");
     expect(repo.tasks.get(TASK_A)?.version).toBe(4);
     expect(repo.events.filter((event) => event.eventType === "date_change")).toHaveLength(2);

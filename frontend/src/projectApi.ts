@@ -95,17 +95,13 @@ export function fetchProject(id: string): Promise<ApiProject> {
   return apiRequest<ApiProject>("/api/v1/projects/" + encodeURIComponent(id));
 }
 
-/** 写请求字段（新建 / 编辑同一套；Push 161 起 customer / 备注 description 由表单采集：undefined = 不改、null = 清空）。 */
+/** 写请求字段（新建 / 编辑同一套；customer / 备注 description 表单暂未采集，不发送即不改）。 */
 export type ProjectWriteInput = {
   code: string;
   name: string;
   region: string;
   projectType: string;
   managerIds: string[];
-  /** 客户（契约 customer）：空串由调用方归一化为 undefined（新建）/ null（编辑，清空）。 */
-  customer?: string | null;
-  /** 备注（契约 description）：同上。 */
-  description?: string | null;
 };
 
 export function createProject(input: ProjectWriteInput): Promise<ApiProject> {
@@ -119,8 +115,6 @@ export function updateProject(id: string, input: ProjectWriteInput, version: num
     region: input.region,
     projectType: input.projectType,
     managerIds: input.managerIds,
-    customer: input.customer,
-    description: input.description,
     version,
   };
   return apiSend<ApiProject>("/api/v1/projects/" + encodeURIComponent(id), "PATCH", body);
@@ -148,15 +142,13 @@ export function formatDateTime(iso: string): string {
   return pick("year") + "-" + pick("month") + "-" + pick("day") + " " + pick("hour") + ":" + pick("minute");
 }
 
-/** API 视图 → UI 模型：前端「项目名称」= 契约 name、`note` = 契约 description（备注）；经理姓名随行下发。 */
+/** API 视图 → UI 模型：前端「项目描述」= 契约 name；经理姓名随行下发（卡片 / 详情不再查演示目录）。 */
 export function toUiProject(view: ApiProject): Project {
   return {
     id: view.id,
     seqNo: view.seqNo,
     code: view.code,
     description: view.name,
-    customer: view.customer,
-    note: view.description,
     region: view.region,
     projectType: view.projectType,
     createdAt: formatDateTime(view.createdAt),

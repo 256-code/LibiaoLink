@@ -175,17 +175,7 @@ function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (
 
 type StageAddCardProps = {
   stage: string;
-  /**
-   * 这个阶段的节点池（M3-07 · Push 163 起 = **真项目节点**，`GET /projects/{id}/flow` 展平后按阶段分组）：
-   * 点一条 → `POST /projects/{id}/tasks`（`taskNodeId`）落库；同一节点在项目里只留一份（服务端 409 兜底）。
-   */
-  poolNodes: readonly TemplatePresetNode[];
-  /**
-   * 「模板」标签的添加动作是否可用：任务节点库 / 任务模板接口（A11：`GET /task-nodes`、`GET /task-templates`）
-   * 后端尚未落地（服务端无实现），模板只能预览 —— 缺省 false = 模板标签的添加按钮禁用并提示。
-   */
-  templatesEnabled?: boolean;
-  existingNodeIds: ReadonlySet<string>;
+  existingTaskIds: ReadonlySet<string>;
   /** 点一条节点直接加进项目（没有「插入位置」时走这条 —— 项目总览里点阶段标签加节点）。 */
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一批 + 指定插入位置（看板那条路径）。 */
@@ -204,16 +194,29 @@ type StageAddCardProps = {
   style?: CSSProperties;
 };
 
+/** 这个阶段的节点池（与任务模板页左列同口径）：该阶段全部预设节点按出现顺序去重。 */
+function presetNodesOf(stage: string): TemplatePresetNode[] {
+  const seen = new Set<string>();
+  const items: TemplatePresetNode[] = [];
+  for (const preset of STAGE_TEMPLATE_PRESETS[stage] ?? []) {
+    for (const node of preset.nodes) {
+      if (seen.has(node.id)) {
+        continue;
+      }
+      seen.add(node.id);
+      items.push(node);
+    }
+  }
+  return items;
+}
+
 /**
  * 任务表里点阶段标签（「售前规划」…「验收」）打开的右侧中等卡片：
  * 顶部是标签导航 —— 第一个「任务节点」（这个阶段的节点池，点一条就加进项目），
  * 其余每个标签 = 这个阶段的一块模板（按预设顺序预览、可鼠标滚动，也能逐条 / 整套加）。
- * **M3-07 · Push 163**：①「任务节点」的节点池改吃**真项目节点**（props `poolNodes`，来源 `GET /projects/{id}/flow`）——
- * 点一条 = `POST /projects/{id}/tasks`（`taskNodeId`）落库，真任务进任务表；② 模板标签保留预览，但任务节点库 / 任务模板接口（A11）后端未落地，
- * 添加动作按 `templatesEnabled`（缺省 false）禁用并提示 —— 旧的「预设节点建内存任务」路径已下线。
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
-export function StageAddCard({ stage, poolNodes, templatesEnabled = false, existingNodeIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
+export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
   /** 点了「＋ 添加」/「整套添加」之后、还没选位置的那一次（Push 113）：`nodes` = 这次要加的一条 / 一批，`anchor` = 贴哪一行浮出。 */
   const [armed, setArmed] = useState<{ nodes: readonly TemplatePresetNode[]; anchor: HTMLElement } | null>(null);
   /**
@@ -222,8 +225,7 @@ export function StageAddCard({ stage, poolNodes, templatesEnabled = false, exist
    */
   const [sequential, setSequential] = useState(true);
   const presets = useMemo(() => STAGE_TEMPLATE_PRESETS[stage] ?? [], [stage]);
-  /** 节点池 = 真项目节点（props 下发）：不用 useMemo —— props 本身就是稳定引用，多包一层反而容易漏依赖。 */
-  const nodes = poolNodes;
+  const nodes = useMemo(() => presetNodesOf(stage), [stage]);
   const [activeTab, setActiveTab] = useState("nodes");
   const cardRef = useRef<HTMLElement | null>(null);
 
@@ -270,7 +272,7 @@ export function StageAddCard({ stage, poolNodes, templatesEnabled = false, exist
   const currentPreset = templateIndex === -1 ? undefined : presets[templateIndex];
   const isNodesTab = currentPreset === undefined;
   const items = currentPreset?.nodes ?? nodes;
-  const pendingCount = items.filter((node) => !existingNodeIds.has(node.id)).length;
+  const pendingCount = items.filter((node) => !existingTaskIds.has(node.id)).length;
   const addedCount = items.length - pendingCount;
 
   /** 位置选好了（Push 113）：交给上层按这个位置插进项目；没给批量入口时逐条加。 */
@@ -363,16 +365,16 @@ export function StageAddCard({ stage, poolNodes, templatesEnabled = false, exist
       </div>
 
       <div className="mt-2 flex shrink-0 items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-[11px] text-zinc-500" title={isNodesTab || templatesEnabled ? undefined : "任务节点库 / 任务模板接口（A11）后端尚未落地"}>
-          {isNodesTab ? "" : templatesEnabled ? "模板预览 · " : "模板预览（接口待落地）· "}已添加 {addedCount}
+        <span className="text-[11px] text-zinc-500">
+          {isNodesTab ? "" : "模板预览 · "}已添加 {addedCount}
         </span>
         <div className="flex shrink-0 items-center gap-2">
           {isNodesTab ? null : (
             <button
               type="button"
-              disabled={pendingCount === 0 || !templatesEnabled}
-              onClick={(event) => { startAdd(items.filter((node) => !existingNodeIds.has(node.id)), event.currentTarget); }}
-              title={templatesEnabled ? "把这块模板里还没加过的节点一次全加到项目" : "模板库接口（A11）待后端落地"}
+              disabled={pendingCount === 0}
+              onClick={(event) => { startAdd(items.filter((node) => !existingTaskIds.has(node.id)), event.currentTarget); }}
+              title="把这块模板里还没加过的节点一次全加到项目"
               className="shrink-0 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
             >
               整套添加（{pendingCount}）
@@ -384,20 +386,14 @@ export function StageAddCard({ stage, poolNodes, templatesEnabled = false, exist
 
       <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
         {items.map((node, index) => {
-          const added = existingNodeIds.has(node.id);
+          const added = existingTaskIds.has(node.id);
           return (
             <li key={node.id}>
               <button
                 type="button"
-                disabled={added || (!isNodesTab && !templatesEnabled)}
+                disabled={added}
                 onClick={(event) => { startAdd([node], event.currentTarget); }}
-                title={
-                  added
-                    ? "已经在项目里"
-                    : isNodesTab || templatesEnabled
-                      ? "添加到项目 · " + stage
-                      : "模板库接口（A11）待后端落地，暂不能从模板添加"
-                }
+                title={added ? "已经在项目里" : "添加到项目 · " + stage}
                 className={
                   "flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition " +
                   (added
@@ -412,8 +408,8 @@ export function StageAddCard({ stage, poolNodes, templatesEnabled = false, exist
                   <span className={"block truncate text-xs " + (added ? "text-zinc-400" : "font-medium text-zinc-700")}>{node.title}</span>
                   <span className="block truncate text-[10px] text-zinc-400">{node.titleEn}</span>
                 </span>
-                <span className={"shrink-0 text-[11px] " + (added || (!isNodesTab && !templatesEnabled) ? "text-zinc-400" : "font-medium text-emerald-700")}>
-                  {added ? "已添加" : isNodesTab || templatesEnabled ? "＋ 添加" : "待落地"}
+                <span className={"shrink-0 text-[11px] " + (added ? "text-zinc-400" : "font-medium text-emerald-700")}>
+                  {added ? "已添加" : "＋ 添加"}
                 </span>
               </button>
             </li>

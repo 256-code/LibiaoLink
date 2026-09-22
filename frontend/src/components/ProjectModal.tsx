@@ -6,12 +6,8 @@ import { MemberMultiSelect } from "./MemberSelect";
 
 export type ProjectDraft = {
   code: string;
-  /** 前端「项目名称」= 契约 name（Push 161 起标签改名，对齐契约）。 */
+  /** 前端「项目描述」= 契约 name。 */
   description: string;
-  /** 客户（契约 customer）：空串 = 未填写（新建不发送、编辑发送 null 清空）。 */
-  customer: string;
-  /** 备注（契约 description）：空串 = 未填写。 */
-  note: string;
   /** 项目经理（多位，Push 136）：至少一位，数组顺序 = 展示顺序。 */
   managerIds: string[];
   /** 项目类型：字典 projectType 的码（主题色由字典元数据下发）。 */
@@ -47,8 +43,6 @@ export function ProjectModal({ mode, initial, regions, projectTypes, managerOpti
   const isEdit = mode === "edit";
   const [code, setCode] = useState(initial?.code ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [customer, setCustomer] = useState(initial?.customer ?? "");
-  const [note, setNote] = useState(initial?.note ?? "");
   const [managerIds, setManagerIds] = useState<string[]>(initial?.managerIds ?? []);
   const [projectType, setProjectType] = useState<string>(initial?.projectType ?? projectTypes[0]?.code ?? "");
   const [region, setRegion] = useState<string>(initial?.region ?? regions[0]?.code ?? "");
@@ -78,7 +72,7 @@ export function ProjectModal({ mode, initial, regions, projectTypes, managerOpti
     }
     setPending(true);
     setError(null);
-    const message = await onSubmit({ code, description, customer, note, managerIds, projectType, region });
+    const message = await onSubmit({ code, description, managerIds, projectType, region });
     setPending(false);
     if (message !== null) {
       setError(message);
@@ -110,25 +104,12 @@ export function ProjectModal({ mode, initial, regions, projectTypes, managerOpti
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目名称</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目描述</span>
             <input
               className={fieldClass}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              maxLength={200}
               placeholder="如 中国包裹分拣"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-              客户<span className="ml-1 text-xs font-normal text-zinc-400">选填</span>
-            </span>
-            <input
-              className={fieldClass}
-              value={customer}
-              onChange={(event) => setCustomer(event.target.value)}
-              maxLength={200}
-              placeholder="如 立镖机器人"
             />
           </label>
           <div className="block">
@@ -172,19 +153,6 @@ export function ProjectModal({ mode, initial, regions, projectTypes, managerOpti
                 </option>
               ))}
             </select>
-          </label>
-
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-              备注<span className="ml-1 text-xs font-normal text-zinc-400">选填</span>
-            </span>
-            <textarea
-              className={fieldClass + " min-h-20 resize-y"}
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              maxLength={2000}
-              placeholder="项目背景 / 交付说明等"
-            />
           </label>
 
           {error === null ? null : (
