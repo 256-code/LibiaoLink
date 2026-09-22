@@ -16,7 +16,7 @@
 - 顺延求值：GET /api/v1/calendar/shift?date=&direction= —— 非工作日移动到最近工作日（已是工作日则 `shifted=false` 原样返回）；`skipped[]` 逐条返回中途跳过的日期（金标用例逐条断言）；`direction` 缺省取配置。
 - T-N / T+N 求值（D5-03）：GET /api/v1/calendar/offset?date=&days=&time=&shift= —— 自然日偏移 → 顺延开关（`inherit` 按日历配置 / `on` / `off` 供规则引擎回放与金标用例强制覆盖）→ 顺延到最近工作日 → 可选叠加时刻（`at` = 业务日 + HH:mm 按 Asia/Shanghai 转 UTC，如 R03「前 1 天 08:00」）。**实时求值、不缓存、不落库**：任务改期后按新日期重算（v0.1 §4 时间语义）。
 - 时钟（v0.3 §4.7）：新增 `server/src/common/clock/clock.service.ts`（now / today / setSource）—— 求值基准日期一律经 ClockService（缺省今天，Asia/Shanghai），规则 / 调度禁止直接取系统时间（保证回放与金标测试）；本模块提供并导出，后续调度 / 规则模块复用。
-- 权限：`calendar.manage` 入契约 `PERMISSION_KEYS`（Push 99 时 27 键；Push 154 后 31 键 —— M6-01 ~ M6-03 补 report.view / report.fill / issue.view / issue.manage）；种子 `database/seeds/role-permissions.mjs` 给 admin 补该键（admin 27 键 = 契约全量；其余角色不含 —— 维护动作属管理面）。
+- 权限：`calendar.manage` 入契约 `PERMISSION_KEYS`（Push 99 时 27 键；Push 155 后 31 键 —— M6-01 ~ M6-03 补 report.view / report.fill / issue.view / issue.manage）；种子 `database/seeds/role-permissions.mjs` 给 admin 补该键（admin 27 键 = 契约全量；其余角色不含 —— 维护动作属管理面）。
 - 窗口防御：求值窗口一次加载基准日 ± 370 天（跨年自动包含）；窗口外一律「未加载」而非「非工作日」（`resolveDay` 返回 null、顺延返回 `exhausted`，最多 366 步）—— 连续非工作日超一年直接 500 提示检查日历数据，避免把不完整数据当默认规则。
 
 ## 与其它模块的边界

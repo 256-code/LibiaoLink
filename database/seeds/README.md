@@ -32,7 +32,7 @@
 | 4 | 紧急重要度（4 项） | `dict_items`（type = priority） | (type, code) | v0.2 §2.5 | 定稿 |
 | 5 | 地区 / 项目类型 | `dict_items`（type = region / projectType）+ `metadata.accent` / `accentText` | (type, code) | 业务待回执（v0.3 §7.3 #10） | 已落地（h7 · Push 97，`seeds/dicts.mjs`：region 8 项 / projectType 3 项；**取值仍待业务回执** —— 改常量区重跑即可，库内已修订的不覆盖） |
 | 6a | 角色（一期六个内置角色） | `roles` | (role code) | v0.2 §4.1；C3-01 / C3-02 | 已落地（h1 · Push 74，`seeds/roles.mjs`） |
-| 6b | 功能权限矩阵（role_permissions 条目） | `role_permissions` | (role_id, permission) | v0.2 §4.1 关键能力列；ADR-011 | 已落地（h6 · Push 95，`seeds/role-permissions.mjs`：六角色 74 条；键唯一来源 = 契约 `PERMISSION_KEYS`，`check:permission-matrix` 三方对齐、admin 全量 **31 键**（h7 补 `dict.manage` / `audit.view`，h8 补 `calendar.manage`，M6-01 ~ M6-03 · Push 154 补 `report.view` / `report.fill` / `issue.view` / `issue.manage` —— 六角色 78 条）；幂等复跑 0 变更） |
+| 6b | 功能权限矩阵（role_permissions 条目） | `role_permissions` | (role_id, permission) | v0.2 §4.1 关键能力列；ADR-011 | 已落地（h6 · Push 95，`seeds/role-permissions.mjs`：六角色 74 条；键唯一来源 = 契约 `PERMISSION_KEYS`，`check:permission-matrix` 三方对齐、admin 全量 **31 键**（h7 补 `dict.manage` / `audit.view`，h8 补 `calendar.manage`，M6-01 ~ M6-03 · Push 155 补 `report.view` / `report.fill` / `issue.view` / `issue.manage` —— 六角色 78 条）；幂等复跑 0 变更） |
 | 7 | 蓝图（默认模板 + 项目类型覆盖） | `blueprints` / `blueprint_versions` | (project_type, version) | ADR-019；v0.2 §3.3 首批节点清单 | 已落地（h3 · Push 83，`seeds/blueprint.mjs`：默认模板 9 阶段 19 节点 + 版本 1）；节点清单仍待业务补全（可修订常量区，库内已修订时不覆盖） |
 | 8 | 任务节点库 / 任务模板 | `task_nodes` / `task_templates` / `task_template_nodes` | (stage_key, node key) | A1-16 / A1-17；对照 `frontend/src/data/templatePresets.ts`（Push 60） | 待业务确认 |
 | 9 | 消息模板（R01~R07 文案） | 消息模板表（M5 建表） | (template code) | `docs/rules/R01-R07-内置规则文案.md` | 文案定稿；表结构随 M5 |
@@ -42,7 +42,7 @@
 
 ## 验收口径（随实现）
 
-- 空库迁移后连续执行种子两次：第二次零变更、无重复行（幂等）—— #6a 角色（Push 74）、#7 蓝图（Push 83）、#6b 权限矩阵（h6 · Push 95）、#5 地区 / 项目类型字典（h7 · Push 97：首次 inserted 2 / 11、复跑 0 变更）、#6b 补 `calendar.manage`（h8 · Push 99：inserted 1、复跑 0 变更，六角色 74 条 / 27 键）、#6b 补 `report.view` / `report.fill` / `issue.view` / `issue.manage`（M6-01 ~ M6-03 · Push 154：admin 27 → 31 键、矩阵 74 → 78 条；幂等与全量口径由静态门禁 `check:permission-matrix` 复核）已按此验证；
+- 空库迁移后连续执行种子两次：第二次零变更、无重复行（幂等）—— #6a 角色（Push 74）、#7 蓝图（Push 83）、#6b 权限矩阵（h6 · Push 95）、#5 地区 / 项目类型字典（h7 · Push 97：首次 inserted 2 / 11、复跑 0 变更）、#6b 补 `calendar.manage`（h8 · Push 99：inserted 1、复跑 0 变更，六角色 74 条 / 27 键）、#6b 补 `report.view` / `report.fill` / `issue.view` / `issue.manage`（M6-01 ~ M6-03 · Push 155：admin 27 → 31 键、矩阵 74 → 78 条；幂等与全量口径由静态门禁 `check:permission-matrix` 复核）已按此验证；
 - 引用一致性：`node_requirements.doc_type` 与任务 `deliverable_types` 的取值全部命中成果文件字典（检查脚本随 M1 落地）；
 - 蓝图校验：种子蓝图通过 v0.2 §3.4 全部校验，能生成 stages / nodes / requirements 全量；
 - 业务确认项（#5 / #8 及 #3 的 SLA 时限）在回执前按占位值断言，回执后更新断言。

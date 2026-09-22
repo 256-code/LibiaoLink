@@ -526,11 +526,18 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
     {
       label: "变更关联",
       value:
-        task.change === "" ? (
+        task.changes.length === 0 ? (
           dash
         ) : (
-          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
-            变更 {task.change}
+          <span className="flex flex-col gap-1">
+            {task.changes.map((change) => (
+              <span key={change.id} className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+                  变更 {change.appliedAt}
+                </span>
+                {change.reason === "" ? null : <span className="text-xs text-zinc-500">{change.reason}</span>}
+              </span>
+            ))}
           </span>
         ),
     },

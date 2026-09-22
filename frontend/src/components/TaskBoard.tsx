@@ -515,11 +515,19 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       </span>
     ),
     change: (
-      <span>
-        {task.change === "" ? null : (
-          <span title={"变更日期 " + task.change} className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
-            变更
-          </span>
+      <span
+        className="flex items-center gap-1"
+        title={
+          task.changes.length === 0
+            ? undefined
+            : task.changes.map((change) => "变更 " + change.appliedAt + (change.reason === "" ? "" : "（" + change.reason + "）")).join("；")
+        }
+      >
+        {task.changes.length === 0 ? null : (
+          <>
+            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">变更</span>
+            {task.changes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.changes.length - 1}</span> : null}
+          </>
         )}
       </span>
     ),

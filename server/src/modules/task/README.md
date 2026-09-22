@@ -29,7 +29,7 @@
   - 归档项目写入口径 409 `PROJECT_ARCHIVED`（ADR-027）；任务变更 touch 项目 `updated_at`（ADR-022 ④）。
 - 留痕与队列：`task_events` 四类型 `status_change / progress_change / date_change / note_change`（before / after 为 JSON 键值对）+ outbox 五个 topic `task.created / task.updated / task.progress_changed / task.deleted / task.locked_fields_adjusted`（dedupeKey 带版本；锁定字段调整 payload 带 `reason` 与实际变化字段）；软删与锁定字段例外调整不写 `task_events`（四值闭集）。
 - 与 h3 门禁的衔接（**过渡口径收口**）：`node/gate.repository` 不再直读 `tasks` 表；阶段推进门禁的「任务全 done」与 `GET /projects/{id}/stages` 的任务计数改经 `TaskStatsService` 出口，`StageProgressRow` 不再携带任务字段，门禁语义不变；`files` 表直读仍为过渡口径（随 i1 收口）。
-- 单测：`test/task-rules.test.ts`（17 例，纯规则）+ `test/task-service.test.ts`（18 例，桩仓储不连库）+ `test/task-order.test.ts`（4 例，顺序纯函数）+ `test/task-locked-fields.test.ts`（8 例，锁定字段例外调整：桩仓储 + 角色 / 门禁替身）；Push 153 后全量 387 例 / 26 文件（任务族：rules 17 / service 22 / order 4 / gate 8 / batch 9 / remove 10 / locked-fields 8）；**Push 154（M6-01 ~ M6-03 日报 / 问题）后全量 416 例 / 27 文件** —— `test/task-remove.test.ts` 10 → **12 例**（引用守卫补齐：日报 `report_ref` / 问题 `issue_ref`，与变更记录同一 409 `TASK_HAS_REFERENCES`）。
+- 单测：`test/task-rules.test.ts`（17 例，纯规则）+ `test/task-service.test.ts`（18 例，桩仓储不连库）+ `test/task-order.test.ts`（4 例，顺序纯函数）+ `test/task-locked-fields.test.ts`（8 例，锁定字段例外调整：桩仓储 + 角色 / 门禁替身）；Push 153 后全量 387 例 / 26 文件（任务族：rules 17 / service 22 / order 4 / gate 8 / batch 9 / remove 10 / locked-fields 8）；**Push 155（M6-01 ~ M6-03 日报 / 问题）后全量 416 例 / 27 文件** —— `test/task-remove.test.ts` 10 → **12 例**（引用守卫补齐：日报 `report_ref` / 问题 `issue_ref`，与变更记录同一 409 `TASK_HAS_REFERENCES`）。
 
 ## 完成门禁（M3-03 · Push 143）
 
