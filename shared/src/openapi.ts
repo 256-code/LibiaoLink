@@ -88,6 +88,8 @@ import {
   FileFinalizeBodySchema,
   FileListQuerySchema,
   FileListResponseSchema,
+  FilePreviewQuerySchema,
+  FilePreviewResponseSchema,
   FilePurgeBodySchema,
   FilePurgeResponseSchema,
   FileRecycleBodySchema,
@@ -882,6 +884,18 @@ export function buildOpenApiDocument() {
       403: commonErrors[403],
       404: commonErrors[404],
       409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/files/{id}/preview",
+    tags: ["files"],
+    summary: "预览状态与短时签名地址（D2：异步产物；未就绪 / 失败为 200 语义，not_ready 幂等补投，失败降级「请下载」）",
+    request: { params: idParams, query: FilePreviewQuerySchema },
+    responses: {
+      200: { description: "预览状态（ready / not_ready / failed）", ...json(FilePreviewResponseSchema) },
+      404: commonErrors[404],
     },
   });
 
