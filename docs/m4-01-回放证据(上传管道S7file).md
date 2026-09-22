@@ -5,11 +5,11 @@
 
 | 项 | 值 |
 |---|---|
-| 回放时间 | 2026-09-21 17:18:59 +08:00 |
+| 回放时间 | 2026-09-22 11:19:27 +08:00 |
 | 目标 | http://127.0.0.1:3011 |
 | 数据库 | postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink |
 | 对象存储 | libiaolink（本地 MinIO 沙箱：仅沙箱、不代表生产选型） |
-| 代码版本 | 11933ff（回放时工作区含本卡未提交改动） |
+| 代码版本 | e9c744f（回放时工作区含本卡未提交改动） |
 | 执行账号 | 管理员（含 file.upload）+ 名册成员（file.upload 平权基准） |
 | 脚本 | server/scripts/m4-upload-replay.mjs |
 
@@ -23,23 +23,23 @@
   - 实际：200 {"userId":"caa8d763-4b6a-4967-9b26-7d1086272c9c","roleCodes":["admin"],"hasUpload":true,"hasDownload":true}
 | PASS | P1 | 建回放项目（导入即快照，为 file 提供 projectId） | 
   - 期望：201 + 项目可见
-  - 实际：201 {"id":"3c04485d-3586-42d9-bc52-03c193d658cd","code":"M4-20260921091852"}
+  - 实际：201 {"id":"4414a454-7836-4713-9901-666d8339d499","code":"M4-20260922031920"}
 | PASS | P2 | 建第二个项目（跨项目 nodeId 反例用） | 
   - 期望：201
   - 实际：201
 | PASS | P3 | 快照节点可见（项目 A / B 各取一个节点） | 
   - 期望：两个节点非空
-  - 实际：{"nodeA":"bf221098-e1ae-4a30-aec7-e4ea547452df","nodeB":"231f39cb-92be-4df1-815a-b27cb605afea"}
+  - 实际：{"nodeA":"841357fe-2ccc-4c87-bd57-3a40dae163bd","nodeB":"afbbe838-b5c1-4542-a0b2-a90130c0754a"}
 | PASS | T1 | 分片状态不落表（2026-09-18 评审定案：以 ListParts 为唯一真相） | 
   - 期望：upload_parts 表不存在（null）
   - 实际：null
   - 说明：会话元数据落 upload_sessions；分片清单只从对象存储读
 | PASS | U1 | 发起上传：建 draft 文件 + 会话（返回分片计划与到期时间） | 
   - 期望：201 + status=draft + version=0 + intent=version + 8 MiB x 3 片 + duplicateHint=null
-  - 实际：201 {"fileId":"4deb0699-de7e-4e71-b9e9-48b9dabf860a","status":"draft","version":0,"intent":"version","partSizeBytes":8388608,"totalParts":3,"duplicateHint":null}
+  - 实际：201 {"fileId":"4d577b77-14b4-4a55-b5dd-aaf1d50e3049","status":"draft","version":0,"intent":"version","partSizeBytes":8388608,"totalParts":3,"duplicateHint":null}
 | PASS | U2 | 落库口径：会话先写暂存键 / 文件 draft version 0 / 发起上传留痕（objectType=file） | 
   - 期望：object_key = …/staging/{sessionId}、files.status=draft、files.version=0、审计 1 条（metadata.uploadId）
-  - 实际：{"objectKey":"projects/3c04485d-3586-42d9-bc52-03c193d658cd/files/4deb0699-de7e-4e71-b9e9-48b9dabf860a/staging/e10397fa-0239-4185-8bc4-54d2e609e3f9","status":"draft","version":0,"currentVersionId":null,"ttlHours":24,"auditAction":"create","auditUploadId":"e10397fa-0239-4185-8bc4-54d2e609e3f9"}
+  - 实际：{"objectKey":"projects/4414a454-7836-4713-9901-666d8339d499/files/4d577b77-14b4-4a55-b5dd-aaf1d50e3049/staging/69e88017-16b4-412c-8c73-0154c5945481","status":"draft","version":0,"currentVersionId":null,"ttlHours":24,"auditAction":"create","auditUploadId":"69e88017-16b4-412c-8c73-0154c5945481"}
 | PASS | U3 | 取分片预签名 URL（首次调用登记存储侧 UploadId；URL 指向对象存储、api 不代理流量） | 
   - 期望：200 + 3 条 URL（含 X-Amz-Signature）+ 落 storage_upload_id
   - 实际：200 {"count":3,"host":"127.0.0.1:9000","signature":true,"storageUploadId":true}
@@ -57,22 +57,22 @@
   - 实际：{"uploaded":[1,2,3],"missing":[]}
 | PASS | U8 | 完成上传：版本 v1 落库、文件 currentVersionId / version 前进 | 
   - 期望：200 + version.seq=1 + sizeBytes=20 MiB + files.version=1 + changeRequest=null
-  - 实际：200 {"seq":1,"sizeBytes":20971520,"fileVersion":1,"currentVersionId":"4bc55923-8d7a-40e8-8c35-43130208b78c","changeRequest":null}
+  - 实际：200 {"seq":1,"sizeBytes":20971520,"fileVersion":1,"currentVersionId":"a138f729-a2d6-4976-b861-27184b8b2ae2","changeRequest":null}
 | PASS | U9 | 契约键口径（ADR-006）：file_versions.object_key = …/v{seq}/{contentHash}.{ext}，会话 completed | 
-  - 期望：object_key=projects/3c04485d-3586-42d9-bc52-03c193d658cd/files/4deb0699-de7e-4e71-b9e9-48b9dabf860a/v1/0ca27a50836b3bd1356deb974388ca084ddad8370c77e54d93935e5e28139c58.docx
-  - 实际：{"objectKey":"projects/3c04485d-3586-42d9-bc52-03c193d658cd/files/4deb0699-de7e-4e71-b9e9-48b9dabf860a/v1/0ca27a50836b3bd1356deb974388ca084ddad8370c77e54d93935e5e28139c58.docx","sizeBytes":20971520,"status":"completed","completedAt":true}
+  - 期望：object_key=projects/4414a454-7836-4713-9901-666d8339d499/files/4d577b77-14b4-4a55-b5dd-aaf1d50e3049/v1/0ca27a50836b3bd1356deb974388ca084ddad8370c77e54d93935e5e28139c58.docx
+  - 实际：{"objectKey":"projects/4414a454-7836-4713-9901-666d8339d499/files/4d577b77-14b4-4a55-b5dd-aaf1d50e3049/v1/0ca27a50836b3bd1356deb974388ca084ddad8370c77e54d93935e5e28139c58.docx","sizeBytes":20971520,"status":"completed","completedAt":true}
 | PASS | U10 | 存储侧：契约键对象存在且大小一致；暂存对象按版本清理干净（无数据版本 / 无 delete marker） | 
   - 期望：契约键 20 MiB；暂存键 0 版本 0 marker
   - 实际：{"contractSize":20971520,"stagingVersions":0,"stagingMarkers":0}
 | PASS | U11 | 留痕与事件：complete 审计（metadata 带 versionSeq / objectKey）+ outbox file.version.created（dedupeKey 幂等） | 
-  - 期望：审计 1 条 + outbox 1 条（dedupeKey=file.version.created:4bc55923-8d7a-40e8-8c35-43130208b78c）
-  - 实际：{"audit":1,"versionSeq":1,"objectKey":"projects/3c04485d-3586-42d9-bc52-03c193d658cd/files/4deb0699-de7e-4e71-b9e9-48b9dabf860a/v1/0ca27a50836b3bd1356deb974388ca084ddad8370c77e54d93935e5e28139c58.docx","outbox":1,"dedupeKey":"file.version.created:4bc55923-8d7a-40e8-8c35-43130208b78c","status":"pendi…
+  - 期望：审计 1 条 + outbox 1 条（dedupeKey=file.version.created:a138f729-a2d6-4976-b861-27184b8b2ae2）
+  - 实际：{"audit":1,"versionSeq":1,"objectKey":"projects/4414a454-7836-4713-9901-666d8339d499/files/4d577b77-14b4-4a55-b5dd-aaf1d50e3049/v1/0ca27a50836b3bd1356deb974388ca084ddad8370c77e54d93935e5e28139c58.docx","outbox":1,"dedupeKey":"file.version.created:a138f729-a2d6-4976-b861-27184b8b2ae2","status":"pendi…
 | PASS | U12 | 秒传提示（A4-04）：同项目同内容哈希 → duplicateHint 指向既有文件（不阻断继续上传） | 
-  - 期望：duplicateHint.fileId=4deb0699-de7e-4e71-b9e9-48b9dabf860a
-  - 实际：201 {"hint":{"fileId":"4deb0699-de7e-4e71-b9e9-48b9dabf860a","name":"机械设计图纸-v2.docx","sizeBytes":20971520,"uploadedBy":"caa8d763-4b6a-4967-9b26-7d1086272c9c","uploadedAt":"2026-09-21T09:18:52.809Z"},"newFileId":"058e071b-90be-4f82-9b31-c6456516…
+  - 期望：duplicateHint.fileId=4d577b77-14b4-4a55-b5dd-aaf1d50e3049
+  - 实际：201 {"hint":{"fileId":"4d577b77-14b4-4a55-b5dd-aaf1d50e3049","name":"机械设计图纸-v2.docx","sizeBytes":20971520,"uploadedBy":"caa8d763-4b6a-4967-9b26-7d1086272c9c","uploadedAt":"2026-09-22T03:19:20.548Z"},"newFileId":"2ebb0a19-6d83-4929-a7c4-ac67ea5e…
 | PASS | U13 | 已完成会话不可续传（409 FILE_STATE_INVALID）/ 不可取消（回退走版本回溯 M4-02） | 
   - 期望：409 + 409
-  - 实际：409 {"code":"FILE_STATE_INVALID","message":"上传会话已结束（completed），不可续传；请重新发起上传","details":[],"traceId":"b2e8ec24-9856-4e5a-862b… / 409 {"code":"FILE_STATE_INVALID","message":"上传已完成，不能取消；如需回退请走版本回溯（M4-02）","details":[],"traceId":"9de09244-8375-48f1-a7de-1f…
+  - 实际：409 {"code":"FILE_STATE_INVALID","message":"上传会话已结束（completed），不可续传；请重新发起上传","details":[],"traceId":"822efe1b-60cc-47ca-818c… / 409 {"code":"FILE_STATE_INVALID","message":"上传已完成，不能取消；如需回退请走版本回溯（M4-02）","details":[],"traceId":"45972e20-10a0-48a4-b56b-ed…
 | PASS | U14 | 分片未齐 → 409 UPLOAD_INCOMPLETE（details.missing 可驱动前端补传） | 
   - 期望：409 + missing=[2,3] + 无版本行
   - 实际：409 {"code":"UPLOAD_INCOMPLETE","missing":[2,3]}
@@ -92,7 +92,7 @@
 | PASS | U19 | worker 定时档（启动即跑一轮）：中止未完成分片 + 按版本清暂存 + 置 expired | 
   - 期望：status=expired + 0 数据版本 + worker 启动日志
   - 实际：{"status":"expired","versions":0,"started":true}
-  - 说明：worker 日志：{"level":30,"time":1789982334137,"pid":18540,"hostname":"liuannan","msg":"worker 已启动（已接入上传会话过期清理 / 回收站到期清理；Outbox 投递 / 调度 / 规则 / 转换编排随后续卡片接入）"} | {"level":30,"time":1789982334178,"pid":18540,"hostname":"liuannan","msg":"
+  - 说明：worker 日志：{"level":30,"time":1790047161859,"pid":11372,"hostname":"liuannan","msg":"worker 已启动（已接入上传会话过期清理 / 回收站到期清理；Outbox 投递 / 调度 / 规则 / 转换编排随后续卡片接入）"} | {"level":30,"time":1790047161944,"pid":11372,"hostname":"liuannan","msg":"
 | PASS | U20 | file.upload 项目成员平权：非成员 404（防 IDOR）→ 入名册后 201 | 
   - 期望：404 NOT_FOUND / 201 + draft
   - 实际：404 NOT_FOUND / 201 draft
@@ -100,9 +100,9 @@
 | PASS | U21 | 跨项目 nodeId → 400（防跨项目挂接）；intent=change → 400（Push 130 定案：change 必填 fileId，本请求缺 fileId 被契约拒；实现随 M4-04） | 
   - 期望：400 VALIDATION_FAILED（invalid_node）/ 400 VALIDATION_FAILED
   - 实际：400 {"code":"VALIDATION_FAILED","detail":"invalid_node"} / 400 VALIDATION_FAILED
-| PASS | U22 | 上传入口 fileId 分派（Push 130 定案 · M4-02 放开 version 路径）：version + fileId 接受（名称须与目标现状一致，不一致 400 name_mismatch）/ change + fileId 仍 400（随 M4-04） | 
-  - 期望：201（追加版本会话，同一 fileId）/ 400 VALIDATION_FAILED（name_mismatch）/ 400 VALIDATION_FAILED（intent_change_not_open）
-  - 实际：201 true / 400 {"code":"VALIDATION_FAILED","detail":"name_mismatch"} / 400 {"code":"VALIDATION_FAILED","detail":"intent_change_not_open"}
+| PASS | U22 | 上传入口 fileId 分派（Push 130 定案 · M4-02 放开 version 路径 · M4-04 放开 change 路径）：version + fileId 接受（名称须与目标现状一致，不一致 400 name_mismatch）/ change + fileId 目标须定档（draft 目标 409 FILE_STATE_INVALID） | 
+  - 期望：201（追加版本会话，同一 fileId）/ 400 VALIDATION_FAILED（name_mismatch）/ 409 FILE_STATE_INVALID（change 目标未定档）
+  - 实际：201 true / 400 {"code":"VALIDATION_FAILED","detail":"name_mismatch"} / 409 {"code":"FILE_STATE_INVALID"}
 
 ## 汇总
 
@@ -115,6 +115,6 @@
 - 完成上传 = U8 ~ U11：合并 → HEAD 校大小 → 哈希一致性 → copyObject 到契约键 → 事务写版本 / 文件 / 会话 + 审计 + outbox → 按版本清暂存。
 - 失败面 = U13 ~ U17：缺片 409 / 大小不符 409 / 哈希不符 422 / 已完成 409 / 取消幂等 + 取消后 410。
 - 过期与清理 = U18 / U19：访问时惰性置 expired（410 + system 审计）；worker 启动一轮即清理未完成分片与暂存对象。
-- 权限与守卫 = U20 / U21 / U22：非成员 404（防 IDOR）→ 名册成员 201；跨项目 nodeId 400；intent=change（缺 fileId / 带 fileId）400（随 M4-04）；带 fileId 的 version 请求已随 M4-02 放开（名称不一致 400 name_mismatch）—— 详见 docs/m4-02-回放证据(版本定档回溯回收站).md。
+- 权限与守卫 = U20 / U21 / U22：非成员 404（防 IDOR）→ 名册成员 201；跨项目 nodeId 400；intent=change 缺 fileId 400（契约层，随 M4-04 已在服务层放开）；带 fileId 的 version 请求已随 M4-02 放开（名称不一致 400 name_mismatch）；change + fileId 随 M4-04 放开（目标须定档，未定档 409）—— 详见 docs/m4-04-回放证据(变更申请即通过).md。
 - 单测回归（不连库）：server/test/file-service.test.ts（34 例）随 npm test 常跑：成功链路 / 缺片 / 哈希 / 大小 / 过期 / 秒传 / 越界 / 完成位次竞态。
 - 复跑：cd server && node --env-file-if-exists=.env scripts/m4-upload-replay.mjs --out "./../docs/m4-01-回放证据(上传管道S7file).md"

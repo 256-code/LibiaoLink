@@ -2,9 +2,10 @@ import { Injectable } from "@nestjs/common";
 import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, lte, ne, notInArray, sql, type SQL } from "drizzle-orm";
 import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
+import { changeRequests } from "../../db/schema/change.js";
 import { fileLinks, files, fileVersions, uploadSessions } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
-import { projects } from "../../db/schema/projects.js";
+import { projectStages, projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
 import type { FileListFilter, FileListSort } from "./file.query.js";
 
@@ -39,6 +40,7 @@ export interface FileTaskBriefRow {
 export type FileRow = typeof files.$inferSelect;
 export type FileVersionRow = typeof fileVersions.$inferSelect;
 export type UploadSessionRow = typeof uploadSessions.$inferSelect;
+export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 
 export interface FileInsertInput {
   projectId: string;
@@ -61,6 +63,22 @@ export interface FileVersionInsertInput {
   mime: string | null;
   uploadedBy: string;
   uploadedAt: Date;
+  /** M4-04：变更流新版本挂接的变更申请（file_versions.change_request_id）；非变更流为空。 */
+  changeRequestId?: string | null;
+}
+
+/** 变更申请写入（M4-04：一期申请即通过；id 由服务层预生成，供同事务回填版本 / 关联 / 任务）。 */
+export interface ChangeRequestInsertInput {
+  id: string;
+  projectId: string;
+  nodeId: string | null;
+  stageKey: string | null;
+  reason: string;
+  beforeSummary: string | null;
+  afterSummary: string | null;
+  appliedBy: string;
+  appliedAt: Date;
+  createdAt: Date;
 }
 
 export interface UploadSessionInsertInput {
@@ -75,6 +93,8 @@ export interface UploadSessionInsertInput {
   sizeBytes: number;
   contentHash: string | null;
   mime: string | null;
+  /** intent=change 的变更申请（reason / beforeSummary / afterSummary / stageKey）；version 意图为空。 */
+  changePayload: Record<string, unknown> | null;
   createdBy: string;
   createdAt: Date;
   expiresAt: Date;
@@ -101,6 +121,8 @@ export interface DuplicateFileRow {
 export interface FileCompletePatch {
   currentVersionId: string;
   version: number;
+  /** M4-04：变更流完成时置 changed（final → changed）；非变更流不传。 */
+  status?: string;
   updatedAt: Date;
 }
 
@@ -195,7 +217,12 @@ export class FileRepository {
   async updateFileOnComplete(fileId: string, patch: FileCompletePatch, client: DbClient): Promise<FileRow> {
     const rows = await client
       .update(files)
-      .set({ currentVersionId: patch.currentVersionId, version: patch.version, updatedAt: patch.updatedAt })
+      .set({
+        currentVersionId: patch.currentVersionId,
+        version: patch.version,
+        ...(patch.status === undefined ? {} : { status: patch.status }),
+        updatedAt: patch.updatedAt,
+      })
       .where(eq(files.id, fileId))
       .returning();
     return rows[0]!;
@@ -213,6 +240,7 @@ export class FileRepository {
         mime: input.mime,
         uploadedBy: input.uploadedBy,
         uploadedAt: input.uploadedAt,
+        changeRequestId: input.changeRequestId ?? null,
       })
       .returning();
     return rows[0]!;
@@ -231,6 +259,61 @@ export class FileRepository {
     return client.select().from(fileVersions).where(eq(fileVersions.fileId, fileId)).orderBy(asc(fileVersions.seq));
   }
 
+  /** 变更申请写入（M4-04：一期申请即通过，status 恒 applied）。 */
+  async insertChangeRequest(input: ChangeRequestInsertInput, client: DbClient): Promise<ChangeRequestRow> {
+    const rows = await client
+      .insert(changeRequests)
+      .values({
+        id: input.id,
+        projectId: input.projectId,
+        nodeId: input.nodeId,
+        stageKey: input.stageKey,
+        reason: input.reason,
+        beforeSummary: input.beforeSummary,
+        afterSummary: input.afterSummary,
+        status: "applied",
+        appliedBy: input.appliedBy,
+        appliedAt: input.appliedAt,
+        createdAt: input.createdAt,
+      })
+      .returning();
+    return rows[0]!;
+  }
+
+  /** 节点的阶段 key（变更记录的默认「变更阶段」；节点不存在 / 无阶段为空）。 */
+  async findNodeStageKey(nodeId: string, client: DbClient = this.database.db): Promise<string | null> {
+    const rows = await client
+      .select({ stageKey: projectStages.stageKey })
+      .from(projectNodes)
+      .innerJoin(projectStages, eq(projectNodes.stageId, projectStages.id))
+      .where(eq(projectNodes.id, nodeId))
+      .limit(1);
+    return rows[0]?.stageKey ?? null;
+  }
+
+  /**
+   * R01 变更自动关联：查找「输出成果文件 = 变更文件成果类型」的任务（ADR-024 §R01 口径 = deliverable 命中；
+   * 无成果文件要求的任务不参与）。
+   */
+  async listTaskIdsByDeliverable(projectId: string, deliverable: string, client: DbClient): Promise<string[]> {
+    const rows = await client
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), eq(tasks.deliverable, deliverable)));
+    return rows.map((row) => row.id);
+  }
+
+  /** R01 回写：任务「变更关联」= 最近一次变更（v0.2 §2.3 change_ref 口径；不递增任务乐观锁 version）。 */
+  async setTasksChangeRef(taskIds: readonly string[], changeRequestId: string, client: DbClient): Promise<number> {
+    if (taskIds.length === 0) return 0;
+    const rows = await client
+      .update(tasks)
+      .set({ changeRef: changeRequestId })
+      .where(inArray(tasks.id, [...taskIds]))
+      .returning({ id: tasks.id });
+    return rows.length;
+  }
+
   async insertSession(input: UploadSessionInsertInput, client: DbClient): Promise<UploadSessionRow> {
     const rows = await client
       .insert(uploadSessions)
@@ -245,6 +328,7 @@ export class FileRepository {
         sizeBytes: input.sizeBytes,
         contentHash: input.contentHash,
         mime: input.mime,
+        changePayload: input.changePayload,
         createdBy: input.createdBy,
         createdAt: input.createdAt,
         updatedAt: input.createdAt,

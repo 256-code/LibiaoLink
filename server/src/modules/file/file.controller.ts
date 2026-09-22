@@ -51,7 +51,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
  *
  * 权限在服务层判定（`file.upload` 需项目上下文：成员平权；读取会话状态 = 项目可见即可），
  * 因此这里只用会话 + CSRF 守卫；记录级可见性（非成员 404）在 FileService 装载文件时按项目判定。
- * 变更（M4-04）与预览（M4-05）为后续切片。
+ * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览（M4-05）为后续切片。
  */
 @Controller("api/v1/files")
 @UseGuards(SessionGuard, CsrfGuard)
@@ -89,7 +89,7 @@ export class FileController {
     return this.files.getUpload(id, uploadId, actorId);
   }
 
-  /** 完成上传：校验分片 → 合并 → 复制到契约键 → 登记版本（intent=change 随 M4-04）。契约响应码 = 200。 */
+  /** 完成上传：校验分片 → 合并 → 复制到契约键 → 登记版本（intent=change 时同事务生效变更，M4-04）。契约响应码 = 200。 */
   @Post(":id/uploads/:uploadId/complete")
   @HttpCode(200)
   complete(
