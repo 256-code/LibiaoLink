@@ -7,6 +7,7 @@ import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { Tracker } from "./Tracker";
+import { RowDeleteButton } from "./RowDeleteButton";
 import { StageAddCard } from "./StageAddCard";
 import type { StagePlacement } from "./StageAddCard";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -187,6 +188,8 @@ type TaskBoardProps = {
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
   /** 表格行内编辑：只改任务字段（负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
+  /** 任务表行内删除（Push 141：行悬停的删除按钮，不传 = 不显示该按钮）。 */
+  onDeleteTask?: (taskId: string) => void;
   /** 表格行内改「项目经理」：项目级字段（多位，Push 136），回写项目（不传 = 该列仍是只读文本）。 */
   onChangeManagers?: (managerIds: string[]) => void;
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
@@ -218,7 +221,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, managers, managerIds, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onEdit: () => void; managers: string; managerIds: string[]; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期列）。 */
   const late = lateDeliveryLabel(task);
   const status = taskStatus(task);
@@ -244,7 +247,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
 
   const cells: Record<ColumnKey, ReactNode> = {
     title: (
-      <div className="flex min-w-0 items-center gap-4 self-stretch pr-8">
+      <div className="flex min-w-0 items-center gap-4 self-stretch">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
             {task.title}
@@ -254,20 +257,13 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
           )}
         </div>
         <Tracker progress={task.progress} onChange={onProgress} />
-        <button
-          type="button"
-          aria-label="编辑任务"
-          title="编辑任务"
-          onClick={(event) => {
-            event.stopPropagation();
-            onEdit();
-          }}
-          className="shrink-0 rounded-lg p-1.5 text-zinc-400 opacity-0 transition hover:bg-white hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-            <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-          </svg>
-        </button>
+        {onDelete === undefined ? null : (
+          // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位，
+          // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
+          <span className="flex w-12 shrink-0 items-center self-stretch">
+            <RowDeleteButton onDelete={onDelete} />
+          </span>
+        )}
       </div>
     ),
     manager:
@@ -601,7 +597,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onChangeManagers, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -815,9 +811,14 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                         selected={selectedTask !== null && selectedTask.id === task.id}
                         onSelect={() => setSelectedTask(task)}
                         onProgress={(progress) => onSetProgress?.(task.id, progress)}
-                        onEdit={() => {
-                          setSelectedTask(task);
-                        }}
+                        onDelete={
+                          onDeleteTask === undefined
+                            ? undefined
+                            : () => {
+                                setSelectedTask((current) => (current !== null && current.id === task.id ? null : current));
+                                onDeleteTask(task.id);
+                              }
+                        }
                         managers={managers ?? PROJECT_MANAGER}
                         managerIds={managerIds ?? []}
                         onChangeManagers={onChangeManagers}
