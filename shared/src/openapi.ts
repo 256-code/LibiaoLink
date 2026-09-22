@@ -27,6 +27,7 @@ import {
   TaskDetailSchema,
   TaskListItemSchema,
   TaskListQuerySchema,
+  TaskLockedFieldsAdjustBodySchema,
   TaskListResponseSchema,
   TaskProgressUpdateBodySchema,
   TaskSchema,
@@ -386,6 +387,22 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "更新后的任务", ...json(TaskSchema) },
       400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/projects/{id}/tasks/{taskId}/locked-fields",
+    tags: ["tasks"],
+    summary:
+      "锁定字段例外调整（仅系统管理员 · A1-17 / C9-07）：任务描述 / 输出成果文件生成后锁定，确需修正时原因必填并留痕（审计 + outbox）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskLockedFieldsAdjustBodySchema) },
+    responses: {
+      200: { description: "调整后的任务", ...json(TaskSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
       404: commonErrors[404],
       409: commonErrors[409],
     },

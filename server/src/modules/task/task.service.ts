@@ -17,6 +17,7 @@ import {
   TaskGateWarningSchema,
   TaskListItemSchema,
   TaskListResponseSchema,
+  TaskLockedFieldsAdjustBodySchema,
   TaskProgressSchema,
   TaskProgressUpdateBodySchema,
   TaskSchema,
@@ -69,6 +70,7 @@ type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
 type TaskBatchFailure = z.infer<typeof TaskBatchFailureSchema>;
 type TaskBatchResponse = z.infer<typeof TaskBatchResponseSchema>;
 type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
+type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchema>;
 
 /**
  * 单条写入内核的输入（编辑 / 批量共用）：expectedVersion = null 表示批量语义（按当前行覆盖，不做逐行乐观锁）；
@@ -399,6 +401,77 @@ export class TaskService {
       });
     });
     return { id: taskId, deleted: true };
+  }
+
+  /**
+   * PATCH /projects/{id}/tasks/{taskId}/locked-fields（M3-05 · A1-17 / C9-07 · Push 153）：锁定字段例外调整。
+   * 任务描述 / 输出成果文件按流程节点模板生成后锁定（常规编辑不可达）；确需修正时 **仅系统管理员** 可执行，
+   * 原因必填并留痕（模板本身由管理员修正，C9-07）；「阶段性里程」一期任务无对应列，不开放。
+   * 口径：至少一个实际变化（否则 400 —— 防止空调整刷留痕）；乐观锁 409；归档项目 409；不存在 / 已删 404。
+   * 留痕：审计（changes = 锁定字段 before → after；metadata 记原因与 kind）+ outbox `task.locked_fields_adjusted` + touch 项目；
+   * 不写 `task_events`（四值闭集不含锁定字段）。成果文件类型修正后即刻成为无节点任务的完成门禁依据。
+   */
+  async adjustLockedFields(
+    projectId: string,
+    taskId: string,
+    body: TaskLockedFieldsAdjustBody,
+    actorId: string,
+  ): Promise<Task> {
+    await this.loadProjectForWrite(projectId);
+    await this.assertAdmin(actorId, "例外调整锁定字段（A1-17 / C9-07）");
+    const at = new Date();
+    const today = shanghaiToday(at);
+    const row = await this.database.db.transaction(async (tx) => {
+      const before = await this.requireActiveTask(tx, projectId, taskId);
+      if (before.version !== body.version) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      const patch: TaskUpdatePatch = {};
+      if (body.title !== undefined && body.title !== before.title) patch.title = body.title;
+      if (body.titleEn !== undefined && body.titleEn !== before.titleEn) patch.titleEn = body.titleEn;
+      if (body.deliverableTypes !== undefined) {
+        const next = normalizeDocTypes(body.deliverableTypes);
+        if (next.join(",") !== normalizeDocTypes(before.deliverableTypes).join(",")) patch.deliverableTypes = next;
+      }
+      if (Object.keys(patch).length === 0) {
+        throw new AppError("VALIDATION_FAILED", "锁定字段没有实际变化，无需例外调整");
+      }
+      const updated = await this.repository.updateWithVersion(taskId, body.version, patch, at, tx);
+      if (updated === null) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      const changes = diffRecords(lockedFieldsSnapshot(before), lockedFieldsSnapshot(updated));
+      await appendOutbox(tx, {
+        topic: "task.locked_fields_adjusted",
+        dedupeKey: "task.locked_fields_adjusted:" + taskId + ":" + updated.version,
+        payload: {
+          projectId,
+          taskId,
+          fields: changes.map((change) => change.field),
+          reason: body.reason,
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+      await this.repository.touchProject(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "task",
+        objectId: taskId,
+        projectId,
+        summary: "例外调整任务锁定字段：" + updated.title + "（原因：" + body.reason + "）",
+        changes,
+        metadata: {
+          reason: body.reason,
+          kind: "locked_field_exception",
+          adminOnly: true,
+          fields: changes.map((change) => change.field),
+        },
+      });
+      return updated;
+    });
+    return toTaskView(row, today, await this.changeLinksOf(row));
   }
 
   /** 写路径统一前置（M3-05）：锁行 + 校验归属本项目 + 未软删；已删任务 = 404（与读面不可见同口径）。 */
@@ -853,6 +926,11 @@ function gateMissingFrom(error: AppError): TaskGateMissing[] {
     missing.push({ docType: docType as TaskGateMissing["docType"], required, present });
   }
   return missing;
+}
+
+/** 锁定字段快照（A1-17 例外调整留痕 · M3-05）：任务描述 / 输出成果文件 —— 不在 taskAuditSnapshot 内（后者只覆盖可编辑字段），故单列一份。 */
+function lockedFieldsSnapshot(row: { title: string; titleEn: string | null; deliverableTypes: string[] }): Record<string, unknown> {
+  return { title: row.title, titleEn: row.titleEn, deliverableTypes: normalizeDocTypes(row.deliverableTypes) };
 }
 
 /** 任务字段级留痕快照（C7-02：负责人（多位）/ 状态 / 进度 / 组内位次 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */

@@ -77,6 +77,10 @@ export interface TaskInsertInput {
 }
 
 export interface TaskUpdatePatch {
+  /** 锁定字段（A1-17）：仅「例外调整」管理员路径写入（M3-05 · Push 153），普通编辑不传。 */
+  title?: string;
+  titleEn?: string | null;
+  deliverableTypes?: string[];
   ownerIds?: string[];
   status?: string;
   progress?: string;
