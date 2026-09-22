@@ -49,10 +49,10 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 主题 | 口径 |
 |---|---|
-| 前缀 / 编码 | `/api/v1`；JSON；请求与响应字段 camelCase（与 DDL snake_case 一一映射，如 manager_id ↔ managerId） |
+| 前缀 / 编码 | `/api/v1`；JSON；请求与响应字段 camelCase（与 DDL snake_case 一一映射，如 manager_ids ↔ managerIds） |
 | 分页 | 表格型 `page` / `limit` + `total`；信息流型后续用 cursor |
 | 筛选与排序 | `filter[...]=..`（多值逗号分隔，如 region / projectType / managerId）、`sort=field:asc,field2:desc`、`q` 关键字 |
-| 项目人员 | 项目级唯一责任人为「项目经理」（`projects.manager_id`，必填；首页筛选用 `filter[managerId]`，多值逗号分隔）；任务级为「任务负责人」（`tasks.owner_id`），两者不同粒度，不可混用 |
+| 项目人员 | 项目级为「项目经理」**多位**（`projects.manager_ids` uuid[]，至少一位、顺序 = 展示顺序；首页筛选用 `filter[managerId]`，多值逗号分隔、任一位命中即命中，A22 · Push 136）；任务级为「任务负责人」**多位**（`tasks.owner_ids` uuid[]；空数组 = 「待分配」，`filter[ownerId]` 任一位命中即命中，A23 · Push 136）——两者不同粒度，不可混用 |
 | 乐观锁 | 更新必须回传 `version`；冲突返回 409（VERSION_CONFLICT） |
 | 幂等 | 写操作支持 `Idempotency-Key` 头；重复提交返回首次结果 |
 | 时间 | 时间戳 ISO8601（UTC 存储，前端按 Asia/Shanghai 展示）；业务日期 `YYYY-MM-DD` |
@@ -73,17 +73,17 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 回收站 | 任意状态可回收（默认保留 30 天，可恢复回原状态）；彻底删除仅管理员且留痕（权限模型落地前为临时口径） |
 | 下载与预览地址 | 短时签名 URL + 审计；对象存储禁止匿名读取 |
 | 时间区间（A1） | `filter[timeFrom]` / `filter[timeTo]`：`YYYY-MM-DD` 闭区间，按 Asia/Shanghai 日界截断（下界含当日 00:00、上界按次日 00:00 不含）；一期维度映射 `projects.updated_at`（语义以 v0.3 §7#4 ADR 为准）；只传一端合法，`timeFrom > timeTo` 或格式非法返回 400；列表与 facets 同 schema 同口径；列表 `sort` 缺省 = `updatedAt:desc`（最近活动在前）；白名单 `updatedAt` / `createdAt` / `seqNo`（A9 · Push 69：补 `createdAt`，供前端后续「按创建时间」维度升级） |
-| 用户目录（A2） | `GET /users`：`q` + 分页，只返回 `status=active`；项为 `{ id, username, displayName, email, status }`（不含 casdoorId / owner / 部门 / 手机号）；默认按 `username` 升序（分页不跳行）；登录用户全员可读，不做数据范围裁剪；项目侧随行下发 `Project.managerName`（列表 / 详情 / 创建与编辑返回；人员停用 / 离职仍返回姓名，取不到为 `null`） |
+| 用户目录（A2） | `GET /users`：`q` + 分页，只返回 `status=active`；项为 `{ id, username, displayName, email, status }`（不含 casdoorId / owner / 部门 / 手机号）；默认按 `username` 升序（分页不跳行）；登录用户全员可读，不做数据范围裁剪；项目侧随行下发 `Project.managerNames`（与 `managerIds` 同下标数组；列表 / 详情 / 创建与编辑返回；人员停用 / 离职仍返回姓名，取不到该位为 `null`） |
 | 字典（A3） | `GET /dicts` / `GET /dicts/{type}`：一期只下发可运营数据字典 `region` / `projectType`（项 `{ code, name, sort, enabled, metadata }`，`projectType` 必含 `metadata.accent`）；阶段 / 成果文件类型 / 紧急重要度属契约枚举（`src/common/dicts.ts`），前端直接引用、不走接口（避免同一事实两处来源） |
 | 用户偏好（A4） | `GET / PATCH /users/me/preferences`：PATCH 合并语义（只传变更键），响应回全量 + `updatedAt`；一期键 `taskTableHiddenColumns`（列 key 白名单校验，未知 key 400）；存储 `user_preferences`（与项目视图 `project_views` 分离）；单用户单写者不带 `version` |
 | 分类字段（A1-12） | `region` / `projectType`：首页分类侧边栏与统计的来源（facets 五组里的两组）；创建请求缺省「未分类」（服务端 default，前端表单仍必填、空串 400），更新可改；字典取值由 C9 字典维护（`GET /dicts` 已入契约，落表随 h7） |
 | 项目成员（M2-05） | 名册 `project_members`：`role_in_project` 两值 `project_manager` / `project_member`（与全局角色 `roles` 相互独立）；`GET / POST / DELETE /projects/{id}/members`（POST 幂等 upsert：同项目 + 同用户唯一，重复添加 = 覆盖角色且保留 `joinedAt`；`userId` 不存在 404）；不是成员 / 项目不可见统一 404；成员变更按 ADR-022 ② 刷新项目 `updatedAt`；归档项目名册只读（409 PROJECT_ARCHIVED）；记录级**过滤**（非成员 404 裁剪）随 h6 |
 | 蓝图组织（ADR-019） | 蓝图按项目类型各一份（`projectType` 缺省 `default`）+ default 兜底；`GET / PUT /blueprint`、`POST /blueprint/publish`、`GET /blueprint/export`、`POST /blueprint/import` 按 `projectType` **精确取**（未建档 404；PUT 首次保存即建档），default 兜底只发生在**项目侧解析**（建项目快照 / 版本解析 / 模板节点池）；发布 = 版本递增（无变更不递增、幂等，比较前做键序归一化）；导入 / 导出 round-trip 无损；导入即快照 |
 | 阶段推进与回退（ADR-023） | `GET /projects/{id}/stages`：九阶段状态 + 节点 / 任务完成度（读时派生）；`POST …/stages/{key}/advance` 仅当前 `active` 阶段可推进，服务端门禁 = 该阶段节点全 done + 任务全 done + 各节点必交成果文件齐备（失败 422 `STAGE_GATE_NOT_PASSED` + `details[].code = node_not_done / task_not_done / doc_missing`，**整体一次事务、不部分推进**）；`POST …/rollback` 仅相邻上一阶段、原因必填、不做门禁（首阶段 409 `STAGE_STATE_INVALID`）；`projects.stage_key` 随推进前移 / 回退回移，跟踪列 `advanced_at/by`、`rolled_back_at/by`、`rollback_reason` |
-| 节点增删（ADR-020） | `POST /projects/{id}/nodes` 仅项目经理（`admin` 角色 / `projects.manager_id` / 名册 `role_in_project=project_manager`），`nodeKey` 必须命中**项目导入版本**的模板节点池（否则 422 `BLUEPRINT_REF_UNKNOWN`）；`node_key` 项目内唯一：已有未删节点 409 `NODE_ALREADY_EXISTS`，软删后再增补 = 还原同一行（回 `pending`、清完成留痕）；`DELETE …/nodes/{nodeId}` 原因必填 + 软删 + 乐观锁，有成果文件 409 `NODE_HAS_FILES` |
+| 节点增删（ADR-020） | `POST /projects/{id}/nodes` 仅项目经理（`admin` 角色 / `projects.manager_ids` 任一位 / 名册 `role_in_project=project_manager`），`nodeKey` 必须命中**项目导入版本**的模板节点池（否则 422 `BLUEPRINT_REF_UNKNOWN`）；`node_key` 项目内唯一：已有未删节点 409 `NODE_ALREADY_EXISTS`，软删后再增补 = 还原同一行（回 `pending`、清完成留痕）；`DELETE …/nodes/{nodeId}` 原因必填 + 软删 + 乐观锁，有成果文件 409 `NODE_HAS_FILES` |
 | 项目软删（A5） | `DELETE /projects/{id}`：软删；`If-Match` 回传当前 `version` 防误删（缺失或非数字 400、不匹配 409，不用 body 传 version）；列表 / 详情 / facets / 搜索 / 导出统一不可见；`seqNo` 不回收、`code` 唯一性保留（同编号再建仍 409 PROJECT_CODE_EXISTS）；非成员 / 不存在统一 404；仅项目经理 / 管理员并写审计 |
-| 任务列表项（A7） | 列表 `GET /projects/{id}/tasks` 返回 `TaskListItem`（Task 去掉 `changeRef` + 内联 `ownerName` / `changeSummary` / `fileSummary`，免 N+1）；抽屉走 `GET /projects/{id}/tasks/{taskId}`（`TaskDetail`：全字段 + 文件清单）；进度更新响应同 `TaskListItem` 形，前端直接替换行 |
-| 任务落库口径（A15 / A18 / A19 / A20 · Push 124） | `tasks.stage_key` / `tasks.owner_id` 放宽可空 + 新增 `tasks.sort_index`（迁移 0015）：契约 `Task.stageKey` / `Task.ownerId` / `Task.ownerName` 可空；`TaskCreateBody.stageKey` 可选可空（缺省 = 未分组，带节点时缺省取节点阶段、不一致 400）、`TaskCreateBody.ownerId` 可空（显式 null = 待分配，缺省 = 项目经理）、`TaskCreateBody.sortIndex` 可选（插入位次）；`TaskUpdateBody.ownerId` 可空（不传 = 不改 / null = 置空）、`TaskUpdateBody.sortIndex` 可选（组内重排） |
+| 任务列表项（A7） | 列表 `GET /projects/{id}/tasks` 返回 `TaskListItem`（Task 去掉 `changeRef` + 内联 `ownerNames` / `changeSummary` / `fileSummary`，免 N+1）；抽屉走 `GET /projects/{id}/tasks/{taskId}`（`TaskDetail`：全字段 + 文件清单）；进度更新响应同 `TaskListItem` 形，前端直接替换行 |
+| 任务落库口径（A15 / A18 / A19 / A20 · Push 124；A23 · Push 136 修订） | `tasks.stage_key` 放宽可空（未分组）+ `tasks.sort_index`（迁移 0015）；负责人由 `owner_id`（可空）改为 `owner_ids` uuid[]（迁移 0017）——契约 `Task.stageKey` 可空、`Task.ownerIds` 数组（空数组 = 待分配）、`TaskListItem.ownerNames` 同下标数组；`TaskCreateBody.stageKey` 可选可空（缺省 = 未分组，带节点时缺省取节点阶段、不一致 400）、`TaskCreateBody.ownerIds` 可选（缺省 = 项目全部项目经理兜底，显式 `[]` = 待分配）、`TaskCreateBody.sortIndex` 可选（插入位次）；`TaskUpdateBody.ownerIds` 可选（不传 = 不改 / `[]` = 置空 / 传数组 = 整体替换）、`TaskUpdateBody.sortIndex` 可选（组内重排） |
 | 任务排序（A8；A15 / A19 / A20 · Push 124 修订） | 默认顺序 = 阶段顺序（`STAGE_KEYS` 序，`stageKey` 为空 = 「未分组」落最后）+ 组内位次 `sortIndex` + `id`（稳定，分页不跳行）；位次由 `tasks.sort_index` 落库（一组 = 同一项目 + 同一阶段，组内 0 起、密集；创建 `sortIndex` = 插入位次、编辑 = 移到第 N 位，越界 = 组尾）；`sort` 白名单 `plannedStart` / `plannedEnd` / `actualEnd` / `progress` / `title` / `createdAt`，白名单外 400；一期不新增 `tasks.seq` |
 | 任务状态可写（A12） | `PATCH /projects/{id}/tasks/{taskId}` 开放可选 `status`（基础三态 `pending` / `active` / `done`）；服务端同事务回填进度与完成日期：done → `progress=1` 且 `actualEnd` 缺省按当天；active → 进度至少 1 格（0 → 0.25、满格 → 0.75）并清 `actualEnd`；pending → 进度 0 并清 `actualEnd`；「已延期 / 提前完成」是派生展示态、不可写（提交 400）且派生优先 |
 | 进度与完成日期（A13） | 进度为离散五档 `0 / 0.25 / 0.5 / 0.75 / 1`（迁移 / 演示数据的任意小数先归一，如 0.49 → 0.5）；`progress<1` 服务端一律清空 `actual_end`（清除完成日期的唯一方式）；`progress=1` 且缺省按当天（Asia/Shanghai）写入；完成日期不进 `PATCH /tasks/{taskId}` |
@@ -174,7 +174,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 |---|---|---|
 | ADR-019 蓝图组织 | 已入（Push 83）：`BlueprintSchema.projectType`、`BlueprintView` 类型标识与发布版本 | M2-02 |
 | ADR-020 节点权限 | 已入（Push 83）：接口 403 语义（模板写 = 管理员、增删 / 推进 = 项目经理）；权限矩阵用例随 h6 | M2-05 |
-| ADR-021 负责人标识 | Task 族 `ownerId` 可空 + `ownerName`；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
+| ADR-021 负责人标识 | Task 族 `ownerIds` 数组（空数组 = 待分配，A23 · Push 136 多位）+ `ownerNames` 同下标数组；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
 | ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层） | M2-04 |
 | ADR-023 阶段推进 | 已入（Push 83）：stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` + 缺项明细 | M2-03 |
 | ADR-024 成果文件 | `deliverableTypes` 数组；门禁错误语义 | M3-03 / M3-05 |

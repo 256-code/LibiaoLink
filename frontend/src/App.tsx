@@ -83,7 +83,7 @@ export default function App() {
           accent: PROJECT_TYPE_ACCENTS[draft.projectType],
           createdAt: timestamp,
           updatedAt: timestamp,
-          managerId: draft.managerId,
+          managerIds: draft.managerIds,
         },
       ];
     });
@@ -100,17 +100,17 @@ export default function App() {
               projectType: draft.projectType,
               accent: PROJECT_TYPE_ACCENTS[draft.projectType],
               updatedAt: nowText(),
-              managerId: draft.managerId,
+              managerIds: draft.managerIds,
             }
           : project,
       ),
     );
   };
 
-  /** 任务编辑里改「项目经理」：项目经理是项目级字段（projects.manager_id），回写后本项目所有任务行与项目卡片同步，并刷新项目时间。 */
-  const handleChangeManager = (id: string, managerId: string) => {
+  /** 任务编辑里改「项目经理」：项目经理是项目级字段（projects.manager_ids），回写后本项目所有任务行与项目卡片同步，并刷新项目时间。 */
+  const handleChangeManagers = (id: string, managerIds: string[]) => {
     setProjects((previous) =>
-      previous.map((project) => (project.id === id ? { ...project, managerId, updatedAt: nowText() } : project)),
+      previous.map((project) => (project.id === id ? { ...project, managerIds, updatedAt: nowText() } : project)),
     );
   };
 
@@ -166,7 +166,7 @@ export default function App() {
         initial={{
           code: editingProject.code,
           description: editingProject.description,
-          managerId: editingProject.managerId,
+          managerIds: editingProject.managerIds,
           projectType: editingProject.projectType,
         }}
         onClose={() => {
@@ -191,7 +191,7 @@ export default function App() {
     const project = projects.find((item) => item.id === route.id) ?? null;
     return (
       <>
-        <ProjectDetail me={state.me} project={project} onChangeManager={handleChangeManager} onTaskEdited={handleTaskEdited} />
+        <ProjectDetail me={state.me} project={project} onChangeManagers={handleChangeManagers} onTaskEdited={handleTaskEdited} />
         {editModal}
       </>
     );

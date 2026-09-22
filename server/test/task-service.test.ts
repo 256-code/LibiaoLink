@@ -22,6 +22,7 @@ const TASK = "22222222-2222-4222-8222-222222222222";
 const NODE = "33333333-3333-4333-8333-333333333333";
 const MANAGER = "caa8d763-4b6a-4967-9b26-7d1086272c9c";
 const ACTOR = "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69";
+const MANAGER_2 = "b0f1c9d2-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
 
 function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
   return {
@@ -31,7 +32,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     nodeId: NODE,
     title: "货架组装",
     titleEn: null,
-    ownerId: MANAGER,
+    ownerIds: [MANAGER],
     status: "pending",
     progress: "0",
     sortIndex: 0,
@@ -53,7 +54,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
 }
 
 class FakeTaskRepository {
-  project: TaskProjectRow | null = { id: PROJECT, managerId: MANAGER, stageKey: "presale", status: "active" };
+  project: TaskProjectRow | null = { id: PROJECT, managerIds: [MANAGER], stageKey: "presale", status: "active" };
   node: TaskProjectNodeRow | null = { id: NODE, stageKey: "install", status: "active" };
   existingTaskId: string | null = null;
   task: TaskRow | null = makeRow();
@@ -69,7 +70,7 @@ class FakeTaskRepository {
     return { items: [], total: 0 };
   }
   async findListRowById(): Promise<TaskListRow | null> {
-    return this.task === null ? null : { task: this.task, ownerName: "张三", changeSummary: null };
+    return this.task === null ? null : { task: this.task, ownerNames: ["张三"], changeSummary: null };
   }
   async listFiles(): Promise<never[]> {
     return [];
@@ -94,7 +95,7 @@ class FakeTaskRepository {
   shifted: { from: number; to: number | null; delta: number }[] = [];
 
   async insert(input: TaskInsertInput): Promise<TaskRow> {
-    const row = makeRow({ id: TASK, status: "pending", progress: "0", version: 0, title: input.title, stageKey: input.stageKey, nodeId: input.nodeId, ownerId: input.ownerId, sortIndex: input.sortIndex });
+    const row = makeRow({ id: TASK, status: "pending", progress: "0", version: 0, title: input.title, stageKey: input.stageKey, nodeId: input.nodeId, ownerIds: input.ownerIds, sortIndex: input.sortIndex });
     this.inserted = row;
     return row;
   }
@@ -103,7 +104,7 @@ class FakeTaskRepository {
     if (current === null || current.version !== expectedVersion) return null;
     const next: TaskRow = {
       ...current,
-      ownerId: patch.ownerId !== undefined ? patch.ownerId : current.ownerId,
+      ownerIds: patch.ownerIds !== undefined ? patch.ownerIds : current.ownerIds,
       status: patch.status ?? current.status,
       progress: patch.progress ?? current.progress,
       sortIndex: patch.sortIndex !== undefined ? patch.sortIndex : current.sortIndex,
@@ -199,7 +200,7 @@ function makeService(repo: FakeTaskRepository, roles: FakeRoleService = new Fake
 }
 
 describe("TaskService.create（A10 / A1-13）", () => {
-  it("带节点创建：ownerId 缺省 = 项目经理，状态 pending / 进度 0，写 outbox 与项目触点", async () => {
+  it("带节点创建：ownerIds 缺省 = 项目全部项目经理，状态 pending / 进度 0，写 outbox 与项目触点", async () => {
     const repo = new FakeTaskRepository();
     const service = makeService(repo);
     const created = await service.create(
@@ -207,10 +208,18 @@ describe("TaskService.create（A10 / A1-13）", () => {
       { stageKey: "install", title: "货架组装", taskNodeId: NODE },
       ACTOR,
     );
-    expect(created.ownerId).toBe(MANAGER);
+    expect(created.ownerIds).toEqual([MANAGER]);
     expect(created.status).toBe("pending");
     expect(created.progress).toBe(0);
     expect(repo.touched).toEqual([PROJECT]);
+  });
+
+  it("多位项目经理（A23 · Push 136）：ownerIds 缺省兜底 = 项目全部经理、顺序与 managerIds 一致", async () => {
+    const repo = new FakeTaskRepository();
+    repo.project = { id: PROJECT, managerIds: [MANAGER, MANAGER_2], stageKey: "presale", status: "active" };
+    const service = makeService(repo);
+    const created = await service.create(PROJECT, { stageKey: "install", title: "货架组装", taskNodeId: NODE }, ACTOR);
+    expect(created.ownerIds).toEqual([MANAGER, MANAGER_2]);
   });
 
   it("节点判重 → 409 TASK_ALREADY_EXISTS", async () => {
@@ -248,7 +257,7 @@ describe("TaskService.create（A10 / A1-13）", () => {
 
   it("归档项目 → 409 PROJECT_ARCHIVED", async () => {
     const repo = new FakeTaskRepository();
-    repo.project = { id: PROJECT, managerId: MANAGER, stageKey: "acceptance", status: "archived" };
+    repo.project = { id: PROJECT, managerIds: [MANAGER], stageKey: "acceptance", status: "archived" };
     const service = makeService(repo);
     await expect(service.create(PROJECT, { stageKey: "install", title: "货架组装", taskNodeId: NODE }, ACTOR)).rejects.toMatchObject({
       code: "PROJECT_ARCHIVED",
@@ -338,14 +347,14 @@ describe("TaskService.updateProgress（A13 清除完成日期的唯一方式）"
 });
 
 describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 124）", () => {
-  it("临时任务：stageKey 缺省 = 「未分组」、ownerId 显式 null = 「待分配」（不兜底项目经理）", async () => {
+  it("临时任务：stageKey 缺省 = 「未分组」、ownerIds 显式 [] = 「待分配」（不兜底项目经理）", async () => {
     const repo = new FakeTaskRepository();
     const roles = new FakeRoleService();
     roles.roleCodes = ["admin"];
     const service = makeService(repo, roles);
-    const created = await service.create(PROJECT, { title: "临时任务", ownerId: null }, ACTOR);
+    const created = await service.create(PROJECT, { title: "临时任务", ownerIds: [] }, ACTOR);
     expect(created.stageKey).toBeNull();
-    expect(created.ownerId).toBeNull();
+    expect(created.ownerIds).toEqual([]);
   });
 
   it("带节点创建：stageKey 缺省取来源节点阶段；sortIndex 缺省 = 组尾（不平移）", async () => {
@@ -369,11 +378,11 @@ describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 124）", (
     expect(repo.shifted).toEqual([{ from: 0, to: null, delta: 1 }]);
   });
 
-  it("负责人显式置空：PATCH ownerId=null → 待分配（不保留原值）", async () => {
+  it("负责人显式置空：PATCH ownerIds=[] → 待分配（不保留原值）", async () => {
     const repo = new FakeTaskRepository();
     const service = makeService(repo);
-    const updated = await service.update(PROJECT, TASK, { ownerId: null, version: 3 }, ACTOR);
-    expect(updated.ownerId).toBeNull();
+    const updated = await service.update(PROJECT, TASK, { ownerIds: [], version: 3 }, ACTOR);
+    expect(updated.ownerIds).toEqual([]);
   });
 
   it("拖动排序：移到组首 → 同组其余顺延；越界 = 组尾", async () => {

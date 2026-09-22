@@ -6,7 +6,7 @@ import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
-import { managerName } from "./data/managers";
+import { managerNames } from "./data/managers";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
@@ -35,7 +35,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
     return hasListFilters(filters) || readStoredSidebarOpen() === true;
   });
   const knownRegions = useMemo(() => new Set(projects.map((project) => project.region)), [projects]);
-  const knownManagerIds = useMemo(() => new Set(projects.map((project) => project.managerId)), [projects]);
+  const knownManagerIds = useMemo(() => new Set(projects.flatMap((project) => project.managerIds)), [projects]);
   // 链接里可能带着当前数据不存在的取值（分享过期 / 手改地址）：先丢弃，再由下面的 effect 归一化地址栏
   const activeFilters = useMemo(() => {
     const regions = filters.regions.filter((region) => knownRegions.has(region));
@@ -75,7 +75,8 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
       if (activeFilters.regions.length > 0 && !activeFilters.regions.includes(project.region)) {
         return false;
       }
-      if (activeFilters.managerIds.length > 0 && !activeFilters.managerIds.includes(project.managerId)) {
+      // 项目经理筛选（Push 136）：项目挂多位经理时任一位命中即算命中
+      if (activeFilters.managerIds.length > 0 && !project.managerIds.some((managerId) => activeFilters.managerIds.includes(managerId))) {
         return false;
       }
       if (activeFilters.projectTypes.length > 0 && !activeFilters.projectTypes.includes(project.projectType)) {
@@ -90,7 +91,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
       if (keyword === "") {
         return true;
       }
-      return [String(project.seqNo), String(project.seqNo).padStart(2, "0"), project.code, project.description, project.region, project.projectType, project.id, project.createdAt, project.updatedAt, managerName(project.managerId)].some((field) =>
+      return [String(project.seqNo), String(project.seqNo).padStart(2, "0"), project.code, project.description, project.region, project.projectType, project.id, project.createdAt, project.updatedAt, managerNames(project.managerIds)].some((field) =>
         field.toLowerCase().includes(keyword),
       );
     });
@@ -267,7 +268,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
                 description={project.description}
                 accent={project.accent}
                 projectType={project.projectType}
-                managerName={managerName(project.managerId)}
+                managerNames={managerNames(project.managerIds)}
                 time={project.createdAt}
                 onEdit={() => {
                   onEdit(project);

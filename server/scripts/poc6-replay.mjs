@@ -132,7 +132,7 @@ try {
 
   // ---------- 记录级：建回放项目（管理员） ----------
   const code = "POC6-" + new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const created = await adminCall("POST", "/api/v1/projects", { code, name: "PoC-6 回放项目", projectType: "default", managerId: adminId });
+  const created = await adminCall("POST", "/api/v1/projects", { code, name: "PoC-6 回放项目", projectType: "default", managerIds: [adminId] });
   check("R1", "建回放项目（管理员；项目经理 = 管理员本人）", "201 + 返回项目 id", created.status + " " + truncate({ id: created.body?.id, stageKey: created.body?.stageKey, version: created.body?.version }, 160), created.status === 201 && typeof created.body?.id === "string");
   const projectId = created.body.id;
   cleanup.projectId = projectId;

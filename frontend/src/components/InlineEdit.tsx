@@ -100,31 +100,36 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
   );
 }
 
-type InlineMemberCellProps = {
-  value: string;
+type InlineMemberMultiCellProps = {
+  /** 已选成员 id（有序，Push 136）。 */
+  values: string[];
   options: Member[];
   ariaLabel: string;
+  /** 勾选 / 取消勾选一位成员（浮层不自动关 —— 接着点下一位）。 */
   onPick: (member: Member) => void;
   display: ReactNode;
 };
 
-/** 行内人员单元格（可搜索人员下拉；项目经理 / 任务负责人两列共用）。 */
-export function InlineMemberCell({ value, options, ariaLabel, onPick, display }: InlineMemberCellProps) {
+/**
+ * 行内人员多选单元格（Push 136）：项目经理 / 任务负责人两列共用。
+ * 勾选 / 取消勾选都不收浮层（一次可以连着点好几位），选完点浮层外 / Esc 收起。
+ */
+export function InlineMemberMultiCell({ values, options, ariaLabel, onPick, display }: InlineMemberMultiCellProps) {
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击选择成员"
+      title="点击选择成员（可多选）"
       width={280}
       height={286}
       display={display}
-      render={(close) => (
+      render={() => (
         <MemberSearchList
           options={options}
-          value={value}
+          value=""
+          selectedIds={values}
           ariaLabel={ariaLabel}
           onPick={(member) => {
             onPick(member);
-            close();
           }}
         />
       )}

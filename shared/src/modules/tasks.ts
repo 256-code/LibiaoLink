@@ -24,7 +24,9 @@ export const TaskSchema = z
     nodeId: UuidSchema.nullable(),
     title: z.string(),
     titleEn: z.string().nullable(),
-    ownerId: UuidSchema.nullable().openapi({ description: "任务负责人；null = 「待分配」（A18 · Push 124：负责人为空是合法中间状态）" }),
+    ownerIds: z.array(UuidSchema).openapi({
+      description: "任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应",
+    }),
     status: TaskBaseStatusSchema,
     displayStatus: TaskDisplayStatusSchema,
     progress: TaskProgressSchema,
@@ -75,7 +77,9 @@ export const TaskFileBriefSchema = z
  */
 export const TaskListItemSchema = TaskSchema.omit({ changeRef: true })
   .extend({
-    ownerName: z.string().nullable().openapi({ description: "负责人姓名（users.display_name 随行下发）；「待分配」= null" }),
+    ownerNames: z.array(z.string().nullable()).openapi({
+      description: "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）",
+    }),
     changeSummary: z.string().nullable().openapi({ description: "变更摘要（列表用短文本；详情用 changeRef 跳变更记录）" }),
     fileSummary: TaskFileSummarySchema,
   })
@@ -83,7 +87,7 @@ export const TaskListItemSchema = TaskSchema.omit({ changeRef: true })
 
 /** 任务详情（抽屉全字段，A7）：含变更指针与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
 export const TaskDetailSchema = TaskSchema.extend({
-  ownerName: z.string().nullable(),
+  ownerNames: z.array(z.string().nullable()).openapi({ description: "负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组" }),
   changeSummary: z.string().nullable(),
   files: z.array(TaskFileBriefSchema),
 }).openapi("TaskDetail", { description: "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）" });
@@ -109,7 +113,9 @@ export const TaskSortSchema = z
 export const TaskListQuerySchema = z
   .object({
     stage: StageKeySchema.optional(),
-    "filter[ownerId]": UuidSchema.optional(),
+    "filter[ownerId]": UuidSchema.optional().openapi({
+      description: "任务负责人（单个 UUID）；命中口径（A23 · Push 136）= 该任务挂的任意一位负责人命中即命中",
+    }),
     "filter[status]": z.string().optional().openapi({ description: "展示态（多值逗号分隔）：pending / active / done / overdue / early_done" }),
     q: z.string().optional().openapi({ description: "关键字（中英文任务描述）" }),
     page: PageQuerySchema.shape.page,
@@ -164,9 +170,9 @@ export const TaskCreateBodySchema = z
       description:
         "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409 TASK_ALREADY_EXISTS）并建立节点关联；节点必须属于本项目（否则 400）",
     }),
-    ownerId: UuidSchema.nullable().optional().openapi({
+    ownerIds: z.array(UuidSchema).optional().openapi({
       description:
-        "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 124：不兜底项目经理）",
+        "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理（projects.manager_ids）兜底；显式 [] = 「待分配」（不兜底项目经理，沿用 A18）；数组顺序 = 展示顺序",
     }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
@@ -181,8 +187,8 @@ export const TaskCreateBodySchema = z
 /** 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。 */
 export const TaskUpdateBodySchema = z
   .object({
-    ownerId: UuidSchema.nullable().optional().openapi({
-      description: "任务负责人（A18 · Push 124）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）",
+    ownerIds: z.array(UuidSchema).optional().openapi({
+      description: "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换、顺序 = 展示顺序",
     }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description:
@@ -202,7 +208,7 @@ export const TaskUpdateBodySchema = z
   })
   .openapi("TaskUpdateBody", {
     description:
-      "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerId 显式 null = 待分配，sortIndex = 组内重排）",
+      "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）",
   });
 
 /** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
@@ -211,7 +217,7 @@ export const TaskCreateFromTemplateBodySchema = z
     templateId: UuidSchema,
     nodeIds: z.array(UuidSchema).optional().openapi({ description: "只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400" }),
     skipExisting: z.boolean().default(true).openapi({ description: "已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409" }),
-    ownerId: UuidSchema.optional().openapi({ description: "任务负责人；缺省 = 项目项目经理兜底" }),
+    ownerIds: z.array(UuidSchema).optional().openapi({ description: "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」" }),
   })
   .openapi("TaskCreateFromTemplateBody", { description: "从任务模板生成任务（批量；同一节点在项目里只留一份）" });
 

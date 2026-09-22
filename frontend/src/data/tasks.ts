@@ -1,3 +1,5 @@
+import type { Member } from "./members";
+
 export type TaskStatus = "已完成" | "提前完成" | "进行中" | "待开始" | "已延期";
 
 export type TaskPriority = "高" | "中" | "低";
@@ -7,8 +9,13 @@ export type ProjectTask = {
   stage: string;
   title: string;
   titleEn: string;
-  owner: string;
-  ownerEn: string;
+  /**
+   * 任务负责人（多位，Push 136）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，对齐契约 A18）。
+   * 与 `ownersEn` 同下标一一对应；任务表「任务负责人」列、看板「人员任务分配」列、任务详情抽屉都按它展示。
+   */
+  owners: string[];
+  /** 负责人拼音名（可空串；与 `owners` 同下标一一对应）。 */
+  ownersEn: string[];
   status: TaskStatus;
   progress: number;
   startDate: string;
@@ -29,54 +36,72 @@ export type ProjectTask = {
   statusOverride?: TaskStatus;
 };
 
-/** 兜底项目经理（虚构演示名；正常路径取项目卡片上的经理 `project.managerId` → 姓名，Push 61 起）。 */
+/** 兜底项目经理（虚构演示名；正常路径取项目卡片上的经理 `project.managerIds` → 姓名，Push 61 起）。 */
 export const PROJECT_MANAGER = "李伟";
 
+/**
+ * 多位负责人的展示文本（Push 136）：姓名(拼音) 按存储顺序「、」连接；空数组 = 空串。
+ * 任务表 / 看板卡片 / 抽屉 / 日报问题面板共用同一份口径，保证各处显示一致。
+ */
+export function ownersLabel(owners: readonly string[], ownersEn: readonly string[]): string {
+  return owners
+    .map((name, index) => {
+      const en = ownersEn[index] ?? "";
+      return en === "" ? name : name + "(" + en + ")";
+    })
+    .join("、");
+}
+
+/** 人员目录选中项 → 任务负责人字段（姓名 / 拼音两个同下标数组；数组顺序 = 人员下拉里的勾选顺序）。 */
+export function ownersFromMembers(members: readonly Member[]): Pick<ProjectTask, "owners" | "ownersEn"> {
+  return { owners: members.map((member) => member.name), ownersEn: members.map((member) => member.handle) };
+}
+
 const BASE_TASKS: Array<Omit<ProjectTask, "headcount" | "priority" | "files">> = [
-  { id: "t01", stage: "售前规划", title: "布局定档", titleEn: "Layout scheduling", owner: "彭砚", ownerEn: "pengyan", status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "CAD 图纸", change: "", onTime: "按时交付", note: "" },
-  { id: "t02", stage: "售前规划", title: "技术协议定档", titleEn: "Technical agreement finalization", owner: "石昀", ownerEn: "shiyun", status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "技术协议", change: "", onTime: "按时交付", note: "" },
-  { id: "t03", stage: "售前规划", title: "合同签署", titleEn: "Contract signing", owner: "岑宁", ownerEn: "chenning", status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "合同", change: "", onTime: "按时交付", note: "" },
-  { id: "t04", stage: "售前规划", title: "项目启动", titleEn: "Project Startup", owner: "苏珩", ownerEn: "suheng", status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月15日", doneDate: "5月15日", days: 1, deliverable: "评审单", change: "", onTime: "按时交付", note: "维护本计划" },
-  { id: "t05", stage: "设计开发", title: "规划设计", titleEn: "planning design", owner: "石昀", ownerEn: "shiyun", status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "设备清单", change: "", onTime: "按时交付", note: "" },
-  { id: "t06", stage: "加工采购", title: "订单录入", titleEn: "Order entry", owner: "蒋恬", ownerEn: "jiangtian", status: "已完成", progress: 1, startDate: "5月21日", dueDate: "6月19日", doneDate: "6月19日", days: 30, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t07", stage: "组装发货", title: "生产", titleEn: "Production", owner: "谢遥", ownerEn: "xieyao", status: "已完成", progress: 1, startDate: "6月23日", dueDate: "7月4日", doneDate: "7月4日", days: 12, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t08", stage: "组装发货", title: "质检", titleEn: "Quality inspection", owner: "谢遥", ownerEn: "xieyao", status: "已完成", progress: 1, startDate: "6月23日", dueDate: "7月4日", doneDate: "7月4日", days: 12, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t09", stage: "组装发货", title: "包装", titleEn: "Packing", owner: "谢遥", ownerEn: "xieyao", status: "已完成", progress: 1, startDate: "6月23日", dueDate: "7月4日", doneDate: "7月4日", days: 12, deliverable: "发货装箱单", change: "2026/8/11", onTime: "按时交付", note: "" },
-  { id: "t10", stage: "组装发货", title: "运输", titleEn: "Transportation", owner: "苏珩", ownerEn: "suheng", status: "进行中", progress: 0.49, startDate: "7月5日", dueDate: "8月31日", doneDate: "", days: 58, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t11", stage: "硬件实施", title: "人员进场、场地检查、施工对接", titleEn: "Personnel entry, site inspection, construction docking", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 1, startDate: "9月2日", dueDate: "9月2日", doneDate: "8月11日", days: 1, deliverable: "到货单", change: "", onTime: "按时交付", note: "" },
-  { id: "t12", stage: "硬件实施", title: "施工安全培训", titleEn: "Construction Safety Training", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月3日", dueDate: "9月3日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t13", stage: "硬件实施", title: "物料转运、清点分类", titleEn: "Material transfer, inventory and classification", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月3日", dueDate: "9月4日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t14", stage: "硬件实施", title: "货架组装", titleEn: "Shelf Assembly", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月5日", dueDate: "9月22日", doneDate: "", days: 18, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t15", stage: "硬件实施", title: "货架检查", titleEn: "Shelf inspection", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月23日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t16", stage: "硬件实施", title: "挂件安装", titleEn: "Pendant Installation", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月24日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t17", stage: "硬件实施", title: "巷道导轨安装，铜丝镶嵌", titleEn: "Tunnel rail installation, copper wire inlay", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月24日", dueDate: "9月26日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t18", stage: "硬件实施", title: "飞箱机器安装", titleEn: "Air Robot installed", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月25日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t19", stage: "硬件实施", title: "强弱电布线、接线，服务器机柜安装及理线", titleEn: "Power and weak current wiring and connectionsServer cabinet installation and cable management", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月30日", doneDate: "", days: 8, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t20", stage: "软件部署", title: "通电测试", titleEn: "Power-on Test", owner: "夏珂", ownerEn: "xiake", status: "待开始", progress: 0, startDate: "10月2日", dueDate: "10月2日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t21", stage: "硬件实施", title: "工作站安装及定位弹线", titleEn: "Workstation Installation and Positioning Chalk Line", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月25日", dueDate: "9月30日", doneDate: "", days: 6, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t22", stage: "硬件实施", title: "飞箱电控箱及AP安装", titleEn: "AirRobot electric control cabinet and AP installation", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月26日", dueDate: "9月27日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t23", stage: "硬件实施", title: "货架条码黏贴", titleEn: "Shelf barcode labeling", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月28日", dueDate: "9月28日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t24", stage: "硬件实施", title: "接驳位弹线及魔毯黏贴，充电桩组装", titleEn: "Docking position marking and magic carpet sticking, charging pile assembly", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "9月29日", dueDate: "10月1日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t25", stage: "硬件实施", title: "导航柱弹线及安装", titleEn: "Guide post marking and installation", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "10月1日", dueDate: "10月1日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t26", stage: "软件部署", title: "RCS部署及联动随机跑", titleEn: "RCS Deployment and Random-linked Operation", owner: "夏珂", ownerEn: "xiake", status: "待开始", progress: 0, startDate: "10月2日", dueDate: "10月6日", doneDate: "", days: 5, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t27", stage: "软件部署", title: "工作站软件部署", titleEn: "Workstation Software Deployment", owner: "夏珂", ownerEn: "xiake", status: "待开始", progress: 0, startDate: "10月2日", dueDate: "10月2日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t28", stage: "硬件实施", title: "第一批空箱上架", titleEn: "The first batch of empty boxes is on the shelves", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "10月5日", dueDate: "10月7日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t29", stage: "硬件实施", title: "安全围栏安装及调试", titleEn: "Safety Fence Installation and Commissioning", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "10月8日", dueDate: "10月9日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t30", stage: "软件部署", title: "WES软件部署及与WMS联调;设备运行测试", titleEn: "WES Software Deployment and Integration with WMS; Equipment operation test", owner: "夏珂", ownerEn: "xiake", status: "待开始", progress: 0, startDate: "10月8日", dueDate: "10月23日", doneDate: "", days: 16, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t31", stage: "硬件实施", title: "第二批空箱上架", titleEn: "The second batch of empty boxes is on the shelves", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "10月10日", dueDate: "10月12日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t32", stage: "硬件实施", title: "第三批空箱上架", titleEn: "The third batch of empty boxes is on the shelves", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "10月15日", dueDate: "10月19日", doneDate: "", days: 5, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t33", stage: "试运行", title: "小批量实物测试", titleEn: "Small batch of physical test", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "10月24日", dueDate: "10月28日", doneDate: "", days: 5, deliverable: "安装完成证明", change: "", onTime: "", note: "" },
-  { id: "t34", stage: "试运行", title: "客户培训、上线", titleEn: "Customer training, go alive", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "10月29日", dueDate: "11月1日", doneDate: "", days: 4, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t35", stage: "生产阶段", title: "产能爬坡", titleEn: "Capacity climbing", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "11月2日", dueDate: "11月6日", doneDate: "", days: 5, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t36", stage: "验收", title: "验收交付", titleEn: "Acceptance", owner: "彭砚", ownerEn: "pengyan", status: "待开始", progress: 0, startDate: "11月7日", dueDate: "11月8日", doneDate: "", days: 2, deliverable: "验收单", change: "", onTime: "", note: "" },
-  { id: "t37", stage: "设计开发", title: "机械设计", titleEn: "Mechanical design", owner: "卢青", ownerEn: "luqing", status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t38", stage: "设计开发", title: "软件开发", titleEn: "Software", owner: "方沐", ownerEn: "fangmu", status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t39", stage: "组装发货", title: "清关", titleEn: "Customs clearance", owner: "苏珩", ownerEn: "suheng", status: "待开始", progress: 0, startDate: "7月5日", dueDate: "9月2日", doneDate: "", days: 60, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t40", stage: "加工采购", title: "采购", titleEn: "Procurement", owner: "蒋恬", ownerEn: "jiangtian", status: "已完成", progress: 1, startDate: "5月21日", dueDate: "6月19日", doneDate: "6月19日", days: 30, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t41", stage: "加工采购", title: "到货入库", titleEn: "Goods arrival and warehousing", owner: "蒋恬", ownerEn: "jiangtian", status: "已完成", progress: 1, startDate: "5月21日", dueDate: "6月19日", doneDate: "6月19日", days: 30, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t42", stage: "设计开发", title: "硬件研发", titleEn: "Hardware R&D", owner: "程屿", ownerEn: "chengyu", status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "", change: "", onTime: "按时交付", note: "" },
-  { id: "t43", stage: "组装发货", title: "送仓", titleEn: "Deliver to warehouse", owner: "苏珩", ownerEn: "suheng", status: "待开始", progress: 0, startDate: "9月2日", dueDate: "9月3日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
-  { id: "t44", stage: "设计开发", title: "物料清单完整版", titleEn: "", owner: "苏珩", ownerEn: "suheng", status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "物料总清单", change: "2026/8/11", onTime: "按时交付", note: "物料清单" },
+  { id: "t01", stage: "售前规划", title: "布局定档", titleEn: "Layout scheduling", owners: ["彭砚"], ownersEn: ["pengyan"], status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "CAD 图纸", change: "", onTime: "按时交付", note: "" },
+  { id: "t02", stage: "售前规划", title: "技术协议定档", titleEn: "Technical agreement finalization", owners: ["石昀"], ownersEn: ["shiyun"], status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "技术协议", change: "", onTime: "按时交付", note: "" },
+  { id: "t03", stage: "售前规划", title: "合同签署", titleEn: "Contract signing", owners: ["岑宁"], ownersEn: ["chenning"], status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "合同", change: "", onTime: "按时交付", note: "" },
+  { id: "t04", stage: "售前规划", title: "项目启动", titleEn: "Project Startup", owners: ["苏珩"], ownersEn: ["suheng"], status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月15日", doneDate: "5月15日", days: 1, deliverable: "评审单", change: "", onTime: "按时交付", note: "维护本计划" },
+  { id: "t05", stage: "设计开发", title: "规划设计", titleEn: "planning design", owners: ["石昀"], ownersEn: ["shiyun"], status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "设备清单", change: "", onTime: "按时交付", note: "" },
+  { id: "t06", stage: "加工采购", title: "订单录入", titleEn: "Order entry", owners: ["蒋恬"], ownersEn: ["jiangtian"], status: "已完成", progress: 1, startDate: "5月21日", dueDate: "6月19日", doneDate: "6月19日", days: 30, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t07", stage: "组装发货", title: "生产", titleEn: "Production", owners: ["谢遥"], ownersEn: ["xieyao"], status: "已完成", progress: 1, startDate: "6月23日", dueDate: "7月4日", doneDate: "7月4日", days: 12, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t08", stage: "组装发货", title: "质检", titleEn: "Quality inspection", owners: ["谢遥"], ownersEn: ["xieyao"], status: "已完成", progress: 1, startDate: "6月23日", dueDate: "7月4日", doneDate: "7月4日", days: 12, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t09", stage: "组装发货", title: "包装", titleEn: "Packing", owners: ["谢遥", "石昀"], ownersEn: ["xieyao", "shiyun"], status: "已完成", progress: 1, startDate: "6月23日", dueDate: "7月4日", doneDate: "7月4日", days: 12, deliverable: "发货装箱单", change: "2026/8/11", onTime: "按时交付", note: "" },
+  { id: "t10", stage: "组装发货", title: "运输", titleEn: "Transportation", owners: ["苏珩", "彭砚"], ownersEn: ["suheng", "pengyan"], status: "进行中", progress: 0.49, startDate: "7月5日", dueDate: "8月31日", doneDate: "", days: 58, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t11", stage: "硬件实施", title: "人员进场、场地检查、施工对接", titleEn: "Personnel entry, site inspection, construction docking", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 1, startDate: "9月2日", dueDate: "9月2日", doneDate: "8月11日", days: 1, deliverable: "到货单", change: "", onTime: "按时交付", note: "" },
+  { id: "t12", stage: "硬件实施", title: "施工安全培训", titleEn: "Construction Safety Training", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月3日", dueDate: "9月3日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t13", stage: "硬件实施", title: "物料转运、清点分类", titleEn: "Material transfer, inventory and classification", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月3日", dueDate: "9月4日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t14", stage: "硬件实施", title: "货架组装", titleEn: "Shelf Assembly", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月5日", dueDate: "9月22日", doneDate: "", days: 18, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t15", stage: "硬件实施", title: "货架检查", titleEn: "Shelf inspection", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月23日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t16", stage: "硬件实施", title: "挂件安装", titleEn: "Pendant Installation", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月24日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t17", stage: "硬件实施", title: "巷道导轨安装，铜丝镶嵌", titleEn: "Tunnel rail installation, copper wire inlay", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月24日", dueDate: "9月26日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t18", stage: "硬件实施", title: "飞箱机器安装", titleEn: "Air Robot installed", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月25日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t19", stage: "硬件实施", title: "强弱电布线、接线，服务器机柜安装及理线", titleEn: "Power and weak current wiring and connectionsServer cabinet installation and cable management", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月23日", dueDate: "9月30日", doneDate: "", days: 8, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t20", stage: "软件部署", title: "通电测试", titleEn: "Power-on Test", owners: ["夏珂"], ownersEn: ["xiake"], status: "待开始", progress: 0, startDate: "10月2日", dueDate: "10月2日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t21", stage: "硬件实施", title: "工作站安装及定位弹线", titleEn: "Workstation Installation and Positioning Chalk Line", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月25日", dueDate: "9月30日", doneDate: "", days: 6, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t22", stage: "硬件实施", title: "飞箱电控箱及AP安装", titleEn: "AirRobot electric control cabinet and AP installation", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月26日", dueDate: "9月27日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t23", stage: "硬件实施", title: "货架条码黏贴", titleEn: "Shelf barcode labeling", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月28日", dueDate: "9月28日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t24", stage: "硬件实施", title: "接驳位弹线及魔毯黏贴，充电桩组装", titleEn: "Docking position marking and magic carpet sticking, charging pile assembly", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "9月29日", dueDate: "10月1日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t25", stage: "硬件实施", title: "导航柱弹线及安装", titleEn: "Guide post marking and installation", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "10月1日", dueDate: "10月1日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t26", stage: "软件部署", title: "RCS部署及联动随机跑", titleEn: "RCS Deployment and Random-linked Operation", owners: ["夏珂"], ownersEn: ["xiake"], status: "待开始", progress: 0, startDate: "10月2日", dueDate: "10月6日", doneDate: "", days: 5, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t27", stage: "软件部署", title: "工作站软件部署", titleEn: "Workstation Software Deployment", owners: ["夏珂"], ownersEn: ["xiake"], status: "待开始", progress: 0, startDate: "10月2日", dueDate: "10月2日", doneDate: "", days: 1, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t28", stage: "硬件实施", title: "第一批空箱上架", titleEn: "The first batch of empty boxes is on the shelves", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "10月5日", dueDate: "10月7日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t29", stage: "硬件实施", title: "安全围栏安装及调试", titleEn: "Safety Fence Installation and Commissioning", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "10月8日", dueDate: "10月9日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t30", stage: "软件部署", title: "WES软件部署及与WMS联调;设备运行测试", titleEn: "WES Software Deployment and Integration with WMS; Equipment operation test", owners: ["夏珂"], ownersEn: ["xiake"], status: "待开始", progress: 0, startDate: "10月8日", dueDate: "10月23日", doneDate: "", days: 16, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t31", stage: "硬件实施", title: "第二批空箱上架", titleEn: "The second batch of empty boxes is on the shelves", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "10月10日", dueDate: "10月12日", doneDate: "", days: 3, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t32", stage: "硬件实施", title: "第三批空箱上架", titleEn: "The third batch of empty boxes is on the shelves", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "10月15日", dueDate: "10月19日", doneDate: "", days: 5, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t33", stage: "试运行", title: "小批量实物测试", titleEn: "Small batch of physical test", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "10月24日", dueDate: "10月28日", doneDate: "", days: 5, deliverable: "安装完成证明", change: "", onTime: "", note: "" },
+  { id: "t34", stage: "试运行", title: "客户培训、上线", titleEn: "Customer training, go alive", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "10月29日", dueDate: "11月1日", doneDate: "", days: 4, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t35", stage: "生产阶段", title: "产能爬坡", titleEn: "Capacity climbing", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "11月2日", dueDate: "11月6日", doneDate: "", days: 5, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t36", stage: "验收", title: "验收交付", titleEn: "Acceptance", owners: ["彭砚"], ownersEn: ["pengyan"], status: "待开始", progress: 0, startDate: "11月7日", dueDate: "11月8日", doneDate: "", days: 2, deliverable: "验收单", change: "", onTime: "", note: "" },
+  { id: "t37", stage: "设计开发", title: "机械设计", titleEn: "Mechanical design", owners: ["卢青"], ownersEn: ["luqing"], status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t38", stage: "设计开发", title: "软件开发", titleEn: "Software", owners: ["方沐"], ownersEn: ["fangmu"], status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t39", stage: "组装发货", title: "清关", titleEn: "Customs clearance", owners: ["苏珩"], ownersEn: ["suheng"], status: "待开始", progress: 0, startDate: "7月5日", dueDate: "9月2日", doneDate: "", days: 60, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t40", stage: "加工采购", title: "采购", titleEn: "Procurement", owners: ["蒋恬"], ownersEn: ["jiangtian"], status: "已完成", progress: 1, startDate: "5月21日", dueDate: "6月19日", doneDate: "6月19日", days: 30, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t41", stage: "加工采购", title: "到货入库", titleEn: "Goods arrival and warehousing", owners: ["蒋恬"], ownersEn: ["jiangtian"], status: "已完成", progress: 1, startDate: "5月21日", dueDate: "6月19日", doneDate: "6月19日", days: 30, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t42", stage: "设计开发", title: "硬件研发", titleEn: "Hardware R&D", owners: ["程屿"], ownersEn: ["chengyu"], status: "已完成", progress: 1, startDate: "5月15日", dueDate: "5月20日", doneDate: "5月20日", days: 6, deliverable: "", change: "", onTime: "按时交付", note: "" },
+  { id: "t43", stage: "组装发货", title: "送仓", titleEn: "Deliver to warehouse", owners: ["苏珩"], ownersEn: ["suheng"], status: "待开始", progress: 0, startDate: "9月2日", dueDate: "9月3日", doneDate: "", days: 2, deliverable: "", change: "", onTime: "", note: "" },
+  { id: "t44", stage: "设计开发", title: "物料清单完整版", titleEn: "", owners: ["苏珩"], ownersEn: ["suheng"], status: "已完成", progress: 1, startDate: "5月20日", dueDate: "5月20日", doneDate: "5月20日", days: 1, deliverable: "物料总清单", change: "2026/8/11", onTime: "按时交付", note: "物料清单" },
 ];
 
 const HEADCOUNT_BY_STAGE: Record<string, number> = {

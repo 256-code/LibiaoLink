@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type Dispatch, type PointerEvent
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { PROGRESS_STEPS, cnDateFromIso, isCompleteStatus, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, cnDateFromIso, ownersLabel, isCompleteStatus, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -146,16 +146,19 @@ type PendingDrag = {
   dragging: boolean;
 };
 
-/** 「添加」时的列上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
-export type KanbanAddContext = { owner: string; ownerEn: string; status: TaskStatus };
+/**
+ * 「添加」时的列上下文：负责人看板给负责人（Push 136：新任务先挂这一位，单人）、进展看板给状态
+ * （与旧「+ 添加」口径一致）。
+ */
+export type KanbanAddContext = { owners: string[]; ownersEn: string[]; status: TaskStatus };
 
 type TaskKanbanProps = {
   mode: KanbanMode;
   tasks: ProjectTask[];
-  /** 项目经理（项目级字段；任务详情抽屉展示用）。 */
-  manager: string;
-  /** 项目经理 id（任务详情抽屉里「项目经理」字段的当前选中项）。 */
-  managerId: string;
+  /** 项目经理展示文本（项目级字段，多位按「、」连接；任务详情抽屉展示用）。 */
+  managers: string;
+  /** 项目经理 id 名单（任务详情抽屉里「项目经理」字段的当前选中项，Push 136）。 */
+  managerIds: string[];
   /** 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。 */
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
   /**
@@ -197,14 +200,26 @@ function groupTasks(tasks: ProjectTask[], mode: KanbanMode): KanbanGroup[] {
       items: tasks.filter((task) => taskStatus(task) === status),
     }));
   }
+  // Push 136：一个任务可以有多位负责人 —— 这张卡出现在**每一位**负责人的列里（列计数 = 该人手上的任务数）；
+  // 一位都没有 = 「待分配」列。同一位负责人在同一列里只出现一次。
   const byOwner = new Map<string, KanbanGroup>();
   for (const task of tasks) {
-    const key = task.owner === "" ? "待分配" : task.owner;
-    const found = byOwner.get(key);
-    if (found === undefined) {
-      byOwner.set(key, { key, ownerEn: task.ownerEn, status: "待开始", items: [task] });
-    } else {
-      found.items.push(task);
+    const names = task.owners.length === 0 ? [""] : task.owners;
+    for (const name of names) {
+      const key = name === "" ? "待分配" : name;
+      const at = task.owners.indexOf(name);
+      const ownerEn = at < 0 ? "" : task.ownersEn[at] ?? "";
+      const found = byOwner.get(key);
+      if (found === undefined) {
+        byOwner.set(key, { key, ownerEn, status: "待开始", items: [task] });
+        continue;
+      }
+      if (found.ownerEn === "" && ownerEn !== "") {
+        found.ownerEn = ownerEn;
+      }
+      if (!found.items.some((item) => item.id === task.id)) {
+        found.items.push(task);
+      }
     }
   }
   const groups = Array.from(byOwner.values());
@@ -292,8 +307,10 @@ function KanbanCard({
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const status = taskStatus(task);
-  const owner = memberByName(task.owner);
-  const ownerLabel = task.owner === "" ? "待分配" : task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
+  /** 卡片上的负责人展示（多位按「、」连接，Push 136）。 */
+  const ownerLabel = task.owners.length === 0 ? "待分配" : ownersLabel(task.owners, task.ownersEn);
+  /** 头像取第一位负责人（目录外的名字回落首字圆圈）。 */
+  const owner = task.owners.length === 0 ? undefined : memberByName(task.owners[0] ?? "");
   /** 实际完成日期（Push 98）：空值「—」也带框，点开就是单日期小日历（上 / 下月、清除、今天）。 */
   const doneField =
     onPatch === undefined ? (
@@ -363,7 +380,7 @@ function KanbanCard({
           <>
             <Field label="任务负责人">
               <span className="flex min-w-0 items-center gap-1.5">
-                {owner === undefined ? <InitialAvatar name={task.owner} /> : <MemberAvatar member={owner} />}
+                {owner === undefined ? <InitialAvatar name={task.owners[0] ?? ""} /> : <MemberAvatar member={owner} />}
                 <span className="truncate text-sm text-zinc-800" title={ownerLabel}>{ownerLabel}</span>
               </span>
             </Field>
@@ -459,8 +476,8 @@ function KanbanColumn({
 
   /** 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
   const context: KanbanAddContext = {
-    owner: mode === "owner" && group.key !== "待分配" ? group.key : "",
-    ownerEn: mode === "owner" && group.key !== "待分配" ? group.ownerEn : "",
+    owners: mode === "owner" && group.key !== "待分配" ? [group.key] : [],
+    ownersEn: mode === "owner" && group.key !== "待分配" && group.ownerEn !== "" ? [group.ownerEn] : [],
     status: mode === "status" ? group.status : "待开始",
   };
 
@@ -665,7 +682,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /**
    * 「添加」浮层（Push 118）：整块看板共用的**单值**状态 —— 业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」。
@@ -756,12 +773,14 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
       return;
     }
     if (mode === "owner") {
-      const nextOwner = group.key === "待分配" ? "" : group.key;
-      const nextOwnerEn = nextOwner === "" ? "" : memberByName(nextOwner)?.handle ?? group.ownerEn;
-      if (task.owner === nextOwner && task.ownerEn === nextOwnerEn) {
+      // Push 136：拖到某人列 = 该任务的负责人**整体换成这一位**（多负责人任务会收敛成单人；要挂多头请用抽屉 / 任务表），
+      // 拖到「待分配」= 清空全部负责人（A18 合法状态）。
+      const nextOwners = group.key === "待分配" ? [] : [group.key];
+      const nextOwnersEn = group.key === "待分配" || group.ownerEn === "" ? [] : [group.ownerEn];
+      if (task.owners.join("|") === nextOwners.join("|") && task.ownersEn.join("|") === nextOwnersEn.join("|")) {
         return;
       }
-      onPatchTask(task.id, { owner: nextOwner, ownerEn: nextOwnerEn });
+      onPatchTask(task.id, { owners: nextOwners, ownersEn: nextOwnersEn });
       return;
     }
     const nextStatus = group.status;
@@ -947,8 +966,8 @@ export function TaskKanban({ mode, tasks, manager, managerId, onAddTask, onAddSt
       )}
       <TaskDrawer
         task={drawerTask}
-        manager={manager}
-        managerId={managerId}
+        managers={managers}
+        managerIds={managerIds}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
         onPatch={onPatchTask}

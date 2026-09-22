@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
@@ -7,7 +7,8 @@ import { visibleProjectIds, type ProjectScopeSpec } from "./permission.rules.js"
 
 /** 项目数据面引用：可见性解析需要的项目主数据字段（不做软删过滤，由调用方判定）。 */
 export interface ProjectRef {
-  managerId: string;
+  /** 项目经理（A22 · Push 136：多位，任一位即视为项目责任人）。 */
+  managerIds: string[];
   deletedAt: Date | null;
 }
 
@@ -36,12 +37,12 @@ export class PermissionRepository {
     return rows.map((row) => row.projectId);
   }
 
-  /** 我作为主数据责任人的项目 id（projects.manager_id = 我，未软删）。 */
+  /** 我作为主数据责任人的项目 id（projects.manager_ids 含我，未软删；A22 · Push 136 多位，任一位命中）。 */
   async listOwnedProjectIds(actorId: string): Promise<string[]> {
     const rows = await this.database.db
       .select({ projectId: projects.id })
       .from(projects)
-      .where(and(eq(projects.managerId, actorId), isNull(projects.deletedAt)));
+      .where(and(sql`${projects.managerIds} @> array[${actorId}]::uuid[]`, isNull(projects.deletedAt)));
     return rows.map((row) => row.projectId);
   }
 
@@ -69,7 +70,7 @@ export class PermissionRepository {
   /** 项目主数据引用（不存在返回 null；软删由调用方判定）。 */
   async findProjectRef(projectId: string): Promise<ProjectRef | null> {
     const rows = await this.database.db
-      .select({ managerId: projects.managerId, deletedAt: projects.deletedAt })
+      .select({ managerIds: projects.managerIds, deletedAt: projects.deletedAt })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);

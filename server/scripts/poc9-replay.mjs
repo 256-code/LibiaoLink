@@ -124,7 +124,7 @@ try {
 
   // ---------- 证据二：建项目快照 + 完成门禁 ----------
   const code = "POC9-" + new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const created = await call("POST", "/api/v1/projects", { code, name: "PoC-9 回放项目", projectType: "default", managerId: actorId });
+  const created = await call("POST", "/api/v1/projects", { code, name: "PoC-9 回放项目", projectType: "default", managerIds: [actorId] });
   check("P1", "建项目（导入即快照）", "201 + 项目可见", created.status + " " + short({ id: created.body?.id, stageKey: created.body?.stageKey, version: created.body?.version }, 140), created.status === 201);
   const projectId = created.body.id;
   cleanup.projectId = projectId;

@@ -262,7 +262,7 @@ try {
     code: "M4L-" + stamp,
     name: "m4-02 回放项目（版本 / 定档 / 回溯 / 回收站）",
     projectType: "default",
-    managerId: adminId,
+    managerIds: [adminId],
   });
   check("P1", "建回放项目（为 file 提供 projectId）", "201 + 项目可见", created.status + " " + short({ id: created.body?.id, code: created.body?.code }, 120), created.status === 201);
   project = created.body.id;
@@ -272,7 +272,7 @@ try {
     code: "M4LB-" + stamp,
     name: "m4-02 回放项目（跨项目反例）",
     projectType: "default",
-    managerId: adminId,
+    managerIds: [adminId],
   });
   check("P2", "建第二个项目（跨项目 fileId 反例用）", "201", createdOther.status, createdOther.status === 201);
   otherProject = createdOther.body.id;
