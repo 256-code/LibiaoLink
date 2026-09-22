@@ -26,10 +26,11 @@ export const AUDIT_OBJECT_TYPES = [
   "calendar_settings",
   "file",
   "change",
+  "stakeholder",
 ] as const;
 export const AuditObjectTypeSchema = z.enum(AUDIT_OBJECT_TYPES).openapi("AuditObjectType", {
   description:
-    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04）",
+    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6）",
 });
 
 /** 审计结果：成功 / 越权拒绝（C7-03，管理员可按 result=denied 筛出）/ 失败（门禁拒绝等）。 */

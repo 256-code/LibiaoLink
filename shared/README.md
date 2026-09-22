@@ -58,7 +58,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 时间 | 时间戳 ISO8601（UTC 存储，前端按 Asia/Shanghai 展示）；业务日期 `YYYY-MM-DD` |
 | 可见性 | 资源不存在与无权访问统一 404 语义（防 IDOR） |
 | 错误模型 | 统一信封 `{ code, message, details[], traceId }`；错误码见 src/common/errors.ts（与 v0.2 §7.2 同步维护） |
-| 审计对象类型 | `AUDIT_OBJECT_TYPES`：project / project_member / task / node / stage / dict_item / blueprint / calendar_day / calendar_settings / **file**（M4-01 · PR-4 新增；审计对象 id = fileId，上传会话事件经 `metadata.uploadId` 定位 —— 扩枚举而非新增 `upload_session`，避免为同一业务对象开两套检索口径） |
+| 审计对象类型 | `AUDIT_OBJECT_TYPES`：project / project_member / task / node / stage / dict_item / blueprint / calendar_day / calendar_settings / **file**（M4-01 · PR-4 新增；审计对象 id = fileId，上传会话事件经 `metadata.uploadId` 定位 —— 扩枚举而非新增 `upload_session`，避免为同一业务对象开两套检索口径）/ change（M4-04 变更记录，对象 id = changeRequestId）/ **stakeholder**（j6 · Push 144：对象 id = stakeholderId；项目关联 / 解除经 `metadata.projectId` + `metadata.link` 记录） |
 | 审计动作 | `AUDIT_ACTIONS`：create / update / delete / progress / complete / advance / rollback / **preview**（契约切片 · M4-05 前置；D2-07：预览计入查看 / 下载审计 —— 与「下载计入审计」同口径；库侧 `ck_audit_logs_action` 现八值，随 M4-05 迁移扩值） / deny |
 | 预览契约 | `GET /api/v1/files/{id}/preview` → `FilePreviewResponse`：`status` = ready / not_ready / failed、`target` = pdf / image / structured（**渲染通道**口径，不按文件格式）、ready 附短时签名 `url` + `expiresAt` + `pipelineVersion` + `generatedAt`，failed 附 `reason`（≤ 500 字；D2-05 降级「请下载」）；可选查询参数 `versionId`（A4-06 历史版本预览，缺省 = 当前版本；不属于该文件 / 不存在 → 404）；未就绪 / 失败为 **200 语义**（对齐 v0.2 §7.2 的 `PREVIEW_NOT_READY` / `PREVIEW_FAILED`）；`not_ready` 时服务端幂等补投生成任务（按三元组去重）、前端轮询 —— 不引入请求约定；审计 = `object_type = file` + `action = preview` + metadata（versionId / target / pipelineVersion），仅返回 ready 的读取写审计；缓存键 = 内容哈希 + `pipelineVersion` + `target`（ADR-007 / v0.2 §5.4 三元组） |
 | 项目编号 | 创建人填写（创建请求必填 code；格式仅前端提示、不做强校验）；唯一性由服务端校验 + 数据库唯一约束保证，重复返回 409 PROJECT_CODE_EXISTS；建后可修改（更新请求可传 code，同样校验唯一性） |
@@ -97,9 +97,12 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 > **本表状态（PR-5 · Push 131）**：M4-01 上传管道（PR-4 · Push 129）—— `AUDIT_OBJECT_TYPES` 增 `file`（跨线改动，请 wmj 评审）；生成物已按 `npm run generate` 重出（openapi.json / api-types.d.ts），`npm run check` 零漂移。**M4-02（版本 / 定档 / 回溯 / 回收站）实现落地，契约零改动**：上传入口 `intent=version` + `fileId` 放开（draft 替换 / 追加版本），`intent=change` 仍 400（随 M4-04）；错误码沿用 V0.3 既有（`VERSION_CONFLICT` / `FILE_STATE_INVALID` / `change_flow_not_open`）。
 
+> **本表状态（Push 143 · M3-03 完成门禁 + ADR-024 成果文件多选）**：`Task` 族 `deliverable` → `deliverableTypes: DocType[]`（数组、服务端去重、空数组 = 不要求；生成后锁定，A1-17）；新增完成门禁端点 `GET /projects/{id}/tasks/{taskId}/can-complete`（`TaskCanCompleteResponse` = `canComplete` + `missing[]` + `warnings[]`）与 `POST /projects/{id}/tasks/{taskId}/complete`（`TaskCompleteBody` = `version` + 可选 `actualEnd` / `note`；`TaskCompleteResponse` = `{ task, warnings }`），缺件明细 `TaskGateMissing`、放行提示 `TaskGateWarning`（`draft_doc_present`）；错误码新增 422 `TASK_REQUIRED_DOC_MISSING` 与 409 `TASK_ALREADY_DONE`。生成物已重出（paths = 62、schemas = 150），`npm run check` 零漂移。
+
+> **本表状态（Push 144 · j6 干系人台账）**：新增契约 `shared/src/modules/stakeholders.ts` —— `StakeholderSchema`（八业务字段 + `projects[]` 关联 + 台账留痕；六个受保护字段一律 `nullable().optional()`：**无权 = 键不存在，有权但值为空 = null**）、`StakeholderCreateBodySchema`（`projectIds` 可一并关联）/ `StakeholderUpdateBodySchema`（null = 清空）/ `StakeholderListQuerySchema`（`q` / `filter[companyType]` / `filter[projectId]` / 排序白名单）/ `StakeholderListResponseSchema` / `StakeholderProjectLinkBodySchema` / `StakeholderDeleteResponseSchema`；`AUDIT_OBJECT_TYPES` 增 `stakeholder`（跨线改动，请 lan 评审）；OpenAPI 新增 7 条路由（tags=stakeholders；GET / POST `/stakeholders`、GET / PATCH / DELETE `/stakeholders/{stakeholderId}`、POST `/stakeholders/{stakeholderId}/projects`、DELETE `…/projects/{projectId}`）。生成物已重出（paths = 66、schemas = 158），`npm run check` 零漂移。
 > 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
-> 现状（契约切片 · M4-04 / M4-05 前置）：**paths = 60、schemas = 145**（Push 89 · h4 基线 49 / 117；此后 h6 / h7 / h8 / M4-01~03 / M4-04-05 前置切片累计），生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
-> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更 / 文件库列表 GET /projects/{id}/files（M4-03 起用）/ 预览 GET /files/{id}/preview（M4-04-05 前置切片入，含可选 versionId））、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
+> 现状（契约切片 · Push 144 · j6 后）：**paths = 66、schemas = 158**（Push 89 · h4 基线 49 / 117；此后 h6 / h7 / h8 / M4-01~03 / M4-04-05 前置切片 / M3-03 / j6 累计），生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
+> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template / 完成与预检）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更 / 文件库列表 GET /projects/{id}/files（M4-03 起用）/ 预览 GET /files/{id}/preview（M4-04-05 前置切片入，含可选 versionId））、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）、stakeholders（干系人台账 CRUD + 项目关联与反查 · j6）。
 
 ### M1 身份与平台底座（h1 + 平台）
 
@@ -127,9 +130,9 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 |---|---|---|
 | M3-01 列表 / 详情 | 已入（A7 / A8）并 HTTP 落地（Push 89）；**快筛参数未做**（`filter[mine]` / `dueToday` / `dueThisWeek` / `overdue` / `incomplete` / `missingDeliverable`，随 k4 接线前按前端实际使用补） | 参数 |
 | M3-02 进度与状态 | 已入（A12~A14）并 HTTP 落地（Push 89）；系统置位无契约变化（ADR-025，随调度卡片 i5）；新增 409 `TASK_ALREADY_EXISTS`（`taskNodeId` 判重） | 无 / 错误码 |
-| M3-03 完成门禁 | 新增 `POST /projects/{id}/tasks/{taskId}/complete`；`422 TASK_REQUIRED_DOC_MISSING` + `{ missing[], warnings[] }`（A4-20 / ADR-024） | 端点 / 错误码 |
+| M3-03 完成门禁 | **已入并 HTTP 落地（Push 143）**：新增 `GET /projects/{id}/tasks/{taskId}/can-complete` + `POST …/complete`；`422 TASK_REQUIRED_DOC_MISSING` + `{ missing[], warnings[] }`、409 `TASK_ALREADY_DONE`；`deliverableTypes` 多值同批落地（A4-20 / ADR-024） | 端点 / 错误码 / 字段 |
 | M3-04 批量操作 | 新增 `PATCH /projects/{id}/tasks/batch`（字段白名单 + 逐条校验 + `failures[]`） | 端点 |
-| M3-05 模板锁定与修正 | `deliverable` → `deliverableTypes: DocType[]`（ADR-024）；模板锁定字段修正需原因 | 字段 |
+| M3-05 模板锁定与修正 | `deliverableTypes: DocType[]` **已随 M3-03 落地（Push 143）**；余「模板锁定字段修正需原因 / 例外调整留痕」（ADR-024 / A1-17） | 字段 |
 | 任务软删 | 新增 `DELETE /projects/{id}/tasks/{taskId}`（被日报 / 问题 / 变更引用时拒绝） | 端点 |
 | 流程节点（h3） | 节点增删已入；权限口径按 ADR-020（403 语义声明，无字段变化） | 说明 |
 
@@ -154,7 +157,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 |---|---|---|
 | 日报 | 新增 `/reports` 族（草稿 / 提交 / 补填 / 关联任务） | 端点 |
 | 问题 | 新增 `/issues` 族（四态流转 + 看板 + 统计）；`Issue.dueAt`（ADR-026）；`ISSUE_TRANSITION_INVALID` 复用 | 端点 / 字段 |
-| 干系人 | 新增 `/stakeholders`（台账 + 批量导入 + 导出；隐私字段走字段级权限） | 端点 |
+| 干系人 | **已入并 HTTP 落地（Push 144）**：`/stakeholders` 台账 CRUD + `/{id}/projects` 关联与反查（隐私字段走字段级权限，无权**键不存在**）；批量导入（A5-05 · M8-01）与导出（A5-09 · M7-03）待落 | 端点 |
 | 待办（C2-06） | 新增 `/todos` | 端点 |
 | 归档（C4-02 / C4-03） | 新增 `POST /projects/{id}/archive` 与 `GET /projects/{id}/archive`（清单）；写保护 `PROJECT_ARCHIVED`（ADR-027） | 端点 / 错误码 |
 
@@ -181,7 +184,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | ADR-021 负责人标识 | Task 族 `ownerIds` 数组（空数组 = 待分配，A23 · Push 136 多位）+ `ownerNames` 同下标数组；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
 | ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层） | M2-04 |
 | ADR-023 阶段推进 | 已入（Push 83）：stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` + 缺项明细 | M2-03 |
-| ADR-024 成果文件 | `deliverableTypes` 数组；门禁错误语义 | M3-03 / M3-05 |
+| ADR-024 成果文件 | **已入（Push 143）**：`deliverableTypes` 数组 + 完成 / 预检端点 + `TASK_REQUIRED_DOC_MISSING` / `TASK_ALREADY_DONE`；例外调整留痕随 M3-05 | M3-03（已落）/ M3-05 |
 | ADR-025 进行中置位 | 无契约变化（系统作业） | M3-02 |
 | ADR-026 问题 SLA | `Issue.dueAt` | M6 |
 | ADR-027 归档 | archive 端点 + `PROJECT_ARCHIVED` | M6 / M7 |

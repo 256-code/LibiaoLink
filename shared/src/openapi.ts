@@ -17,6 +17,9 @@ import {
   ProjectUpdateBodySchema,
 } from "./modules/projects.ts";
 import {
+  TaskCanCompleteResponseSchema,
+  TaskCompleteBodySchema,
+  TaskCompleteResponseSchema,
   TaskCreateBodySchema,
   TaskCreateFromTemplateBodySchema,
   TaskCreateFromTemplateResponseSchema,
@@ -39,6 +42,15 @@ import {
   TaskTemplateSchema,
   TaskTemplateUpdateBodySchema,
 } from "./modules/templates.ts";
+import {
+  StakeholderCreateBodySchema,
+  StakeholderDeleteResponseSchema,
+  StakeholderListQuerySchema,
+  StakeholderListResponseSchema,
+  StakeholderProjectLinkBodySchema,
+  StakeholderSchema,
+  StakeholderUpdateBodySchema,
+} from "./modules/stakeholders.ts";
 import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
@@ -305,6 +317,33 @@ export function buildOpenApiDocument() {
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/tasks/{taskId}/can-complete",
+    tags: ["tasks"],
+    summary: "完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }) },
+    responses: {
+      200: { description: "预检结果（canComplete + missing + warnings）", ...json(TaskCanCompleteResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/tasks/{taskId}/complete",
+    tags: ["tasks"],
+    summary: "任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskCompleteBodySchema) },
+    responses: {
+      200: { description: "完成结果（task + warnings）", ...json(TaskCompleteResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
     },
   });
 
@@ -1082,6 +1121,97 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 干系人台账（j6 · S8·stakeholder · A5） ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/stakeholders",
+    tags: ["stakeholders"],
+    summary: "干系人台账列表（记录级按数据范围裁剪；隐私字段按字段级策略不返回）",
+    request: { query: StakeholderListQuerySchema },
+    responses: {
+      200: { description: "干系人列表", ...json(StakeholderListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/stakeholders",
+    tags: ["stakeholders"],
+    summary: "新增干系人（A5-01 / A5-04；stakeholder.manage）：写审计留痕（对象 = stakeholder）",
+    request: { body: json(StakeholderCreateBodySchema) },
+    responses: {
+      201: { description: "新建的干系人", ...json(StakeholderSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/stakeholders/{stakeholderId}",
+    tags: ["stakeholders"],
+    summary: "干系人详情（含关联项目；不可见 / 已删除一律 404，防 IDOR）",
+    request: { params: z.object({ stakeholderId: UuidSchema }) },
+    responses: {
+      200: { description: "干系人详情", ...json(StakeholderSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/stakeholders/{stakeholderId}",
+    tags: ["stakeholders"],
+    summary: "更新干系人（部分更新，null = 清空）：字段级留痕",
+    request: { params: z.object({ stakeholderId: UuidSchema }), body: json(StakeholderUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的干系人", ...json(StakeholderSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/stakeholders/{stakeholderId}",
+    tags: ["stakeholders"],
+    summary: "删除干系人（软删：deleted_at 置位，不物理删行；项目关联保留）",
+    request: { params: z.object({ stakeholderId: UuidSchema }) },
+    responses: {
+      200: { description: "删除结果（deleted 标记）", ...json(StakeholderDeleteResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/stakeholders/{stakeholderId}/projects",
+    tags: ["stakeholders"],
+    summary: "关联项目（A5-03；幂等：已关联返回同一结果）；写审计留痕",
+    request: { params: z.object({ stakeholderId: UuidSchema }), body: json(StakeholderProjectLinkBodySchema) },
+    responses: {
+      200: { description: "关联后的干系人", ...json(StakeholderSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/stakeholders/{stakeholderId}/projects/{projectId}",
+    tags: ["stakeholders"],
+    summary: "解除项目关联（A5-03）：未关联 404；写审计留痕",
+    request: { params: z.object({ stakeholderId: UuidSchema, projectId: UuidSchema }) },
+    responses: {
+      200: { description: "解除后的干系人", ...json(StakeholderSchema) },
+      404: commonErrors[404],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1104,6 +1234,7 @@ export function buildOpenApiDocument() {
       { name: "audit", description: "操作审计（C7）：关键操作留痕、按对象 / 操作人检索与越权尝试（admin 模块）" },
       { name: "calendar", description: "工作日历（D5）：日历维护 / 顺延规则配置 / T-1·T+1 求值（h8）" },
       { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
+      { name: "stakeholders", description: "干系人台账与项目关联（A5-01~A5-04 / A5-07；隐私字段走字段级策略）" },
     ],
   });
 }

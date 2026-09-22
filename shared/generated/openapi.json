@@ -59,6 +59,10 @@
     {
       "name": "changes",
       "description": "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）"
+    },
+    {
+      "name": "stakeholders",
+      "description": "干系人台账与项目关联（A5-01~A5-04 / A5-07；隐私字段走字段级策略）"
     }
   ],
   "components": {
@@ -316,9 +320,10 @@
           "calendar_day",
           "calendar_settings",
           "file",
-          "change"
+          "change",
+          "stakeholder"
         ],
-        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04）"
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6）"
       },
       "AuditResult": {
         "type": "string",
@@ -1393,10 +1398,7 @@
         "description": "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404"
       },
       "DocType": {
-        "type": [
-          "string",
-          "null"
-        ],
+        "type": "string",
         "enum": [
           "CAD图纸",
           "技术协议",
@@ -1407,8 +1409,7 @@
           "发货装箱单",
           "到货单",
           "安装完成证明",
-          "验收单",
-          null
+          "验收单"
         ],
         "description": "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）"
       },
@@ -1459,12 +1460,14 @@
           "STAGE_GATE_NOT_PASSED",
           "BLUEPRINT_NOT_PUBLISHED",
           "NODE_REQUIRED_DOC_MISSING",
+          "TASK_REQUIRED_DOC_MISSING",
           "NODE_HAS_FILES",
           "STAGE_STATE_INVALID",
           "NODE_ALREADY_DONE",
           "NODE_ALREADY_EXISTS",
           "NODE_DELETED",
           "TASK_ALREADY_EXISTS",
+          "TASK_ALREADY_DONE",
           "BLUEPRINT_SCHEMA_INVALID",
           "BLUEPRINT_REF_UNKNOWN",
           "FILE_STATE_INVALID",
@@ -1545,6 +1548,10 @@
                 "$ref": "#/components/schemas/DocType"
               },
               {
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "description": "成果文件类型（十类字典）；普通附件为空"
               }
             ]
@@ -2208,7 +2215,17 @@
             ]
           },
           "docType": {
-            "$ref": "#/components/schemas/DocType"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocType"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
           },
           "minCount": {
             "type": "integer",
@@ -3207,6 +3224,325 @@
         ],
         "description": "阶段状态（project_stages.status）"
       },
+      "Stakeholder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "干系人姓名"
+          },
+          "companyType": {
+            "$ref": "#/components/schemas/StakeholderCompanyType"
+          },
+          "company": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "具体公司名称（A5-02）；需 stakeholder.view，无权时**键不存在**，有权限但空为 null"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "职务 / 责任板块；需 stakeholder.view，无权时键不存在"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "电话（含 WhatsApp）；需 stakeholder.contact.view，无权时键不存在（A5-07）"
+          },
+          "wechat": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "微信号；需 stakeholder.contact.view，无权时键不存在（A5-07）"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "邮箱；需 stakeholder.contact.view，无权时键不存在（A5-07）"
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "备注；需 stakeholder.manage，无权时键不存在"
+          },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "录入人 users.id（A5-04 销售端口）；系统导入为空"
+              }
+            ]
+          },
+          "createdByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "录入人显示名（清单「填写者」列）"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StakeholderProjectRef"
+            },
+            "description": "关联项目（A5-03）；按干系人反查"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "最近更新时间（A5-01「最近更新时间」）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "companyType",
+          "createdBy",
+          "createdByName",
+          "projects",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "干系人台账条目；联系方式等隐私字段按字段级策略裁剪（C3-08，不返回而非打码）"
+      },
+      "StakeholderCompanyType": {
+        "type": "string",
+        "enum": [
+          "libiao",
+          "supplier",
+          "general_contractor",
+          "customer"
+        ],
+        "description": "公司分类（A5-02）：libiao 立镖机器人 / supplier 供应商 / general_contractor 总包单位 / customer 客户"
+      },
+      "StakeholderCreateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "companyType": {
+            "$ref": "#/components/schemas/StakeholderCompanyType"
+          },
+          "company": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "具体公司名称；不传则空"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "phone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "wechat": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "邮箱（格式校验在服务端软校验，避免历史数据误拦）"
+          },
+          "remark": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "projectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 50,
+            "description": "建台账时一并关联的项目（A5-03）；项目不存在 404"
+          }
+        },
+        "required": [
+          "name",
+          "companyType"
+        ],
+        "description": "新增干系人：变更写审计留痕（对象 = stakeholder）；判重提示（姓名 + 手机号）随批量导入（A5-05，lan 线 M8-01）落地，本切片不阻断"
+      },
+      "StakeholderDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "恒为 true（软删：deleted_at 置位）"
+          }
+        },
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "description": "干系人删除结果（软删，不物理删行）"
+      },
+      "StakeholderListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Stakeholder"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total"
+        ]
+      },
+      "StakeholderProjectLinkBody": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "目标项目 projects.id；不存在或已软删 404"
+              }
+            ]
+          }
+        },
+        "required": [
+          "projectId"
+        ],
+        "description": "把干系人关联到项目（幂等）；需 stakeholder.manage 且干系人可见"
+      },
+      "StakeholderProjectRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "code": {
+            "type": "string",
+            "description": "项目编号（projects.code）"
+          },
+          "name": {
+            "type": "string",
+            "description": "项目名称"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name"
+        ],
+        "description": "干系人关联的项目（按干系人反查参与项目）"
+      },
+      "StakeholderUpdateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "companyType": {
+            "$ref": "#/components/schemas/StakeholderCompanyType"
+          },
+          "company": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "wechat": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        },
+        "description": "更新干系人（部分更新；null = 清空该字段）：变更写审计留痕（字段级 before / after）"
+      },
       "Task": {
         "type": "object",
         "properties": {
@@ -3332,8 +3668,12 @@
           "priority": {
             "$ref": "#/components/schemas/Priority"
           },
-          "deliverable": {
-            "$ref": "#/components/schemas/DocType"
+          "deliverableTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocType"
+            },
+            "description": "要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05）"
           },
           "note": {
             "type": [
@@ -3389,7 +3729,7 @@
           "estimatedDays",
           "headcount",
           "priority",
-          "deliverable",
+          "deliverableTypes",
           "note",
           "onTime",
           "changeRef",
@@ -3407,6 +3747,78 @@
           "done"
         ],
         "description": "任务存储基础态（不写回派生结果）"
+      },
+      "TaskCanCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "canComplete": {
+            "type": "boolean"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskGateMissing"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskGateWarning"
+            }
+          }
+        },
+        "required": [
+          "canComplete",
+          "missing",
+          "warnings"
+        ],
+        "description": "完成预检（canComplete=false 时 missing 给缺件明细）"
+      },
+      "TaskCompleteBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "actualEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "完成日期：缺省 = 服务端按当天（Asia/Shanghai）"
+              }
+            ]
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "完成备注：提供时写入任务的「项目进展描述」（note）并留痕"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "完成提交（乐观锁 version 必传；门禁未通过 422 + missing）"
+      },
+      "TaskCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskGateWarning"
+            }
+          }
+        },
+        "required": [
+          "task",
+          "warnings"
+        ],
+        "description": "完成结果（warnings 非空 = 已放行但存在未定档成果文件，R02 已入队）"
       },
       "TaskCreateBody": {
         "type": "object",
@@ -3511,8 +3923,12 @@
           "priority": {
             "$ref": "#/components/schemas/Priority"
           },
-          "deliverable": {
-            "$ref": "#/components/schemas/DocType"
+          "deliverableTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocType"
+            },
+            "description": "要求输出成果文件（ADR-024 多选）：去重（首次出现保序）；缺省 / 空数组 = 不要求"
           },
           "note": {
             "type": [
@@ -3656,7 +4072,17 @@
             "$ref": "#/components/schemas/FileStatus"
           },
           "docType": {
-            "$ref": "#/components/schemas/DocType"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocType"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
           }
         },
         "required": [
@@ -3689,6 +4115,52 @@
           "draft",
           "final"
         ]
+      },
+      "TaskGateMissing": {
+        "type": "object",
+        "properties": {
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "required": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "present": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "docType",
+          "required",
+          "present"
+        ],
+        "description": "缺件明细：required / present 按门禁统计范围逐 doc_type 给出"
+      },
+      "TaskGateWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "draft_doc_present"
+            ]
+          },
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "code",
+          "docType",
+          "count"
+        ],
+        "description": "放行提示：存在 draft 成果文件（放行但提示定档，R02 已入队）"
       },
       "TaskListItem": {
         "type": "object",
@@ -3815,8 +4287,12 @@
           "priority": {
             "$ref": "#/components/schemas/Priority"
           },
-          "deliverable": {
-            "$ref": "#/components/schemas/DocType"
+          "deliverableTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocType"
+            },
+            "description": "要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05）"
           },
           "note": {
             "type": [
@@ -3879,7 +4355,7 @@
           "estimatedDays",
           "headcount",
           "priority",
-          "deliverable",
+          "deliverableTypes",
           "note",
           "onTime",
           "version",
@@ -5987,6 +6463,145 @@
         }
       }
     },
+    "/api/v1/projects/{id}/tasks/{taskId}/can-complete": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "预检结果（canComplete + missing + warnings）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCanCompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}/complete": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCompleteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "完成结果（task + warnings）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCompleteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{id}/tasks/from-template": {
       "post": {
         "tags": [
@@ -6817,7 +7432,7 @@
               "$ref": "#/components/schemas/AuditObjectType"
             },
             "required": false,
-            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04）",
+            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6）",
             "name": "objectType",
             "in": "query"
           },
@@ -9763,6 +10378,433 @@
           },
           "401": {
             "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stakeholders": {
+      "get": {
+        "tags": [
+          "stakeholders"
+        ],
+        "summary": "干系人台账列表（记录级按数据范围裁剪；隐私字段按字段级策略不返回）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "description": "关键词：姓名 / 公司 / 职务前缀匹配（大小写不敏感）"
+            },
+            "required": false,
+            "description": "关键词：姓名 / 公司 / 职务前缀匹配（大小写不敏感）",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "公司分类，多值逗号分隔（A5-02）"
+            },
+            "required": false,
+            "description": "公司分类，多值逗号分隔（A5-02）",
+            "name": "filter[companyType]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "description": "只看该项目关联的干系人（A5-03 按项目查看联系人清单）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "只看该项目关联的干系人（A5-03 按项目查看联系人清单）",
+            "name": "filter[projectId]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
+              "description": "排序白名单：updatedAt / createdAt / name；缺省 updatedAt:desc（A5-01 最近更新在前）",
+              "example": "plannedEnd:asc"
+            },
+            "required": false,
+            "description": "排序白名单：updatedAt / createdAt / name；缺省 updatedAt:desc（A5-01 最近更新在前）",
+            "name": "sort",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "干系人列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StakeholderListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "stakeholders"
+        ],
+        "summary": "新增干系人（A5-01 / A5-04；stakeholder.manage）：写审计留痕（对象 = stakeholder）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StakeholderCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "新建的干系人",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stakeholder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stakeholders/{stakeholderId}": {
+      "get": {
+        "tags": [
+          "stakeholders"
+        ],
+        "summary": "干系人详情（含关联项目；不可见 / 已删除一律 404，防 IDOR）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "stakeholderId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "干系人详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stakeholder"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "stakeholders"
+        ],
+        "summary": "更新干系人（部分更新，null = 清空）：字段级留痕",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "stakeholderId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StakeholderUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的干系人",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stakeholder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "stakeholders"
+        ],
+        "summary": "删除干系人（软删：deleted_at 置位，不物理删行；项目关联保留）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "stakeholderId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除结果（deleted 标记）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StakeholderDeleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stakeholders/{stakeholderId}/projects": {
+      "post": {
+        "tags": [
+          "stakeholders"
+        ],
+        "summary": "关联项目（A5-03；幂等：已关联返回同一结果）；写审计留痕",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "stakeholderId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StakeholderProjectLinkBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "关联后的干系人",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stakeholder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stakeholders/{stakeholderId}/projects/{projectId}": {
+      "delete": {
+        "tags": [
+          "stakeholders"
+        ],
+        "summary": "解除项目关联（A5-03）：未关联 404；写审计留痕",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "stakeholderId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "projectId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "解除后的干系人",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stakeholder"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {
