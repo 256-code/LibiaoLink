@@ -371,3 +371,18 @@ export type TaskBatchFailure = z.infer<typeof TaskBatchFailureSchema>;
 export type TaskBatchChanges = z.infer<typeof TaskBatchChangesSchema>;
 export type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
 export type TaskBatchResponse = z.infer<typeof TaskBatchResponseSchema>;
+
+/**
+ * 删除响应（M3-05 · A25 · 系统功能书 A1-01 修订）：软删只回标记，不回整行（前端列表本地移除即可）。
+ * 重复删除 / 已删任务上的任何操作 = 统一 404（记录级 404 语义），不新增错误码。
+ */
+export const TaskDeleteResponseSchema = z
+  .object({
+    id: UuidSchema,
+    deleted: z.boolean().openapi({ description: "恒为 true（软删：tasks.deleted_at 置位，不物理删行；历史与留痕保留）" }),
+  })
+  .openapi("TaskDeleteResponse", {
+    description: "任务删除结果（软删）：列表 / 看板 / 甘特图 / 完成门禁一律不可见，来源节点约束随之释放",
+  });
+
+export type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
