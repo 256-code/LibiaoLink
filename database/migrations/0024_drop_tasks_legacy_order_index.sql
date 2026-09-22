@@ -1,0 +1,11 @@
+-- LibiaoLink · 0024 下线历史排序索引 ix_tasks_project_stage_order（M3-06 · 索引调优评估定案：2026-09-22）
+-- 口径来源：技术设计v0.2-架构与数据模型.md §2.3（tasks 索引）、技术设计v0.3-实施与验收.md §3.4 M3-06 与 §6.1、
+--   server/scripts/m3-06-stress.mjs（CI database job 真机对照；证据：docs/m3-06-压测证据(CI).md）。
+--   1. 0015 建的 ix_tasks_project_stage_order (project_id, stage_key, sort_index) 与 0022 的部分索引
+--      ix_tasks_active_group（同列 + where deleted_at is null）功能重叠：读面（task.repository.ts 13 处）
+--      一律带 deleted_at is null，故部分索引完整覆盖旧索引的可用场景，双索引只剩写放大与空间成本。
+--   2. 真机对照（CI · postgres:18 · 1 万行合成项目）：DROP 旧索引后 9 个读取形状 p50 倍率 0.94x ~ 1.02x
+--      （阈值 1.5x）、下线后默认读序 p50 4.1 ms（阈值 800 ms），计划命中部分索引或顺序扫描，无回归。
+--   3. 只删索引，不动数据与列；索引随表级 GRANT 生效，应用角色 libiaolink_api 无 DDL 权限（迁移器角色执行）。
+-- 回滚（如需）：create index ix_tasks_project_stage_order on tasks (project_id, stage_key, sort_index);
+drop index if exists ix_tasks_project_stage_order;
