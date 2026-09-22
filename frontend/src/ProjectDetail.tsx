@@ -14,6 +14,7 @@ import { isCompleteStatus, isPastDue, progressAfterStatus, statusOverrideAfterPr
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { managerNames } from "./data/managers";
 import type { MeResponse, Project } from "./types";
+import { replaceProjectView, type ProjectView } from "./useHashRoute";
 
 /** 阶段名（不含「项目总览」汇总视图）。 */
 const STAGE_NAMES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
@@ -35,9 +36,20 @@ function stageRankOf(stage: string): number {
 /**
  * 顶部视图标签（Push 82 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」；
  * Push 128：再往后加第四个视图「日报及问题」（口径见 components/ReportIssuePanel.tsx）；
- * Push 142：「项目总览」之后再加「甘特图」（口径见 components/GanttChart.tsx）。
+ * Push 142：「项目总览」之后再加「甘特图」（口径见 components/GanttChart.tsx）；
+ * Push 154：当前标签走地址 `?view=`，刷新 / 收藏 / 分享都停在同一块标签。
  */
-const VIEW_TABS: readonly string[] = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题"];
+const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题"] as const;
+type ViewTab = (typeof VIEW_TABS)[number];
+
+/** 顶部标签 ↔ 地址参数（`?view=`）：缺省「项目总览」（overview）不落参数。 */
+const VIEW_KEYS: Record<ViewTab, ProjectView> = {
+  "项目总览": "overview",
+  "甘特图": "gantt",
+  "人员任务分配": "owners",
+  "任务进展": "progress",
+  "日报及问题": "daily",
+};
 
 /** 从任务模板预设加进来的任务：字段先给默认值（负责人 / 日期等留空，后续在任务详情里补）。 */
 function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTask {
@@ -55,7 +67,7 @@ function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTas
     doneDate: "",
     days: 0,
     deliverable: "",
-    change: "",
+    changes: [],
     onTime: "",
     note: "",
     headcount: 0,
@@ -84,7 +96,7 @@ function quickTask(group: { owners: string[]; ownersEn: string[]; status: TaskSt
     doneDate: "",
     days: 0,
     deliverable: "",
-    change: "",
+    changes: [],
     onTime: "",
     note: "",
     headcount: 0,
@@ -96,15 +108,17 @@ function quickTask(group: { owners: string[]; ownersEn: string[]; status: TaskSt
 type ProjectDetailProps = {
   me: MeResponse;
   project: Project | null;
+  /** 顶部标签的当前视图（Push 154 起由地址 `?view=` 派生，缺省「项目总览」）。 */
+  view: ProjectView;
   /** 任务编辑里改「项目经理」时回写项目（项目经理是项目级字段，Push 136 起可多位）。 */
   onChangeManagers?: (projectId: string, managerIds: string[]) => void;
   /** 任务字段被编辑（按口径刷新项目时间 updatedAt）。 */
   onTaskEdited?: (projectId: string) => void;
 };
 
-export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdited }: ProjectDetailProps) {
-  /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」。 */
-  const [activeView, setActiveView] = useState<string>(VIEW_TABS[0]);
+export default function ProjectDetail({ me, project, view, onChangeManagers, onTaskEdited }: ProjectDetailProps) {
+  /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
+  const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
   /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
   const [taskEdits, setTaskEdits] = useState<Record<string, Partial<ProjectTask>>>({});
@@ -404,13 +418,14 @@ export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdi
       <main className="w-full px-6 pb-10 pt-3">
         <div className="flex items-center gap-3 border-b border-zinc-200">
           <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-            {VIEW_TABS.map((view) => {
-              const active = view === activeView;
+            {VIEW_TABS.map((tab) => {
+              const active = tab === activeView;
               return (
                 <button
-                  key={view}
+                  key={tab}
                   type="button"
-                  onClick={() => setActiveView(view)}
+                  onClick={() => replaceProjectView(project.id, VIEW_KEYS[tab])}
+                  aria-current={active ? "page" : undefined}
                   className={
                     "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
                     (active
@@ -418,7 +433,7 @@ export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdi
                       : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                   }
                 >
-                  {view}
+                  {tab}
                 </button>
               );
             })}
