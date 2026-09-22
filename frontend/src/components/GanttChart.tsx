@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import { PROGRESS_STEPS, TASK_DATE_YEAR, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, ownersLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
@@ -17,8 +17,14 @@ import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
  * 已对齐的官方开关（尽量还原官方功能）：
  * - `taskListTable` 左表 + `frame.verticalSplitLineMoveable`：左表横向不滚、右边线可拖（列宽固定，拖的是「右侧时间轴盖住左表多少」的边界，双击复位）；
  * - `grid` / `headerRowHeight`：两级表头（月 + 日）、逐日竖线、周末底纹、每周一与每月一号分隔线；
+ * - 滚动条（业务口径「滚动条右边的做出隐式的 下方滚动条要固定」）：原生滚动条隐藏，改自绘 —— 右侧**竖向隐式**
+ *   （滚动 / 悬停才浮现，停手 900ms 隐去；与 `ScrollArea` 同一套材质）、下方**横向固定常驻**（有溢出一律可见、可直接拖）；
+ * - 拖画面平移（业务口径「向左向右拖动画面要移动」）：在图表空白处按住左键拖动 = 时间轴跟手滑动（横向 / 纵向），
+ *   只滚容器、不改任何任务字段；位移没过阈值仍算点击（左表行定位 / 阶段折叠 / 点空白清选中照常）；
  * - `timelineHeader.scales`：时间轴粒度可切日 / 周 / 月（表头分段与网格密度跟着换，条仍按天精确落点）；
  * - 甘特内筛选：按负责人（含「待分配」）、只看已延期、只看未排期（时间轴范围 / 阶段汇总跟着筛完的任务走）；
+ * - 拖动时边缘自动滚动（业务口径「拖动进度条要移动 也要可以移画面」）：拖条 / 两端 / 进度圆点时指针进到
+ *   时间轴左右边缘 72px 内，画面按深度逐帧滚，条跟着新滚到的日期走；
  * - `taskBar.moveable`：拖条整体平移改期（工期不变）；
  * - `taskBar.resizable`：拖条两端改工期（只动被拖的那一端）；
  * - 进度圆点：拖条上的圆点改进度（按四档吸附，与四格进度条同口径）；
@@ -77,6 +83,13 @@ const BAR_H = 20;
 const GROUP_BAR_H = 10;
 const EDGE_ZONE_W = 6;
 const KNOB_SIZE = 10;
+
+/** 拖空白平移画面：位移超过这个像素才算「拖动」（不到 = 还是点击，左表行定位 / 阶段折叠照常）。 */
+const PAN_THRESHOLD_PX = 4;
+
+/** 拖任务条时靠近时间轴左右边缘的自动滚动区宽度与逐帧最大速度（px）——条能拖到屏幕外的日期。 */
+const DRAG_EDGE_PX = 72;
+const DRAG_EDGE_MAX_SPEED = 16;
 
 const DAY_MS = 86400000;
 
@@ -164,6 +177,41 @@ const OWNER_NONE = "__none__";
  */
 const YEAR_FIRST = Date.UTC(TASK_DATE_YEAR, 0, 1);
 const YEAR_LAST = Date.UTC(TASK_DATE_YEAR, 11, 31);
+
+/** 自绘滚动条：轨道两端留白、滑块最短长度（与 `ScrollArea` 同一套手感）。 */
+const BAR_TRACK_INSET = 4;
+const BAR_MIN_THUMB = 28;
+/** 隐式滚动条停手后隐去的延时（与 `ScrollArea` 一致）。 */
+const BAR_HIDE_DELAY = 900;
+
+/**
+ * 自绘滑块的几何：`track` = 轨道长度（竖向 = 容器高；横向那条固定在窗口底部，轨道 = 整个窗口宽）、
+ * `viewport` = 可视长度、`content` = 内容长度、`scrolled` = 已滚距离；没有溢出 = null。
+ */
+function thumbMetrics(track: number, viewport: number, content: number, scrolled: number): { size: number; offset: number; progress: number } | null {
+  const usable = track - BAR_TRACK_INSET * 2;
+  if (usable <= 0 || content <= viewport + 1) {
+    return null;
+  }
+  const size = Math.max(BAR_MIN_THUMB, Math.round((viewport / content) * usable));
+  const maxScroll = content - viewport;
+  const ratio = maxScroll <= 0 ? 0 : clampNumber(scrolled / maxScroll, 0, 1);
+  return { size, offset: Math.round(ratio * (usable - size)), progress: Math.round(ratio * 100) };
+}
+
+/**
+ * 横向那条固定在整个窗口底部（业务口径「要固定在全局 不然不方便」）：轨道 = 窗口可视宽。
+ * 用 `documentElement.clientWidth` 而不是 `window.innerWidth` —— 后者含页面竖向滚动条的宽度，
+ * 会让滑块右端钻到滚动条底下 / 位置算偏。
+ */
+function bottomBarTrack(): number {
+  return document.documentElement.clientWidth;
+}
+
+/** 拖到边缘时的逐帧滚动速度：越深入边缘区越快（最低 1px，最高 DRAG_EDGE_MAX_SPEED）。 */
+function edgeScrollSpeed(depth: number): number {
+  return clampNumber((depth / DRAG_EDGE_PX) * DRAG_EDGE_MAX_SPEED, 1, DRAG_EDGE_MAX_SPEED);
+}
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -540,8 +588,21 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
   const [leftWidth, setLeftWidth] = useState(LEFT_W_DEFAULT);
   const [splitHover, setSplitHover] = useState(false);
   const [splitActive, setSplitActive] = useState(false);
+  /** 拖空白平移画面：拖动期间换抓手光标并禁掉文字选区。 */
+  const [panActive, setPanActive] = useState(false);
+  /** 自绘滚动条的两根滑块（null = 该方向没有溢出）；竖向隐式、横向固定常驻。 */
+  const [vBar, setVBar] = useState<{ size: number; offset: number; progress: number } | null>(null);
+  const [hBar, setHBar] = useState<{ size: number; offset: number; progress: number } | null>(null);
+  const [barActive, setBarActive] = useState(false);
+  const barHideTimerRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const splitRef = useRef<{ originX: number; base: number } | null>(null);
+  const panRef = useRef<{ pointerId: number; originX: number; originY: number; baseLeft: number; baseTop: number; moved: boolean } | null>(null);
+  /** 平移收尾那一下补出来的 click：挡在容器捕获层（见 swallowClickAfterPan）。 */
+  const panJustEndedRef = useRef(false);
+  /** 拖条期间的指针位置与「按下时画面滚到哪儿了」：边缘自动滚动要靠它把滚动换算成日期位移。 */
+  const dragPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const dragScrollBaseRef = useRef(0);
   /** 刚拖完那一下（拖动收尾浏览器会补一个 click）：用来挡掉「拖完顺手把选中清掉」。 */
   const justDraggedRef = useRef(false);
 
@@ -714,6 +775,8 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
     }
     setSelectedId(bar.task.id);
     justDraggedRef.current = false;
+    dragPointerRef.current = { x: event.clientX, y: event.clientY };
+    dragScrollBaseRef.current = scrollRef.current === null ? 0 : scrollRef.current.scrollLeft;
     setDrag({
       taskId: bar.task.id,
       mode,
@@ -728,13 +791,19 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
     });
   };
 
-  /** 拖动中：每次 move 都从 base 重算（不累加），按任务日期域（2026）与「起点不晚于终点」夹住。 */
-  const moveDrag = (event: ReactPointerEvent<HTMLElement>) => {
+  /**
+   * 拖动预览的唯一算法：每次都从 base 出发重算（不累加），按任务日期域（2026）与「起点不晚于终点」夹住。
+   * 入参是**等效 clientX** —— 画面滚了多少 = 指针在日期轴上等效多走多少（边缘自动滚动、拖动途中滚画面都走这条），
+   * 条因此始终跟着指针，也才可能一次拖到当前屏幕外的日期。
+   */
+  const applyDrag = (clientX: number) => {
+    const element = scrollRef.current;
+    const scrolled = element === null ? 0 : element.scrollLeft - dragScrollBaseRef.current;
     setDrag((previous) => {
       if (previous === null) {
         return null;
       }
-      const deltaDays = Math.round((event.clientX - previous.originX) / previous.pxPerDay);
+      const deltaDays = Math.round((clientX + scrolled - previous.originX) / previous.pxPerDay);
       if (previous.mode === "progress") {
         // 进度圆点：条宽（含首尾）= 100%，按四档吸附（0 / 25 / 50 / 75 / 100），与四格进度条同口径。
         const widthDays = dayDiff(previous.baseStart, previous.baseEnd) + 1;
@@ -756,6 +825,45 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
     });
   };
 
+  /** 条上的 pointermove：先记住指针位置（边缘自动滚动要用），再交给同一套算法。 */
+  const moveDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    dragPointerRef.current = { x: event.clientX, y: event.clientY };
+    applyDrag(event.clientX);
+  };
+
+  /**
+   * 拖条时的边缘自动滚动（业务口径「拖动进度条要移动 也要可以移画面」）：指针停在时间轴左右边缘区内时，
+   * 按进入深度逐帧滚容器，并让条跟着新滚到的位置重算日期 —— 一次拖动能把条放到当前屏幕外的日期上；
+   * 指针停着不动也照样滚。循环只在拖动期间存在（松手 / Esc / pointercancel 即停）。
+   */
+  const barDragging = drag !== null;
+  useEffect(() => {
+    if (!barDragging) {
+      return undefined;
+    }
+    let raf = window.requestAnimationFrame(function tick() {
+      raf = window.requestAnimationFrame(tick);
+      const element = scrollRef.current;
+      const pointer = dragPointerRef.current;
+      if (element === null || pointer === null) {
+        return;
+      }
+      const rect = element.getBoundingClientRect();
+      const before = element.scrollLeft;
+      if (pointer.x < rect.left + DRAG_EDGE_PX) {
+        element.scrollLeft = before - edgeScrollSpeed(rect.left + DRAG_EDGE_PX - pointer.x);
+      } else if (pointer.x > rect.right - DRAG_EDGE_PX) {
+        element.scrollLeft = before + edgeScrollSpeed(pointer.x - (rect.right - DRAG_EDGE_PX));
+      }
+      if (element.scrollLeft !== before) {
+        applyDrag(pointer.x);
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [barDragging]);
+
   /** 松手写回：进度走 onSetProgress（与四格进度条同一套状态联动）、日期走 onPatchTask；没动过 = 不写。 */
   const endDrag = () => {
     const session = drag;
@@ -763,6 +871,7 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
       return;
     }
     setDrag(null);
+    dragPointerRef.current = null;
     if (session.mode === "progress") {
       if (session.percent === session.basePercent) {
         return;
@@ -807,6 +916,158 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
   const endSplit = () => {
     splitRef.current = null;
     setSplitActive(false);
+  };
+
+  /**
+   * 拖画面平移（业务口径「向左向右拖动画面要移动」）：在图表空白处按住拖动 = 时间轴跟手滑（横向 / 纵向），
+   * 只滚外层容器、不改任何任务字段。任务条与分隔线自己 stopPropagation，从条上 / 线上按下仍是原来那几种拖动；
+   * 位移没过阈值就当成点击（左表行定位、阶段折叠、点空白清选中都不受影响）。只认鼠标左键 —— 触屏本来就能拖。
+   */
+  const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    panJustEndedRef.current = false;
+    const element = scrollRef.current;
+    if (element === null || event.pointerType === "touch" || event.button !== 0) {
+      return;
+    }
+    panRef.current = {
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      originY: event.clientY,
+      baseLeft: element.scrollLeft,
+      baseTop: element.scrollTop,
+      moved: false,
+    };
+  };
+
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const session = panRef.current;
+    const element = scrollRef.current;
+    if (session === null || element === null || session.pointerId !== event.pointerId) {
+      return;
+    }
+    const dx = event.clientX - session.originX;
+    const dy = event.clientY - session.originY;
+    if (!session.moved) {
+      if (Math.abs(dx) < PAN_THRESHOLD_PX && Math.abs(dy) < PAN_THRESHOLD_PX) {
+        return;
+      }
+      session.moved = true;
+      // 拖动途中浏览器可能已经开始拉选区（与任务条拖动同一口径：先清掉再跟手）。
+      window.getSelection()?.removeAllRanges();
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // 捕获失败只影响「指针移出容器后是否继续跟手」，容器内拖动照常。
+      }
+      setPanActive(true);
+    }
+    element.scrollLeft = session.baseLeft - dx;
+    element.scrollTop = session.baseTop - dy;
+  };
+
+  const endPan = () => {
+    const session = panRef.current;
+    panRef.current = null;
+    if (session === null || !session.moved) {
+      return;
+    }
+    panJustEndedRef.current = true;
+    setPanActive(false);
+  };
+
+  /** 平移收尾补的那一下 click 在捕获层吃掉：不落到左表行定位 / 阶段折叠 / 点空白清选中上。 */
+  const swallowClickAfterPan = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!panJustEndedRef.current) {
+      return;
+    }
+    panJustEndedRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  /** 重新量两根滑块（尺寸 / 位置 / 进度）——与 `ScrollArea` 同一套算法，只是两个方向一起维护。 */
+  const syncScrollbars = useCallback(() => {
+    const node = scrollRef.current;
+    if (node === null) {
+      return;
+    }
+    setVBar(thumbMetrics(node.clientHeight, node.clientHeight, node.scrollHeight, node.scrollTop));
+    setHBar(thumbMetrics(bottomBarTrack(), node.clientWidth, node.scrollWidth, node.scrollLeft));
+  }, []);
+
+  /** 竖向滑块是隐式的：滚动 / 拖它的时候浮现，停手 900ms 隐去（横向固定常驻，不走这条）。 */
+  const revealScrollbars = useCallback(() => {
+    setBarActive(true);
+    window.clearTimeout(barHideTimerRef.current);
+    barHideTimerRef.current = window.setTimeout(() => {
+      setBarActive(false);
+    }, BAR_HIDE_DELAY);
+  }, []);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (node === null) {
+      return undefined;
+    }
+    syncScrollbars();
+    const onScroll = () => {
+      syncScrollbars();
+      revealScrollbars();
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", syncScrollbars);
+    const observer = new ResizeObserver(syncScrollbars);
+    observer.observe(node);
+    for (const child of Array.from(node.children)) {
+      observer.observe(child);
+    }
+    return () => {
+      node.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", syncScrollbars);
+      observer.disconnect();
+      window.clearTimeout(barHideTimerRef.current);
+    };
+  }, [revealScrollbars, syncScrollbars]);
+
+  /** 拖滑块 = 滚容器（两根共用；`size` = 该方向滑块长度，用来把拖动距离换算成滚动距离）。 */
+  const beginScrollbarDrag = (event: ReactPointerEvent<HTMLDivElement>, orientation: "horizontal" | "vertical", size: number, track: number) => {
+    const node = scrollRef.current;
+    if (node === null) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const thumbNode = event.currentTarget;
+    try {
+      thumbNode.setPointerCapture(event.pointerId);
+    } catch {
+      // 捕获失败只影响「指针移出滑块后是否继续跟手」，滑块内拖动照常。
+    }
+    const horizontal = orientation === "horizontal";
+    const startPointer = horizontal ? event.clientX : event.clientY;
+    const startScroll = horizontal ? node.scrollLeft : node.scrollTop;
+    const usable = track - BAR_TRACK_INSET * 2;
+    const maxScroll = horizontal ? node.scrollWidth - node.clientWidth : node.scrollHeight - node.clientHeight;
+    const distance = maxScroll / Math.max(1, usable - size);
+    window.clearTimeout(barHideTimerRef.current);
+    setBarActive(true);
+    const onMove = (moveEvent: PointerEvent) => {
+      const delta = (horizontal ? moveEvent.clientX : moveEvent.clientY) - startPointer;
+      if (horizontal) {
+        node.scrollLeft = startScroll + delta * distance;
+      } else {
+        node.scrollTop = startScroll + delta * distance;
+      }
+    };
+    const onUp = () => {
+      thumbNode.removeEventListener("pointermove", onMove);
+      thumbNode.removeEventListener("pointerup", onUp);
+      thumbNode.removeEventListener("pointercancel", onUp);
+      revealScrollbars();
+    };
+    thumbNode.addEventListener("pointermove", onMove);
+    thumbNode.addEventListener("pointerup", onUp);
+    thumbNode.addEventListener("pointercancel", onUp);
   };
 
   /**
@@ -1281,272 +1542,319 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
           ) : null}
         </div>
         <p className="mt-2 border-t border-zinc-100 pt-2 text-[11px] leading-4 text-zinc-400">
-          条上操作（对齐参考样例）：拖条 = 整体改期 · 拖条两端 = 改工期 · 拖条上圆点 = 改进度（四档）· 点条 = 选中 · 点左表任务行 = 定位到条 · 拖左表右边线 = 移动分隔线（左表被时间轴盖住多少，双击复位）· Esc = 取消
+          条上操作（对齐参考样例）：拖条 = 整体改期 · 拖条两端 = 改工期 · 拖条上圆点 = 改进度（四档）· 拖到时间轴左右边缘 = 画面自动跟着走 · 点条 = 选中 · 点左表任务行 = 定位到条 · 拖空白 = 平移画面（横向 / 纵向跟手）· 拖左表右边线 = 移动分隔线（左表被时间轴盖住多少，双击复位）· Esc = 取消
         </p>
       </div>
 
       {/* 图表：左表（sticky left，横向不滚）+ 时间轴（表头 sticky top，纵向吸顶），两边逐行同一组行高 */}
-      <div
-        ref={scrollRef}
-        className="h-[calc(100vh-15rem)] min-h-[22rem] max-h-[52rem] overflow-auto rounded-xl border border-zinc-200 bg-white"
-      >
-        <div className="flex w-max">
-          {/*
-            左表：列宽固定、每行按自然宽渲染，可见宽度 = 分隔线位置；超出的列由右侧时间轴盖住。
-            只给「裁切层」上 clipPath（只裁不重排 —— 列宽一直不变，也不新建滚动容器，sticky 照常）。
-            分隔线把手放在裁切层之外，否则悬停高亮线与外侧 8px 的抓手会被一起裁掉。
-          */}
-          <div className="sticky left-0 z-20 shrink-0" style={{ width: leftWidth }}>
-            <div
-              className="h-full border-r border-zinc-200 bg-white"
-              style={{ width: leftWidth, clipPath: "inset(0)" }}
-            >
+      {/* 外面这层 relative 给自绘的竖向滑块（隐式浮在右缘）定位；下方横向那条是 fixed 在整个窗口底部的，不随页面滚 */}
+      <div className="relative">
+        <div
+          ref={scrollRef}
+          className={
+            "scrollbar-hidden h-[calc(100vh-15rem)] min-h-[22rem] max-h-[52rem] overflow-auto rounded-xl border border-zinc-200 bg-white " +
+            (panActive ? "cursor-grabbing select-none" : "cursor-grab")
+          }
+          onPointerDown={beginPan}
+          onPointerMove={movePan}
+          onPointerUp={endPan}
+          onPointerCancel={endPan}
+          onClickCapture={swallowClickAfterPan}
+        >
+          <div className="flex w-max">
+            {/*
+              左表：列宽固定、每行按自然宽渲染，可见宽度 = 分隔线位置；超出的列由右侧时间轴盖住。
+              只给「裁切层」上 clipPath（只裁不重排 —— 列宽一直不变，也不新建滚动容器，sticky 照常）。
+              分隔线把手放在裁切层之外，否则悬停高亮线与外侧 8px 的抓手会被一起裁掉。
+            */}
+            <div className="sticky left-0 z-20 shrink-0" style={{ width: leftWidth }}>
               <div
-                className="flex items-center border-b border-zinc-200 bg-zinc-50 text-[11px] font-medium text-zinc-500"
-                style={{ height: HEADER_TOTAL_H, width: LEFT_W_NATURAL }}
+                className="h-full border-r border-zinc-200 bg-white"
+                style={{ width: leftWidth, clipPath: "inset(0)" }}
               >
-                <div className="flex h-full items-center justify-center" style={{ width: COL_INDEX_W }}>
-                  行号
-                </div>
-                <div className="flex h-full items-center px-3" style={{ width: COL_TITLE_W }}>
-                  任务
-                </div>
-                <div className="flex h-full items-center px-3" style={{ width: COL_START_W }}>
-                  开始日期
-                </div>
-                <div className="flex h-full items-center px-3" style={{ width: COL_END_W }}>
-                  预计完成日期
-                </div>
-                <div className="flex h-full items-center justify-end pr-3" style={{ width: COL_PROGRESS_W }}>
-                  进展
-                </div>
-              </div>
-              {model.rows.map((row) => {
-                const isHovered = hovered === row.key;
-                const range = rowDateRange(row);
-                return (
-                  <div
-                    key={row.key}
-                    onMouseEnter={() => {
-                      setHovered(row.key);
-                    }}
-                    onMouseLeave={() => {
-                      setHovered(null);
-                    }}
-                    onClick={clearSelection}
-                    className={"flex items-center border-b border-zinc-100 " + (isHovered ? "bg-zinc-50" : "bg-white")}
-                    style={{ height: ROW_H, width: LEFT_W_NATURAL }}
-                  >
-                    <div className="flex items-center justify-center text-[11px] tabular-nums text-zinc-400" style={{ width: COL_INDEX_W }}>
-                      {row.no}
-                    </div>
-                    {row.kind === "group" ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleStage(row.group.stage);
-                        }}
-                        title={collapsed[row.group.stage] === true ? "展开这个阶段" : "折叠这个阶段"}
-                        className="flex h-full min-w-0 items-center gap-1.5 px-2 text-left"
-                        style={{ width: COL_TITLE_W }}
-                      >
-                        <svg
-                          viewBox="0 0 12 12"
-                          className={
-                            "h-2.5 w-2.5 shrink-0 text-zinc-400 transition-transform " +
-                            (collapsed[row.group.stage] === true ? "" : "rotate-90")
-                          }
-                          aria-hidden="true"
-                        >
-                          <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        <span className="truncate text-[13px] font-semibold text-zinc-800">{row.group.stage}</span>
-                        <span className="ml-auto shrink-0 pr-1 text-[11px] text-zinc-400">
-                          {row.group.bars.length === 0
-                            ? "暂无任务"
-                            : "已完成 " + String(row.group.doneCount) + "/" + String(row.group.bars.length)}
-                        </span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          locateBar(row.bar);
-                        }}
-                        title={row.bar.label + "\n点一下 = 选中这条，并把条定位到时间轴可视区"}
-                        className="flex h-full min-w-0 items-center gap-1.5 pl-6 pr-2 text-left"
-                        style={{ width: COL_TITLE_W }}
-                      >
-                        <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + STATUS_DOT_CLASS[row.bar.status]} aria-hidden="true" />
-                        <span className={"truncate text-[13px] " + (selectedId === row.bar.task.id ? "font-semibold text-zinc-900" : "text-zinc-700")}>
-                          {row.bar.task.title}
-                        </span>
-                      </button>
-                    )}
-                    <div className={dateCellClass(range.live)} style={{ width: COL_START_W }}>
-                      {range.start}
-                    </div>
-                    <div className={dateCellClass(range.live)} style={{ width: COL_END_W }}>
-                      {range.end}
-                    </div>
-                    <div className="pr-3 text-right text-[11px] tabular-nums text-zinc-500" style={{ width: COL_PROGRESS_W }}>
-                      {row.kind === "group"
-                        ? String(row.group.percent) + "%"
-                        : row.bar.start === null
-                          ? "未排期"
-                          : String(row.bar.percent) + "%"}
-                    </div>
+                <div
+                  className="flex items-center border-b border-zinc-200 bg-zinc-50 text-[11px] font-medium text-zinc-500"
+                  style={{ height: HEADER_TOTAL_H, width: LEFT_W_NATURAL }}
+                >
+                  <div className="flex h-full items-center justify-center" style={{ width: COL_INDEX_W }}>
+                    行号
                   </div>
-                );
-              })}
-            </div>
-            {/* 拖这条线 = 移动右侧时间轴的左边界（左表被盖住多少），双击复位到全露（官方 frame.verticalSplitLineMoveable + verticalSplitLineHighlight）：高亮线压在分隔线本身上 */}
-            <span
-              className="absolute -right-2 top-0 z-30 h-full w-4 cursor-col-resize touch-none"
-              title="拖动移动分隔线（左表被时间轴盖住多少），双击复位"
-              onPointerDown={beginSplit}
-              onPointerMove={moveSplit}
-              onPointerUp={endSplit}
-              onPointerCancel={endSplit}
-              onDoubleClick={() => {
-                setLeftWidth(LEFT_W_DEFAULT);
-              }}
-              onMouseEnter={() => {
-                setSplitHover(true);
-              }}
-              onMouseLeave={() => {
-                setSplitHover(false);
-              }}
-            >
+                  <div className="flex h-full items-center px-3" style={{ width: COL_TITLE_W }}>
+                    任务
+                  </div>
+                  <div className="flex h-full items-center px-3" style={{ width: COL_START_W }}>
+                    开始日期
+                  </div>
+                  <div className="flex h-full items-center px-3" style={{ width: COL_END_W }}>
+                    预计完成日期
+                  </div>
+                  <div className="flex h-full items-center justify-end pr-3" style={{ width: COL_PROGRESS_W }}>
+                    进展
+                  </div>
+                </div>
+                {model.rows.map((row) => {
+                  const isHovered = hovered === row.key;
+                  const range = rowDateRange(row);
+                  return (
+                    <div
+                      key={row.key}
+                      onMouseEnter={() => {
+                        setHovered(row.key);
+                      }}
+                      onMouseLeave={() => {
+                        setHovered(null);
+                      }}
+                      onClick={clearSelection}
+                      className={"flex items-center border-b border-zinc-100 " + (isHovered ? "bg-zinc-50" : "bg-white")}
+                      style={{ height: ROW_H, width: LEFT_W_NATURAL }}
+                    >
+                      <div className="flex items-center justify-center text-[11px] tabular-nums text-zinc-400" style={{ width: COL_INDEX_W }}>
+                        {row.no}
+                      </div>
+                      {row.kind === "group" ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            toggleStage(row.group.stage);
+                          }}
+                          title={collapsed[row.group.stage] === true ? "展开这个阶段" : "折叠这个阶段"}
+                          className="flex h-full min-w-0 items-center gap-1.5 px-2 text-left"
+                          style={{ width: COL_TITLE_W }}
+                        >
+                          <svg
+                            viewBox="0 0 12 12"
+                            className={
+                              "h-2.5 w-2.5 shrink-0 text-zinc-400 transition-transform " +
+                              (collapsed[row.group.stage] === true ? "" : "rotate-90")
+                            }
+                            aria-hidden="true"
+                          >
+                            <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <span className="truncate text-[13px] font-semibold text-zinc-800">{row.group.stage}</span>
+                          <span className="ml-auto shrink-0 pr-1 text-[11px] text-zinc-400">
+                            {row.group.bars.length === 0
+                              ? "暂无任务"
+                              : "已完成 " + String(row.group.doneCount) + "/" + String(row.group.bars.length)}
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            locateBar(row.bar);
+                          }}
+                          title={row.bar.label + "\n点一下 = 选中这条，并把条定位到时间轴可视区"}
+                          className="flex h-full min-w-0 items-center gap-1.5 pl-6 pr-2 text-left"
+                          style={{ width: COL_TITLE_W }}
+                        >
+                          <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + STATUS_DOT_CLASS[row.bar.status]} aria-hidden="true" />
+                          <span className={"truncate text-[13px] " + (selectedId === row.bar.task.id ? "font-semibold text-zinc-900" : "text-zinc-700")}>
+                            {row.bar.task.title}
+                          </span>
+                        </button>
+                      )}
+                      <div className={dateCellClass(range.live)} style={{ width: COL_START_W }}>
+                        {range.start}
+                      </div>
+                      <div className={dateCellClass(range.live)} style={{ width: COL_END_W }}>
+                        {range.end}
+                      </div>
+                      <div className="pr-3 text-right text-[11px] tabular-nums text-zinc-500" style={{ width: COL_PROGRESS_W }}>
+                        {row.kind === "group"
+                          ? String(row.group.percent) + "%"
+                          : row.bar.start === null
+                            ? "未排期"
+                            : String(row.bar.percent) + "%"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* 拖这条线 = 移动右侧时间轴的左边界（左表被盖住多少），双击复位到全露（官方 frame.verticalSplitLineMoveable + verticalSplitLineHighlight）：高亮线压在分隔线本身上 */}
               <span
-                className={"absolute inset-y-0 left-2 w-[2px] " + (splitHover || splitActive ? "bg-blue-500" : "bg-transparent")}
-                aria-hidden="true"
-              />
-            </span>
-          </div>
-
-          <div className="relative" style={{ width: totalWidth }}>
-            {/* 表头两排（官方 timelineHeader.scales）：上排 = 月粒度下写年份、日 / 周粒度下写月份；
-                下排 = 日粒度逐日、周粒度逐周（「M/D」）、月粒度逐月（「5月」）。今天那一列整列加蓝底。 */}
-            <div className="sticky top-0 z-10 bg-white">
-              <div className="flex border-b border-zinc-200 bg-zinc-50" style={{ height: HEADER_H }}>
-                {(scale === "month" ? model.years : model.months).map((unit) => (
-                  <div
-                    key={unit.key}
-                    className="flex items-center justify-center border-r border-zinc-200 text-xs font-semibold text-zinc-700"
-                    style={{ width: unit.days * dayWidth }}
-                  >
-                    {unit.label}
-                  </div>
-                ))}
-              </div>
-              <div className="flex border-b border-zinc-200 bg-white" style={{ height: HEADER_H }}>
-                {headerUnits === null
-                  ? Array.from({ length: model.days }, (_item, index) => {
-                      const isWeekend = weekendSet.has(index);
-                      const isToday = todayIndex === index;
-                      return (
-                        <div
-                          key={"day-" + String(index)}
-                          className={
-                            "flex items-center justify-center text-[10px] tabular-nums " +
-                            (isToday ? "bg-blue-50 font-semibold text-blue-600" : isWeekend ? "bg-zinc-50 text-zinc-400" : "text-zinc-600")
-                          }
-                          style={{ width: dayWidth }}
-                        >
-                          {String(dayOfMonth(shiftDays(model.rangeStart, index)))}
-                        </div>
-                      );
-                    })
-                  : headerUnits.map((unit, index) => {
-                      const isToday = index === todayUnitIndex;
-                      return (
-                        <div
-                          key={unit.key}
-                          className={
-                            "flex items-center justify-center border-r border-zinc-200 text-[10px] tabular-nums " +
-                            (isToday ? "bg-blue-50 font-semibold text-blue-600" : "text-zinc-600")
-                          }
-                          style={{ width: unit.days * dayWidth }}
-                        >
-                          {unit.label}
-                        </div>
-                      );
-                    })}
-              </div>
+                className="absolute -right-2 top-0 z-30 h-full w-4 cursor-col-resize touch-none"
+                title="拖动移动分隔线（左表被时间轴盖住多少），双击复位"
+                onPointerDown={beginSplit}
+                onPointerMove={moveSplit}
+                onPointerUp={endSplit}
+                onPointerCancel={endSplit}
+                onDoubleClick={() => {
+                  setLeftWidth(LEFT_W_DEFAULT);
+                }}
+                onMouseEnter={() => {
+                  setSplitHover(true);
+                }}
+                onMouseLeave={() => {
+                  setSplitHover(false);
+                }}
+              >
+                <span
+                  className={"absolute inset-y-0 left-2 w-[2px] " + (splitHover || splitActive ? "bg-blue-500" : "bg-transparent")}
+                  aria-hidden="true"
+                />
+              </span>
             </div>
 
-            {/* 网格随粒度：竖线 = 日粒度逐日 / 周粒度逐周（月粒度交给月线），周末底纹只在日粒度（周 / 月粒度太密），
-                月线一直有、年线只在月粒度 —— 条 / 今天线不受影响，仍按天精确落点。 */}
-            <div className="relative" style={scale === "month" ? undefined : dayLineStyle(scale === "week" ? dayWidth * 7 : dayWidth)}>
-              {scale !== "day"
-                ? null
-                : model.weekends.map((index) => (
-                    <span
-                      key={"weekend-" + String(index)}
-                      className="absolute inset-y-0 bg-zinc-50"
-                      style={{ left: index * dayWidth, width: dayWidth, ...dayLineStyle(dayWidth) }}
-                      aria-hidden="true"
-                    />
+            <div className="relative" style={{ width: totalWidth }}>
+              {/* 表头两排（官方 timelineHeader.scales）：上排 = 月粒度下写年份、日 / 周粒度下写月份；
+                  下排 = 日粒度逐日、周粒度逐周（「M/D」）、月粒度逐月（「5月」）。今天那一列整列加蓝底。 */}
+              <div className="sticky top-0 z-10 bg-white">
+                <div className="flex border-b border-zinc-200 bg-zinc-50" style={{ height: HEADER_H }}>
+                  {(scale === "month" ? model.years : model.months).map((unit) => (
+                    <div
+                      key={unit.key}
+                      className="flex items-center justify-center border-r border-zinc-200 text-xs font-semibold text-zinc-700"
+                      style={{ width: unit.days * dayWidth }}
+                    >
+                      {unit.label}
+                    </div>
                   ))}
-              {scale === "month"
-                ? null
-                : model.weekStarts.map((index) => (
-                    <span
-                      key={"week-" + String(index)}
-                      className={"absolute inset-y-0 border-l " + (scale === "week" ? "border-zinc-300" : "border-zinc-200")}
-                      style={{ left: index * dayWidth }}
-                      aria-hidden="true"
-                    />
-                  ))}
-              {model.monthStarts.map((index) => (
-                <span
-                  key={"month-line-" + String(index)}
-                  className="absolute inset-y-0 border-l border-zinc-300"
-                  style={{ left: index * dayWidth }}
-                  aria-hidden="true"
-                />
-              ))}
-              {scale !== "month"
-                ? null
-                : model.yearStarts.map((index) => (
-                    <span
-                      key={"year-line-" + String(index)}
-                      className="absolute inset-y-0 border-l border-zinc-400"
-                      style={{ left: index * dayWidth }}
-                      aria-hidden="true"
-                    />
-                  ))}
-              {model.rows.map((row) => {
-                const isHovered = hovered === row.key;
-                return (
-                  <div
-                    key={row.key}
-                    onMouseEnter={() => {
-                      setHovered(row.key);
-                    }}
-                    onMouseLeave={() => {
-                      setHovered(null);
-                    }}
-                    onClick={clearSelection}
-                    className={"relative border-b border-zinc-100 " + (isHovered ? "bg-zinc-50/70" : "")}
-                    style={{ height: ROW_H }}
-                  >
-                    {row.kind === "group" ? renderGroupBar(row.group) : renderTaskBar(row.bar)}
-                  </div>
-                );
-              })}
-              {todayLeft === null ? null : (
-                <span
-                  className="pointer-events-none absolute inset-y-0 border-l border-dashed border-blue-500"
-                  style={{ left: todayLeft }}
-                  aria-hidden="true"
-                />
-              )}
+                </div>
+                <div className="flex border-b border-zinc-200 bg-white" style={{ height: HEADER_H }}>
+                  {headerUnits === null
+                    ? Array.from({ length: model.days }, (_item, index) => {
+                        const isWeekend = weekendSet.has(index);
+                        const isToday = todayIndex === index;
+                        return (
+                          <div
+                            key={"day-" + String(index)}
+                            className={
+                              "flex items-center justify-center text-[10px] tabular-nums " +
+                              (isToday ? "bg-blue-50 font-semibold text-blue-600" : isWeekend ? "bg-zinc-50 text-zinc-400" : "text-zinc-600")
+                            }
+                            style={{ width: dayWidth }}
+                          >
+                            {String(dayOfMonth(shiftDays(model.rangeStart, index)))}
+                          </div>
+                        );
+                      })
+                    : headerUnits.map((unit, index) => {
+                        const isToday = index === todayUnitIndex;
+                        return (
+                          <div
+                            key={unit.key}
+                            className={
+                              "flex items-center justify-center border-r border-zinc-200 text-[10px] tabular-nums " +
+                              (isToday ? "bg-blue-50 font-semibold text-blue-600" : "text-zinc-600")
+                            }
+                            style={{ width: unit.days * dayWidth }}
+                          >
+                            {unit.label}
+                          </div>
+                        );
+                      })}
+                </div>
+              </div>
+
+              {/* 网格随粒度：竖线 = 日粒度逐日 / 周粒度逐周（月粒度交给月线），周末底纹只在日粒度（周 / 月粒度太密），
+                  月线一直有、年线只在月粒度 —— 条 / 今天线不受影响，仍按天精确落点。 */}
+              <div className="relative" style={scale === "month" ? undefined : dayLineStyle(scale === "week" ? dayWidth * 7 : dayWidth)}>
+                {scale !== "day"
+                  ? null
+                  : model.weekends.map((index) => (
+                      <span
+                        key={"weekend-" + String(index)}
+                        className="absolute inset-y-0 bg-zinc-50"
+                        style={{ left: index * dayWidth, width: dayWidth, ...dayLineStyle(dayWidth) }}
+                        aria-hidden="true"
+                      />
+                    ))}
+                {scale === "month"
+                  ? null
+                  : model.weekStarts.map((index) => (
+                      <span
+                        key={"week-" + String(index)}
+                        className={"absolute inset-y-0 border-l " + (scale === "week" ? "border-zinc-300" : "border-zinc-200")}
+                        style={{ left: index * dayWidth }}
+                        aria-hidden="true"
+                      />
+                    ))}
+                {model.monthStarts.map((index) => (
+                  <span
+                    key={"month-line-" + String(index)}
+                    className="absolute inset-y-0 border-l border-zinc-300"
+                    style={{ left: index * dayWidth }}
+                    aria-hidden="true"
+                  />
+                ))}
+                {scale !== "month"
+                  ? null
+                  : model.yearStarts.map((index) => (
+                      <span
+                        key={"year-line-" + String(index)}
+                        className="absolute inset-y-0 border-l border-zinc-400"
+                        style={{ left: index * dayWidth }}
+                        aria-hidden="true"
+                      />
+                    ))}
+                {model.rows.map((row) => {
+                  const isHovered = hovered === row.key;
+                  return (
+                    <div
+                      key={row.key}
+                      onMouseEnter={() => {
+                        setHovered(row.key);
+                      }}
+                      onMouseLeave={() => {
+                        setHovered(null);
+                      }}
+                      onClick={clearSelection}
+                      className={"relative border-b border-zinc-100 " + (isHovered ? "bg-zinc-50/70" : "")}
+                      style={{ height: ROW_H }}
+                    >
+                      {row.kind === "group" ? renderGroupBar(row.group) : renderTaskBar(row.bar)}
+                    </div>
+                  );
+                })}
+                {todayLeft === null ? null : (
+                  <span
+                    className="pointer-events-none absolute inset-y-0 border-l border-dashed border-blue-500"
+                    style={{ left: todayLeft }}
+                    aria-hidden="true"
+                  />
+                )}
+              </div>
             </div>
           </div>
         </div>
+      {vBar === null ? null : (
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-40 w-3">
+          <div
+            role="scrollbar"
+            aria-orientation="vertical"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={vBar.progress}
+            onPointerDown={(event) => {
+              beginScrollbarDrag(event, "vertical", vBar.size, scrollRef.current === null ? 0 : scrollRef.current.clientHeight);
+            }}
+            style={{ height: vBar.size, top: BAR_TRACK_INSET + vBar.offset }}
+            className={
+              "pointer-events-auto absolute left-1/2 w-1.5 -translate-x-1/2 cursor-grab rounded-full bg-zinc-400/70 transition-opacity duration-200 hover:bg-zinc-500 active:cursor-grabbing active:bg-zinc-500 " +
+              (barActive ? "opacity-100" : "opacity-0 hover:opacity-100")
+            }
+          />
+        </div>
+      )}
+      {/* 横向滑块：fixed 在整个窗口底部（业务口径「要固定在全局 不然不方便」）——页面 / 卡片怎么滚都够得着；轨道宽按窗口可视宽算 */}
+      {hBar === null ? null : (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 h-3">
+          <div
+            role="scrollbar"
+            aria-orientation="horizontal"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={hBar.progress}
+            onPointerDown={(event) => {
+              beginScrollbarDrag(event, "horizontal", hBar.size, bottomBarTrack());
+            }}
+            style={{ width: hBar.size, left: BAR_TRACK_INSET + hBar.offset }}
+            className="pointer-events-auto absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-zinc-400/70 opacity-60 transition-opacity duration-200 hover:bg-zinc-500 hover:opacity-100 active:cursor-grabbing active:bg-zinc-500"
+          />
+        </div>
+      )}
       </div>
     </div>
   );
