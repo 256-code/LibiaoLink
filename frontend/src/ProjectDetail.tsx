@@ -111,6 +111,8 @@ export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdi
    * 原型阶段存浏览器内存（与任务覆盖表同一层），换项目 / 刷新即重置 —— 正式版由后端落库（见 `前端功能需求.md` §3.8 A19）。
    */
   const [taskOrder, setTaskOrder] = useState<string[]>([]);
+  /** 任务表行内删除（Push 141，原型内存态：只从项目列表移除，刷新 / 换项目即复位 —— 正式版走任务删除接口，见 `前端功能需求.md` §3.8 A25）。 */
+  const [deletedTaskIds, setDeletedTaskIds] = useState<string[]>([]);
 
   /** 原型阶段只有印度项目（`inmu-0010`）带示例任务数据；其余项目为空列表（正式版按项目取数）。 */
   const baseTasks = tasksForProject(project?.id ?? "");
@@ -121,8 +123,9 @@ export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdi
     setProgressOverrides({});
     setTaskEdits({});
     setTaskOrder([]);
+    setDeletedTaskIds([]);
   }, [project?.id]);
-  const projectTasks = [...baseTasks, ...addedTasks];
+  const projectTasks = [...baseTasks, ...addedTasks].filter((task) => !deletedTaskIds.includes(task.id));
 
   /**
    * 看板顺序（Push 105）：排过的按 `taskOrder` 走，没排过的（新加的任务等）接在后面、保持原有先后（稳定排序）。
@@ -161,6 +164,11 @@ export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdi
    * 点四格进度条：进度 + 联动状态一起写（0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生，Push 65；
    * Push 67 修正：已过预计完成日期的任务点进度条保持「已延期」，不会被改成「待开始 / 进行中」）。
    */
+  /** 任务表行内删除（Push 141）：把任务从本项目列表移除（原型存内存，换项目 / 刷新复位；正式版见 `前端功能需求.md` §3.8 A25）。 */
+  const handleDeleteTask = (taskId: string) => {
+    setDeletedTaskIds((previous) => (previous.includes(taskId) ? previous : [...previous, taskId]));
+  };
+
   const handleSetProgress = (taskId: string, progress: number) => {
     const current = tasks.find((task) => task.id === taskId);
     const nextStatus = statusOverrideAfterProgress(progress, current !== undefined && isPastDue(current));
@@ -425,7 +433,7 @@ export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdi
           {activeView === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} focusMode={focusMode} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focusMode} />
             </>
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
