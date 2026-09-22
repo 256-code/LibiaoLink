@@ -15,7 +15,8 @@ export type TaskRow = typeof tasks.$inferSelect;
 
 export interface TaskListRow {
   task: TaskRow;
-  ownerName: string | null;
+  /** 负责人姓名数组（A23：与 owner_ids 同下标；「待分配」= 空数组；缺失用户该位为 null）。 */
+  ownerNames: (string | null)[] | null;
   changeSummary: string | null;
 }
 
@@ -34,7 +35,7 @@ export interface TaskFileBriefRow {
 
 export interface TaskProjectRow {
   id: string;
-  managerId: string;
+  managerIds: string[];
   stageKey: string;
   status: string;
 }
@@ -52,8 +53,8 @@ export interface TaskInsertInput {
   nodeId: string | null;
   title: string;
   titleEn: string | null;
-  /** null = 「待分配」（A18 · Push 124）。 */
-  ownerId: string | null;
+  /** 空数组 = 「待分配」（A18 · Push 124 / A23 · Push 136）。 */
+  ownerIds: string[];
   /** 组内位次（A19 / A20：插入位置由 service 计算，本层落列）。 */
   sortIndex: number;
   plannedStart: string | null;
@@ -66,7 +67,7 @@ export interface TaskInsertInput {
 }
 
 export interface TaskUpdatePatch {
-  ownerId?: string | null;
+  ownerIds?: string[];
   status?: string;
   progress?: string;
   sortIndex?: number;
@@ -98,6 +99,16 @@ export interface TaskEventInput {
   beforeValue: string | null;
   afterValue: string | null;
 }
+
+/**
+ * 负责人姓名数组（A23 · Push 136）：与 owner_ids 同下标一一对应；
+ * 展开数组按 ordinality left join users（缺失 / 停用用户该位为 null），顺序 = owner_ids 顺序。
+ */
+const OWNER_NAMES_SQL = sql<(string | null)[] | null>`(
+  select array_agg(u.display_name order by o.ord)
+  from unnest(${tasks.ownerIds}) with ordinality as o(uid, ord)
+  left join ${users} u on u.id = o.uid
+)`;
 
 const SORT_COLUMNS = {
   plannedStart: tasks.plannedStart,
@@ -137,9 +148,8 @@ export class TaskRepository {
   ): Promise<{ items: TaskListRow[]; total: number }> {
     const where = and(...taskConditions(projectId, filter, today));
     const items = await client
-      .select({ task: tasks, ownerName: users.displayName, changeSummary: changeRequests.reason })
+      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeSummary: changeRequests.reason })
       .from(tasks)
-      .leftJoin(users, eq(users.id, tasks.ownerId))
       .leftJoin(changeRequests, eq(changeRequests.id, tasks.changeRef))
       .where(where)
       .orderBy(...taskOrderBy(sorts))
@@ -151,9 +161,8 @@ export class TaskRepository {
 
   async findListRowById(taskId: string, projectId: string, client: DbClient = this.database.db): Promise<TaskListRow | null> {
     const rows = await client
-      .select({ task: tasks, ownerName: users.displayName, changeSummary: changeRequests.reason })
+      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeSummary: changeRequests.reason })
       .from(tasks)
-      .leftJoin(users, eq(users.id, tasks.ownerId))
       .leftJoin(changeRequests, eq(changeRequests.id, tasks.changeRef))
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)))
       .limit(1);
@@ -193,7 +202,7 @@ export class TaskRepository {
   /** 项目读（软删过滤）：任务读写都要先过项目可见性 / 归档写保护。 */
   async findProject(projectId: string, client: DbClient = this.database.db): Promise<TaskProjectRow | null> {
     const rows = await client
-      .select({ id: projects.id, managerId: projects.managerId, stageKey: projects.stageKey, status: projects.status })
+      .select({ id: projects.id, managerIds: projects.managerIds, stageKey: projects.stageKey, status: projects.status })
       .from(projects)
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);
@@ -289,7 +298,7 @@ export class TaskRepository {
         nodeId: input.nodeId,
         title: input.title,
         titleEn: input.titleEn,
-        ownerId: input.ownerId,
+        ownerIds: input.ownerIds,
         sortIndex: input.sortIndex,
         status: "pending",
         progress: "0",
@@ -396,7 +405,7 @@ export class TaskRepository {
 function taskConditions(projectId: string, filter: TaskListFilter, today: string): SQL[] {
   const conditions: SQL[] = [eq(tasks.projectId, projectId)];
   if (filter.stageKey !== null) conditions.push(eq(tasks.stageKey, filter.stageKey));
-  if (filter.ownerId !== null) conditions.push(eq(tasks.ownerId, filter.ownerId));
+  if (filter.ownerId !== null) conditions.push(sql`${tasks.ownerIds} @> array[${filter.ownerId}]::uuid[]`);
   if (filter.keyword !== null) {
     const pattern = "%" + filter.keyword + "%";
     conditions.push(or(ilike(tasks.title, pattern), ilike(tasks.titleEn, pattern)) as SQL);

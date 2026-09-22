@@ -18,7 +18,7 @@ export interface paths {
                     "filter[region]"?: string;
                     /** @description 项目类型（多值逗号分隔） */
                     "filter[projectType]"?: string;
-                    /** @description 项目经理（多值逗号分隔） */
+                    /** @description 项目经理（多值逗号分隔，UUID）；命中口径（A22 · Push 136）= 项目挂的任意一位经理命中即命中 */
                     "filter[managerId]"?: string;
                     /** @description 阶段 key（多值逗号分隔） */
                     "filter[stageKey]"?: string;
@@ -129,7 +129,7 @@ export interface paths {
                     "filter[region]"?: string;
                     /** @description 项目类型（多值逗号分隔） */
                     "filter[projectType]"?: string;
-                    /** @description 项目经理（多值逗号分隔） */
+                    /** @description 项目经理（多值逗号分隔，UUID）；命中口径（A22 · Push 136）= 项目挂的任意一位经理命中即命中 */
                     "filter[managerId]"?: string;
                     /** @description 阶段 key（多值逗号分隔） */
                     "filter[stageKey]"?: string;
@@ -560,8 +560,8 @@ export interface paths {
                 query?: {
                     /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
                     stage?: components["schemas"]["StageKey"];
-                    /** @description UUID（主键与关联 ID） */
-                    "filter[ownerId]"?: components["schemas"]["Uuid"];
+                    /** @description 任务负责人（单个 UUID）；命中口径（A23 · Push 136）= 该任务挂的任意一位负责人命中即命中 */
+                    "filter[ownerId]"?: components["schemas"]["Uuid"] & unknown;
                     /** @description 展示态（多值逗号分隔）：pending / active / done / overdue / early_done */
                     "filter[status]"?: string;
                     /** @description 关键字（中英文任务描述） */
@@ -1610,13 +1610,13 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位） */
+                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） */
                     objectType?: components["schemas"]["AuditObjectType"];
                     /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
                     objectId?: string;
                     /** @description 操作人（按人检索 —— h7 验收项②） */
                     actorId?: components["schemas"]["Uuid"] & unknown;
-                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝 */
+                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / deny 越权拒绝 */
                     action?: components["schemas"]["AuditAction"];
                     /** @description result=denied 即越权尝试（C7-03） */
                     result?: components["schemas"]["AuditResult"] & unknown;
@@ -3412,6 +3412,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 预览状态与短时签名地址（D2：异步产物；未就绪 / 失败为 200 语义，not_ready 幂等补投，失败降级「请下载」） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 指定历史版本（A4-06）；缺省 = 当前版本；不属于该文件 / 不存在 → 404 */
+                    versionId?: components["schemas"]["Uuid"] & unknown;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 预览状态（ready / not_ready / failed） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FilePreviewResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/change-requests": {
         parameters: {
             query?: never;
@@ -4216,10 +4267,10 @@ export interface components {
             traceId: string;
         };
         /**
-         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / deny 越权拒绝
          * @enum {string}
          */
-        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "deny";
+        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "preview" | "deny";
         /** @description 字段级修改条目（C7-02） */
         AuditChange: {
             /** @description 字段名（契约口径 camelCase） */
@@ -4265,10 +4316,10 @@ export interface components {
             total: number;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
@@ -4651,6 +4702,21 @@ export interface components {
             limit: number;
             total: number;
         };
+        /** @description 文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed） */
+        FilePreviewResponse: {
+            fileId: components["schemas"]["Uuid"];
+            versionId: components["schemas"]["Uuid"] & (string | null);
+            status: components["schemas"]["PreviewStatus"];
+            target: components["schemas"]["PreviewTarget"];
+            /** @description 短时签名预览地址（仅 ready；未就绪 / 失败为空；对象存储禁止匿名读取） */
+            url: string | null;
+            expiresAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 产物对应的转换管线版本（服务端配置下发，如 PREVIEW_PIPELINE_VERSION；客户端不解析，用于缓存失效 / 排障）；未生成过为空 */
+            pipelineVersion: string | null;
+            /** @description 失败原因（仅 failed，最长 500 字；D2-05 记录原因，不影响下载） */
+            reason: string | null;
+            generatedAt: components["schemas"]["DateTime"] & (string | null);
+        };
         /** @description 彻底删除（仅管理员；对象与元数据一并清理，操作留痕） */
         FilePurgeBody: {
             version: components["schemas"]["Version"];
@@ -4771,6 +4837,16 @@ export interface components {
             permissions: components["schemas"]["ActorPermissions"];
         };
         /**
+         * @description 预览状态：ready 产物就绪（附短时签名 URL） / not_ready 尚未生成（服务端幂等补投生成任务、按三元组去重，前端轮询至 ready / failed —— 不引入请求约定） / failed 转换失败（记原因并降级「请下载」）
+         * @enum {string}
+         */
+        PreviewStatus: "ready" | "not_ready" | "failed";
+        /**
+         * @description 已就绪产物的目标（渲染通道）；未就绪 / 失败为空
+         * @enum {string|null}
+         */
+        PreviewTarget: "pdf" | "image" | "structured" | null;
+        /**
          * @description 紧急重要度四象限字典
          * @enum {string|null}
          */
@@ -4795,9 +4871,10 @@ export interface components {
             region: string;
             /** @description 项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码） */
             projectType: string;
-            managerId: components["schemas"]["Uuid"];
-            /** @description 项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」） */
-            managerName: string | null;
+            /** @description 项目经理（A22 · Push 136：一位也可、可多位）：至少一位、数组顺序 = 展示顺序（前端按「、」连接展示）；与 managerNames 同下标一一对应 */
+            managerIds: components["schemas"]["Uuid"][];
+            /** @description 项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」） */
+            managerNames: (string | null)[];
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
             description: string | null;
@@ -4824,7 +4901,8 @@ export interface components {
              * @default 未分类
              */
             projectType: string;
-            managerId: components["schemas"]["Uuid"];
+            /** @description 项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序；判空失败返回 400 VALIDATION_FAILED */
+            managerIds: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
             description?: string;
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
@@ -4839,6 +4917,7 @@ export interface components {
             projectType: {
                 [key: string]: number;
             };
+            /** @description 项目经理维度计数：键 = users.id；一个项目挂多位经理时**每位各计一次**（A22 · Push 136） */
             managerId: {
                 [key: string]: number;
             };
@@ -4959,7 +5038,8 @@ export interface components {
             customer?: string | null;
             region?: string;
             projectType?: string;
-            managerId?: components["schemas"]["Uuid"];
+            /** @description 项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序 */
+            managerIds?: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
             status?: components["schemas"]["ProjectStatus"];
             description?: string | null;
@@ -5007,7 +5087,8 @@ export interface components {
             nodeId: components["schemas"]["Uuid"] & (string | null);
             title: string;
             titleEn: string | null;
-            ownerId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应 */
+            ownerIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["TaskBaseStatus"];
             displayStatus: components["schemas"]["TaskDisplayStatus"];
             progress: components["schemas"]["TaskProgress"];
@@ -5047,11 +5128,8 @@ export interface components {
             title: string;
             titleEn?: string | null;
             taskNodeId?: components["schemas"]["Uuid"] & unknown;
-            /**
-             * Format: uuid
-             * @description 任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 124：不兜底项目经理）
-             */
-            ownerId?: string | null;
+            /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理（projects.manager_ids）兜底；显式 [] = 「待分配」（不兜底项目经理，沿用 A18）；数组顺序 = 展示顺序 */
+            ownerIds?: components["schemas"]["Uuid"][];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
             estimatedDays?: number | null;
@@ -5070,7 +5148,8 @@ export interface components {
              * @default true
              */
             skipExisting: boolean;
-            ownerId?: components["schemas"]["Uuid"] & unknown;
+            /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」 */
+            ownerIds?: components["schemas"]["Uuid"][];
         };
         TaskCreateFromTemplateResponse: {
             created: components["schemas"]["Task"][];
@@ -5082,7 +5161,8 @@ export interface components {
         };
         /** @description 任务详情（M3-01；列表 → 详情不再依赖列表随行数据） */
         TaskDetail: components["schemas"]["Task"] & {
-            ownerName: string | null;
+            /** @description 负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组 */
+            ownerNames: (string | null)[];
             changeSummary: string | null;
             files: components["schemas"]["TaskFileBrief"][];
         };
@@ -5113,7 +5193,8 @@ export interface components {
             nodeId: components["schemas"]["Uuid"] & (string | null);
             title: string;
             titleEn: string | null;
-            ownerId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应 */
+            ownerIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["TaskBaseStatus"];
             displayStatus: components["schemas"]["TaskDisplayStatus"];
             progress: components["schemas"]["TaskProgress"];
@@ -5130,8 +5211,8 @@ export interface components {
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
-            /** @description 负责人姓名（users.display_name 随行下发）；「待分配」= null */
-            ownerName: string | null;
+            /** @description 负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」） */
+            ownerNames: (string | null)[];
             /** @description 变更摘要（列表用短文本；详情用 changeRef 跳变更记录） */
             changeSummary: string | null;
             fileSummary: components["schemas"]["TaskFileSummary"];
@@ -5223,13 +5304,10 @@ export interface components {
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
-        /** @description 编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerId 显式 null = 待分配，sortIndex = 组内重排） */
+        /** @description 编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排） */
         TaskUpdateBody: {
-            /**
-             * Format: uuid
-             * @description 任务负责人（A18 · Push 124）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）
-             */
-            ownerId?: string | null;
+            /** @description 任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换、顺序 = 展示顺序 */
+            ownerIds?: components["schemas"]["Uuid"][];
             /** @description 组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
             sortIndex?: number;
             status?: components["schemas"]["TaskBaseStatus"] & unknown;

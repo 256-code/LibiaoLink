@@ -36,12 +36,14 @@ type MemberSearchListProps = {
   options: Member[];
   /** 当前选中成员 id（"" = 未选）。 */
   value: string;
+  /** 多选模式（Push 136）：已选成员 id 列表；给出时选中判定改看「在不在列表里」，`value` 只作单选回退。 */
+  selectedIds?: readonly string[];
   onPick: (member: Member) => void;
   ariaLabel: string;
 };
 
 /** 成员搜索列表（搜索框 + 选项 + 页脚）：人员下拉与任务表行内编辑共用。 */
-export function MemberSearchList({ options, value, onPick, ariaLabel }: MemberSearchListProps) {
+export function MemberSearchList({ options, value, onPick, ariaLabel, selectedIds }: MemberSearchListProps) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -111,7 +113,7 @@ export function MemberSearchList({ options, value, onPick, ariaLabel }: MemberSe
               key={member.id}
               type="button"
               role="option"
-              aria-selected={member.id === value}
+              aria-selected={selectedIds === undefined ? member.id === value : selectedIds.includes(member.id)}
               onMouseEnter={() => {
                 setActiveIndex(index);
               }}
@@ -127,7 +129,7 @@ export function MemberSearchList({ options, value, onPick, ariaLabel }: MemberSe
               <span className="truncate text-sm text-zinc-800">{member.name}</span>
               <span className="truncate text-xs text-zinc-400">{member.handle}</span>
               <span className="ml-auto shrink-0 pl-2 text-[11px] text-zinc-400">{member.role}</span>
-              {member.id === value ? (
+              {(selectedIds === undefined ? member.id === value : selectedIds.includes(member.id)) ? (
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-emerald-600">
                   <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
@@ -143,46 +145,71 @@ export function MemberSearchList({ options, value, onPick, ariaLabel }: MemberSe
   );
 }
 
-type MemberSelectProps = {
-  /** 选中的成员 id（"" = 未选）。 */
-  value: string;
-  onChange: (member: Member) => void;
+type MemberMultiSelectProps = {
+  /** 已选成员 id（有序；空数组 = 未选）。 */
+  values: string[];
+  /** 勾选 / 取消勾选后回传完整选中集（顺序 = 展示顺序）。 */
+  onChange: (memberIds: string[]) => void;
   options: Member[];
   placeholder?: string;
   ariaLabel: string;
 };
 
-/** 人员下拉（可搜索）：姓名 / 拼音 / 岗位都能搜，展示 = 姓名 + 拼音 + 岗位。 */
-export function MemberSelect({ value, onChange, options, placeholder = "选择成员", ariaLabel }: MemberSelectProps) {
+/**
+ * 人员多选下拉（Push 136）：已选成员以胶囊列出（每颗可单个 ×移除），点右侧「添加 / 继续添加」开搜索列表接着勾选。
+ * 用于「一个项目多位项目经理」「一个任务多位负责人」；与任务表行内多选 `InlineMemberMultiCell` 共用同一个搜索列表，
+ * 浮层不随勾选关闭（可以连着点好几位）。
+ */
+export function MemberMultiSelect({ values, onChange, options, placeholder = "选择成员", ariaLabel }: MemberMultiSelectProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, 286);
-  const selected = options.find((member) => member.id === value) ?? null;
+  const selected = values
+    .map((id) => options.find((member) => member.id === id))
+    .filter((member): member is Member => member !== undefined);
+  const toggle = (member: Member) => {
+    onChange(values.includes(member.id) ? values.filter((id) => id !== member.id) : [...values, member.id]);
+  };
 
   return (
     <div className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={ariaLabel}
-        onClick={() => {
-          setOpen((previous) => !previous);
-        }}
-        className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm transition hover:border-zinc-300 hover:bg-zinc-50"
-      >
-        {selected === null ? (
-          <span className="truncate text-zinc-400">{placeholder}</span>
-        ) : (
-          <>
-            <MemberAvatar member={selected} />
-            <span className="truncate font-medium text-zinc-800">{selected.name}</span>
-            <span className="truncate text-xs text-zinc-400">{selected.handle}</span>
-          </>
-        )}
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
-          <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-200 bg-white p-1.5 transition hover:border-zinc-300">
+        {selected.map((member) => (
+          <span
+            key={member.id}
+            className="inline-flex max-w-[200px] items-center gap-1.5 rounded-md bg-zinc-100 py-0.5 pl-0.5 pr-1 text-xs text-zinc-700"
+          >
+            <MemberAvatar member={member} />
+            <span className="truncate">{member.name}</span>
+            <button
+              type="button"
+              aria-label={"移除 " + member.name}
+              onClick={() => {
+                toggle(member);
+              }}
+              className="rounded p-0.5 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-600"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3 w-3">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </span>
+        ))}
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={ariaLabel}
+          onClick={() => {
+            setOpen((previous) => !previous);
+          }}
+          className="inline-flex min-w-[104px] flex-1 items-center gap-1 rounded-md px-2 py-1 text-left text-sm text-zinc-400 transition hover:bg-zinc-50"
+        >
+          {selected.length === 0 ? placeholder : "继续添加"}
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
+            <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
 
       {open && position !== null
         ? createPortal(
@@ -193,11 +220,11 @@ export function MemberSelect({ value, onChange, options, placeholder = "选择�
             >
               <MemberSearchList
                 options={options}
-                value={value}
+                value=""
+                selectedIds={values}
                 ariaLabel={ariaLabel}
                 onPick={(member) => {
-                  onChange(member);
-                  setOpen(false);
+                  toggle(member);
                 }}
               />
             </div>,

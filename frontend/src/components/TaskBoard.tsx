@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
-import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName } from "../data/members";
-import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
-import { InlineDateCell, InlineMemberCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
+import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
+import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, ownersFromMembers, ownersLabel, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
@@ -79,6 +79,17 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
   低: "bg-zinc-100 text-zinc-500",
 };
 
+/**
+ * 正常模式的紧急重要度胶囊（Push 134 收口：业务口径「紧急程度也要」）——
+ * 与状态列同一套做法：色签底色**铺满整颗胶囊**（不再套「液态玻璃」白底小框 + 内层色签），悬停再深一档。
+ * 底色取色签同色系 100 档（原标签底是 50 档，铺满整颗胶囊后 50 档几乎看不出颜色，故抬一档），字色沿用原标签。
+ */
+const PRIORITY_CAPSULE_CLASS: Record<TaskPriority, string> = {
+  高: "bg-rose-100 text-rose-600 hover:bg-rose-200/70",
+  中: "bg-amber-100 text-amber-700 hover:bg-amber-200/70",
+  低: "bg-zinc-100 text-zinc-500 hover:bg-zinc-200/70",
+};
+
 const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
   已完成: "bg-emerald-500",
   提前完成: "bg-emerald-500",
@@ -104,6 +115,41 @@ export const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
   提前完成: "bg-fuchsia-100 text-fuchsia-700",
 };
 
+/**
+ * 醒目模式（Push 134）的整行底色：业务口径「保留整行浅色，但大幅降低透明度」——
+ * 同一个状态色（图一色系）压到 **6% 不透明**（马卡龙级极淡，只隐约区分），悬停再抬一档到 12% 留住「这一行可点」的手感。
+ */
+const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
+  已延期: "bg-rose-500/[0.06] hover:bg-rose-500/[0.12]",
+  进行中: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
+  已完成: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
+  待开始: "bg-sky-500/[0.06] hover:bg-sky-500/[0.12]",
+  提前完成: "bg-fuchsia-500/[0.06] hover:bg-fuchsia-500/[0.12]",
+};
+
+/**
+ * 正常模式的状态列胶囊（Push 134 收口：业务口径「这个颜色填满胶囊」）——
+ * 色签底色铺满整颗胶囊（不再套「液态玻璃」白底小框、也不留内层白边），悬停再深一档。
+ */
+const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
+  已延期: "bg-rose-100 text-rose-700 hover:bg-rose-200/70",
+  进行中: "bg-amber-100 text-amber-800 hover:bg-amber-200/70",
+  已完成: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200/70",
+  待开始: "bg-sky-100 text-sky-700 hover:bg-sky-200/70",
+  提前完成: "bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200/70",
+};
+
+/**
+ * 醒目模式下的状态字色（Push 134）：整行已经有状态色了，状态列不再套白底小框 / 色签底色，只留这一档深色字。
+ */
+const STATUS_TAG_TEXT_CLASS: Record<TaskStatus, string> = {
+  已延期: "text-rose-700",
+  进行中: "text-amber-800",
+  已完成: "text-emerald-700",
+  待开始: "text-sky-700",
+  提前完成: "text-fuchsia-700",
+};
+
 /** 任务状态可选项（顺序对齐业务截图：已延期 / 进行中 / 已完成 / 待开始 / 提前完成）。 */
 const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", "待开始", "提前完成"] as TaskStatus[]).map((status) => ({
   value: status,
@@ -111,7 +157,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "owner" | "ownerEn" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "owners" | "ownersEn" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -133,18 +179,23 @@ type TaskBoardProps = {
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一条 / 一批并指定插入位置（Push 113：点「＋ 添加」先弹位置浮层，选完才加进项目）。不传 = 点一条直接加到该阶段最后。 */
   onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
-  /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
-  manager?: string;
-  /** 项目经理 id（项目级字段：编辑弹窗「项目经理」下拉的当前选中项）。 */
-  managerId?: string;
+  /** 项目经理展示文本（项目级字段：取项目卡片上的名单，多位按「、」连接；不传时回落常量占位）。 */
+  managers?: string;
+  /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
+  managerIds?: string[];
   /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
   /** 表格行内编辑：只改任务字段（负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
-  /** 表格行内改「项目经理」：项目级字段，回写项目（不传 = 该列仍是只读文本）。 */
-  onChangeManager?: (managerId: string) => void;
+  /** 表格行内改「项目经理」：项目级字段（多位，Push 136），回写项目（不传 = 该列仍是只读文本）。 */
+  onChangeManagers?: (managerIds: string[]) => void;
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
   viewStage?: string;
+  /**
+   * 醒目模式（Push 134，业务口径「启用后项目总览的卡片整行都变成图一状态的颜色」）：
+   * 打开后每张任务卡片整行铺该任务状态的底色（图一色签同款），关掉 = 保持现状（白底行）。
+   */
+  focusMode?: boolean;
 };
 
 function shortenFileName(name: string): string {
@@ -167,13 +218,18 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manager, managerId, onChangeManager, onPatch }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onEdit: () => void; manager: string; managerId: string; onChangeManager?: (managerId: string) => void; onPatch?: (patch: TaskPatch) => void }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, managers, managerIds, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onEdit: () => void; managers: string; managerIds: string[]; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期列）。 */
   const late = lateDeliveryLabel(task);
   const status = taskStatus(task);
   const dotClass = STATUS_DOT_CLASS[status];
-  const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
-  const ownerMember = memberByName(task.owner);
+  /** 负责人展示（多位按「、」连接，Push 136）。 */
+  const fullOwners = ownersLabel(task.owners, task.ownersEn);
+  /** 人员下拉的选中项：按姓名回查目录 id（目录外的名字取不到 id、不进勾选态）。 */
+  const ownerIds = task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== "");
+  /** 人员目录 id → 成员（目录里查不到的 id 直接丢掉）。 */
+  const membersFromIds = (ids: readonly string[]): Member[] =>
+    ids.map((id) => MEMBER_DIRECTORY.find((item) => item.id === id)).filter((item): item is Member => item !== undefined);
   const startIso = isoFromCnDate(task.startDate);
   const dueIso = isoFromCnDate(task.dueDate);
   const doneIso = isoFromCnDate(task.doneDate);
@@ -215,44 +271,56 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
       </div>
     ),
     manager:
-      onChangeManager === undefined ? (
-        <span className="truncate text-xs text-zinc-600">{manager}</span>
+      onChangeManagers === undefined ? (
+        <span className="truncate text-xs text-zinc-600" title={managers}>{managers}</span>
       ) : (
-        <InlineMemberCell
-          value={managerId}
+        <InlineMemberMultiCell
+          values={managerIds}
           options={PROJECT_MANAGERS}
           ariaLabel="修改项目经理"
-          display={<span className="text-zinc-600">{manager}</span>}
+          display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
-            onChangeManager(member.id);
+            if (managerIds.includes(member.id)) {
+              // 至少留一位（对齐契约 projects.manager_ids 非空）：取消最后一位时不生效
+              if (managerIds.length <= 1) {
+                return;
+              }
+              onChangeManagers(managerIds.filter((id) => id !== member.id));
+              return;
+            }
+            onChangeManagers([...managerIds, member.id]);
           }}
         />
       ),
     owner:
       onPatch === undefined ? (
-        task.owner === "" ? (
+        task.owners.length === 0 ? (
           <span className="text-xs text-zinc-300">待分配</span>
         ) : (
-          <span className="truncate text-xs text-zinc-600" title={fullOwner}>
-            {task.owner}
+          <span className="truncate text-xs text-zinc-600" title={fullOwners}>
+            {task.owners.join("、")}
           </span>
         )
       ) : (
-        <InlineMemberCell
-          value={ownerMember?.id ?? ""}
+        <InlineMemberMultiCell
+          values={ownerIds}
           options={MEMBER_DIRECTORY}
           ariaLabel="修改任务负责人"
           display={
-            task.owner === "" ? (
+            task.owners.length === 0 ? (
               <span className="text-zinc-300">待分配</span>
             ) : (
-              <span className="text-zinc-600" title={fullOwner}>
-                {task.owner}
+              <span className="text-zinc-600" title={fullOwners}>
+                {task.owners.join("、")}
               </span>
             )
           }
           onPick={(member) => {
-            onPatch({ owner: member.name, ownerEn: member.handle });
+            const next = ownerIds.includes(member.id)
+              ? ownerIds.filter((id) => id !== member.id)
+              : [...ownerIds, member.id];
+            // 全部取消 = 「待分配」（合法中间状态，A18）；数组顺序 = 勾选顺序
+            onPatch({ ...ownersFromMembers(membersFromIds(next)) });
           }}
         />
       ),
@@ -267,7 +335,15 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
           value={status}
           options={STATUS_OPTIONS}
           ariaLabel="修改任务状态"
-          display={<span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{status}</span>}
+          // Push 134：状态列改成裸框胶囊 —— 正常模式 = 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗），
+          // 醒目模式 = 整行已有状态色，只留深色字（悬停给一点淡淡的可点提示）。
+          bare
+          triggerClassName={
+            focusMode
+              ? STATUS_TAG_TEXT_CLASS[status] + " px-1.5 py-[3px] text-xs font-semibold hover:bg-zinc-900/[0.04]"
+              : STATUS_CAPSULE_CLASS[status] + " px-3 py-1.5 text-[11px] font-medium"
+          }
+          display={<span className="truncate">{status}</span>}
           onPick={(value) => {
             const next = value as TaskStatus;
             // 状态与四格进度条联动（Push 65）：选 已完成 / 提前完成 → 四格全亮；进行中 → 至少亮一格；待开始 → 清零；已延期 → 保持当前格数
@@ -291,11 +367,10 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
             value={task.priority}
             options={PRIORITY_OPTIONS}
             ariaLabel="修改紧急重要度"
-            display={
-              <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
-                {task.priority}
-              </span>
-            }
+            // Push 134：紧急重要度同状态列 —— 裸框胶囊，色签底色**填满整颗胶囊**（业务口径「紧急程度也要」）
+            bare
+            triggerClassName={PRIORITY_CAPSULE_CLASS[task.priority] + " px-3 py-1.5 text-[11px] font-medium"}
+            display={<span className="truncate">{task.priority}</span>}
             onPick={(value) => {
               onPatch({ priority: value as TaskPriority });
             }}
@@ -468,7 +543,12 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
       }}
       className={
         "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
-        (selected ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]" : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
+        // 醒目模式（Push 134）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
+        (focusMode
+          ? STATUS_ROW_CLASS[status] + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
+          : selected
+            ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]"
+            : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
       }
       style={{ gridTemplateColumns: columns.map((column) => column.width).join(" ") }}
     >
@@ -521,7 +601,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, manager, managerId, onSubmitTaskEdit, onPatchTask, onChangeManager }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onChangeManagers, focusMode }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -730,6 +810,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                       <TaskRow
                         key={task.id}
                         task={task}
+                        focusMode={focusMode === true}
                         columns={columns}
                         selected={selectedTask !== null && selectedTask.id === task.id}
                         onSelect={() => setSelectedTask(task)}
@@ -737,9 +818,9 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                         onEdit={() => {
                           setSelectedTask(task);
                         }}
-                        manager={manager ?? PROJECT_MANAGER}
-                        managerId={managerId ?? ""}
-                        onChangeManager={onChangeManager}
+                        managers={managers ?? PROJECT_MANAGER}
+                        managerIds={managerIds ?? []}
+                        onChangeManagers={onChangeManagers}
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                       />
                     ))}
@@ -765,8 +846,8 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       </div>
       <TaskDrawer
         task={drawerTask}
-        manager={manager ?? PROJECT_MANAGER}
-        managerId={managerId ?? ""}
+        managers={managers ?? PROJECT_MANAGER}
+        managerIds={managerIds ?? []}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
         onPatch={onPatchTask}

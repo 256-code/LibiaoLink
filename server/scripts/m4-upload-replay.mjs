@@ -222,7 +222,7 @@ try {
     code: "M4-" + stamp,
     name: "m4-01 回放项目（上传管道）",
     projectType: "default",
-    managerId: adminId,
+    managerIds: [adminId],
   });
   check("P1", "建回放项目（导入即快照，为 file 提供 projectId）", "201 + 项目可见", created.status + " " + short({ id: created.body?.id, code: created.body?.code }, 120), created.status === 201);
   projectA = created.body.id;
@@ -232,7 +232,7 @@ try {
     code: "M4B-" + stamp,
     name: "m4-01 回放项目（跨项目挂接反例）",
     projectType: "default",
-    managerId: adminId,
+    managerIds: [adminId],
   });
   check("P2", "建第二个项目（跨项目 nodeId 反例用）", "201", createdB.status, createdB.status === 201);
   projectB = createdB.body.id;

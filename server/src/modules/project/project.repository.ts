@@ -10,10 +10,10 @@ import type { ProjectFilter, ProjectSort } from "./project.query.js";
 
 export type ProjectRow = typeof projects.$inferSelect;
 
-/** 列表 / 详情视图行：项目字段 + managerName（A2：随行下发；停用 / 离职仍返回姓名，取不到为 null）。 */
+/** 列表 / 详情视图行：项目字段 + managerNames（A2：随行下发，与 managerIds 同下标；停用 / 离职仍返回姓名，取不到为 null）。 */
 export interface ProjectViewRow {
   project: ProjectRow;
-  managerName: string | null;
+  managerNames: (string | null)[] | null;
 }
 
 export interface ProjectInsertInput {
@@ -22,7 +22,7 @@ export interface ProjectInsertInput {
   customer: string | null;
   region: string;
   projectType: string;
-  managerId: string;
+  managerIds: string[];
   stageKey: string;
   description: string | null;
 }
@@ -33,7 +33,7 @@ export interface ProjectUpdateInput {
   customer?: string | null;
   region?: string;
   projectType?: string;
-  managerId?: string;
+  managerIds?: string[];
   stageKey?: string;
   status?: string;
   description?: string | null;
@@ -47,6 +47,16 @@ export interface ProjectFacetsResult {
   stageKey: Record<string, number>;
   status: Record<string, number>;
 }
+
+/**
+ * 项目经理姓名数组（A2 / A22 · Push 136）：与 manager_ids 同下标一一对应；
+ * 展开数组按 ordinality left join users（缺失 / 停用用户该位为 null），顺序 = manager_ids 顺序。
+ */
+const MANAGER_NAMES_SQL = sql<(string | null)[] | null>`(
+  select array_agg(u.display_name order by m.ord)
+  from unnest(${projects.managerIds}) with ordinality as m(uid, ord)
+  left join ${users} u on u.id = m.uid
+)`;
 
 const SORT_COLUMNS = {
   updatedAt: projects.updatedAt,
@@ -71,9 +81,8 @@ export class ProjectRepository {
     }
     const where = and(...projectConditions(filter, scope));
     const items = await this.database.db
-      .select({ project: projects, managerName: users.displayName })
+      .select({ project: projects, managerNames: MANAGER_NAMES_SQL })
       .from(projects)
-      .leftJoin(users, eq(users.id, projects.managerId))
       .where(where)
       .orderBy(...projectOrderBy(sorts))
       .limit(limit)
@@ -86,36 +95,45 @@ export class ProjectRepository {
     if (scope.kind === "ids" && scope.ids.length === 0) {
       return { total: 0, region: {}, projectType: {}, managerId: {}, stageKey: {}, status: {} };
     }
+    const where = and(...projectConditions(filter, scope)) as SQL;
     const rows = await this.database.db
       .select({
         region: projects.region,
         projectType: projects.projectType,
-        managerId: projects.managerId,
         stageKey: projects.stageKey,
         status: projects.status,
         value: count(),
       })
       .from(projects)
-      .where(and(...projectConditions(filter, scope)))
-      .groupBy(projects.region, projects.projectType, projects.managerId, projects.stageKey, projects.status);
+      .where(where)
+      .groupBy(projects.region, projects.projectType, projects.stageKey, projects.status);
     const facets: ProjectFacetsResult = { total: 0, region: {}, projectType: {}, managerId: {}, stageKey: {}, status: {} };
     for (const row of rows) {
       const value = Number(row.value);
       facets.total += value;
       bump(facets.region, row.region, value);
       bump(facets.projectType, row.projectType, value);
-      bump(facets.managerId, row.managerId, value);
       bump(facets.stageKey, row.stageKey, value);
       bump(facets.status, row.status, value);
+    }
+    // 项目经理维度（A22 · Push 136）：数组展开后按人头聚合 —— 一个项目挂多位经理时每位各计一次。
+    const managerRows = await this.database.db.execute<{ managerId: string; value: number }>(sql`
+      select m.uid as "managerId", count(*)::int as value
+      from projects
+      cross join lateral unnest(${projects.managerIds}) as m(uid)
+      where ${where}
+      group by m.uid
+    `);
+    for (const row of managerRows.rows) {
+      bump(facets.managerId, row.managerId, Number(row.value));
     }
     return facets;
   }
 
   async findViewById(id: string): Promise<ProjectViewRow | null> {
     const rows = await this.database.db
-      .select({ project: projects, managerName: users.displayName })
+      .select({ project: projects, managerNames: MANAGER_NAMES_SQL })
       .from(projects)
-      .leftJoin(users, eq(users.id, projects.managerId))
       .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
@@ -131,7 +149,7 @@ export class ProjectRepository {
           customer: input.customer,
           region: input.region,
           projectType: input.projectType,
-          managerId: input.managerId,
+          managerIds: input.managerIds,
           stageKey: input.stageKey,
           status: "active",
           description: input.description,
@@ -222,7 +240,9 @@ function projectConditions(filter: ProjectFilter, scope: ProjectScopeFilter): SQ
   if (scope.kind === "ids") conditions.push(inArray(projects.id, scope.ids));
   if (filter.regions !== null) conditions.push(inArray(projects.region, filter.regions));
   if (filter.projectTypes !== null) conditions.push(inArray(projects.projectType, filter.projectTypes));
-  if (filter.managerIds !== null) conditions.push(inArray(projects.managerId, filter.managerIds));
+  if (filter.managerIds !== null) {
+    conditions.push(sql`${projects.managerIds} && ${filter.managerIds}::uuid[]`);
+  }
   if (filter.stageKeys !== null) conditions.push(inArray(projects.stageKey, filter.stageKeys));
   if (filter.statuses !== null) conditions.push(inArray(projects.status, filter.statuses));
   if (filter.keyword !== null) {

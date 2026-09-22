@@ -241,7 +241,7 @@ try {
     code: "M4LIB-" + stamp,
     name: "m4-03 回放项目（文件库查询 + 多态关联）",
     projectType: "default",
-    managerId: adminId,
+    managerIds: [adminId],
   });
   check("P1", "建回放项目（为 file 提供 projectId）", "201 + 项目可见", created.status + " " + short({ id: created.body?.id, code: created.body?.code }, 120), created.status === 201);
   project = created.body.id;
@@ -251,7 +251,7 @@ try {
     code: "M4LIBX-" + stamp,
     name: "m4-03 回放项目（不可见反例）",
     projectType: "default",
-    managerId: adminId,
+    managerIds: [adminId],
   });
   check("P2", "建第二个项目（非成员 404 反例用）", "201", createdOther.status, createdOther.status === 201);
   otherProject = createdOther.body.id;

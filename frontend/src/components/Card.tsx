@@ -17,12 +17,13 @@ type CardProps = {
   accent?: CardAccent;
   projectType: ProjectType;
   icon?: ReactNode;
-  managerName: string;
+  /** 项目经理展示文本（多位时按「、」连接；Push 136）。 */
+  managerNames: string;
   time: string;
   onEdit?: () => void;
 };
 
-export function Card({ seqNo, code, description, accent = "blue", projectType, icon, managerName, time, onEdit }: CardProps) {
+export function Card({ seqNo, code, description, accent = "blue", projectType, icon, managerNames, time, onEdit }: CardProps) {
   const styles = ACCENT_STYLES[accent];
   const seqNoText = String(seqNo).padStart(2, "0");
   return (
@@ -40,8 +41,8 @@ export function Card({ seqNo, code, description, accent = "blue", projectType, i
       </div>
       <div className="flex w-full items-center gap-3">
         {icon ?? <span className={"car-icon block h-9 w-12 shrink-0 " + styles.icon} />}
-        <p className="text-sm text-zinc-400">
-          项目经理：<span className="font-medium text-zinc-600">{managerName}</span>
+        <p className="min-w-0 truncate text-sm text-zinc-400">
+          项目经理：<span className="font-medium text-zinc-600" title={managerNames}>{managerNames}</span>
         </p>
       </div>
       <h1 className="font-mono text-xl font-bold tracking-tight">{code}</h1>

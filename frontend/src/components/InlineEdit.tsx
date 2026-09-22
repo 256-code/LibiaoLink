@@ -24,6 +24,8 @@ type InlineCellProps = {
   height: number;
   /** 触发器（单元格本体）附加类名，如右对齐列用 `justify-self-end`。 */
   triggerClassName?: string;
+  /** 裸框模式（Push 134）：撤掉「液态玻璃」小框的底 / 边 / 模糊，底色 / 字色 / 内边距由 triggerClassName 给。 */
+  bare?: boolean;
   /** 浮层内容；`close` 用于选完即关。 */
   render: (close: () => void) => ReactNode;
 };
@@ -32,7 +34,7 @@ type InlineCellProps = {
  * 表格行内编辑的通用外壳（Push 64）：单元格本身是按钮，点击在被点的位置弹出浮层（portal 到 body，
  * 不被表格横向滚动裁掉），点浮层外 / Esc 关闭；浮层里的控件不冒泡到行（不会触发行选中的抽屉）。
  */
-export function InlineCell({ ariaLabel, title = "点击编辑", display, width, height, triggerClassName, render }: InlineCellProps) {
+export function InlineCell({ ariaLabel, title = "点击编辑", display, width, height, triggerClassName, bare = false, render }: InlineCellProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(width, height);
 
   return (
@@ -58,12 +60,16 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
         className={
           // 「液态玻璃」小框（Push 66）：可点区域 = 这个框本身 —— 不给负外边距。
           // 静止态 = 白底 + 淡灰描边（Push 67 按业务样张调）；悬停 / 展开时才稍微实一点。
-          "inline-flex max-w-full items-center gap-1 rounded-lg border px-1.5 py-[3px] text-left text-xs " +
-          "backdrop-blur-[3px] transition " +
-          (open
-            ? "border-zinc-300 bg-white ring-1 ring-zinc-900/10 shadow-[0_4px_14px_rgba(15,23,42,0.12)] "
-            : "border-zinc-200/90 bg-white/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(15,23,42,0.04)] " +
-              "hover:border-zinc-300 hover:bg-white hover:shadow-[0_2px_6px_rgba(15,23,42,0.08)] ") +
+          // Push 134：bare = 裸框模式 —— 撤掉小框的白底 / 描边 / 模糊，**尺寸与配色全交给调用方**（triggerClassName 给，
+          // 例如状态列正常模式 = 色签填满整颗胶囊、醒目模式 = 只留深色字），基础类只留几何与过渡。
+          (bare
+            ? "inline-flex max-w-full items-center justify-center rounded-lg text-left transition "
+            : "inline-flex max-w-full items-center gap-1 rounded-lg border px-1.5 py-[3px] text-left text-xs " +
+              "backdrop-blur-[3px] transition " +
+              (open
+                ? "border-zinc-300 bg-white ring-1 ring-zinc-900/10 shadow-[0_4px_14px_rgba(15,23,42,0.12)] "
+                : "border-zinc-200/90 bg-white/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(15,23,42,0.04)] " +
+                  "hover:border-zinc-300 hover:bg-white hover:shadow-[0_2px_6px_rgba(15,23,42,0.08)] ")) +
           (triggerClassName === undefined ? "" : " " + triggerClassName)
         }
       >
@@ -94,31 +100,36 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
   );
 }
 
-type InlineMemberCellProps = {
-  value: string;
+type InlineMemberMultiCellProps = {
+  /** 已选成员 id（有序，Push 136）。 */
+  values: string[];
   options: Member[];
   ariaLabel: string;
+  /** 勾选 / 取消勾选一位成员（浮层不自动关 —— 接着点下一位）。 */
   onPick: (member: Member) => void;
   display: ReactNode;
 };
 
-/** 行内人员单元格（可搜索人员下拉；项目经理 / 任务负责人两列共用）。 */
-export function InlineMemberCell({ value, options, ariaLabel, onPick, display }: InlineMemberCellProps) {
+/**
+ * 行内人员多选单元格（Push 136）：项目经理 / 任务负责人两列共用。
+ * 勾选 / 取消勾选都不收浮层（一次可以连着点好几位），选完点浮层外 / Esc 收起。
+ */
+export function InlineMemberMultiCell({ values, options, ariaLabel, onPick, display }: InlineMemberMultiCellProps) {
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击选择成员"
+      title="点击选择成员（可多选）"
       width={280}
       height={286}
       display={display}
-      render={(close) => (
+      render={() => (
         <MemberSearchList
           options={options}
-          value={value}
+          value=""
+          selectedIds={values}
           ariaLabel={ariaLabel}
           onPick={(member) => {
             onPick(member);
-            close();
           }}
         />
       )}
@@ -132,16 +143,22 @@ type InlineOptionCellProps = {
   ariaLabel: string;
   onPick: (value: string) => void;
   display: ReactNode;
+  /** 裸框模式（Push 134）：不套「液态玻璃」白底小框，底色 / 字色 / 内边距由 triggerClassName 给。 */
+  bare?: boolean;
+  /** 触发器附加类名（醒目模式下 = 状态字的深色档）。 */
+  triggerClassName?: string;
 };
 
 /** 行内枚举单元格（如紧急重要度）。 */
-export function InlineOptionCell({ value, options, ariaLabel, onPick, display }: InlineOptionCellProps) {
+export function InlineOptionCell({ value, options, ariaLabel, onPick, display, bare = false, triggerClassName }: InlineOptionCellProps) {
   return (
     <InlineCell
       ariaLabel={ariaLabel}
       title="点击选择"
       width={140}
       height={options.length * 34 + 12}
+      bare={bare}
+      triggerClassName={triggerClassName}
       display={display}
       render={(close) => (
         <OptionList

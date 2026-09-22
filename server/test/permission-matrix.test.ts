@@ -280,7 +280,7 @@ class FakePermissionRepository {
   memberIds: string[] = [];
   ownedIds: string[] = [];
   managedRosterIds: string[] = [];
-  refs = new Map<string, { managerId: string; deletedAt: Date | null }>();
+  refs = new Map<string, { managerIds: string[]; deletedAt: Date | null }>();
   memberships = new Map<string, string>();
   visibleCalls = 0;
 
@@ -305,7 +305,7 @@ class FakePermissionRepository {
     });
   }
 
-  async findProjectRef(projectId: string): Promise<{ managerId: string; deletedAt: Date | null } | null> {
+  async findProjectRef(projectId: string): Promise<{ managerIds: string[]; deletedAt: Date | null } | null> {
     return this.refs.get(projectId) ?? null;
   }
 
@@ -346,7 +346,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
 
   it("resolveProjectAccess：非成员 → null（统一 404 语义）", async () => {
     const repository = new FakePermissionRepository();
-    repository.refs.set(PROJECT_ID, { managerId: MANAGER_ID, deletedAt: null });
+    repository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
     const { service } = makeService([member], repository);
     expect(await service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toBeNull();
     await expectAppError(() => service.assertProjectVisible(ACTOR_ID, PROJECT_ID), "NOT_FOUND");
@@ -354,7 +354,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
 
   it("resolveProjectAccess：名册成员 / 主数据责任人的角色位正确", async () => {
     const repository = new FakePermissionRepository();
-    repository.refs.set(PROJECT_ID, { managerId: MANAGER_ID, deletedAt: null });
+    repository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
     repository.memberships.set(PROJECT_ID, "project_manager");
     const { service } = makeService([member], repository);
     expect(await service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toEqual({
@@ -364,7 +364,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
     });
 
     const rosterOnly = new FakePermissionRepository();
-    rosterOnly.refs.set(PROJECT_ID, { managerId: MANAGER_ID, deletedAt: null });
+    rosterOnly.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
     rosterOnly.memberships.set(PROJECT_ID, "project_member");
     const second = makeService([member], rosterOnly);
     expect(await second.service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toEqual({
@@ -374,9 +374,18 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
     });
 
     const owner = new FakePermissionRepository();
-    owner.refs.set(PROJECT_ID, { managerId: ACTOR_ID, deletedAt: null });
+    owner.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
     const third = makeService([actor()], owner);
     expect(await third.service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toEqual({
+      projectId: PROJECT_ID,
+      member: true,
+      projectManager: true,
+    });
+    // A22 · Push 136：multi-manager —— 责任人是第二位经理同样命中（任意一位）。
+    const secondManager = new FakePermissionRepository();
+    secondManager.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID, ACTOR_ID], deletedAt: null });
+    const fourth = makeService([actor()], secondManager);
+    expect(await fourth.service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toEqual({
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
@@ -385,7 +394,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
 
   it("resolveProjectAccess：软删 / 不存在一律 null", async () => {
     const repository = new FakePermissionRepository();
-    repository.refs.set(PROJECT_ID, { managerId: ACTOR_ID, deletedAt: new Date("2026-09-20T00:00:00.000Z") });
+    repository.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: new Date("2026-09-20T00:00:00.000Z") });
     const { service } = makeService([admin], repository);
     expect(await service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toBeNull();
     expect(await service.resolveProjectAccess(ACTOR_ID, OTHER_PROJECT)).toBeNull();
