@@ -1,6 +1,9 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   ProjectSummarySchema,
+  TaskCanCompleteResponseSchema,
+  TaskCompleteBodySchema,
+  TaskCompleteResponseSchema,
   TaskCreateBodySchema,
   TaskDetailSchema,
   TaskListItemSchema,
@@ -21,6 +24,7 @@ type TaskListQuery = z.infer<typeof TaskListQuerySchema>;
 type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
 type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
+type TaskCompleteBody = z.infer<typeof TaskCompleteBodySchema>;
 
 const uuidParam = new ZodValidationPipe(UuidSchema);
 
@@ -80,6 +84,28 @@ export class TaskController {
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
     return this.tasks.update(id, taskId, body, actorId);
+  }
+
+  /** 完成预检（M3-03）：门禁缺件与放行提示（UI 置灰依据；服务端仍在事务内强校验）。 */
+  @Get(":id/tasks/:taskId/can-complete")
+  canComplete(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+  ): Promise<z.infer<typeof TaskCanCompleteResponseSchema>> {
+    return this.tasks.canComplete(id, taskId);
+  }
+
+  /** 完成提交（M3-03 · A4-20）：事务内门禁；缺件 422 TASK_REQUIRED_DOC_MISSING（拒绝留痕）；未定档放行 + warning 并触发 R02。 */
+  @Post(":id/tasks/:taskId/complete")
+  @HttpCode(200)
+  @RequirePermission("task.progress")
+  complete(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+    @Body(new ZodValidationPipe(TaskCompleteBodySchema)) body: TaskCompleteBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskCompleteResponseSchema>> {
+    return this.tasks.complete(id, taskId, body, actorId);
   }
 
   /** 更新四格进度（联动状态与完成日期；progress<1 清完成日期 —— 清除的唯一方式）。 */

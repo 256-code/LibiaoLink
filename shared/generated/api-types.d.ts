@@ -843,6 +843,137 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/projects/{id}/tasks/{taskId}/can-complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 预检结果（canComplete + missing + warnings） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskCanCompleteResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/tasks/{taskId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskCompleteBody"];
+                };
+            };
+            responses: {
+                /** @description 完成结果（task + warnings） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskCompleteResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/tasks/from-template": {
         parameters: {
             query?: never;
@@ -4629,9 +4760,9 @@ export interface components {
         DictType: "region" | "projectType";
         /**
          * @description 十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）
-         * @enum {string|null}
+         * @enum {string}
          */
-        DocType: "CAD图纸" | "技术协议" | "合同" | "评审单" | "设备清单" | "物料总清单" | "发货装箱单" | "到货单" | "安装完成证明" | "验收单" | null;
+        DocType: "CAD图纸" | "技术协议" | "合同" | "评审单" | "设备清单" | "物料总清单" | "发货装箱单" | "到货单" | "安装完成证明" | "验收单";
         /** @description 同内容哈希的既有文件提示（用户确认后可继续上传，不做强阻断） */
         DuplicateHint: {
             fileId: components["schemas"]["Uuid"];
@@ -4644,7 +4775,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -4663,7 +4794,7 @@ export interface components {
             projectId: components["schemas"]["Uuid"];
             nodeId: components["schemas"]["Uuid"] & (string | null);
             taskId: components["schemas"]["Uuid"] & (string | null);
-            docType: components["schemas"]["DocType"] & unknown;
+            docType: components["schemas"]["DocType"] & (string | null);
             /**
              * @description 原文件名（含中文，保留在元数据）
              * @example 机械设计图纸-v2.docx
@@ -4819,7 +4950,7 @@ export interface components {
         NodeRequirement: {
             /** @enum {string} */
             requirementType: "required_doc" | "field" | "dependency" | "deadline";
-            docType: components["schemas"]["DocType"];
+            docType: components["schemas"]["DocType"] & (string | null);
             minCount: number;
         };
         /**
@@ -5098,7 +5229,8 @@ export interface components {
             estimatedDays: number | null;
             headcount: number | null;
             priority: components["schemas"]["Priority"];
-            deliverable: components["schemas"]["DocType"];
+            /** @description 要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05） */
+            deliverableTypes: components["schemas"]["DocType"][];
             note: string | null;
             /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
             onTime: boolean | null;
@@ -5112,6 +5244,24 @@ export interface components {
          * @enum {string}
          */
         TaskBaseStatus: "pending" | "active" | "done";
+        /** @description 完成预检（canComplete=false 时 missing 给缺件明细） */
+        TaskCanCompleteResponse: {
+            canComplete: boolean;
+            missing: components["schemas"]["TaskGateMissing"][];
+            warnings: components["schemas"]["TaskGateWarning"][];
+        };
+        /** @description 完成提交（乐观锁 version 必传；门禁未通过 422 + missing） */
+        TaskCompleteBody: {
+            version: components["schemas"]["Version"];
+            actualEnd?: components["schemas"]["DateOnly"] & unknown;
+            /** @description 完成备注：提供时写入任务的「项目进展描述」（note）并留痕 */
+            note?: string;
+        };
+        /** @description 完成结果（warnings 非空 = 已放行但存在未定档成果文件，R02 已入队） */
+        TaskCompleteResponse: {
+            task: components["schemas"]["Task"];
+            warnings: components["schemas"]["TaskGateWarning"][];
+        };
         /** @description 创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径） */
         TaskCreateBody: {
             /**
@@ -5135,7 +5285,8 @@ export interface components {
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
-            deliverable?: components["schemas"]["DocType"];
+            /** @description 要求输出成果文件（ADR-024 多选）：去重（首次出现保序）；缺省 / 空数组 = 不要求 */
+            deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
         };
         /** @description 从任务模板生成任务（批量；同一节点在项目里只留一份） */
@@ -5175,7 +5326,7 @@ export interface components {
             id: components["schemas"]["Uuid"];
             name: string;
             status: components["schemas"]["FileStatus"];
-            docType: components["schemas"]["DocType"];
+            docType: components["schemas"]["DocType"] & (string | null);
         };
         TaskFileSummary: {
             total: number;
@@ -5183,6 +5334,19 @@ export interface components {
             draft: number;
             /** @description 已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计 */
             final: number;
+        };
+        /** @description 缺件明细：required / present 按门禁统计范围逐 doc_type 给出 */
+        TaskGateMissing: {
+            docType: components["schemas"]["DocType"];
+            required: number;
+            present: number;
+        };
+        /** @description 放行提示：存在 draft 成果文件（放行但提示定档，R02 已入队） */
+        TaskGateWarning: {
+            /** @enum {string} */
+            code: "draft_doc_present";
+            docType: components["schemas"]["DocType"];
+            count: number;
         };
         TaskListItem: {
             id: components["schemas"]["Uuid"];
@@ -5204,7 +5368,8 @@ export interface components {
             estimatedDays: number | null;
             headcount: number | null;
             priority: components["schemas"]["Priority"];
-            deliverable: components["schemas"]["DocType"];
+            /** @description 要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05） */
+            deliverableTypes: components["schemas"]["DocType"][];
             note: string | null;
             /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
             onTime: boolean | null;

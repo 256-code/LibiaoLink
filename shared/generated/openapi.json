@@ -1393,10 +1393,7 @@
         "description": "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404"
       },
       "DocType": {
-        "type": [
-          "string",
-          "null"
-        ],
+        "type": "string",
         "enum": [
           "CAD图纸",
           "技术协议",
@@ -1407,8 +1404,7 @@
           "发货装箱单",
           "到货单",
           "安装完成证明",
-          "验收单",
-          null
+          "验收单"
         ],
         "description": "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）"
       },
@@ -1459,12 +1455,14 @@
           "STAGE_GATE_NOT_PASSED",
           "BLUEPRINT_NOT_PUBLISHED",
           "NODE_REQUIRED_DOC_MISSING",
+          "TASK_REQUIRED_DOC_MISSING",
           "NODE_HAS_FILES",
           "STAGE_STATE_INVALID",
           "NODE_ALREADY_DONE",
           "NODE_ALREADY_EXISTS",
           "NODE_DELETED",
           "TASK_ALREADY_EXISTS",
+          "TASK_ALREADY_DONE",
           "BLUEPRINT_SCHEMA_INVALID",
           "BLUEPRINT_REF_UNKNOWN",
           "FILE_STATE_INVALID",
@@ -1545,6 +1543,10 @@
                 "$ref": "#/components/schemas/DocType"
               },
               {
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "description": "成果文件类型（十类字典）；普通附件为空"
               }
             ]
@@ -2208,7 +2210,17 @@
             ]
           },
           "docType": {
-            "$ref": "#/components/schemas/DocType"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocType"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
           },
           "minCount": {
             "type": "integer",
@@ -3332,8 +3344,12 @@
           "priority": {
             "$ref": "#/components/schemas/Priority"
           },
-          "deliverable": {
-            "$ref": "#/components/schemas/DocType"
+          "deliverableTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocType"
+            },
+            "description": "要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05）"
           },
           "note": {
             "type": [
@@ -3389,7 +3405,7 @@
           "estimatedDays",
           "headcount",
           "priority",
-          "deliverable",
+          "deliverableTypes",
           "note",
           "onTime",
           "changeRef",
@@ -3407,6 +3423,78 @@
           "done"
         ],
         "description": "任务存储基础态（不写回派生结果）"
+      },
+      "TaskCanCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "canComplete": {
+            "type": "boolean"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskGateMissing"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskGateWarning"
+            }
+          }
+        },
+        "required": [
+          "canComplete",
+          "missing",
+          "warnings"
+        ],
+        "description": "完成预检（canComplete=false 时 missing 给缺件明细）"
+      },
+      "TaskCompleteBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "actualEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "完成日期：缺省 = 服务端按当天（Asia/Shanghai）"
+              }
+            ]
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "完成备注：提供时写入任务的「项目进展描述」（note）并留痕"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "完成提交（乐观锁 version 必传；门禁未通过 422 + missing）"
+      },
+      "TaskCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskGateWarning"
+            }
+          }
+        },
+        "required": [
+          "task",
+          "warnings"
+        ],
+        "description": "完成结果（warnings 非空 = 已放行但存在未定档成果文件，R02 已入队）"
       },
       "TaskCreateBody": {
         "type": "object",
@@ -3511,8 +3599,12 @@
           "priority": {
             "$ref": "#/components/schemas/Priority"
           },
-          "deliverable": {
-            "$ref": "#/components/schemas/DocType"
+          "deliverableTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocType"
+            },
+            "description": "要求输出成果文件（ADR-024 多选）：去重（首次出现保序）；缺省 / 空数组 = 不要求"
           },
           "note": {
             "type": [
@@ -3656,7 +3748,17 @@
             "$ref": "#/components/schemas/FileStatus"
           },
           "docType": {
-            "$ref": "#/components/schemas/DocType"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocType"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
           }
         },
         "required": [
@@ -3689,6 +3791,52 @@
           "draft",
           "final"
         ]
+      },
+      "TaskGateMissing": {
+        "type": "object",
+        "properties": {
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "required": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "present": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "docType",
+          "required",
+          "present"
+        ],
+        "description": "缺件明细：required / present 按门禁统计范围逐 doc_type 给出"
+      },
+      "TaskGateWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "draft_doc_present"
+            ]
+          },
+          "docType": {
+            "$ref": "#/components/schemas/DocType"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "code",
+          "docType",
+          "count"
+        ],
+        "description": "放行提示：存在 draft 成果文件（放行但提示定档，R02 已入队）"
       },
       "TaskListItem": {
         "type": "object",
@@ -3815,8 +3963,12 @@
           "priority": {
             "$ref": "#/components/schemas/Priority"
           },
-          "deliverable": {
-            "$ref": "#/components/schemas/DocType"
+          "deliverableTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocType"
+            },
+            "description": "要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05）"
           },
           "note": {
             "type": [
@@ -3879,7 +4031,7 @@
           "estimatedDays",
           "headcount",
           "priority",
-          "deliverable",
+          "deliverableTypes",
           "note",
           "onTime",
           "version",
@@ -5976,6 +6128,145 @@
           },
           "409": {
             "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}/can-complete": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "预检结果（canComplete + missing + warnings）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCanCompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}/complete": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCompleteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "完成结果（task + warnings）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCompleteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
             "content": {
               "application/json": {
                 "schema": {

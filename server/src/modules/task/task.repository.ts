@@ -62,7 +62,8 @@ export interface TaskInsertInput {
   estimatedDays: number | null;
   headcount: number | null;
   priority: string | null;
-  deliverable: string | null;
+  /** 要求输出成果文件（ADR-024 多选）：空数组 = 不要求。 */
+  deliverableTypes: string[];
   note: string | null;
 }
 
@@ -78,6 +79,15 @@ export interface TaskUpdatePatch {
   headcount?: number | null;
   priority?: string | null;
   note?: string | null;
+}
+
+/** 完成门禁目标（M3-03）：任务行上判定门禁需要的字段（含无节点任务的 deliverable_types 兜底）。 */
+export interface TaskCompletionTargetRow {
+  id: string;
+  projectId: string;
+  nodeId: string | null;
+  status: string;
+  deliverableTypes: string[];
 }
 
 export interface TaskOrderRow {
@@ -230,6 +240,22 @@ export class TaskRepository {
     return rows[0]?.id ?? null;
   }
 
+  /** 完成门禁目标读（无锁）：can-complete 预检与写入口的事务内判定共用字段。 */
+  async findCompletionTarget(client: DbClient, taskId: string): Promise<TaskCompletionTargetRow | null> {
+    const rows = await client
+      .select({
+        id: tasks.id,
+        projectId: tasks.projectId,
+        nodeId: tasks.nodeId,
+        status: tasks.status,
+        deliverableTypes: tasks.deliverableTypes,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   /** 任务精简读（无锁；只取重排需要的字段）。 */
   async findTaskBrief(taskId: string, client: DbClient = this.database.db): Promise<TaskOrderBrief | null> {
     const rows = await client
@@ -307,7 +333,7 @@ export class TaskRepository {
         estimatedDays: input.estimatedDays,
         headcount: input.headcount,
         priority: input.priority,
-        deliverable: input.deliverable,
+        deliverableTypes: input.deliverableTypes,
         note: input.note,
         createdAt: at,
         updatedAt: at,
