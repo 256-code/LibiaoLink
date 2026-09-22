@@ -60,6 +60,9 @@ export const DOC_TYPE_KEYS = [
   "验收单",
 ] as const;
 
+/** 公司分类（stakeholders.company_type，A5-02 / C9）：立镖机器人 / 供应商 / 总包单位 / 客户。 */
+export const STAKEHOLDER_COMPANY_TYPE_KEYS = ["libiao", "supplier", "general_contractor", "customer"] as const;
+
 /** 数组字面量（CHECK 用：`<@ array[… ]::text[]`）；sqlValueList 只服务 `in (…)`。 */
 export function sqlArrayLiteral(values: readonly string[]): string {
   const quote = String.fromCharCode(39);
