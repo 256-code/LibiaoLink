@@ -80,7 +80,7 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
 };
 
 /**
- * 正常模式的紧急重要度胶囊（Push 133 收口：业务口径「紧急程度也要」）——
+ * 正常模式的紧急重要度胶囊（Push 134 收口：业务口径「紧急程度也要」）——
  * 与状态列同一套做法：色签底色**铺满整颗胶囊**（不再套「液态玻璃」白底小框 + 内层色签），悬停再深一档。
  * 底色取色签同色系 100 档（原标签底是 50 档，铺满整颗胶囊后 50 档几乎看不出颜色，故抬一档），字色沿用原标签。
  */
@@ -116,7 +116,7 @@ export const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
 };
 
 /**
- * 醒目模式（Push 133）的整行底色：业务口径「保留整行浅色，但大幅降低透明度」——
+ * 醒目模式（Push 134）的整行底色：业务口径「保留整行浅色，但大幅降低透明度」——
  * 同一个状态色（图一色系）压到 **6% 不透明**（马卡龙级极淡，只隐约区分），悬停再抬一档到 12% 留住「这一行可点」的手感。
  */
 const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
@@ -128,7 +128,7 @@ const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
 };
 
 /**
- * 正常模式的状态列胶囊（Push 133 收口：业务口径「这个颜色填满胶囊」）——
+ * 正常模式的状态列胶囊（Push 134 收口：业务口径「这个颜色填满胶囊」）——
  * 色签底色铺满整颗胶囊（不再套「液态玻璃」白底小框、也不留内层白边），悬停再深一档。
  */
 const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
@@ -140,7 +140,7 @@ const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
 };
 
 /**
- * 醒目模式下的状态字色（Push 133）：整行已经有状态色了，状态列不再套白底小框 / 色签底色，只留这一档深色字。
+ * 醒目模式下的状态字色（Push 134）：整行已经有状态色了，状态列不再套白底小框 / 色签底色，只留这一档深色字。
  */
 const STATUS_TAG_TEXT_CLASS: Record<TaskStatus, string> = {
   已延期: "text-rose-700",
@@ -192,7 +192,7 @@ type TaskBoardProps = {
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
   viewStage?: string;
   /**
-   * 醒目模式（Push 133，业务口径「启用后项目总览的卡片整行都变成图一状态的颜色」）：
+   * 醒目模式（Push 134，业务口径「启用后项目总览的卡片整行都变成图一状态的颜色」）：
    * 打开后每张任务卡片整行铺该任务状态的底色（图一色签同款），关掉 = 保持现状（白底行）。
    */
   focusMode?: boolean;
@@ -318,7 +318,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
           value={status}
           options={STATUS_OPTIONS}
           ariaLabel="修改任务状态"
-          // Push 133：状态列改成裸框胶囊 —— 正常模式 = 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗），
+          // Push 134：状态列改成裸框胶囊 —— 正常模式 = 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗），
           // 醒目模式 = 整行已有状态色，只留深色字（悬停给一点淡淡的可点提示）。
           bare
           triggerClassName={
@@ -350,7 +350,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
             value={task.priority}
             options={PRIORITY_OPTIONS}
             ariaLabel="修改紧急重要度"
-            // Push 133：紧急重要度同状态列 —— 裸框胶囊，色签底色**填满整颗胶囊**（业务口径「紧急程度也要」）
+            // Push 134：紧急重要度同状态列 —— 裸框胶囊，色签底色**填满整颗胶囊**（业务口径「紧急程度也要」）
             bare
             triggerClassName={PRIORITY_CAPSULE_CLASS[task.priority] + " px-3 py-1.5 text-[11px] font-medium"}
             display={<span className="truncate">{task.priority}</span>}
@@ -526,7 +526,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
       }}
       className={
         "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
-        // 醒目模式（Push 133）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
+        // 醒目模式（Push 134）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
         (focusMode
           ? STATUS_ROW_CLASS[status] + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
           : selected

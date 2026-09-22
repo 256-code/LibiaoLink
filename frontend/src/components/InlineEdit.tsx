@@ -24,7 +24,7 @@ type InlineCellProps = {
   height: number;
   /** 触发器（单元格本体）附加类名，如右对齐列用 `justify-self-end`。 */
   triggerClassName?: string;
-  /** 裸框模式（Push 133）：撤掉「液态玻璃」小框的底 / 边 / 模糊，底色 / 字色 / 内边距由 triggerClassName 给。 */
+  /** 裸框模式（Push 134）：撤掉「液态玻璃」小框的底 / 边 / 模糊，底色 / 字色 / 内边距由 triggerClassName 给。 */
   bare?: boolean;
   /** 浮层内容；`close` 用于选完即关。 */
   render: (close: () => void) => ReactNode;
@@ -60,7 +60,7 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
         className={
           // 「液态玻璃」小框（Push 66）：可点区域 = 这个框本身 —— 不给负外边距。
           // 静止态 = 白底 + 淡灰描边（Push 67 按业务样张调）；悬停 / 展开时才稍微实一点。
-          // Push 133：bare = 裸框模式 —— 撤掉小框的白底 / 描边 / 模糊，**尺寸与配色全交给调用方**（triggerClassName 给，
+          // Push 134：bare = 裸框模式 —— 撤掉小框的白底 / 描边 / 模糊，**尺寸与配色全交给调用方**（triggerClassName 给，
           // 例如状态列正常模式 = 色签填满整颗胶囊、醒目模式 = 只留深色字），基础类只留几何与过渡。
           (bare
             ? "inline-flex max-w-full items-center justify-center rounded-lg text-left transition "
@@ -138,7 +138,7 @@ type InlineOptionCellProps = {
   ariaLabel: string;
   onPick: (value: string) => void;
   display: ReactNode;
-  /** 裸框模式（Push 133）：不套「液态玻璃」白底小框，底色 / 字色 / 内边距由 triggerClassName 给。 */
+  /** 裸框模式（Push 134）：不套「液态玻璃」白底小框，底色 / 字色 / 内边距由 triggerClassName 给。 */
   bare?: boolean;
   /** 触发器附加类名（醒目模式下 = 状态字的深色档）。 */
   triggerClassName?: string;

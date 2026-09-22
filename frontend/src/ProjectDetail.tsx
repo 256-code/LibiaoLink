@@ -335,7 +335,7 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
 
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
   /**
-   * 醒目模式（Push 133，业务口径「默认不启用」）：打开后项目总览的每张任务卡片整行铺该任务状态的底色；
+   * 醒目模式（Push 134，业务口径「默认不启用」）：打开后项目总览的每张任务卡片整行铺该任务状态的底色；
    * 关掉 = 保持现状。原型阶段存浏览器内存（换项目时保留、刷新回默认关），正式版口径见 `前端功能需求.md` §6.13。
    */
   const [focusMode, setFocusMode] = useState(false);
