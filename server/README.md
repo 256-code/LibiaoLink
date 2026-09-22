@@ -31,6 +31,8 @@ server/
   scripts/m4-upload-replay.mjs   # M4-01 上传管道真机回放（真 PG + 真对象存储 + 真 api；断言全过退出码 0）
   scripts/m4-library-replay.mjs  # M4-03 多态关联与文件库查询真机回放（同上口径；断言全过退出码 0）
   scripts/m4-change-replay.mjs   # M4-04 变更（申请即通过）真机回放（同上口径；断言全过退出码 0）
+  scripts/m3-06-stress.mjs    # M3-06 压测真机回放（1 万行任务数据集 + 索引调优评估；真 PG + 真 api；断言全过退出码 0）
+  scripts/m6-replay.mjs         # M6 日报 / 问题真机回放（A3-01 ~ A3-13 + A2-01 引用守卫；同上口径）
   test/                          # vitest（health / auth 端到端 + 校验管道单测；auth 用进程内桩 IdP，不依赖 PG 与 Casdoor）
 ```
 
@@ -388,6 +390,20 @@ server/
 - 落点说明：`docs/` 属 px 线；证据文件由 lan 随 M4-04 写入 + 读面切片代记（回放脚本与断言同 PR），请 px 复核。
 - 切片提示：写入面（PR-7）与**读面（PR-8，R1~R4：列表 / 筛选 / 详情 / 可见性 404）均已落地**；剩余统计（A4-17）与通知（A4-18，随 M5）。既有回放脚本同步切换：`m4-lifecycle-replay.mjs` 的 L5（定档后回溯）与 `m4-upload-replay.mjs` 的 U22（change 入口）随写入切片更新，避免旧断言把新行为判失败。既有回放脚本同步切换：`m4-lifecycle-replay.mjs` 的 L5（定档后回溯）与 `m4-upload-replay.mjs` 的 U22（change 入口）随本卡更新，避免旧断言把新行为判失败。
 
+
+## M3-06 压测（1 万行任务数据集 + 索引调优评估）
+
+- 脚本：`scripts/m3-06-stress.mjs`（真 PG + 真 api；自建合成项目 `M3STRESS-` 与 8 位合成负责人，插 1 万行任务（其中 200 条软删，避开各组头部与关键字行）—— 跑完硬删任务 / 事件 / 阶段 / 成员 / 项目 / 合成用户与会话）。
+- 证据面：① 数据集（1 万行 · 九阶段 + 未分组 · 8 位负责人 · 稀疏关键字可复现）；② API 时延（列表默认读序 / 阶段 / 负责人 / 关键字 / 展示态筛选、项目总览四格、阶段完成度、甘特 10 页 x 200 条取数 —— p50 / p95 阈值断言）；③ SQL 计划（`EXPLAIN (ANALYZE, BUFFERS)` 逐形状记录命中索引）；④ **索引对照（本卡核心）**：同一组查询在「保留 `ix_tasks_project_stage_order`」与「同库 DROP 后」两种状态逐形状对照（p50 倍率 <= 1.5x + 默认读序阈值），评估由部分索引 `ix_tasks_active_group`（0022 · `where deleted_at is null`）取代旧索引的可行性；对照结束默认把旧索引建回（库结构与迁移一致），`--drop-index` 时保持删除态（供迁移复核）。
+- 复跑：`cd server && M3_STRESS_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m3-06-stress.mjs [--tasks 10000] [--rounds 6] [--out <报告.md>]`；退出码 0 = 断言全过（可当门禁），`--no-api` 只跑 SQL 面、`--keep` 保留回放数据。
+- 索引结论（待真机证据定案）：若对照达标，旧索引 `ix_tasks_project_stage_order` 由迁移 0024 下线（Drizzle schema 同步，避免双索引写放大）；未达标则维持双索引并把差异登记到 `技术设计v0.2-架构与数据模型.md` §2.3。
+
+## M6 回放（S6·report-issue：日报 / 问题）
+
+- 脚本：`scripts/m6-replay.mjs`（真 PG + 真 api；铸管理员会话 / 跑完撤销、空库自动补合成管理员，建 `M6RPL-` 回放项目与 2 个任务 / 跑完硬删日报 / 问题 / 事件 / 任务 / 审计 / outbox / 项目 / 合成账号）。
+- 断言：A3-01 ~ A3-04（新报 / 重复 409 REPORT_ALREADY_EXISTS / 未来日期 400 / 补填 supplement / 草稿 + 提交）、A3-08 / A3-09（回写 `tasks.note` 标记 `【日报 <日期>】` + `task_events(note_change)`；问题 `source_report_id` 唯一兜底 —— 重编辑已提交日报触发重放验证幂等）、A3-12（部门名归类落 `owner_department`）、A3-10 / A3-13（四态 + 回退 + 关闭对清空 + 每次实际变化一条 `issue_events` + 空更新 400 + 乐观锁 409）、A2-01（被日报 / 问题引用的任务 409 `TASK_HAS_REFERENCES`，`details[].code = report_ref` / `issue_ref`）、归档写保护 409。
+- 复跑：`cd server && M6_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m6-replay.mjs [--out <报告.md>] [--json <证据.json>]`；退出码 0 = 断言全过（可当门禁），`--actor <userId>` 指定管理员、`--keep` 保留回放数据。
+- 落点说明：`docs/` 属 px 线；证据文件由 wmj 随本卡代记（回放脚本与断言同 PR），请 px 复核。
 ## CI 接线（g5 · px｜已落地）
 
 `.github/` 归 px 线；下方 job 片段已按 g5 落入 `.github/workflows/ci.yml` 的 `server` job（另补 `npm run build` 一步，保证部署产物可构建）：
@@ -425,7 +441,7 @@ server/
         run: npm run check:boundaries
 ```
 
-数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。
+数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。（Push 156 起：迁移 → 漂移检查之后追加「种子 → 后台起 api → M3-06 压测 + M6 回放」三步真机执行，证据逐行落 CI 日志；本机沙箱无 PostgreSQL 时以 CI 证据为准。）
 
 ## 后续卡片衔接
 
