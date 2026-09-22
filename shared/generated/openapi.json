@@ -3742,6 +3742,195 @@
         ],
         "description": "任务存储基础态（不写回派生结果）"
       },
+      "TaskBatchBody": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "目标任务 id（1~100；重复 id 去重后按首次出现顺序逐条处理；不属于本项目的 id 计为该条 not_found，不影响同批其它项）"
+          },
+          "changes": {
+            "$ref": "#/components/schemas/TaskBatchChanges"
+          }
+        },
+        "required": [
+          "ids",
+          "changes"
+        ],
+        "description": "批量操作（系统功能书 A1-08）：逐条校验 + 逐条独立事务（避免长事务）；部分失败返回失败清单，成功项照常生效"
+      },
+      "TaskBatchChanges": {
+        "type": "object",
+        "properties": {
+          "ownerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序）"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskBaseStatus"
+              },
+              {
+                "description": "批量改状态（基础三态）：done = 批量完成（逐条走同一完成门禁，缺件项进 failures 的 gate_not_passed）；服务端同事务联动进度与完成日期（口径同单条编辑）"
+              }
+            ]
+          },
+          "plannedStart": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "plannedEnd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "批量改期（开始 / 预计完成）；提醒重算随 C2 规则引擎（i8 / i9）"
+          },
+          "estimatedDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "headcount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "重要且紧急",
+              "紧急但不重要",
+              "重要不紧急",
+              "不紧急不重要",
+              null
+            ],
+            "description": "批量改紧急重要度（A1-08）"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        },
+        "description": "批量变更字段（白名单；语义同单条编辑：null = 清空、缺键 = 不改；至少给一个键）"
+      },
+      "TaskBatchFailure": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "失败的任务 id（原样回传，前端按行标红）"
+              }
+            ]
+          },
+          "code": {
+            "$ref": "#/components/schemas/TaskBatchFailureCode"
+          },
+          "message": {
+            "type": "string",
+            "description": "失败原因（可直接展示）"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskGateMissing"
+            },
+            "description": "code=gate_not_passed 时的缺件明细（与完成门禁同形：docType / required / present）"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "message"
+        ],
+        "description": "批量失败项（逐条校验结果；失败不影响同批成功项）"
+      },
+      "TaskBatchFailureCode": {
+        "type": "string",
+        "enum": [
+          "not_found",
+          "archived",
+          "gate_not_passed",
+          "already_done",
+          "version_conflict",
+          "invalid_state"
+        ],
+        "description": "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败"
+      },
+      "TaskBatchResponse": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "去重后的目标条数"
+          },
+          "succeededCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "succeeded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "description": "成功项（更新后的任务全量视图，前端按行替换）"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskBatchFailure"
+            },
+            "description": "失败项清单（含原因；顺序 = 处理顺序）"
+          }
+        },
+        "required": [
+          "total",
+          "succeededCount",
+          "failedCount",
+          "succeeded",
+          "failures"
+        ],
+        "description": "批量操作结果（整体 200：部分失败不影响成功项，失败清单给出逐条原因）"
+      },
       "TaskCanCompleteResponse": {
         "type": "object",
         "properties": {
@@ -6442,6 +6631,85 @@
           },
           "422": {
             "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/batch": {
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "任务批量操作（A1-08：批量指派 / 改状态 / 改日期 / 批量完成；逐条校验 + 部分失败清单）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskBatchBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "批量结果（succeeded + failures；部分失败不影响成功项）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {
