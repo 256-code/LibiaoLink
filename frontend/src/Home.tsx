@@ -8,7 +8,7 @@ import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
-import { dictLabel, typeAccent, type Dicts } from "./dicts";
+import { LEGACY_REGION_ALIASES, dictLabel, fixDictFilterValues, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
 import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toUiProject, type ProjectFacets } from "./projectApi";
@@ -33,6 +33,11 @@ type HomeProps = {
 };
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** 值列表等价判定（顺序敏感）：判断归一化是否真的改动了筛选条件。 */
+function sameList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 
 /** 计数 → 侧栏选项：字典顺序优先、未知码排后；已选但零命中的值保留（否则没办法取消勾选）。 */
 function buildOptions(
@@ -66,6 +71,18 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // 常用筛选（Push 138）：本地记忆的组合，点一下套用到当前筛选；「哪组正在生效」由条件比较派生，不另存状态
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => readSavedFilters());
+  // 常用筛选里也可能存着旧值（Push 161 前的国家名地区）：使用时按当前字典换算一次（不动用户存储，只在用的时候换算）
+  const fixedSavedFilters = useMemo<SavedFilter[]>(
+    () =>
+      savedFilters.map((filter) => {
+        const regions = fixDictFilterValues(dicts.region, filter.regions, LEGACY_REGION_ALIASES).values;
+        const projectTypes = fixDictFilterValues(dicts.projectType, filter.projectTypes).values;
+        return sameList(regions, filter.regions) && sameList(projectTypes, filter.projectTypes)
+          ? filter
+          : { ...filter, regions, projectTypes };
+      }),
+    [savedFilters, dicts],
+  );
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
   const [filterOpen, setFilterOpen] = useState(() => {
     if (initialRouteRestored()) {
@@ -74,16 +91,36 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
     }
     return hasListFilters(filters) || readStoredSidebarOpen() === true;
   });
-  // 手改地址 / 分享过期可能带非 UUID 的经理值：先在本地丢弃，再由 effect 归一化地址栏（服务端 400 的兜底见下面 error 分支）
+  // 手改地址 / 分享过期可能带非 UUID 的经理值、旧国家名地区值（Push 159 前的演示数据）：先在本地归一化，
+  // 再由 effect 回写地址栏（服务端 400 的兜底见下面 error 分支）；换算结果用黄条提示一次。
+  const filterFix = useMemo(
+    () => ({
+      managerIds: filters.managerIds.filter((managerId) => UUID.test(managerId)),
+      regions: fixDictFilterValues(dicts.region, filters.regions, LEGACY_REGION_ALIASES),
+      projectTypes: fixDictFilterValues(dicts.projectType, filters.projectTypes),
+    }),
+    [filters, dicts],
+  );
   const activeFilters = useMemo<ListQueryState>(() => {
-    const managerIds = filters.managerIds.filter((managerId) => UUID.test(managerId));
-    return managerIds.length === filters.managerIds.length ? filters : { ...filters, managerIds };
-  }, [filters]);
+    const { managerIds, regions, projectTypes } = filterFix;
+    if (
+      sameList(managerIds, filters.managerIds) &&
+      sameList(regions.values, filters.regions) &&
+      sameList(projectTypes.values, filters.projectTypes)
+    ) {
+      return filters;
+    }
+    return { ...filters, managerIds, regions: regions.values, projectTypes: projectTypes.values };
+  }, [filters, filterFix]);
   useEffect(() => {
     if (buildListHash(activeFilters) !== buildListHash(filters)) {
       replaceListQuery(activeFilters);
+      const mapped = [...filterFix.regions.mapped, ...filterFix.projectTypes.mapped];
+      if (mapped.length > 0) {
+        setFilterNotice("已把旧筛选值换算为字典码：" + mapped.map((entry) => entry.from + " → " + entry.to).join("、") + "。");
+      }
     }
-  }, [activeFilters, filters]);
+  }, [activeFilters, filters, filterFix]);
 
   const updateFilters = (patch: Partial<ListQueryState>) => {
     const next = { ...activeFilters, ...patch };
@@ -123,6 +160,8 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** 旧筛选值换算提示（Push 161）：只在真的换算过时出现，可一键关掉。 */
+  const [filterNotice, setFilterNotice] = useState<string | null>(null);
   const [facets, setFacets] = useState<ProjectFacets>(EMPTY_FACETS);
   const [savedCounts, setSavedCounts] = useState<Record<string, number>>({});
   const [reloadToken, setReloadToken] = useState(0);
@@ -180,7 +219,7 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
 
   // 常用筛选胶囊计数：按该组合单独取一次 total（服务端同口径判定），与当前筛选无关
   useEffect(() => {
-    if (savedFilters.length === 0) {
+    if (fixedSavedFilters.length === 0) {
       setSavedCounts({});
       return;
     }
@@ -188,7 +227,7 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
     const run = async (): Promise<void> => {
       try {
         const entries = await Promise.all(
-          savedFilters.map(async (filter): Promise<[string, number]> => {
+          fixedSavedFilters.map(async (filter): Promise<[string, number]> => {
             const result = await fetchProjectFacets({
               regions: filter.regions,
               projectTypes: filter.projectTypes,
@@ -214,7 +253,7 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
     return () => {
       cancelled = true;
     };
-  }, [savedFilters, reloadToken, refreshToken]);
+  }, [fixedSavedFilters, reloadToken, refreshToken]);
 
   const regionOptions = useMemo(
     () =>
@@ -260,9 +299,9 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
     if (!hasFilters) {
       return null;
     }
-    const matched = savedFilters.find((filter) => sameCriteria(filter, activeFilters));
+    const matched = fixedSavedFilters.find((filter) => sameCriteria(filter, activeFilters));
     return matched === undefined ? null : matched.id;
-  }, [activeFilters, hasFilters, savedFilters]);
+  }, [activeFilters, hasFilters, fixedSavedFilters]);
   const applySavedFilter = (filter: SavedFilter) => {
     updateFilters({
       regions: filter.regions.slice(),
@@ -321,7 +360,7 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
         selectedManagerIds={activeFilters.managerIds}
         selectedTypes={activeFilters.projectTypes}
         dateRange={dateRange}
-        savedFilters={savedFilters}
+        savedFilters={fixedSavedFilters}
         appliedSavedFilterId={appliedSavedFilterId}
         onApplySavedFilter={applySavedFilter}
         onDeleteSavedFilter={deleteSavedFilter}
@@ -422,7 +461,7 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
               onChange={(value) => {
                 updateFilters({ q: value });
               }}
-              placeholder="搜索名称、国家、时间或项目经理"
+              placeholder="搜索名称、客户、地区、时间或项目经理"
               className="w-full sm:w-72"
             />
           </div>
@@ -439,6 +478,21 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
               className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
             >
               重试
+            </button>
+          </div>
+        )}
+
+        {filterNotice === null ? null : (
+          <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>{filterNotice}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setFilterNotice(null);
+              }}
+              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
+            >
+              知道了
             </button>
           </div>
         )}
