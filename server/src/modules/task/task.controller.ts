@@ -1,14 +1,18 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   ProjectSummarySchema,
+  TaskBatchBodySchema,
+  TaskBatchResponseSchema,
   TaskCanCompleteResponseSchema,
   TaskCompleteBodySchema,
   TaskCompleteResponseSchema,
   TaskCreateBodySchema,
+  TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskListItemSchema,
   TaskListQuerySchema,
   TaskListResponseSchema,
+  TaskLockedFieldsAdjustBodySchema,
   TaskProgressUpdateBodySchema,
   TaskSchema,
   TaskUpdateBodySchema,
@@ -25,6 +29,8 @@ type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
 type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
 type TaskCompleteBody = z.infer<typeof TaskCompleteBodySchema>;
+type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
+type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchema>;
 
 const uuidParam = new ZodValidationPipe(UuidSchema);
 
@@ -74,6 +80,20 @@ export class TaskController {
     return this.tasks.create(id, body, actorId);
   }
 
+  /**
+   * 批量操作（M3-04 · A1-08）：批量指派 / 改状态（含批量完成）/ 改期 / 重要度 / 人数 / 备注。
+   * 声明在 :taskId 之前（避免 batch 被当作任务 id 命中）；整体 200 + failures[] 部分失败清单。
+   */
+  @Patch(":id/tasks/batch")
+  @RequirePermission("task.update")
+  batch(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(TaskBatchBodySchema)) body: TaskBatchBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskBatchResponseSchema>> {
+    return this.tasks.batch(id, body, actorId);
+  }
+
   /** 编辑任务（乐观锁；status 基础三态同事务联动进度 / 完成日期；任务描述 / 成果文件锁定不在本接口）。 */
   @Patch(":id/tasks/:taskId")
   @RequirePermission("task.update")
@@ -84,6 +104,35 @@ export class TaskController {
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
     return this.tasks.update(id, taskId, body, actorId);
+  }
+
+  /**
+   * 删除任务（M3-05 · A25 · 系统功能书 A1-01 修订）：软删 —— 不物理删行；列表 / 看板 / 甘特图 / 详情 / 完成门禁一律不可见 + 写留痕。
+   * 重复删除与已删任务上的任何写操作 = 统一 404（记录级 404 语义，不新增错误码）；归档项目 409 PROJECT_ARCHIVED。
+   */
+  @Delete(":id/tasks/:taskId")
+  @RequirePermission("task.update")
+  remove(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskDeleteResponseSchema>> {
+    return this.tasks.remove(id, taskId, actorId);
+  }
+
+  /**
+   * 锁定字段例外调整（M3-05 · A1-17 / C9-07 · Push 153）：任务描述 / 输出成果文件生成后锁定；
+   * 确需修正时仅系统管理员可执行，原因必填并留痕（服务端 assertAdmin 复核，非管理员 403）。
+   */
+  @Patch(":id/tasks/:taskId/locked-fields")
+  @RequirePermission("task.update")
+  adjustLockedFields(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+    @Body(new ZodValidationPipe(TaskLockedFieldsAdjustBodySchema)) body: TaskLockedFieldsAdjustBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskSchema>> {
+    return this.tasks.adjustLockedFields(id, taskId, body, actorId);
   }
 
   /** 完成预检（M3-03）：门禁缺件与放行提示（UI 置灰依据；服务端仍在事务内强校验）。 */

@@ -1,22 +1,29 @@
+import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   DOC_TYPES,
   PRIORITY_VALUES,
   ProjectSummarySchema,
+  TaskBatchBodySchema,
+  TaskBatchFailureSchema,
+  TaskBatchResponseSchema,
   TaskCanCompleteResponseSchema,
   TaskCompleteBodySchema,
   TaskCompleteResponseSchema,
   TaskCreateBodySchema,
+  TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskGateMissingSchema,
   TaskGateWarningSchema,
   TaskListItemSchema,
   TaskListResponseSchema,
+  TaskLockedFieldsAdjustBodySchema,
   TaskProgressSchema,
   TaskProgressUpdateBodySchema,
   TaskSchema,
   TaskUpdateBodySchema,
   z,
+  type ErrorDetail,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -60,6 +67,20 @@ type TaskCanCompleteResponse = z.infer<typeof TaskCanCompleteResponseSchema>;
 type TaskGateMissing = z.infer<typeof TaskGateMissingSchema>;
 type TaskGateWarning = z.infer<typeof TaskGateWarningSchema>;
 type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
+type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
+type TaskBatchFailure = z.infer<typeof TaskBatchFailureSchema>;
+type TaskBatchResponse = z.infer<typeof TaskBatchResponseSchema>;
+type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
+type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchema>;
+
+/**
+ * 单条写入内核的输入（编辑 / 批量共用）：expectedVersion = null 表示批量语义（按当前行覆盖，不做逐行乐观锁）；
+ * sortIndex 仅单条编辑使用（批量白名单不含顺序调整 —— 顺序调整是「插入位置」的逐条语义）。
+ */
+type TaskWriteRequest = Pick<
+  TaskUpdateBody,
+  "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "note" | "sortIndex"
+> & { expectedVersion: number | null };
 
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
 const CHANGE_SUMMARY_MAX = 40;
@@ -238,75 +259,333 @@ export class TaskService {
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.runCompletionGuarded(actorId, taskId, () =>
-      this.database.db.transaction(async (tx) => {
-      if (body.sortIndex !== undefined) {
-        const brief = await this.repository.findTaskBrief(taskId, tx);
-        if (brief === null || brief.projectId !== projectId) {
-          throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
-        }
-        await this.repository.listGroupOrder(projectId, brief.stageKey, tx, true);
+      this.database.db.transaction((tx) =>
+        this.applyUpdate(
+          tx,
+          projectId,
+          taskId,
+          {
+            expectedVersion: body.version,
+            sortIndex: body.sortIndex,
+            ownerIds: body.ownerIds,
+            status: body.status,
+            plannedStart: body.plannedStart,
+            plannedEnd: body.plannedEnd,
+            estimatedDays: body.estimatedDays,
+            headcount: body.headcount,
+            priority: body.priority,
+            note: body.note,
+          },
+          actorId,
+          at,
+          today,
+          null,
+        ),
+      ),
+    );
+    return toTaskView(row, today, await this.changeLinksOf(row));
+  }
+
+  /**
+   * PATCH /projects/{id}/tasks/batch：批量操作（M3-04 · 系统功能书 A1-08）。
+   * 口径：同一组变更（白名单）逐条应用到 ids —— 逐条独立事务（避免长事务）、逐条校验 + 部分失败清单；
+   * 成功项照常生效（整体 200），条目级错误（不存在 / 门禁缺件 / 已完成 / 并发冲突）降级为 failures[]，非预期错误照旧抛出；
+   * 批量完成 = changes.status=done，与单条编辑 / /complete 同一门禁（缺件项进 failures 的 gate_not_passed 并留痕）。
+   * 留痕（C7-01 / A1-08 / A1-10）：批次一条（project 域，metadata 记 batchId / 计数 / 失败清单，「批量操作整体写审计日志」）+ 逐条字段级一条（entry=batch + 同批 batchId，每条任务的修改历史可查「批量」入口）。
+   */
+  async batch(projectId: string, body: TaskBatchBody, actorId: string): Promise<TaskBatchResponse> {
+    await this.loadProjectForWrite(projectId);
+    if (Object.values(body.changes).every((value) => value === undefined)) {
+      throw new AppError("VALIDATION_FAILED", "批量操作至少给出一个变更字段（changes）");
+    }
+    const at = new Date();
+    const today = shanghaiToday(at);
+    const batchId = randomUUID();
+    const ids = [...new Set(body.ids)];
+    const request: TaskWriteRequest = { expectedVersion: null, ...body.changes };
+    const succeeded: Task[] = [];
+    const failures: TaskBatchFailure[] = [];
+    for (const taskId of ids) {
+      try {
+        const row = await this.runCompletionGuarded(
+          actorId,
+          taskId,
+          () => this.database.db.transaction((tx) => this.applyUpdate(tx, projectId, taskId, request, actorId, at, today, batchId)),
+          batchId,
+        );
+        succeeded.push(toTaskView(row, today, await this.changeLinksOf(row)));
+      } catch (error) {
+        const failure = toBatchFailure(taskId, error);
+        if (failure === null) throw error;
+        failures.push(failure);
       }
-      const before = await this.repository.lockTask(tx, taskId);
-      if (before === null || before.projectId !== projectId) {
-        throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
+    }
+    // 批次审计（系统功能书 A1-08「批量操作整体写审计日志」）：一次请求一条（project 域），
+    // 与逐条字段级审计（entry=batch + 同批 batchId）并存 —— 前者可查「谁在什么时候批了什么」，后者可查每条任务的修改历史。
+    await this.audit.record(this.database.db, {
+      actorId,
+      action: "update",
+      objectType: "project",
+      objectId: projectId,
+      projectId,
+      summary: "批量操作任务：" + ids.length + " 条（成功 " + succeeded.length + "，失败 " + failures.length + "）",
+      changes: null,
+      metadata: {
+        entry: "batch",
+        batchId,
+        taskIds: ids,
+        changedFields: Object.entries(body.changes)
+          .filter(([, value]) => value !== undefined)
+          .map(([key]) => key),
+        succeededCount: succeeded.length,
+        failedCount: failures.length,
+        failures: failures.map((failure) => ({ id: failure.id, code: failure.code })),
+      },
+    });
+    return { total: ids.length, succeededCount: succeeded.length, failedCount: failures.length, succeeded, failures };
+  }
+
+  /**
+   * DELETE /projects/{id}/tasks/{taskId}（M3-05 · A25 · 系统功能书 A1-01 修订）：软删 —— 不物理删行，历史与留痕保留。
+   * 口径：① 列表 / 看板 / 甘特图 / 详情 / 完成门禁一律不可见（读面统一过滤 deleted_at is null）；
+   * ② 重复删除 = 统一 404（记录级 404 语义，与已删任务上的任何写路径一致 —— 不新增错误码）；
+   * ③ 组内位次同事务压缩，保持「0 起、密集」不变式（A19 / A20）；
+   * ④ 来源节点约束随软删释放（节点回到「可添加」，A10 / A11 口径不变 —— 判重走 findTaskIdByNode 已过滤软删）；
+   * ⑤ 权限沿用 task.update（与编辑同一权限位，不新增权限键）；归档项目写保护照旧 409 PROJECT_ARCHIVED。
+   * ⑥ 已有引用（日报 / 问题 / 变更记录）的任务不允许删除 = 409 TASK_HAS_REFERENCES（系统功能书 A2-01「已产生日报 / 问题 / 变更的任务不允许删除，只能关闭或标记」；
+   *   日报 / 问题两表随 0023 落地，本卡（M5）在守卫处补齐判定：details[].code = change_ref / report_ref / issue_ref）；
+   * 留痕：审计 action=delete（objectType=task，changes = 删除前快照）+ outbox task.deleted；
+   * 不写 task_events —— 其类型为四值闭集（status_change / date_change / progress_change / note_change），删除不属于字段级变更。
+   */
+  async remove(projectId: string, taskId: string, actorId: string): Promise<TaskDeleteResponse> {
+    await this.loadProjectForWrite(projectId);
+    const at = new Date();
+    await this.database.db.transaction(async (tx) => {
+      const before = await this.requireActiveTask(tx, projectId, taskId);
+      const references = await this.referencesOf(tx, before);
+      if (references.length > 0) {
+        throw new AppError(
+          "TASK_HAS_REFERENCES",
+          "任务已产生日报 / 问题 / 变更，不允许删除（系统功能书 A2-01）；只能关闭或标记",
+          references,
+        );
       }
-      if (before.version !== body.version) {
-        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
-      }
-      const sortIndex =
-        body.sortIndex === undefined ? before.sortIndex : await this.moveWithinGroup(tx, projectId, before, body.sortIndex);
-      const current = { status: before.status, progress: Number(before.progress), actualEnd: before.actualEnd };
-      const linked = body.status === undefined ? null : applyStatusWrite(current, body.status, today);
-      if (linked !== null && linked.status === "done" && before.status !== "done") {
-        await this.assertCompletionGate(tx, before, at, actorId);
-      }
-      const patch: TaskUpdatePatch = {
-        ownerIds: body.ownerIds !== undefined ? body.ownerIds : before.ownerIds,
-        status: linked === null ? before.status : linked.status,
-        progress: String(linked === null ? current.progress : linked.progress),
-        sortIndex,
-        plannedStart: body.plannedStart !== undefined ? body.plannedStart : before.plannedStart,
-        plannedEnd: body.plannedEnd !== undefined ? body.plannedEnd : before.plannedEnd,
-        actualEnd: linked === null ? before.actualEnd : linked.actualEnd,
-        estimatedDays: body.estimatedDays !== undefined ? body.estimatedDays : before.estimatedDays,
-        headcount: body.headcount !== undefined ? body.headcount : before.headcount,
-        priority: body.priority !== undefined ? body.priority : before.priority,
-        note: body.note !== undefined ? body.note : before.note,
-      };
-      const updated = await this.repository.updateWithVersion(taskId, body.version, patch, at, tx);
-      if (updated === null) {
-        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
-      }
-      await this.repository.insertEvents(tx, buildEvents(before, patch), actorId, at);
+      const deleted = await this.repository.softDelete(tx, taskId, actorId, at);
+      if (!deleted) throw new AppError("NOT_FOUND", "任务不存在或已删除：" + taskId);
+      await this.repository.shiftGroupIndexes(projectId, before.stageKey, before.sortIndex + 1, null, -1, tx);
       await appendOutbox(tx, {
-        topic: "task.updated",
-        dedupeKey: "task.updated:" + taskId + ":" + updated.version,
+        topic: "task.deleted",
+        dedupeKey: "task.deleted:" + taskId + ":" + before.version,
         payload: {
           projectId,
           taskId,
-          status: updated.status,
-          progress: Number(updated.progress),
-          plannedEnd: updated.plannedEnd,
-          actualEnd: updated.actualEnd,
+          stageKey: before.stageKey,
+          nodeId: before.nodeId,
           actorId,
           at: at.toISOString(),
         },
       });
       await this.repository.touchProject(projectId, at, tx);
-      const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "task",
+        objectId: taskId,
+        projectId,
+        summary: "删除任务：" + before.title,
+        changes: diffRecords(taskAuditSnapshot(before), null),
+        metadata: { softDelete: true, stageKey: before.stageKey, nodeId: before.nodeId },
+      });
+    });
+    return { id: taskId, deleted: true };
+  }
+
+  /**
+   * PATCH /projects/{id}/tasks/{taskId}/locked-fields（M3-05 · A1-17 / C9-07 · Push 153）：锁定字段例外调整。
+   * 任务描述 / 输出成果文件按流程节点模板生成后锁定（常规编辑不可达）；确需修正时 **仅系统管理员** 可执行，
+   * 原因必填并留痕（模板本身由管理员修正，C9-07）；「阶段性里程」一期任务无对应列，不开放。
+   * 口径：至少一个实际变化（否则 400 —— 防止空调整刷留痕）；乐观锁 409；归档项目 409；不存在 / 已删 404。
+   * 留痕：审计（changes = 锁定字段 before → after；metadata 记原因与 kind）+ outbox `task.locked_fields_adjusted` + touch 项目；
+   * 不写 `task_events`（四值闭集不含锁定字段）。成果文件类型修正后即刻成为无节点任务的完成门禁依据。
+   */
+  async adjustLockedFields(
+    projectId: string,
+    taskId: string,
+    body: TaskLockedFieldsAdjustBody,
+    actorId: string,
+  ): Promise<Task> {
+    await this.loadProjectForWrite(projectId);
+    await this.assertAdmin(actorId, "例外调整锁定字段（A1-17 / C9-07）");
+    const at = new Date();
+    const today = shanghaiToday(at);
+    const row = await this.database.db.transaction(async (tx) => {
+      const before = await this.requireActiveTask(tx, projectId, taskId);
+      if (before.version !== body.version) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      const patch: TaskUpdatePatch = {};
+      if (body.title !== undefined && body.title !== before.title) patch.title = body.title;
+      if (body.titleEn !== undefined && body.titleEn !== before.titleEn) patch.titleEn = body.titleEn;
+      if (body.deliverableTypes !== undefined) {
+        const next = normalizeDocTypes(body.deliverableTypes);
+        if (next.join(",") !== normalizeDocTypes(before.deliverableTypes).join(",")) patch.deliverableTypes = next;
+      }
+      if (Object.keys(patch).length === 0) {
+        throw new AppError("VALIDATION_FAILED", "锁定字段没有实际变化，无需例外调整");
+      }
+      const updated = await this.repository.updateWithVersion(taskId, body.version, patch, at, tx);
+      if (updated === null) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      const changes = diffRecords(lockedFieldsSnapshot(before), lockedFieldsSnapshot(updated));
+      await appendOutbox(tx, {
+        topic: "task.locked_fields_adjusted",
+        dedupeKey: "task.locked_fields_adjusted:" + taskId + ":" + updated.version,
+        payload: {
+          projectId,
+          taskId,
+          fields: changes.map((change) => change.field),
+          reason: body.reason,
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+      await this.repository.touchProject(projectId, at, tx);
       await this.audit.record(tx, {
         actorId,
         action: "update",
         objectType: "task",
         objectId: taskId,
         projectId,
-        summary: "修改任务：" + updated.title,
-        changes: changes.length > 0 ? changes : null,
+        summary: "例外调整任务锁定字段：" + updated.title + "（原因：" + body.reason + "）",
+        changes,
+        metadata: {
+          reason: body.reason,
+          kind: "locked_field_exception",
+          adminOnly: true,
+          fields: changes.map((change) => change.field),
+        },
       });
       return updated;
-      }),
-    );
+    });
     return toTaskView(row, today, await this.changeLinksOf(row));
+  }
+
+  /** 写路径统一前置（M3-05）：锁行 + 校验归属本项目 + 未软删；已删任务 = 404（与读面不可见同口径）。 */
+  /**
+   * 删除引用守卫明细（A2-01；Push 152 登记「日报 / 问题随 M5 加判定」，本卡补齐）：
+   * ① 变更记录（tasks.change_refs）逐条明细；② 日报（daily_reports.task_ids 含本任务）；③ 问题（issues.task_id）。
+   * 任一非空即 409 TASK_HAS_REFERENCES —— 拒绝时不软删 / 不压缩位次 / 不写留痕（抛在事务内，整体回滚）。
+   */
+  private async referencesOf(tx: DbClient, task: TaskRow): Promise<ErrorDetail[]> {
+    const details: ErrorDetail[] = task.changeRefs.map((changeId) => ({
+      code: "change_ref",
+      message: "关联变更：" + changeId,
+      path: "changeRefs",
+      meta: { changeRequestId: changeId },
+    }));
+    const reportRefs = await this.repository.countReportRefs(task.id, tx);
+    if (reportRefs > 0) {
+      details.push({ code: "report_ref", message: "关联日报：" + reportRefs + " 条", path: "reports", meta: { count: reportRefs } });
+    }
+    const issueRefs = await this.repository.countIssueRefs(task.id, tx);
+    if (issueRefs > 0) {
+      details.push({ code: "issue_ref", message: "关联问题：" + issueRefs + " 条", path: "issues", meta: { count: issueRefs } });
+    }
+    return details;
+  }
+
+  private async requireActiveTask(tx: DbClient, projectId: string, taskId: string): Promise<TaskRow> {
+    const row = await this.repository.lockTask(tx, taskId);
+    if (row === null || row.projectId !== projectId || row.deletedAt !== null) {
+      throw new AppError("NOT_FOUND", "任务不存在或已删除：" + taskId);
+    }
+    return row;
+  }
+  /**
+   * 单条写入内核（编辑 / 批量共用）：锁行 → 校验 → 状态联动 → 门禁 → 落库 + 事件 + outbox + 审计。
+   * expectedVersion = null 表示批量（按当前行覆盖：批量是「把选中行统一改成同一值」，不带逐行乐观锁）；
+   * batchId 非空时审计 metadata 标注「批量」入口（entry=batch）并共享批次号。
+   */
+  private async applyUpdate(
+    tx: DbClient,
+    projectId: string,
+    taskId: string,
+    request: TaskWriteRequest,
+    actorId: string,
+    at: Date,
+    today: string,
+    batchId: string | null,
+  ): Promise<TaskRow> {
+    if (request.sortIndex !== undefined) {
+      const brief = await this.repository.findTaskBrief(taskId, tx);
+      if (brief === null || brief.projectId !== projectId) {
+        throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
+      }
+      await this.repository.listGroupOrder(projectId, brief.stageKey, tx, true);
+    }
+    const before = await this.repository.lockTask(tx, taskId);
+    if (before === null || before.projectId !== projectId) {
+      throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
+    }
+    if (request.expectedVersion !== null && before.version !== request.expectedVersion) {
+      throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+    }
+    if (batchId !== null && request.status === "done" && before.status === "done") {
+      throw new AppError("TASK_ALREADY_DONE", "任务已完成，无需重复提交");
+    }
+    const sortIndex =
+      request.sortIndex === undefined ? before.sortIndex : await this.moveWithinGroup(tx, projectId, before, request.sortIndex);
+    const current = { status: before.status, progress: Number(before.progress), actualEnd: before.actualEnd };
+    const linked = request.status === undefined ? null : applyStatusWrite(current, request.status, today);
+    if (linked !== null && linked.status === "done" && before.status !== "done") {
+      await this.assertCompletionGate(tx, before, at, actorId);
+    }
+    const patch: TaskUpdatePatch = {
+      ownerIds: request.ownerIds !== undefined ? request.ownerIds : before.ownerIds,
+      status: linked === null ? before.status : linked.status,
+      progress: String(linked === null ? current.progress : linked.progress),
+      sortIndex,
+      plannedStart: request.plannedStart !== undefined ? request.plannedStart : before.plannedStart,
+      plannedEnd: request.plannedEnd !== undefined ? request.plannedEnd : before.plannedEnd,
+      actualEnd: linked === null ? before.actualEnd : linked.actualEnd,
+      estimatedDays: request.estimatedDays !== undefined ? request.estimatedDays : before.estimatedDays,
+      headcount: request.headcount !== undefined ? request.headcount : before.headcount,
+      priority: request.priority !== undefined ? request.priority : before.priority,
+      note: request.note !== undefined ? request.note : before.note,
+    };
+    const updated = await this.repository.updateWithVersion(taskId, request.expectedVersion ?? before.version, patch, at, tx);
+    if (updated === null) {
+      throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+    }
+    await this.repository.insertEvents(tx, buildEvents(before, patch), actorId, at);
+    await appendOutbox(tx, {
+      topic: "task.updated",
+      dedupeKey: "task.updated:" + taskId + ":" + updated.version,
+      payload: {
+        projectId,
+        taskId,
+        status: updated.status,
+        progress: Number(updated.progress),
+        plannedEnd: updated.plannedEnd,
+        actualEnd: updated.actualEnd,
+        actorId,
+        at: at.toISOString(),
+      },
+    });
+    await this.repository.touchProject(projectId, at, tx);
+    const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
+    await this.audit.record(tx, {
+      actorId,
+      action: "update",
+      objectType: "task",
+      objectId: taskId,
+      projectId,
+      summary: (batchId === null ? "" : "批量") + "修改任务：" + updated.title,
+      changes: changes.length > 0 ? changes : null,
+      metadata: batchId === null ? undefined : { entry: "batch", batchId },
+    });
+    return updated;
   }
 
   /** PATCH /projects/{id}/tasks/{taskId}/progress：四格进度 + 完成日期（A12 / A13）；响应为 TaskListItem 同形。 */
@@ -531,8 +810,13 @@ export class TaskService {
     return gate.warnings;
   }
 
-  /** 门禁拒绝的事务外善后（照 FlowService 模式）：补写 outbox 留痕 + 审计 failed，再抛 422 契约错误。 */
-  private async runCompletionGuarded<T>(actorId: string, taskId: string, run: () => Promise<T>): Promise<T> {
+  /** 门禁拒绝的事务外善后（照 FlowService 模式）：补写 outbox 留痕 + 审计 failed，再抛 422 契约错误；batchId 非空时审计标注批量入口（entry=batch）。 */
+  private async runCompletionGuarded<T>(
+    actorId: string,
+    taskId: string,
+    run: () => Promise<T>,
+    batchId: string | null = null,
+  ): Promise<T> {
     try {
       return await run();
     } catch (error) {
@@ -547,8 +831,11 @@ export class TaskService {
           objectId: taskId,
           projectId,
           result: "failed",
-          summary: "任务完成被门禁拒绝：" + error.appError.message,
-          metadata: { errorCode: error.appError.code, details: error.appError.details },
+          summary: (batchId === null ? "" : "批量") + "任务完成被门禁拒绝：" + error.appError.message,
+          metadata:
+            batchId === null
+              ? { errorCode: error.appError.code, details: error.appError.details }
+              : { errorCode: error.appError.code, details: error.appError.details, entry: "batch", batchId },
         });
         throw error.appError;
       }
@@ -614,6 +901,56 @@ export class TaskService {
       throw new AppError("FORBIDDEN", "仅管理员可" + action + "（系统功能书 A1-13）");
     }
   }
+}
+
+/**
+ * 批量条目错误降级（M3-04）：可预期的业务错误映射为 failures[] 条目（同批其它项照常处理）；
+ * 非 AppError（程序缺陷 / 基础设施故障）返回 null —— 由 batch() 照旧抛出（500），避免系统错误被吞成「部分失败」。
+ */
+function toBatchFailure(taskId: string, error: unknown): TaskBatchFailure | null {
+  if (!(error instanceof AppError)) return null;
+  const message = error.message;
+  switch (error.code) {
+    case "NOT_FOUND":
+      return { id: taskId, code: "not_found", message };
+    case "PROJECT_ARCHIVED":
+      return { id: taskId, code: "archived", message };
+    case "TASK_REQUIRED_DOC_MISSING": {
+      const missing = gateMissingFrom(error);
+      return missing.length > 0
+        ? { id: taskId, code: "gate_not_passed", message, missing }
+        : { id: taskId, code: "gate_not_passed", message };
+    }
+    case "TASK_ALREADY_DONE":
+      return { id: taskId, code: "already_done", message };
+    case "VERSION_CONFLICT":
+      return { id: taskId, code: "version_conflict", message };
+    default:
+      return error.httpStatus >= 400 && error.httpStatus < 500
+        ? { id: taskId, code: "invalid_state", message }
+        : null;
+  }
+}
+
+/** 门禁缺件明细还原（assertCompletionGate 的 details[].meta → 契约 TaskGateMissing；缺 meta 的明细跳过）。 */
+function gateMissingFrom(error: AppError): TaskGateMissing[] {
+  const missing: TaskGateMissing[] = [];
+  for (const detail of error.details) {
+    const meta = detail.meta;
+    if (meta === undefined) continue;
+    const docType = meta["docType"];
+    const required = meta["required"];
+    const present = meta["present"];
+    if (typeof docType !== "string" || typeof required !== "number" || typeof present !== "number") continue;
+    if (!(DOC_TYPES as readonly string[]).includes(docType)) continue;
+    missing.push({ docType: docType as TaskGateMissing["docType"], required, present });
+  }
+  return missing;
+}
+
+/** 锁定字段快照（A1-17 例外调整留痕 · M3-05）：任务描述 / 输出成果文件 —— 不在 taskAuditSnapshot 内（后者只覆盖可编辑字段），故单列一份。 */
+function lockedFieldsSnapshot(row: { title: string; titleEn: string | null; deliverableTypes: string[] }): Record<string, unknown> {
+  return { title: row.title, titleEn: row.titleEn, deliverableTypes: normalizeDocTypes(row.deliverableTypes) };
 }
 
 /** 任务字段级留痕快照（C7-02：负责人（多位）/ 状态 / 进度 / 组内位次 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */

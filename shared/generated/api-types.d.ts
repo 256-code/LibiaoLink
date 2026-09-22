@@ -709,7 +709,50 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** 删除任务（软删：列表 / 看板 / 甘特图 / 完成门禁不可见 + 写留痕；重复删除统一 404；已产生变更记录 409 TASK_HAS_REFERENCES） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（软删标记） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskDeleteResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         /** 编辑任务（乐观锁；任务描述 / 成果文件按 A1-17 锁定，进度走 /progress） */
@@ -972,6 +1015,160 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/tasks/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 任务批量操作（A1-08：批量指派 / 改状态 / 改日期 / 批量完成；逐条校验 + 部分失败清单） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskBatchBody"];
+                };
+            };
+            responses: {
+                /** @description 批量结果（succeeded + failures；部分失败不影响成功项） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskBatchResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/tasks/{taskId}/locked-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 锁定字段例外调整（仅系统管理员 · A1-17 / C9-07）：任务描述 / 输出成果文件生成后锁定，确需修正时原因必填并留痕（审计 + outbox） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskLockedFieldsAdjustBody"];
+                };
+            };
+            responses: {
+                /** @description 调整后的任务 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/api/v1/projects/{id}/tasks/from-template": {
@@ -1741,7 +1938,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） */
+                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） */
                     objectType?: components["schemas"]["AuditObjectType"];
                     /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
                     objectId?: string;
@@ -4729,6 +4926,410 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 日报列表（A3-01 / A7-02）：日期区间 / 状态 / 提交人筛选 + 分页；日期倒序 */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 日期下界（含） */
+                    "filter[dateFrom]"?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 日期上界（含） */
+                    "filter[dateTo]"?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 状态多值逗号分隔：draft / submitted / supplement */
+                    "filter[state]"?: string;
+                    /** @description 提交人 */
+                    "filter[authorId]"?: components["schemas"]["Uuid"] & unknown;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 日报列表（项目内成员可见） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReportListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 新建日报（A3-01 / A3-02 · M6-01）：一人一项目一天一条（重复 409 REPORT_ALREADY_EXISTS）；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DailyReportCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 新建的日报 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReport"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/reports/{reportId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 日报详情（A3-01 全字段 + 关联任务标题） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    reportId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 日报详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReport"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 编辑 / 提交日报（A3-02 草稿提交 · A3-08 回写关联任务「项目进展描述」）：乐观锁 version；date 不可改；已提交行不允许退回草稿 */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    reportId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DailyReportUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的日报 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReport"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 问题列表（A3-16 问题追踪 / 问题看板同源）：状态 / 归类 / 任务 / 来源日报筛选 + 关键字 + 分页；提出日期倒序 */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 状态多值逗号分隔：unassigned / open / in_progress / done */
+                    "filter[state]"?: string;
+                    /** @description 归类多值逗号分隔（C9 十项） */
+                    "filter[category]"?: string;
+                    /** @description 所属任务 */
+                    "filter[taskId]"?: components["schemas"]["Uuid"] & unknown;
+                    /** @description 来源日报 */
+                    "filter[reportId]"?: components["schemas"]["Uuid"] & unknown;
+                    /** @description 关键字（问题描述） */
+                    q?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 问题列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IssueListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/issues/{issueId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 问题详情（A3-13）：问题本体 + 处理过程留痕（时间正序） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    issueId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 问题详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IssueDetail"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 问题更新（A3-10 四态流转 / A3-12 分派 / A3-13 解决方案）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    issueId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["IssueUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的问题详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IssueDetail"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4808,10 +5409,10 @@ export interface components {
             total: number;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
@@ -5041,6 +5642,87 @@ export interface components {
          * @enum {string}
          */
         ChangeStatus: "applied";
+        /** @description 一条日报（A3-01 全字段 + 系统字段） */
+        DailyReport: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            authorId: components["schemas"]["Uuid"];
+            /** @description 提交人显示名（A3-01 系统字段） */
+            authorName: string | null;
+            date: components["schemas"]["DateOnly"] & unknown;
+            state: components["schemas"]["DailyReportState"];
+            /** @description 今日施工人数（A3-03 默认带上次填报值，可修改） */
+            headcount: number | null;
+            /** @description 当日完成工作（A3-04 必填；关联任务后回写任务「项目进展描述」，A3-08） */
+            doneWork: string;
+            /** @description 明日计划 */
+            plan: string | null;
+            /** @description 现场发现问题（非空 → 提交时自动生成问题，A3-09 幂等） */
+            foundIssue: string | null;
+            issueCategory: components["schemas"]["IssueCategory"];
+            /** @description 解决方案或建议 */
+            suggestion: string | null;
+            /** @description 关联任务（A3-03 多选；用于回写任务进展） */
+            taskIds: components["schemas"]["Uuid"][];
+            /** @description 关联任务标题（与 taskIds 同下标） */
+            taskTitles: string[];
+            submittedAt: components["schemas"]["DateTime"] & (string | null);
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+            version: components["schemas"]["Version"];
+        };
+        /** @description 新报一天日报（草稿 / 提交）；补填由服务端按日期推导 */
+        DailyReportCreateBody: {
+            date: components["schemas"]["DateOnly"] & unknown;
+            state?: components["schemas"]["DailyReportWriteState"];
+            /** @description 今日施工人数（缺省为空） */
+            headcount?: number;
+            /** @description 当日完成工作（A3-04 必填） */
+            doneWork: string;
+            /** @description 明日计划 */
+            plan?: string;
+            /** @description 现场发现问题（非空时问题归类必填；提交时自动生成问题，A3-09） */
+            foundIssue?: string;
+            issueCategory?: components["schemas"]["IssueCategory"] & unknown;
+            /** @description 解决方案或建议 */
+            suggestion?: string;
+            /** @description 关联任务（A3-03 多选；须属本项目） */
+            taskIds?: components["schemas"]["Uuid"][];
+        };
+        /** @description 日报列表（项目内成员可见） */
+        DailyReportListResponse: {
+            items: components["schemas"]["DailyReport"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /**
+         * @description 日报状态（A3-02）：draft 草稿 / submitted 已提交 / supplement 补填（对过去日期首次提交）
+         * @enum {string}
+         */
+        DailyReportState: "draft" | "submitted" | "supplement";
+        /** @description 编辑日报（乐观锁 version；date 不可改） */
+        DailyReportUpdateBody: {
+            version: components["schemas"]["Version"];
+            state?: components["schemas"]["DailyReportWriteState"] & unknown;
+            /** @description 今日施工人数（null = 清空） */
+            headcount?: number | null;
+            doneWork?: string;
+            /** @description 明日计划（null = 清空） */
+            plan?: string | null;
+            /** @description 现场发现问题（null = 清空；已生成问题不随清空撤回） */
+            foundIssue?: string | null;
+            issueCategory?: components["schemas"]["IssueCategory"] & unknown;
+            suggestion?: string | null;
+            /** @description 关联任务整体替换（缺省 = 不改） */
+            taskIds?: components["schemas"]["Uuid"][];
+        };
+        /**
+         * @description draft 暂存 / submitted 提交（缺省 submitted）
+         * @default submitted
+         * @enum {string}
+         */
+        DailyReportWriteState: "draft" | "submitted";
         /**
          * @description 角色数据范围：all > managed_projects > involved_projects > own_stakeholders > granted（多角色并集）
          * @enum {string}
@@ -5136,7 +5818,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -5262,6 +5944,93 @@ export interface components {
         };
         /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
         IdempotencyKey: string;
+        /** @description 一条问题记录（由日报自动生成或手工创建） */
+        Issue: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            taskId: components["schemas"]["Uuid"] & (string | null);
+            sourceReportId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 问题描述（自动生成 = 日报「现场发现问题」原文） */
+            title: string;
+            category: components["schemas"]["IssueCategory"] & unknown;
+            state: components["schemas"]["IssueState"];
+            reporterId: components["schemas"]["Uuid"];
+            /** @description 提出人显示名（= 来源日报提交人） */
+            reporterName: string | null;
+            /** @description 责任部门（A3-12 按归类自动分派；未分派 = null） */
+            ownerDepartment: string | null;
+            ownerId: components["schemas"]["Uuid"] & (string | null);
+            ownerName: string | null;
+            dueAt: components["schemas"]["DateTime"] & (string | null);
+            raisedAt: components["schemas"]["DateOnly"] & unknown;
+            /** @description 解决方案 / 回复（A3-13） */
+            solution: string | null;
+            closedBy: components["schemas"]["Uuid"] & (string | null);
+            closedAt: components["schemas"]["DateTime"] & (string | null);
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+            version: components["schemas"]["Version"];
+        };
+        /**
+         * @description 问题归类（C9 十项；「现场发现问题」非空时必填，A3-04）
+         * @enum {string|null}
+         */
+        IssueCategory: "机械部" | "采购部" | "规划部" | "项目部" | "物流原因" | "供应商原因" | "客户原因" | "客观原因" | "生产原因" | "其它原因" | null;
+        /** @description 问题详情 = 问题 + 处理过程留痕 */
+        IssueDetail: components["schemas"]["Issue"] & {
+            /** @description 处理过程留痕（时间正序） */
+            events: components["schemas"]["IssueEvent"][];
+        };
+        /** @description 问题处理过程留痕（A3-13：创建 / 状态流转 / 解决方案 / 分派） */
+        IssueEvent: {
+            id: components["schemas"]["Uuid"];
+            issueId: components["schemas"]["Uuid"];
+            eventType: components["schemas"]["IssueEventType"];
+            fromState: components["schemas"]["IssueState"] & (string | null);
+            toState: components["schemas"]["IssueState"] & (string | null);
+            actorId: components["schemas"]["Uuid"];
+            actorName: string | null;
+            note: string | null;
+            createdAt: components["schemas"]["DateTime"];
+        };
+        /**
+         * @description 问题事件类型（A3-13）：created 创建 / state_change 状态流转 / solution 解决方案 / assignment 分派
+         * @enum {string}
+         */
+        IssueEventType: "created" | "state_change" | "solution" | "assignment";
+        /** @description 问题列表（问题追踪表 / 问题看板共用；看板按四态分组由前端渲染） */
+        IssueListResponse: {
+            items: components["schemas"]["Issue"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /**
+         * @description 问题四态（A3-10）：unassigned 未分组 / open 未解决 / in_progress 处理中 / done 已完成；允许回退且留痕
+         * @enum {string}
+         */
+        IssueState: "unassigned" | "open" | "in_progress" | "done";
+        /** @description 问题更新（状态流转 / 解决方案 / 分派 / 时限；一次请求写一条事件） */
+        IssueUpdateBody: {
+            version: components["schemas"]["Version"];
+            state?: components["schemas"]["IssueState"] & unknown;
+            /** @description 解决方案 / 回复（null = 清空） */
+            solution?: string | null;
+            /** @description 责任部门（null = 取消分派部门） */
+            ownerDepartment?: string | null;
+            /**
+             * Format: uuid
+             * @description 责任人（null = 取消责任人）
+             */
+            ownerId?: string | null;
+            /**
+             * Format: date-time
+             * @description 处理时限（null = 清空）
+             */
+            dueAt?: string | null;
+            /** @description 本次处理的备注（A3-13 留痕） */
+            note?: string;
+        };
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
         MeResponse: {
             user: components["schemas"]["User"];
@@ -5323,7 +6092,7 @@ export interface components {
          * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
          * @enum {string}
          */
-        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage";
+        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage";
         /** @description 当前用户授权画像（未登录 401） */
         PermissionMeResponse: {
             permissions: components["schemas"]["ActorPermissions"];
@@ -5687,6 +6456,57 @@ export interface components {
          * @enum {string}
          */
         TaskBaseStatus: "pending" | "active" | "done";
+        /** @description 批量操作（系统功能书 A1-08）：逐条校验 + 逐条独立事务（避免长事务）；部分失败返回失败清单，成功项照常生效 */
+        TaskBatchBody: {
+            /** @description 目标任务 id（1~100；重复 id 去重后按首次出现顺序逐条处理；不属于本项目的 id 计为该条 not_found，不影响同批其它项） */
+            ids: components["schemas"]["Uuid"][];
+            changes: components["schemas"]["TaskBatchChanges"];
+        };
+        /** @description 批量变更字段（白名单；语义同单条编辑：null = 清空、缺键 = 不改；至少给一个键） */
+        TaskBatchChanges: {
+            /** @description 批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序） */
+            ownerIds?: components["schemas"]["Uuid"][];
+            status?: components["schemas"]["TaskBaseStatus"] & unknown;
+            plannedStart?: components["schemas"]["DateOnly"] & (string | null);
+            /**
+             * Format: date
+             * @description 批量改期（开始 / 预计完成）；提醒重算随 C2 规则引擎（i8 / i9）
+             */
+            plannedEnd?: string | null;
+            estimatedDays?: number | null;
+            headcount?: number | null;
+            /**
+             * @description 批量改紧急重要度（A1-08）
+             * @enum {string|null}
+             */
+            priority?: "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要" | null;
+            note?: string | null;
+        };
+        /** @description 批量失败项（逐条校验结果；失败不影响同批成功项） */
+        TaskBatchFailure: {
+            id: components["schemas"]["Uuid"] & unknown;
+            code: components["schemas"]["TaskBatchFailureCode"];
+            /** @description 失败原因（可直接展示） */
+            message: string;
+            /** @description code=gate_not_passed 时的缺件明细（与完成门禁同形：docType / required / present） */
+            missing?: components["schemas"]["TaskGateMissing"][];
+        };
+        /**
+         * @description 批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败
+         * @enum {string}
+         */
+        TaskBatchFailureCode: "not_found" | "archived" | "gate_not_passed" | "already_done" | "version_conflict" | "invalid_state";
+        /** @description 批量操作结果（整体 200：部分失败不影响成功项，失败清单给出逐条原因） */
+        TaskBatchResponse: {
+            /** @description 去重后的目标条数 */
+            total: number;
+            succeededCount: number;
+            failedCount: number;
+            /** @description 成功项（更新后的任务全量视图，前端按行替换） */
+            succeeded: components["schemas"]["Task"][];
+            /** @description 失败项清单（含原因；顺序 = 处理顺序） */
+            failures: components["schemas"]["TaskBatchFailure"][];
+        };
         /** @description 完成预检（canComplete=false 时 missing 给缺件明细） */
         TaskCanCompleteResponse: {
             canComplete: boolean;
@@ -5760,6 +6580,12 @@ export interface components {
                 taskId: components["schemas"]["Uuid"];
             }[];
         };
+        /** @description 任务删除结果（软删）：列表 / 看板 / 甘特图 / 完成门禁一律不可见，来源节点约束随之释放 */
+        TaskDeleteResponse: {
+            id: components["schemas"]["Uuid"];
+            /** @description 恒为 true（软删：tasks.deleted_at 置位，不物理删行；历史与留痕保留） */
+            deleted: boolean;
+        };
         /** @description 任务详情（M3-01；列表 → 详情不再依赖列表随行数据） */
         TaskDetail: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组 */
@@ -5809,6 +6635,18 @@ export interface components {
             page: number;
             limit: number;
             total: number;
+        };
+        /** @description 锁定字段例外调整（仅系统管理员）：至少给出一个实际变化的字段，否则 400；原因必填并留痕（审计 + task.locked_fields_adjusted） */
+        TaskLockedFieldsAdjustBody: {
+            version: components["schemas"]["Version"];
+            /** @description 例外调整原因（必填并留痕；A1-17 / C9-07） */
+            reason: string;
+            /** @description 任务描述（中文；锁定字段 —— 仅管理员例外修正） */
+            title?: string;
+            /** @description 任务描述（英文；锁定项；null = 清空） */
+            titleEn?: string | null;
+            /** @description 要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
+            deliverableTypes?: components["schemas"]["DocType"][];
         };
         /** @description 任务节点库条目（任务模板的节点来源） */
         TaskNode: {

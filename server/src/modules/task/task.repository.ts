@@ -8,6 +8,7 @@ import { files } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
 import { projectStages, projects } from "../../db/schema/projects.js";
+import { dailyReports, issues } from "../../db/schema/reports.js";
 import { taskEvents, tasks } from "../../db/schema/tasks.js";
 import type { TaskListFilter, TaskSort } from "./task.query.js";
 
@@ -77,6 +78,10 @@ export interface TaskInsertInput {
 }
 
 export interface TaskUpdatePatch {
+  /** 锁定字段（A1-17）：仅「例外调整」管理员路径写入（M3-05 · Push 153），普通编辑不传。 */
+  title?: string;
+  titleEn?: string | null;
+  deliverableTypes?: string[];
   ownerIds?: string[];
   status?: string;
   progress?: string;
@@ -203,7 +208,7 @@ export class TaskRepository {
     const rows = await client
       .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)))
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
       .limit(1);
     const row = rows[0];
     return row === undefined ? null : { ...row, changeLinks: row.changeLinks ?? [] };
@@ -285,7 +290,7 @@ export class TaskRepository {
     const rows = await client
       .select({ id: tasks.id })
       .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), eq(tasks.nodeId, nodeId)))
+      .where(and(eq(tasks.projectId, projectId), eq(tasks.nodeId, nodeId), isNull(tasks.deletedAt)))
       .limit(1);
     return rows[0]?.id ?? null;
   }
@@ -301,7 +306,7 @@ export class TaskRepository {
         deliverableTypes: tasks.deliverableTypes,
       })
       .from(tasks)
-      .where(eq(tasks.id, taskId))
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -311,7 +316,7 @@ export class TaskRepository {
     const rows = await client
       .select({ id: tasks.id, projectId: tasks.projectId, stageKey: tasks.stageKey, sortIndex: tasks.sortIndex })
       .from(tasks)
-      .where(eq(tasks.id, taskId))
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -321,7 +326,7 @@ export class TaskRepository {
     const rows = await client
       .select({ value: count() })
       .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), groupCondition(stageKey)));
+      .where(and(eq(tasks.projectId, projectId), groupCondition(stageKey), isNull(tasks.deletedAt)));
     return Number(rows[0]?.value ?? 0);
   }
 
@@ -338,7 +343,7 @@ export class TaskRepository {
     const base = client
       .select({ id: tasks.id, sortIndex: tasks.sortIndex })
       .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), groupCondition(stageKey)))
+      .where(and(eq(tasks.projectId, projectId), groupCondition(stageKey), isNull(tasks.deletedAt)))
       .orderBy(asc(tasks.sortIndex), asc(tasks.id));
     return lock ? base.for("update") : base;
   }
@@ -352,7 +357,7 @@ export class TaskRepository {
     delta: number,
     client: DbClient,
   ): Promise<void> {
-    const conditions: SQL[] = [eq(tasks.projectId, projectId), groupCondition(stageKey), gte(tasks.sortIndex, from)];
+    const conditions: SQL[] = [eq(tasks.projectId, projectId), groupCondition(stageKey), gte(tasks.sortIndex, from), isNull(tasks.deletedAt) as SQL];
     if (to !== null) conditions.push(lte(tasks.sortIndex, to));
     await client
       .update(tasks)
@@ -360,8 +365,43 @@ export class TaskRepository {
       .where(and(...conditions));
   }
 
+  /**
+   * 引用守卫（系统功能书 A2-01 · M5 补齐）：日报（daily_reports.task_ids 含本任务）与问题（issues.task_id）的
+   * 引用计数 —— 非零即不允许删除（409 TASK_HAS_REFERENCES，details[].code = report_ref / issue_ref）。
+   * 只计数不取明细：提示用数量；日报 / 问题两表随 0023 落地，故本判定在 M5 一并补入（Push 152 已登记「随 M5 加判定」）。
+   */
+  async countReportRefs(taskId: string, client: DbClient = this.database.db): Promise<number> {
+    const rows = await client
+      .select({ value: sql<number>`count(*)::int` })
+      .from(dailyReports)
+      .where(sql`${dailyReports.taskIds} @> ${[taskId]}::uuid[]`);
+    return Number(rows[0]?.value ?? 0);
+  }
+
+  /** 问题引用（issues.task_id，b-tree 索引 ix_issues_task）。 */
+  async countIssueRefs(taskId: string, client: DbClient = this.database.db): Promise<number> {
+    const rows = await client
+      .select({ value: sql<number>`count(*)::int` })
+      .from(issues)
+      .where(eq(issues.taskId, taskId));
+    return Number(rows[0]?.value ?? 0);
+  }
+
+  /**
+   * 软删（M3-05 · A25 · 迁移 0022）：置 deleted_at / deleted_by；不物理删行（历史与留痕保留）。
+   * 并发安全：条件带 deleted_at is null —— 重复删除不会二次置位（返回 false，由 service 转统一 404）。
+   */
+  async softDelete(client: DbClient, taskId: string, actorId: string, at: Date): Promise<boolean> {
+    const rows = await client
+      .update(tasks)
+      .set({ deletedAt: at, deletedBy: actorId })
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
+      .returning({ id: tasks.id });
+    return rows.length > 0;
+  }
+
   async lockTask(client: DbClient, taskId: string): Promise<TaskRow | null> {
-    const rows = await client.select().from(tasks).where(eq(tasks.id, taskId)).for("update");
+    const rows = await client.select().from(tasks).where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt))).for("update");
     return rows[0] ?? null;
   }
 
@@ -442,7 +482,7 @@ export class TaskRepository {
         overdue: sql<number>`count(*) filter (where ${tasks.status} <> ${"done"} and ${tasks.plannedEnd} < ${today})`,
       })
       .from(tasks)
-      .where(eq(tasks.projectId, projectId));
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)));
     const row = rows[0];
     return { overdue: Number(row?.overdue ?? 0), done: Number(row?.done ?? 0), total: Number(row?.total ?? 0) };
   }
@@ -452,7 +492,7 @@ export class TaskRepository {
     const rows = await client
       .select({ status: tasks.status, value: count() })
       .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), eq(tasks.stageKey, stageKey)))
+      .where(and(eq(tasks.projectId, projectId), eq(tasks.stageKey, stageKey), isNull(tasks.deletedAt)))
       .groupBy(tasks.status);
     let total = 0;
     let done = 0;
@@ -472,14 +512,14 @@ export class TaskRepository {
     const rows = await client
       .select({ stageKey: tasks.stageKey, status: tasks.status, value: count() })
       .from(tasks)
-      .where(eq(tasks.projectId, projectId))
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
       .groupBy(tasks.stageKey, tasks.status);
     return rows.map((row) => ({ stageKey: row.stageKey, status: row.status, value: Number(row.value) }));
   }
 }
 
 function taskConditions(projectId: string, filter: TaskListFilter, today: string): SQL[] {
-  const conditions: SQL[] = [eq(tasks.projectId, projectId)];
+  const conditions: SQL[] = [eq(tasks.projectId, projectId), isNull(tasks.deletedAt) as SQL];
   if (filter.stageKey !== null) conditions.push(eq(tasks.stageKey, filter.stageKey));
   if (filter.ownerId !== null) conditions.push(sql`${tasks.ownerIds} @> array[${filter.ownerId}]::uuid[]`);
   if (filter.keyword !== null) {

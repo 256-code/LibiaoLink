@@ -88,7 +88,7 @@ export interface ProjectResourceContext {
 
 /**
  * 项目内角色隐含的权限位（ADR-011 §4.3 平权例外 + ADR-020 / ADR-023 既有口径）：
- * 名册成员在其项目内即可读、可改任务进度、可完成节点（节点操作一期平权）。
+ * 名册成员在其项目内即可读、可改任务进度、可完成节点（节点操作一期平权）、可填日报与处理问题（A3 与 §4.1）。
  */
 export const PROJECT_MEMBER_IMPLIED_KEYS: readonly PermissionKey[] = [
   "project.view",
@@ -97,6 +97,10 @@ export const PROJECT_MEMBER_IMPLIED_KEYS: readonly PermissionKey[] = [
   "task.create",
   "task.update",
   "task.progress",
+  "report.view",
+  "report.fill",
+  "issue.view",
+  "issue.manage",
   "node.view",
   "node.complete",
   "file.upload",
