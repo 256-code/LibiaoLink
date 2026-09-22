@@ -3,8 +3,13 @@ import {
   DOC_TYPES,
   PRIORITY_VALUES,
   ProjectSummarySchema,
+  TaskCanCompleteResponseSchema,
+  TaskCompleteBodySchema,
+  TaskCompleteResponseSchema,
   TaskCreateBodySchema,
   TaskDetailSchema,
+  TaskGateMissingSchema,
+  TaskGateWarningSchema,
   TaskListItemSchema,
   TaskListResponseSchema,
   TaskProgressSchema,
@@ -30,6 +35,7 @@ import {
 } from "./task.rules.js";
 import {
   TaskRepository,
+  type TaskCompletionTargetRow,
   type TaskEventInput,
   type TaskFileSummaryCounts,
   type TaskListRow,
@@ -37,6 +43,7 @@ import {
   type TaskRow,
   type TaskUpdatePatch,
 } from "./task.repository.js";
+import { TaskGateRepository, type TaskGateDocCountRow, type TaskGateScope } from "./task.gate.repository.js";
 
 type Task = z.infer<typeof TaskSchema>;
 type TaskDetail = z.infer<typeof TaskDetailSchema>;
@@ -46,10 +53,25 @@ type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
 type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
 type TaskProgress = z.infer<typeof TaskProgressSchema>;
+type TaskCompleteBody = z.infer<typeof TaskCompleteBodySchema>;
+type TaskCompleteResponse = z.infer<typeof TaskCompleteResponseSchema>;
+type TaskCanCompleteResponse = z.infer<typeof TaskCanCompleteResponseSchema>;
+type TaskGateMissing = z.infer<typeof TaskGateMissingSchema>;
+type TaskGateWarning = z.infer<typeof TaskGateWarningSchema>;
 type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
 const CHANGE_SUMMARY_MAX = 40;
+
+/** 门禁拒绝的内部信号（事务回滚后补写留痕，再转 422 契约错误）—— 与 FlowService 同模式。 */
+class GateRejectedSignal extends Error {
+  constructor(
+    readonly appError: AppError,
+    readonly outbox: { topic: string; dedupeKey: string; payload: Record<string, unknown> },
+  ) {
+    super("gate_rejected");
+  }
+}
 
 /**
  * 任务用例（h4 · S6·task：M3-01 列表 / 详情 + M3-02 进度与状态 + 项目总览四格）。
@@ -62,6 +84,7 @@ export class TaskService {
   constructor(
     private readonly database: DatabaseService,
     private readonly repository: TaskRepository,
+    private readonly gate: TaskGateRepository,
     private readonly roles: RoleService,
     private readonly audit: AuditService,
   ) {}
@@ -166,7 +189,7 @@ export class TaskService {
           estimatedDays: body.estimatedDays ?? null,
           headcount: body.headcount ?? null,
           priority: body.priority ?? null,
-          deliverable: body.deliverable ?? null,
+          deliverableTypes: await this.resolveDeliverableTypes(tx, nodeId, body.deliverableTypes),
           note: body.note ?? null,
         },
         at,
@@ -214,7 +237,8 @@ export class TaskService {
     await this.loadProjectForWrite(projectId);
     const at = new Date();
     const today = shanghaiToday(at);
-    const row = await this.database.db.transaction(async (tx) => {
+    const row = await this.runCompletionGuarded(actorId, taskId, () =>
+      this.database.db.transaction(async (tx) => {
       if (body.sortIndex !== undefined) {
         const brief = await this.repository.findTaskBrief(taskId, tx);
         if (brief === null || brief.projectId !== projectId) {
@@ -233,6 +257,9 @@ export class TaskService {
         body.sortIndex === undefined ? before.sortIndex : await this.moveWithinGroup(tx, projectId, before, body.sortIndex);
       const current = { status: before.status, progress: Number(before.progress), actualEnd: before.actualEnd };
       const linked = body.status === undefined ? null : applyStatusWrite(current, body.status, today);
+      if (linked !== null && linked.status === "done" && before.status !== "done") {
+        await this.assertCompletionGate(tx, before, at, actorId);
+      }
       const patch: TaskUpdatePatch = {
         ownerIds: body.ownerIds !== undefined ? body.ownerIds : before.ownerIds,
         status: linked === null ? before.status : linked.status,
@@ -277,7 +304,8 @@ export class TaskService {
         changes: changes.length > 0 ? changes : null,
       });
       return updated;
-    });
+      }),
+    );
     return toTaskView(row, today);
   }
 
@@ -291,7 +319,8 @@ export class TaskService {
     await this.loadProjectForWrite(projectId);
     const at = new Date();
     const today = shanghaiToday(at);
-    const row = await this.database.db.transaction(async (tx) => {
+    const row = await this.runCompletionGuarded(actorId, taskId, () =>
+      this.database.db.transaction(async (tx) => {
       const before = await this.repository.lockTask(tx, taskId);
       if (before === null || before.projectId !== projectId) {
         throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
@@ -300,6 +329,9 @@ export class TaskService {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
       }
       const linked = applyProgressWrite(body.progress, body.actualEnd ?? null, today);
+      if (linked.status === "done" && before.status !== "done") {
+        await this.assertCompletionGate(tx, before, at, actorId);
+      }
       const patch: TaskUpdatePatch = {
         status: linked.status,
         progress: String(linked.progress),
@@ -336,7 +368,8 @@ export class TaskService {
         changes: changes.length > 0 ? changes : null,
       });
       return updated;
-    });
+      }),
+    );
     const listRow = await this.repository.findListRowById(row.id, projectId);
     if (listRow === null) throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
     const summaries = await this.repository.fileSummaries([row.id]);
@@ -347,6 +380,197 @@ export class TaskService {
    * 组内重排（A19 / A20 · Push 124）：把任务移到该组第 N 位（越界 = 组尾），返回落定位次。
    * 调用方必须已锁住该组（listGroupOrder lock=true）—— 只平移其余任务的位次，不逐个改版本 / updated_at。
    */
+  /**
+   * GET /projects/{id}/tasks/{taskId}/can-complete：完成任务预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。
+   * 门禁口径（ADR-024 / A4-20）：有节点任务按所属节点 node_requirements 判定；无节点任务按自身 deliverable_types 兜底（每类 ≥ 1 份）。
+   */
+  async canComplete(projectId: string, taskId: string): Promise<TaskCanCompleteResponse> {
+    await this.loadProjectOrFail(projectId);
+    const target = await this.repository.findCompletionTarget(this.database.db, taskId);
+    if (target === null || target.projectId !== projectId) {
+      throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
+    }
+    if (target.status === "done") return { canComplete: false, missing: [], warnings: [] };
+    const gate = await this.evaluateGate(this.database.db, target);
+    return { canComplete: gate.missing.length === 0, missing: gate.missing, warnings: gate.warnings };
+  }
+
+  /**
+   * POST /projects/{id}/tasks/{taskId}/complete：任务完成提交（M3-03 · PoC 9 后半）。
+   * 事务内乐观锁 + 门禁强校验；缺件 422 TASK_REQUIRED_DOC_MISSING（拒绝也留痕）；存在 draft 成果文件放行 + warning 并触发 R02。
+   */
+  async complete(projectId: string, taskId: string, body: TaskCompleteBody, actorId: string): Promise<TaskCompleteResponse> {
+    await this.loadProjectForWrite(projectId);
+    const at = new Date();
+    const today = shanghaiToday(at);
+    const result = await this.runCompletionGuarded(actorId, taskId, () =>
+      this.database.db.transaction(async (tx) => {
+        const before = await this.repository.lockTask(tx, taskId);
+        if (before === null || before.projectId !== projectId) {
+          throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
+        }
+        if (before.status === "done") {
+          throw new AppError("TASK_ALREADY_DONE", "任务已完成，无需重复提交");
+        }
+        if (before.version !== body.version) {
+          throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+        }
+        const warnings = await this.assertCompletionGate(tx, before, at, actorId);
+        const linked = applyStatusWrite(
+          { status: before.status, progress: Number(before.progress), actualEnd: body.actualEnd ?? before.actualEnd },
+          "done",
+          today,
+        );
+        const patch: TaskUpdatePatch = {
+          status: linked.status,
+          progress: String(linked.progress),
+          actualEnd: linked.actualEnd,
+          note: body.note !== undefined ? body.note : before.note,
+        };
+        const updated = await this.repository.updateWithVersion(taskId, body.version, patch, at, tx);
+        if (updated === null) {
+          throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+        }
+        await this.repository.insertEvents(tx, buildEvents(before, patch), actorId, at);
+        await appendOutbox(tx, {
+          topic: "task.completed",
+          dedupeKey: "task.completed:" + taskId + ":" + updated.version,
+          payload: {
+            projectId,
+            taskId,
+            status: updated.status,
+            progress: Number(updated.progress),
+            actualEnd: updated.actualEnd,
+            warnings,
+            actorId,
+            at: at.toISOString(),
+          },
+        });
+        if (warnings.length > 0) {
+          await appendOutbox(tx, {
+            topic: "task.draft_doc_reminded",
+            dedupeKey: "task.draft_doc_reminded:" + taskId + ":" + updated.version,
+            payload: { projectId, taskId, warnings, actorId, at: at.toISOString() },
+          });
+        }
+        await this.repository.touchProject(projectId, at, tx);
+        const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
+        await this.audit.record(tx, {
+          actorId,
+          action: "complete",
+          objectType: "task",
+          objectId: taskId,
+          projectId,
+          summary: "完成任务：" + updated.title + (warnings.length > 0 ? "（存在未定档成果文件，已触发 R02 提醒）" : ""),
+          changes: changes.length > 0 ? changes : null,
+        });
+        return { task: updated, warnings };
+      }),
+    );
+    return { task: toTaskView(result.task, today), warnings: result.warnings };
+  }
+
+  /**
+   * 门禁判定（ADR-024 / A4-20）：有节点任务按所属节点 node_requirements 逐类统计；无节点任务按自身 deliverable_types 兜底（每类 ≥ 1 份）。
+   * 定档口径：files.status ∈ (final, changed) 且 current_version_id 非空；draft 单独计数作放行提示（R02）。
+   */
+  private async evaluateGate(
+    client: DbClient,
+    task: TaskCompletionTargetRow,
+  ): Promise<{ missing: TaskGateMissing[]; warnings: TaskGateWarning[] }> {
+    const requirements: { docType: string; minCount: number }[] =
+      task.nodeId !== null
+        ? await this.gate.listNodeDocRequirements(client, task.nodeId)
+        : normalizeDocTypes(task.deliverableTypes).map((docType) => ({ docType, minCount: 1 }));
+    const scope: TaskGateScope = task.nodeId !== null ? { nodeId: task.nodeId } : { taskId: task.id };
+    const presentByType = new Map((await this.gate.countFinalFiles(client, scope)).map((row) => [row.docType, row.present]));
+    const missing: TaskGateMissing[] = [];
+    for (const requirement of requirements) {
+      // 蓝图校验（BLUEPRINT_REF_UNKNOWN）已限制 required_doc 取值；非法历史值静默跳过，不让门禁误拦。
+      if (!(DOC_TYPES as readonly string[]).includes(requirement.docType)) continue;
+      const presentCount = presentByType.get(requirement.docType) ?? 0;
+      if (presentCount < requirement.minCount) {
+        missing.push({
+          docType: requirement.docType as TaskGateMissing["docType"],
+          required: requirement.minCount,
+          present: presentCount,
+        });
+      }
+    }
+    const warnings = buildDraftWarnings(await this.gate.countDraftFiles(client, scope));
+    return { missing, warnings };
+  }
+
+  /** 事务内门禁强校验：缺件 → GateRejectedSignal（422 + missing）；通过 → 放行提示（R02）。拒绝留痕由调用方在事务外补写。 */
+  private async assertCompletionGate(client: DbClient, task: TaskRow, at: Date, actorId: string): Promise<TaskGateWarning[]> {
+    const gate = await this.evaluateGate(client, task);
+    if (gate.missing.length > 0) {
+      const rejection = new AppError(
+        "TASK_REQUIRED_DOC_MISSING",
+        "缺少必交成果文件，无法完成任务（TASK_REQUIRED_DOC_MISSING）",
+        gate.missing.map((item) => ({
+          code: "required_doc",
+          message: "缺少必交成果文件：" + item.docType + "（需要 " + item.required + "，现有 " + item.present + "）",
+          path: "missing",
+          meta: { ...item },
+        })),
+      );
+      throw new GateRejectedSignal(rejection, {
+        topic: "task.gate_rejected",
+        dedupeKey: "task.gate_rejected:" + task.id + ":" + at.getTime(),
+        payload: {
+          taskId: task.id,
+          projectId: task.projectId,
+          nodeId: task.nodeId,
+          missing: gate.missing,
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+    }
+    return gate.warnings;
+  }
+
+  /** 门禁拒绝的事务外善后（照 FlowService 模式）：补写 outbox 留痕 + 审计 failed，再抛 422 契约错误。 */
+  private async runCompletionGuarded<T>(actorId: string, taskId: string, run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof GateRejectedSignal) {
+        await appendOutbox(this.database.db, error.outbox);
+        const projectId =
+          typeof error.outbox.payload["projectId"] === "string" ? error.outbox.payload["projectId"] : null;
+        await this.audit.record(this.database.db, {
+          actorId,
+          action: "complete",
+          objectType: "task",
+          objectId: taskId,
+          projectId,
+          result: "failed",
+          summary: "任务完成被门禁拒绝：" + error.appError.message,
+          metadata: { errorCode: error.appError.code, details: error.appError.details },
+        });
+        throw error.appError;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 创建时解析「要求输出成果文件」（A1-17 模板带出）：显式传入优先；缺省时从所属节点的 required_doc 类型带出；
+   * 无节点任务缺省 = 空数组（不要求）。数组去重、首次出现保序。
+   */
+  private async resolveDeliverableTypes(
+    client: DbClient,
+    nodeId: string | null,
+    requested: readonly string[] | undefined,
+  ): Promise<string[]> {
+    if (requested !== undefined) return normalizeDocTypes(requested);
+    if (nodeId === null) return [];
+    const requirements = await this.gate.listNodeDocRequirements(client, nodeId);
+    return normalizeDocTypes(requirements.map((item) => item.docType));
+  }
+
   private async moveWithinGroup(tx: DbClient, projectId: string, task: TaskRow, requested: number): Promise<number> {
     const rows = await this.repository.listGroupOrder(projectId, task.stageKey, tx);
     const currentIndex = rows.findIndex((row) => row.id === task.id);
@@ -443,7 +667,7 @@ function toTaskView(row: TaskRow, today: string): Task {
     estimatedDays: row.estimatedDays,
     headcount: row.headcount,
     priority: normalizePriority(row.priority),
-    deliverable: normalizeDocType(row.deliverable),
+    deliverableTypes: normalizeDocTypes(row.deliverableTypes),
     note: row.note,
     onTime: deriveOnTime(input),
     changeRef: row.changeRef,
@@ -474,7 +698,7 @@ function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today:
     estimatedDays: view.estimatedDays,
     headcount: view.headcount,
     priority: view.priority,
-    deliverable: view.deliverable,
+    deliverableTypes: view.deliverableTypes,
     note: view.note,
     onTime: view.onTime,
     version: view.version,
@@ -560,7 +784,31 @@ function normalizePriority(value: string | null): Task["priority"] {
   return (PRIORITY_VALUES as readonly string[]).includes(value) ? (value as Task["priority"]) : null;
 }
 
-function normalizeDocType(value: string | null): Task["deliverable"] {
+/** 文件侧单值类型归一（files.doc_type）：非十类字典值回落 null（文件清单展示用）。 */
+function normalizeDocType(value: string | null): Task["deliverableTypes"][number] | null {
   if (value === null) return null;
-  return (DOC_TYPES as readonly string[]).includes(value) ? (value as Task["deliverable"]) : null;
+  return (DOC_TYPES as readonly string[]).includes(value) ? (value as Task["deliverableTypes"][number]) : null;
+}
+
+/** 十类字典过滤 + 去重（首次出现保序）—— ADR-024：取值属成果文件字典、数组去重、空数组 = 不要求。 */
+function normalizeDocTypes(values: readonly string[]): Task["deliverableTypes"] {
+  const seen = new Set<string>();
+  const result: Task["deliverableTypes"] = [];
+  for (const value of values) {
+    if (!(DOC_TYPES as readonly string[]).includes(value) || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value as Task["deliverableTypes"][number]);
+  }
+  return result;
+}
+
+/** 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时按字典顺序出 warning（计数 > 0 才出）。 */
+function buildDraftWarnings(rows: readonly TaskGateDocCountRow[]): TaskGateWarning[] {
+  const counts = new Map(rows.map((row) => [row.docType, row.present]));
+  const warnings: TaskGateWarning[] = [];
+  for (const docType of DOC_TYPES) {
+    const count = counts.get(docType) ?? 0;
+    if (count > 0) warnings.push({ code: "draft_doc_present", docType, count });
+  }
+  return warnings;
 }

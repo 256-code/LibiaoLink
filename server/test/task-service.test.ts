@@ -7,6 +7,7 @@ import type {
   TaskEventInput,
   TaskFileSummaryCounts,
   TaskListRow,
+  TaskCompletionTargetRow,
   TaskProjectNodeRow,
   TaskProjectRow,
   TaskInsertInput,
@@ -14,6 +15,7 @@ import type {
   TaskUpdatePatch,
 } from "../src/modules/task/task.repository.js";
 import { TaskRepository } from "../src/modules/task/task.repository.js";
+import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 import { TaskService } from "../src/modules/task/task.service.js";
 
@@ -42,7 +44,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     estimatedDays: null,
     headcount: null,
     priority: null,
-    deliverable: null,
+    deliverableTypes: [],
     note: null,
     onTime: null,
     changeRef: null,
@@ -89,6 +91,17 @@ class FakeTaskRepository {
   }
   async lockTask(): Promise<TaskRow | null> {
     return this.task;
+  }
+  async findCompletionTarget(): Promise<TaskCompletionTargetRow | null> {
+    return this.task === null
+      ? null
+      : {
+          id: this.task.id,
+          projectId: this.task.projectId,
+          nodeId: this.task.nodeId,
+          status: this.task.status,
+          deliverableTypes: this.task.deliverableTypes,
+        };
   }
   group: { id: string; sortIndex: number }[] = [];
   groupSize = 0;
@@ -158,6 +171,22 @@ class FakeTaskRepository {
   }
 }
 
+/** 门禁替身（M3-03）：默认放行；用例可注入要求与计数（缺件 / draft 提示）。 */
+class FakeTaskGateRepository {
+  requirements: { docType: string; minCount: number }[] = [];
+  finalCounts: { docType: string; present: number }[] = [];
+  draftCounts: { docType: string; present: number }[] = [];
+  async listNodeDocRequirements(): Promise<{ docType: string; minCount: number }[]> {
+    return this.requirements;
+  }
+  async countFinalFiles(): Promise<{ docType: string; present: number }[]> {
+    return this.finalCounts;
+  }
+  async countDraftFiles(): Promise<{ docType: string; present: number }[]> {
+    return this.draftCounts;
+  }
+}
+
 class FakeRoleService {
   roleCodes: string[] = [];
   async getActorAuthorization(): Promise<{ roleCodes: string[] }> {
@@ -189,11 +218,16 @@ class FakeAuditService {
   }
 }
 
-function makeService(repo: FakeTaskRepository, roles: FakeRoleService = new FakeRoleService()): TaskService {
+function makeService(
+  repo: FakeTaskRepository,
+  roles: FakeRoleService = new FakeRoleService(),
+  gate: FakeTaskGateRepository = new FakeTaskGateRepository(),
+): TaskService {
   const database = new FakeDatabase();
   return new TaskService(
     database as unknown as DatabaseService,
     repo as unknown as TaskRepository,
+    gate as unknown as TaskGateRepository,
     roles as unknown as RoleService,
     new FakeAuditService() as unknown as AuditService,
   );
