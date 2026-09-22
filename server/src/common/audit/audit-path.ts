@@ -16,6 +16,8 @@ function safeDecode(segment: string): string {
 const OBJECT_TYPE_BY_SEGMENT: Record<string, string> = {
   projects: "project",
   tasks: "task",
+  reports: "daily_report",
+  issues: "issue",
   nodes: "node",
   members: "project_member",
   stages: "stage",
