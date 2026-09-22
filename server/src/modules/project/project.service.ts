@@ -24,7 +24,7 @@ type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 /** 创建时未指定阶段的兜底值：导入蓝图后会被前移到蓝图首个阶段（M2-02）。 */
 const DEFAULT_STAGE_KEY = "presale";
 
-/** 行 → 契约视图（camelCase 对齐；managerName 随行下发，A2）。 */
+/** 行 → 契约视图（camelCase 对齐；managerNames 随行下发，A2 / A22）。 */
 export function toProjectView(view: ProjectViewRow): ProjectView {
   const row = view.project;
   return {
@@ -35,8 +35,8 @@ export function toProjectView(view: ProjectViewRow): ProjectView {
     customer: row.customer,
     region: row.region,
     projectType: row.projectType,
-    managerId: row.managerId,
-    managerName: view.managerName,
+    managerIds: row.managerIds,
+    managerNames: view.managerNames ?? row.managerIds.map(() => null),
     stageKey: row.stageKey as ProjectView["stageKey"],
     status: row.status as ProjectView["status"],
     description: row.description,
@@ -54,7 +54,7 @@ function projectAuditSnapshot(row: ProjectRow): Record<string, unknown> {
     customer: row.customer,
     region: row.region,
     projectType: row.projectType,
-    managerId: row.managerId,
+    managerIds: row.managerIds,
     stageKey: row.stageKey,
     status: row.status,
     description: row.description,
@@ -108,7 +108,7 @@ export class ProjectService {
       customer: body.customer ?? null,
       region: body.region,
       projectType: body.projectType,
-      managerId: body.managerId,
+      managerIds: body.managerIds,
       stageKey: body.stageKey ?? DEFAULT_STAGE_KEY,
       description: body.description ?? null,
     };
@@ -137,7 +137,7 @@ export class ProjectService {
           { field: "customer", from: null, to: row.customer },
           { field: "region", from: null, to: row.region },
           { field: "projectType", from: null, to: row.projectType },
-          { field: "managerId", from: null, to: row.managerId },
+          { field: "managerIds", from: null, to: row.managerIds },
           { field: "stageKey", from: null, to: imported.activeStageKey },
         ],
       });
@@ -163,7 +163,7 @@ export class ProjectService {
     if (body.customer !== undefined) patch.customer = body.customer;
     if (body.region !== undefined) patch.region = body.region;
     if (body.projectType !== undefined) patch.projectType = body.projectType;
-    if (body.managerId !== undefined) patch.managerId = body.managerId;
+    if (body.managerIds !== undefined) patch.managerIds = body.managerIds;
     if (body.stageKey !== undefined) patch.stageKey = body.stageKey;
     if (body.status !== undefined) patch.status = body.status;
     if (body.description !== undefined) patch.description = body.description;
@@ -190,7 +190,7 @@ export class ProjectService {
       return row;
     });
     const view = await this.projects.findViewById(id);
-    return toProjectView(view ?? { project: updated, managerName: current.managerName });
+    return toProjectView(view ?? { project: updated, managerNames: current.managerNames });
   }
 
   /** 软删（M2-01 · A5）：If-Match version 防误删；seq_no 不回收、code 唯一性保留（同编号再建仍 409）。 */
@@ -223,6 +223,6 @@ export class ProjectService {
       });
       return row;
     });
-    return toProjectView({ project: deleted, managerName: current.managerName });
+    return toProjectView({ project: deleted, managerNames: current.managerNames });
   }
 }

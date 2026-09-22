@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
-import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName } from "../data/members";
-import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
-import { InlineDateCell, InlineMemberCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
+import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
+import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, ownersFromMembers, ownersLabel, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { Tracker } from "./Tracker";
+import { RowDeleteButton } from "./RowDeleteButton";
 import { StageAddCard } from "./StageAddCard";
 import type { StagePlacement } from "./StageAddCard";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -157,7 +158,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "owner" | "ownerEn" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "owners" | "ownersEn" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -179,16 +180,18 @@ type TaskBoardProps = {
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一条 / 一批并指定插入位置（Push 113：点「＋ 添加」先弹位置浮层，选完才加进项目）。不传 = 点一条直接加到该阶段最后。 */
   onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
-  /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
-  manager?: string;
-  /** 项目经理 id（项目级字段：编辑弹窗「项目经理」下拉的当前选中项）。 */
-  managerId?: string;
+  /** 项目经理展示文本（项目级字段：取项目卡片上的名单，多位按「、」连接；不传时回落常量占位）。 */
+  managers?: string;
+  /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
+  managerIds?: string[];
   /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
   /** 表格行内编辑：只改任务字段（负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
-  /** 表格行内改「项目经理」：项目级字段，回写项目（不传 = 该列仍是只读文本）。 */
-  onChangeManager?: (managerId: string) => void;
+  /** 任务表行内删除（Push 141：行悬停的删除按钮，不传 = 不显示该按钮）。 */
+  onDeleteTask?: (taskId: string) => void;
+  /** 表格行内改「项目经理」：项目级字段（多位，Push 136），回写项目（不传 = 该列仍是只读文本）。 */
+  onChangeManagers?: (managerIds: string[]) => void;
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
   viewStage?: string;
   /**
@@ -218,13 +221,18 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manager, managerId, onChangeManager, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onEdit: () => void; manager: string; managerId: string; onChangeManager?: (managerId: string) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期列）。 */
   const late = lateDeliveryLabel(task);
   const status = taskStatus(task);
   const dotClass = STATUS_DOT_CLASS[status];
-  const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
-  const ownerMember = memberByName(task.owner);
+  /** 负责人展示（多位按「、」连接，Push 136）。 */
+  const fullOwners = ownersLabel(task.owners, task.ownersEn);
+  /** 人员下拉的选中项：按姓名回查目录 id（目录外的名字取不到 id、不进勾选态）。 */
+  const ownerIds = task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== "");
+  /** 人员目录 id → 成员（目录里查不到的 id 直接丢掉）。 */
+  const membersFromIds = (ids: readonly string[]): Member[] =>
+    ids.map((id) => MEMBER_DIRECTORY.find((item) => item.id === id)).filter((item): item is Member => item !== undefined);
   const startIso = isoFromCnDate(task.startDate);
   const dueIso = isoFromCnDate(task.dueDate);
   const doneIso = isoFromCnDate(task.doneDate);
@@ -239,7 +247,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
 
   const cells: Record<ColumnKey, ReactNode> = {
     title: (
-      <div className="flex min-w-0 items-center gap-4 self-stretch pr-8">
+      <div className="flex min-w-0 items-center gap-4 self-stretch">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
             {task.title}
@@ -249,61 +257,66 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onEdit, manage
           )}
         </div>
         <Tracker progress={task.progress} onChange={onProgress} />
-        <button
-          type="button"
-          aria-label="编辑任务"
-          title="编辑任务"
-          onClick={(event) => {
-            event.stopPropagation();
-            onEdit();
-          }}
-          className="shrink-0 rounded-lg p-1.5 text-zinc-400 opacity-0 transition hover:bg-white hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-            <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-          </svg>
-        </button>
+        {onDelete === undefined ? null : (
+          // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
+          // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
+          <span className="mr-4 flex w-12 shrink-0 items-center self-stretch">
+            <RowDeleteButton onDelete={onDelete} />
+          </span>
+        )}
       </div>
     ),
     manager:
-      onChangeManager === undefined ? (
-        <span className="truncate text-xs text-zinc-600">{manager}</span>
+      onChangeManagers === undefined ? (
+        <span className="truncate text-xs text-zinc-600" title={managers}>{managers}</span>
       ) : (
-        <InlineMemberCell
-          value={managerId}
+        <InlineMemberMultiCell
+          values={managerIds}
           options={PROJECT_MANAGERS}
           ariaLabel="修改项目经理"
-          display={<span className="text-zinc-600">{manager}</span>}
+          display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
-            onChangeManager(member.id);
+            if (managerIds.includes(member.id)) {
+              // 至少留一位（对齐契约 projects.manager_ids 非空）：取消最后一位时不生效
+              if (managerIds.length <= 1) {
+                return;
+              }
+              onChangeManagers(managerIds.filter((id) => id !== member.id));
+              return;
+            }
+            onChangeManagers([...managerIds, member.id]);
           }}
         />
       ),
     owner:
       onPatch === undefined ? (
-        task.owner === "" ? (
+        task.owners.length === 0 ? (
           <span className="text-xs text-zinc-300">待分配</span>
         ) : (
-          <span className="truncate text-xs text-zinc-600" title={fullOwner}>
-            {task.owner}
+          <span className="truncate text-xs text-zinc-600" title={fullOwners}>
+            {task.owners.join("、")}
           </span>
         )
       ) : (
-        <InlineMemberCell
-          value={ownerMember?.id ?? ""}
+        <InlineMemberMultiCell
+          values={ownerIds}
           options={MEMBER_DIRECTORY}
           ariaLabel="修改任务负责人"
           display={
-            task.owner === "" ? (
+            task.owners.length === 0 ? (
               <span className="text-zinc-300">待分配</span>
             ) : (
-              <span className="text-zinc-600" title={fullOwner}>
-                {task.owner}
+              <span className="text-zinc-600" title={fullOwners}>
+                {task.owners.join("、")}
               </span>
             )
           }
           onPick={(member) => {
-            onPatch({ owner: member.name, ownerEn: member.handle });
+            const next = ownerIds.includes(member.id)
+              ? ownerIds.filter((id) => id !== member.id)
+              : [...ownerIds, member.id];
+            // 全部取消 = 「待分配」（合法中间状态，A18）；数组顺序 = 勾选顺序
+            onPatch({ ...ownersFromMembers(membersFromIds(next)) });
           }}
         />
       ),
@@ -584,7 +597,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, manager, managerId, onSubmitTaskEdit, onPatchTask, onChangeManager, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -679,6 +692,30 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
     };
   }, [cardStage, scrollRef]);
 
+  /**
+   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下，
+   * 左右滚动（含底部滑块）时用 translateX 跟随 #task-board-scroll 的 scrollLeft，保证表头与各列始终对齐。
+   */
+  useEffect(() => {
+    const scroller = scrollRef?.current ?? null;
+    if (scroller === null) {
+      return;
+    }
+    const sync = () => {
+      const header = headerRowRef.current;
+      if (header !== null) {
+        header.style.transform = "translateX(" + String(-scroller.scrollLeft) + "px)";
+      }
+    };
+    sync();
+    scroller.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      scroller.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+    };
+  }, [scrollRef]);
+
   /** 阶段不在九阶段里的任务（看板「添加」直接建的空任务）归到「未分组」组，依旧能在表里看到。 */
   const stageOf = (task: ProjectTask) => (task.stage === "" ? "未分组" : task.stage);
   const groups = [...STAGE_ORDER, "未分组"]
@@ -693,14 +730,15 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   return (
     <>
       <div ref={boardWrapRef} className="relative">
-      <div ref={boardCardRef} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-      <div id="task-board-scroll" ref={scrollRef} className="overflow-x-auto">
-        <div style={{ minWidth: minWidth }}>
-          <div
-            ref={headerRowRef}
-            className="grid items-center border-b border-zinc-200 bg-zinc-50/70 px-5 py-2.5 text-xs font-medium text-zinc-400"
-            style={{ gridTemplateColumns: gridTemplate }}
-          >
+      <div ref={boardCardRef} className="rounded-xl border border-zinc-200 bg-white">
+      {/* 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下；
+          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。 */}
+      <div className="sticky top-16 z-20 overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
+        <div
+          ref={headerRowRef}
+          className="grid items-center px-5 py-2.5 text-xs font-medium text-zinc-400"
+          style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
+        >
             {columns.map((column) =>
               column.key === "title" ? (
                 <span key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-2.5">
@@ -734,7 +772,10 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                 </span>
               ),
             )}
-          </div>
+        </div>
+      </div>
+      <div id="task-board-scroll" ref={scrollRef} className="overflow-x-auto rounded-b-xl">
+        <div style={{ minWidth: minWidth }}>
           {groups.map((group) => {
             const done = group.items.filter(isTaskDone).length;
             const pct = group.items.length === 0 ? 0 : Math.round((done / group.items.length) * 100);
@@ -798,12 +839,17 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                         selected={selectedTask !== null && selectedTask.id === task.id}
                         onSelect={() => setSelectedTask(task)}
                         onProgress={(progress) => onSetProgress?.(task.id, progress)}
-                        onEdit={() => {
-                          setSelectedTask(task);
-                        }}
-                        manager={manager ?? PROJECT_MANAGER}
-                        managerId={managerId ?? ""}
-                        onChangeManager={onChangeManager}
+                        onDelete={
+                          onDeleteTask === undefined
+                            ? undefined
+                            : () => {
+                                setSelectedTask((current) => (current !== null && current.id === task.id ? null : current));
+                                onDeleteTask(task.id);
+                              }
+                        }
+                        managers={managers ?? PROJECT_MANAGER}
+                        managerIds={managerIds ?? []}
+                        onChangeManagers={onChangeManagers}
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                       />
                     ))}
@@ -829,8 +875,8 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       </div>
       <TaskDrawer
         task={drawerTask}
-        manager={manager ?? PROJECT_MANAGER}
-        managerId={managerId ?? ""}
+        managers={managers ?? PROJECT_MANAGER}
+        managerIds={managerIds ?? []}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
         onPatch={onPatchTask}

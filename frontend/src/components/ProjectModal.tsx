@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { MANAGERS } from "../data/managers";
+import { PROJECT_MANAGERS } from "../data/members";
+import { MemberMultiSelect } from "./MemberSelect";
 import { PROJECT_TYPES } from "../types";
 import type { ProjectType } from "../types";
 
 export type ProjectDraft = {
   code: string;
   description: string;
-  managerId: string;
+  /** 项目经理（多位，Push 136）：至少一位，数组顺序 = 展示顺序。 */
+  managerIds: string[];
   projectType: ProjectType;
 };
 
@@ -24,7 +26,7 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
   const isEdit = mode === "edit";
   const [code, setCode] = useState(initial?.code ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [managerId, setManagerId] = useState(initial?.managerId ?? "");
+  const [managerIds, setManagerIds] = useState<string[]>(initial?.managerIds ?? []);
   const [projectType, setProjectType] = useState<ProjectType>(initial?.projectType ?? "T-sort");
 
   useEffect(() => {
@@ -39,7 +41,7 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
     };
   }, [onClose]);
 
-  const canSubmit = code.trim() !== "" && description.trim() !== "" && managerId !== "";
+  const canSubmit = code.trim() !== "" && description.trim() !== "" && managerIds.length > 0;
   const title = isEdit ? "编辑项目" : "新建项目";
 
   return (
@@ -63,7 +65,7 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
             if (!canSubmit) {
               return;
             }
-            onSubmit({ code, description, managerId, projectType });
+            onSubmit({ code, description, managerIds, projectType });
           }}
         >
           <label className="block">
@@ -84,21 +86,19 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
               placeholder="如 中国包裹分拣"
             />
           </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目经理</span>
-            <select
-              className={fieldClass}
-              value={managerId}
-              onChange={(event) => setManagerId(event.target.value)}
-            >
-              <option value="">请选择项目经理</option>
-              {MANAGERS.map((manager) => (
-                <option key={manager.id} value={manager.id}>
-                  {manager.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="block">
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+              项目经理<span className="ml-1 text-xs font-normal text-zinc-400">可多位</span>
+            </span>
+            <MemberMultiSelect
+              values={managerIds}
+              onChange={setManagerIds}
+              options={PROJECT_MANAGERS}
+              placeholder="选择项目经理"
+              ariaLabel="选择项目经理"
+            />
+            <span className="mt-1 block text-[11px] text-zinc-400">至少一位；多位时按勾选顺序展示（Push 136）。</span>
+          </div>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
             <select

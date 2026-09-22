@@ -124,7 +124,7 @@ function projectRow(status = "active"): ProjectViewRow {
       customer: null,
       region: "华东",
       projectType: "分拣",
-      managerId: UUID_MANAGER,
+      managerIds: [UUID_MANAGER],
       stageKey: "presale",
       status,
       description: null,
@@ -134,7 +134,7 @@ function projectRow(status = "active"): ProjectViewRow {
       deletedAt: null,
       deletedBy: null,
     },
-    managerName: "项目经理甲",
+    managerNames: ["项目经理甲"],
   };
 }
 

@@ -19,6 +19,7 @@ export interface TaskSort {
 
 export interface TaskListFilter {
   stageKey: string | null;
+  /** 负责人筛选（单个 UUID）；命中口径 = 任务挂的任意一位负责人命中即命中（A23 · Push 136）。 */
   ownerId: string | null;
   /** 展示态多值（OR）；null = 不筛选。 */
   displayStatuses: string[] | null;

@@ -106,7 +106,7 @@ export class TaskService {
     const today = shanghaiToday(new Date());
     return {
       ...toTaskView(row.task, today),
-      ownerName: row.ownerName ?? null,
+      ownerNames: row.ownerNames ?? [],
       changeSummary: shortenChangeSummary(row.changeSummary),
       files: files.map((file) => ({
         id: file.id,
@@ -119,7 +119,7 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks：从任务节点生成（成员）或手工创建（仅管理员，A1-13）；按节点判重 409。
-   * w2 · Push 124：stageKey 可选（缺省 / null = 「未分组」；带节点时缺省取节点阶段）、ownerId 显式 null = 「待分配」、
+   * w2 · Push 124 / A23 · Push 136：stageKey 可选（缺省 / null = 「未分组」；带节点时缺省取节点阶段）、ownerIds 显式 [] = 「待分配」、
    * sortIndex = 插入位次（越界 / 缺省 = 组尾），组内其余任务位次顺延。
    */
   async create(projectId: string, body: TaskCreateBody, actorId: string): Promise<Task> {
@@ -138,7 +138,7 @@ export class TaskService {
     } else {
       await this.assertAdmin(actorId, "手工创建非标准任务");
     }
-    const ownerId = body.ownerId !== undefined ? body.ownerId : project.managerId;
+    const ownerIds = body.ownerIds !== undefined ? body.ownerIds : project.managerIds;
     const at = new Date();
     const row = await this.database.db.transaction(async (tx) => {
       if (nodeId !== null) {
@@ -159,7 +159,7 @@ export class TaskService {
           nodeId,
           title: body.title,
           titleEn: body.titleEn ?? null,
-          ownerId,
+          ownerIds,
           sortIndex,
           plannedStart: body.plannedStart ?? null,
           plannedEnd: body.plannedEnd ?? null,
@@ -197,7 +197,7 @@ export class TaskService {
         changes: [
           { field: "stageKey", from: null, to: created.stageKey },
           { field: "title", from: null, to: created.title },
-          { field: "ownerId", from: null, to: created.ownerId },
+          { field: "ownerIds", from: null, to: created.ownerIds },
           { field: "plannedEnd", from: null, to: created.plannedEnd },
         ].filter((change) => change.to !== null),
       });
@@ -208,7 +208,7 @@ export class TaskService {
 
   /**
    * PATCH /projects/{id}/tasks/{taskId}：字段编辑 +（可选）基础三态写入联动（A12）+ 组内重排（A19 / A20，Push 124）；
-   * 乐观锁 + 字段留痕。ownerId 显式 null = 「待分配」；sortIndex = 移到该组第 N 位（越界 = 组尾）。
+   * 乐观锁 + 字段留痕。ownerIds 显式 [] = 「待分配」；sortIndex = 移到该组第 N 位（越界 = 组尾）。
    */
   async update(projectId: string, taskId: string, body: TaskUpdateBody, actorId: string): Promise<Task> {
     await this.loadProjectForWrite(projectId);
@@ -234,7 +234,7 @@ export class TaskService {
       const current = { status: before.status, progress: Number(before.progress), actualEnd: before.actualEnd };
       const linked = body.status === undefined ? null : applyStatusWrite(current, body.status, today);
       const patch: TaskUpdatePatch = {
-        ownerId: body.ownerId !== undefined ? body.ownerId : before.ownerId,
+        ownerIds: body.ownerIds !== undefined ? body.ownerIds : before.ownerIds,
         status: linked === null ? before.status : linked.status,
         progress: String(linked === null ? current.progress : linked.progress),
         sortIndex,
@@ -387,9 +387,9 @@ export class TaskService {
   }
 }
 
-/** 任务字段级留痕快照（C7-02：负责人 / 状态 / 进度 / 组内位次 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */
+/** 任务字段级留痕快照（C7-02：负责人（多位）/ 状态 / 进度 / 组内位次 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */
 function taskAuditSnapshot(row: {
-  ownerId: string | null;
+  ownerIds: string[];
   status: string;
   progress: string | number;
   sortIndex: number;
@@ -402,7 +402,7 @@ function taskAuditSnapshot(row: {
   note: string | null;
 }): Record<string, unknown> {
   return {
-    ownerId: row.ownerId,
+    ownerIds: row.ownerIds,
     status: row.status,
     progress: Number(row.progress),
     sortIndex: row.sortIndex,
@@ -433,7 +433,7 @@ function toTaskView(row: TaskRow, today: string): Task {
     nodeId: row.nodeId,
     title: row.title,
     titleEn: row.titleEn,
-    ownerId: row.ownerId,
+    ownerIds: row.ownerIds,
     status: row.status as Task["status"],
     displayStatus: deriveDisplayStatus(input),
     progress: normalizeProgress(Number(row.progress)),
@@ -453,7 +453,7 @@ function toTaskView(row: TaskRow, today: string): Task {
   };
 }
 
-/** 列表项：TaskListItem（omit changeRef + ownerName / changeSummary / fileSummary）。 */
+/** 列表项：TaskListItem（omit changeRef + ownerNames / changeSummary / fileSummary）。 */
 function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today: string): TaskListItem {
   const view = toTaskView(row.task, today);
   return {
@@ -464,7 +464,7 @@ function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today:
     nodeId: view.nodeId,
     title: view.title,
     titleEn: view.titleEn,
-    ownerId: view.ownerId,
+    ownerIds: view.ownerIds,
     status: view.status,
     displayStatus: view.displayStatus,
     progress: view.progress,
@@ -480,7 +480,7 @@ function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today:
     version: view.version,
     createdAt: view.createdAt,
     updatedAt: view.updatedAt,
-    ownerName: row.ownerName ?? null,
+    ownerNames: row.ownerNames ?? [],
     changeSummary: shortenChangeSummary(row.changeSummary),
     fileSummary,
   };

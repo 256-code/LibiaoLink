@@ -30,8 +30,11 @@ export const tasks = pgTable(
     nodeId: uuid("node_id").references(() => projectNodes.id),
     title: text("title").notNull(),
     titleEn: text("title_en"),
-    /** 可空（A18 · Push 124）：「待分配」是合法中间状态（拖进「待分配」列 = 清空负责人）。 */
-    ownerId: uuid("owner_id"),
+    /**
+     * 任务负责人（A23 · Push 136）：可多位、数组顺序 = 展示顺序；空数组 = 「待分配」（A18 合法中间状态）。
+     * 空默认值与「未分配」同义，存量 / 新建都不写 null。
+     */
+    ownerIds: uuid("owner_ids").array().notNull().default(sql`array[]::uuid[]`),
     status: text("status").notNull(),
     progress: numeric("progress", { precision: 3, scale: 2 }).notNull().default("0"),
     plannedStart: date("planned_start"),
@@ -55,7 +58,7 @@ export const tasks = pgTable(
   (table) => [
     index("ix_tasks_project_stage").on(table.projectId, table.stageKey),
     index("ix_tasks_project_stage_order").on(table.projectId, table.stageKey, table.sortIndex),
-    index("ix_tasks_owner_due").on(table.ownerId, table.plannedEnd),
+    index("ix_tasks_owner_ids").using("gin", table.ownerIds),
     index("ix_tasks_due").on(table.projectId, table.actualEnd, table.plannedEnd),
     check(
       "ck_tasks_stage_key",
@@ -69,6 +72,7 @@ export const tasks = pgTable(
       sql`${table.estimatedDays} is null or ${table.estimatedDays} >= 0`,
     ),
     check("ck_tasks_sort_index", sql`${table.sortIndex} >= 0`),
+    check("ck_tasks_owner_ids_no_null", sql`array_position(${table.ownerIds}, null::uuid) is null`),
   ],
 );
 

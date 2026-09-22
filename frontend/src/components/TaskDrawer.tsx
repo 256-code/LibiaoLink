@@ -1,9 +1,10 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberById, memberByName } from "../data/members";
+import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberById, memberByName, type Member } from "../data/members";
 import {
   PROJECT_MANAGER,
   cnDateFromIso,
+  ownersLabel,
   daysBetweenInclusive,
   isCompleteStatus,
   isTaskOverdue,
@@ -17,7 +18,7 @@ import {
 } from "../data/tasks";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { InlineDateCell } from "./InlineEdit";
-import { MemberSelect } from "./MemberSelect";
+import { MemberMultiSelect } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import type { TaskPatch } from "./TaskBoard";
@@ -69,12 +70,14 @@ const FIELD_CLASS =
 
 const CAPTION_CLASS = "mt-1 block text-[11px] leading-4 text-zinc-400";
 
-/** 任务编辑保存值：可编辑字段 = 项目经理（项目级）/ 负责人 / 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
+/** 任务编辑保存值：可编辑字段 = 项目经理（项目级，多位）/ 任务负责人（多位）/ 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
 export type TaskEditSubmit = {
   taskId: string;
-  managerId: string;
-  owner: string;
-  ownerEn: string;
+  /** 项目经理 id 名单（项目级字段，Push 136）：至少一位，回写项目。 */
+  managerIds: string[];
+  /** 任务负责人（多位）：空数组 = 待分配。 */
+  owners: string[];
+  ownersEn: string[];
   startDate: string;
   dueDate: string;
   days: number;
@@ -85,8 +88,8 @@ export type TaskEditSubmit = {
 
 /** 抽屉里的表单草稿（「所见即所存」：抽屉打开期间不随父级刷新重置）。 */
 type Draft = {
-  managerId: string;
-  ownerId: string;
+  managerIds: string[];
+  ownerIds: string[];
   range: DateRange | null;
   headcount: string;
   priority: TaskPriority;
@@ -99,10 +102,11 @@ function rangeOf(task: ProjectTask): DateRange | null {
   return from === "" || to === "" ? null : { from, to };
 }
 
-function draftOf(task: ProjectTask | null, managerId: string): Draft {
+function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
   return {
-    managerId,
-    ownerId: task === null ? "" : memberByName(task.owner)?.id ?? "",
+    managerIds,
+    ownerIds:
+      task === null ? [] : task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== ""),
     range: task === null ? null : rangeOf(task),
     headcount: task !== null && task.headcount > 0 ? String(task.headcount) : "",
     priority: task === null ? "中" : task.priority,
@@ -111,10 +115,10 @@ function draftOf(task: ProjectTask | null, managerId: string): Draft {
 }
 
 type TaskDrawerProps = {
-  /** 项目经理（项目级字段：取项目卡片上的经理；不传时回落常量占位）。 */
-  manager?: string;
-  /** 当前项目经理 id（项目级字段，人员下拉的选中项）。 */
-  managerId?: string;
+  /** 项目经理展示文本（项目级字段：多位按「、」连接；不传时回落常量占位）。 */
+  managers?: string;
+  /** 当前项目经理 id 名单（项目级字段，人员多选下拉的选中项，Push 136）。 */
+  managerIds?: string[];
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => void;
@@ -134,11 +138,11 @@ type TaskDrawerProps = {
  * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
  * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、文件（走文件库）、变更关联。
  */
-export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress, onPatch, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgress, onPatch, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
-  const [draft, setDraft] = useState<Draft>(() => draftOf(task, managerId));
+  const [draft, setDraft] = useState<Draft>(() => draftOf(task, managerIds));
   const draftRef = useRef(draft);
   draftRef.current = draft;
   /** 「已保存」提示（非 0 = 展示中）。 */
@@ -151,7 +155,7 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
     setClosing(false);
     setSavedTick(0);
     setHoveredStep(0);
-    setDraft(draftOf(task, managerId));
+    setDraft(draftOf(task, managerIds));
     // 换任务时把草稿重置成新任务的字段；同一个任务上父级刷新不重置，避免打断正在输入的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
@@ -219,14 +223,14 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
         return;
       }
       const next = updateDraft(patch);
-      const owner = next.ownerId === "" ? null : memberById(next.ownerId) ?? null;
+      const owners = next.ownerIds.map((id) => memberById(id)).filter((member): member is Member => member !== undefined);
       const headcountText = next.headcount.trim();
       const headcountValue = headcountText === "" ? 0 : Number(headcountText);
       onSubmit({
         taskId: current.id,
-        managerId: next.managerId,
-        owner: owner?.name ?? "",
-        ownerEn: owner?.handle ?? "",
+        managerIds: next.managerIds,
+        owners: owners.map((member) => member.name),
+        ownersEn: owners.map((member) => member.handle),
         startDate: next.range === null ? "" : cnDateFromIso(next.range.from),
         dueDate: next.range === null ? "" : cnDateFromIso(next.range.to),
         days: next.range === null ? 0 : daysBetweenInclusive(next.range.from, next.range.to),
@@ -254,7 +258,7 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
   const shownStep = hoveredStep > 0 ? hoveredStep : step;
   const stepPct = Math.round((shownStep / TRACKER_STEPS) * 100);
   const progressText = hoveredStep > 0 ? TRACKER_LABELS[hoveredStep] ?? "" : trackerLabel(task.progress);
-  const fullOwner = task.ownerEn === "" ? task.owner : task.owner + "(" + task.ownerEn + ")";
+  const fullOwners = ownersLabel(task.owners, task.ownersEn);
   /** 进度条与条上那四颗点一律用绿色（与任务表四格点 `bg-emerald-500` 同一个绿）—— 进度条只表达「做了多少」，
    *  状态色由状态签与色点单独表达；业务反馈：灰的看不懂，要和任务表一样绿。 */
   const barClass = "bg-emerald-500";
@@ -294,40 +298,44 @@ export function TaskDrawer({ task, manager, managerId = "", onSubmit, onProgress
       label: "项目经理",
       value: editable ? (
         <>
-          <MemberSelect
-            value={draft.managerId}
+          <MemberMultiSelect
+            values={draft.managerIds}
             options={PROJECT_MANAGERS}
-            onChange={(member) => {
-              commit({ managerId: member.id });
+            onChange={(memberIds) => {
+              // 至少留一位（对齐契约 projects.manager_ids 非空）：全取消时不写
+              if (memberIds.length === 0) {
+                return;
+              }
+              commit({ managerIds: memberIds });
             }}
             placeholder="选择项目经理"
             ariaLabel="选择项目经理"
           />
-          <span className={CAPTION_CLASS}>项目级字段，改后全项目同步</span>
+          <span className={CAPTION_CLASS}>项目级字段（可多位，按勾选顺序展示），改后全项目同步</span>
         </>
       ) : (
-        <span className="font-medium text-zinc-800">{manager ?? PROJECT_MANAGER}</span>
+        <span className="font-medium text-zinc-800">{managers ?? PROJECT_MANAGER}</span>
       ),
     },
     {
       label: "任务负责人",
       value: editable ? (
         <>
-          <MemberSelect
-            value={draft.ownerId}
+          <MemberMultiSelect
+            values={draft.ownerIds}
             options={MEMBER_DIRECTORY}
-            onChange={(member) => {
-              commit({ ownerId: member.id });
+            onChange={(memberIds) => {
+              commit({ ownerIds: memberIds });
             }}
             placeholder="待分配"
             ariaLabel="选择任务负责人"
           />
-          <span className={CAPTION_CLASS}>留空 = 待分配</span>
+          <span className={CAPTION_CLASS}>可多位；全部取消 = 待分配</span>
         </>
-      ) : task.owner === "" ? (
+      ) : task.owners.length === 0 ? (
         <span className="text-zinc-400">待分配</span>
       ) : (
-        fullOwner
+        fullOwners
       ),
     },
     {
