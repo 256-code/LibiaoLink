@@ -10,7 +10,7 @@
 ## 已实现（h6）
 
 - 策略层纯函数（permission.rules.ts，不碰数据库，CI 用例主对象）：
-  - 记录级：`projectScopeSpec`（数据范围 → all / managed / member 三开关；own_stakeholders 与 granted 未落地、无角色兜底名册，见下「差异」）；
+  - 记录级：`projectScopeSpec`（数据范围 → all / managed / member 三开关；granted 未落地（own_stakeholders 已随 j6 落地，见下「差异」1）；无角色兜底名册）；
   - 功能权限：`can(actor, key, ctx)` = 全局权限位 ∪ 项目内项目经理隐含位 ∪ 项目内成员隐含位（ADR-011 §4.3 平权例外 + ADR-020 / ADR-023 既有口径）；
   - 字段级：表驱动 `FIELD_POLICIES`（干系人联系方式三个字段 → stakeholder.contact.view；公司 / 职务 → stakeholder.view；备注 → stakeholder.manage；员工邮箱一期全员可见）；无权字段**不返回**（服务端裁剪，不做前端打码 · C3-08）；
   - 五出口：`planExit(actor, exit, entity)`（page / export / search / notify）与 `exitsConsistent`（同一实体下四出口投影必须一致）；导出出口额外要求 `project.export`（C3-05 单独授权 + 审计）。
@@ -30,8 +30,8 @@
 
 ## 差异与后续（待复核）
 
-1. `own_stakeholders` / `granted` 两个数据范围**未落地**（干系人表随 j6 · S8·stakeholder；临时授权随 C3-06）：当前不贡献可见集，等价于「只看得到自己名册上的项目 ∪（managed_projects 下）自己管理的项目」。
-2. 字段级的真实出口随干系人卡片（j6）：一期落地的是策略表 + 五出口投影 + 用例；干系人接口接入时直接调用 `planExit` / `projectFields`，不需要再改策略层。
-3. 「隐藏脱敏」的位形打码档（masked）与「只读」档留待 j6 / C3-09 定稿：一期按 C3-08「无权字段一律不返回」执行。
+1. `granted` 数据范围**未落地**（临时授权随 C3-06）：当前不贡献可见集；`own_stakeholders` **已随 j6 落地（Push 144）** —— 一期落地形态 = 干系人台账的记录级可见集「我录入的（`stakeholders.created_by` = 本人）」∪「关联项目落在可见项目内」，由 `stakeholder.rules.stakeholderVisibility` 实现（ownId 恒为本人 = 兜底，避免「有角色反而看得更少」）。项目域仍等价于「只看得到自己名册上的项目 ∪（managed_projects 下）自己管理的项目」。
+2. 字段级的真实出口**已随 j6 干系人落地（Push 144）**：`StakeholderService` 逐行经 `projectFields(authorization, stakeholder, dto)` 裁剪，无权字段**键不存在**（C3-08：不返回、不打码）—— 策略层零改动，接入即出口。导出 / 搜索 / 消息出口（lan 线 M7 / M5）复用同一策略表与投影入口。
+3. 「隐藏脱敏」的位形打码档（masked）与「只读」档仍留待 C3-09 定稿：一期按 C3-08「无权字段一律不返回」执行 —— j6 已按此落地（只读角色读得到干系人、读不到 remark；列表与详情同一键位）。
 4. 列表可见集按 id 集合过滤（一次查询取可见项目 id，再 `inArray`）—— 一期规模够用；项目量级上来后随 M2-06 / 压测评估改视图或子查询。
 5. 导出 / 搜索 / 通知模块本身（i 系列 / M7 的 search、notify、jobs）尚未落地：本模块已给出统一投影入口，落地时按出口调用即可。
