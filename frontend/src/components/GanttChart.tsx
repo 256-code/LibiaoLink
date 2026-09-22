@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROGRESS_STEPS, TASK_DATE_YEAR, cnDateFromIso, daysBetweenInclusive, isTaskDone, isoFromCnDate, ownersLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, TASK_DATE_YEAR, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, ownersLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
 
@@ -31,7 +31,7 @@ import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
  * 其余口径（详见 `前端功能需求.md` §6.14）：
  * - 分组 = 施工阶段（九个阶段按项目总览顺序，空阶段照样出骨架行；非九阶段的任务落「未分组」垫底）；
  * - 任务条 = 开始日期 → 预计完成日期；条内青色 = 已完成进度（`task.progress`）、橙色 = 剩余工期；
- * - 单日任务（开始 = 预计完成）画里程碑菱形 —— 一期没有「是否里程碑」字段（系统功能书 A1-11 在二期），
+ * - 单日任务（开始 = 预计完成）画菱形 —— 一期没有「是否里程碑」字段（系统功能书 A1-11 在二期），菱形按状态取色：已完成 = 绿色、未完成 = 灰色、已延期 = 红色；
  *   这里按单日派生，字段口径见 `前端功能需求.md` §3.8 A26；
  * - 深色竖线 = 实际完成日期刻度（系统功能书 B3-01「计划条 + 实际完成标注」）；
  * - 已延期 = 条头一段红内嵌色条（B3-05）；今天 = 蓝色虚线（今天落在时间轴范围内时才画）；
@@ -966,7 +966,7 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
   };
 
   /**
-   * 任务条：里程碑 = 绿色菱形（单日任务，只给整条平移）；其余 = 青色进度 + 橙色剩余 + 实际完成刻度；
+   * 任务条：单日任务 = 菱形（只给整条平移；已完成绿 / 未完成灰 / 已延期红）；其余 = 青色进度 + 橙色剩余 + 实际完成刻度；
    * 悬停 / 拖动时条两端浮出改工期的热区与进度圆点，拖动中的那条上方浮一枚日期（进度）浮标。
    */
   const renderTaskBar = (bar: GanttBar) => {
@@ -991,6 +991,12 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
 
     if (bar.milestone) {
       const size = 14;
+      // 单日任务的菱形按状态取色（业务 2026-09-22）：已完成 / 提前完成 = 绿、未完成 = 灰、已延期 = 红。
+      const tone = isCompleteStatus(bar.status)
+        ? "bg-emerald-500 ring-emerald-700/60"
+        : bar.status === "已延期"
+          ? "bg-red-500 ring-red-700/60"
+          : "bg-zinc-400 ring-zinc-500/60";
       return (
         <>
           <span
@@ -1014,7 +1020,7 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
               setSelectedId(bar.task.id);
             }}
           >
-            <span className={"block rotate-45 rounded-[2px] bg-emerald-500 ring-1 ring-emerald-700/60 " + (selected ? "shadow-[0_0_0_2px_rgba(37,99,235,0.45)]" : "")} style={{ width: size, height: size }} aria-hidden="true" />
+            <span className={"block rotate-45 rounded-[2px] ring-1 " + tone + " " + (selected ? "shadow-[0_0_0_2px_rgba(37,99,235,0.45)]" : "")} style={{ width: size, height: size }} aria-hidden="true" />
           </span>
           {dragBubble(box.left + dayWidth / 2 - size / 2, dragging)}
         </>
@@ -1147,9 +1153,9 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
               <span className="h-2.5 w-4 rounded-[3px] bg-[#f7a63c] shadow-[inset_3px_0_0_0_#ef4444]" aria-hidden="true" />
               已延期
             </li>
-            <li className="flex items-center gap-1.5">
+            <li className="flex items-center gap-1.5" title="单日任务（开始 = 预计完成）：已完成 = 绿色、未完成 = 灰色、已延期 = 红色">
               <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-emerald-500 ring-1 ring-emerald-700/60" aria-hidden="true" />
-              里程碑（单日任务）
+              单日任务
             </li>
             <li className="flex items-center gap-1.5">
               <span className="h-3 w-[2px] bg-zinc-900/60" aria-hidden="true" />
