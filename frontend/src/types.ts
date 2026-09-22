@@ -22,8 +22,12 @@ export type Project = {
   /** 项目序号（契约 seqNo ↔ projects.seq_no）：服务端创建时分配，全库唯一、不可修改、不回收；卡片两位补零展示。 */
   seqNo: number;
   code: string;
-  /** 前端「项目描述」= 契约 name（唯一展示名）；备注长文本是契约 description，一期表单不采集。 */
+  /** 前端「项目名称」= 契约 name（唯一展示名；Push 161 起表单标签由「项目描述」改名，对齐契约 name）。 */
   description: string;
+  /** 客户（契约 customer，可空）：Push 161 起表单采集；未填写 = null（新建不发送、编辑发送 null 清空）。 */
+  customer: string | null;
+  /** 备注（契约 description，可空）：Push 161 起表单采集；与「项目名称」是两回事，详情页头部单独一行展示。 */
+  note: string | null;
   /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（停用 / 存量值回落码本身）。 */
   region: string;
   /** 项目类型：契约 projects.projectType 存字典 projectType 的码；主题色由字典 metadata 下发（前端不硬编码）。 */

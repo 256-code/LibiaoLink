@@ -149,6 +149,8 @@ export default function App() {
         region: draft.region,
         projectType: draft.projectType,
         managerIds: draft.managerIds,
+        customer: draft.customer.trim() === "" ? undefined : draft.customer.trim(),
+        description: draft.note.trim() === "" ? undefined : draft.note.trim(),
       });
       setDataVersion((value) => value + 1);
       return null;
@@ -168,6 +170,8 @@ export default function App() {
           region: draft.region,
           projectType: draft.projectType,
           managerIds: draft.managerIds,
+          customer: draft.customer.trim() === "" ? null : draft.customer.trim(),
+          description: draft.note.trim() === "" ? null : draft.note.trim(),
         },
         project.version,
       );
@@ -277,6 +281,8 @@ export default function App() {
         initial={{
           code: editingProject.code,
           description: editingProject.description,
+          customer: editingProject.customer ?? "",
+          note: editingProject.note ?? "",
           managerIds: editingProject.managerIds,
           projectType: editingProject.projectType,
           region: editingProject.region,
