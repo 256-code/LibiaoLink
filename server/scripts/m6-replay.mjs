@@ -261,6 +261,8 @@ try {
         await db.query("delete from tasks where project_id = $1", [cleanup.projectId]);
         await db.query("delete from audit_logs where project_id = $1", [cleanup.projectId]);
         await db.query("delete from outbox_events where payload::text like $1", ["%" + cleanup.projectId + "%"]);
+        await db.query("delete from node_requirements where node_id in (select id from project_nodes where project_id = $1)", [cleanup.projectId]);
+        await db.query("delete from project_nodes where project_id = $1", [cleanup.projectId]);
         await db.query("delete from project_stages where project_id = $1", [cleanup.projectId]);
         await db.query("delete from project_members where project_id = $1", [cleanup.projectId]);
         await db.query("delete from projects where id = $1", [cleanup.projectId]);
