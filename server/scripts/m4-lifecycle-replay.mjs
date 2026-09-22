@@ -5,7 +5,7 @@
  *   证据二（定档锁版）：POST /files/{id}/finalize → draft → final + finalized_* 成对字段 + 审计（action=complete）+ outbox
  *           file.finalized；并发定档（两个请求持同一 version）第二个 409 VERSION_CONFLICT（M4 出口标准）。
  *   证据三（定档后管控）：定档后对既有文件追加版本 → 409 FILE_STATE_INVALID（version 意图目标须 draft）；
- *           定档后回溯 → 400（details change_flow_not_open，随 M4-04 变更流）。
+ *           定档后回溯 → 走变更流（M4-04 申请即通过：change_requests + 新版本挂 change_request_id + 状态 changed）。
  *   证据四（Push 130 定案放开：对既有 draft 文件追加版本）：intent=version + fileId → 同一文件行追加 v2；
  *           名称 / 归属与目标现状不一致 → 400（防静默改名 / 改挂接）。
  *   证据五（回溯）：POST /files/{id}/rollback 生成新版本（复制目标版对象到新版本契约键），不删历史；
@@ -377,15 +377,36 @@ try {
     "上传入口在会话未建立前即拒绝：不留半截会话",
   );
 
-  const rollbackFinalized = await rollbackFile(fileA.fileId, versionA1.id, "定档后回退", finalized.body?.version, admin);
+  // 定档后回溯 = 变更：前置要「同一文件两版再定档」（回退目标版 ≠ 当前版）。
+  const fileD = await uploadNewFile({
+    projectId: project,
+    name: "变更回溯-M4-04.docx",
+    sizeBytes: FILE_B_SIZE,
+    docType: "CAD图纸",
+    nodeId: projectNode,
+    session: admin,
+  });
+  const versionD1 = fileD.completed.body?.version;
+  await appendVersion({ projectId: project, fileId: fileD.fileId, name: "变更回溯-M4-04.docx", sizeBytes: MI_B, session: admin });
+  const detailD = await fileDetail(fileD.fileId);
+  const finalizedD = await finalizeFile(fileD.fileId, detailD.body?.version, admin);
+  const rollbackFinalized = await rollbackFile(fileD.fileId, versionD1.id, "定档后回退", finalizedD.body?.version, admin);
+  const rollbackChange = rollbackFinalized.body?.changeRequest;
+  const rollbackChangeRow = await db.query("select id, status, reason from change_requests where id = $1", [rollbackChange?.id]);
+  const rollbackVersionRow = await db.query("select change_request_id from file_versions where file_id = $1 order by seq desc limit 1", [fileD.fileId]);
   check(
     "L5",
-    "定档后回溯 → 400（details change_flow_not_open，随 M4-04 变更流；切片内显式暂缓）",
-    "400 VALIDATION_FAILED（change_flow_not_open）",
-    rollbackFinalized.status + " " + short({ code: rollbackFinalized.body?.code, detail: rollbackFinalized.body?.details?.[0]?.code }, 120),
-    rollbackFinalized.status === 400 &&
-      rollbackFinalized.body?.code === "VALIDATION_FAILED" &&
-      rollbackFinalized.body?.details?.[0]?.code === "change_flow_not_open",
+    "定档后回溯 = 变更（M4-04 申请即通过）：200 + changeRequest 非空 + 新版本挂 change_request_id + 状态 final → changed",
+    "200 + changeRequest.status=applied + 版本 change_request_id 一致 + files.status=changed",
+    rollbackFinalized.status +
+      " " +
+      short({ changeRequest: rollbackChange, versionRow: rollbackVersionRow.rows[0], changeRow: rollbackChangeRow.rows[0] }, 300),
+    rollbackFinalized.status === 200 &&
+      rollbackChange?.status === "applied" &&
+      rollbackChange?.reason === "定档后回退" &&
+      rollbackChangeRow.rows[0]?.status === "applied" &&
+      rollbackVersionRow.rows[0]?.change_request_id === rollbackChange.id &&
+      rollbackFinalized.body?.file?.status === "changed",
   );
 
   // ---------- 证据四：对既有 draft 文件追加版本（Push 130 定案放开） ----------
@@ -717,6 +738,7 @@ try {
           await db.query("update files set current_version_id = null where project_id = $1", [projectId]);
           await db.query("delete from upload_sessions where file_id in (select id from files where project_id = $1)", [projectId]);
           await db.query("delete from file_versions where file_id in (select id from files where project_id = $1)", [projectId]);
+          await db.query("delete from change_requests where project_id = $1", [projectId]);
           await db.query("delete from audit_logs where project_id = $1", [projectId]);
           await db.query("delete from outbox_events where payload::text like $$%$$ || $1::text || $$%$$", [projectId]);
           await db.query("delete from files where project_id = $1", [projectId]);
@@ -772,7 +794,7 @@ lines.push("");
 lines.push("- 读面 = L2 / L11：`GET /files/{id}`（含当前版本）与 `GET /files/{id}/versions`（版本链，按 seq 升序）；读面项目可见即可，非成员 404。");
 lines.push("- 定档锁版 = L3：draft → final，`finalized_at/by` 成对落库，审计 action=complete + outbox `file.finalized`。");
 lines.push("- 并发定档 409（M4 出口标准）= L10：两个请求持同一 version，恰好一个成功、一个 409 VERSION_CONFLICT。");
-lines.push("- 定档后管控 = L4 / L5：对已定档文件追加版本 409 FILE_STATE_INVALID；定档后回溯 400（`change_flow_not_open`，随 M4-04 变更流）。");
+lines.push("- 定档后管控 = L4 / L5：对已定档文件追加版本 409 FILE_STATE_INVALID；定档后回溯 = 变更（M4-04 申请即通过：change_requests + 新版本挂 change_request_id + 状态 changed）。");
 lines.push("- draft 追加版本（Push 130 定案放开）= L6 / L7：`intent=version + fileId` 同一文件行追加 v2；名称 / 跨项目不一致 400。");
 lines.push("- 回溯 = L8 / L9：复制目标版对象到新版本契约键、生成新版本（不删历史）；目标即当前版本 400 already_current。");
 lines.push("- 回收站 = L12 / L13：任意状态可删（记 `recycled_from_status`、`purge_after = +30 天`）；恢复回到进入前状态。");
@@ -782,7 +804,7 @@ lines.push("- 单测回归（不连库）：server/test/file-service.test.ts（5
 lines.push("");
 lines.push("## 与 M4-01 回放的关系");
 lines.push("");
-lines.push("- 本卡放开了 `intent=version + fileId`（Push 130 定案）→ `scripts/m4-upload-replay.mjs` 的 U22 断言同步切换为「version + fileId 接受 / change + fileId 仍 400」，避免旧断言把新行为判失败；`docs/m4-01-回放证据(上传管道S7file).md` 的 U22 行同步修订。");
+lines.push("- 本卡放开了 `intent=version + fileId`（Push 130 定案）→ `scripts/m4-upload-replay.mjs` 的 U22 断言同步切换为「version + fileId 接受 / change + fileId 目标门禁」，避免旧断言把新行为判失败；`docs/m4-01-回放证据(上传管道S7file).md` 的 U22 行同步修订。");
 lines.push("- 复跑：cd server && node --env-file-if-exists=.env scripts/m4-lifecycle-replay.mjs --out \"../docs/m4-02-回放证据(版本定档回溯回收站).md\"");
 lines.push("");
 

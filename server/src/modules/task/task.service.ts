@@ -39,6 +39,7 @@ import {
 } from "./task.rules.js";
 import {
   TaskRepository,
+  type TaskChangeLinkRow,
   type TaskCompletionTargetRow,
   type TaskEventInput,
   type TaskFileSummaryCounts,
@@ -144,9 +145,8 @@ export class TaskService {
     const files = await this.repository.listFiles(taskId);
     const today = shanghaiToday(new Date());
     return {
-      ...toTaskView(row.task, today),
+      ...toTaskView(row.task, today, toChangeLinks(row.changeLinks)),
       ownerNames: row.ownerNames ?? [],
-      changeSummary: shortenChangeSummary(row.changeSummary),
       files: files.map((file) => ({
         id: file.id,
         name: file.name,
@@ -242,7 +242,7 @@ export class TaskService {
       });
       return created;
     });
-    return toTaskView(row, shanghaiToday(at));
+    return toTaskView(row, shanghaiToday(at), []);
   }
 
   /**
@@ -278,7 +278,7 @@ export class TaskService {
         ),
       ),
     );
-    return toTaskView(row, today);
+    return toTaskView(row, today, await this.changeLinksOf(row));
   }
 
   /**
@@ -308,7 +308,7 @@ export class TaskService {
           () => this.database.db.transaction((tx) => this.applyUpdate(tx, projectId, taskId, request, actorId, at, today, batchId)),
           batchId,
         );
-        succeeded.push(toTaskView(row, today));
+        succeeded.push(toTaskView(row, today, await this.changeLinksOf(row)));
       } catch (error) {
         const failure = toBatchFailure(taskId, error);
         if (failure === null) throw error;
@@ -584,7 +584,7 @@ export class TaskService {
         return { task: updated, warnings };
       }),
     );
-    return { task: toTaskView(result.task, today), warnings: result.warnings };
+    return { task: toTaskView(result.task, today, await this.changeLinksOf(result.task)), warnings: result.warnings };
   }
 
   /**
@@ -712,6 +712,11 @@ export class TaskService {
   }
 
   /** 项目可见性：软删 / 不存在统一 404（记录级 404 语义随 h6 策略服务）。 */
+  /** 写路径响应用：按任务行的 change_refs（追加序）取回关联变更，保证「编辑 / 完成」不改动已有变更关联。 */
+  private async changeLinksOf(task: TaskRow): Promise<TaskChangeLinkRow[]> {
+    return this.repository.listChangeLinks(task.changeRefs);
+  }
+
   private async loadProjectOrFail(projectId: string): Promise<TaskProjectRow> {
     const project = await this.repository.findProject(projectId);
     if (project === null) throw new AppError("NOT_FOUND", "项目不存在或不可见");
@@ -811,7 +816,7 @@ function taskAuditSnapshot(row: {
 }
 
 /** 行 → 契约视图：displayStatus / onTime 读时派生（A12 / A14），不写回存储。 */
-function toTaskView(row: TaskRow, today: string): Task {
+function toTaskView(row: TaskRow, today: string, changeLinks: Task["changeLinks"]): Task {
   const input = {
     status: row.status,
     plannedEnd: row.plannedEnd,
@@ -840,42 +845,18 @@ function toTaskView(row: TaskRow, today: string): Task {
     deliverableTypes: normalizeDocTypes(row.deliverableTypes),
     note: row.note,
     onTime: deriveOnTime(input),
-    changeRef: row.changeRef,
+    changeLinks,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-/** 列表项：TaskListItem（omit changeRef + ownerNames / changeSummary / fileSummary）。 */
+/** 列表项：TaskListItem（Task + ownerNames / fileSummary；「变更关联」列吃 changeLinks 多条）。 */
 function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today: string): TaskListItem {
-  const view = toTaskView(row.task, today);
   return {
-    id: view.id,
-    projectId: view.projectId,
-    stageKey: view.stageKey,
-    sortIndex: view.sortIndex,
-    nodeId: view.nodeId,
-    title: view.title,
-    titleEn: view.titleEn,
-    ownerIds: view.ownerIds,
-    status: view.status,
-    displayStatus: view.displayStatus,
-    progress: view.progress,
-    plannedStart: view.plannedStart,
-    plannedEnd: view.plannedEnd,
-    actualEnd: view.actualEnd,
-    estimatedDays: view.estimatedDays,
-    headcount: view.headcount,
-    priority: view.priority,
-    deliverableTypes: view.deliverableTypes,
-    note: view.note,
-    onTime: view.onTime,
-    version: view.version,
-    createdAt: view.createdAt,
-    updatedAt: view.updatedAt,
+    ...toTaskView(row.task, today, toChangeLinks(row.changeLinks)),
     ownerNames: row.ownerNames ?? [],
-    changeSummary: shortenChangeSummary(row.changeSummary),
     fileSummary,
   };
 }
@@ -932,8 +913,13 @@ function buildEvents(before: TaskRow, after: TaskUpdatePatch): TaskEventInput[] 
   return events;
 }
 
-/** 变更摘要（列表用短文本）：取变更原因截断；详情用 changeRef 跳变更记录。 */
-function shortenChangeSummary(value: string | null): string | null {
+/** 变更关联项（A1-07 多条）：行上已按 change_refs 追加序取好；原因在服务端截短（列表短文本，全文在变更记录）。 */
+function toChangeLinks(rows: readonly TaskChangeLinkRow[]): Task["changeLinks"] {
+  return rows.map((row) => ({ id: row.id, reason: shortenChangeReason(row.reason), appliedAt: row.appliedAt }));
+}
+
+/** 变更原因短文本（列表用）：超长截断；详情跳变更记录看全文。 */
+function shortenChangeReason(value: string | null): string | null {
   if (value === null) return null;
   const text = value.trim();
   if (text === "") return null;

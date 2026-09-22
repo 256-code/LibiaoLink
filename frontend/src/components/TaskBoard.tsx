@@ -91,7 +91,7 @@ const PRIORITY_CAPSULE_CLASS: Record<TaskPriority, string> = {
   低: "bg-zinc-100 text-zinc-500 hover:bg-zinc-200/70",
 };
 
-const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
+export const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
   已完成: "bg-emerald-500",
   提前完成: "bg-emerald-500",
   进行中: "bg-blue-500",

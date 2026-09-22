@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  ChangeIntentBodySchema,
+  ChangeRequestSchema,
   FileDetailSchema,
   FileFinalizeBodySchema,
   FileListResponseSchema,
@@ -43,6 +45,7 @@ import { PermissionService } from "../permission/index.js";
 import {
   FileRepository,
   type FileLinkInsertInput,
+  type ChangeRequestRow,
   type FileRow,
   type FileVersionRow,
   type UploadSessionRow,
@@ -68,6 +71,20 @@ type FileRestoreBody = z.infer<typeof FileRestoreBodySchema>;
 type FilePurgeBody = z.infer<typeof FilePurgeBodySchema>;
 type FilePurgeResponse = z.infer<typeof FilePurgeResponseSchema>;
 type FileListResponse = z.infer<typeof FileListResponseSchema>;
+type ChangeRequestView = z.infer<typeof ChangeRequestSchema>;
+type ChangeIntentBody = z.infer<typeof ChangeIntentBodySchema>;
+
+/**
+ * 变更申请载荷（`upload_sessions.change_payload` 原文；complete / 回溯时读入 `change_requests`）。
+ * 带索引签名：直接作为 `jsonb` 值写入（drizzle `$type<Record<string, unknown>>`）。
+ */
+interface ChangePayload {
+  [key: string]: unknown;
+  reason: string;
+  beforeSummary: string | null;
+  afterSummary: string | null;
+  stageKey: string | null;
+}
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -95,13 +112,21 @@ export const RECYCLE_SWEEP_BATCH = 100;
  * - 状态机：draft → final（定档锁版）→ changed（M4-04 变更）→ archived；任意态可 recycled（回收站，保留 30 天可恢复）；
  * - 放开 `intent=version` + `fileId`（Push 130 定案）：对既有 draft 文件追加 / 替换版本（版本链只追加，当前版本指向新版本）；
  * - 生命周期写操作一律带乐观锁 `version`（409 VERSION_CONFLICT；「并发定档 409」为 M4 出口标准）；
- * - 回溯生成新版本（复制目标版对象到新版本契约键），不删历史；定档后回溯走变更流（随 M4-04）；
- * - `intent=change`（M4-04）与「定档后回溯」见各方法内的暂缓说明；到期清理由 worker 定时档执行（system 审计 actorId=null）。
+ * - 回溯生成新版本（复制目标版对象到新版本契约键），不删历史；定档后回溯走变更流（M4-04 起落地）；
+ * - 到期清理由 worker 定时档执行（system 审计 actorId=null）。
  *
  * M4-03 增补（多态关联与文件库查询）：
  * - complete 时在事务内写 `file_links`（project 必写、node / task 有则写；唯一（file, object_type, object_id）保证幂等）；
  * - 文件库列表 `GET /projects/{id}/files`：状态 / 类型 / 节点 / 任务 / 上传人筛选 + 关键字 + 白名单排序 + 分页
  *   （默认排除 recycled —— 回收站文件走显式 `filter[status]=recycled`）。
+ *
+ * M4-04 增补（变更申请即通过 · A4-13 / A4-14）：
+ * - 上传入口 `intent=change` 放开（目标须 final / changed；会话落 `upload_sessions.change_payload`）；
+ * - complete（change）/ 定档后回溯：同一事务写 `change_requests`（status = applied）+ 新版本挂 `change_request_id`
+ *   + 文件状态置 `changed` + `file_links`(change) + R01 回写任务 `change_refs` + 变更审计 + outbox `change.applied`；
+ * - R01（`docs/rules/R01-R07-内置规则文案.md`）：按「任务输出成果文件（多值）命中变更文件成果类型」匹配任务，
+ *   命中多条全部关联、无匹配只记日志（不阻断变更生效）；`tasks.change_refs` 落「追加 + 去重」的多条关联
+ *   （A1-07 / A4-13「一条任务可关联多条变更」；数组顺序 = 关联先后，末位 = 最近一次变更，迁移 0020）。
  */
 @Injectable()
 export class FileService {
@@ -124,23 +149,11 @@ export class FileService {
       member: access.member,
       projectManager: access.projectManager,
     });
-    // `intent=change`（定档后变更上传）随 M4-04 变更申请落地：zod 已按契约放行（change 必填 fileId + change 体），
-    // 本切片显式 400 —— 不处理会把变更误当「新建 / 追加版本」写库。
-    if (body.intent === "change") {
-      throw new AppError(
-        "VALIDATION_FAILED",
-        "intent=change（定档后变更上传）随 M4-04 变更申请落地；当前只开放 intent=version（省略 fileId = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本）",
-        [
-          {
-            code: "intent_change_not_open",
-            message: "change 意图随 M4-04 变更申请落地",
-            path: "intent",
-          },
-        ],
-      );
-    }
-    // 目标文件（Push 130 定案 · M4-02 放开）：给出 fileId = 对既有 draft 文件替换 / 追加新版本。
-    const target = body.fileId === undefined ? null : await this.resolveUploadTarget(body, actorId);
+    // 目标文件（Push 130 定案；M4-02 放开 version、M4-04 放开 change）：
+    // version 给出 fileId = 对既有 draft 文件替换 / 追加版本；change 必填 fileId = 对已定档（final / changed）文件发起变更。
+    const target = await this.resolveUploadTarget(body, actorId);
+    const isChange = body.intent === "change";
+    const changePayload = body.intent === "change" ? normalizeChangePayload(body.change) : null;
     const effectiveName = target === null ? body.name : target.name;
     const effectiveDocType = target === null ? body.docType ?? null : target.docType;
     const effectiveNodeId = target === null ? body.nodeId : target.nodeId ?? undefined;
@@ -193,6 +206,7 @@ export class FileService {
           sizeBytes: body.sizeBytes,
           contentHash: body.contentHash?.toLowerCase() ?? null,
           mime: body.mime ?? null,
+          changePayload,
           createdBy: actorId,
           createdAt: at,
           expiresAt,
@@ -205,14 +219,25 @@ export class FileService {
         objectType: "file",
         objectId: file.id,
         projectId: body.projectId,
-        summary: (target === null ? "发起上传：" : "发起上传（既有 draft 文件追加版本）：") + effectiveName,
+        summary:
+          (target === null
+            ? "发起上传："
+            : isChange
+              ? "发起变更上传（定档后变更）："
+              : "发起上传（既有 draft 文件追加版本）：") + effectiveName,
         changes:
           target === null
             ? [
                 { field: "name", from: null, to: effectiveName },
                 { field: "status", from: null, to: file.status },
               ]
-            : [{ field: "pendingVersion", from: null, to: String(target.version + 1) }],
+            : [
+                {
+                  field: isChange ? "pendingChange" : "pendingVersion",
+                  from: null,
+                  to: isChange ? (changePayload?.reason ?? "") : String(target.version + 1),
+                },
+              ],
         metadata: {
           uploadId: session.id,
           intent: session.intent,
@@ -304,6 +329,7 @@ export class FileService {
   /** POST /files/{id}/uploads/{uploadId}/complete：校验分片 → 合并 → 复制到契约键 → 登记版本。 */
   async completeUpload(fileId: string, uploadId: string, body: UploadCompleteBody, actorId: string): Promise<UploadCompleteResponse> {
     const { file, session } = await this.loadUploadContext(fileId, uploadId, actorId, "file.upload");
+    const isChange = session.intent === "change";
     const at = this.clock.now();
     if (session.status !== "active") {
       throw new AppError("UPLOAD_SESSION_EXPIRED", "上传会话已结束（" + session.status + "），请重新发起上传");
@@ -386,8 +412,15 @@ export class FileService {
       if (lockedFile === null) {
         throw new AppError("NOT_FOUND", "文件不存在");
       }
-      // 目标文件在会话期间被定档 / 回收时不得再追加版本（Push 130 定案：version 意图目标须 draft）。
-      if (lockedFile.status !== "draft") {
+      // 状态门禁（会话期间文件可能被定档 / 回收）：version 意图目标须 draft；change 意图目标须 final / changed（A4-13）。
+      if (isChange) {
+        if (lockedFile.status !== "final" && lockedFile.status !== "changed") {
+          throw new AppError(
+            "FILE_STATE_INVALID",
+            "变更目标文件已不是定档状态（" + lockedFile.status + "），不能变更；变更须针对已定档（final / changed）文件",
+          );
+        }
+      } else if (lockedFile.status !== "draft") {
         throw new AppError(
           "FILE_STATE_INVALID",
           "目标文件已不是未定档状态（" + lockedFile.status + "），不能追加版本；定档后修改请走变更（M4-04）",
@@ -397,6 +430,18 @@ export class FileService {
       if (currentSeq !== seq) {
         throw new AppError("INTERNAL", "文件版本位次被并发上传占用，请重试完成上传");
       }
+      const changeRequestId = isChange ? randomUUID() : null;
+      // M4-04：变更记录先于版本落库 —— file_versions.change_request_id 是即时外键（同事务内也要求被引用行先存在）。
+      const changeDraft =
+        changeRequestId === null
+          ? null
+          : await this.insertChangeInTx(tx, {
+              changeRequestId,
+              file: lockedFile,
+              payload: readChangePayload(session.changePayload),
+              actorId,
+              at,
+            });
       const version = await this.repository.insertVersion(
         {
           fileId,
@@ -407,12 +452,18 @@ export class FileService {
           mime: session.mime,
           uploadedBy: actorId,
           uploadedAt: at,
+          changeRequestId,
         },
         tx,
       );
       const updatedFile = await this.repository.updateFileOnComplete(
         fileId,
-        { currentVersionId: version.id, version: lockedFile.version + 1, updatedAt: at },
+        {
+          currentVersionId: version.id,
+          version: lockedFile.version + 1,
+          status: isChange ? "changed" : undefined,
+          updatedAt: at,
+        },
         tx,
       );
       const completedSession = await this.repository.updateSession(
@@ -422,13 +473,27 @@ export class FileService {
       );
       // M4-03 多态关联：上传成功即建立关联（project 必写，node / task 有则写；on conflict do nothing 幂等）。
       await this.repository.insertFileLinks(buildFileLinkInputs(lockedFile, actorId, at), tx);
+      // M4-04 变更（申请即通过）：同事务写 file_links(change) + R01 任务回写 + 变更审计 + outbox（记录行已先落库）。
+      if (changeDraft !== null) {
+        await this.finishChangeInTx(tx, {
+          draft: changeDraft,
+          file: lockedFile,
+          version,
+          actorId,
+          at,
+          fromStatus: lockedFile.status,
+        });
+      }
+      const changeRequest = changeDraft === null ? null : changeDraft.row;
       await this.audit.record(tx, {
         actorId,
         action: "complete",
         objectType: "file",
         objectId: fileId,
         projectId: file.projectId,
-        summary: "完成上传：" + lockedFile.name + " v" + version.seq,
+        summary: isChange
+          ? "完成变更上传：" + lockedFile.name + " v" + version.seq + "（状态 " + lockedFile.status + " → changed）"
+          : "完成上传：" + lockedFile.name + " v" + version.seq,
         changes: [
           { field: "currentVersionId", from: lockedFile.currentVersionId, to: version.id },
           { field: "version", from: String(lockedFile.version), to: String(updatedFile.version) },
@@ -441,6 +506,7 @@ export class FileService {
           sizeBytes: head.sizeBytes,
           etag: mergedEtag,
           duplicateOf: null,
+          changeRequestId: changeRequest === null ? null : changeRequest.id,
         },
       });
       await appendOutbox(tx, {
@@ -459,7 +525,7 @@ export class FileService {
           at: at.toISOString(),
         },
       });
-      return { file: updatedFile, version, session: completedSession };
+      return { file: updatedFile, version, session: completedSession, changeRequest };
     });
 
     // 暂存对象已复制到契约键：按版本清理（失败只告警 —— 残留由过期清理兜底，不影响已落库版本）。
@@ -472,8 +538,108 @@ export class FileService {
     return {
       file: toFileView(committed.file),
       version: toVersionView(committed.version),
-      changeRequest: null,
+      changeRequest:
+        committed.changeRequest === null ? null : toChangeRequestView(committed.changeRequest, fileId, committed.version),
     };
+  }
+
+  /**
+   * M4-04 变更记录（申请即通过，A4-13 / A4-14）第一步：同事务写 `change_requests`（status = applied）。
+   * 必须先于版本写入 —— `file_versions.change_request_id` 是即时外键（同一事务内也要求被引用行先存在）。
+   */
+  private async insertChangeInTx(
+    tx: DbTransaction,
+    input: { changeRequestId: string; file: FileRow; payload: ChangePayload; actorId: string; at: Date },
+  ): Promise<{ row: ChangeRequestRow; stageKey: string | null }> {
+    const { file, payload } = input;
+    const stageKey = payload.stageKey ?? (file.nodeId === null ? null : await this.repository.findNodeStageKey(file.nodeId, tx));
+    const row = await this.repository.insertChangeRequest(
+      {
+        id: input.changeRequestId,
+        projectId: file.projectId,
+        nodeId: file.nodeId,
+        stageKey,
+        reason: payload.reason,
+        beforeSummary: payload.beforeSummary,
+        afterSummary: payload.afterSummary,
+        appliedBy: input.actorId,
+        appliedAt: input.at,
+        createdAt: input.at,
+      },
+      tx,
+    );
+    return { row, stageKey };
+  }
+
+  /**
+   * M4-04 变更生效第二步（版本写入之后）：同事务写 `file_links`(change) + R01 回写任务 `change_refs` + 变更审计
+   * + outbox `change.applied`；变更后文件状态置 `changed`（由调用方随状态流转落库）。
+   *
+   * R01 口径（ADR-024 多值命中 / `docs/rules/R01-R07-内置规则文案.md` / A1-07）：按「变更文件成果类型 ∈
+   * 任务输出成果文件（deliverable_types 多值）」匹配任务 —— 命中多条全部关联（`change_refs` 追加 + 去重）；
+   * 无匹配只记日志（不阻断变更生效，提示申请人由通知侧承担，随 M5）。
+   */
+  private async finishChangeInTx(
+    tx: DbTransaction,
+    input: {
+      draft: { row: ChangeRequestRow; stageKey: string | null };
+      file: FileRow;
+      version: FileVersionRow;
+      actorId: string;
+      at: Date;
+      fromStatus: string;
+    },
+  ): Promise<void> {
+    const { file } = input;
+    const { row: changeRequest, stageKey } = input.draft;
+    await this.repository.insertFileLinks(
+      [{ fileId: file.id, objectType: "change", objectId: changeRequest.id, createdBy: input.actorId, createdAt: input.at }],
+      tx,
+    );
+    const matchedTaskIds =
+      file.docType === null ? [] : await this.repository.listTaskIdsByDeliverable(file.projectId, file.docType, tx);
+    const linkedTasks = await this.repository.appendTasksChangeRefs(matchedTaskIds, changeRequest.id, tx);
+    if (linkedTasks === 0) {
+      this.logger.warn(
+        "变更 R01 无匹配任务（变更关联未回写）：" + changeRequest.id + " / 成果类型 " + String(file.docType),
+      );
+    }
+    await this.audit.record(tx, {
+      actorId: input.actorId,
+      action: "create",
+      objectType: "change",
+      objectId: changeRequest.id,
+      projectId: file.projectId,
+      summary: "变更申请即通过：" + file.name + " → v" + input.version.seq + "（" + summarizeText(changeRequest.reason, 60) + "）",
+      changes: [{ field: "status", from: input.fromStatus, to: "changed" }],
+      metadata: {
+        fileId: file.id,
+        versionId: input.version.id,
+        versionSeq: input.version.seq,
+        nodeId: file.nodeId,
+        stageKey,
+        deliverableType: file.docType,
+        matchedTasks: matchedTaskIds,
+        linkedTasks,
+      },
+    });
+    await appendOutbox(tx, {
+      topic: "change.applied",
+      dedupeKey: "change.applied:" + changeRequest.id,
+      payload: {
+        projectId: file.projectId,
+        changeRequestId: changeRequest.id,
+        fileId: file.id,
+        versionId: input.version.id,
+        versionSeq: input.version.seq,
+        nodeId: file.nodeId,
+        stageKey,
+        reason: changeRequest.reason,
+        matchedTasks: matchedTaskIds,
+        actorId: input.actorId,
+        at: input.at.toISOString(),
+      },
+    });
   }
 
   /** POST /files/{id}/uploads/{uploadId}/abort：取消上传（幂等；已完成会话拒绝）。 */
@@ -566,19 +732,19 @@ export class FileService {
     ]);
   }
 
-  /** 回溯准入：仅未定档（draft）可回溯；final / changed 走变更流（M4-04），recycled / archived 状态不允许。 */
-  private assertRollbackAllowed(status: string): void {
-    if (status === "final" || status === "changed") {
-      throw new AppError("VALIDATION_FAILED", "文件已定档，回溯必须走变更（申请即通过，随 M4-04 落地）；当前仅支持未定档文件回溯", [
-        { code: "change_flow_not_open", message: "定档后回溯随 M4-04 变更流落地", path: "toVersionId" },
-      ]);
-    }
+  /**
+   * 回溯准入（M4-04 起）：draft = 普通回溯（无变更记录）；final / changed = 走变更流（申请即通过，A4-13）；
+   * recycled / archived 不允许（回收站中的文件需先恢复）。
+   */
+  private assertRollbackAllowed(status: string): "draft" | "change" {
+    if (status === "final" || status === "changed") return "change";
     if (status !== "draft") {
       throw new AppError(
         "FILE_STATE_INVALID",
         "文件当前状态（" + status + "）不允许回溯" + (status === "recycled" ? "；请先从回收站恢复" : ""),
       );
     }
+    return "draft";
   }
 
   /** 彻底删除仅系统管理员（权限模型落地前的临时口径，A4-12）。 */
@@ -711,8 +877,8 @@ export class FileService {
 
   /**
    * POST /files/{id}/rollback：版本回溯 —— 生成新版本（复制目标版对象到新版本契约键），不删除历史。
-   * 定档（final / changed）后回溯按变更流处理（A4-13 申请即通过），随 M4-04 落地：
-   * 本切片显式 400（details `change_flow_not_open`，同 M4-01 `intent_change_not_open` 的切片守卫口径）。
+   * 定档（final / changed）后回溯 = 变更（A4-13 申请即通过 · M4-04）：同一事务写 `change_requests` + 新版本挂
+   * `change_request_id` + 文件状态 `changed` + `file_links`(change) + R01 回写 + 审计 + outbox `change.applied`。
    */
   async rollbackFile(fileId: string, body: FileRollbackBody, actorId: string): Promise<FileRollbackResponse> {
     const file = await this.loadFileForWrite(fileId, actorId);
@@ -750,7 +916,8 @@ export class FileService {
     const committed = await this.database.db.transaction(async (tx) => {
       const locked = await this.lockFileOr404(tx, fileId);
       this.assertOptimisticVersion(body.version, locked.version);
-      this.assertRollbackAllowed(locked.status);
+      const mode = this.assertRollbackAllowed(locked.status);
+      const changeRequestId = mode === "change" ? randomUUID() : null;
       if (locked.currentVersionId === target.id) {
         throw new AppError("VALIDATION_FAILED", "目标版本已是当前版本，无需回溯", [
           { code: "already_current", message: "toVersionId 即当前版本", path: "toVersionId" },
@@ -760,6 +927,17 @@ export class FileService {
       if (currentSeq !== seq) {
         throw new AppError("INTERNAL", "文件版本位次被并发上传占用，请重试回溯");
       }
+      // M4-04：变更记录先于版本落库 —— file_versions.change_request_id 是即时外键（同事务内也要求被引用行先存在）。
+      const changeDraft =
+        changeRequestId === null
+          ? null
+          : await this.insertChangeInTx(tx, {
+              changeRequestId,
+              file: locked,
+              payload: { reason: body.reason, beforeSummary: null, afterSummary: null, stageKey: null },
+              actorId,
+              at,
+            });
       const version = await this.repository.insertVersion(
         {
           fileId,
@@ -770,23 +948,55 @@ export class FileService {
           mime: target.mime,
           uploadedBy: actorId,
           uploadedAt: at,
+          changeRequestId,
         },
         tx,
       );
       const updated = await this.repository.updateFileState(
         fileId,
-        { currentVersionId: version.id, version: locked.version + 1, updatedAt: at },
+        {
+          currentVersionId: version.id,
+          version: locked.version + 1,
+          ...(mode === "change" ? { status: "changed" } : {}),
+          updatedAt: at,
+        },
         tx,
       );
+      // M4-04：定档后回溯 = 变更（申请即通过）—— change 关联 + R01 回写 + 变更审计 + outbox（记录行已先于版本落库）。
+      if (changeDraft !== null) {
+        await this.finishChangeInTx(tx, {
+          draft: changeDraft,
+          file: locked,
+          version,
+          actorId,
+          at,
+          fromStatus: locked.status,
+        });
+      }
+      const changeRequest = changeDraft === null ? null : changeDraft.row;
       await this.audit.record(tx, {
         actorId,
         action: "rollback",
         objectType: "file",
         objectId: fileId,
         projectId: file.projectId,
-        summary: "版本回溯：" + locked.name + " v" + target.seq + " → 新版本 v" + version.seq + "（不删历史）",
+        summary:
+          (mode === "change" ? "变更回溯（定档后）：" : "版本回溯：") +
+          locked.name +
+          " v" +
+          target.seq +
+          " → 新版本 v" +
+          version.seq +
+          "（不删历史）",
         changes: [{ field: "currentVersionId", from: locked.currentVersionId, to: version.id }],
-        metadata: { toVersionId: target.id, fromSeq: target.seq, newSeq: version.seq, reason: body.reason, objectKey },
+        metadata: {
+          toVersionId: target.id,
+          fromSeq: target.seq,
+          newSeq: version.seq,
+          reason: body.reason,
+          objectKey,
+          changeRequestId: changeRequest === null ? null : changeRequest.id,
+        },
       });
       await appendOutbox(tx, {
         topic: "file.version.created",
@@ -806,9 +1016,14 @@ export class FileService {
           at: at.toISOString(),
         },
       });
-      return { file: updated, version };
+      return { file: updated, version, changeRequest };
     });
-    return { file: toFileView(committed.file), version: toVersionView(committed.version), changeRequest: null };
+    return {
+      file: toFileView(committed.file),
+      version: toVersionView(committed.version),
+      changeRequest:
+        committed.changeRequest === null ? null : toChangeRequestView(committed.changeRequest, fileId, committed.version),
+    };
   }
 
   /**
@@ -899,14 +1114,16 @@ export class FileService {
   }
 
   /**
-   * 目标文件解析（`intent=version` + `fileId`，Push 130 定案 · M4-02 放开）：
-   * 不存在 / 不可见 → 404；与 projectId 不一致 / 名称与归属（name / docType / nodeId / taskId）与现状不符 → 400；
-   * 非 draft → 409 FILE_STATE_INVALID（定档后修改走变更 M4-04）。生效字段一律以目标文件现状为准。
+   * 目标文件解析（Push 130 定案；M4-02 放开 version、M4-04 放开 change）：
+   * `fileId` 省略（仅 version）→ 新建文件（返回 null）；给出：不存在 / 不可见 → 404；与 projectId 不一致 /
+   * 名称与归属（name / docType / nodeId / taskId）与现状不符 → 400；状态：version 意图须 draft、change 意图须
+   * final / changed，否则 409 FILE_STATE_INVALID。生效字段一律以目标文件现状为准。
    */
-  private async resolveUploadTarget(body: Extract<UploadCreateBody, { intent: "version" }>, actorId: string): Promise<FileRow> {
+  private async resolveUploadTarget(body: UploadCreateBody, actorId: string): Promise<FileRow | null> {
     const fileId = body.fileId;
     if (fileId === undefined) {
-      throw new AppError("INTERNAL", "内部错误：resolveUploadTarget 需要 fileId");
+      // 仅 `intent=version` 可能省略（change 的 fileId 由契约必填）；省略 = 新建文件。
+      return null;
     }
     const file = await this.repository.findFileById(fileId);
     if (file === null) {
@@ -919,7 +1136,15 @@ export class FileService {
         { code: "invalid_file", message: "fileId 与 projectId 不一致", path: "fileId" },
       ]);
     }
-    if (file.status !== "draft") {
+    if (body.intent === "change") {
+      // A4-13：变更针对已定档文件（final / changed）；未定档文件直接替换版本即可。
+      if (file.status !== "final" && file.status !== "changed") {
+        throw new AppError(
+          "FILE_STATE_INVALID",
+          "变更目标文件当前状态（" + file.status + "）不允许变更；变更须针对已定档（final / changed）文件",
+        );
+      }
+    } else if (file.status !== "draft") {
       throw new AppError(
         "FILE_STATE_INVALID",
         "目标文件当前状态（" + file.status + "）不允许追加版本；定档后修改请走变更（M4-04）",
@@ -1169,6 +1394,52 @@ function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSchema> {
     uploadedAt: row.uploadedAt.toISOString(),
     changeRequestId: row.changeRequestId,
   };
+}
+
+/** 变更记录视图（`fileId` / `versionId` / `versionSeq` 来自同事务的版本行，非 `change_requests` 列）。 */
+function toChangeRequestView(row: ChangeRequestRow, fileId: string, version: FileVersionRow): ChangeRequestView {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    nodeId: row.nodeId,
+    stageKey: row.stageKey as ChangeRequestView["stageKey"],
+    reason: row.reason,
+    beforeSummary: row.beforeSummary,
+    afterSummary: row.afterSummary,
+    status: row.status as ChangeRequestView["status"],
+    appliedBy: row.appliedBy,
+    appliedAt: row.appliedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    fileId,
+    versionId: version.id,
+    versionSeq: version.seq,
+  };
+}
+
+/** 变更申请载荷规范化（`intent=change` 随上传会话落 `upload_sessions.change_payload`）。 */
+function normalizeChangePayload(change: ChangeIntentBody): ChangePayload {
+  return {
+    reason: change.reason,
+    beforeSummary: change.beforeSummary ?? null,
+    afterSummary: change.afterSummary ?? null,
+    stageKey: change.stageKey ?? null,
+  };
+}
+
+/** 读会话里的变更载荷（服务端自写；字段缺失按空值兜底）。 */
+function readChangePayload(value: unknown): ChangePayload {
+  const record = (value ?? {}) as Record<string, unknown>;
+  return {
+    reason: typeof record.reason === "string" ? record.reason : "",
+    beforeSummary: typeof record.beforeSummary === "string" ? record.beforeSummary : null,
+    afterSummary: typeof record.afterSummary === "string" ? record.afterSummary : null,
+    stageKey: typeof record.stageKey === "string" ? record.stageKey : null,
+  };
+}
+
+/** 摘要截断（审计 / 日志里的长文本）。 */
+function summarizeText(value: string, max: number): string {
+  return value.length <= max ? value : value.slice(0, max) + "…";
 }
 
 /** complete 的关联写入（M4-03）：project 必写，node / task 有则写（唯一约束兜底幂等）。 */

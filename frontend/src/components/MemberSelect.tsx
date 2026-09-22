@@ -32,18 +32,70 @@ export function MemberAvatar({ member }: { member: Member }) {
   );
 }
 
-type MemberSearchListProps = {
-  options: Member[];
-  /** 当前选中成员 id（"" = 未选）。 */
-  value: string;
-  /** 多选模式（Push 136）：已选成员 id 列表；给出时选中判定改看「在不在列表里」，`value` 只作单选回退。 */
-  selectedIds?: readonly string[];
-  onPick: (member: Member) => void;
+/** 通用搜索下拉的选项：成员行（头像 + 姓名 + 拼音 + 角色）或普通行（首字圆底 + 名称 + 右侧说明，如筛选用的「全部」「待分配」）。 */
+export type SearchSelectItem =
+  | { kind: "member"; value: string; member: Member }
+  | { kind: "plain"; value: string; name: string; hint: string };
+
+/** 选项名（成员取姓名、普通行取名称）：触发器展示用。 */
+function itemName(item: SearchSelectItem): string {
+  return item.kind === "member" ? item.member.name : item.name;
+}
+
+/** 搜索匹配：成员按姓名 / 拼音 / 角色，普通行按名称 / 说明（大小写不敏感）。 */
+function itemMatches(item: SearchSelectItem, keyword: string): boolean {
+  const lower = keyword.toLowerCase();
+  const fields = item.kind === "member" ? [item.member.name, item.member.handle, item.member.role] : [item.name, item.hint];
+  return fields.some((field) => field.includes(keyword) || field.toLowerCase().includes(lower));
+}
+
+/** 选中绿勾（与 SelectMenu 的选项勾同一枚图标）。 */
+function CheckMark() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-emerald-600">
+      <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+type SearchRowProps = { item: SearchSelectItem; selected: boolean; active: boolean; onHover: () => void; onPick: () => void };
+
+/** 选项行：成员行 = 头像 + 姓名 + 拼音 + 角色；普通行 = 首字圆底 + 名称 + 右侧说明；选中态右侧绿勾。 */
+function SearchRow({ item, selected, active, onHover, onPick }: SearchRowProps) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      onMouseEnter={onHover}
+      onClick={onPick}
+      className={"flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition " + (active ? "bg-zinc-100" : "")}
+    >
+      {item.kind === "member" ? (
+        <MemberAvatar member={item.member} />
+      ) : (
+        <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-300 text-[11px] font-semibold text-zinc-600">
+          {Array.from(item.name)[0] ?? "?"}
+        </span>
+      )}
+      <span className="truncate text-sm text-zinc-800">{itemName(item)}</span>
+      {item.kind === "member" ? <span className="truncate text-xs text-zinc-400">{item.member.handle}</span> : null}
+      <span className="ml-auto shrink-0 pl-2 text-[11px] text-zinc-400">{item.kind === "member" ? item.member.role : item.hint}</span>
+      {selected ? <CheckMark /> : null}
+    </button>
+  );
+}
+
+type SearchListProps = {
+  items: readonly SearchSelectItem[];
+  isSelected: (item: SearchSelectItem) => boolean;
+  onPick: (item: SearchSelectItem) => void;
   ariaLabel: string;
+  footer: string;
 };
 
-/** 成员搜索列表（搜索框 + 选项 + 页脚）：人员下拉与任务表行内编辑共用。 */
-export function MemberSearchList({ options, value, onPick, ariaLabel, selectedIds }: MemberSearchListProps) {
+/** 搜索列表（搜索框 + 选项 + 页脚，无触发器）：人员下拉 / 行内编辑 / 通用搜索下拉共用。 */
+function SearchList({ items, isSelected, onPick, ariaLabel, footer }: SearchListProps) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -60,13 +112,10 @@ export function MemberSearchList({ options, value, onPick, ariaLabel, selectedId
   const filtered = useMemo(() => {
     const keyword = query.trim();
     if (keyword === "") {
-      return options;
+      return items;
     }
-    const lower = keyword.toLowerCase();
-    return options.filter(
-      (member) => member.name.includes(keyword) || member.handle.toLowerCase().includes(lower) || member.role.includes(keyword),
-    );
-  }, [options, query]);
+    return items.filter((item) => itemMatches(item, keyword));
+  }, [items, query]);
 
   const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
@@ -108,39 +157,127 @@ export function MemberSearchList({ options, value, onPick, ariaLabel, selectedId
         {filtered.length === 0 ? (
           <p className="px-3 py-4 text-center text-xs text-zinc-400">没有匹配的成员</p>
         ) : (
-          filtered.map((member, index) => (
-            <button
-              key={member.id}
-              type="button"
-              role="option"
-              aria-selected={selectedIds === undefined ? member.id === value : selectedIds.includes(member.id)}
-              onMouseEnter={() => {
+          filtered.map((item, index) => (
+            <SearchRow
+              key={item.value}
+              item={item}
+              selected={isSelected(item)}
+              active={index === activeIndex}
+              onHover={() => {
                 setActiveIndex(index);
               }}
-              onClick={() => {
-                onPick(member);
+              onPick={() => {
+                onPick(item);
               }}
-              className={
-                "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition " +
-                (index === activeIndex ? "bg-zinc-100" : "")
-              }
-            >
-              <MemberAvatar member={member} />
-              <span className="truncate text-sm text-zinc-800">{member.name}</span>
-              <span className="truncate text-xs text-zinc-400">{member.handle}</span>
-              <span className="ml-auto shrink-0 pl-2 text-[11px] text-zinc-400">{member.role}</span>
-              {(selectedIds === undefined ? member.id === value : selectedIds.includes(member.id)) ? (
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-emerald-600">
-                  <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              ) : null}
-            </button>
+            />
           ))
         )}
       </div>
-      <p className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400">
-        共 {options.length} 人 · 按姓名 / 拼音搜索 · 当前为虚构演示成员
-      </p>
+      <p className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400">{footer}</p>
+    </div>
+  );
+}
+
+type MemberSearchListProps = {
+  options: Member[];
+  /** 当前选中成员 id（"" = 未选）。 */
+  value: string;
+  /** 多选模式（Push 136）：已选成员 id 列表；给出时选中判定改看「在不在列表里」，value 只作单选回退。 */
+  selectedIds?: readonly string[];
+  onPick: (member: Member) => void;
+  ariaLabel: string;
+};
+
+/** 成员搜索列表（搜索框 + 选项 + 页脚）：人员下拉与任务表行内编辑共用。 */
+export function MemberSearchList({ options, value, onPick, ariaLabel, selectedIds }: MemberSearchListProps) {
+  const items = useMemo<SearchSelectItem[]>(() => options.map((member): SearchSelectItem => ({ kind: "member", value: member.id, member })), [options]);
+  return (
+    <SearchList
+      items={items}
+      ariaLabel={ariaLabel}
+      isSelected={(item) => (selectedIds === undefined ? item.value === value : selectedIds.includes(item.value))}
+      onPick={(item) => {
+        if (item.kind === "member") {
+          onPick(item.member);
+        }
+      }}
+      footer={"共 " + String(options.length) + " 人 · 按姓名 / 拼音搜索 · 当前为虚构演示成员"}
+    />
+  );
+}
+
+type SearchSelectProps = {
+  value: string;
+  items: readonly SearchSelectItem[];
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  /** 页脚说明（人数 / 搜索口径）：与人员下拉的版式一致。 */
+  footer: string;
+  placeholder?: string;
+  /** 浮层宽度（默认 280，与人员下拉同宽）。 */
+  width?: number;
+  /** 触发按钮类名（默认与 SelectMenu 同一档：白底描边 + 右侧箭头）。 */
+  triggerClassName?: string;
+};
+
+/**
+ * 单选搜索下拉（Push 142）：触发器 + 搜索列表（搜索框 / 选项 / 页脚）+ 选中后收起，
+ * 与人员下拉 `MemberMultiSelect` / 行内成员单元格共用同一份列表版式与搜索口径（姓名 / 拼音 / 角色）。
+ * 选项既可以是成员（头像 + 姓名 + 拼音 + 角色），也可以是普通项（如筛选用的「全部」「待分配」，首字圆底 + 说明）；
+ * `value` / `onChange` 走调用方自己的字符串空间（甘特图负责人筛选直接用任务里的姓名，不换成成员 id）。
+ */
+export function SearchSelect({ value, items, onChange, ariaLabel, footer, placeholder = "请选择", width = 280, triggerClassName }: SearchSelectProps) {
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(width, 286);
+  const selected = items.find((item) => item.value === value) ?? null;
+
+  return (
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={() => {
+          setOpen((previous) => !previous);
+        }}
+        className={
+          triggerClassName ??
+          "flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm transition hover:border-zinc-300 hover:bg-zinc-50"
+        }
+      >
+        {selected === null ? (
+          <span className="truncate text-zinc-400">{placeholder}</span>
+        ) : (
+          <span className="truncate font-medium text-zinc-800">{itemName(selected)}</span>
+        )}
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
+          <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && position !== null
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              data-select-popover="true"
+              className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+              style={{ top: position.top, left: position.left, width: position.width }}
+            >
+              <SearchList
+                items={items}
+                ariaLabel={ariaLabel}
+                footer={footer}
+                isSelected={(item) => item.value === value}
+                onPick={(item) => {
+                  onChange(item.value);
+                  setOpen(false);
+                }}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

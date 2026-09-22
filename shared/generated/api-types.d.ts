@@ -5749,7 +5749,8 @@ export interface components {
             note: string | null;
             /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
             onTime: boolean | null;
-            changeRef: components["schemas"]["Uuid"] & (string | null);
+            /** @description 变更关联（A1-07 / R01：**一条任务可关联多条变更**，写面「追加＋去重」）：数组顺序 = 关联先后（追加序，末位 = 最近一次变更）；空数组 = 无变更。前端「变更关联」列按本数组渲染多条变更徽标（悬浮显示变更日期） */
+            changeLinks: components["schemas"]["TaskChangeLink"][];
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
@@ -5816,6 +5817,13 @@ export interface components {
             missing: components["schemas"]["TaskGateMissing"][];
             warnings: components["schemas"]["TaskGateWarning"][];
         };
+        /** @description 任务 ↔ 变更关联项（多条；列表 / 详情同形） */
+        TaskChangeLink: {
+            id: components["schemas"]["Uuid"] & unknown;
+            /** @description 变更原因（列表下发短文本，超长由服务端截断；全文在变更详情） */
+            reason: string | null;
+            appliedAt: components["schemas"]["DateTime"] & unknown;
+        };
         /** @description 完成提交（乐观锁 version 必传；门禁未通过 422 + missing） */
         TaskCompleteBody: {
             version: components["schemas"]["Version"];
@@ -5880,7 +5888,6 @@ export interface components {
         TaskDetail: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组 */
             ownerNames: (string | null)[];
-            changeSummary: string | null;
             files: components["schemas"]["TaskFileBrief"][];
         };
         /**
@@ -5914,38 +5921,10 @@ export interface components {
             docType: components["schemas"]["DocType"];
             count: number;
         };
-        TaskListItem: {
-            id: components["schemas"]["Uuid"];
-            projectId: components["schemas"]["Uuid"];
-            stageKey: components["schemas"]["StageKey"] & (string | null);
-            /** @description 组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它 */
-            sortIndex: number;
-            nodeId: components["schemas"]["Uuid"] & (string | null);
-            title: string;
-            titleEn: string | null;
-            /** @description 任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应 */
-            ownerIds: components["schemas"]["Uuid"][];
-            status: components["schemas"]["TaskBaseStatus"];
-            displayStatus: components["schemas"]["TaskDisplayStatus"];
-            progress: components["schemas"]["TaskProgress"];
-            plannedStart: components["schemas"]["DateOnly"] & (string | null);
-            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
-            actualEnd: components["schemas"]["DateOnly"] & (string | null);
-            estimatedDays: number | null;
-            headcount: number | null;
-            priority: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05） */
-            deliverableTypes: components["schemas"]["DocType"][];
-            note: string | null;
-            /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
-            onTime: boolean | null;
-            version: components["schemas"]["Version"];
-            createdAt: components["schemas"]["DateTime"];
-            updatedAt: components["schemas"]["DateTime"];
+        /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124） */
+        TaskListItem: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」） */
             ownerNames: (string | null)[];
-            /** @description 变更摘要（列表用短文本；详情用 changeRef 跳变更记录） */
-            changeSummary: string | null;
             fileSummary: components["schemas"]["TaskFileSummary"];
         };
         /** @description 任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要） */
