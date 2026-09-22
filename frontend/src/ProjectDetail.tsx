@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { FocusModeToggle } from "./components/FocusModeToggle";
@@ -10,7 +10,10 @@ import type { TaskEditSubmit } from "./components/TaskDrawer";
 import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
-import { isCompleteStatus, isPastDue, progressAfterStatus, statusOverrideAfterProgress, tasksForProject, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { isCompleteStatus, isPastDue, isServerTask, isoFromCnDateWithYear, progressAfterStatus, statusOverrideAfterProgress, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { ApiError } from "./api";
+import { directoryMemberOptions, type DirectoryUser } from "./directory";
+import { baseStatusOf, deleteTask, fetchProjectTasks, fetchTaskDetail, toUiTask, updateTask, updateTaskProgress, type ApiTaskListItem, type TaskUpdateBody } from "./taskApi";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
@@ -71,7 +74,7 @@ function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTas
     onTime: "",
     note: "",
     headcount: 0,
-    priority: "中",
+    priority: null,
     files: [],
   };
 }
@@ -100,7 +103,7 @@ function quickTask(group: { owners: string[]; ownersEn: string[]; status: TaskSt
     onTime: "",
     note: "",
     headcount: 0,
-    priority: "中",
+    priority: null,
     files: [],
   };
 }
@@ -114,25 +117,71 @@ type ProjectDetailProps = {
   onChangeManagers?: (projectId: string, managerIds: string[]) => void;
   /** 任务字段被编辑（按口径刷新项目时间 updatedAt）。 */
   onTaskEdited?: (projectId: string) => void;
+  /** 用户目录（Push 162）：任务负责人候选与「姓名(工号)」展示走后端目录。 */
+  directory?: DirectoryUser[];
+  /** 顶部提示条（409 冲突 / 422 完成门禁 / 取数失败）——App 统一渲染。 */
+  onNotice?: (message: string) => void;
 };
 
-export default function ProjectDetail({ me, project, view, onChangeManagers, onTaskEdited }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, directory = [], onChangeManagers, onTaskEdited, onNotice }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
-  /** 任务编辑保存的字段（负责人 / 日期 / 施工人数 / 紧急重要度 / 进展描述；原型阶段存浏览器内存）。 */
+  /** 原型内存任务（节点 / 临时任务）的字段覆盖（Push 162 起只管这类任务；真任务写面走 taskApi 后重新取数）。 */
   const [taskEdits, setTaskEdits] = useState<Record<string, Partial<ProjectTask>>>({});
   /**
    * 看板拖出来的任务顺序（Push 105）：存任务 id 顺序，空数组 = 用默认顺序。
    * 原型阶段存浏览器内存（与任务覆盖表同一层），换项目 / 刷新即重置 —— 正式版由后端落库（见 `前端功能需求.md` §3.8 A19）。
    */
   const [taskOrder, setTaskOrder] = useState<string[]>([]);
-  /** 任务表行内删除（Push 141，原型内存态：只从项目列表移除，刷新 / 换项目即复位 —— 正式版走任务删除接口，见 `前端功能需求.md` §3.8 A25）。 */
+  /** 原型内存任务的删除表（Push 141；真任务删除走 DELETE 接口，不在此表）。 */
   const [deletedTaskIds, setDeletedTaskIds] = useState<string[]>([]);
 
-  /** 原型阶段只有印度项目（`inmu-0010`）带示例任务数据；其余项目为空列表（正式版按项目取数）。 */
-  const baseTasks = tasksForProject(project?.id ?? "");
-  /** 从任务模板加进来的任务（原型阶段存浏览器内存；换项目 / 刷新即重置 —— 正式版由后端落库）。 */
+  /** 服务端任务（M3-07 接线：`GET /projects/{id}/tasks`；TaskListItem 直接渲染 15 列表格）。 */
+  const [serverTasks, setServerTasks] = useState<ProjectTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+  /** 取数版本（写回成功后 +1 重新拉列表：前端不做本地拼接，以服务端返回为准）。 */
+  const [taskVersion, setTaskVersion] = useState(0);
+  const reloadTasks = () => setTaskVersion((value) => value + 1);
+
+  /** 负责人 id → 工号（真用户目录）：任务负责人展示「姓名(工号)」。 */
+  const usernameOf = (id: string): string => directory.find((user) => user.id === id)?.username ?? "";
+
+  const projectId = project?.id ?? null;
+  useEffect(() => {
+    if (projectId === null) {
+      setServerTasks([]);
+      return;
+    }
+    let cancelled = false;
+    setTasksLoading(true);
+    const load = async (): Promise<void> => {
+      try {
+        const items = await fetchProjectTasks(projectId);
+        if (!cancelled) {
+          setServerTasks(items.map((item) => toUiTask(item, usernameOf)));
+          setTasksError(null);
+        }
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setTasksError(error instanceof ApiError ? error.message : "任务加载失败");
+        }
+      } finally {
+        if (!cancelled) {
+          setTasksLoading(false);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+    // usernameOf 依赖 directory：目录后到时按新目录重新映射「姓名(工号)」
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, taskVersion, directory]);
+
+  /** 从任务模板 / 节点加进来的任务（原型内存态：写面仍本地；正式创建接口见 A10 / A11）。 */
   const [addedTasks, setAddedTasks] = useState<ProjectTask[]>([]);
   useEffect(() => {
     setAddedTasks([]);
@@ -140,7 +189,9 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     setTaskEdits({});
     setTaskOrder([]);
     setDeletedTaskIds([]);
-  }, [project?.id]);
+  }, [projectId]);
+  /** 表格数据源 = 服务端任务 + 原型内存新增（真任务字段以服务端为准）。 */
+  const baseTasks = serverTasks;
   const projectTasks = [...baseTasks, ...addedTasks].filter((task) => !deletedTaskIds.includes(task.id));
 
   /**
@@ -170,6 +221,9 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     .map((entry) => entry.task);
 
   const tasks = stagedTasks.map((task) => {
+    if (isServerTask(task)) {
+      return task;
+    }
     const edit = taskEdits[task.id];
     const override = progressOverrides[task.id];
     const withEdit = edit === undefined ? task : { ...task, ...edit };
@@ -180,24 +234,135 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
    * 点四格进度条：进度 + 联动状态一起写（0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生，Push 65；
    * Push 67 修正：已过预计完成日期的任务点进度条保持「已延期」，不会被改成「待开始 / 进行中」）。
    */
-  /** 任务表行内删除（Push 141）：把任务从本项目列表移除（原型存内存，换项目 / 刷新复位；正式版见 `前端功能需求.md` §3.8 A25）。 */
-  const handleDeleteTask = (taskId: string) => {
-    setDeletedTaskIds((previous) => (previous.includes(taskId) ? previous : [...previous, taskId]));
+  /** 写失败统一提示（409 冲突 / 422 完成门禁 / 其它）：不改本地数据，提示后按服务端重新取数对齐。 */
+  const reportWriteError = (error: unknown, fallback: string): void => {
+    if (error instanceof ApiError) {
+      if (error.status === 409 && error.code === "VERSION_CONFLICT") {
+        onNotice?.("数据已被他人更新，请刷新后重试。");
+        return;
+      }
+      if (error.status === 422 && error.code === "TASK_REQUIRED_DOC_MISSING") {
+        const missing = error.details
+          .map((detail) => detail.message)
+          .filter((message) => message !== "")
+          .join("；");
+        onNotice?.(missing === "" ? "缺少必交成果文件，无法完成任务。" : missing);
+        return;
+      }
+      onNotice?.(error.message === "" ? fallback : error.message);
+      return;
+    }
+    onNotice?.(fallback);
   };
 
+  /** 进度接口回的是列表项（含 ownerNames）：贴回列表 —— 文件名等详情字段沿用原值。 */
+  const applyListItem = (item: ApiTaskListItem): void => {
+    setServerTasks((previous) =>
+      previous.map((task) => (task.id === item.id ? { ...toUiTask(item, usernameOf), files: task.files } : task)),
+    );
+  };
+
+  /** 真任务行内改动 → PATCH body（只发改动过的字段：缺键 = 不改、null = 清空）。 */
+  const patchBodyOf = (current: ProjectTask, patch: TaskPatch): TaskUpdateBody | null => {
+    const body: TaskUpdateBody = { version: current.version ?? 0 };
+    if (patch.ownerIds !== undefined) {
+      body.ownerIds = patch.ownerIds;
+    }
+    if (patch.startDate !== undefined) {
+      const iso = isoFromCnDateWithYear(patch.startDate, current.dateIso?.start ?? null);
+      body.plannedStart = iso === "" ? null : iso;
+    }
+    if (patch.dueDate !== undefined) {
+      const iso = isoFromCnDateWithYear(patch.dueDate, current.dateIso?.due ?? null);
+      body.plannedEnd = iso === "" ? null : iso;
+    }
+    if (patch.days !== undefined) {
+      body.estimatedDays = patch.days === 0 ? null : patch.days;
+    }
+    if (patch.headcount !== undefined) {
+      body.headcount = patch.headcount === 0 ? null : patch.headcount;
+    }
+    if (patch.priority !== undefined) {
+      body.priority = patch.priority;
+    }
+    if (patch.note !== undefined) {
+      body.note = patch.note === "" ? null : patch.note;
+    }
+    if (patch.statusOverride !== undefined) {
+      const base = baseStatusOf(patch.statusOverride);
+      if (base === null) {
+        // 「已延期」是服务端派生展示态（A14 派生优先）：不可写 —— 提示后不提交
+        onNotice?.("「已延期」由预计完成日期派生，不能直接改；可改预计完成日期或进度。");
+        return null;
+      }
+      // 状态与进度 / 完成日期的联动由服务端同事务完成（TaskUpdateBody.status），不再单独写进度
+      body.status = base;
+      return body;
+    }
+    if (Object.keys(body).length <= 1) {
+      return null;
+    }
+    return body;
+  };
+
+  /** 任务表行内删除（Push 141 · A25）：真任务走 DELETE 软删；原型内存任务仍从本地列表移除。 */
+  const handleDeleteTask = (taskId: string) => {
+    const current = tasks.find((task) => task.id === taskId);
+    if (current === undefined) {
+      return;
+    }
+    if (!isServerTask(current) || project === null) {
+      setDeletedTaskIds((previous) => (previous.includes(taskId) ? previous : [...previous, taskId]));
+      return;
+    }
+    const id = project.id;
+    void (async () => {
+      try {
+        await deleteTask(id, taskId);
+        reloadTasks();
+        onTaskEdited?.(id);
+      } catch (error: unknown) {
+        reportWriteError(error, "删除任务失败");
+        reloadTasks();
+      }
+    })();
+  };
+
+  /**
+   * 点四格进度条（Push 65 / 67 口径；M3-07 接线）：真任务写 `PATCH …/progress`（服务端联动状态与完成日期），
+   * 原型内存任务保持本地覆盖表口径。
+   */
   const handleSetProgress = (taskId: string, progress: number) => {
     const current = tasks.find((task) => task.id === taskId);
-    const nextStatus = statusOverrideAfterProgress(progress, current !== undefined && isPastDue(current));
-    setProgressOverrides((previous) => ({ ...previous, [taskId]: progress }));
-    setTaskEdits((previous) => ({
-      ...previous,
-      [taskId]: {
-        ...previous[taskId],
-        statusOverride: nextStatus,
-        // 进度退回非完成态时，实际完成日期一并清空（Push 67 业务定案）
-        ...(nextStatus === undefined || isCompleteStatus(nextStatus) ? {} : { doneDate: "" }),
-      },
-    }));
+    if (current === undefined) {
+      return;
+    }
+    if (!isServerTask(current) || project === null) {
+      const nextStatus = statusOverrideAfterProgress(progress, isPastDue(current));
+      setProgressOverrides((previous) => ({ ...previous, [taskId]: progress }));
+      setTaskEdits((previous) => ({
+        ...previous,
+        [taskId]: {
+          ...previous[taskId],
+          statusOverride: nextStatus,
+          // 进度退回非完成态时，实际完成日期一并清空（Push 67 业务定案）
+          ...(nextStatus === undefined || isCompleteStatus(nextStatus) ? {} : { doneDate: "" }),
+        },
+      }));
+      return;
+    }
+    const id = project.id;
+    const version = current.version ?? 0;
+    void (async () => {
+      try {
+        const updated = await updateTaskProgress(id, taskId, { progress, version });
+        applyListItem(updated);
+        onTaskEdited?.(id);
+      } catch (error: unknown) {
+        reportWriteError(error, "进度更新失败");
+        reloadTasks();
+      }
+    })();
   };
 
   /**
@@ -222,7 +387,7 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     onTaskEdited?.(project.id);
   };
 
-  /** 任务编辑保存：项目经理变化回写项目（项目级），其余字段进任务覆盖表；同时刷新项目时间。 */
+  /** 任务抽屉保存：项目经理变化回写项目（项目级）；真任务 PATCH（只发改动字段），原型内存任务进覆盖表。 */
   const handleSubmitTaskEdit = (values: TaskEditSubmit) => {
     if (project === null) {
       return;
@@ -230,34 +395,127 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     if (values.managerIds.length > 0 && !sameIds(values.managerIds, project.managerIds)) {
       onChangeManagers?.(project.id, values.managerIds);
     }
-    setTaskEdits((previous) => ({
-      ...previous,
-      [values.taskId]: {
-        owners: values.owners,
-        ownersEn: values.ownersEn,
-        startDate: values.startDate,
-        dueDate: values.dueDate,
-        days: values.days,
-        headcount: values.headcount,
-        priority: values.priority,
-        note: values.note,
-      },
-    }));
-    onTaskEdited?.(project.id);
+    const current = tasks.find((task) => task.id === values.taskId);
+    if (current === undefined) {
+      return;
+    }
+    if (!isServerTask(current)) {
+      setTaskEdits((previous) => ({
+        ...previous,
+        [values.taskId]: {
+          owners: values.owners,
+          ownersEn: values.ownersEn,
+          startDate: values.startDate,
+          dueDate: values.dueDate,
+          days: values.days,
+          headcount: values.headcount,
+          priority: values.priority,
+          note: values.note,
+        },
+      }));
+      onTaskEdited?.(project.id);
+      return;
+    }
+    const id = project.id;
+    const startIso = values.startDate === "" ? null : isoFromCnDateWithYear(values.startDate, current.dateIso?.start ?? null);
+    const dueIso = values.dueDate === "" ? null : isoFromCnDateWithYear(values.dueDate, current.dateIso?.due ?? null);
+    const note = values.note.trim();
+    const body: TaskUpdateBody = { version: current.version ?? 0 };
+    if (!sameIds(values.ownerIds, current.ownerIds ?? [])) {
+      body.ownerIds = values.ownerIds;
+    }
+    if (startIso !== (current.dateIso?.start ?? null)) {
+      body.plannedStart = startIso;
+    }
+    if (dueIso !== (current.dateIso?.due ?? null)) {
+      body.plannedEnd = dueIso;
+    }
+    if (values.days !== current.days) {
+      body.estimatedDays = values.days === 0 ? null : values.days;
+    }
+    if (values.headcount !== current.headcount) {
+      body.headcount = values.headcount === 0 ? null : values.headcount;
+    }
+    if (values.priority !== (current.priority ?? null)) {
+      body.priority = values.priority;
+    }
+    if (note !== current.note) {
+      body.note = note === "" ? null : note;
+    }
+    if (Object.keys(body).length <= 1) {
+      // 值没变不写（口径：避免无谓刷新项目时间）
+      return;
+    }
+    void (async () => {
+      try {
+        await updateTask(id, values.taskId, body);
+        reloadTasks();
+        onTaskEdited?.(id);
+      } catch (error: unknown) {
+        reportWriteError(error, "任务保存失败");
+        reloadTasks();
+      }
+    })();
   };
 
-  /** 表格行内编辑：只覆盖被改的字段（与弹窗共用同一张覆盖表），并刷新项目时间。 */
+  /**
+   * 表格行内编辑 / 甘特图拖动（M3-07 接线）：真任务写 `PATCH …/tasks/{id}`（实际完成日期走 `/progress`），
+   * 原型内存任务保持本地覆盖表。
+   */
   const handlePatchTask = (taskId: string, patch: TaskPatch) => {
+    const current = tasks.find((task) => task.id === taskId);
+    if (current === undefined) {
+      return;
+    }
+    if (!isServerTask(current)) {
+      // 行内改状态会同时带进度（四格联动）：进度仍走进度覆盖表，避免被旧值盖回去
+      if (patch.progress !== undefined) {
+        const nextProgress = patch.progress;
+        setProgressOverrides((previous) => ({ ...previous, [taskId]: nextProgress }));
+      }
+      setTaskEdits((previous) => ({ ...previous, [taskId]: { ...previous[taskId], ...patch } }));
+      if (project !== null) {
+        onTaskEdited?.(project.id);
+      }
+      return;
+    }
     if (project === null) {
       return;
     }
-    // 行内改状态会同时带进度（四格联动）：进度仍走进度覆盖表，避免被旧值盖回去
-    if (patch.progress !== undefined) {
-      const nextProgress = patch.progress;
-      setProgressOverrides((previous) => ({ ...previous, [taskId]: nextProgress }));
+    const id = project.id;
+    const version = current.version ?? 0;
+    // 实际完成日期：填 = 完成（progress 1 + 完成日期）、清 = 退回进行中（进度 3 格）—— 契约里只有进度接口能改它（A13）
+    if (patch.doneDate !== undefined) {
+      const iso = patch.doneDate === "" ? "" : isoFromCnDateWithYear(patch.doneDate, current.dateIso?.done ?? null);
+      void (async () => {
+        try {
+          const updated =
+            iso === ""
+              ? await updateTaskProgress(id, taskId, { progress: 0.75, version })
+              : await updateTaskProgress(id, taskId, { progress: 1, actualEnd: iso, version });
+          applyListItem(updated);
+          onTaskEdited?.(id);
+        } catch (error: unknown) {
+          reportWriteError(error, "实际完成日期更新失败");
+          reloadTasks();
+        }
+      })();
+      return;
     }
-    setTaskEdits((previous) => ({ ...previous, [taskId]: { ...previous[taskId], ...patch } }));
-    onTaskEdited?.(project.id);
+    const body = patchBodyOf(current, patch);
+    if (body === null) {
+      return;
+    }
+    void (async () => {
+      try {
+        await updateTask(id, taskId, body);
+        reloadTasks();
+        onTaskEdited?.(id);
+      } catch (error: unknown) {
+        reportWriteError(error, "任务更新失败");
+        reloadTasks();
+      }
+    })();
   };
 
   /** 表格行内改「项目经理」：项目级字段（多位，Push 136），回写项目卡片。 */
@@ -356,6 +614,18 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     }
   };
 
+  /** 抽屉打开时按需取任务详情（M3-01）：列表不下发文件名，抽屉的「文件」行按详情给（Push 162）。 */
+  const loadTaskFiles = useCallback(
+    async (taskId: string): Promise<string[]> => {
+      if (projectId === null) {
+        return [];
+      }
+      const detail = await fetchTaskDetail(projectId, taskId);
+      return detail.files.map((file) => file.name);
+    },
+    [projectId],
+  );
+
   /** 项目经理：项目级字段，姓名随项目下发（契约 managerNames），多位按「、」连接；任务表「项目经理」列与任务详情都用它。 */
   const managers = project === null ? "" : projectManagerText(project);
 
@@ -449,8 +719,16 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
         <div className="mt-6 space-y-4">
           {activeView === "项目总览" ? (
             <>
+              {tasksLoading || tasksError !== null ? (
+                <p
+                  role={tasksError === null ? undefined : "alert"}
+                  className={"text-xs " + (tasksError === null ? "text-zinc-500" : "text-rose-600")}
+                >
+                  {tasksError === null ? "正在加载任务…" : "任务加载失败：" + tasksError}
+                </p>
+              ) : null}
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focusMode} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} members={directoryMemberOptions(directory)} managerOptions={directoryMemberOptions(directory)} loadTaskFiles={loadTaskFiles} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focusMode} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（含内存态新增 / 编辑 / 删除）；拖动改期 / 改进度写回同一张内存态覆盖表
@@ -464,6 +742,8 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
               tasks={tasks}
               managers={managers}
               managerIds={project.managerIds}
+              members={directoryMemberOptions(directory)}
+              managerOptions={directoryMemberOptions(directory)}
               onAddTask={handleQuickAdd}
               onAddStageTask={handleKanbanAddNode}
               onSubmitTaskEdit={handleSubmitTaskEdit}
