@@ -2,13 +2,9 @@ import { useEffect, useState } from "react";
 import { ScrollArea } from "./ScrollArea";
 import { DateRangePicker } from "./DateRangePicker";
 import type { DateRange } from "./DateRangePicker";
-import { managerName } from "../data/managers";
-import { PROJECT_TYPES } from "../types";
-import type { Project } from "../types";
 import {
   SAVED_FILTER_LIMIT,
   SAVED_FILTER_NAME_MAX,
-  countMatches,
   criteriaOf,
   emptyCriteria,
   hasCriteria,
@@ -25,9 +21,19 @@ const GLASS_PANEL =
   "border-r border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.72),rgba(255,255,255,0.5))] " +
   "shadow-[inset_1px_0_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150";
 
+/** 侧栏一组计数：value = 筛选值（字典码 / 经理 UUID），label = 展示名，count = 命中数。 */
+export type FacetOption = { value: string; count: number; label: string };
+
 type CategoryFilterSidebarProps = {
   open: boolean;
-  projects: Project[];
+  /** 三组计数（各自排除自己那一维、其余条件照常参与；数据来自 GET /projects/facets）。 */
+  regions: FacetOption[];
+  types: FacetOption[];
+  managers: FacetOption[];
+  /** 常用筛选胶囊的命中数（按组合单独取 total；缺数据按 0 显示）。 */
+  savedFilterCounts: Record<string, number>;
+  /** 时间区间选择器的提示日（当前项目集里最新的一天，YYYY-MM-DD）。 */
+  newestDay: string;
   selectedRegions: string[];
   selectedManagerIds: string[];
   selectedTypes: string[];
@@ -52,14 +58,6 @@ type ComposeState = {
   criteria: FilterCriteria;
 };
 
-function countBy(items: string[]): Array<{ value: string; count: number }> {
-  const map = new Map<string, number>();
-  for (const item of items) {
-    map.set(item, (map.get(item) ?? 0) + 1);
-  }
-  return Array.from(map, ([value, count]) => ({ value, count }));
-}
-
 function criteriaCount(criteria: FilterCriteria): number {
   return (
     criteria.regions.length +
@@ -71,7 +69,11 @@ function criteriaCount(criteria: FilterCriteria): number {
 
 export function CategoryFilterSidebar({
   open,
-  projects,
+  regions,
+  types,
+  managers,
+  savedFilterCounts,
+  newestDay,
   selectedRegions,
   selectedManagerIds,
   selectedTypes,
@@ -117,21 +119,6 @@ export function CategoryFilterSidebar({
       setCompose(null);
     }
   }, [open]);
-
-  const regions = countBy(projects.map((project) => project.region));
-  // 项目经理计数（Push 136）：一个项目挂多位经理时，每位经理各计一次（计数 = 该项目里有他）
-  const managers = countBy(projects.flatMap((project) => project.managerIds)).map((option) => ({
-    ...option,
-    label: managerName(option.value),
-  }));
-  const types = PROJECT_TYPES.map((type) => ({
-    value: type,
-    count: projects.filter((project) => project.projectType === type).length,
-  })).filter((option) => option.count > 0);
-  const newestDay = projects.reduce(
-    (latest, project) => (project.updatedAt > latest ? project.updatedAt : latest),
-    "",
-  ).slice(0, 10);
 
   const activeCount =
     selectedRegions.length + selectedManagerIds.length + selectedTypes.length + (dateRange === null ? 0 : 1);
@@ -342,7 +329,7 @@ export function CategoryFilterSidebar({
               <div className="mt-3 flex flex-wrap gap-2">
                 {savedFilters.map((filter) => {
                   const applied = filter.id === appliedSavedFilterId;
-                  const count = countMatches(projects, filter);
+                  const count = savedFilterCounts[filter.id] ?? 0;
                   return (
                     <span
                       key={filter.id}

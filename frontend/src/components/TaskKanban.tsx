@@ -39,7 +39,7 @@ import { trackerLabel } from "./Tracker";
  * 位置每帧更新（与落点同一个 rAF 循环）；原地那张卡片照旧不动、不淡出、不抬起。
  * Push 110（业务反馈「还是要透明的吧」）：拖动卡片改成**半透明**（壳从实心白换成半透明白 + 轻磨砂 `backdrop-blur`），
  * 压住落点槽位 / 列内卡片时能透出去（`pointer-events-none` 不变）；投影保持原样不淡，原地那张卡片仍不动、不淡出。
- * Push 157（业务口径「卡片右移左移也要可以滚动」）：在**指针拖动**这套（Push 108 起）上补回「拖到边缘自动滚」——
+ * Push 156（业务口径「卡片右移左移也要可以滚动」）：在**指针拖动**这套（Push 108 起）上补回「拖到边缘自动滚」——
  * 拖动中指针进看板左右边缘 72px 内逐帧横向滚看板、进某一列的上下边缘 72px 内逐帧滚这一列的卡片列表（越深越快，1~16px/帧），
  * 于是拖到当前屏幕外的列 / 列底之外的格子也能落到（Push 107 撤回的是「原生 HTML5 拖拽」那一整套，本次仍是鼠标自己控制的指针拖动，两条不冲突）。
  * 同轮补「**拖看板空白 = 横向平移**」（口径同甘特图）：只滚看板本身、不改任何任务字段；卡片 / 「添加」/ 滑块上按下不接管。
@@ -136,7 +136,7 @@ const CARD_BODY = "relative px-4 py-3.5";
 const DRAG_THRESHOLD = 4;
 
 /**
- * 拖卡片到边缘 = 看板跟着滚（Push 157，业务口径「卡片右移左移也要可以滚动」）：指针进左右 / 上下边缘
+ * 拖卡片到边缘 = 看板跟着滚（Push 156，业务口径「卡片右移左移也要可以滚动」）：指针进左右 / 上下边缘
  * `DRAG_EDGE_PX` 内就逐帧滚，越深越快（1~`DRAG_EDGE_MAX_SPEED` px/帧）—— 拖到当前屏幕外的列 / 列底之外的格子也能落到。
  */
 const DRAG_EDGE_PX = 72;
@@ -166,7 +166,7 @@ function scrollAreaViewport(root: ParentNode | null, axis: "horizontal" | "verti
 }
 
 /**
- * 拖卡片到边缘时的逐帧自动滚（Push 157）：横向滚看板本体（`root` = 看板壳），纵向滚指针底下那一列
+ * 拖卡片到边缘时的逐帧自动滚（Push 156）：横向滚看板本体（`root` = 看板壳），纵向滚指针底下那一列
  * （看板列内列表也是 `ScrollArea`）。指针离看板太远（上下超过 24px）就不横向滚，免得在工具条上拖也乱滚。
  */
 function autoScrollForDrag(root: HTMLElement | null, point: { x: number; y: number }): void {
@@ -765,12 +765,12 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
   const suppressClickRef = useRef(false);
   /** 跟着鼠标走的拖动卡片（Push 109）：直接用 DOM 改 `transform`，不走 state（每帧都要动）。 */
   const ghostRef = useRef<HTMLDivElement | null>(null);
-  /** 看板本体（Push 157）：拖空白平移 / 拖卡片到边缘自动滚都按它找横向视口。 */
+  /** 看板本体（Push 156）：拖空白平移 / 拖卡片到边缘自动滚都按它找横向视口。 */
   const boardRef = useRef<HTMLDivElement | null>(null);
-  /** 拖看板空白平移的暂存（Push 157）：没过 `BOARD_PAN_THRESHOLD` 就还是普通点击。 */
+  /** 拖看板空白平移的暂存（Push 156）：没过 `BOARD_PAN_THRESHOLD` 就还是普通点击。 */
   const boardPanRef = useRef<{ pointerId: number; x: number; baseLeft: number; moved: boolean } | null>(null);
   const [boardPanning, setBoardPanning] = useState(false);
-  /** 平移收尾那一下补出来的 click 不当成「打开抽屉」（Push 157）。 */
+  /** 平移收尾那一下补出来的 click 不当成「打开抽屉」（Push 156）。 */
   const boardPanJustEndedRef = useRef(false);
   /** 抓取偏移（Push 109）：按下时鼠标在卡片内的位置 + 卡片宽度，拖动卡片按这个对齐。 */
   const grabRef = useRef({ dx: 0, dy: 0, width: 0 });
@@ -797,7 +797,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
   const dropTargetAt = (x: number, y: number): DropTarget | null => {
     let column = columnAtPoint(x, y);
     if (column === null) {
-      // Push 157：拖到边缘触发自动滚时，指针常常已经压到看板左右边缘之外（拖动中页面多出的滚动条还会再吃掉 15px），
+      // Push 156：拖到边缘触发自动滚时，指针常常已经压到看板左右边缘之外（拖动中页面多出的滚动条还会再吃掉 15px），
       // 这时把横坐标夹回看板可视范围再判一次 —— 不然「滚到目标列 → 在最右边松手」会落空；纵向拖出看板（工具条 / 页脚）仍是取消。
       const board = scrollAreaViewport(boardRef.current, "horizontal");
       if (board !== null) {
@@ -976,7 +976,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
         const grab = grabRef.current;
         ghost.style.transform = "translate(" + (pointerRef.current.x - grab.dx) + "px," + (pointerRef.current.y - grab.dy) + "px)";
       }
-      // 拖到边缘 = 看板 / 这一列自己滚（Push 157）：先滚再算落点，插入槽位跟着新滚出来的位置走
+      // 拖到边缘 = 看板 / 这一列自己滚（Push 156）：先滚再算落点，插入槽位跟着新滚出来的位置走
       autoScrollForDrag(boardRef.current, pointerRef.current);
       const next = dropTargetAtRef.current(pointerRef.current.x, pointerRef.current.y);
       setDropTarget((prev) => (prev !== null && next !== null && prev.key === next.key && prev.index === next.index ? prev : next));
@@ -988,7 +988,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
   }, [draggingId]);
 
   /**
-   * 拖看板空白 = 横向平移（Push 157，业务口径「卡片右移左移也要可以滚动」的同族）：与甘特图同一口径 ——
+   * 拖看板空白 = 横向平移（Push 156，业务口径「卡片右移左移也要可以滚动」的同族）：与甘特图同一口径 ——
    * 只认鼠标左键、位移超过 `BOARD_PAN_THRESHOLD` 才算拖动（不到仍是点击）；卡片 / 「添加」/ 滑块上按下不接管，
    * 卡片那套拖动照旧。只滚看板本身，**不改任何任务字段**。
    */

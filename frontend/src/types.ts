@@ -12,39 +12,42 @@ export type MeResponse = {
   expiresAt: number | null;
 };
 
-export type CardAccent = "blue" | "emerald" | "amber";
-
-// 预留色：暂不启用，未来新增项目类型时可用（例如红色、紫色）
-// export type CardAccentReserved = "rose" | "violet";
-
-export const PROJECT_TYPES = ["T-sort", "3D分拣", "飞箱"] as const;
-
-export type ProjectType = (typeof PROJECT_TYPES)[number];
-
-export const PROJECT_TYPE_ACCENTS: Record<ProjectType, CardAccent> = {
-  "T-sort": "blue",
-  "3D分拣": "emerald",
-  "飞箱": "amber",
-};
-
-/** 项目（内存态演示数据）：编号、序号与人员字段命名对齐 shared 契约（code / seqNo / managerIds）。 */
+/**
+ * 项目（M2-07 起为服务端数据，映射见 projectApi.ts 的 toUiProject）：
+ * 编号、序号与人员字段命名对齐 shared 契约（code / seqNo / managerIds / managerNames）。
+ * 主题色不再挂在这里 —— 取字典 projectType 条目的 metadata.accent（dicts.ts 的 typeAccent）。
+ */
 export type Project = {
   id: string;
   /** 项目序号（契约 seqNo ↔ projects.seq_no）：服务端创建时分配，全库唯一、不可修改、不回收；卡片两位补零展示。 */
   seqNo: number;
   code: string;
+  /** 前端「项目描述」= 契约 name（唯一展示名）；备注长文本是契约 description，一期表单不采集。 */
   description: string;
+  /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（停用 / 存量值回落码本身）。 */
   region: string;
-  projectType: ProjectType;
-  accent: CardAccent;
-  /** 创建时间（契约 createdAt）：创建时生成、不随编辑变化；卡片右下角与详情顶栏「创建于」展示。 */
+  /** 项目类型：契约 projects.projectType 存字典 projectType 的码；主题色由字典 metadata 下发（前端不硬编码）。 */
+  projectType: string;
+  /** 创建时间（契约 createdAt，展示用「YYYY-MM-DD HH:mm」，Asia/Shanghai）：创建时生成、编辑不修改。 */
   createdAt: string;
-  /** 项目时间（契约 updatedAt）：项目最近活动时间——主数据变更 / 阶段推进 / 任务变更刷新；列表排序 / 搜索 / 「项目时间」区间筛选用，暂不上卡面（见 前端功能需求 第六章第 14 条）。 */
+  /** 项目时间（契约 updatedAt）：项目最近活动时间——主数据变更 / 阶段推进 / 任务变更刷新；排序 / 搜索 / 区间筛选口径。 */
   updatedAt: string;
   /**
    * 项目经理（多位，Push 136）：至少一位、可多位，数组顺序 = 展示顺序。
-   * 对齐契约 `projects.manager_ids`（uuid[]、非空）；列表筛选 `filter[managerId]` 命中「该项目有这一位经理」，
-   * 卡片 / 详情顶栏 / 任务表「项目经理」列都按这一份名单展示。
+   * 对齐契约 projects.manager_ids（uuid[]、非空）；筛选 filter[managerId] 命中「项目挂的任意一位经理」。
    */
   managerIds: string[];
+  /** 经理姓名（契约 managerNames，与 managerIds 同下标一一对应；取不到时该位为 null）。 */
+  managerNames: Array<string | null>;
+  /** 乐观锁版本（契约 version）：编辑 / 删除时原样回传；冲突返回 409 VERSION_CONFLICT。 */
+  version: number;
+  /** 当前阶段 key（契约 stageKey）。 */
+  stageKey: string;
+  /** 项目状态（契约 status：active / paused / done / archived）。 */
+  status: string;
 };
+
+/** 项目经理展示文本（多位按「、」连接；某位取不到姓名显示「—」）。 */
+export function projectManagerText(project: Project): string {
+  return project.managerNames.map((name) => (name === null || name === "" ? "—" : name)).join("、");
+}
