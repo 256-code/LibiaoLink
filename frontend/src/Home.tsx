@@ -8,6 +8,14 @@ import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
 import { managerNames } from "./data/managers";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
+import {
+  newSavedFilterId,
+  matchesCriteria,
+  persistSavedFilters,
+  readSavedFilters,
+  sameCriteria,
+} from "./savedFilters";
+import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
 import { PROJECT_TYPES } from "./types";
@@ -26,6 +34,8 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
   const route = useHashRoute();
   const filters = route.kind === "list" ? route.filters : EMPTY_LIST_QUERY;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  // 常用筛选（Push 138）：本地记忆的组合，点一下套用到当前筛选；「哪组正在生效」由条件比较派生，不另存状态
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => readSavedFilters());
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
   const [filterOpen, setFilterOpen] = useState(() => {
     if (initialRouteRestored()) {
@@ -72,21 +82,9 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
       : null;
   const filtered = useMemo(() => {
     const matched = projects.filter((project) => {
-      if (activeFilters.regions.length > 0 && !activeFilters.regions.includes(project.region)) {
+      // 分类条件（地区 / 项目类型 / 项目经理任一命中 / 项目时间闭区间）与「常用筛选」共用同一判定（savedFilters.ts），两边口径不会漂
+      if (!matchesCriteria(project, activeFilters)) {
         return false;
-      }
-      // 项目经理筛选（Push 136）：项目挂多位经理时任一位命中即算命中
-      if (activeFilters.managerIds.length > 0 && !project.managerIds.some((managerId) => activeFilters.managerIds.includes(managerId))) {
-        return false;
-      }
-      if (activeFilters.projectTypes.length > 0 && !activeFilters.projectTypes.includes(project.projectType)) {
-        return false;
-      }
-      if (activeFilters.timeFrom !== null && activeFilters.timeTo !== null) {
-        const day = project.updatedAt.slice(0, 10);
-        if (day < activeFilters.timeFrom || day > activeFilters.timeTo) {
-          return false;
-        }
       }
       if (keyword === "") {
         return true;
@@ -101,6 +99,52 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
   const resetFilters = () => {
     updateFilters({ regions: [], projectTypes: [], managerIds: [], timeFrom: null, timeTo: null });
   };
+  // 正在生效的常用筛选：条件与某一组等价即高亮（排序 / 关键字不影响判定）
+  const appliedSavedFilterId = useMemo(() => {
+    if (!hasFilters) {
+      return null;
+    }
+    const matched = savedFilters.find((filter) => sameCriteria(filter, activeFilters));
+    return matched === undefined ? null : matched.id;
+  }, [activeFilters, hasFilters, savedFilters]);
+  const applySavedFilter = (filter: SavedFilter) => {
+    updateFilters({
+      regions: filter.regions.slice(),
+      projectTypes: filter.projectTypes.slice(),
+      managerIds: filter.managerIds.slice(),
+      timeFrom: filter.timeFrom,
+      timeTo: filter.timeTo,
+    });
+  };
+  const deleteSavedFilter = (id: string) => {
+    const next = savedFilters.filter((item) => item.id !== id);
+    setSavedFilters(next);
+    persistSavedFilters(next);
+  };
+  const saveSavedFilter = ({ id, name, criteria }: { id: string | null; name: string; criteria: FilterCriteria }) => {
+    // 保存前按当前数据兜底：丢弃已不存在的地区 / 类型 / 经理（与 URL 参数归一化同一收敛口径）
+    const normalized: FilterCriteria = {
+      regions: criteria.regions.filter((region) => knownRegions.has(region)),
+      projectTypes: criteria.projectTypes.filter((projectType) => (PROJECT_TYPES as readonly string[]).includes(projectType)),
+      managerIds: criteria.managerIds.filter((managerId) => knownManagerIds.has(managerId)),
+      timeFrom: criteria.timeFrom,
+      timeTo: criteria.timeTo,
+    };
+    const next =
+      id === null
+        ? [...savedFilters, { id: newSavedFilterId(), name, ...normalized }]
+        : savedFilters.map((item) => (item.id === id ? { ...item, name, ...normalized } : item));
+    setSavedFilters(next);
+    persistSavedFilters(next);
+    // 保存即应用（刚定义的一组就是要看的那组）；当前筛选保留的部分以这组为准整体替换
+    updateFilters({
+      regions: normalized.regions,
+      projectTypes: normalized.projectTypes,
+      managerIds: normalized.managerIds,
+      timeFrom: normalized.timeFrom,
+      timeTo: normalized.timeTo,
+    });
+  };
   const toggleValue = (list: string[], value: string) => (list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
 
   return (
@@ -114,6 +158,11 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
         selectedManagerIds={activeFilters.managerIds}
         selectedTypes={activeFilters.projectTypes}
         dateRange={dateRange}
+        savedFilters={savedFilters}
+        appliedSavedFilterId={appliedSavedFilterId}
+        onApplySavedFilter={applySavedFilter}
+        onDeleteSavedFilter={deleteSavedFilter}
+        onSaveSavedFilter={saveSavedFilter}
         onToggleRegion={(region) => {
           updateFilters({ regions: toggleValue(activeFilters.regions, region) });
         }}
