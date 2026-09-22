@@ -31,14 +31,27 @@ export const DATA_SCOPE_KEYS = [
   "granted",
 ] as const;
 
-/** 审计动作（audit_logs.action，h7 · C7）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 越权拒绝。 */
-export const AUDIT_ACTION_KEYS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "deny"] as const;
+/**
+ * 审计动作（audit_logs.action，h7 · C7 + M4-05）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 预览查看 / 越权拒绝。
+ * 与 shared/src/modules/audits.ts 的 AUDIT_ACTIONS 同序同值 —— 一致性由 test/schema-literals-parity.test.ts 守护
+ * （check:db-schema 只比 CHECK 约束名、不比取值）。
+ */
+export const AUDIT_ACTION_KEYS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "preview", "deny"] as const;
 
 /** 审计结果（audit_logs.result）：成功 / 越权拒绝 / 执行失败。 */
 export const AUDIT_RESULT_KEYS = ["succeeded", "denied", "failed"] as const;
 
 /** 审计入口（audit_logs.entry）：页面 / API / 系统任务 / 批量。 */
 export const AUDIT_ENTRY_KEYS = ["api", "page", "system", "batch"] as const;
+
+/** 预览渲染通道（preview_artifacts.target，M4-05 · ADR-007）：与契约 PREVIEW_TARGETS 同序同值。 */
+export const PREVIEW_TARGET_KEYS = ["pdf", "image", "structured"] as const;
+
+/**
+ * 预览产物状态（preview_artifacts.status，M4-05 · D2-05）：与契约 PREVIEW_STATUSES 同值 ——
+ * 库侧 not_ready = 已请求未就绪（生成任务由 outbox 重试兜底），读面原样下发，不做值映射。
+ */
+export const PREVIEW_STATUS_KEYS = ["ready", "not_ready", "failed"] as const;
 
 /** 工作日历例外类型（calendar_days.day_type，h8 · D5-01）：holiday 放假 / makeup_workday 调休上班。 */
 export const CALENDAR_DAY_TYPE_KEYS = ["holiday", "makeup_workday"] as const;

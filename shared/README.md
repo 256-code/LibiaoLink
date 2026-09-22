@@ -59,7 +59,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 可见性 | 资源不存在与无权访问统一 404 语义（防 IDOR） |
 | 错误模型 | 统一信封 `{ code, message, details[], traceId }`；错误码见 src/common/errors.ts（与 v0.2 §7.2 同步维护） |
 | 审计对象类型 | `AUDIT_OBJECT_TYPES`：project / project_member / task / node / stage / dict_item / blueprint / calendar_day / calendar_settings / **file**（M4-01 · PR-4 新增；审计对象 id = fileId，上传会话事件经 `metadata.uploadId` 定位 —— 扩枚举而非新增 `upload_session`，避免为同一业务对象开两套检索口径） |
-| 审计动作 | `AUDIT_ACTIONS`：create / update / delete / progress / complete / advance / rollback / **preview**（契约切片 · M4-05 前置；D2-07：预览计入查看 / 下载审计 —— 与「下载计入审计」同口径；库侧 `ck_audit_logs_action` 现八值，随 M4-05 迁移扩值） / deny |
+| 审计动作 | `AUDIT_ACTIONS`：create / update / delete / progress / complete / advance / rollback / **preview**（契约切片 · M4-05 前置；D2-07：预览计入查看 / 下载审计 —— 与「下载计入审计」同口径；库侧 `ck_audit_logs_action` 已随迁移 `0022`（M4-05 数据层）扩为九值） / deny |
 | 预览契约 | `GET /api/v1/files/{id}/preview` → `FilePreviewResponse`：`status` = ready / not_ready / failed、`target` = pdf / image / structured（**渲染通道**口径，不按文件格式）、ready 附短时签名 `url` + `expiresAt` + `pipelineVersion` + `generatedAt`，failed 附 `reason`（≤ 500 字；D2-05 降级「请下载」）；可选查询参数 `versionId`（A4-06 历史版本预览，缺省 = 当前版本；不属于该文件 / 不存在 → 404）；未就绪 / 失败为 **200 语义**（对齐 v0.2 §7.2 的 `PREVIEW_NOT_READY` / `PREVIEW_FAILED`）；`not_ready` 时服务端幂等补投生成任务（按三元组去重）、前端轮询 —— 不引入请求约定；审计 = `object_type = file` + `action = preview` + metadata（versionId / target / pipelineVersion），仅返回 ready 的读取写审计；缓存键 = 内容哈希 + `pipelineVersion` + `target`（ADR-007 / v0.2 §5.4 三元组） |
 | 项目编号 | 创建人填写（创建请求必填 code；格式仅前端提示、不做强校验）；唯一性由服务端校验 + 数据库唯一约束保证，重复返回 409 PROJECT_CODE_EXISTS；建后可修改（更新请求可传 code，同样校验唯一性） |
 | 项目序号 | 服务端创建时分配（`projects.seq_no` ↔ `seqNo`，全库唯一正整数、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示两位补零，列表支持 `sort=seqNo:asc\|desc` |
@@ -93,7 +93,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 ## 契约切片表（M0-02 · Push 73）
 
-> **本表状态（契约切片 · M4-04 / M4-05 前置 · wmj 评审定案）**：`AUDIT_ACTIONS` 增 `preview`（D2-07 预览计入查看 / 下载审计；库侧 `ck_audit_logs_action` 需随 M4-05 迁移扩值）、`AUDIT_OBJECT_TYPES` 增 `change`（M4-04 变更记录；**预览不新开对象类型** —— 沿用 `file` + `action = preview` + metadata，避免同一 fileId 两套检索口径）；新增预览契约 `FilePreviewResponse` + `GET /api/v1/files/{id}/preview`（含可选 `versionId`；`PreviewStatus` ready / not_ready / failed，后两者 200 语义）与 `PreviewTarget`（pdf / image / structured）。生成物已重出（paths = 60、schemas = 145），`npm run check` 零漂移；定案见 PR #103 评审（wmj）。
+> **本表状态（契约切片 · M4-04 / M4-05 前置 · wmj 评审定案）**：`AUDIT_ACTIONS` 增 `preview`（D2-07 预览计入查看 / 下载审计；库侧 `ck_audit_logs_action` 已随迁移 `0022` 扩为九值）、`AUDIT_OBJECT_TYPES` 增 `change`（M4-04 变更记录；**预览不新开对象类型** —— 沿用 `file` + `action = preview` + metadata，避免同一 fileId 两套检索口径）；新增预览契约 `FilePreviewResponse` + `GET /api/v1/files/{id}/preview`（含可选 `versionId`；`PreviewStatus` ready / not_ready / failed，后两者 200 语义）与 `PreviewTarget`（pdf / image / structured）。生成物已重出（paths = 60、schemas = 145），`npm run check` 零漂移；定案见 PR #103 评审（wmj）。
 
 > **本表状态（PR-5 · Push 131）**：M4-01 上传管道（PR-4 · Push 129）—— `AUDIT_OBJECT_TYPES` 增 `file`（跨线改动，请 wmj 评审）；生成物已按 `npm run generate` 重出（openapi.json / api-types.d.ts），`npm run check` 零漂移。**M4-02（版本 / 定档 / 回溯 / 回收站）实现落地，契约零改动**：上传入口 `intent=version` + `fileId` 放开（draft 替换 / 追加版本），`intent=change` 仍 400（随 M4-04）；错误码沿用 V0.3 既有（`VERSION_CONFLICT` / `FILE_STATE_INVALID` / `change_flow_not_open`）。
 
