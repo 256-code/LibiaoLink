@@ -4,6 +4,7 @@
  * 读面过滤（列表 / 详情 / summary / 门禁 / 节点判重 / 锁行）由仓储统一承担（isNull(tasks.deletedAt)）；本文件用替身镜像该语义，
  * 锁定服务层口径：已删任务上的一切写路径 404、归档项目 409、删除不写 task_events（其类型为四值闭集）。
  * 真机口径见 server/README.md「M3-05」；门禁与批量用例见 test/task-gate.test.ts / test/task-batch.test.ts。
+ * M5 补齐（Push 154）：引用守卫在 change_refs 之外新增日报（daily_reports.task_ids）与问题（issues.task_id）两类判定。
  */
 import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
@@ -157,6 +158,18 @@ class FakeTaskRepository {
   async lockTask(_tx: DbClient, taskId: string): Promise<TaskRow | null> {
     const row = this.tasks.get(taskId);
     return row !== undefined && row.deletedAt === null ? row : null;
+  }
+
+  /** 引用守卫（A2-01 · M5 补齐）：替身按「日报 task_ids / 问题 task_id 的引用条数」口径给数。 */
+  reportRefs = 0;
+  issueRefs = 0;
+
+  async countReportRefs(): Promise<number> {
+    return this.reportRefs;
+  }
+
+  async countIssueRefs(): Promise<number> {
+    return this.issueRefs;
   }
 
   async findTaskBrief(taskId: string): Promise<TaskOrderBrief | null> {
@@ -389,11 +402,44 @@ describe("M3-05 · 任务软删（A25）", () => {
     expect(audit.entries).toEqual([]);
   });
 
-  it("引用守卫只拦变更：无关联任务照常软删（change_refs 空数组 = 无变更）", async () => {
+  it("无任何引用：照常软删（change_refs 空数组 + 日报 / 问题均为 0）", async () => {
     const repo = new FakeTaskRepository();
     const { service, db } = makeService(repo);
     repo.tasks.set(TASK_A, makeRow(TASK_A, { sortIndex: 0, changeRefs: [] }));
     await expect(service.remove(PROJECT, TASK_A, ACTOR)).resolves.toEqual({ id: TASK_A, deleted: true });
     expect(db.outbox.filter((row) => row.topic === "task.deleted")).toHaveLength(1);
+  });
+
+  it("日报引用：409 TASK_HAS_REFERENCES（details[].code = report_ref，带条数；系统功能书 A2-01）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.tasks.set(TASK_A, makeRow(TASK_A, { sortIndex: 0, changeRefs: [] }));
+    repo.reportRefs = 2;
+    const { service, db, audit } = makeService(repo);
+    const rejected = await service.remove(PROJECT, TASK_A, ACTOR).catch((error: unknown) => error);
+    expect(rejected).toMatchObject({ code: "TASK_HAS_REFERENCES", httpStatus: 409 });
+    const details = (rejected as { details: { code: string; meta?: Record<string, unknown> }[] }).details;
+    expect(details.map((item) => item.code)).toEqual(["report_ref"]);
+    expect(details[0]?.meta?.["count"]).toBe(2);
+    expect(repo.tasks.get(TASK_A)?.deletedAt).toBeNull();
+    expect(repo.shifts).toEqual([]);
+    expect(repo.deletedCalls).toEqual([]);
+    expect(db.outbox).toEqual([]);
+    expect(audit.entries).toEqual([]);
+  });
+
+  it("问题引用：409 TASK_HAS_REFERENCES（details[].code = issue_ref）；变更 / 日报 / 问题三类同报时明细齐全", async () => {
+    const repo = new FakeTaskRepository();
+    repo.tasks.set(TASK_A, makeRow(TASK_A, { sortIndex: 0, changeRefs: ["77777777-7777-4777-8777-777777777777"], }));
+    repo.reportRefs = 1;
+    repo.issueRefs = 3;
+    const { service, db, audit } = makeService(repo);
+    const rejected = await service.remove(PROJECT, TASK_A, ACTOR).catch((error: unknown) => error);
+    expect(rejected).toMatchObject({ code: "TASK_HAS_REFERENCES", httpStatus: 409 });
+    const details = (rejected as { details: { code: string; meta?: Record<string, unknown> }[] }).details;
+    expect(details.map((item) => item.code)).toEqual(["change_ref", "report_ref", "issue_ref"]);
+    expect(details[2]?.meta?.["count"]).toBe(3);
+    expect(repo.tasks.get(TASK_A)?.deletedAt).toBeNull();
+    expect(db.outbox).toEqual([]);
+    expect(audit.entries).toEqual([]);
   });
 });

@@ -56,6 +56,19 @@ import {
   StakeholderUpdateBodySchema,
 } from "./modules/stakeholders.ts";
 import {
+  DailyReportCreateBodySchema,
+  DailyReportListQuerySchema,
+  DailyReportListResponseSchema,
+  DailyReportSchema,
+  DailyReportUpdateBodySchema,
+} from "./modules/reports.ts";
+import {
+  IssueDetailSchema,
+  IssueListQuerySchema,
+  IssueListResponseSchema,
+  IssueUpdateBodySchema,
+} from "./modules/issues.ts";
+import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
   BlueprintSaveBodySchema,
@@ -1258,6 +1271,101 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 日报与问题（M6-01 ~ M6-03 · A3：日报填报 / 回写 / 问题闭环 · wmj 线）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/reports",
+    tags: ["reports"],
+    summary: "日报列表（A3-01 / A7-02）：日期区间 / 状态 / 提交人筛选 + 分页；日期倒序",
+    request: { params: idParams, query: DailyReportListQuerySchema },
+    responses: {
+      200: { description: "日报列表（项目内成员可见）", ...json(DailyReportListResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/reports",
+    tags: ["reports"],
+    summary:
+      "新建日报（A3-01 / A3-02 · M6-01）：一人一项目一天一条（重复 409 REPORT_ALREADY_EXISTS）；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等）",
+    request: { params: idParams, body: json(DailyReportCreateBodySchema) },
+    responses: {
+      201: { description: "新建的日报", ...json(DailyReportSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/reports/{reportId}",
+    tags: ["reports"],
+    summary: "日报详情（A3-01 全字段 + 关联任务标题）",
+    request: { params: z.object({ id: UuidSchema, reportId: UuidSchema }) },
+    responses: {
+      200: { description: "日报详情", ...json(DailyReportSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/projects/{id}/reports/{reportId}",
+    tags: ["reports"],
+    summary:
+      "编辑 / 提交日报（A3-02 草稿提交 · A3-08 回写关联任务「项目进展描述」）：乐观锁 version；date 不可改；已提交行不允许退回草稿",
+    request: { params: z.object({ id: UuidSchema, reportId: UuidSchema }), body: json(DailyReportUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的日报", ...json(DailyReportSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/issues",
+    tags: ["issues"],
+    summary: "问题列表（A3-16 问题追踪 / 问题看板同源）：状态 / 归类 / 任务 / 来源日报筛选 + 关键字 + 分页；提出日期倒序",
+    request: { params: idParams, query: IssueListQuerySchema },
+    responses: {
+      200: { description: "问题列表", ...json(IssueListResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/issues/{issueId}",
+    tags: ["issues"],
+    summary: "问题详情（A3-13）：问题本体 + 处理过程留痕（时间正序）",
+    request: { params: z.object({ id: UuidSchema, issueId: UuidSchema }) },
+    responses: {
+      200: { description: "问题详情", ...json(IssueDetailSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/projects/{id}/issues/{issueId}",
+    tags: ["issues"],
+    summary:
+      "问题更新（A3-10 四态流转 / A3-12 分派 / A3-13 解决方案）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at）",
+    request: { params: z.object({ id: UuidSchema, issueId: UuidSchema }), body: json(IssueUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的问题详情", ...json(IssueDetailSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1281,6 +1389,8 @@ export function buildOpenApiDocument() {
       { name: "calendar", description: "工作日历（D5）：日历维护 / 顺延规则配置 / T-1·T+1 求值（h8）" },
       { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
       { name: "stakeholders", description: "干系人台账与项目关联（A5-01~A5-04 / A5-07；隐私字段走字段级策略）" },
+      { name: "reports", description: "日报（A3-01 / A3-02 / A3-08 / A3-09；M6-01 / M6-02）" },
+      { name: "issues", description: "问题闭环（A3-09~A3-13；四态流转 / 分派 / 留痕，M6-02 / M6-03）" },
     ],
   });
 }

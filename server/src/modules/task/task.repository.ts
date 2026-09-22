@@ -8,6 +8,7 @@ import { files } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
 import { projectStages, projects } from "../../db/schema/projects.js";
+import { dailyReports, issues } from "../../db/schema/reports.js";
 import { taskEvents, tasks } from "../../db/schema/tasks.js";
 import type { TaskListFilter, TaskSort } from "./task.query.js";
 
@@ -362,6 +363,28 @@ export class TaskRepository {
       .update(tasks)
       .set({ sortIndex: sql`${tasks.sortIndex} + ${delta}` })
       .where(and(...conditions));
+  }
+
+  /**
+   * 引用守卫（系统功能书 A2-01 · M5 补齐）：日报（daily_reports.task_ids 含本任务）与问题（issues.task_id）的
+   * 引用计数 —— 非零即不允许删除（409 TASK_HAS_REFERENCES，details[].code = report_ref / issue_ref）。
+   * 只计数不取明细：提示用数量；日报 / 问题两表随 0023 落地，故本判定在 M5 一并补入（Push 152 已登记「随 M5 加判定」）。
+   */
+  async countReportRefs(taskId: string, client: DbClient = this.database.db): Promise<number> {
+    const rows = await client
+      .select({ value: sql<number>`count(*)::int` })
+      .from(dailyReports)
+      .where(sql`${dailyReports.taskIds} @> ${[taskId]}::uuid[]`);
+    return Number(rows[0]?.value ?? 0);
+  }
+
+  /** 问题引用（issues.task_id，b-tree 索引 ix_issues_task）。 */
+  async countIssueRefs(taskId: string, client: DbClient = this.database.db): Promise<number> {
+    const rows = await client
+      .select({ value: sql<number>`count(*)::int` })
+      .from(issues)
+      .where(eq(issues.taskId, taskId));
+    return Number(rows[0]?.value ?? 0);
   }
 
   /**
