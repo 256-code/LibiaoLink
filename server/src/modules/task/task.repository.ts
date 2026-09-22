@@ -13,11 +13,20 @@ import type { TaskListFilter, TaskSort } from "./task.query.js";
 
 export type TaskRow = typeof tasks.$inferSelect;
 
+/** 任务 ↔ 变更关联项（A1-07 / R01：一条任务可关联多条；读面按 change_refs 追加序下发）。 */
+export interface TaskChangeLinkRow {
+  id: string;
+  reason: string | null;
+  /** 变更生效时间（ISO8601 UTC，SQL 侧已格式化 —— 免二次解析）。 */
+  appliedAt: string;
+}
+
 export interface TaskListRow {
   task: TaskRow;
   /** 负责人姓名数组（A23：与 owner_ids 同下标；「待分配」= 空数组；缺失用户该位为 null）。 */
   ownerNames: (string | null)[] | null;
-  changeSummary: string | null;
+  /** 变更关联（A1-07 / R01 多条）：按 tasks.change_refs 追加序（末位 = 最近一次变更），空数组 = 无变更。 */
+  changeLinks: TaskChangeLinkRow[];
 }
 
 export interface TaskFileSummaryCounts {
@@ -62,7 +71,8 @@ export interface TaskInsertInput {
   estimatedDays: number | null;
   headcount: number | null;
   priority: string | null;
-  deliverable: string | null;
+  /** 要求输出成果文件（ADR-024 多选）：空数组 = 不要求。 */
+  deliverableTypes: string[];
   note: string | null;
 }
 
@@ -78,6 +88,15 @@ export interface TaskUpdatePatch {
   headcount?: number | null;
   priority?: string | null;
   note?: string | null;
+}
+
+/** 完成门禁目标（M3-03）：任务行上判定门禁需要的字段（含无节点任务的 deliverable_types 兜底）。 */
+export interface TaskCompletionTargetRow {
+  id: string;
+  projectId: string;
+  nodeId: string | null;
+  status: string;
+  deliverableTypes: string[];
 }
 
 export interface TaskOrderRow {
@@ -108,6 +127,27 @@ const OWNER_NAMES_SQL = sql<(string | null)[] | null>`(
   select array_agg(u.display_name order by o.ord)
   from unnest(${tasks.ownerIds}) with ordinality as o(uid, ord)
   left join ${users} u on u.id = o.uid
+)`;
+
+/**
+ * 变更关联（A1-07 / R01 多条 · 迁移 0019 `tasks.change_refs` uuid[]）：一次聚合出任务的全部关联变更，
+ * 列 = id / 原因 / 生效时间；排序按 `array_position`（= 追加序，末位 = 最近一次变更）；空数组 → `[]`。
+ * 时间在 SQL 侧按 ISO8601 UTC 格式化（`to_char` 带 Z 后缀），与 JS `toISOString()` 同形。
+ */
+const CHANGE_LINKS_SQL = sql<TaskChangeLinkRow[] | null>`(
+  select coalesce(
+    json_agg(
+      json_build_object(
+        'id', c.id,
+        'reason', c.reason,
+        'appliedAt', to_char(c.applied_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      )
+      order by array_position(${tasks.changeRefs}, c.id)
+    ),
+    '[]'::json
+  )
+  from ${changeRequests} c
+  where c.id = any(${tasks.changeRefs})
 )`;
 
 const SORT_COLUMNS = {
@@ -147,26 +187,46 @@ export class TaskRepository {
     client: DbClient = this.database.db,
   ): Promise<{ items: TaskListRow[]; total: number }> {
     const where = and(...taskConditions(projectId, filter, today));
-    const items = await client
-      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeSummary: changeRequests.reason })
+    const rows = await client
+      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
       .from(tasks)
-      .leftJoin(changeRequests, eq(changeRequests.id, tasks.changeRef))
       .where(where)
       .orderBy(...taskOrderBy(sorts))
       .limit(limit)
       .offset(offset);
     const totals = await client.select({ value: count() }).from(tasks).where(where);
+    const items = rows.map((row) => ({ ...row, changeLinks: row.changeLinks ?? [] }));
     return { items, total: Number(totals[0]?.value ?? 0) };
   }
 
   async findListRowById(taskId: string, projectId: string, client: DbClient = this.database.db): Promise<TaskListRow | null> {
     const rows = await client
-      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeSummary: changeRequests.reason })
+      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
       .from(tasks)
-      .leftJoin(changeRequests, eq(changeRequests.id, tasks.changeRef))
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)))
       .limit(1);
-    return rows[0] ?? null;
+    const row = rows[0];
+    return row === undefined ? null : { ...row, changeLinks: row.changeLinks ?? [] };
+  }
+
+  /**
+   * 写路径（创建 / 编辑 / 完成响应）用：按 `change_refs` 顺序（追加序）取变更记录的 id / 原因 / 生效时间；
+   * 已失效的引用（理论上不出现 —— change_requests 只追加）跳过，不抛错。
+   */
+  async listChangeLinks(changeRefs: readonly string[], client: DbClient = this.database.db): Promise<TaskChangeLinkRow[]> {
+    if (changeRefs.length === 0) return [];
+    const rows = await client
+      .select({ id: changeRequests.id, reason: changeRequests.reason, appliedAt: changeRequests.appliedAt })
+      .from(changeRequests)
+      .where(inArray(changeRequests.id, [...changeRefs]));
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const links: TaskChangeLinkRow[] = [];
+    for (const id of changeRefs) {
+      const row = byId.get(id);
+      if (row === undefined) continue;
+      links.push({ id: row.id, reason: row.reason, appliedAt: row.appliedAt.toISOString() });
+    }
+    return links;
   }
 
   /** 详情文件清单：排除回收站（recycled），按创建时间倒序。 */
@@ -228,6 +288,22 @@ export class TaskRepository {
       .where(and(eq(tasks.projectId, projectId), eq(tasks.nodeId, nodeId)))
       .limit(1);
     return rows[0]?.id ?? null;
+  }
+
+  /** 完成门禁目标读（无锁）：can-complete 预检与写入口的事务内判定共用字段。 */
+  async findCompletionTarget(client: DbClient, taskId: string): Promise<TaskCompletionTargetRow | null> {
+    const rows = await client
+      .select({
+        id: tasks.id,
+        projectId: tasks.projectId,
+        nodeId: tasks.nodeId,
+        status: tasks.status,
+        deliverableTypes: tasks.deliverableTypes,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+    return rows[0] ?? null;
   }
 
   /** 任务精简读（无锁；只取重排需要的字段）。 */
@@ -307,7 +383,7 @@ export class TaskRepository {
         estimatedDays: input.estimatedDays,
         headcount: input.headcount,
         priority: input.priority,
-        deliverable: input.deliverable,
+        deliverableTypes: input.deliverableTypes,
         note: input.note,
         createdAt: at,
         updatedAt: at,

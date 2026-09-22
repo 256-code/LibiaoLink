@@ -301,8 +301,8 @@ class FakeFileRepository {
   deliverableTaskIds: string[] = [];
   /** R01 查询记录。 */
   deliverableQueries: { projectId: string; deliverable: string }[] = [];
-  /** R01 回写记录（任务 change_ref = 最近一次变更）。 */
-  taskChangeRefWrites: { taskIds: string[]; changeRequestId: string }[] = [];
+  /** R01 回写记录（任务 change_refs 追加 + 去重，A1-07 多条 · 迁移 0019）。 */
+  changeRefAppends: { taskIds: string[]; changeRequestId: string }[] = [];
 
   async insertChangeRequest(input: ChangeRequestInsertInput): Promise<ChangeRequestRow> {
     this.insertedChanges.push(input);
@@ -330,8 +330,8 @@ class FakeFileRepository {
     return [...this.deliverableTaskIds];
   }
 
-  async setTasksChangeRef(taskIds: readonly string[], changeRequestId: string): Promise<number> {
-    this.taskChangeRefWrites.push({ taskIds: [...taskIds], changeRequestId });
+  async appendTasksChangeRefs(taskIds: readonly string[], changeRequestId: string): Promise<number> {
+    this.changeRefAppends.push({ taskIds: [...taskIds], changeRequestId });
     return taskIds.length;
   }
 
@@ -1451,7 +1451,7 @@ describe("FileService.rollbackFile（版本回溯 · 生成新版本不删历史
       beforeSummary: null,
       afterSummary: null,
     });
-    expect(h.repo.taskChangeRefWrites).toEqual([{ taskIds: [TASK], changeRequestId: result.changeRequest!.id }]);
+    expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK], changeRequestId: result.changeRequest!.id }]);
     expect(h.repo.insertedLinks.map((row) => row.objectType)).toContain("change");
     // 变更审计（objectType=change）+ 回溯审计（带 changeRequestId）
     expect(h.audit.entries.at(-2)).toMatchObject({
@@ -1804,9 +1804,9 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
     // 多态关联：project / node / change（change 指向本次变更）
     expect(h.repo.insertedLinks.map((row) => row.objectType)).toEqual(["project", "node", "change"]);
     expect(h.repo.insertedLinks.find((row) => row.objectType === "change")!.objectId).toBe(change.id);
-    // R01：deliverable = docType 命中全部回写 change_ref
+    // R01：docType ∈ deliverable_types（多值命中）的全部任务一律追加 change_refs
     expect(h.repo.deliverableQueries).toEqual([{ projectId: PROJECT, deliverable: "CAD图纸" }]);
-    expect(h.repo.taskChangeRefWrites).toEqual([{ taskIds: [TASK, OTHER_TASK], changeRequestId: change.id }]);
+    expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK, OTHER_TASK], changeRequestId: change.id }]);
     // 审计：变更 create（objectType=change）+ 上传 complete（metadata 带 changeRequestId）
     expect(h.audit.entries.at(-2)).toMatchObject({
       action: "create",
@@ -1849,7 +1849,7 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
       expect(result.changeRequest).not.toBeNull();
       expect(result.file.status).toBe("changed");
       expect(h.repo.deliverableQueries).toHaveLength(0);
-      expect(h.repo.taskChangeRefWrites).toEqual([{ taskIds: [], changeRequestId: result.changeRequest!.id }]);
+      expect(h.repo.changeRefAppends).toEqual([{ taskIds: [], changeRequestId: result.changeRequest!.id }]);
       expect(warn.mock.calls.some((call) => String(call[0]).includes("变更 R01 无匹配任务"))).toBe(true);
     } finally {
       warn.mockRestore();

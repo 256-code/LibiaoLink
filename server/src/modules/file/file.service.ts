@@ -123,9 +123,10 @@ export const RECYCLE_SWEEP_BATCH = 100;
  * M4-04 增补（变更申请即通过 · A4-13 / A4-14）：
  * - 上传入口 `intent=change` 放开（目标须 final / changed；会话落 `upload_sessions.change_payload`）；
  * - complete（change）/ 定档后回溯：同一事务写 `change_requests`（status = applied）+ 新版本挂 `change_request_id`
- *   + 文件状态置 `changed` + `file_links`(change) + R01 回写任务 `change_ref` + 变更审计 + outbox `change.applied`；
- * - R01（`docs/rules/R01-R07-内置规则文案.md`）：按「任务输出成果文件 = 变更文件成果类型」匹配任务，命中多条
- *   全部关联、无匹配只记日志（不阻断变更生效）；`tasks.change_ref` 落「最近一次变更」（v0.2 §2.3 单列口径）。
+ *   + 文件状态置 `changed` + `file_links`(change) + R01 回写任务 `change_refs` + 变更审计 + outbox `change.applied`；
+ * - R01（`docs/rules/R01-R07-内置规则文案.md`）：按「任务输出成果文件（多值）命中变更文件成果类型」匹配任务，
+ *   命中多条全部关联、无匹配只记日志（不阻断变更生效）；`tasks.change_refs` 落「追加 + 去重」的多条关联
+ *   （A1-07 / A4-13「一条任务可关联多条变更」；数组顺序 = 关联先后，末位 = 最近一次变更，迁移 0019）。
  */
 @Injectable()
 export class FileService {
@@ -571,11 +572,12 @@ export class FileService {
   }
 
   /**
-   * M4-04 变更生效第二步（版本写入之后）：同事务写 `file_links`(change) + R01 回写任务 `change_ref` + 变更审计
+   * M4-04 变更生效第二步（版本写入之后）：同事务写 `file_links`(change) + R01 回写任务 `change_refs` + 变更审计
    * + outbox `change.applied`；变更后文件状态置 `changed`（由调用方随状态流转落库）。
    *
-   * R01 口径（ADR-024 / `docs/rules/R01-R07-内置规则文案.md`）：按「任务输出成果文件 = 变更文件成果类型」匹配任务 ——
-   * 命中多条全部关联；无匹配只记日志（不阻断变更生效，提示申请人由通知侧承担，随 M5）。
+   * R01 口径（ADR-024 多值命中 / `docs/rules/R01-R07-内置规则文案.md` / A1-07）：按「变更文件成果类型 ∈
+   * 任务输出成果文件（deliverable_types 多值）」匹配任务 —— 命中多条全部关联（`change_refs` 追加 + 去重）；
+   * 无匹配只记日志（不阻断变更生效，提示申请人由通知侧承担，随 M5）。
    */
   private async finishChangeInTx(
     tx: DbTransaction,
@@ -596,7 +598,7 @@ export class FileService {
     );
     const matchedTaskIds =
       file.docType === null ? [] : await this.repository.listTaskIdsByDeliverable(file.projectId, file.docType, tx);
-    const linkedTasks = await this.repository.setTasksChangeRef(matchedTaskIds, changeRequest.id, tx);
+    const linkedTasks = await this.repository.appendTasksChangeRefs(matchedTaskIds, changeRequest.id, tx);
     if (linkedTasks === 0) {
       this.logger.warn(
         "变更 R01 无匹配任务（变更关联未回写）：" + changeRequest.id + " / 成果类型 " + String(file.docType),

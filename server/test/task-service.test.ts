@@ -4,9 +4,11 @@ import type { DbClient } from "../src/db/db-client.js";
 import type { RoleService } from "../src/modules/identity/index.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type {
+  TaskChangeLinkRow,
   TaskEventInput,
   TaskFileSummaryCounts,
   TaskListRow,
+  TaskCompletionTargetRow,
   TaskProjectNodeRow,
   TaskProjectRow,
   TaskInsertInput,
@@ -14,6 +16,7 @@ import type {
   TaskUpdatePatch,
 } from "../src/modules/task/task.repository.js";
 import { TaskRepository } from "../src/modules/task/task.repository.js";
+import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 import { TaskService } from "../src/modules/task/task.service.js";
 
@@ -42,10 +45,10 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     estimatedDays: null,
     headcount: null,
     priority: null,
-    deliverable: null,
+    deliverableTypes: [],
     note: null,
     onTime: null,
-    changeRef: null,
+    changeRefs: [],
     version: 3,
     createdAt: new Date("2026-09-01T00:00:00Z"),
     updatedAt: new Date("2026-09-01T00:00:00Z"),
@@ -58,6 +61,10 @@ class FakeTaskRepository {
   node: TaskProjectNodeRow | null = { id: NODE, stageKey: "install", status: "active" };
   existingTaskId: string | null = null;
   task: TaskRow | null = makeRow();
+  /** 变更关联（A1-07 多条）：列表 / 详情随行下发，测试按需替换。 */
+  changeLinks: TaskChangeLinkRow[] = [];
+  /** listChangeLinks 收到的 change_refs（追加序）。 */
+  changeLinkQueries: string[][] = [];
   inserted: TaskRow | null = null;
   events: TaskEventInput[] = [];
   touched: string[] = [];
@@ -70,10 +77,21 @@ class FakeTaskRepository {
     return { items: [], total: 0 };
   }
   async findListRowById(): Promise<TaskListRow | null> {
-    return this.task === null ? null : { task: this.task, ownerNames: ["张三"], changeSummary: null };
+    return this.task === null
+      ? null
+      : {
+          task: this.task,
+          ownerNames: ["张三"],
+          changeLinks: this.changeLinks,
+        };
   }
   async listFiles(): Promise<never[]> {
     return [];
+  }
+  /** 写路径响应回读变更关联（edit / complete 不改动已有 change_refs）。 */
+  async listChangeLinks(changeRefs: readonly string[]): Promise<TaskChangeLinkRow[]> {
+    this.changeLinkQueries.push([...changeRefs]);
+    return this.changeLinks.filter((link) => changeRefs.includes(link.id));
   }
   async fileSummaries(): Promise<Map<string, TaskFileSummaryCounts>> {
     return new Map();
@@ -89,6 +107,17 @@ class FakeTaskRepository {
   }
   async lockTask(): Promise<TaskRow | null> {
     return this.task;
+  }
+  async findCompletionTarget(): Promise<TaskCompletionTargetRow | null> {
+    return this.task === null
+      ? null
+      : {
+          id: this.task.id,
+          projectId: this.task.projectId,
+          nodeId: this.task.nodeId,
+          status: this.task.status,
+          deliverableTypes: this.task.deliverableTypes,
+        };
   }
   group: { id: string; sortIndex: number }[] = [];
   groupSize = 0;
@@ -158,6 +187,22 @@ class FakeTaskRepository {
   }
 }
 
+/** 门禁替身（M3-03）：默认放行；用例可注入要求与计数（缺件 / draft 提示）。 */
+class FakeTaskGateRepository {
+  requirements: { docType: string; minCount: number }[] = [];
+  finalCounts: { docType: string; present: number }[] = [];
+  draftCounts: { docType: string; present: number }[] = [];
+  async listNodeDocRequirements(): Promise<{ docType: string; minCount: number }[]> {
+    return this.requirements;
+  }
+  async countFinalFiles(): Promise<{ docType: string; present: number }[]> {
+    return this.finalCounts;
+  }
+  async countDraftFiles(): Promise<{ docType: string; present: number }[]> {
+    return this.draftCounts;
+  }
+}
+
 class FakeRoleService {
   roleCodes: string[] = [];
   async getActorAuthorization(): Promise<{ roleCodes: string[] }> {
@@ -189,11 +234,16 @@ class FakeAuditService {
   }
 }
 
-function makeService(repo: FakeTaskRepository, roles: FakeRoleService = new FakeRoleService()): TaskService {
+function makeService(
+  repo: FakeTaskRepository,
+  roles: FakeRoleService = new FakeRoleService(),
+  gate: FakeTaskGateRepository = new FakeTaskGateRepository(),
+): TaskService {
   const database = new FakeDatabase();
   return new TaskService(
     database as unknown as DatabaseService,
     repo as unknown as TaskRepository,
+    gate as unknown as TaskGateRepository,
     roles as unknown as RoleService,
     new FakeAuditService() as unknown as AuditService,
   );
@@ -420,5 +470,49 @@ describe("TaskService.summary（项目总览四格）", () => {
     const service = makeService(repo);
     const summary = await service.summary(PROJECT);
     expect(summary).toEqual({ projectId: PROJECT, currentStage: "presale", overdue: 2, done: 5, total: 9 });
+  });
+});
+
+describe("变更关联多条（A1-07 / R01 · Push 144）", () => {
+  const CHANGE_1 = "aaaa1111-1111-4111-8111-111111111111";
+  const CHANGE_2 = "bbbb2222-2222-4222-8222-222222222222";
+
+  it("详情随行 changeLinks = change_refs 追加序（多条 + 原因截断，全文留给变更记录）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ changeRefs: [CHANGE_1, CHANGE_2] });
+    repo.changeLinks = [
+      { id: CHANGE_1, reason: "首次变更：孔位调整", appliedAt: "2026-09-20T02:00:00.000Z" },
+      { id: CHANGE_2, reason: "x".repeat(50), appliedAt: "2026-09-21T02:00:00.000Z" },
+    ];
+
+    const detail = await makeService(repo).detail(PROJECT, TASK);
+
+    expect(detail.changeLinks.map((link) => link.id)).toEqual([CHANGE_1, CHANGE_2]);
+    expect(detail.changeLinks[0]).toEqual({
+      id: CHANGE_1,
+      reason: "首次变更：孔位调整",
+      appliedAt: "2026-09-20T02:00:00.000Z",
+    });
+    expect(detail.changeLinks[1]!.reason).toBe("x".repeat(40) + "…");
+  });
+
+  it("编辑响应回读 change_refs：既有变更关联不被响应清空", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ changeRefs: [CHANGE_1] });
+    repo.changeLinks = [{ id: CHANGE_1, reason: "设计变更", appliedAt: "2026-09-20T02:00:00.000Z" }];
+
+    const updated = await makeService(repo).update(PROJECT, TASK, { version: 3, note: "改备注" }, ACTOR);
+
+    expect(repo.changeLinkQueries).toEqual([[CHANGE_1]]);
+    expect(updated.changeLinks.map((link) => link.id)).toEqual([CHANGE_1]);
+  });
+
+  it("无关联任务：changeLinks = []（空数组不下发 null）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ changeRefs: [] });
+
+    const detail = await makeService(repo).detail(PROJECT, TASK);
+
+    expect(detail.changeLinks).toEqual([]);
   });
 });

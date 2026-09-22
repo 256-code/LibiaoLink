@@ -292,23 +292,40 @@ export class FileRepository {
   }
 
   /**
-   * R01 变更自动关联：查找「输出成果文件 = 变更文件成果类型」的任务（ADR-024 §R01 口径 = deliverable 命中；
-   * 无成果文件要求的任务不参与）。
+   * R01 变更自动关联：查找「变更文件成果类型 ∈ 任务输出成果文件」的任务。
+   *
+   * ADR-024 多值命中（**已随迁移 0018 / Push 143 同批落地**，PR #111 评审第 3 条）：`tasks.deliverable_types`
+   * 为 `text[]`，「变更文件 doc_type 属于其中任一取值即命中」（数组包含查询，走 GIN `ix_tasks_deliverable_types`）；
+   * 空数组（不要求输出成果文件）的任务不参与 —— 不再有单值等值（旧的 `tasks.deliverable` 已随 0018 drop）。
    */
   async listTaskIdsByDeliverable(projectId: string, deliverable: string, client: DbClient): Promise<string[]> {
     const rows = await client
       .select({ id: tasks.id })
       .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), eq(tasks.deliverable, deliverable)));
+      .where(
+        and(
+          eq(tasks.projectId, projectId),
+          sql`${tasks.deliverableTypes} @> array[${deliverable}]::text[]`,
+        ),
+      );
     return rows.map((row) => row.id);
   }
 
-  /** R01 回写：任务「变更关联」= 最近一次变更（v0.2 §2.3 change_ref 口径；不递增任务乐观锁 version）。 */
-  async setTasksChangeRef(taskIds: readonly string[], changeRequestId: string, client: DbClient): Promise<number> {
+  /**
+   * R01 回写：任务「变更关联」**追加 + 去重**（A1-07 / A4-13；迁移 0019 起 `tasks.change_refs` 为 uuid[]，可多条）——
+   * 已关联过同一变更的任务原样保留（幂等、不重复），否则追加到数组末位（数组顺序 = 关联先后，末位 = 最近一次变更）。
+   * 不递增任务乐观锁 version（变更关联不视为任务编辑）；返回实际回写的任务行数。
+   */
+  async appendTasksChangeRefs(taskIds: readonly string[], changeRequestId: string, client: DbClient): Promise<number> {
     if (taskIds.length === 0) return 0;
     const rows = await client
       .update(tasks)
-      .set({ changeRef: changeRequestId })
+      .set({
+        changeRefs: sql`case
+          when ${changeRequestId}::uuid = any(${tasks.changeRefs}) then ${tasks.changeRefs}
+          else array_append(${tasks.changeRefs}, ${changeRequestId}::uuid)
+        end`,
+      })
       .where(inArray(tasks.id, [...taskIds]))
       .returning({ id: tasks.id });
     return rows.length;

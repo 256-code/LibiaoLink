@@ -17,6 +17,9 @@ import {
   ProjectUpdateBodySchema,
 } from "./modules/projects.ts";
 import {
+  TaskCanCompleteResponseSchema,
+  TaskCompleteBodySchema,
+  TaskCompleteResponseSchema,
   TaskCreateBodySchema,
   TaskCreateFromTemplateBodySchema,
   TaskCreateFromTemplateResponseSchema,
@@ -305,6 +308,33 @@ export function buildOpenApiDocument() {
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/tasks/{taskId}/can-complete",
+    tags: ["tasks"],
+    summary: "完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }) },
+    responses: {
+      200: { description: "预检结果（canComplete + missing + warnings）", ...json(TaskCanCompleteResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/tasks/{taskId}/complete",
+    tags: ["tasks"],
+    summary: "任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskCompleteBodySchema) },
+    responses: {
+      200: { description: "完成结果（task + warnings）", ...json(TaskCompleteResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
     },
   });
 

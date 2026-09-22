@@ -6,8 +6,8 @@
  *   证据二（目标门禁）：非定档（draft）409 FILE_STATE_INVALID / 不存在 404 / 跨项目 400 / 非成员 404（防 IDOR）。
  *   证据三（变更生效 · 完成上传）：同一事务写 change_requests(status=applied) + 版本挂 change_request_id +
  *           files.status=changed + file_links(change) + 审计(object_type=change) + outbox change.applied。
- *   证据四（R01 自动关联）：按「任务输出成果文件 = 变更文件成果类型」匹配任务并全部回写 tasks.change_ref（最近一次变更）；
- *           无匹配只记日志、不阻断变更生效。
+ *   证据四（R01 自动关联 · A1-07 多条）：按「变更文件成果类型 ∈ 任务输出成果文件（deliverable_types 多值）」匹配任务，
+ *           全部**追加 + 去重**回写 tasks.change_refs（一条任务可关联多条变更，业务要求「变更关联」列展示多条）；无匹配只记日志、不阻断生效。
  *   证据五（定档后回溯 = 变更）：POST /files/{id}/rollback 对 final 文件生成变更（changeRequest 非空）+ 新版本挂 change_request_id。
  *   证据六（定档后管控）：intent=version 对 changed 文件 409（修改须走变更）。
  *
@@ -275,11 +275,11 @@ try {
     projectNode !== undefined && projectStageKey !== undefined,
   );
 
-  const createdTaskA = await call("POST", "/api/v1/projects/" + project + "/tasks", { title: "M4CHG-出图A（成果文件命中）", stageKey: projectStageKey, deliverable: "CAD图纸" }, admin);
+  const createdTaskA = await call("POST", "/api/v1/projects/" + project + "/tasks", { title: "M4CHG-出图A（成果文件命中）", stageKey: projectStageKey, deliverableTypes: ["CAD图纸"] }, admin);
   taskMatchedA = createdTaskA.body?.id;
-  const createdTaskB = await call("POST", "/api/v1/projects/" + project + "/tasks", { title: "M4CHG-出图B（成果文件命中）", stageKey: projectStageKey, deliverable: "CAD图纸" }, admin);
+  const createdTaskB = await call("POST", "/api/v1/projects/" + project + "/tasks", { title: "M4CHG-出图B（成果文件命中）", stageKey: projectStageKey, deliverableTypes: ["CAD图纸"] }, admin);
   taskMatchedB = createdTaskB.body?.id;
-  const createdTaskOther = await call("POST", "/api/v1/projects/" + project + "/tasks", { title: "M4CHG-合同（成果文件不命中）", stageKey: projectStageKey, deliverable: "合同" }, admin);
+  const createdTaskOther = await call("POST", "/api/v1/projects/" + project + "/tasks", { title: "M4CHG-合同（成果文件不命中）", stageKey: projectStageKey, deliverableTypes: ["合同"] }, admin);
   taskOther = createdTaskOther.body?.id;
   check(
     "P4",
@@ -429,14 +429,17 @@ try {
     changeLink.rows.length === 1 && changeLink.rows[0]?.object_id === changeRequestId,
   );
 
-  const taskRows = await db.query("select id, deliverable, change_ref from tasks where project_id = $1 order by id", [project]);
+  const taskRows = await db.query("select id, deliverable_types, change_refs from tasks where project_id = $1 order by id", [project]);
   const byId = (id) => taskRows.rows.find((row) => row.id === id);
   check(
     "C6",
-    "R01 自动关联：输出成果文件 = 变更文件成果类型（CAD图纸）的任务全部回写 change_ref = 本次变更；不命中任务保持空",
-    "两个 CAD图纸 任务 change_ref = 变更 id；合同任务 change_ref = null",
-    short({ a: byId(taskMatchedA)?.change_ref === changeRequestId, b: byId(taskMatchedB)?.change_ref === changeRequestId, other: byId(taskOther)?.change_ref }, 240),
-    byId(taskMatchedA)?.change_ref === changeRequestId && byId(taskMatchedB)?.change_ref === changeRequestId && byId(taskOther)?.change_ref === null,
+    "R01 自动关联（ADR-024 多值命中）：变更文件 doc_type ∈ 任务输出成果文件（CAD图纸）的任务全部追加 change_refs = [本次变更]；不命中任务保持空数组",
+    "两个 CAD图纸 任务 change_refs = [变更 id]；合同任务 change_refs = []",
+    short({ a: byId(taskMatchedA)?.change_refs, b: byId(taskMatchedB)?.change_refs, other: byId(taskOther)?.change_refs }, 260),
+    JSON.stringify(byId(taskMatchedA)?.change_refs) === JSON.stringify([changeRequestId]) &&
+      JSON.stringify(byId(taskMatchedB)?.change_refs) === JSON.stringify([changeRequestId]) &&
+      Array.isArray(byId(taskOther)?.change_refs) &&
+      byId(taskOther).change_refs.length === 0,
   );
 
   const outboxRow = await db.query("select topic, dedupe_key, status, payload from outbox_events where payload->>'changeRequestId' = $1", [changeRequestId]);
@@ -466,9 +469,53 @@ try {
       auditRow.rows[0]?.metadata?.linkedTasks === 2,
   );
 
+  // ---------- 证据四-a：变更关联多条（A1-07 追加 + 去重） ----------
+  const changeA2 = await changeUploadFile({
+    projectId: project,
+    fileId: fileA.fileId,
+    name: "总装图-M4-04.docx",
+    sizeBytes: MI_B,
+    change: { reason: "第二次变更（回放）：孔径按现场复测调整" },
+    session: admin,
+  });
+  const changeRequestId2 = changeA2.completed.body?.changeRequest?.id;
+  const taskRowsAfter2 = await db.query("select id, change_refs from tasks where project_id = $1 order by id", [project]);
+  const byTaskId = (id) => taskRowsAfter2.rows.find((row) => row.id === id);
+  check(
+    "C6b",
+    "变更关联多条（业务要求「变更关联」列展示多条）：同一成果类型的第二次变更追加到数组末位（= 追加序 [首次, 本次]），数组不覆盖",
+    "[变更1, 变更2]（两个 CAD图纸 任务）；合同任务仍为空数组",
+    short({ a: byTaskId(taskMatchedA)?.change_refs, b: byTaskId(taskMatchedB)?.change_refs, other: byTaskId(taskOther)?.change_refs, change2: changeRequestId2 }, 320),
+    changeA2.completed.status === 200 &&
+      typeof changeRequestId2 === "string" &&
+      JSON.stringify(byTaskId(taskMatchedA)?.change_refs) === JSON.stringify([changeRequestId, changeRequestId2]) &&
+      JSON.stringify(byTaskId(taskMatchedB)?.change_refs) === JSON.stringify([changeRequestId, changeRequestId2]) &&
+      Array.isArray(byTaskId(taskOther)?.change_refs) &&
+      byTaskId(taskOther).change_refs.length === 0,
+  );
+
+  // 去重（幂等）：同一变更重复回写不产生重复项 —— SQL 与 file.repository.appendTasksChangeRefs 的 case-when 同形
+  await db.query(
+    "update tasks set change_refs = case when $2::uuid = any(change_refs) then change_refs else array_append(change_refs, $2::uuid) end where id = $1",
+    [taskMatchedA, changeRequestId2],
+  );
+  const dedupeRow = await db.query("select change_refs from tasks where id = $1", [taskMatchedA]);
+  check(
+    "C6c",
+    "追加 + 去重（幂等）：同一变更重复回写不产生重复项（数组仍两项、无重复）",
+    "长度 2、去重后仍 2",
+    short({ refs: dedupeRow.rows[0]?.change_refs }, 220),
+    Array.isArray(dedupeRow.rows[0]?.change_refs) &&
+      dedupeRow.rows[0].change_refs.length === 2 &&
+      new Set(dedupeRow.rows[0].change_refs).size === 2,
+  );
+
   // ---------- 证据四：R01 无匹配（只记日志、不阻断变更生效） ----------
   const fileB = await uploadNewFile({ projectId: project, name: "评审单-M4-04.docx", sizeBytes: FILE_B_SIZE, docType: "评审单", nodeId: projectNode, session: admin });
   await finalizeFile(fileB.fileId, fileB.completed.body?.file?.version, admin);
+  const refsBeforeB = (await db.query("select change_refs from tasks where project_id = $1 order by id", [project])).rows.map(
+    (row) => row.change_refs,
+  );
   const changeB = await changeUploadFile({
     projectId: project,
     fileId: fileB.fileId,
@@ -477,16 +524,16 @@ try {
     change: { reason: "评审意见修订（无对应成果任务）" },
     session: admin,
   });
-  const taskRowsAfterB = await db.query("select id, change_ref from tasks where project_id = $1 order by id", [project]);
-  const refsAfterB = taskRowsAfterB.rows.map((row) => row.change_ref);
+  const taskRowsAfterB = await db.query("select id, change_refs from tasks where project_id = $1 order by id", [project]);
+  const refsAfterB = taskRowsAfterB.rows.map((row) => row.change_refs);
   check(
     "C8",
-    "R01 无匹配（成果类型 = 评审单，无对应任务）→ 变更仍生效、change_ref 不回写（提示申请人随 M5）",
-    "200 + changeRequest 非空 + 既有任务 change_ref 均未变",
+    "R01 无匹配（成果类型 = 评审单，无对应任务）→ 变更仍生效、change_refs 不回写（提示申请人随 M5）",
+    "200 + changeRequest 非空 + 既有任务 change_refs 与变更前逐条一致",
     short({ status: changeB.completed.status, changeRequest: changeB.completed.body?.changeRequest?.id, refs: refsAfterB }, 260),
     changeB.completed.status === 200 &&
       typeof changeB.completed.body?.changeRequest?.id === "string" &&
-      refsAfterB.every((ref) => ref === null || ref === changeRequestId),
+      JSON.stringify(refsAfterB) === JSON.stringify(refsBeforeB),
   );
 
   // ---------- 证据五：定档后回溯 = 变更（A4-13 申请即通过） ----------
@@ -498,18 +545,18 @@ try {
   const rollbackChange = rolledBackC.body?.changeRequest;
   const versionC = await db.query("select seq, change_request_id from file_versions where file_id = $1 order by seq desc limit 1", [fileC.fileId]);
   const fileCRow = await db.query("select status, version from files where id = $1", [fileC.fileId]);
-  const taskOtherAfter = await db.query("select change_ref from tasks where id = $1", [taskOther]);
+  const taskOtherAfter = await db.query("select change_refs from tasks where id = $1", [taskOther]);
   check(
     "C9",
-    "定档后回溯 = 变更（不再 400）：changeRequest 非空 + 新版本挂 change_request_id + 状态 final → changed + 合同任务 change_ref 回写",
-    "200 + changeRequest.status=applied + 版本 change_request_id 一致 + files.status=changed + 合同任务 change_ref=本次变更",
-    short({ status: rolledBackC.status, changeRequest: rollbackChange, version: versionC.rows[0], file: fileCRow.rows[0], taskOther: taskOtherAfter.rows[0]?.change_ref }, 420),
+    "定档后回溯 = 变更（不再 400）：changeRequest 非空 + 新版本挂 change_request_id + 状态 final → changed + 合同任务 change_refs = [本次变更]",
+    "200 + changeRequest.status=applied + 版本 change_request_id 一致 + files.status=changed + 合同任务 change_refs=[本次变更]",
+    short({ status: rolledBackC.status, changeRequest: rollbackChange, version: versionC.rows[0], file: fileCRow.rows[0], taskOther: taskOtherAfter.rows[0]?.change_refs }, 420),
     rolledBackC.status === 200 &&
       rollbackChange?.status === "applied" &&
       rollbackChange?.reason === "定档后回退到 v1（走变更）" &&
       versionC.rows[0]?.change_request_id === rollbackChange.id &&
       fileCRow.rows[0]?.status === "changed" &&
-      taskOtherAfter.rows[0]?.change_ref === rollbackChange.id,
+      JSON.stringify(taskOtherAfter.rows[0]?.change_refs) === JSON.stringify([rollbackChange.id]),
   );
 
   // ---------- 证据六：定档后管控（changed 文件不再接受 version 追加） ----------
@@ -587,13 +634,13 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：变更入口与载荷落库 / 目标门禁 / 生效链路（变更记录 + 版本 + 状态 + 关联 + 审计 + outbox）/ R01 多值与无匹配 / 定档后回溯 = 变更 / 定档后管控。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：变更入口与载荷落库 / 目标门禁 / 生效链路（变更记录 + 版本 + 状态 + 关联 + 审计 + outbox）/ R01 多值命中与多条追加 + 去重 / 无匹配 / 定档后回溯 = 变更 / 定档后管控。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 验收对照（M4-04 写入切片）");
 lines.push("");
 lines.push("- 变更入口 = C1 / C2：`intent=change` 随上传管道提交（技术设计v0.3 §3.5 口径），`ChangeIntentBody` 落 `upload_sessions.change_payload`；目标须 final / changed，其余状态 409 / 不存在 404 / 跨项目 400 / 无可见性 404。");
 lines.push("- 变更生效 = C3 / C4 / C5 / C7：完成上传同一事务写 `change_requests`（status=applied、stage_key 缺省取节点阶段）+ 版本挂 `change_request_id` + `files.status=changed` + `file_links`(change) + 审计（object_type=change）+ outbox `change.applied`。");
-lines.push("- R01 自动关联 = C6 / C8 / C9：按「任务输出成果文件 = 变更文件成果类型」命中全部回写 `tasks.change_ref`（最近一次变更，覆盖式）；无匹配只记日志、不阻断（提示申请人随 M5 通知）。");
+lines.push("- R01 自动关联 = C6 / C6b / C6c / C8 / C9：按「变更文件成果类型 ∈ 任务输出成果文件（`deliverable_types` 多值）」命中全部**追加 + 去重**回写 `tasks.change_refs`（A1-07「一条任务可关联多条变更」，数组顺序 = 追加序；迁移 0019）；无匹配只记日志、不阻断（提示申请人随 M5 通知）。");
 lines.push("- 定档后回溯 = C9（A4-13）：`POST /files/{id}/rollback` 对 final 文件即变更（生成新版本 + 变更记录 + 状态 changed），不再 400。");
 lines.push("- 定档后管控 = C10：`intent=version` 对非 draft 文件 409 `FILE_STATE_INVALID`（修改须走变更）。");
 lines.push("- 单测回归（不连库）：server/test/file-service.test.ts 随 npm test 常跑：change 入口（载荷规范化 / 目标门禁 / 不新建文件）、change 完成链路（变更记录 / 版本挂接 / 状态 / 关联 / R01 / 审计 / outbox）、R01 无匹配只告警、定档后回溯 = 变更。");

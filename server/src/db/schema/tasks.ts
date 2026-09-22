@@ -1,6 +1,5 @@
 import { desc, sql } from "drizzle-orm";
 import {
-  type AnyPgColumn,
   bigserial,
   boolean,
   check,
@@ -14,9 +13,8 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { changeRequests } from "./change.js";
 import { projectNodes } from "./flow.js";
-import { STAGE_KEYS, sqlValueList } from "./literals.js";
+import { DOC_TYPE_KEYS, STAGE_KEYS, sqlArrayLiteral, sqlValueList } from "./literals.js";
 import { projects } from "./projects.js";
 
 /** tasks（项目总览 15 列口径；status 为存储基础态，展示态派生，见 v0.2 §2.4）。 */
@@ -43,12 +41,22 @@ export const tasks = pgTable(
     estimatedDays: smallint("estimated_days"),
     headcount: smallint("headcount"),
     priority: text("priority"),
-    deliverable: text("deliverable"),
+    /** 要求输出成果文件（ADR-024 多选 · Push 143）：text[] 非空、空数组 = 不要求；顺序 = 展示顺序（去重在应用层保证）。 */
+    deliverableTypes: text("deliverable_types")
+      .array()
+      .notNull()
+      .default(sql`array[]::text[]`),
     note: text("note"),
     onTime: boolean("on_time"),
-    changeRef: uuid("change_ref").references((): AnyPgColumn => changeRequests.id, {
-      onDelete: "set null",
-    }),
+    /**
+     * 变更关联（A1-07 / R01「追加＋去重」· 迁移 0019）：一条任务可关联多条变更 —— 数组顺序 = 关联先后
+     * （追加序，末位 = 最近一次变更）；空数组 = 无变更。多值后不再保留单列外键（Postgres 无数组外键；
+     * change_requests 为只追加表、无删除路径），「无 NULL 元素」由 ck_tasks_change_refs_no_null 兜底。
+     */
+    changeRefs: uuid("change_refs")
+      .array()
+      .notNull()
+      .default(sql`array[]::uuid[]`),
     version: integer("version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -59,6 +67,8 @@ export const tasks = pgTable(
     index("ix_tasks_project_stage").on(table.projectId, table.stageKey),
     index("ix_tasks_project_stage_order").on(table.projectId, table.stageKey, table.sortIndex),
     index("ix_tasks_owner_ids").using("gin", table.ownerIds),
+    index("ix_tasks_deliverable_types").using("gin", table.deliverableTypes),
+    index("ix_tasks_change_refs").using("gin", table.changeRefs),
     index("ix_tasks_due").on(table.projectId, table.actualEnd, table.plannedEnd),
     check(
       "ck_tasks_stage_key",
@@ -73,6 +83,12 @@ export const tasks = pgTable(
     ),
     check("ck_tasks_sort_index", sql`${table.sortIndex} >= 0`),
     check("ck_tasks_owner_ids_no_null", sql`array_position(${table.ownerIds}, null::uuid) is null`),
+    check(
+      "ck_tasks_deliverable_types",
+      sql`${table.deliverableTypes} <@ ${sql.raw(sqlArrayLiteral(DOC_TYPE_KEYS))}`,
+    ),
+    check("ck_tasks_deliverable_types_no_null", sql`array_position(${table.deliverableTypes}, null::text) is null`),
+    check("ck_tasks_change_refs_no_null", sql`array_position(${table.changeRefs}, null::uuid) is null`),
   ],
 );
 

@@ -11,6 +11,23 @@ export const TaskProgressSchema = z
   .union([z.literal(0), z.literal(0.25), z.literal(0.5), z.literal(0.75), z.literal(1)])
   .openapi("TaskProgress", { description: "任务进度四格（离散五档）：0 / 25% / 50% / 75% / 100%；写入即联动状态与完成日期" });
 
+/**
+ * 变更关联项（A1-07 / R01「追加＋去重」）：一条任务可关联多条变更 —— 变更生效时由 R01 按
+ * 「任务成果类型命中变更文件 doc_type」追加，重复引用去重（业务要求「变更关联」列展示多条，Push 144）。
+ */
+export const TaskChangeLinkSchema = z
+  .object({
+    id: UuidSchema.openapi({ description: "变更记录 id（change_requests；M4-04 读面按 id 跳变更详情）" }),
+    reason: z
+      .string()
+      .nullable()
+      .openapi({ description: "变更原因（列表下发短文本，超长由服务端截断；全文在变更详情）" }),
+    appliedAt: DateTimeSchema.openapi({
+      description: "变更生效时间（一期「申请即通过」= 提交生效时间）；「变更关联」列按此显示变更日期",
+    }),
+  })
+  .openapi("TaskChangeLink", { description: "任务 ↔ 变更关联项（多条；列表 / 详情同形）" });
+
 /** 任务（tasks 表；displayStatus 为服务端派生，不写回存储）。 */
 export const TaskSchema = z
   .object({
@@ -36,13 +53,19 @@ export const TaskSchema = z
     estimatedDays: z.number().int().min(0).nullable(),
     headcount: z.number().int().min(0).nullable(),
     priority: PrioritySchema.nullable(),
-    deliverable: DocTypeSchema.nullable(),
+    deliverableTypes: z.array(DocTypeSchema).openapi({
+      description:
+        "要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05）",
+    }),
     note: z.string().nullable(),
     onTime: z.boolean().nullable().openapi({
       description:
         "是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生",
     }),
-    changeRef: UuidSchema.nullable(),
+    changeLinks: z.array(TaskChangeLinkSchema).openapi({
+      description:
+        "变更关联（A1-07 / R01：**一条任务可关联多条变更**，写面「追加＋去重」）：数组顺序 = 关联先后（追加序，末位 = 最近一次变更）；空数组 = 无变更。前端「变更关联」列按本数组渲染多条变更徽标（悬浮显示变更日期）",
+    }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
@@ -72,23 +95,20 @@ export const TaskFileBriefSchema = z
   .openapi("TaskFileBrief");
 
 /**
- * 任务列表项（A7）：表格 15 列 + 内联摘要（负责人姓名 / 变更摘要 / 文件摘要）。
- * 前端不再逐行反查 /users 或 /files，避免 N+1；changeRef 只在详情给。
+ * 任务列表项（A7）：表格 15 列 + 内联摘要（负责人姓名 / 文件摘要）。
+ * 前端不再逐行反查 /users 或 /files，避免 N+1；「变更关联」列（第 15 列）直接吃 Task.changeLinks
+ * 多条（A1-07），列表与详情同形，不再走单条 changeSummary。
  */
-export const TaskListItemSchema = TaskSchema.omit({ changeRef: true })
-  .extend({
-    ownerNames: z.array(z.string().nullable()).openapi({
-      description: "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）",
-    }),
-    changeSummary: z.string().nullable().openapi({ description: "变更摘要（列表用短文本；详情用 changeRef 跳变更记录）" }),
-    fileSummary: TaskFileSummarySchema,
-  })
-  .openapi("TaskListItem");
+export const TaskListItemSchema = TaskSchema.extend({
+  ownerNames: z.array(z.string().nullable()).openapi({
+    description: "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）",
+  }),
+  fileSummary: TaskFileSummarySchema,
+}).openapi("TaskListItem");
 
-/** 任务详情（抽屉全字段，A7）：含变更指针与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
+/** 任务详情（抽屉全字段，A7）：含变更关联（多条）与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
 export const TaskDetailSchema = TaskSchema.extend({
   ownerNames: z.array(z.string().nullable()).openapi({ description: "负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组" }),
-  changeSummary: z.string().nullable(),
   files: z.array(TaskFileBriefSchema),
 }).openapi("TaskDetail", { description: "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）" });
 
@@ -150,6 +170,46 @@ export const TaskProgressUpdateBodySchema = z
   })
   .openapi("TaskProgressUpdateBody");
 
+/** 任务完成门禁缺件明细（TASK_REQUIRED_DOC_MISSING 的 details.missing；与节点门禁同形同口径）。 */
+export const TaskGateMissingSchema = z
+  .object({
+    docType: DocTypeSchema,
+    required: z.number().int().min(0),
+    present: z.number().int().min(0),
+  })
+  .openapi("TaskGateMissing", { description: "缺件明细：required / present 按门禁统计范围逐 doc_type 给出" });
+
+/** 完成门禁放行提示（A2-10）：存在未定档（draft）成果文件时放行，返回 warning 并触发 R02（提醒定档）。 */
+export const TaskGateWarningSchema = z
+  .object({
+    code: z.literal("draft_doc_present"),
+    docType: DocTypeSchema,
+    count: z.number().int().min(0),
+  })
+  .openapi("TaskGateWarning", { description: "放行提示：存在 draft 成果文件（放行但提示定档，R02 已入队）" });
+
+/** 任务完成提交（M3-03）：表格 / 看板 / 详情三个入口调用同一服务，事务内强校验门禁。 */
+export const TaskCompleteBodySchema = z
+  .object({
+    version: VersionSchema,
+    actualEnd: DateOnlySchema.optional().openapi({ description: "完成日期：缺省 = 服务端按当天（Asia/Shanghai）" }),
+    note: z.string().max(2000).optional().openapi({ description: "完成备注：提供时写入任务的「项目进展描述」（note）并留痕" }),
+  })
+  .openapi("TaskCompleteBody", { description: "完成提交（乐观锁 version 必传；门禁未通过 422 + missing）" });
+
+export const TaskCompleteResponseSchema = z
+  .object({ task: TaskSchema, warnings: z.array(TaskGateWarningSchema) })
+  .openapi("TaskCompleteResponse", { description: "完成结果（warnings 非空 = 已放行但存在未定档成果文件，R02 已入队）" });
+
+/** 完成预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。 */
+export const TaskCanCompleteResponseSchema = z
+  .object({
+    canComplete: z.boolean(),
+    missing: z.array(TaskGateMissingSchema),
+    warnings: z.array(TaskGateWarningSchema),
+  })
+  .openapi("TaskCanCompleteResponse", { description: "完成预检（canComplete=false 时 missing 给缺件明细）" });
+
 /**
  * 任务创建（A10；2026-09-19 定案入契约）：从任务节点库 / 任务模板生成或手工创建。
  * 默认值：状态 pending、进度 0；headcount / priority 可空（Q8 定案）。
@@ -179,7 +239,9 @@ export const TaskCreateBodySchema = z
     estimatedDays: z.number().int().min(0).nullable().optional(),
     headcount: z.number().int().min(0).nullable().optional(),
     priority: PrioritySchema.nullable().optional(),
-    deliverable: DocTypeSchema.nullable().optional(),
+    deliverableTypes: z.array(DocTypeSchema).optional().openapi({
+      description: "要求输出成果文件（ADR-024 多选）：去重（首次出现保序）；缺省 / 空数组 = 不要求",
+    }),
     note: z.string().max(2000).nullable().optional(),
   })
   .openapi("TaskCreateBody", { description: "创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径）" });
