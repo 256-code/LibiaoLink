@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
+import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -39,6 +39,10 @@ import { trackerLabel } from "./Tracker";
  * 位置每帧更新（与落点同一个 rAF 循环）；原地那张卡片照旧不动、不淡出、不抬起。
  * Push 110（业务反馈「还是要透明的吧」）：拖动卡片改成**半透明**（壳从实心白换成半透明白 + 轻磨砂 `backdrop-blur`），
  * 压住落点槽位 / 列内卡片时能透出去（`pointer-events-none` 不变）；投影保持原样不淡，原地那张卡片仍不动、不淡出。
+ * Push 157（业务口径「卡片右移左移也要可以滚动」）：在**指针拖动**这套（Push 108 起）上补回「拖到边缘自动滚」——
+ * 拖动中指针进看板左右边缘 72px 内逐帧横向滚看板、进某一列的上下边缘 72px 内逐帧滚这一列的卡片列表（越深越快，1~16px/帧），
+ * 于是拖到当前屏幕外的列 / 列底之外的格子也能落到（Push 107 撤回的是「原生 HTML5 拖拽」那一整套，本次仍是鼠标自己控制的指针拖动，两条不冲突）。
+ * 同轮补「**拖看板空白 = 横向平移**」（口径同甘特图）：只滚看板本身、不改任何任务字段；卡片 / 「添加」/ 滑块上按下不接管。
  * Push 118（业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」）：「添加」浮层的打开态原来是**每列一份**（列内局部 state），
  * 六列互不感知、能同时开着菜单；现在提到 `TaskKanban` 一层，整块看板共用**单值**状态（`AddOverlay`）——
  * 点别的列的「添加」= 那一列接管，上一列的菜单 / 临时任务表单 / 阶段选择 / 模板卡片应声关掉；`Esc` / 点外面仍是关。
@@ -130,6 +134,66 @@ const CARD_BODY = "relative px-4 py-3.5";
 
 /** 拖动判定阈值（Push 108）：按下后位移不超过这么多像素 = 「点一下看详情」，不算拖动。 */
 const DRAG_THRESHOLD = 4;
+
+/**
+ * 拖卡片到边缘 = 看板跟着滚（Push 157，业务口径「卡片右移左移也要可以滚动」）：指针进左右 / 上下边缘
+ * `DRAG_EDGE_PX` 内就逐帧滚，越深越快（1~`DRAG_EDGE_MAX_SPEED` px/帧）—— 拖到当前屏幕外的列 / 列底之外的格子也能落到。
+ */
+const DRAG_EDGE_PX = 72;
+const DRAG_EDGE_MAX_SPEED = 16;
+
+/** 拖看板空白平移的判定阈值（口径同甘特图）：位移不到这么多像素仍算点击。 */
+const BOARD_PAN_THRESHOLD = 4;
+
+/** 边缘自动滚的速度：按深入边缘的程度 1~16px/帧。 */
+function edgeScrollSpeed(depth: number): number {
+  return Math.min(Math.max((depth / DRAG_EDGE_PX) * DRAG_EDGE_MAX_SPEED, 1), DRAG_EDGE_MAX_SPEED);
+}
+
+/** 点 `(x, y)` 落在哪一列上（没有 = null）：落点判定与「夹回看板内」共用一层薄封装。 */
+function columnAtPoint(x: number, y: number): Element | null {
+  const under = document.elementFromPoint(x, y);
+  return under === null ? null : under.closest("[data-kanban-column]");
+}
+
+/** `ScrollArea` 的滚动视口（组件内部那层带 `data-scroll-area` 的 div）——按轴找它，比给组件加 ref 出口更省事。 */
+function scrollAreaViewport(root: ParentNode | null, axis: "horizontal" | "vertical"): HTMLElement | null {
+  if (root === null) {
+    return null;
+  }
+  const node = root.querySelector('[data-scroll-area="' + axis + '"]');
+  return node instanceof HTMLElement ? node : null;
+}
+
+/**
+ * 拖卡片到边缘时的逐帧自动滚（Push 157）：横向滚看板本体（`root` = 看板壳），纵向滚指针底下那一列
+ * （看板列内列表也是 `ScrollArea`）。指针离看板太远（上下超过 24px）就不横向滚，免得在工具条上拖也乱滚。
+ */
+function autoScrollForDrag(root: HTMLElement | null, point: { x: number; y: number }): void {
+  const viewport = scrollAreaViewport(root, "horizontal");
+  if (viewport !== null) {
+    const rect = viewport.getBoundingClientRect();
+    if (point.y >= rect.top - 24 && point.y <= rect.bottom + 24) {
+      if (point.x < rect.left + DRAG_EDGE_PX) {
+        viewport.scrollLeft -= edgeScrollSpeed(rect.left + DRAG_EDGE_PX - point.x);
+      } else if (point.x > rect.right - DRAG_EDGE_PX) {
+        viewport.scrollLeft += edgeScrollSpeed(point.x - (rect.right - DRAG_EDGE_PX));
+      }
+    }
+  }
+  const under = document.elementFromPoint(point.x, point.y);
+  const column = under === null ? null : under.closest("[data-kanban-column]");
+  const list = scrollAreaViewport(column, "vertical");
+  if (list === null) {
+    return;
+  }
+  const rect = list.getBoundingClientRect();
+  if (point.y < rect.top + DRAG_EDGE_PX) {
+    list.scrollTop -= edgeScrollSpeed(rect.top + DRAG_EDGE_PX - point.y);
+  } else if (point.y > rect.bottom - DRAG_EDGE_PX) {
+    list.scrollTop += edgeScrollSpeed(point.y - (rect.bottom - DRAG_EDGE_PX));
+  }
+}
 
 /** 当前落点（Push 108）：`key` = 哪一列（负责人 / 状态 / 待分配）、`index` = 插到列内第几格（0 = 最前、`items.length` = 列尾）。 */
 type DropTarget = { key: string; index: number };
@@ -701,6 +765,13 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
   const suppressClickRef = useRef(false);
   /** 跟着鼠标走的拖动卡片（Push 109）：直接用 DOM 改 `transform`，不走 state（每帧都要动）。 */
   const ghostRef = useRef<HTMLDivElement | null>(null);
+  /** 看板本体（Push 157）：拖空白平移 / 拖卡片到边缘自动滚都按它找横向视口。 */
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  /** 拖看板空白平移的暂存（Push 157）：没过 `BOARD_PAN_THRESHOLD` 就还是普通点击。 */
+  const boardPanRef = useRef<{ pointerId: number; x: number; baseLeft: number; moved: boolean } | null>(null);
+  const [boardPanning, setBoardPanning] = useState(false);
+  /** 平移收尾那一下补出来的 click 不当成「打开抽屉」（Push 157）。 */
+  const boardPanJustEndedRef = useRef(false);
   /** 抓取偏移（Push 109）：按下时鼠标在卡片内的位置 + 卡片宽度，拖动卡片按这个对齐。 */
   const grabRef = useRef({ dx: 0, dy: 0, width: 0 });
   /** 任务表最新值 + 两个「最新实现」的 ref（Push 108）：指针 / 每帧回调里读，免得闭包吃到旧值。 */
@@ -724,8 +795,18 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
    * （某张卡片中线以上 = 插到这张前面，都在上面 = 插到列尾）；浮动的那块虚线槽位不参与计算（它没有 `data-kanban-card`）。
    */
   const dropTargetAt = (x: number, y: number): DropTarget | null => {
-    const under = document.elementFromPoint(x, y);
-    const column = under === null ? null : under.closest("[data-kanban-column]");
+    let column = columnAtPoint(x, y);
+    if (column === null) {
+      // Push 157：拖到边缘触发自动滚时，指针常常已经压到看板左右边缘之外（拖动中页面多出的滚动条还会再吃掉 15px），
+      // 这时把横坐标夹回看板可视范围再判一次 —— 不然「滚到目标列 → 在最右边松手」会落空；纵向拖出看板（工具条 / 页脚）仍是取消。
+      const board = scrollAreaViewport(boardRef.current, "horizontal");
+      if (board !== null) {
+        const rect = board.getBoundingClientRect();
+        if (y >= rect.top && y <= rect.bottom && x >= rect.left - 64 && x <= rect.right + 64) {
+          column = columnAtPoint(Math.min(Math.max(x, rect.left + 1), rect.right - 1), y);
+        }
+      }
+    }
     if (column === null) {
       return null;
     }
@@ -895,6 +976,8 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
         const grab = grabRef.current;
         ghost.style.transform = "translate(" + (pointerRef.current.x - grab.dx) + "px," + (pointerRef.current.y - grab.dy) + "px)";
       }
+      // 拖到边缘 = 看板 / 这一列自己滚（Push 157）：先滚再算落点，插入槽位跟着新滚出来的位置走
+      autoScrollForDrag(boardRef.current, pointerRef.current);
       const next = dropTargetAtRef.current(pointerRef.current.x, pointerRef.current.y);
       setDropTarget((prev) => (prev !== null && next !== null && prev.key === next.key && prev.index === next.index ? prev : next));
       raf = window.requestAnimationFrame(tick);
@@ -903,6 +986,71 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
       window.cancelAnimationFrame(raf);
     };
   }, [draggingId]);
+
+  /**
+   * 拖看板空白 = 横向平移（Push 157，业务口径「卡片右移左移也要可以滚动」的同族）：与甘特图同一口径 ——
+   * 只认鼠标左键、位移超过 `BOARD_PAN_THRESHOLD` 才算拖动（不到仍是点击）；卡片 / 「添加」/ 滑块上按下不接管，
+   * 卡片那套拖动照旧。只滚看板本身，**不改任何任务字段**。
+   */
+  const beginBoardPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch" || event.button !== 0) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target !== null && target.closest("[data-kanban-card=true], [data-add-root=true], [role=scrollbar], button, a, input, textarea, select") !== null) {
+      return;
+    }
+    const viewport = scrollAreaViewport(boardRef.current, "horizontal");
+    if (viewport === null) {
+      return;
+    }
+    boardPanRef.current = { pointerId: event.pointerId, x: event.clientX, baseLeft: viewport.scrollLeft, moved: false };
+  };
+
+  const moveBoardPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const session = boardPanRef.current;
+    if (session === null || session.pointerId !== event.pointerId) {
+      return;
+    }
+    const dx = event.clientX - session.x;
+    if (!session.moved) {
+      if (Math.abs(dx) < BOARD_PAN_THRESHOLD) {
+        return;
+      }
+      session.moved = true;
+      setBoardPanning(true);
+      try {
+        // 指针捕获在看板壳上：鼠标滑出看板再放开也收得到 pointerup
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // 捕获失败只影响「指针移出看板后是否继续跟手」，壳内拖动照常
+      }
+    }
+    const viewport = scrollAreaViewport(boardRef.current, "horizontal");
+    if (viewport !== null) {
+      viewport.scrollLeft = session.baseLeft - dx;
+    }
+  };
+
+  const endBoardPan = () => {
+    const session = boardPanRef.current;
+    boardPanRef.current = null;
+    if (session === null || !session.moved) {
+      return;
+    }
+    boardPanJustEndedRef.current = true;
+    setBoardPanning(false);
+  };
+
+  /** 平移收尾补的那一下 click 在捕获层吃掉：松手落在卡片 / 列头上也不会顺手打开详情。 */
+  const swallowClickAfterBoardPan = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!boardPanJustEndedRef.current) {
+      return;
+    }
+    boardPanJustEndedRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   /** 按下卡片（Push 108）：先只记「可能拖动」，真拖动由上面的指针循环判定。 */
   const beginCardDrag = (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => {
@@ -933,26 +1081,36 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
 
   return (
     <>
-      <ScrollArea axis="horizontal" ariaLabel="任务看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
-        {groups.map((group) => (
-          <KanbanColumn
-            key={group.key}
-            group={group}
-            mode={mode}
-            existingTaskIds={existingTaskIds}
-            overlay={addOverlay}
-            setOverlay={setAddOverlay}
-            onOpenTask={openTask}
-            onAddTask={onAddTask}
-            onAddStageTask={onAddStageTask}
-            stageTasksOf={stageTasksOf}
-            onPatchTask={onPatchTask}
-            draggingId={onPatchTask === undefined ? null : draggingId}
-            dropIndex={dropTarget !== null && dropTarget.key === group.key ? dropTarget.index : null}
-            onPointerDownDrag={onPatchTask === undefined ? undefined : beginCardDrag}
-          />
-        ))}
-      </ScrollArea>
+      <div
+        ref={boardRef}
+        className={boardPanning ? "cursor-grabbing select-none" : "cursor-grab"}
+        onPointerDown={beginBoardPan}
+        onPointerMove={moveBoardPan}
+        onPointerUp={endBoardPan}
+        onPointerCancel={endBoardPan}
+        onClickCapture={swallowClickAfterBoardPan}
+      >
+        <ScrollArea axis="horizontal" ariaLabel="任务看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
+          {groups.map((group) => (
+            <KanbanColumn
+              key={group.key}
+              group={group}
+              mode={mode}
+              existingTaskIds={existingTaskIds}
+              overlay={addOverlay}
+              setOverlay={setAddOverlay}
+              onOpenTask={openTask}
+              onAddTask={onAddTask}
+              onAddStageTask={onAddStageTask}
+              stageTasksOf={stageTasksOf}
+              onPatchTask={onPatchTask}
+              draggingId={onPatchTask === undefined ? null : draggingId}
+              dropIndex={dropTarget !== null && dropTarget.key === group.key ? dropTarget.index : null}
+              onPointerDownDrag={onPatchTask === undefined ? undefined : beginCardDrag}
+            />
+          ))}
+        </ScrollArea>
+      </div>
       {draggingTask === null ? null : (
         <div
           ref={ghostRef}

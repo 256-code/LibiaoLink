@@ -441,7 +441,7 @@ server/
         run: npm run check:boundaries
 ```
 
-数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。（Push 156 起：迁移 → 漂移检查之后追加「种子 → 后台起 api → M3-06 压测 + M6 回放」三步真机执行，证据逐行落 CI 日志；本机沙箱无 PostgreSQL 时以 CI 证据为准。）
+数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。（Push 157 起：迁移 → 漂移检查之后追加「种子 → 后台起 api → M3-06 压测 + M6 回放」三步真机执行，证据逐行落 CI 日志；本机沙箱无 PostgreSQL 时以 CI 证据为准。）
 
 ## 后续卡片衔接
 
