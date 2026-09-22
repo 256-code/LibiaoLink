@@ -12,7 +12,7 @@ import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { isCompleteStatus, isPastDue, progressAfterStatus, statusOverrideAfterProgress, tasksForProject, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
-import { managerNames } from "./data/managers";
+import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectView, type ProjectView } from "./useHashRoute";
 
@@ -356,8 +356,8 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     }
   };
 
-  /** 项目经理：项目级字段，取项目卡片上的名单（`managerIds` → 姓名，多位按「、」连接），任务表「项目经理」列与任务详情都用它。 */
-  const managers = project === null ? "" : managerNames(project.managerIds);
+  /** 项目经理：项目级字段，姓名随项目下发（契约 managerNames），多位按「、」连接；任务表「项目经理」列与任务详情都用它。 */
+  const managers = project === null ? "" : projectManagerText(project);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [tableOverflow, setTableOverflow] = useState(false);

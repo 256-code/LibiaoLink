@@ -1,33 +1,53 @@
 import { useEffect, useState } from "react";
-import { PROJECT_MANAGERS } from "../data/members";
+import type { FormEvent } from "react";
+import type { DictItem } from "../dicts";
+import type { Member } from "../data/members";
 import { MemberMultiSelect } from "./MemberSelect";
-import { PROJECT_TYPES } from "../types";
-import type { ProjectType } from "../types";
 
 export type ProjectDraft = {
   code: string;
+  /** 前端「项目描述」= 契约 name。 */
   description: string;
   /** 项目经理（多位，Push 136）：至少一位，数组顺序 = 展示顺序。 */
   managerIds: string[];
-  projectType: ProjectType;
+  /** 项目类型：字典 projectType 的码（主题色由字典元数据下发）。 */
+  projectType: string;
+  /** 项目地区：字典 region 的码。 */
+  region: string;
 };
 
 type ProjectModalProps = {
   mode: "create" | "edit";
   initial?: ProjectDraft;
+  /** 字典下拉项（GET /api/v1/dicts）。 */
+  regions: DictItem[];
+  projectTypes: DictItem[];
+  /** 项目经理候选（GET /api/v1/users）。 */
+  managerOptions: Member[];
   onClose: () => void;
-  onSubmit: (draft: ProjectDraft) => void;
+  /** 提交：返回 null = 成功（父层负责关窗 / 刷新列表）；返回文案 = 失败提示，窗口保持打开。 */
+  onSubmit: (draft: ProjectDraft) => Promise<string | null>;
 };
 
 const fieldClass =
   "block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25";
 
-export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalProps) {
+/** 项目类型主题色（字典 metadata.accent；缺省品牌黄）。 */
+function accentOf(items: DictItem[], code: string): string {
+  const item = items.find((entry) => entry.code === code);
+  const accent = item === undefined ? undefined : item.metadata["accent"];
+  return typeof accent === "string" && accent !== "" ? accent : "#feca04";
+}
+
+export function ProjectModal({ mode, initial, regions, projectTypes, managerOptions, onClose, onSubmit }: ProjectModalProps) {
   const isEdit = mode === "edit";
   const [code, setCode] = useState(initial?.code ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [managerIds, setManagerIds] = useState<string[]>(initial?.managerIds ?? []);
-  const [projectType, setProjectType] = useState<ProjectType>(initial?.projectType ?? "T-sort");
+  const [projectType, setProjectType] = useState<string>(initial?.projectType ?? projectTypes[0]?.code ?? "");
+  const [region, setRegion] = useState<string>(initial?.region ?? regions[0]?.code ?? "");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -41,8 +61,23 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
     };
   }, [onClose]);
 
-  const canSubmit = code.trim() !== "" && description.trim() !== "" && managerIds.length > 0;
+  const canSubmit =
+    code.trim() !== "" && description.trim() !== "" && managerIds.length > 0 && projectType !== "" && region !== "" && !pending;
   const title = isEdit ? "编辑项目" : "新建项目";
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+    setPending(true);
+    setError(null);
+    const message = await onSubmit({ code, description, managerIds, projectType, region });
+    setPending(false);
+    if (message !== null) {
+      setError(message);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -55,19 +90,10 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
       >
         <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
         <p className="mt-1 text-sm text-zinc-500">
-          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后出现在项目列表末尾。"}
+          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后按项目时间出现在列表里。"}
         </p>
 
-        <form
-          className="mt-5 space-y-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!canSubmit) {
-              return;
-            }
-            onSubmit({ code, description, managerIds, projectType });
-          }}
-        >
+        <form className="mt-5 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目编号</span>
             <input
@@ -93,28 +119,47 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
             <MemberMultiSelect
               values={managerIds}
               onChange={setManagerIds}
-              options={PROJECT_MANAGERS}
+              options={managerOptions}
               placeholder="选择项目经理"
               ariaLabel="选择项目经理"
             />
             <span className="mt-1 block text-[11px] text-zinc-400">至少一位；多位时按勾选顺序展示（Push 136）。</span>
           </div>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
-            <select
-              className={fieldClass}
-              value={projectType}
-              onChange={(event) => {
-                setProjectType(event.target.value as ProjectType);
-              }}
-            >
-              {PROJECT_TYPES.map((item) => (
-                <option key={item} value={item}>
-                  {item}
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目地区</span>
+            <select className={fieldClass} value={region} onChange={(event) => setRegion(event.target.value)}>
+              {regions.length === 0 ? <option value="">（字典加载中…）</option> : null}
+              {regions.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.name}
                 </option>
               ))}
             </select>
           </label>
+          <label className="block">
+            <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-zinc-700">
+              项目类型
+              <span
+                className="inline-block h-3 w-3 rounded-full ring-1 ring-zinc-900/10"
+                style={{ backgroundColor: accentOf(projectTypes, projectType) }}
+                aria-hidden="true"
+              />
+            </span>
+            <select className={fieldClass} value={projectType} onChange={(event) => setProjectType(event.target.value)}>
+              {projectTypes.length === 0 ? <option value="">（字典加载中…）</option> : null}
+              {projectTypes.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {error === null ? null : (
+            <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </p>
+          )}
 
           <div className="flex justify-end gap-3 pt-1">
             <button
@@ -129,7 +174,7 @@ export function ProjectModal({ mode, initial, onClose, onSubmit }: ProjectModalP
               disabled={!canSubmit}
               className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isEdit ? "保存修改" : "创建项目"}
+              {pending ? "提交中…" : isEdit ? "保存修改" : "创建项目"}
             </button>
           </div>
         </form>
