@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { FocusModeToggle } from "./components/FocusModeToggle";
+import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
@@ -33,9 +34,10 @@ function stageRankOf(stage: string): number {
 
 /**
  * 顶部视图标签（Push 82 定稿）：阶段标签不再各占一格，改成「项目总览 + 两块看板」；
- * Push 128：再往后加第四个视图「日报及问题」（口径见 components/ReportIssuePanel.tsx）。
+ * Push 128：再往后加第四个视图「日报及问题」（口径见 components/ReportIssuePanel.tsx）；
+ * Push 142：「项目总览」之后再加「甘特图」（口径见 components/GanttChart.tsx）。
  */
-const VIEW_TABS: readonly string[] = ["项目总览", "人员任务分配", "任务进展", "日报及问题"];
+const VIEW_TABS: readonly string[] = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题"];
 
 /** 从任务模板预设加进来的任务：字段先给默认值（负责人 / 日期等留空，后续在任务详情里补）。 */
 function taskFromPresetNode(stage: string, node: TemplatePresetNode): ProjectTask {
@@ -435,6 +437,9 @@ export default function ProjectDetail({ me, project, onChangeManagers, onTaskEdi
               <ProjectSummary tasks={tasks} />
               <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focusMode} />
             </>
+          ) : activeView === "甘特图" ? (
+            // 甘特图（Push 142）：与项目总览同一份任务数据（含内存态新增 / 编辑 / 删除）；拖动改期 / 改进度写回同一张内存态覆盖表
+            <GanttChart tasks={tasks} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             <ReportIssuePanel key={project.id} project={project} me={me} tasks={tasks} />
