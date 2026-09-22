@@ -1347,7 +1347,7 @@ function summarize(parts: readonly number[]): string {
   return parts.length <= 20 ? parts.join(",") : parts.slice(0, 20).join(",") + "…（共 " + parts.length + " 片）";
 }
 
-function toFileView(row: FileRow): z.infer<typeof FileSchema> {
+export function toFileView(row: FileRow): z.infer<typeof FileSchema> {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -1382,7 +1382,7 @@ function toSessionView(row: UploadSessionRow): z.infer<typeof UploadSessionSchem
   };
 }
 
-function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSchema> {
+export function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSchema> {
   return {
     id: row.id,
     fileId: row.fileId,
@@ -1397,7 +1397,11 @@ function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSchema> {
 }
 
 /** 变更记录视图（`fileId` / `versionId` / `versionSeq` 来自同事务的版本行，非 `change_requests` 列）。 */
-function toChangeRequestView(row: ChangeRequestRow, fileId: string, version: FileVersionRow): ChangeRequestView {
+export function toChangeRequestView(
+  row: ChangeRequestRow,
+  fileId: string,
+  version: Pick<FileVersionRow, "id" | "seq">,
+): ChangeRequestView {
   return {
     id: row.id,
     projectId: row.projectId,
