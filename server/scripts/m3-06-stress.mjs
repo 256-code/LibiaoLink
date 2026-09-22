@@ -303,10 +303,10 @@ try {
   if (legacyPresent) {
     note("- p50 倍率（下线后 / 基线）：" + ratios.map((item) => item.id + " " + ratioOf(item).toFixed(2) + "x").join(" / "));
   } else {
-    note("- 旧索引已下线（无基线对照）：逐形状 p50 / 预算 —— " + after.map((item) => item.id + " " + fmt(item.p50) + " ms / " + SHAPE_BUDGET[item.id] + " ms").join(" / "));
+    note("- 旧索引已下线（无基线对照）：逐形状 p50 / 预算 —— " + after.map((item, index) => item.id + " " + fmt(item.p50) + " ms / " + SHAPE_BUDGET[SHAPES[index].id] + " ms").join(" / "));
   }
   evidence.index = { oldIndex: OLD_INDEX, newIndex: NEW_INDEX, legacyIndexPresent: legacyPresent, sizes: indexSizes.rows, ratios: ratios.map((item) => ({ id: item.id, baseP50: item.base, afterP50: item.next, ratio: Number(ratioOf(item).toFixed(3)) })), afterIndexes: after.map((item) => ({ id: item.id, indexes: item.indexes, nodes: item.nodes })), keptDropped: args.dropIndex === true || !legacyPresent };
-  check("A13", legacyPresent ? "下线旧索引后最差形状的 p50 倍率 <= 1.5x" : "旧索引已下线（0024）：9 形状逐条压预算", legacyPresent ? "worst <= 1.5x" : "各形状 p50 <= 预算", legacyPresent ? worst.id + " " + ratioOf(worst).toFixed(2) + "x" : after.map((item) => item.id + " " + fmt(item.p50)).join(" / "), legacyPresent ? ratioOf(worst) <= 1.5 : after.every((item) => item.p50 <= SHAPE_BUDGET[item.id]));
+  check("A13", legacyPresent ? "下线旧索引后最差形状的 p50 倍率 <= 1.5x" : "旧索引已下线（0024）：9 形状逐条压预算", legacyPresent ? "worst <= 1.5x" : "各形状 p50 <= 预算", legacyPresent ? worst.id + " " + ratioOf(worst).toFixed(2) + "x" : after.map((item, index) => item.id + " " + fmt(item.p50) + " / 预算 " + SHAPE_BUDGET[SHAPES[index].id]).join(" / "), legacyPresent ? ratioOf(worst) <= 1.5 : after.every((item, index) => item.p50 <= SHAPE_BUDGET[SHAPES[index].id]));
   check("A14", "下线旧索引后默认读序（S1）p50 阈值", "<= " + THRESHOLDS.list + " ms", fmt(after[0].p50) + " ms", after[0].p50 <= THRESHOLDS.list);
   if (!legacyPresent) {
     note("");
