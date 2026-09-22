@@ -714,8 +714,8 @@ const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: serverRoot }
 const lines = [];
 lines.push("# M4-04 回放证据（S7·file 变更 · 申请即通过）");
 lines.push("");
-lines.push("> 卡片：M4-04「变更（申请即通过）」一期写入切片（主责 lan，评审 wmj）｜口径来源：系统功能书 A4-13（定档后变更须走变更流程，申请即通过、平权）/ A4-14（变更 = 新版本 + 变更记录）/ A4-17（变更统计，读面随后续切片）｜技术设计v0.2 §2.3（`change_requests`）与 §5.1-5.3｜ADR-024 §R01（输出成果文件 = 变更文件 → 自动关联任务）｜契约 shared/src/modules/files.ts（`ChangeIntentBody` / `ChangeRequest`，本卡零改动）。");
-lines.push("> 落点说明：`docs/` 属 px 线；本文件由 lan 随 M4-04 写入切片代记（回放脚本与断言同 PR，请 px 复核）。");
+lines.push("> 卡片：M4-04「变更（申请即通过）」写入 + 读面切片（PR-7 写入 / PR-8 读面；主责 lan，评审 wmj）｜口径来源：系统功能书 A4-13（定档后变更须走变更流程，申请即通过、平权）/ A4-14（变更 = 新版本 + 变更记录）/ A4-15（变更记录检索）/ A4-17（变更统计，随后续切片）｜技术设计v0.2 §2.3（`change_requests`）与 §5.1-5.3｜ADR-024 §R01（输出成果文件 = 变更文件 → 自动关联任务）｜契约 shared/src/modules/files.ts（`ChangeIntentBody` / `ChangeRequest`，本卡零改动）。");
+lines.push("> 落点说明：`docs/` 属 px 线；本文件由 lan 随 M4-04 写入 + 读面切片代记（回放脚本与断言同 PR，请 px 复核）。");
 lines.push("");
 lines.push("| 项 | 值 |");
 lines.push("|---|---|");
