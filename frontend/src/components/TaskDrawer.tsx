@@ -31,10 +31,9 @@ const CLOSE_ANIMATION_MS = 170;
 const SAVED_FLASH_MS = 1600;
 
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
-  重要且紧急: "bg-rose-50 text-rose-600",
-  紧急但不重要: "bg-amber-50 text-amber-700",
-  重要不紧急: "bg-blue-50 text-blue-700",
-  不紧急不重要: "bg-zinc-100 text-zinc-500",
+  高: "bg-rose-50 text-rose-600",
+  中: "bg-amber-50 text-amber-700",
+  低: "bg-zinc-100 text-zinc-500",
 };
 
 const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
@@ -61,7 +60,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
   ),
 }));
 
-/** 紧急重要度下拉（Push 162 对齐契约四象限：页面值 = 契约值）。 */
+/** 紧急重要度下拉（Push 163：三档「高 / 中 / 低」，页面值 = 契约值）。 */
 const PRIORITY_OPTIONS: SelectOption[] = PRIORITY_VALUES.map((value) => ({ value, label: value }));
 
 /** 抽屉里可编辑控件的统一外观（与任务编辑表单同一套）。 */
@@ -84,7 +83,7 @@ export type TaskEditSubmit = {
   dueDate: string;
   days: number;
   headcount: number;
-  /** 紧急重要度（契约四象限；null = 未选 —— 提交时前端不发这一字段）。 */
+  /** 紧急重要度（三档「高 / 中 / 低」；null = 未选 —— 提交时前端不发这一字段）。 */
   priority: TaskPriority | null;
   note: string;
 };

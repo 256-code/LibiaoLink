@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
-import { PRIORITY_VALUES } from "../taskApi";
+import { PRIORITY_VALUES, STAGE_LABELS, type ApiProjectSummary } from "../taskApi";
 import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, displayStatusOf, isCompleteStatus, isTaskDone, isoFromCnDate, lateLabelOf, ownersFromMembers, ownersLabel, daysBetweenInclusive, progressAfterStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
@@ -76,10 +76,9 @@ export function resolveColumns(visible: VisibleColumns): ColumnDef[] {
 }
 
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
-  重要且紧急: "bg-rose-50 text-rose-600",
-  紧急但不重要: "bg-amber-50 text-amber-700",
-  重要不紧急: "bg-blue-50 text-blue-700",
-  不紧急不重要: "bg-zinc-100 text-zinc-500",
+  高: "bg-rose-50 text-rose-600",
+  中: "bg-amber-50 text-amber-700",
+  低: "bg-zinc-100 text-zinc-500",
 };
 
 /**
@@ -88,10 +87,9 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
  * 底色取色签同色系 100 档（原标签底是 50 档，铺满整颗胶囊后 50 档几乎看不出颜色，故抬一档），字色沿用原标签。
  */
 const PRIORITY_CAPSULE_CLASS: Record<TaskPriority, string> = {
-  重要且紧急: "bg-rose-100 text-rose-600 hover:bg-rose-200/70",
-  紧急但不重要: "bg-amber-100 text-amber-700 hover:bg-amber-200/70",
-  重要不紧急: "bg-blue-100 text-blue-700 hover:bg-blue-200/70",
-  不紧急不重要: "bg-zinc-100 text-zinc-500 hover:bg-zinc-200/70",
+  高: "bg-rose-100 text-rose-600 hover:bg-rose-200/70",
+  中: "bg-amber-100 text-amber-700 hover:bg-amber-200/70",
+  低: "bg-zinc-100 text-zinc-500 hover:bg-zinc-200/70",
 };
 
 export const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
@@ -163,7 +161,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
 export type TaskPatch = Partial<Pick<ProjectTask, "owners" | "ownersEn" | "ownerIds" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
 
-/** 紧急重要度下拉（Push 162 对齐契约四象限：页面值 = 契约值，一一对应、不折叠）。 */
+/** 紧急重要度下拉（Push 163：三档「高 / 中 / 低」，页面值 = 契约值）。 */
 const PRIORITY_OPTIONS: SelectOption[] = PRIORITY_VALUES.map((value) => ({ value, label: value }));
 
 type TaskBoardProps = {
@@ -176,10 +174,15 @@ type TaskBoardProps = {
   onToggleAllStages: () => void;
   /** 没有数据也要出分组头的阶段（原型阶段没有任务的项目：只出阶段骨架，展开后没有任务行）。 */
   skeletonStages?: readonly string[];
-  /** 「添加任务」：从任务模板预设里挑节点加进项目（不传 = 阶段标签点不开右侧卡片）。 */
+  /** 「添加任务」：挑一条项目节点加进项目（不传 = 阶段标签点不开右侧卡片）。 */
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一条 / 一批并指定插入位置（Push 113：点「＋ 添加」先弹位置浮层，选完才加进项目）。不传 = 点一条直接加到该阶段最后。 */
   onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
+  /**
+   * 阶段名 → 该阶段的**真项目节点**（M3-07 · Push 163：`GET /projects/{id}/flow` 展平后由 ProjectDetail 下发）。
+   * 缺省空对象 = 卡片节点池为空（真项目都有蓝图节点；不传时卡片仍能打开，只是没有可加节点）。
+   */
+  nodesByStage?: Record<string, readonly TemplatePresetNode[]>;
   /** 任务负责人候选目录（Push 162：真用户目录由 ProjectDetail 下发；缺省演示目录）。 */
   members?: Member[];
   /** 项目经理候选目录（Push 162：真用户目录；缺省演示常量）。 */
@@ -591,18 +594,24 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
   );
 }
 
-export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
-  const total = tasks.length;
-  const done = tasks.filter(isTaskDone).length;
+export function ProjectSummary({ tasks, summary }: { tasks: ProjectTask[]; summary?: ApiProjectSummary | null }) {
+  /**
+   * 汇总数值优先吃服务端（M3-07 · Push 163：`GET /projects/{id}/summary`）——
+   * 当前阶段 = **项目 flow 的当前阶段**（流程推进口径，不再取「第一个有未完成任务的阶段」）；done / total = 任务派生。
+   * 取数中 / 失败 / 无 summary 时按任务列表本地派生兜底（口径与旧版一致），空项目仍不显示「0/0 完成」。
+   */
+  const total = summary?.total ?? tasks.length;
+  const done = summary?.done ?? tasks.filter(isTaskDone).length;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  /** 没有任务的项目（原型阶段除印度外）：当前阶段给占位符，不写「全部完成」这种会误读的结论。 */
   const currentStage =
-    total === 0
-      ? "—"
-      : (STAGE_ORDER.find((stage) => {
-          const items = tasks.filter((task) => task.stage === stage);
-          return items.length > 0 && items.some((task) => !isTaskDone(task));
-        }) ?? "全部完成");
+    summary !== undefined && summary !== null
+      ? STAGE_LABELS[summary.currentStage] ?? summary.currentStage
+      : total === 0
+        ? "—"
+        : (STAGE_ORDER.find((stage) => {
+            const items = tasks.filter((task) => task.stage === stage);
+            return items.length > 0 && items.some((task) => !isTaskDone(task));
+          }) ?? "全部完成");
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-xl border border-zinc-200 bg-white px-5 py-3.5">
@@ -626,7 +635,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, members = MEMBER_DIRECTORY, managerOptions = PROJECT_MANAGERS, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode, loadTaskFiles }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, nodesByStage, viewStage, managers, managerIds, members = MEMBER_DIRECTORY, managerOptions = PROJECT_MANAGERS, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode, loadTaskFiles }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -665,8 +674,11 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
-  /** 项目里已有的任务 id：添加任务时用来判断节点是不是已经加过。 */
-  const existingTaskIds = new Set(tasks.map((task) => task.id));
+  /**
+   * 项目里已经有任务的**来源节点 id**（M3-07 · Push 163）：添加任务时判「已添加」按 `task.nodeId`（同一节点只留一份），
+   * 不再拿任务 id 顶替（真任务 id 是服务端 uuid，与节点 id 不同）。
+   */
+  const existingNodeIds = new Set(tasks.map((task) => task.nodeId).filter((nodeId): nodeId is string => nodeId !== null && nodeId !== undefined));
   /**
    * 该阶段现有任务（Push 113）：给「点 ＋ 添加 → 选位置」当锚点 —— `tasks` 已经是展示顺序
    * （阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
@@ -918,7 +930,8 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       {cardStage !== null && (onAddNode !== undefined || onAddNodes !== undefined) ? (
         <StageAddCard
           stage={cardStage}
-          existingTaskIds={existingTaskIds}
+          poolNodes={nodesByStage?.[cardStage] ?? []}
+          existingNodeIds={existingNodeIds}
           onAddNode={onAddNode}
           placement={onAddNodes === undefined ? undefined : { tasks: stageTasksOf(cardStage) }}
           onAddNodes={onAddNodes}
