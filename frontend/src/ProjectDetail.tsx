@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
+import { FocusModeToggle } from "./components/FocusModeToggle";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
@@ -333,6 +334,11 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
   const [tableOverflow, setTableOverflow] = useState(false);
 
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
+  /**
+   * 醒目模式（Push 134，业务口径「默认不启用」）：打开后项目总览的每张任务卡片整行铺该任务状态的底色；
+   * 关掉 = 保持现状。原型阶段存浏览器内存（换项目时保留、刷新回默认关），正式版口径见 `前端功能需求.md` §6.13。
+   */
+  const [focusMode, setFocusMode] = useState(false);
   const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
   /**
    * 阶段骨架常显（Push 61 调整）：没有任务的阶段也保留分组头（只有阶段名、组内没有任务行），
@@ -403,7 +409,10 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
             })}
           </div>
           {activeView === "项目总览" ? (
-            <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+            <div className="flex shrink-0 items-center gap-4">
+              <FocusModeToggle checked={focusMode} onToggle={setFocusMode} />
+              <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+            </div>
           ) : null}
         </div>
 
@@ -411,7 +420,7 @@ export default function ProjectDetail({ me, project, onChangeManager, onTaskEdit
           {activeView === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" manager={manager} managerId={project.managerId} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManager={handleBoardManagerChange} focusMode={focusMode} />
             </>
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
