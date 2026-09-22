@@ -1,11 +1,11 @@
-# task 模块（h4 · S6·task：任务主表 / 五态派生 / 进度聚合 / 完成门禁）
+# task 模块（h4 · S6·task：任务主表 / 五态派生 / 进度聚合 / 完成门禁 / 批量操作）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
-| 职责 | 任务主数据（列表 / 详情）、进度与状态写入联动、展示五态与按时交付派生、项目总览四格、阶段任务统计出口、完成门禁（M3-03 · A4-20 / ADR-024） |
+| 职责 | 任务主数据（列表 / 详情）、进度与状态写入联动、展示五态与按时交付派生、项目总览四格、阶段任务统计出口、完成门禁（M3-03 · A4-20 / ADR-024）、批量操作（M3-04 · A1-08） |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | TaskService（summary / list / detail / create / update / updateProgress / canComplete / complete）、TaskStatsService（countStageTasks / stageTaskCounts）、规则纯函数与查询解析（task.rules / task.query）；节点实例的读写仍在 project 模块 flow.service（依赖方向 project → node → task，本模块不反向依赖） |
+| 对外接口 | TaskService（summary / list / detail / create / update / updateProgress / canComplete / complete / batch）、TaskStatsService（countStageTasks / stageTaskCounts）、规则纯函数与查询解析（task.rules / task.query）；节点实例的读写仍在 project 模块 flow.service（依赖方向 project → node → task，本模块不反向依赖） |
 
 ## 已实现（h4 · Push 89）
 
@@ -23,6 +23,7 @@
   - `POST /{id}/tasks` 创建：① 从任务节点生成（节点须属本项目，`stageKey` 与节点阶段不一致 400；同节点已有未删任务 409 `TASK_ALREADY_EXISTS`）；② 手工创建（**仅管理员**，系统功能书 A1-13，非管理员 403）；`stageKey` 缺省 / 显式 null = 「未分组」、`ownerIds` 缺省 = 项目全部项目经理（A23 · Push 136；**显式 `[]` = 「待分配」**）、`sortIndex` = 插入位次（A15 / A18 / A20 · Push 124）；
   - `PATCH /{id}/tasks/{taskId}` 编辑：乐观锁 `version`（不一致 409 `VERSION_CONFLICT`）+ 基础三态写入联动（A12）+ `ownerIds` 显式置空（不传 = 不改；传数组 = 整体替换、顺序 = 展示顺序）+ 组内重排（`sortIndex`，越界 = 组尾）+ 字段级留痕（A18 / A19 / A20 · Push 124）；任务描述 / 成果文件锁定不在本接口；
   - `PATCH /{id}/tasks/{taskId}/progress` 进度写入：响应与列表行同形（`TaskListItem`），联动状态与完成日期；`note` 写 note_change 事件留痕；
+  - `PATCH /{id}/tasks/batch` 批量操作（M3-04 · Push 150 / A1-08）：`ids`（1~100、重复去重）+ `changes` 白名单（ownerIds / status / plannedStart / plannedEnd / estimatedDays / headcount / priority / note；null = 清空、缺键 = 不改；不含描述 / 成果文件（A1-17）与 sortIndex）；逐条独立事务 + 部分失败清单 `failures[]`（复用单条写入内核 `applyUpdate`）；空 changes 400、归档项目 409；审计 = 批次一条（`project` 域，metadata 记 batchId / 计数 / 失败清单）+ 逐条字段级一条（`metadata.entry = batch` + 同批 `batchId`）；
   - 归档项目写入口径 409 `PROJECT_ARCHIVED`（ADR-027）；任务变更 touch 项目 `updated_at`（ADR-022 ④）。
 - 留痕与队列：`task_events` 四类型 `status_change / progress_change / date_change / note_change`（before / after 为 JSON 键值对）+ outbox 三个 topic `task.created / task.updated / task.progress_changed`（dedupeKey 带版本）。
 - 与 h3 门禁的衔接（**过渡口径收口**）：`node/gate.repository` 不再直读 `tasks` 表；阶段推进门禁的「任务全 done」与 `GET /projects/{id}/stages` 的任务计数改经 `TaskStatsService` 出口，`StageProgressRow` 不再携带任务字段，门禁语义不变；`files` 表直读仍为过渡口径（随 i1 收口）。
@@ -41,6 +42,17 @@
 - 实现归属：门禁判定实现在本模块 `task.gate.repository.ts`（只读 `node_requirements` / `files`）—— node 模块 `GateService` 依赖 task（`TaskStatsService`），task 反向依赖会成环；两处 SQL 口径必须同步修改（node/README.md 已登记）。
 - 单测：`test/task-gate.test.ts` 8 例（预检缺件明细 / 无节点 deliverable_types 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done` 与 `progress=1` 同一门禁）。
 
+## 批量操作（M3-04 · A1-08 · Push 150）
+
+> 口径来源：系统功能书 A1-08（批量指派 / 改状态 / 改日期 / 批量完成）；一次请求 = 同一组变更应用到 1~100 个任务。
+
+- 端点与权限：`PATCH /projects/{id}/tasks/batch`（注册在 `PATCH …/{taskId}` 之前，否则 batch 会被当作任务 id 命中）；权限键 `task.update`（项目内成员平权）；归档项目入口 409 `PROJECT_ARCHIVED`。
+- 变更白名单 `TaskBatchChanges`：`ownerIds` / `status`（基础三态，done = 批量完成，走同一完成门禁）/ `plannedStart` / `plannedEnd` / `estimatedDays` / `headcount` / `priority` / `note`；语义与单条编辑一致（null = 清空、缺键 = 不改）；不含任务描述 / 成果文件（A1-17 生成后锁定）与 `sortIndex`（顺序是「插入位置」的逐条语义）；全空 changes 400 `VALIDATION_FAILED`。
+- 执行模型：`ids` 去重后按首次出现顺序**逐条独立事务**（避免长事务与整体回滚），复用单条写入内核 `applyUpdate`（锁行 → 校验 → 状态联动 → 完成门禁 → 落库 + 事件 + outbox + touch + 审计）；响应 `{ total, succeededCount, failedCount, succeeded[], failures[] }`。
+- 部分失败（条目级可预期错误降级，整体 200）：`not_found`（不存在 / 不属于该项目）/ `archived` / `gate_not_passed`（带 `missing[]`，与完成门禁同形）/ `already_done`（批量完成遇已完成条目，不重复写）/ `version_conflict` / `invalid_state`（其它 4xx）；非 AppError 照旧抛出（500）。
+- 留痕双层：① **批次审计**（A1-08「批量操作整体写审计日志」）—— 每次请求一条 `project` 域记录（summary「批量操作任务：N 条（成功 X，失败 Y）」，metadata = `{ entry, batchId, taskIds, changedFields, succeededCount, failedCount, failures[] }`）；② **逐条字段级审计**（C7-02）—— `action=update`，summary 前缀「批量修改任务：」，`metadata.entry = batch` + 同批 `batchId`；批量完成缺件的拒绝留痕沿用 outbox `task.gate_rejected` + 审计 `result=failed`（summary 前缀「批量任务完成被门禁拒绝：」+ 同批 metadata）。
+- 单测：`test/task-batch.test.ts` 9 例（批量改字段 + 审计同 batchId / 部分失败 not_found / ids 去重 / 空 changes 400 / 归档 409 / 批量指派置空 / 批量完成 / 缺件 gate_not_passed + 留痕 / already_done）。
+
 ## 落库口径（w2 · A15 / A18 / A19 / A20 · Push 124）
 
 > 口径来源：`前端功能需求.md` 附录 A15 / A18 / A19 / A20（Push 119 / 120 定案）与 `字段对照清单.md` §七；落库机制二选一定为 **① `tasks.sort_index` 位次列**（不新增批量排序接口）。
@@ -54,6 +66,6 @@
 ## 边界与后续（差异登记）
 
 - 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；
-- 不在本卡（Push 143 后更新）：列表快捷筛选参数、任务软删 / 批量操作、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；模板锁定与例外调整随 M3-05）；
+- 不在本卡（Push 150 后更新）：列表快捷筛选参数、任务软删、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；模板实例化与快筛、模板锁定与例外调整随 M3-05、1 万行压测随 M3-06）；
 - 列表默认序已有 `ix_tasks_project_stage_order (project_id, stage_key, sort_index)` 复合索引（0015 · Push 124）；1 万行压测与索引调优仍随压测卡 M3-06；
 - 契约里进度档位为离散五档，迁移数据任意小数在读时四舍五入到最近档。

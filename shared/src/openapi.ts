@@ -30,6 +30,8 @@ import {
   TaskProgressUpdateBodySchema,
   TaskSchema,
   TaskUpdateBodySchema,
+  TaskBatchBodySchema,
+  TaskBatchResponseSchema,
 } from "./modules/tasks.ts";
 import {
   TaskNodeListQuerySchema,
@@ -361,6 +363,19 @@ export function buildOpenApiDocument() {
     },
   });
 
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/projects/{id}/tasks/batch",
+    tags: ["tasks"],
+    summary: "任务批量操作（A1-08：批量指派 / 改状态 / 改日期 / 批量完成；逐条校验 + 部分失败清单）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(TaskBatchBodySchema) },
+    responses: {
+      200: { description: "批量结果（succeeded + failures；部分失败不影响成功项）", ...json(TaskBatchResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
   registry.registerPath({
     method: "patch",
     path: "/api/v1/projects/{id}/tasks/{taskId}",
