@@ -258,9 +258,9 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         </div>
         <Tracker progress={task.progress} onChange={onProgress} />
         {onDelete === undefined ? null : (
-          // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位，
+          // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
           // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
-          <span className="flex w-12 shrink-0 items-center self-stretch">
+          <span className="mr-4 flex w-12 shrink-0 items-center self-stretch">
             <RowDeleteButton onDelete={onDelete} />
           </span>
         )}
