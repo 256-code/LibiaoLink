@@ -23,6 +23,7 @@ import {
   TaskCreateBodySchema,
   TaskCreateFromTemplateBodySchema,
   TaskCreateFromTemplateResponseSchema,
+  TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskListItemSchema,
   TaskListQuerySchema,
@@ -385,6 +386,19 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "更新后的任务", ...json(TaskSchema) },
       400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/projects/{id}/tasks/{taskId}",
+    tags: ["tasks"],
+    summary: "删除任务（软删：列表 / 看板 / 甘特图 / 完成门禁不可见 + 写留痕；重复删除统一 404；已产生变更记录 409 TASK_HAS_REFERENCES）",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }) },
+    responses: {
+      200: { description: "删除结果（软删标记）", ...json(TaskDeleteResponseSchema) },
       404: commonErrors[404],
       409: commonErrors[409],
     },

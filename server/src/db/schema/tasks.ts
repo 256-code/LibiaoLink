@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { projectNodes } from "./flow.js";
 import { DOC_TYPE_KEYS, STAGE_KEYS, sqlArrayLiteral, sqlValueList } from "./literals.js";
+import { users } from "./identity.js";
 import { projects } from "./projects.js";
 
 /** tasks（项目总览 15 列口径；status 为存储基础态，展示态派生，见 v0.2 §2.4）。 */
@@ -62,6 +63,12 @@ export const tasks = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     /** 组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组）；0 起、密集。 */
     sortIndex: integer("sort_index").notNull().default(0),
+    /**
+     * 软删（M3-05 · A25 · 迁移 0022）：置位后列表 / 看板 / 甘特图 / 完成门禁 / 节点判重一律不可见
+     * （读面统一过滤 deleted_at is null），节点约束随之释放；不物理删行（历史与留痕保留）。
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: uuid("deleted_by").references(() => users.id),
   },
   (table) => [
     index("ix_tasks_project_stage").on(table.projectId, table.stageKey),
@@ -70,6 +77,8 @@ export const tasks = pgTable(
     index("ix_tasks_deliverable_types").using("gin", table.deliverableTypes),
     index("ix_tasks_change_refs").using("gin", table.changeRefs),
     index("ix_tasks_due").on(table.projectId, table.actualEnd, table.plannedEnd),
+    /** 未删行专用（0022）：列表 / 看板顺序读（project_id, stage_key, sort_index）—— 读面恒带 deleted_at is null。 */
+    index("ix_tasks_active_group").on(table.projectId, table.stageKey, table.sortIndex).where(sql`deleted_at is null`),
     check(
       "ck_tasks_stage_key",
       sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,

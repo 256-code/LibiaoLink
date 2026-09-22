@@ -1468,6 +1468,7 @@
           "NODE_DELETED",
           "TASK_ALREADY_EXISTS",
           "TASK_ALREADY_DONE",
+          "TASK_HAS_REFERENCES",
           "BLUEPRINT_SCHEMA_INVALID",
           "BLUEPRINT_REF_UNKNOWN",
           "FILE_STATE_INVALID",
@@ -4229,6 +4230,23 @@
           "skipped"
         ]
       },
+      "TaskDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "恒为 true（软删：tasks.deleted_at 置位，不物理删行；历史与留痕保留）"
+          }
+        },
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "description": "任务删除结果（软删）：列表 / 看板 / 甘特图 / 完成门禁一律不可见，来源节点约束随之释放"
+      },
       "TaskDetail": {
         "allOf": [
           {
@@ -6397,6 +6415,64 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "删除任务（软删：列表 / 看板 / 甘特图 / 完成门禁不可见 + 写留痕；重复删除统一 404；已产生变更记录 409 TASK_HAS_REFERENCES）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除结果（软删标记）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDeleteResponse"
                 }
               }
             }

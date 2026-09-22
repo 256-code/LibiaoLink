@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   ProjectSummarySchema,
   TaskBatchBodySchema,
@@ -7,6 +7,7 @@ import {
   TaskCompleteBodySchema,
   TaskCompleteResponseSchema,
   TaskCreateBodySchema,
+  TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskListItemSchema,
   TaskListQuerySchema,
@@ -101,6 +102,20 @@ export class TaskController {
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
     return this.tasks.update(id, taskId, body, actorId);
+  }
+
+  /**
+   * 删除任务（M3-05 · A25 · 系统功能书 A1-01 修订）：软删 —— 不物理删行；列表 / 看板 / 甘特图 / 详情 / 完成门禁一律不可见 + 写留痕。
+   * 重复删除与已删任务上的任何写操作 = 统一 404（记录级 404 语义，不新增错误码）；归档项目 409 PROJECT_ARCHIVED。
+   */
+  @Delete(":id/tasks/:taskId")
+  @RequirePermission("task.update")
+  remove(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskDeleteResponseSchema>> {
+    return this.tasks.remove(id, taskId, actorId);
   }
 
   /** 完成预检（M3-03）：门禁缺件与放行提示（UI 置灰依据；服务端仍在事务内强校验）。 */
