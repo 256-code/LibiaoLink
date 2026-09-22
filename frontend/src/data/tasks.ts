@@ -2,7 +2,11 @@ import type { Member } from "./members";
 
 export type TaskStatus = "已完成" | "提前完成" | "进行中" | "待开始" | "已延期";
 
-export type TaskPriority = "高" | "中" | "低";
+/**
+ * 紧急重要度（Push 162 对齐契约 PRIORITY_VALUES 四象限）：页面值 = 契约值，一一对应、不折叠 ——
+ * 演示期的「高 / 中 / 低」三档已下线（折叠写回会把「紧急但不重要」静默改成别的档）。
+ */
+export type TaskPriority = "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要";
 
 /**
  * 变更关联记录（Push 154）：与契约 `Task.changeLinks: TaskChangeLink[]` 同形（id / 变更原因短文本 / 生效时间）。
@@ -43,8 +47,27 @@ export type ProjectTask = {
   onTime: string;
   note: string;
   headcount: number;
-  priority: TaskPriority;
+  /** 紧急重要度（契约 priority）：未填 = null（表格 / 抽屉显示「—」）。 */
+  priority: TaskPriority | null;
   files: string[];
+  /** 服务端版本（契约 version）：有值 = 真任务（写面走 taskApi）；原型内存任务没有。 */
+  version?: number;
+  /** 服务端负责人 id（契约 ownerIds，与 owners 同下标）：写面按 id 整体替换。 */
+  ownerIds?: string[];
+  /** 服务端阶段码（契约 stageKey）：展示用中文 stage，写面不含阶段（TaskUpdateBody 无此字段）。 */
+  stageKey?: string | null;
+  /** 服务端展示五态标签（契约 displayStatus）：有值 = 状态展示以它为准（Push 70 派生优先）。 */
+  displayStatusLabel?: TaskStatus;
+  /** 服务端派生的逾期标注（契约 onTime + displayStatus）：有值 = 不再走前端本地派生。 */
+  lateLabel?: "逾期未交付" | "逾期已交付" | null;
+  /** 服务端是否按时交付（契约 onTime）：null = 派生不出（显示「—」）。 */
+  onTimeFlag?: boolean | null;
+  /** 要求输出成果文件（契约 deliverableTypes）：表格按「、」连接展示；生成后锁定（A1-17）。 */
+  deliverableTypes?: string[];
+  /** 文件摘要（契约 fileSummary，列表不下发文件名）：列表「文件」列暂无文件名，抽屉按详情给。 */
+  fileSummary?: { total: number; draft: number; final: number };
+  /** 服务端日期原值（ISO）：写回时兜年份，跨年任务不被换算成 TASK_DATE_YEAR。 */
+  dateIso?: { start: string | null; due: string | null; done: string | null };
   /**
    * 手动指定的任务状态（Push 65 表格行内下拉 / 进度条联动的结果）。
    * 未指定 = 纯派生（进度 + 日期）；指定后以手动为准，直到再次改进度条。
@@ -144,7 +167,7 @@ const FILES_BY_STAGE: Record<string, string[]> = {
   验收: ["验收单.pdf", "培训材料.pptx"],
 };
 
-const PRIORITY_CYCLE: TaskPriority[] = ["高", "中", "中", "低", "中", "高"];
+const PRIORITY_CYCLE: TaskPriority[] = ["重要且紧急", "重要不紧急", "重要不紧急", "不紧急不重要", "重要不紧急", "重要且紧急"];
 
 export const PROJECT_TASKS: ProjectTask[] = BASE_TASKS.map((task, index) => {
   const done = task.doneDate !== "" || task.progress >= 1;
@@ -152,21 +175,15 @@ export const PROJECT_TASKS: ProjectTask[] = BASE_TASKS.map((task, index) => {
   return {
     ...task,
     headcount: (HEADCOUNT_BY_STAGE[task.stage] ?? 4) + (index % 3),
-    priority: task.status === "进行中" ? "高" : PRIORITY_CYCLE[index % PRIORITY_CYCLE.length],
+    priority: task.status === "进行中" ? "重要且紧急" : PRIORITY_CYCLE[index % PRIORITY_CYCLE.length],
     files: done ? pool.slice(0, 2) : task.progress > 0 ? pool.slice(0, 1) : [],
   };
 });
 
 /**
- * 示例任务数据（源表 44 条）归属的项目：原型阶段只有印度项目有真实来源（源表那一个项目），
- * 其余项目暂为空列表 —— 打开后只出页面骨架（阶段标签导航 + 阶段分组头，没有任务行）。
+ * 演示任务数据（源表 44 条）自 Push 162 起**不再作为详情页数据源**（M3-07 任务域接线，改取
+ * `GET /projects/{id}/tasks`）—— 只保留给 `data/templatePresets.ts` 派生「任务节点」池（原型预设）。
  */
-export const DEMO_TASKS_PROJECT_ID = "inmu-0010";
-
-/** 取某个项目的任务：原型阶段只有示例项目（印度）带数据，其余项目返回空列表（正式版按项目取数）。 */
-export function tasksForProject(projectId: string): ProjectTask[] {
-  return projectId === DEMO_TASKS_PROJECT_ID ? PROJECT_TASKS : [];
-}
 
 export function parseCnDate(value: string): { month: number; day: number } | null {
   const match = /(\d+)月(\d+)日/.exec(value);
@@ -188,6 +205,23 @@ export function isoFromCnDate(value: string): string {
   return (
     String(TASK_DATE_YEAR) + "-" + String(parsed.month).padStart(2, "0") + "-" + String(parsed.day).padStart(2, "0")
   );
+}
+
+/**
+ * 「M月D日」→「YYYY-MM-DD」（年份取 hintIso 的年份）：真任务日期写回用它兜年份 ——
+ * 演示期的 TASK_DATE_YEAR 固定 2026，跨年任务（如 2027）改期会被写错年份。
+ */
+export function isoFromCnDateWithYear(value: string, hintIso: string | null): string {
+  if (value === "") {
+    return "";
+  }
+  const parsed = parseCnDate(value);
+  if (parsed === null) {
+    return "";
+  }
+  const hint = hintIso === null ? null : /^(\d{4})-/.exec(hintIso);
+  const year = hint === null ? String(TASK_DATE_YEAR) : hint[1];
+  return year + "-" + String(parsed.month).padStart(2, "0") + "-" + String(parsed.day).padStart(2, "0");
 }
 
 /** 「YYYY-MM-DD」→「M月D日」（表格 / 抽屉展示格式）。 */
@@ -323,6 +357,27 @@ export function lateDeliveryLabel(task: ProjectTask, now: Date = new Date()): "�
   }
   const late = done.month > due.month || (done.month === due.month && done.day > due.day);
   return late ? "逾期已交付" : null;
+}
+
+/**
+ * 状态展示（Push 162）：真任务以服务端 displayStatus 为准（Push 70 派生优先），
+ * 原型内存任务（没有 displayStatusLabel）回落本地派生 —— 表格 / 抽屉 / 看板 / 甘特图共用本函数。
+ */
+export function displayStatusOf(task: ProjectTask, now: Date = new Date()): TaskStatus {
+  return task.displayStatusLabel ?? taskStatus(task, now);
+}
+
+/**
+ * 逾期标注（Push 162）：真任务以服务端 onTime + displayStatus 为准（Push 70 定案「前端不再本地派生」），
+ * 原型内存任务回落本地派生（Push 67 口径）。
+ */
+export function lateLabelOf(task: ProjectTask, now: Date = new Date()): "逾期未交付" | "逾期已交付" | null {
+  return task.lateLabel === undefined ? lateDeliveryLabel(task, now) : task.lateLabel;
+}
+
+/** 是否服务端任务（有 version = 写面走 taskApi；原型内存任务没有）。 */
+export function isServerTask(task: ProjectTask): boolean {
+  return task.version !== undefined;
 }
 
 export function taskStatus(task: ProjectTask, now: Date = new Date()): TaskStatus {

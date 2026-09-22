@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
-import { memberByName } from "../data/members";
+import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { PROGRESS_STEPS, cnDateFromIso, ownersLabel, isCompleteStatus, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, cnDateFromIso, displayStatusOf, isCompleteStatus, isoFromCnDate, lateLabelOf, ownersLabel, progressAfterStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -223,6 +223,10 @@ type TaskKanbanProps = {
   managers: string;
   /** 项目经理 id 名单（任务详情抽屉里「项目经理」字段的当前选中项，Push 136）。 */
   managerIds: string[];
+  /** 人员目录（Push 162：任务负责人下拉的真用户目录；缺省演示常量）。 */
+  members?: Member[];
+  /** 项目经理候选目录（Push 162：项目经理下拉的真用户目录；缺省演示常量）。 */
+  managerOptions?: Member[];
   /** 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。 */
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
   /**
@@ -261,7 +265,7 @@ function groupTasks(tasks: ProjectTask[], mode: KanbanMode): KanbanGroup[] {
       key: status,
       ownerEn: "",
       status,
-      items: tasks.filter((task) => taskStatus(task) === status),
+      items: tasks.filter((task) => displayStatusOf(task) === status),
     }));
   }
   // Push 136：一个任务可以有多位负责人 —— 这张卡出现在**每一位**负责人的列里（列计数 = 该人手上的任务数）；
@@ -335,7 +339,7 @@ function StageChip({ stage }: { stage: string }) {
 
 /** 「是否按时交付」：逾期标注优先（与任务表同一口径），其次是数据里的按时交付值。 */
 function OnTimeChip({ task }: { task: ProjectTask }) {
-  const late = lateDeliveryLabel(task);
+  const late = lateLabelOf(task);
   if (late === "逾期未交付") {
     return <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>;
   }
@@ -370,7 +374,7 @@ function KanbanCard({
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下看详情 / 按住拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
-  const status = taskStatus(task);
+  const status = displayStatusOf(task);
   /** 卡片上的负责人展示（多位按「、」连接，Push 136）。 */
   const ownerLabel = task.owners.length === 0 ? "待分配" : ownersLabel(task.owners, task.ownersEn);
   /** 头像取第一位负责人（目录外的名字回落首字圆圈）。 */
@@ -746,7 +750,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, managers, managerIds, members = MEMBER_DIRECTORY, managerOptions = PROJECT_MANAGERS, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /**
    * 「添加」浮层（Push 118）：整块看板共用的**单值**状态 —— 业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」。
@@ -865,7 +869,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
       return;
     }
     const nextStatus = group.status;
-    if (taskStatus(task) === nextStatus) {
+    if (displayStatusOf(task) === nextStatus) {
       return;
     }
     onPatchTask(task.id, {
@@ -1126,6 +1130,8 @@ export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAdd
         task={drawerTask}
         managers={managers}
         managerIds={managerIds}
+        members={members}
+        managerOptions={managerOptions}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
         onPatch={onPatchTask}

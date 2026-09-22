@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
-import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, ownersFromMembers, ownersLabel, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { PRIORITY_VALUES } from "../taskApi";
+import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, displayStatusOf, isCompleteStatus, isTaskDone, isoFromCnDate, lateLabelOf, ownersFromMembers, ownersLabel, daysBetweenInclusive, progressAfterStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
@@ -75,9 +76,10 @@ export function resolveColumns(visible: VisibleColumns): ColumnDef[] {
 }
 
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
-  高: "bg-rose-50 text-rose-600",
-  中: "bg-amber-50 text-amber-700",
-  低: "bg-zinc-100 text-zinc-500",
+  重要且紧急: "bg-rose-50 text-rose-600",
+  紧急但不重要: "bg-amber-50 text-amber-700",
+  重要不紧急: "bg-blue-50 text-blue-700",
+  不紧急不重要: "bg-zinc-100 text-zinc-500",
 };
 
 /**
@@ -86,9 +88,10 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
  * 底色取色签同色系 100 档（原标签底是 50 档，铺满整颗胶囊后 50 档几乎看不出颜色，故抬一档），字色沿用原标签。
  */
 const PRIORITY_CAPSULE_CLASS: Record<TaskPriority, string> = {
-  高: "bg-rose-100 text-rose-600 hover:bg-rose-200/70",
-  中: "bg-amber-100 text-amber-700 hover:bg-amber-200/70",
-  低: "bg-zinc-100 text-zinc-500 hover:bg-zinc-200/70",
+  重要且紧急: "bg-rose-100 text-rose-600 hover:bg-rose-200/70",
+  紧急但不重要: "bg-amber-100 text-amber-700 hover:bg-amber-200/70",
+  重要不紧急: "bg-blue-100 text-blue-700 hover:bg-blue-200/70",
+  不紧急不重要: "bg-zinc-100 text-zinc-500 hover:bg-zinc-200/70",
 };
 
 export const STATUS_DOT_CLASS: Record<TaskStatus, string> = {
@@ -158,13 +161,10 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "owners" | "ownersEn" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "owners" | "ownersEn" | "ownerIds" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
 
-const PRIORITY_OPTIONS = [
-  { value: "高", label: "高" },
-  { value: "中", label: "中" },
-  { value: "低", label: "低" },
-];
+/** 紧急重要度下拉（Push 162 对齐契约四象限：页面值 = 契约值，一一对应、不折叠）。 */
+const PRIORITY_OPTIONS: SelectOption[] = PRIORITY_VALUES.map((value) => ({ value, label: value }));
 
 type TaskBoardProps = {
   tasks: ProjectTask[];
@@ -180,6 +180,10 @@ type TaskBoardProps = {
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一条 / 一批并指定插入位置（Push 113：点「＋ 添加」先弹位置浮层，选完才加进项目）。不传 = 点一条直接加到该阶段最后。 */
   onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
+  /** 任务负责人候选目录（Push 162：真用户目录由 ProjectDetail 下发；缺省演示目录）。 */
+  members?: Member[];
+  /** 项目经理候选目录（Push 162：真用户目录；缺省演示常量）。 */
+  managerOptions?: Member[];
   /** 项目经理展示文本（项目级字段：取项目卡片上的名单，多位按「、」连接；不传时回落常量占位）。 */
   managers?: string;
   /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
@@ -190,6 +194,8 @@ type TaskBoardProps = {
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
   /** 任务表行内删除（Push 141：行悬停的删除按钮，不传 = 不显示该按钮）。 */
   onDeleteTask?: (taskId: string) => void;
+  /** 抽屉打开时取任务文件清单（Push 162：列表不下发文件名，按详情接口取；不传 = 抽屉「文件」行显示「—」）。 */
+  loadTaskFiles?: (taskId: string) => Promise<string[]>;
   /** 表格行内改「项目经理」：项目级字段（多位，Push 136），回写项目（不传 = 该列仍是只读文本）。 */
   onChangeManagers?: (managerIds: string[]) => void;
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
@@ -221,18 +227,21 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, managerOptions, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: Member[]; managerOptions: Member[]; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期列）。 */
-  const late = lateDeliveryLabel(task);
-  const status = taskStatus(task);
+  const late = lateLabelOf(task);
+  const status = displayStatusOf(task);
   const dotClass = STATUS_DOT_CLASS[status];
   /** 负责人展示（多位按「、」连接，Push 136）。 */
   const fullOwners = ownersLabel(task.owners, task.ownersEn);
-  /** 人员下拉的选中项：按姓名回查目录 id（目录外的名字取不到 id、不进勾选态）。 */
-  const ownerIds = task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== "");
-  /** 人员目录 id → 成员（目录里查不到的 id 直接丢掉）。 */
+  /**
+   * 人员下拉的选中项（Push 162）：真任务直接用服务端 ownerIds（与 owners 同下标一一对应）；
+   * 原型内存任务没有 ownerIds，按姓名回查目录（目录外的名字取不到 id、不进勾选态）。
+   */
+  const ownerIds = task.ownerIds ?? task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== "");
+  /** 人员目录 id → 成员（目录里查不到的 id 直接丢掉）；目录 = ProjectDetail 下发的真用户目录。 */
   const membersFromIds = (ids: readonly string[]): Member[] =>
-    ids.map((id) => MEMBER_DIRECTORY.find((item) => item.id === id)).filter((item): item is Member => item !== undefined);
+    ids.map((id) => members.find((item) => item.id === id)).filter((item): item is Member => item !== undefined);
   const startIso = isoFromCnDate(task.startDate);
   const dueIso = isoFromCnDate(task.dueDate);
   const doneIso = isoFromCnDate(task.doneDate);
@@ -272,7 +281,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       ) : (
         <InlineMemberMultiCell
           values={managerIds}
-          options={PROJECT_MANAGERS}
+          options={managerOptions}
           ariaLabel="修改项目经理"
           display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
@@ -300,7 +309,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       ) : (
         <InlineMemberMultiCell
           values={ownerIds}
-          options={MEMBER_DIRECTORY}
+          options={members}
           ariaLabel="修改任务负责人"
           display={
             task.owners.length === 0 ? (
@@ -316,7 +325,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
               ? ownerIds.filter((id) => id !== member.id)
               : [...ownerIds, member.id];
             // 全部取消 = 「待分配」（合法中间状态，A18）；数组顺序 = 勾选顺序
-            onPatch({ ...ownersFromMembers(membersFromIds(next)) });
+            onPatch({ ...ownersFromMembers(membersFromIds(next)), ownerIds: next });
           }}
         />
       ),
@@ -354,7 +363,9 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       ),
     priority: (
       <span>
-        {onPatch === undefined ? (
+        {task.priority === null ? (
+          <span className="text-xs text-zinc-300">—</span>
+        ) : onPatch === undefined ? (
           <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
             {task.priority}
           </span>
@@ -399,7 +410,17 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     files: (
       <span className="min-w-0">
         {task.files.length === 0 ? (
-          <span className="text-xs text-zinc-300">—</span>
+          task.fileSummary !== undefined && task.fileSummary.total > 0 ? (
+            // Push 162：列表不下发文件名（只给摘要计数），先显示件数；文件名在抽屉里按详情接口给
+            <span
+              className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600"
+              title={"已定档 " + String(task.fileSummary.final) + " / 未定档 " + String(task.fileSummary.draft)}
+            >
+              {String(task.fileSummary.total) + " 件"}
+            </span>
+          ) : (
+            <span className="text-xs text-zinc-300">—</span>
+          )
         ) : (
           <span className="flex items-center gap-1">
             <span className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600" title={task.files.join("、")}>{shortenFileName(task.files[0])}</span>
@@ -605,7 +626,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, members = MEMBER_DIRECTORY, managerOptions = PROJECT_MANAGERS, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode, loadTaskFiles }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -618,6 +639,29 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   /** 抽屉里的任务按 id 取当前值（Push 98）：抽屉里点四格进度、卡片上改实际完成日期后，抽屉要立刻跟着变 ——
    *  不能拿点击那一刻的任务快照，否则父级刷新后抽屉还显示旧进度。 */
   const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
+  /** 抽屉里的文件清单（Push 162：列表不下发文件名，打开抽屉时按详情接口取一次）。 */
+  const [taskFiles, setTaskFiles] = useState<Record<string, string[]>>({});
+  const selectedTaskId = selectedTask === null ? null : selectedTask.id;
+  useEffect(() => {
+    if (selectedTaskId === null || loadTaskFiles === undefined) {
+      return;
+    }
+    let cancelled = false;
+    void loadTaskFiles(selectedTaskId)
+      .then((names) => {
+        if (!cancelled) {
+          setTaskFiles((previous) => ({ ...previous, [selectedTaskId]: names }));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTaskId, loadTaskFiles]);
+  const drawerTaskWithFiles =
+    drawerTask === null || taskFiles[drawerTask.id] === undefined
+      ? drawerTask
+      : { ...drawerTask, files: taskFiles[drawerTask.id] };
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
@@ -857,6 +901,8 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                         }
                         managers={managers ?? PROJECT_MANAGER}
                         managerIds={managerIds ?? []}
+                        members={members}
+                        managerOptions={managerOptions}
                         onChangeManagers={onChangeManagers}
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                       />
@@ -882,9 +928,11 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       ) : null}
       </div>
       <TaskDrawer
-        task={drawerTask}
+        task={drawerTaskWithFiles}
         managers={managers ?? PROJECT_MANAGER}
         managerIds={managerIds ?? []}
+        members={members}
+        managerOptions={managerOptions}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
         onPatch={onPatchTask}

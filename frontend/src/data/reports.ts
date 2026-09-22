@@ -65,7 +65,7 @@ export type Issue = {
   reportId: string;
 };
 
-/** 演示数据挂靠的项目（与 `data/tasks.ts` 的 DEMO_TASKS_PROJECT_ID 同一个示例项目：印度）。 */
+/** 演示数据挂靠的项目（沿用 Push 59 起的示例项目口径：印度；任务域演示数据已于 Push 162 下线）。 */
 export const DEMO_REPORTS_PROJECT_ID = "inmu-0010";
 
 /** 演示日报（新 → 旧）：9月17日 ~ 9月21日，覆盖 已提交 / 补填 / 草稿 三种状态。 */
