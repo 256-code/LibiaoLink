@@ -31,7 +31,7 @@ const ROUNDS = Number(args.rounds ?? process.env.M3_STRESS_ROUNDS ?? 6);
 const LIMIT = 50;
 const GANTT_LIMIT = 200;
 const THRESHOLDS = { list: 800, filter: 800, summary: 500, stages: 800, ganttBatch: 900 };
-const STAGES = ["presale", "design", "purchase", "planning", "production", "logistics", "installation", "debug", "acceptance"];
+const STAGES = ["presale", "design", "purchase", "assembly", "install", "deploy", "trial", "production", "acceptance"];
 const KEYWORD = "M3K-777";
 const OLD_INDEX = "ix_tasks_project_stage_order";
 const NEW_INDEX = "ix_tasks_active_group";
@@ -114,7 +114,7 @@ const stageOrderSql = "case stage_key " + STAGES.map((key, index) => "when $$" +
 
 const INSERT_TASKS_SQL = [
   "with owners as (select array_agg(id order by username) as ids from users where username like $3),",
-  "src as (select g, case when mod(g, 10) = 0 then null else (array[$$presale$$,$$design$$,$$purchase$$,$$planning$$,$$production$$,$$logistics$$,$$installation$$,$$debug$$,$$acceptance$$])[1 + mod(g, 9)] end as stage_key from generate_series(1, $2) g)",
+  "src as (select g, case when mod(g, 10) = 0 then null else (array[$$presale$$,$$design$$,$$purchase$$,$$assembly$$,$$install$$,$$deploy$$,$$trial$$,$$production$$,$$acceptance$$])[1 + mod(g, 9)] end as stage_key from generate_series(1, $2) g)",
   "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, planned_start, planned_end, actual_end, estimated_days, headcount, deliverable_types, change_refs, created_at, updated_at)",
   "select $1::uuid, src.stage_key, (row_number() over (partition by src.stage_key order by src.g))::int - 1,",
   "  case when mod(src.g, 977) = 0 then $4 || $$·装配·$$ || lpad(src.g::text, 5, $$0$$) else $$压测任务·$$ || lpad(src.g::text, 5, $$0$$) || $$ 工装装配$$ end,",
