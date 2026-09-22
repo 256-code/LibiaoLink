@@ -13,6 +13,7 @@ import { FileModule } from "./modules/file/index.js";
 import { IdentityModule } from "./modules/identity/index.js";
 import { PermissionModule } from "./modules/permission/index.js";
 import { ProjectModule } from "./modules/project/index.js";
+import { ReportIssueModule } from "./modules/report-issue/index.js";
 import { StakeholderModule } from "./modules/stakeholder/index.js";
 import { TaskModule } from "./modules/task/index.js";
 import { StorageModule } from "./storage/index.js";
@@ -34,6 +35,7 @@ export class AppModule {
         ProjectModule,
         StakeholderModule,
         TaskModule,
+        ReportIssueModule,
         AdminModule,
         CalendarModule,
         FileModule,

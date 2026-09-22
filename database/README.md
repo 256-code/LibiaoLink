@@ -30,10 +30,11 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0020_task_change_refs.sql` | 任务「变更关联」多条（A1-07 / R01「追加 + 去重」· Push 146；原 0019，撞 j6 后顺延）：`tasks.change_ref`（uuid 单值 + 外键 `fk_tasks_change_ref` on delete set null）→ `tasks.change_refs uuid[]`（回填 `array[change_ref]` → 非空 + 默认空数组 + `ck_tasks_change_refs_no_null` → drop 旧列与旧外键 → GIN `ix_tasks_change_refs`）；数组顺序 = 关联先后（末位 = 最近一次变更）、空数组 = 无变更；多值后无数组外键（`change_requests` 只追加、无删除路径） |
 | `migrations/0021_file_versions_change_request_index.sql` | 变更记录读面反查索引（M4-04 读面 · Push 147 · lan 线补登）：`file_versions.change_request_id` 加部分索引 `ix_file_versions_change_request (change_request_id) where change_request_id is not null`（Postgres 不为外键列自动建索引；变更列表 / 详情按「变更一行 → 版本一行」连接，缺索引退化全表扫描 / 哈希连接） |
 | `migrations/0022_task_soft_delete.sql` | 任务软删（M3-05 · A25 · Push 152）：`tasks` 新增 `deleted_at` / `deleted_by`（照 0009 projects / 0019 stakeholders 口径，软删不物理删行；历史与留痕保留）+ 部分索引 `ix_tasks_active_group (project_id, stage_key, sort_index) where deleted_at is null`（列表 / 看板顺序读主用索引）；读面（列表 / 看板 / 甘特图 / 完成门禁 / 节点判重）一律过滤 `deleted_at is null`，重复删除与已删任务上的写操作统一 404（不新增错误码）；`tasks` 本无 `(project_id, node_id)` 唯一约束，软删后同节点自动回到「可添加」 |
+| `migrations/0023_daily_reports_issues.sql` | 日报与问题（M6-01 ~ M6-03 · A3-01 / A3-02 / A3-04 / A3-08 ~ A3-13 · Push 155）：`daily_reports`（16 列 / `uq_daily_reports_author_date` 一人一项目一天一条 / 三索引（含 `ix_daily_reports_task_ids` GIN 删除守卫）/ 9 CHECK，含「发现问题 ⇔ 归类」成对）、`issues`（18 列 / `uq_issues_source_report` 唯一（A3-09 幂等兜底）/ 4 索引 / 6 CHECK，含 `ck_issues_closed_pairs`）、`issue_events`（8 列 / 1 索引 / 2 CHECK —— 处理过程留痕，四类事件）；状态取值 draft / submitted / supplement（补填由服务端推导）与 unassigned / open / in_progress / done |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |
-| `seeds/role-permissions.mjs` | 种子 #6b：六角色 × 权限位矩阵（h6 · Push 95，h8 补 `calendar.manage`；键唯一来源 = 契约 `PERMISSION_KEYS`，移除键会删除 —— 权限吊销必须生效） |
+| `seeds/role-permissions.mjs` | 种子 #6b：六角色 × 权限位矩阵（h6 · Push 95，h8 补 `calendar.manage`，M6-01 ~ M6-03 补 `report.view` / `report.fill` / `issue.view` / `issue.manage`（Push 155 · 27 → 31 键）；键唯一来源 = 契约 `PERMISSION_KEYS`，移除键会删除 —— 权限吊销必须生效） |
 | `seeds/dicts.mjs` | 种子 #5：地区 8 项 + 项目类型 3 项（h7 · Push 97；metadata 带 accent / accentText 主题色，幂等、不覆盖库内已修订值、不删除） |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
