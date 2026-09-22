@@ -1,7 +1,6 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
-import { PRIORITY_VALUES } from "../taskApi";
+import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberById, memberByName, type Member } from "../data/members";
 import {
   PROJECT_MANAGER,
   cnDateFromIso,
@@ -9,11 +8,10 @@ import {
   daysBetweenInclusive,
   isCompleteStatus,
   isTaskOverdue,
-  isServerTask,
   isoFromCnDate,
-  displayStatusOf,
-  lateLabelOf,
+  lateDeliveryLabel,
   progressAfterStatus,
+  taskStatus,
   type ProjectTask,
   type TaskPriority,
   type TaskStatus,
@@ -60,8 +58,11 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
   ),
 }));
 
-/** 紧急重要度下拉（Push 163：三档「高 / 中 / 低」，页面值 = 契约值）。 */
-const PRIORITY_OPTIONS: SelectOption[] = PRIORITY_VALUES.map((value) => ({ value, label: value }));
+const PRIORITY_OPTIONS = [
+  { value: "高", label: "高" },
+  { value: "中", label: "中" },
+  { value: "低", label: "低" },
+];
 
 /** 抽屉里可编辑控件的统一外观（与任务编辑表单同一套）。 */
 const FIELD_CLASS =
@@ -76,15 +77,12 @@ export type TaskEditSubmit = {
   managerIds: string[];
   /** 任务负责人（多位）：空数组 = 待分配。 */
   owners: string[];
-  /** 任务负责人 id（Push 162：真任务写面按 id 整体替换，与 owners 同下标）。 */
-  ownerIds: string[];
   ownersEn: string[];
   startDate: string;
   dueDate: string;
   days: number;
   headcount: number;
-  /** 紧急重要度（三档「高 / 中 / 低」；null = 未选 —— 提交时前端不发这一字段）。 */
-  priority: TaskPriority | null;
+  priority: TaskPriority;
   note: string;
 };
 
@@ -94,7 +92,7 @@ type Draft = {
   ownerIds: string[];
   range: DateRange | null;
   headcount: string;
-  priority: TaskPriority | null;
+  priority: TaskPriority;
   note: string;
 };
 
@@ -108,12 +106,10 @@ function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
   return {
     managerIds,
     ownerIds:
-      task === null
-        ? []
-        : task.ownerIds ?? task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== ""),
+      task === null ? [] : task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== ""),
     range: task === null ? null : rangeOf(task),
     headcount: task !== null && task.headcount > 0 ? String(task.headcount) : "",
-    priority: task === null ? null : task.priority,
+    priority: task === null ? "中" : task.priority,
     note: task === null ? "" : task.note,
   };
 }
@@ -123,10 +119,6 @@ type TaskDrawerProps = {
   managers?: string;
   /** 当前项目经理 id 名单（项目级字段，人员多选下拉的选中项，Push 136）。 */
   managerIds?: string[];
-  /** 任务负责人候选目录（Push 162：真用户目录由 TaskBoard 下发；缺省演示目录）。 */
-  members?: Member[];
-  /** 项目经理候选目录（Push 162：真用户目录；缺省演示常量）。 */
-  managerOptions?: Member[];
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => void;
@@ -146,7 +138,7 @@ type TaskDrawerProps = {
  * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
  * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、文件（走文件库）、变更关联。
  */
-export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_DIRECTORY, managerOptions = PROJECT_MANAGERS, onSubmit, onProgress, onPatch, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgress, onPatch, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -231,13 +223,12 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
         return;
       }
       const next = updateDraft(patch);
-      const owners = next.ownerIds.map((id) => members.find((item) => item.id === id)).filter((member): member is Member => member !== undefined);
+      const owners = next.ownerIds.map((id) => memberById(id)).filter((member): member is Member => member !== undefined);
       const headcountText = next.headcount.trim();
       const headcountValue = headcountText === "" ? 0 : Number(headcountText);
       onSubmit({
         taskId: current.id,
         managerIds: next.managerIds,
-        ownerIds: next.ownerIds,
         owners: owners.map((member) => member.name),
         ownersEn: owners.map((member) => member.handle),
         startDate: next.range === null ? "" : cnDateFromIso(next.range.from),
@@ -249,7 +240,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
       });
       setSavedTick(Date.now());
     },
-    [members, onSubmit, task, updateDraft],
+    [onSubmit, task, updateDraft],
   );
 
   if (task === null) {
@@ -260,8 +251,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
   const canPatch = onPatch !== undefined;
   const overdue = isTaskOverdue(task);
   /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期字段）。 */
-  const late = lateLabelOf(task);
-  const status = displayStatusOf(task);
+  const late = lateDeliveryLabel(task);
+  const status = taskStatus(task);
   const step = trackerStep(task.progress);
   /** 悬停预览：还没点就先亮到悬停那一档（进度条长度不变，只有填充随预览走）。 */
   const shownStep = hoveredStep > 0 ? hoveredStep : step;
@@ -309,7 +300,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
         <>
           <MemberMultiSelect
             values={draft.managerIds}
-            options={managerOptions}
+            options={PROJECT_MANAGERS}
             onChange={(memberIds) => {
               // 至少留一位（对齐契约 projects.manager_ids 非空）：全取消时不写
               if (memberIds.length === 0) {
@@ -332,7 +323,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
         <>
           <MemberMultiSelect
             values={draft.ownerIds}
-            options={members}
+            options={MEMBER_DIRECTORY}
             onChange={(memberIds) => {
               commit({ ownerIds: memberIds });
             }}
@@ -383,7 +374,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
       label: "紧急重要度",
       value: editable ? (
         <SelectMenu
-          value={draft.priority ?? ""}
+          value={draft.priority}
           options={PRIORITY_OPTIONS}
           onChange={(value) => {
             commit({ priority: value as TaskPriority });
@@ -391,13 +382,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
           ariaLabel="选择紧急重要度"
         />
       ) : (
-        task.priority === null ? (
-          dash
-        ) : (
-          <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
-            {task.priority}
-          </span>
-        )
+        <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
+          {task.priority}
+        </span>
       ),
     },
     {
@@ -647,7 +634,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members = MEMBER_D
           {savedTick !== 0 ? (
             <p className="text-[11px] font-medium text-emerald-600">已保存</p>
           ) : editable ? (
-            <p className="text-[11px] text-zinc-400">{isServerTask(task) ? "改动即时保存" : "改动即时保存（原型暂存浏览器内存）"}</p>
+            <p className="text-[11px] text-zinc-400">改动即时保存（原型暂存浏览器内存）</p>
           ) : null}
         </footer>
       </aside>

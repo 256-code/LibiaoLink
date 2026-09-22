@@ -75,14 +75,8 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
               <span className="font-mono text-[13px] font-semibold text-zinc-900">{project.code}</span>
             </p>
             <p className="mt-0.5 truncate text-xs text-zinc-500">
-              {project.description}
-              {project.customer === null || project.customer === "" ? "" : " · 客户 " + project.customer} · 创建于 {project.createdAt}
+              {project.description} · 创建于 {project.createdAt}
             </p>
-            {project.note === null || project.note === "" ? null : (
-              <p className="mt-0.5 truncate text-[11px] text-zinc-400" title={project.note}>
-                备注：{project.note}
-              </p>
-            )}
           </div>
         ) : title ? (
           <div className="mx-1 hidden min-w-0 border-l border-zinc-200 pl-4 sm:block">

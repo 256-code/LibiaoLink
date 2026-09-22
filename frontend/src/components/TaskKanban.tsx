@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
-import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
+import { memberByName } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { PROGRESS_STEPS, cnDateFromIso, displayStatusOf, isCompleteStatus, isoFromCnDate, lateLabelOf, ownersLabel, progressAfterStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, cnDateFromIso, ownersLabel, isCompleteStatus, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -214,16 +214,7 @@ type PendingDrag = {
  * 「添加」时的列上下文：负责人看板给负责人（Push 136：新任务先挂这一位，单人）、进展看板给状态
  * （与旧「+ 添加」口径一致）。
  */
-export type KanbanAddContext = {
-  owners: string[];
-  ownersEn: string[];
-  /**
-   * 负责人 id（M3-07 · Push 163）：创建任务时写 `ownerIds` 用 —— 列名（姓名）按目录反查 id，查不到 = 空数组（待分配）。
-   * 契约写面只认 uuid，`owners` / `ownersEn` 仍留作原型展示口径。
-   */
-  ownerIds: string[];
-  status: TaskStatus;
-};
+export type KanbanAddContext = { owners: string[]; ownersEn: string[]; status: TaskStatus };
 
 type TaskKanbanProps = {
   mode: KanbanMode;
@@ -232,15 +223,6 @@ type TaskKanbanProps = {
   managers: string;
   /** 项目经理 id 名单（任务详情抽屉里「项目经理」字段的当前选中项，Push 136）。 */
   managerIds: string[];
-  /**
-   * 阶段名 → 该阶段的**真项目节点**（M3-07 · Push 163：`GET /projects/{id}/flow` 展平后由 ProjectDetail 下发）——
-   * 看板「添加 → 阶段任务」的节点池与项目总览同一份。缺省空对象 = 没有可加节点。
-   */
-  nodesByStage?: Record<string, readonly TemplatePresetNode[]>;
-  /** 人员目录（Push 162：任务负责人下拉的真用户目录；缺省演示常量）。 */
-  members?: Member[];
-  /** 项目经理候选目录（Push 162：项目经理下拉的真用户目录；缺省演示常量）。 */
-  managerOptions?: Member[];
   /** 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。 */
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
   /**
@@ -279,7 +261,7 @@ function groupTasks(tasks: ProjectTask[], mode: KanbanMode): KanbanGroup[] {
       key: status,
       ownerEn: "",
       status,
-      items: tasks.filter((task) => displayStatusOf(task) === status),
+      items: tasks.filter((task) => taskStatus(task) === status),
     }));
   }
   // Push 136：一个任务可以有多位负责人 —— 这张卡出现在**每一位**负责人的列里（列计数 = 该人手上的任务数）；
@@ -353,7 +335,7 @@ function StageChip({ stage }: { stage: string }) {
 
 /** 「是否按时交付」：逾期标注优先（与任务表同一口径），其次是数据里的按时交付值。 */
 function OnTimeChip({ task }: { task: ProjectTask }) {
-  const late = lateLabelOf(task);
+  const late = lateDeliveryLabel(task);
   if (late === "逾期未交付") {
     return <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>;
   }
@@ -388,7 +370,7 @@ function KanbanCard({
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下看详情 / 按住拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
-  const status = displayStatusOf(task);
+  const status = taskStatus(task);
   /** 卡片上的负责人展示（多位按「、」连接，Push 136）。 */
   const ownerLabel = task.owners.length === 0 ? "待分配" : ownersLabel(task.owners, task.ownersEn);
   /** 头像取第一位负责人（目录外的名字回落首字圆圈）。 */
@@ -507,9 +489,7 @@ type AddOverlay = {
 function KanbanColumn({
   group,
   mode,
-  existingNodeIds,
-  nodesByStage,
-  members,
+  existingTaskIds,
   overlay,
   setOverlay,
   onOpenTask,
@@ -523,12 +503,7 @@ function KanbanColumn({
 }: {
   group: KanbanGroup;
   mode: KanbanMode;
-  /** 项目里已经有任务的来源节点 id（按 `task.nodeId` 判「已添加」，Push 163）。 */
-  existingNodeIds: ReadonlySet<string>;
-  /** 阶段名 → 该阶段的项目节点池（Push 163：真节点，来源 `GET /flow`）。 */
-  nodesByStage?: Record<string, readonly TemplatePresetNode[]>;
-  /** 人员目录（Push 163：负责人列 → uuid 反查，创建任务写 `ownerIds` 用）。 */
-  members: Member[];
+  existingTaskIds: ReadonlySet<string>;
   /** 整块看板共用的浮层状态（Push 118）：只有 `key` 是本列时，浮层才归本列渲染。 */
   overlay: AddOverlay | null;
   /** 改浮层状态（Push 118）：点本列的「添加」= 本列接管，上一列的浮层自然被顶掉。 */
@@ -563,16 +538,10 @@ function KanbanColumn({
   /** 拖动的就是本列的卡片（同列放开 = 只换顺序，不写负责人 / 状态）。 */
   const isOwnColumn = draggingId !== null && group.items.some((task) => task.id === draggingId);
 
-  /**
-   * 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。
-   * Push 163：负责人列另给 `ownerIds`（按目录反查 uuid），创建任务真正落库用。
-   */
-  const columnOwnerId =
-    mode === "owner" && group.key !== "待分配" ? members.find((member) => member.name === group.key)?.id ?? null : null;
+  /** 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
   const context: KanbanAddContext = {
-    owners: columnOwnerId === null ? [] : [group.key],
-    ownersEn: columnOwnerId === null || group.ownerEn === "" ? [] : [group.ownerEn],
-    ownerIds: columnOwnerId === null ? [] : [columnOwnerId],
+    owners: mode === "owner" && group.key !== "待分配" ? [group.key] : [],
+    ownersEn: mode === "owner" && group.key !== "待分配" && group.ownerEn !== "" ? [group.ownerEn] : [],
     status: mode === "status" ? group.status : "待开始",
   };
 
@@ -763,8 +732,7 @@ function KanbanColumn({
       {templateStage === null ? null : (
         <StageAddCard
           stage={templateStage}
-          poolNodes={nodesByStage?.[templateStage] ?? []}
-          existingNodeIds={existingNodeIds}
+          existingTaskIds={existingTaskIds}
           placement={{ tasks: stageTasksOf(templateStage) }}
           onAddNodes={(stage, nodes, placement) => { onAddStageTask(context, stage, nodes, placement); }}
           onClose={() => {
@@ -778,7 +746,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, managers, managerIds, members = MEMBER_DIRECTORY, managerOptions = PROJECT_MANAGERS, nodesByStage, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, managers, managerIds, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onReorderTask, onSetProgress }: TaskKanbanProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /**
    * 「添加」浮层（Push 118）：整块看板共用的**单值**状态 —— 业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」。
@@ -813,11 +781,8 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members = MEMBER
   /** 抽屉里的任务按 id 取当前值（Push 98）：卡片 / 抽屉里改完，抽屉要立刻反映最新进度与日期。 */
   const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
   const groups = groupTasks(tasks, mode);
-  /**
-   * 已经在项目里的**来源节点 id**（Push 163：按 `task.nodeId` 判重）——「阶段任务」里已加过的节点显示「已添加」、点不动。
-   * 旧口径拿任务 id 顶替节点 id（原型期两者同源）；真任务 id 是服务端 uuid，与节点 id 不同，必须分开。
-   */
-  const existingNodeIds = new Set(tasks.map((task) => task.nodeId).filter((nodeId): nodeId is string => nodeId !== null && nodeId !== undefined));
+  /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
+  const existingTaskIds = new Set(tasks.map((task) => task.id));
   /**
    * 该阶段现有任务（Push 111）：给「添加 → 阶段任务」的插入位置当锚点。
    * `tasks` 已经是展示顺序（阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
@@ -900,7 +865,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members = MEMBER
       return;
     }
     const nextStatus = group.status;
-    if (displayStatusOf(task) === nextStatus) {
+    if (taskStatus(task) === nextStatus) {
       return;
     }
     onPatchTask(task.id, {
@@ -1131,9 +1096,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members = MEMBER
               key={group.key}
               group={group}
               mode={mode}
-              existingNodeIds={existingNodeIds}
-              nodesByStage={nodesByStage}
-              members={members}
+              existingTaskIds={existingTaskIds}
               overlay={addOverlay}
               setOverlay={setAddOverlay}
               onOpenTask={openTask}
@@ -1163,8 +1126,6 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members = MEMBER
         task={drawerTask}
         managers={managers}
         managerIds={managerIds}
-        members={members}
-        managerOptions={managerOptions}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
         onPatch={onPatchTask}
