@@ -1,34 +1,64 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
+import type { FacetOption } from "./components/CategoryFilterSidebar";
 import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
-import { managerNames } from "./data/managers";
+import { dictLabel, typeAccent, type Dicts } from "./dicts";
+import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
-import {
-  newSavedFilterId,
-  matchesCriteria,
-  persistSavedFilters,
-  readSavedFilters,
-  sameCriteria,
-} from "./savedFilters";
+import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toUiProject, type ProjectFacets } from "./projectApi";
+import { newSavedFilterId, persistSavedFilters, readSavedFilters, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
-import { PROJECT_TYPES } from "./types";
+import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
   me: MeResponse;
-  projects: Project[];
-  onCreate: (draft: ProjectDraft) => void;
+  /** 字典（地区 / 项目类型：下拉项与主题色）。 */
+  dicts: Dicts;
+  /** 用户目录（项目经理姓名与候选）。 */
+  directory: DirectoryUser[];
+  /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
+  onCreate: (draft: ProjectDraft) => Promise<string | null>;
   onEdit: (project: Project) => void;
+  /** 服务端写操作后的刷新信号（父层 +1 → 列表与计数重新取数）。 */
+  refreshToken: number;
 };
 
-export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
+const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** 计数 → 侧栏选项：字典顺序优先、未知码排后；已选但零命中的值保留（否则没办法取消勾选）。 */
+function buildOptions(
+  counts: Record<string, number>,
+  selected: string[],
+  labelOf: (value: string) => string,
+  order: string[],
+): FacetOption[] {
+  const values = new Set<string>(Object.keys(counts));
+  for (const value of selected) {
+    values.add(value);
+  }
+  const rank = new Map(order.map((value, index) => [value, index]));
+  return Array.from(values)
+    .map((value) => ({ value, count: counts[value] ?? 0, label: labelOf(value) }))
+    .sort((left, right) => {
+      const leftRank = rank.get(left.value) ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = rank.get(right.value) ?? Number.MAX_SAFE_INTEGER;
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return right.count - left.count;
+    });
+}
+
+export default function Home({ me, dicts, directory, onCreate, onEdit, refreshToken }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
   const route = useHashRoute();
@@ -44,22 +74,11 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
     }
     return hasListFilters(filters) || readStoredSidebarOpen() === true;
   });
-  const knownRegions = useMemo(() => new Set(projects.map((project) => project.region)), [projects]);
-  const knownManagerIds = useMemo(() => new Set(projects.flatMap((project) => project.managerIds)), [projects]);
-  // 链接里可能带着当前数据不存在的取值（分享过期 / 手改地址）：先丢弃，再由下面的 effect 归一化地址栏
-  const activeFilters = useMemo(() => {
-    const regions = filters.regions.filter((region) => knownRegions.has(region));
-    const managerIds = filters.managerIds.filter((managerId) => knownManagerIds.has(managerId));
-    const projectTypes = filters.projectTypes.filter((projectType) => (PROJECT_TYPES as readonly string[]).includes(projectType));
-    if (
-      regions.length === filters.regions.length &&
-      managerIds.length === filters.managerIds.length &&
-      projectTypes.length === filters.projectTypes.length
-    ) {
-      return filters;
-    }
-    return { ...filters, regions, managerIds, projectTypes };
-  }, [filters, knownManagerIds, knownRegions]);
+  // 手改地址 / 分享过期可能带非 UUID 的经理值：先在本地丢弃，再由 effect 归一化地址栏（服务端 400 的兜底见下面 error 分支）
+  const activeFilters = useMemo<ListQueryState>(() => {
+    const managerIds = filters.managerIds.filter((managerId) => UUID.test(managerId));
+    return managerIds.length === filters.managerIds.length ? filters : { ...filters, managerIds };
+  }, [filters]);
   useEffect(() => {
     if (buildListHash(activeFilters) !== buildListHash(filters)) {
       replaceListQuery(activeFilters);
@@ -73,29 +92,166 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
     saveFiltersPref(next);
   };
   const query = activeFilters.q;
-  const keyword = query.trim().toLowerCase();
+  const keyword = query.trim();
   const hasFilters = hasListFilters(activeFilters);
   const sortDesc = activeFilters.sortDesc;
   const dateRange: DateRange | null =
     activeFilters.timeFrom !== null && activeFilters.timeTo !== null
       ? { from: activeFilters.timeFrom, to: activeFilters.timeTo }
       : null;
-  const filtered = useMemo(() => {
-    const matched = projects.filter((project) => {
-      // 分类条件（地区 / 项目类型 / 项目经理任一命中 / 项目时间闭区间）与「常用筛选」共用同一判定（savedFilters.ts），两边口径不会漂
-      if (!matchesCriteria(project, activeFilters)) {
-        return false;
+
+  // 关键字防抖：输入时不每个字符打一次接口（250ms 内的最后一次生效）
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedQuery(activeFilters.q);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [activeFilters.q]);
+  const requestFilters = useMemo<ListQueryState>(
+    () => ({ ...activeFilters, q: debouncedQuery }),
+    [activeFilters, debouncedQuery],
+  );
+  const requestKey = useMemo(() => buildListQuery(requestFilters), [requestFilters]);
+  const requestRef = useRef(requestFilters);
+  requestRef.current = requestFilters;
+
+  // 服务端数据：列表 + 三组计数（各自排除自己那一维）
+  const [items, setItems] = useState<Project[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [facets, setFacets] = useState<ProjectFacets>(EMPTY_FACETS);
+  const [savedCounts, setSavedCounts] = useState<Record<string, number>>({});
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async (): Promise<void> => {
+      const current = requestRef.current;
+      setLoading(true);
+      try {
+        const [page, regionFacets, typeFacets, managerFacets] = await Promise.all([
+          fetchProjectList(current),
+          fetchProjectFacets(current, "regions"),
+          fetchProjectFacets(current, "projectTypes"),
+          fetchProjectFacets(current, "managerIds"),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        setItems(page.items.map(toUiProject));
+        setTotal(page.total);
+        setFacets({
+          total: managerFacets.total,
+          region: regionFacets.region,
+          projectType: typeFacets.projectType,
+          managerId: managerFacets.managerId,
+          stageKey: regionFacets.stageKey,
+          status: regionFacets.status,
+        });
+        setLoadError(null);
+      } catch (error: unknown) {
+        if (cancelled) {
+          return;
+        }
+        if (error instanceof ApiError && error.status === 400) {
+          // 非法筛选值（UUID / 日期 / limit）：丢弃整组条件并归一化地址栏，让页面回到可用状态
+          replaceListQuery(EMPTY_LIST_QUERY);
+          setLoadError("筛选条件无效，已重置为全部项目。");
+        } else if (error instanceof ApiError) {
+          setLoadError(error.message + "（" + error.code + "）");
+        } else {
+          setLoadError("网络异常，未能加载项目列表。");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-      if (keyword === "") {
-        return true;
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [requestKey, reloadToken, refreshToken]);
+
+  // 常用筛选胶囊计数：按该组合单独取一次 total（服务端同口径判定），与当前筛选无关
+  useEffect(() => {
+    if (savedFilters.length === 0) {
+      setSavedCounts({});
+      return;
+    }
+    let cancelled = false;
+    const run = async (): Promise<void> => {
+      try {
+        const entries = await Promise.all(
+          savedFilters.map(async (filter): Promise<[string, number]> => {
+            const result = await fetchProjectFacets({
+              regions: filter.regions,
+              projectTypes: filter.projectTypes,
+              managerIds: filter.managerIds,
+              timeFrom: filter.timeFrom,
+              timeTo: filter.timeTo,
+              q: "",
+              sortDesc: true,
+            });
+            return [filter.id, result.total];
+          }),
+        );
+        if (!cancelled) {
+          setSavedCounts(Object.fromEntries(entries));
+        }
+      } catch {
+        if (!cancelled) {
+          setSavedCounts({});
+        }
       }
-      return [String(project.seqNo), String(project.seqNo).padStart(2, "0"), project.code, project.description, project.region, project.projectType, project.id, project.createdAt, project.updatedAt, managerNames(project.managerIds)].some((field) =>
-        field.toLowerCase().includes(keyword),
-      );
-    });
-    const ordered = matched.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : left.updatedAt > right.updatedAt ? -1 : 0));
-    return sortDesc ? ordered : ordered.reverse();
-  }, [activeFilters, keyword, projects, sortDesc]);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [savedFilters, reloadToken, refreshToken]);
+
+  const regionOptions = useMemo(
+    () =>
+      buildOptions(
+        facets.region,
+        activeFilters.regions,
+        (code) => dictLabel(dicts, "region", code),
+        dicts.region.map((item) => item.code),
+      ),
+    [activeFilters.regions, dicts, facets.region],
+  );
+  const typeOptions = useMemo(
+    () =>
+      buildOptions(
+        facets.projectType,
+        activeFilters.projectTypes,
+        (code) => dictLabel(dicts, "projectType", code),
+        dicts.projectType.map((item) => item.code),
+      ),
+    [activeFilters.projectTypes, dicts, facets.projectType],
+  );
+  const managerOptions = useMemo(
+    () =>
+      buildOptions(
+        facets.managerId,
+        activeFilters.managerIds,
+        (managerId) => directoryName(directory, managerId),
+        [],
+      ),
+    [activeFilters.managerIds, directory, facets.managerId],
+  );
+  const newestDay = useMemo(
+    () => items.reduce((latest, project) => (project.updatedAt > latest ? project.updatedAt : latest), "").slice(0, 10),
+    [items],
+  );
+  const managerChoices = useMemo(() => directoryMemberOptions(directory), [directory]);
+
   const resetFilters = () => {
     updateFilters({ regions: [], projectTypes: [], managerIds: [], timeFrom: null, timeTo: null });
   };
@@ -122,11 +278,14 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
     persistSavedFilters(next);
   };
   const saveSavedFilter = ({ id, name, criteria }: { id: string | null; name: string; criteria: FilterCriteria }) => {
-    // 保存前按当前数据兜底：丢弃已不存在的地区 / 类型 / 经理（与 URL 参数归一化同一收敛口径）
+    // 保存前按当前字典 / 计数兜底：丢弃已不存在的地区 / 类型 / 经理（与 URL 参数归一化同一收敛口径）
+    const knownRegions = new Set(Object.keys(facets.region));
+    const knownTypes = new Set(Object.keys(facets.projectType));
+    const knownManagers = new Set(Object.keys(facets.managerId));
     const normalized: FilterCriteria = {
       regions: criteria.regions.filter((region) => knownRegions.has(region)),
-      projectTypes: criteria.projectTypes.filter((projectType) => (PROJECT_TYPES as readonly string[]).includes(projectType)),
-      managerIds: criteria.managerIds.filter((managerId) => knownManagerIds.has(managerId)),
+      projectTypes: criteria.projectTypes.filter((projectType) => knownTypes.has(projectType)),
+      managerIds: criteria.managerIds.filter((managerId) => knownManagers.has(managerId)),
       timeFrom: criteria.timeFrom,
       timeTo: criteria.timeTo,
     };
@@ -153,7 +312,11 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
 
       <CategoryFilterSidebar
         open={filterOpen}
-        projects={projects}
+        regions={regionOptions}
+        types={typeOptions}
+        managers={managerOptions}
+        savedFilterCounts={savedCounts}
+        newestDay={newestDay}
         selectedRegions={activeFilters.regions}
         selectedManagerIds={activeFilters.managerIds}
         selectedTypes={activeFilters.projectTypes}
@@ -241,7 +404,7 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
             </button>
           </div>
           <span className="text-sm text-zinc-400">
-            {keyword === "" && !hasFilters ? "共 " + projects.length + " 个项目" : "找到 " + filtered.length + " 个项目"}
+            {keyword === "" && !hasFilters ? "共 " + total + " 个项目" : "找到 " + total + " 个项目"}
           </span>
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             <button
@@ -265,10 +428,31 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
           </div>
         </div>
 
-        {filtered.length === 0 && (
+        {loadError === null ? null : (
+          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <span>{loadError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setReloadToken((value) => value + 1);
+              }}
+              className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
+            >
+              重试
+            </button>
+          </div>
+        )}
+
+        {loading && items.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center">
+            <p className="text-sm text-zinc-500">正在加载项目…</p>
+          </div>
+        ) : null}
+
+        {!loading && items.length === 0 && loadError === null ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center">
             <p className="text-sm text-zinc-500">
-              {keyword === "" ? "没有符合筛选条件的项目" : "没有匹配「" + query.trim() + "」的项目"}
+              {keyword === "" ? "没有符合筛选条件的项目" : "没有匹配「" + keyword + "」的项目"}
             </p>
             <div className="mt-4 flex items-center justify-center gap-3">
               {keyword !== "" && (
@@ -293,10 +477,10 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
               )}
             </div>
           </div>
-        )}
+        ) : null}
 
         <div className="grid grid-cols-1 gap-6 @md:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-4">
-          {filtered.map((project) => (
+          {items.map((project) => (
             <div
               key={project.id}
               role="link"
@@ -315,9 +499,10 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
                 seqNo={project.seqNo}
                 code={project.code}
                 description={project.description}
-                accent={project.accent}
-                projectType={project.projectType}
-                managerNames={managerNames(project.managerIds)}
+                typeLabel={dictLabel(dicts, "projectType", project.projectType)}
+                accentColor={typeAccent(dicts, project.projectType).color}
+                accentText={typeAccent(dicts, project.projectType).text}
+                managerNames={projectManagerText(project)}
                 time={project.createdAt}
                 onEdit={() => {
                   onEdit(project);
@@ -326,6 +511,12 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
             </div>
           ))}
         </div>
+
+        {total > items.length ? (
+          <p className="mt-6 text-center text-xs text-zinc-400">
+            已显示前 {items.length} 条，共 {total} 条（一期列表一次最多 200 条）。
+          </p>
+        ) : null}
 
         <details className="mt-12 rounded-xl border border-zinc-200 bg-white p-5 text-sm text-zinc-700">
           <summary className="cursor-pointer text-zinc-500">令牌声明（id_token，已通过 JWKS 验签）</summary>
@@ -337,10 +528,16 @@ export default function Home({ me, projects, onCreate, onEdit }: HomeProps) {
       {isCreateOpen && (
         <ProjectModal
           mode="create"
+          regions={dicts.region}
+          projectTypes={dicts.projectType}
+          managerOptions={managerChoices}
           onClose={() => setIsCreateOpen(false)}
-          onSubmit={(draft) => {
-            onCreate(draft);
-            setIsCreateOpen(false);
+          onSubmit={async (draft) => {
+            const message = await onCreate(draft);
+            if (message === null) {
+              setIsCreateOpen(false);
+            }
+            return message;
           }}
         />
       )}
