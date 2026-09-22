@@ -1,4 +1,4 @@
--- LibiaoLink · 0022 预览产物表 + 审计动作扩值（M4-05 预览管道 · 数据层切片 · Push 150）
+-- LibiaoLink · 0024 预览产物表 + 审计动作扩值（M4-05 预览管道 · 数据层切片 · Push 156；原取 0022，撞 wmj 的 0022_task_soft_delete 后顺延）
 -- 口径来源：系统功能书 D2-01~D2-07 / A4-11（在线预览）、技术设计v0.3 §3.5（M4-05 卡片与「新增表 preview_artifacts」）、
 --   ADR-007（预览管道：缓存键 = 内容哈希 + pipelineVersion + target 三元组）、ADR-006（对象键形态）、
 --   契约 shared/src/modules/files.ts（PREVIEW_TARGETS / PREVIEW_STATUSES / FilePreviewResponse）、

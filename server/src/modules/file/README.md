@@ -57,11 +57,11 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 ## 上游（直接复用，不重复造）
 
 - `src/storage/`（经 `ObjectStorage` 端口注入，不直接碰 S3 SDK）：`createMultipartUpload` / `signPartUploadUrl` / `listParts` / `completeMultipartUpload` / `abortMultipartUpload` / `headObject` / `copyObject`（暂存键 → 契约键）/ `purgeObject`（**按版本**彻底删除）/ `probe`；`buildObjectKey` + `buildUploadStagingKey` + `planUpload` / `missingPartNumbers` + `toApiError`。
-- 数据层：`files` / `file_versions` / `upload_sessions`（`database/migrations/0005_file_lifecycle.sql`；**分片状态不落表**，以 ListParts 为唯一真相）+ `idempotency_keys`（0006）+ `file_links`（`0016_file_links.sql` · M4-03：多态关联，`object_type` 六值 CHECK / 联合唯一幂等 / `(object_type, object_id)` 反查索引）+ `change_requests`（`0001_baseline.sql` · M4-04：一期申请即通过、只追加）+ `file_versions.change_request_id` 反查的部分索引（`0021_file_versions_change_request_index.sql` · M4-04 读面）+ `preview_artifacts`（`0022_preview_artifacts.sql` · M4-05 数据层：三元组缓存键 `content_hash + pipeline_version + target` 唯一 / 状态与契约 `PREVIEW_STATUSES` 同值 / `file_id` / `version_id` = 首次生成登记、读面按三元组命中）+ `audit_logs.action` CHECK 同步扩 `preview`。
+- 数据层：`files` / `file_versions` / `upload_sessions`（`database/migrations/0005_file_lifecycle.sql`；**分片状态不落表**，以 ListParts 为唯一真相）+ `idempotency_keys`（0006）+ `file_links`（`0016_file_links.sql` · M4-03：多态关联，`object_type` 六值 CHECK / 联合唯一幂等 / `(object_type, object_id)` 反查索引）+ `change_requests`（`0001_baseline.sql` · M4-04：一期申请即通过、只追加）+ `file_versions.change_request_id` 反查的部分索引（`0021_file_versions_change_request_index.sql` · M4-04 读面）+ `preview_artifacts`（`0024_preview_artifacts.sql` · M4-05 数据层：三元组缓存键 `content_hash + pipeline_version + target` 唯一 / 状态与契约 `PREVIEW_STATUSES` 同值 / `file_id` / `version_id` = 首次生成登记、读面按三元组命中）+ `audit_logs.action` CHECK 同步扩 `preview`。
 - 横切：`AuditService`（同事务留痕）、`PermissionService`（`file.upload` / `file.download` 与记录级 404）、`ClockService`（会话到期判定，禁止直接取系统时间）。
 
 ## 待落地（按卡片）
 
 - **M4-04**：写入面**已落地（PR-7）**、读面**已落地（PR-8）**（列表 / 详情，见上「M4-04 变更口径」「M4-04 变更读面」）；**剩余** = 变更统计（A4-17，无对外契约，口径由后续切片 / 仪表盘定）与通知（A4-18，随 M5；outbox `change.applied` 已埋点）。
-- **M4-05**：预览编排（预览鉴权与产物，preview 模块）——**数据层已落地（PR-9 · 迁移 `0022`：`preview_artifacts` + `ck_audit_logs_action` 扩 `preview`；契约零改动、生成物零漂移）**；剩余 = 转换器与队列（outbox `preview.job` 领取 / 三元组幂等 / 失败降级）、读 API（三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404）。
+- **M4-05**：预览编排（预览鉴权与产物，preview 模块）——**数据层已落地（PR-9 · 迁移 `0024`：`preview_artifacts` + `ck_audit_logs_action` 扩 `preview`；契约零改动、生成物零漂移）**；剩余 = 转换器与队列（outbox `preview.job` 领取 / 三元组幂等 / 失败降级）、读 API（三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404）。
 - 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。
