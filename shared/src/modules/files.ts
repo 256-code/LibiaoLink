@@ -137,13 +137,27 @@ const UploadCreateBaseSchema = z.object({
   taskId: UuidSchema.optional(),
 });
 
-/** 发起上传：version = 草稿期新增/替换版本；change = 定档后变更（change 必填）。 */
+/**
+ * 发起上传：version = 草稿期新增 / 替换版本（fileId 省略 = 新建文件，给出 = 对既有 draft 文件替换 / 追加版本）；
+ * change = 定档后变更（fileId 与 change 均必填；A4-13 申请即通过，完成上传时同事务生效）。
+ */
 export const UploadCreateBodySchema = z
   .discriminatedUnion("intent", [
-    UploadCreateBaseSchema.extend({ intent: z.literal("version") }),
-    UploadCreateBaseSchema.extend({ intent: z.literal("change"), change: ChangeIntentBodySchema }),
+    UploadCreateBaseSchema.extend({
+      intent: z.literal("version"),
+      fileId: UuidSchema.optional().openapi({
+        description: "目标文件（可选）：省略 = 新建文件；给出 = 对既有未定档（draft）文件替换 / 追加新版本（系统功能书 A2-10「未定档文件可直接替换」）。目标非 draft → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；给出时名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空",
+      }),
+    }),
+    UploadCreateBaseSchema.extend({
+      intent: z.literal("change"),
+      fileId: UuidSchema.openapi({
+        description: "变更目标文件（必填，A4-13）：须为已定档（final / changed）状态；非该状态 → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空",
+      }),
+      change: ChangeIntentBodySchema,
+    }),
   ])
-  .openapi("UploadCreateBody", { description: "发起上传（分片直传；返回预签名分片 URL 的获取入口）" });
+  .openapi("UploadCreateBody", { description: "发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效）" });
 
 export const UploadSessionSchema = z
   .object({

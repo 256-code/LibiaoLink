@@ -13,7 +13,7 @@ export const AuditActionSchema = z.enum(AUDIT_ACTIONS).openapi("AuditAction", {
     "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝",
 });
 
-/** 审计对象类型（audit_logs.object_type）：覆盖 h7 全部写入点 + h8 工作日历（calendar_day / calendar_settings）。 */
+/** 审计对象类型（audit_logs.object_type）：覆盖 h7 全部写入点 + h8 工作日历 + M4 file（文件与上传会话生命周期）。 */
 export const AUDIT_OBJECT_TYPES = [
   "project",
   "project_member",
@@ -24,10 +24,11 @@ export const AUDIT_OBJECT_TYPES = [
   "blueprint",
   "calendar_day",
   "calendar_settings",
+  "file",
 ] as const;
 export const AuditObjectTypeSchema = z.enum(AUDIT_OBJECT_TYPES).openapi("AuditObjectType", {
   description:
-    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default）",
+    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位）",
 });
 
 /** 审计结果：成功 / 越权拒绝（C7-03，管理员可按 result=denied 筛出）/ 失败（门禁拒绝等）。 */

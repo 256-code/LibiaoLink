@@ -18,7 +18,7 @@ shared/
 │   │   ├── tasks.ts            任务 + 四格进度（含创建 / 编辑 / 从模板生成）
 │   │   ├── templates.ts        任务节点库 + 任务模板（A1-16 / A1-17）
 │   │   ├── flow.ts             蓝图 JSON + 流程节点 + 完成门禁
-│   │   ├── files.ts            文件与变更（上传 / 版本 / 定档 / 回收站；v0.2 §5）
+│   │   ├── files.ts            文件与变更（上传 / 版本 / 定档 / 回收站 / 文件库查询与多态关联；v0.2 §5）
 │   │   ├── identity.ts         登录用户 + /auth/me（ADR-010；g6）
 │   │   ├── users.ts            用户目录 + 用户偏好（A2 / A4；M1）
 │   │   ├── dicts.ts            数据字典下发（A3；region / projectType）
@@ -58,6 +58,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 时间 | 时间戳 ISO8601（UTC 存储，前端按 Asia/Shanghai 展示）；业务日期 `YYYY-MM-DD` |
 | 可见性 | 资源不存在与无权访问统一 404 语义（防 IDOR） |
 | 错误模型 | 统一信封 `{ code, message, details[], traceId }`；错误码见 src/common/errors.ts（与 v0.2 §7.2 同步维护） |
+| 审计对象类型 | `AUDIT_OBJECT_TYPES`：project / project_member / task / node / stage / dict_item / blueprint / calendar_day / calendar_settings / **file**（M4-01 · PR-4 新增；审计对象 id = fileId，上传会话事件经 `metadata.uploadId` 定位 —— 扩枚举而非新增 `upload_session`，避免为同一业务对象开两套检索口径） |
 | 项目编号 | 创建人填写（创建请求必填 code；格式仅前端提示、不做强校验）；唯一性由服务端校验 + 数据库唯一约束保证，重复返回 409 PROJECT_CODE_EXISTS；建后可修改（更新请求可传 code，同样校验唯一性） |
 | 项目序号 | 服务端创建时分配（`projects.seq_no` ↔ `seqNo`，全库唯一正整数、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示两位补零，列表支持 `sort=seqNo:asc\|desc` |
 | 主题色 accent | 随项目类型字典（C9）元数据下发：`metadata.accent` = CSS 颜色字符串（hex），`metadata.accentText` = 徽标文字色（可缺省，缺省 `#fff`）；前端不硬编码颜色 |
@@ -67,7 +68,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 蓝图 | 自建 JSON（schemaVersion=1）；导出/导入 round-trip 无损；导入即快照 |
 | 认证与会话 | /auth/*（根路径；OIDC authorization_code + PKCE + state；HttpOnly Cookie 会话）；/auth/me 返回 `{ user, claims, expiresAt }`；未认证 401 AUTH_REQUIRED、回调失败 400 AUTH_CALLBACK_FAILED |
 | 文件状态 | 五态 draft/final/changed/archived/recycled；定档后不可覆盖，修改必须走变更（FILE_STATE_INVALID 拒绝） |
-| 上传 | 分片预签名直传（api 只签名与登记元数据）；`intent=version` 仅草稿替换、`intent=change` 定档后变更；分片未齐 409（UPLOAD_INCOMPLETE）、会话过期 410（UPLOAD_SESSION_EXPIRED）、哈希不符 422（FILE_HASH_MISMATCH，命名对齐技术设计v0.3 §4.8）；分片状态以对象存储 ListParts 为唯一真相（**不落 upload_parts 表**）；内容哈希只做**重复提示**、不做强阻断 |
+| 上传 | 分片预签名直传（api 只签名与登记元数据）；`intent=version` 仅草稿替换、`intent=change` 定档后变更；分片未齐 409（UPLOAD_INCOMPLETE）、会话过期 410（UPLOAD_SESSION_EXPIRED）、哈希不符 422（FILE_HASH_MISMATCH，命名对齐技术设计v0.3 §4.8）；分片状态以对象存储 ListParts 为唯一真相（**不落 upload_parts 表**）；内容哈希只做**重复提示**、不做强阻断。**M4-01 落地口径（PR-4）**：会话先写暂存键 `…/staging/{sessionId}` 直传，complete 校验大小 / 哈希后由服务端 `copyObject` 复制到契约键 `…/v{seq}/{contentHash}.{ext}`，落库 `file_versions.object_key` 始终是契约形态（ADR-006 定案）；`contentHash` init 可选、complete 必填。**上传入口 `fileId` 定案（Push 130 · wmj）**：省略 = 新建文件（仅 `intent=version`）；`intent=version` + `fileId` = 对既有 **draft** 文件替换 / 追加版本（非 draft → 409 `FILE_STATE_INVALID`）；`intent=change` **必填** `fileId`（目标须 final / changed，A4-13）；目标不存在 / 无权 → 404、与 `projectId` 不一致 → 400；给出 `fileId` 时名称与归属（`name` / `docType` / `nodeId` / `taskId`）以目标文件现状为准（可省略、填写须一致），`duplicateHint` 恒空。**M4-01 切片内 `intent=change` 与带 `fileId` 的请求一律显式 400**（守卫，防静默新建文件；回放 U21 / U22 固化）；**M4-02 落地（PR-5 · Push 131）**：`intent=version` + `fileId` 已放开（对既有 draft 文件替换 / 追加版本；目标非 draft → 409 `FILE_STATE_INVALID`；名称 / 归属与目标现状不一致 → 400），`intent=change` + `fileId` 仍显式 400 `intent_change_not_open`（随 M4-04） |
 | 变更 | 一期申请即通过（status=applied）：提交变更后文件与变更字段，完成上传时同事务写 change_requests + 新版本 + 状态 changed + Outbox（R01 / 通知由消费方处理）；缺变更后文件不允许提交 |
 | 回收站 | 任意状态可回收（默认保留 30 天，可恢复回原状态）；彻底删除仅管理员且留痕（权限模型落地前为临时口径） |
 | 下载与预览地址 | 短时签名 URL + 审计；对象存储禁止匿名读取 |
@@ -90,9 +91,11 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 ## 契约切片表（M0-02 · Push 73）
 
+> **本表状态（PR-5 · Push 131）**：M4-01 上传管道（PR-4 · Push 129）—— `AUDIT_OBJECT_TYPES` 增 `file`（跨线改动，请 wmj 评审）；生成物已按 `npm run generate` 重出（openapi.json / api-types.d.ts），`npm run check` 零漂移。**M4-02（版本 / 定档 / 回溯 / 回收站）实现落地，契约零改动**：上传入口 `intent=version` + `fileId` 放开（draft 替换 / 追加版本），`intent=change` 仍 400（随 M4-04）；错误码沿用 V0.3 既有（`VERSION_CONFLICT` / `FILE_STATE_INVALID` / `change_flow_not_open`）。
+
 > 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
 > 现状（Push 89 · h4）：**paths = 49、schemas = 117**，生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
-> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更）、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
+> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / from-template）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更 / 文件库列表 GET /projects/{id}/files（M4-03 起用））、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）。
 
 ### M1 身份与平台底座（h1 + 平台）
 
@@ -130,7 +133,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
-| i1 文件管道 | files 族已入（Push 41）：上传会话 / 分片 / 完成 / 中止 / 定档 / 回滚 / 回收站 / 下载；落地时复核错误码（`UPLOAD_INCOMPLETE` / `UPLOAD_SESSION_EXPIRED` / `FILE_HASH_MISMATCH` / `CHANGE_FILE_REQUIRED` 已登记） | 复核 |
+| i1 文件管道 | files 族已入（Push 41）：上传会话 / 分片 / 完成 / 中止 / 定档 / 回滚 / 回收站 / 下载；落地时复核错误码（`UPLOAD_INCOMPLETE` / `UPLOAD_SESSION_EXPIRED` / `FILE_HASH_MISMATCH` / `CHANGE_FILE_REQUIRED` 已登记）；**M4-01 复核（PR-4 · Push 129，跨线请 wmj 评审）**：错误码沿用既有（V0.3 命名），`AUDIT_OBJECT_TYPES` 增 `file`（审计对象 id = fileId，上传会话事件经 metadata.uploadId 定位）；**上传入口 `fileId` 定案（Push 130 · wmj）**：`intent=change` 必填 `fileId`、`intent=version` + `fileId` = 既有 draft 文件替换 / 追加版本（见上「上传」行）；M4-01 切片内 `change` / 带 `fileId` 一律显式 400（守卫），**M4-02 落地（PR-5 · Push 131）**：`version + fileId` 已放开（对既有 draft 文件替换 / 追加版本；非 draft → 409 `FILE_STATE_INVALID`、名称 / 归属不一致 → 400），`change + fileId` 仍 400（随 M4-04）；**M4-03 落地（PR-6 · Push 132）**：`GET /projects/{id}/files` 起用（查询 / 响应契约零改动），`file_links` 六类关联表随 0016 迁移落地，写入口径 = 上传完成（project 必写 / node / task 有则写 / 幂等），读面 = 项目可见即可 + 默认排除 recycled | 复核 |
 | i3 预览 | 预览鉴权与产物字段复核（preview schema 已就位）；无新增路径预期 | 复核 |
 
 ### M5 自动化与通知（i8 / notify）

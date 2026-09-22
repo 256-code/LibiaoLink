@@ -131,3 +131,26 @@ export const uploadSessions = pgTable(
     ),
   ],
 );
+
+/** file_links（多态关联：project / task / node / report / issue / change；M4-03）。 */
+export const fileLinks = pgTable(
+  "file_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => files.id, { onDelete: "cascade" }),
+    objectType: text("object_type").notNull(),
+    objectId: uuid("object_id").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("uq_file_links_file_object").on(table.fileId, table.objectType, table.objectId),
+    index("ix_file_links_object").on(table.objectType, table.objectId),
+    check(
+      "ck_file_links_object_type",
+      sql`${table.objectType} in ${sql.raw(sqlValueList(["project", "task", "node", "report", "issue", "change"]))}`,
+    ),
+  ],
+);
