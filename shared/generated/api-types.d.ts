@@ -709,7 +709,50 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** 删除任务（软删：列表 / 看板 / 甘特图 / 完成门禁不可见 + 写留痕；重复删除统一 404；已产生变更记录 409 TASK_HAS_REFERENCES） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（软删标记） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskDeleteResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         /** 编辑任务（乐观锁；任务描述 / 成果文件按 A1-17 锁定，进度走 /progress） */
@@ -1018,6 +1061,87 @@ export interface paths {
                 };
                 /** @description 契约校验失败（VALIDATION_FAILED） */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/tasks/{taskId}/locked-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 锁定字段例外调整（仅系统管理员 · A1-17 / C9-07）：任务描述 / 输出成果文件生成后锁定，确需修正时原因必填并留痕（审计 + outbox） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskLockedFieldsAdjustBody"];
+                };
+            };
+            responses: {
+                /** @description 调整后的任务 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -5209,7 +5333,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -5884,6 +6008,12 @@ export interface components {
                 taskId: components["schemas"]["Uuid"];
             }[];
         };
+        /** @description 任务删除结果（软删）：列表 / 看板 / 甘特图 / 完成门禁一律不可见，来源节点约束随之释放 */
+        TaskDeleteResponse: {
+            id: components["schemas"]["Uuid"];
+            /** @description 恒为 true（软删：tasks.deleted_at 置位，不物理删行；历史与留痕保留） */
+            deleted: boolean;
+        };
         /** @description 任务详情（M3-01；列表 → 详情不再依赖列表随行数据） */
         TaskDetail: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组 */
@@ -5933,6 +6063,18 @@ export interface components {
             page: number;
             limit: number;
             total: number;
+        };
+        /** @description 锁定字段例外调整（仅系统管理员）：至少给出一个实际变化的字段，否则 400；原因必填并留痕（审计 + task.locked_fields_adjusted） */
+        TaskLockedFieldsAdjustBody: {
+            version: components["schemas"]["Version"];
+            /** @description 例外调整原因（必填并留痕；A1-17 / C9-07） */
+            reason: string;
+            /** @description 任务描述（中文；锁定字段 —— 仅管理员例外修正） */
+            title?: string;
+            /** @description 任务描述（英文；锁定项；null = 清空） */
+            titleEn?: string | null;
+            /** @description 要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
+            deliverableTypes?: components["schemas"]["DocType"][];
         };
         /** @description 任务节点库条目（任务模板的节点来源） */
         TaskNode: {

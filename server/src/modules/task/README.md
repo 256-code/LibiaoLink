@@ -1,11 +1,11 @@
-# task 模块（h4 · S6·task：任务主表 / 五态派生 / 进度聚合 / 完成门禁 / 批量操作）
+# task 模块（h4 · S6·task：任务主表 / 五态派生 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
-| 职责 | 任务主数据（列表 / 详情）、进度与状态写入联动、展示五态与按时交付派生、项目总览四格、阶段任务统计出口、完成门禁（M3-03 · A4-20 / ADR-024）、批量操作（M3-04 · A1-08） |
+| 职责 | 任务主数据（列表 / 详情）、进度与状态写入联动、展示五态与按时交付派生、项目总览四格、阶段任务统计出口、完成门禁（M3-03 · A4-20 / ADR-024）、批量操作（M3-04 · A1-08）、软删与引用守卫（M3-05 · A25）、锁定字段例外调整（M3-05 续卡 · A1-17 / C9-07） |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | TaskService（summary / list / detail / create / update / updateProgress / canComplete / complete / batch）、TaskStatsService（countStageTasks / stageTaskCounts）、规则纯函数与查询解析（task.rules / task.query）；节点实例的读写仍在 project 模块 flow.service（依赖方向 project → node → task，本模块不反向依赖） |
+| 对外接口 | TaskService（summary / list / detail / create / update / updateProgress / canComplete / complete / batch / remove / adjustLockedFields）、TaskStatsService（countStageTasks / stageTaskCounts）、规则纯函数与查询解析（task.rules / task.query）；节点实例的读写仍在 project 模块 flow.service（依赖方向 project → node → task，本模块不反向依赖） |
 
 ## 已实现（h4 · Push 89）
 
@@ -24,10 +24,12 @@
   - `PATCH /{id}/tasks/{taskId}` 编辑：乐观锁 `version`（不一致 409 `VERSION_CONFLICT`）+ 基础三态写入联动（A12）+ `ownerIds` 显式置空（不传 = 不改；传数组 = 整体替换、顺序 = 展示顺序）+ 组内重排（`sortIndex`，越界 = 组尾）+ 字段级留痕（A18 / A19 / A20 · Push 124）；任务描述 / 成果文件锁定不在本接口；
   - `PATCH /{id}/tasks/{taskId}/progress` 进度写入：响应与列表行同形（`TaskListItem`），联动状态与完成日期；`note` 写 note_change 事件留痕；
   - `PATCH /{id}/tasks/batch` 批量操作（M3-04 · Push 150 / A1-08）：`ids`（1~100、重复去重）+ `changes` 白名单（ownerIds / status / plannedStart / plannedEnd / estimatedDays / headcount / priority / note；null = 清空、缺键 = 不改；不含描述 / 成果文件（A1-17）与 sortIndex）；逐条独立事务 + 部分失败清单 `failures[]`（复用单条写入内核 `applyUpdate`）；空 changes 400、归档项目 409；审计 = 批次一条（`project` 域，metadata 记 batchId / 计数 / 失败清单）+ 逐条字段级一条（`metadata.entry = batch` + 同批 `batchId`）；
+  - `DELETE /{id}/tasks/{taskId}` 删除（M3-05 · A25 · Push 152）：软删 —— 列表 / 看板 / 甘特图 / 详情 / 完成门禁一律不可见 + 写留痕；重复删除与已删任务上的任何写操作统一 404（不新增错误码）；组内位次同事务压缩、来源节点约束随软删释放（口径见下节）。
+  - `PATCH /{id}/tasks/{taskId}/locked-fields` 锁定字段例外调整（M3-05 续卡 · A1-17 / C9-07 · Push 153）：**仅系统管理员**（服务端复核，非管理员 403）；任务描述 / 输出成果文件按模板生成后锁定、常规编辑不可达，确需修正时**原因必填并留痕**；至少一个实际变化（空调整 400）；乐观锁 409；不写 `task_events`（四值闭集）；口径见下节「锁定字段例外调整」。
   - 归档项目写入口径 409 `PROJECT_ARCHIVED`（ADR-027）；任务变更 touch 项目 `updated_at`（ADR-022 ④）。
-- 留痕与队列：`task_events` 四类型 `status_change / progress_change / date_change / note_change`（before / after 为 JSON 键值对）+ outbox 三个 topic `task.created / task.updated / task.progress_changed`（dedupeKey 带版本）。
+- 留痕与队列：`task_events` 四类型 `status_change / progress_change / date_change / note_change`（before / after 为 JSON 键值对）+ outbox 五个 topic `task.created / task.updated / task.progress_changed / task.deleted / task.locked_fields_adjusted`（dedupeKey 带版本；锁定字段调整 payload 带 `reason` 与实际变化字段）；软删与锁定字段例外调整不写 `task_events`（四值闭集）。
 - 与 h3 门禁的衔接（**过渡口径收口**）：`node/gate.repository` 不再直读 `tasks` 表；阶段推进门禁的「任务全 done」与 `GET /projects/{id}/stages` 的任务计数改经 `TaskStatsService` 出口，`StageProgressRow` 不再携带任务字段，门禁语义不变；`files` 表直读仍为过渡口径（随 i1 收口）。
-- 单测：`test/task-rules.test.ts`（17 例，纯规则）+ `test/task-service.test.ts`（18 例，桩仓储不连库）+ `test/task-order.test.ts`（4 例，顺序纯函数）；w2 后全量 222 例 / 17 文件。
+- 单测：`test/task-rules.test.ts`（17 例，纯规则）+ `test/task-service.test.ts`（18 例，桩仓储不连库）+ `test/task-order.test.ts`（4 例，顺序纯函数）+ `test/task-locked-fields.test.ts`（8 例，锁定字段例外调整：桩仓储 + 角色 / 门禁替身）；Push 153 后全量 387 例 / 26 文件（任务族：rules 17 / service 22 / order 4 / gate 8 / batch 9 / remove 10 / locked-fields 8）。
 
 ## 完成门禁（M3-03 · Push 143）
 
@@ -38,7 +40,7 @@
 - 三入口一致（A4-20）：完成提交（`POST …/complete`）与 `PATCH …/{taskId}`（`status=done`）、`PATCH …/progress`（`progress=1`）在**事务内走同一门禁判定**；缺件一律 422 + `missing[]`（`details[].code = required_doc`）且不部分生效（乐观锁校验在前、写库在后）。
 - 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时放行，响应带 `warnings[{ code: draft_doc_present, docType, count }]`，并写 outbox `task.draft_doc_reminded`（R02 触发点，notify 落地后消费）。
 - 留痕：拒绝 → outbox `task.gate_rejected`（事务回滚后补写）+ 审计 `result=failed`（含错误码与缺件明细）；成功 → outbox `task.completed`（payload 带 warnings）+ 审计 `action=complete`。
-- 数据面：迁移 `0018_task_deliverable_types.sql`（`deliverable` text → `deliverable_types` text[] 非空默认空数组 + `ck_tasks_deliverable_types` / `ck_tasks_deliverable_types_no_null` + GIN `ix_tasks_deliverable_types`；存量单值转单元素数组、空值转空数组）；创建任务缺省从节点 `required_doc` 类型带出（body 显式给出优先）；`TaskUpdateBody` 不含该字段 = 生成后锁定（A1-17；例外调整随 M3-05），PATCH 置空/编辑不可达。
+- 数据面：迁移 `0018_task_deliverable_types.sql`（`deliverable` text → `deliverable_types` text[] 非空默认空数组 + `ck_tasks_deliverable_types` / `ck_tasks_deliverable_types_no_null` + GIN `ix_tasks_deliverable_types`；存量单值转单元素数组、空值转空数组）；创建任务缺省从节点 `required_doc` 类型带出（body 显式给出优先）；`TaskUpdateBody` 不含该字段 = 生成后锁定（A1-17；**例外调整已落 Push 153**，见下节），PATCH 置空/编辑不可达。
 - 实现归属：门禁判定实现在本模块 `task.gate.repository.ts`（只读 `node_requirements` / `files`）—— node 模块 `GateService` 依赖 task（`TaskStatsService`），task 反向依赖会成环；两处 SQL 口径必须同步修改（node/README.md 已登记）。
 - 单测：`test/task-gate.test.ts` 8 例（预检缺件明细 / 无节点 deliverable_types 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done` 与 `progress=1` 同一门禁）。
 
@@ -53,6 +55,30 @@
 - 留痕双层：① **批次审计**（A1-08「批量操作整体写审计日志」）—— 每次请求一条 `project` 域记录（summary「批量操作任务：N 条（成功 X，失败 Y）」，metadata = `{ entry, batchId, taskIds, changedFields, succeededCount, failedCount, failures[] }`）；② **逐条字段级审计**（C7-02）—— `action=update`，summary 前缀「批量修改任务：」，`metadata.entry = batch` + 同批 `batchId`；批量完成缺件的拒绝留痕沿用 outbox `task.gate_rejected` + 审计 `result=failed`（summary 前缀「批量任务完成被门禁拒绝：」+ 同批 metadata）。
 - 单测：`test/task-batch.test.ts` 9 例（批量改字段 + 审计同 batchId / 部分失败 not_found / ids 去重 / 空 changes 400 / 归档 409 / 批量指派置空 / 批量完成 / 缺件 gate_not_passed + 留痕 / already_done）。
 
+## 软删（M3-05 · A25 · Push 152）
+
+> 口径来源：系统功能书【修订 2026-09-22，Push 148】业务确认「任务删除要做」+ `前端功能需求.md` §3.8 A25；记录级 404 语义随 h6 策略服务。
+
+- 端点与权限：`DELETE /projects/{id}/tasks/{taskId}`（权限键 `task.update` —— 与编辑同一权限位，不新增权限键，`PROJECT_MEMBER_IMPLIED_KEYS` 已含该键）；响应 `TaskDeleteResponse = { id, deleted: true }`（只回标记，前端列表本地移除即可）；项目侧照旧先过 `loadProjectForWrite`（归档 409 `PROJECT_ARCHIVED`）。
+- 软删而非物理删：置 `tasks.deleted_at` / `deleted_by`（迁移 `0022_task_soft_delete.sql`，照 0009 projects / 0019 stakeholders 口径），行与留痕保留；**统一 404、不新增错误码** —— 重复删除、已删任务上的编辑 / 进度 / 完成提交 / 预检、跨项目与不存在一律 404 `NOT_FOUND`（记录级 404 语义）。
+- 引用守卫（系统功能书 A2-01「已产生日报 / 问题 / 变更的任务不允许删除，只能关闭或标记」）：`change_refs` 非空 → 409 `TASK_HAS_REFERENCES`（`details[].code = change_ref` + `changeRequestId`），不软删 / 不压缩位次 / 不写留痕；日报 / 问题两表随 M5 落地后在守卫处一并加判定（照「节点下已有文件 → 409 `NODE_HAS_FILES`」同一先例）。
+- 读面不可见：列表 / 详情 / summary 四格 / 阶段计数 / 看板与甘特图（与列表同源）/ 完成门禁预检与提交 / 节点判重 / 组内顺序读 / 锁行一律过滤 `deleted_at is null`；新增部分索引 `ix_tasks_active_group (project_id, stage_key, sort_index) where deleted_at is null`（列表与看板顺序读走它）。
+- 组内位次压缩（A19 / A20 不变式）：删除后同组后续任务位次同事务 -1，保持「0 起、密集」；只写位次列，不 bump `version` / `updated_at`（与插入 / 移动同口径）。
+- 节点释放（A10 / A11）：判重走 `findTaskIdByNode`（只看未删行），软删后同一节点可重新创建任务；`tasks` 本无 `(project_id, node_id)` 唯一约束，无需改约束。
+- 留痕：审计 `action=delete`（`objectType=task`，summary「删除任务：<标题>」，changes = 删除前快照，metadata `{ softDelete: true, stageKey, nodeId }`）+ outbox `task.deleted`（dedupeKey = `task.deleted:{taskId}:{version}`，payload = projectId / taskId / stageKey / nodeId / actorId / at）+ touch 项目 `updated_at`；**不写 `task_events`**（其类型为四值闭集：status_change / date_change / progress_change / note_change，删除不属于字段级变更）。
+- 单测：`test/task-remove.test.ts` 10 例（软删置位 + 审计快照 / 位次压缩 / outbox task.deleted / 重复删除 404 / 不存在与跨项目 404 + 并发兜底 / 归档 409 / 已删任务写路径全 404 / can-complete 404 / 节点释放可重建 / 位次仍 0 起密集 / **已有变更关联 409 `TASK_HAS_REFERENCES`（不软删 / 不变位次 / 不写留痕）** / 无关联照常软删）。
+
+## 锁定字段例外调整（M3-05 续卡 · A1-17 / C9-07 · Push 153）
+
+> 口径来源：系统功能书 A1-17（任务描述 / 阶段性里程 / 输出成果文件按流程节点模板生成后锁定；确需修正时由管理员修正模板 + 对当期任务例外调整，原因必填并留痕）与 C9-07；设计口径见 技术设计v0.3 §3.4（M3-05）。
+
+- 端点与权限：`PATCH /projects/{id}/tasks/{taskId}/locked-fields`（body `TaskLockedFieldsAdjustBody` = `version` + `reason` + 可选 `title` / `titleEn` / `deliverableTypes`）；控制器 `@RequirePermission(task.update)` 只作项目上下文门禁，**服务端 `assertAdmin` 复核（仅系统管理员，非管理员 403）** —— 与手工创建任务同口径（A1-13）。
+- 锁定范围：`title`（任务描述）/ `titleEn` / `deliverableTypes`（要求输出成果文件）；常规编辑 `PATCH …/{taskId}` 与批量 `PATCH …/batch` 均不含这三项；**「阶段性里程」一期 tasks 表无对应列**（A1-17 映射修订），本期不开放（差异登记见本 README 边界段与系统功能书）。
+- 校验：至少一个实际变化（同值 / 空调整 → 400 `VALIDATION_FAILED`，防止刷留痕）；`deliverableTypes` 走 `normalizeDocTypes`（字典内、首次出现去重保序）；乐观锁 409 `VERSION_CONFLICT`；归档项目 409 `PROJECT_ARCHIVED`；不存在 / 跨项目 / 已软删统一 404。
+- 留痕（A1-17 / C9-07）：审计 `action=update`（changes = 锁定字段 before → after；metadata = { reason, kind: locked_field_exception, adminOnly: true, fields }）+ outbox `task.locked_fields_adjusted`（dedupeKey = `task.locked_fields_adjusted:{taskId}:{version}`，payload = projectId / taskId / fields / reason / actorId / at）+ touch 项目 `updated_at`；**不写 `task_events`**（四值闭集）。
+- 门禁联动：`deliverableTypes` 修正后即刻成为**无节点任务**的完成门禁依据（有节点任务仍以节点 `node_requirements` 为准，ADR-024）。
+- 单测：`test/task-locked-fields.test.ts` 8 例（管理员改 title + deliverableTypes → 落库 / 版本 +1 / 审计含原因 / outbox / touch / 不写 task_events / 非管理员 403 且无留痕 / 空调整 400 / 乐观锁 409 / 归档 409 / 不存在与跨项目与已软删 404 / 去重与非法值过滤 + 门禁联动 / titleEn 清空）。
+
 ## 落库口径（w2 · A15 / A18 / A19 / A20 · Push 124）
 
 > 口径来源：`前端功能需求.md` 附录 A15 / A18 / A19 / A20（Push 119 / 120 定案）与 `字段对照清单.md` §七；落库机制二选一定为 **① `tasks.sort_index` 位次列**（不新增批量排序接口）。
@@ -66,6 +92,7 @@
 ## 边界与后续（差异登记）
 
 - 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；
-- 不在本卡（Push 150 后更新）：列表快捷筛选参数、任务软删、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；模板实例化与快筛、模板锁定与例外调整随 M3-05、1 万行压测随 M3-06）；
+- 不在本卡（Push 152 后更新）：列表快捷筛选参数、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；**M3-05 软删已落 Push 152**：`DELETE …/tasks/{taskId}` + 统一 404 + 位次压缩；**锁定字段例外调整已落 Push 153**：仅管理员可执行（非管理员 403）/ 原因必填并留痕（审计 + outbox）/ 空调整 400 / 阶段性里程一期无列；模板实例化与快筛随 M3-05 其余切片、1 万行压测随 M3-06）；
+- A1-17 差异登记（Push 153）：系统功能书锁定字段含「阶段性里程」，一期 `tasks` 表无该列（A1-17 映射修订），本期只开放任务描述 / 英文描述 / 输出成果文件三项；里程碑列落地后再开；
 - 列表默认序已有 `ix_tasks_project_stage_order (project_id, stage_key, sort_index)` 复合索引（0015 · Push 124）；1 万行压测与索引调优仍随压测卡 M3-06；
 - 契约里进度档位为离散五档，迁移数据任意小数在读时四舍五入到最近档。
