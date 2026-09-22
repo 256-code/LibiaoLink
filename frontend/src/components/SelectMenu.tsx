@@ -53,10 +53,12 @@ type SelectMenuProps = {
   onChange: (value: string) => void;
   placeholder?: string;
   ariaLabel: string;
+  /** 前置条件未满足时禁用（与原先原生 select 的 disabled 同口径：灰底灰字、点不开）。 */
+  disabled?: boolean;
 };
 
 /** 普通下拉（不可搜索）：状态 / 紧急重要度这类枚举字段。 */
-export function SelectMenu({ value, options, onChange, placeholder = "请选择", ariaLabel }: SelectMenuProps) {
+export function SelectMenu({ value, options, onChange, placeholder = "请选择", ariaLabel, disabled = false }: SelectMenuProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(160, options.length * 34 + 12);
   const selected = options.find((option) => option.value === value) ?? null;
 
@@ -66,19 +68,28 @@ export function SelectMenu({ value, options, onChange, placeholder = "请选择"
         ref={triggerRef}
         type="button"
         aria-haspopup="listbox"
-        aria-expanded={open}
+        aria-expanded={open && !disabled}
         aria-label={ariaLabel}
+        disabled={disabled}
         onClick={() => {
+          if (disabled) {
+            return;
+          }
           setOpen((previous) => !previous);
         }}
-        className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm transition hover:border-zinc-300 hover:bg-zinc-50"
+        className={
+          "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition " +
+          (disabled
+            ? "cursor-not-allowed border-zinc-200 bg-zinc-50"
+            : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50")
+        }
       >
         {selected === null ? (
           <span className="truncate text-zinc-400">{placeholder}</span>
         ) : (
-          <span className="truncate font-medium text-zinc-800">{selected.label}</span>
+          <span className={"truncate font-medium " + (disabled ? "text-zinc-400" : "text-zinc-800")}>{selected.label}</span>
         )}
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={"ml-auto h-4 w-4 shrink-0 " + (disabled ? "text-zinc-300" : "text-zinc-400")}>
           <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
