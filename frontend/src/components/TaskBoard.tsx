@@ -732,7 +732,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       <div ref={boardWrapRef} className="relative">
       <div ref={boardCardRef} className="rounded-xl border border-zinc-200 bg-white">
       {/* 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下；
-          横向偏移由下方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。 */}
+          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。 */}
       <div className="sticky top-16 z-20 overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
         <div
           ref={headerRowRef}
