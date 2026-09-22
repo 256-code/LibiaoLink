@@ -366,9 +366,9 @@ export function CategoryFilterSidebar({
                       </button>
                       <span
                         className={
-                          "flex items-center gap-0.5 pr-2 transition " +
+                          "flex max-w-0 items-center overflow-hidden opacity-0 transition-all duration-200 " +
                           (applied ? "text-white/70" : "text-zinc-400") +
-                          " opacity-0 group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"
+                          " group-hover/chip:max-w-[44px] group-hover/chip:opacity-100 group-focus-within/chip:max-w-[44px] group-focus-within/chip:opacity-100"
                         }
                       >
                         <button
@@ -378,7 +378,10 @@ export function CategoryFilterSidebar({
                           }}
                           aria-label={"编辑常用筛选 " + filter.name}
                           title="编辑 / 改名"
-                          className="rounded-full p-0.5 transition hover:text-zinc-900"
+                          className={
+                            "shrink-0 rounded-full py-0.5 pl-1.5 pr-0.5 transition " +
+                            (applied ? "hover:text-white" : "hover:text-zinc-900")
+                          }
                         >
                           <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3" aria-hidden="true">
                             <path d="M4 20h4L18 10l-4-4L4 16v4z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -391,7 +394,10 @@ export function CategoryFilterSidebar({
                           }}
                           aria-label={"删除常用筛选 " + filter.name}
                           title="删除"
-                          className="rounded-full p-0.5 transition hover:text-zinc-900"
+                          className={
+                            "shrink-0 rounded-full py-0.5 pl-0.5 pr-2 transition " +
+                            (applied ? "hover:text-white" : "hover:text-zinc-900")
+                          }
                         >
                           <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3" aria-hidden="true">
                             <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
