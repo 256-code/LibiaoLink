@@ -271,6 +271,7 @@ try {
         await db.query("update sessions set revoked_at = now() where token_hash = $1 and revoked_at is null", [sha256(token)]);
       }
       if (cleanup.syntheticUserId !== null) {
+        await db.query("delete from audit_logs where actor_id = $1", [cleanup.syntheticUserId]);
         await db.query("delete from user_roles where user_id = $1", [cleanup.syntheticUserId]);
         await db.query("delete from sessions where user_id = $1", [cleanup.syntheticUserId]);
         await db.query("delete from users where id = $1", [cleanup.syntheticUserId]);
