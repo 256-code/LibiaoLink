@@ -13,7 +13,7 @@ export const TaskProgressSchema = z
 
 /**
  * 变更关联项（A1-07 / R01「追加＋去重」）：一条任务可关联多条变更 —— 变更生效时由 R01 按
- * 「任务成果类型命中变更文件 doc_type」追加，重复引用去重（业务要求「变更关联」列展示多条，Push 145）。
+ * 「任务成果类型命中变更文件 doc_type」追加，重复引用去重（业务要求「变更关联」列展示多条，Push 146）。
  */
 export const TaskChangeLinkSchema = z
   .object({
