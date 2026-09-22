@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
@@ -6,6 +7,8 @@ import type { DatabaseService } from "../src/db/database.service.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import { FileService } from "../src/modules/file/index.js";
 import type {
+  ChangeRequestInsertInput,
+  ChangeRequestRow,
   DuplicateFileRow,
   FileCompletePatch,
   FileInsertInput,
@@ -46,6 +49,7 @@ const FILE = "22222222-2222-4222-8222-222222222222";
 const OTHER_FILE = "22222222-2222-4222-8222-22222222222a";
 const NODE = "33333333-3333-4333-8333-333333333333";
 const TASK = "44444444-4444-4444-8444-444444444444";
+const OTHER_TASK = "44444444-4444-4444-8444-44444444444a";
 const SESSION = "55555555-5555-4555-8555-555555555555";
 const VERSION = "66666666-6666-4666-8666-666666666666";
 const VERSION_A = "66666666-6666-4666-8666-66666666666a";
@@ -199,6 +203,7 @@ class FakeFileRepository {
       sizeBytes: input.sizeBytes,
       contentHash: input.contentHash,
       mime: input.mime,
+      changePayload: input.changePayload,
       createdBy: input.createdBy,
       createdAt: input.createdAt,
       updatedAt: input.createdAt,
@@ -252,7 +257,14 @@ class FakeFileRepository {
 
   async updateFileOnComplete(fileId: string, patch: FileCompletePatch): Promise<FileRow> {
     if (this.file === null) throw new Error("fake: 文件不存在");
-    this.file = { ...this.file, id: fileId, currentVersionId: patch.currentVersionId, version: patch.version, updatedAt: patch.updatedAt };
+    this.file = {
+      ...this.file,
+      id: fileId,
+      currentVersionId: patch.currentVersionId,
+      version: patch.version,
+      ...(patch.status === undefined ? {} : { status: patch.status }),
+      updatedAt: patch.updatedAt,
+    };
     return this.file;
   }
 
@@ -273,9 +285,54 @@ class FakeFileRepository {
       mime: input.mime,
       uploadedBy: input.uploadedBy,
       uploadedAt: input.uploadedAt,
+      changeRequestId: input.changeRequestId ?? null,
     });
     this.versions.push(row);
     return row;
+  }
+
+  // ---------- M4-04：变更写入（申请即通过） ----------
+
+  /** 变更申请写入（applyChangeInTx 经 insertChangeRequest 落库）。 */
+  insertedChanges: ChangeRequestInsertInput[] = [];
+  /** 节点阶段 key（变更记录的默认变更阶段；null = 节点无阶段）。 */
+  nodeStageKey: string | null = null;
+  /** R01 匹配结果（deliverable = 文件成果类型）。 */
+  deliverableTaskIds: string[] = [];
+  /** R01 查询记录。 */
+  deliverableQueries: { projectId: string; deliverable: string }[] = [];
+  /** R01 回写记录（任务 change_refs 追加 + 去重，A1-07 多条 · 迁移 0020）。 */
+  changeRefAppends: { taskIds: string[]; changeRequestId: string }[] = [];
+
+  async insertChangeRequest(input: ChangeRequestInsertInput): Promise<ChangeRequestRow> {
+    this.insertedChanges.push(input);
+    return {
+      id: input.id,
+      projectId: input.projectId,
+      nodeId: input.nodeId,
+      stageKey: input.stageKey,
+      reason: input.reason,
+      beforeSummary: input.beforeSummary,
+      afterSummary: input.afterSummary,
+      status: "applied",
+      appliedBy: input.appliedBy,
+      appliedAt: input.appliedAt,
+      createdAt: input.createdAt,
+    };
+  }
+
+  async findNodeStageKey(): Promise<string | null> {
+    return this.nodeStageKey;
+  }
+
+  async listTaskIdsByDeliverable(projectId: string, deliverable: string): Promise<string[]> {
+    this.deliverableQueries.push({ projectId, deliverable });
+    return [...this.deliverableTaskIds];
+  }
+
+  async appendTasksChangeRefs(taskIds: readonly string[], changeRequestId: string): Promise<number> {
+    this.changeRefAppends.push({ taskIds: [...taskIds], changeRequestId });
+    return taskIds.length;
   }
 
   async listExpiredActiveSessions(): Promise<(UploadSessionRow & { projectId: string })[]> {
@@ -562,19 +619,73 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
   });
 
   // 「intent=change 缺 fileId」在契约层（zod）即被拒、到不了服务层 —— 该面由契约回放
-  // （shared/scripts/upload-intent-replay.mjs）与真机回放 U21 兜住；服务层只测切片守卫本身。
-  it("intent=change + fileId → 400（Push 130 定案：目标路径随 M4-04 落地，切片内显式拒绝）", async () => {
+  // （shared/scripts/upload-intent-replay.mjs）与真机回放 U21 兜住；服务层测 M4-04 放开后的目标解析与载荷落库。
+  it("intent=change + fileId（目标 final）→ 建会话：change_payload 落库、不新建文件、审计记待生效变更", async () => {
     const h = makeService();
-    await expect(
-      h.service.createUpload(
-        { projectId: PROJECT, name: "变更.pdf", sizeBytes: MI_B, intent: "change", fileId: FILE, change: { reason: "设计变更" } },
-        ACTOR,
-      ),
-    ).rejects.toMatchObject({
-      code: "VALIDATION_FAILED",
-      httpStatus: 400,
-      details: [{ code: "intent_change_not_open", path: "intent" }],
+    h.repo.file = makeFileRow({ status: "final", version: 3, currentVersionId: VERSION, docType: "CAD图纸" });
+    const result = await h.service.createUpload(
+      {
+        projectId: PROJECT,
+        name: "机械设计图纸.pdf",
+        sizeBytes: MI_B,
+        intent: "change",
+        fileId: FILE,
+        change: { reason: "设计变更（变更单 CR-2026-0918）", afterSummary: "按变更单调整孔位" },
+      },
+      ACTOR,
+    );
+
+    expect(result.file.id).toBe(FILE);
+    expect(result.upload.intent).toBe("change");
+    expect(h.repo.insertedFiles).toHaveLength(0);
+    expect(h.repo.insertedSessions).toHaveLength(1);
+    expect(h.repo.insertedSessions[0]).toMatchObject({ fileId: FILE, intent: "change" });
+    // 变更申请随会话落 change_payload（契约 ChangeIntentBody）：未给字段补空
+    expect(h.repo.insertedSessions[0]!.changePayload).toEqual({
+      reason: "设计变更（变更单 CR-2026-0918）",
+      beforeSummary: null,
+      afterSummary: "按变更单调整孔位",
+      stageKey: null,
     });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "update",
+      objectType: "file",
+      objectId: FILE,
+      changes: [{ field: "pendingChange", from: null, to: "设计变更（变更单 CR-2026-0918）" }],
+      metadata: { intent: "change", targetFileId: FILE },
+    });
+  });
+
+  it("intent=change 反例：目标非定档（draft / recycled）409；跨项目 400；不存在 404（均不落会话）", async () => {
+    const h = makeService();
+    const change = (overrides: Record<string, unknown> = {}) =>
+      h.service.createUpload(
+        {
+          projectId: PROJECT,
+          name: "机械设计图纸.pdf",
+          sizeBytes: MI_B,
+          intent: "change",
+          fileId: FILE,
+          change: { reason: "设计变更" },
+          ...overrides,
+        },
+        ACTOR,
+      );
+
+    h.repo.file = makeFileRow({ status: "draft" });
+    await expect(change()).rejects.toMatchObject({ code: "FILE_STATE_INVALID", httpStatus: 409 });
+
+    h.repo.file = makeFileRow({ status: "recycled", version: 2 });
+    await expect(change()).rejects.toMatchObject({ code: "FILE_STATE_INVALID", httpStatus: 409 });
+
+    h.repo.file = makeFileRow({ status: "final", projectId: OTHER_PROJECT });
+    await expect(change()).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: [{ code: "invalid_file", path: "fileId" }],
+    });
+
+    h.repo.file = null;
+    await expect(change()).rejects.toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
     expect(h.repo.insertedSessions).toHaveLength(0);
   });
 
@@ -1311,15 +1422,55 @@ describe("FileService.rollbackFile（版本回溯 · 生成新版本不删历史
     });
   });
 
-  it("定档后回溯 → 400（details change_flow_not_open，随 M4-04 变更流）；recycled → 409", async () => {
+  it("定档后回溯 = 变更（M4-04 申请即通过）：changeRequest 非空 + 状态 changed + change 关联 / R01 / 审计 / outbox", async () => {
     const h = draftWithTwoVersions();
-    h.repo.file = makeFileRow({ status: "final", currentVersionId: VERSION_B, version: 4 });
-    await expect(h.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "回退", version: 4 }, ACTOR)).rejects.toMatchObject({
-      code: "VALIDATION_FAILED",
-      httpStatus: 400,
-      details: [{ code: "change_flow_not_open", path: "toVersionId" }],
-    });
+    h.repo.file = makeFileRow({ status: "final", currentVersionId: VERSION_B, version: 4, docType: "CAD图纸", nodeId: NODE });
+    h.repo.deliverableTaskIds = [TASK];
+    h.repo.nodeStageKey = "construction";
 
+    const result = await h.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "变更回溯到 v1", version: 4 }, ACTOR);
+
+    expect(h.storage.copied).toHaveLength(1);
+    expect(result.file.status).toBe("changed");
+    expect(result.changeRequest).toMatchObject({
+      status: "applied",
+      reason: "变更回溯到 v1",
+      fileId: FILE,
+      versionId: VERSION_C,
+      versionSeq: 3,
+      nodeId: NODE,
+      stageKey: "construction",
+      appliedBy: ACTOR,
+    });
+    // 新版本挂变更 + 变更记录（无摘要 / 阶段取节点默认）+ R01 回写
+    expect(h.repo.insertedVersions[0]!.changeRequestId).toBe(result.changeRequest!.id);
+    expect(h.repo.insertedChanges[0]).toMatchObject({
+      nodeId: NODE,
+      stageKey: "construction",
+      reason: "变更回溯到 v1",
+      beforeSummary: null,
+      afterSummary: null,
+    });
+    expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK], changeRequestId: result.changeRequest!.id }]);
+    expect(h.repo.insertedLinks.map((row) => row.objectType)).toContain("change");
+    // 变更审计（objectType=change）+ 回溯审计（带 changeRequestId）
+    expect(h.audit.entries.at(-2)).toMatchObject({
+      action: "create",
+      objectType: "change",
+      objectId: result.changeRequest!.id,
+      changes: [{ field: "status", from: "final", to: "changed" }],
+    });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "rollback",
+      objectType: "file",
+      objectId: FILE,
+      metadata: { toVersionId: VERSION_A, reason: "变更回溯到 v1", changeRequestId: result.changeRequest!.id },
+    });
+    expect(h.database.outbox.map((row) => (row as { topic: string }).topic)).toEqual(["change.applied", "file.version.created"]);
+  });
+
+  it("回收站中回溯 → 409 FILE_STATE_INVALID（不复制对象、不落版本）", async () => {
+    const h = draftWithTwoVersions();
     h.repo.file = makeFileRow({
       status: "recycled",
       version: 5,
@@ -1577,5 +1728,143 @@ describe("FileService.completeUpload 关联写入（M4-03 file_links）", () => 
     h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/pdf" });
     await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
     expect(h.repo.insertedLinks).toHaveLength(first);
+  });
+});
+
+describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · intent=change）", () => {
+  /** 定档文件 + change 意图会话（分片齐、哈希一致、载荷带摘要）。 */
+  function changeHarness(): Harness {
+    const h = makeService();
+    h.repo.file = makeFileRow({
+      status: "final",
+      nodeId: NODE,
+      docType: "CAD图纸",
+      version: 3,
+      currentVersionId: VERSION_A,
+    });
+    h.repo.session = makeSessionRow({
+      intent: "change",
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "application/pdf",
+      changePayload: {
+        reason: "设计变更（变更单 CR-2026-0918）",
+        beforeSummary: "v1 按初版施工",
+        afterSummary: "按变更单调整孔位",
+        stageKey: null,
+      },
+    });
+    h.storage.parts = [part(1, 8 * MI_B), part(2, 4 * MI_B)];
+    h.storage.head = {
+      objectKey: STAGING_KEY,
+      sizeBytes: 12 * MI_B,
+      etag: "\"merged-etag\"",
+      contentType: "application/pdf",
+      lastModified: NOW,
+    };
+    return h;
+  }
+
+  it("生效链路：change_requests(applied) + 版本挂 change_request_id + 状态 changed + change 关联 + R01 回写 + 变更审计 + outbox", async () => {
+    const h = changeHarness();
+    h.repo.deliverableTaskIds = [TASK, OTHER_TASK];
+    h.repo.nodeStageKey = "construction";
+
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+
+    // 变更记录：载荷取自会话 change_payload；stageKey 缺省时按节点阶段回填
+    expect(h.repo.insertedChanges).toHaveLength(1);
+    const change = h.repo.insertedChanges[0]!;
+    expect(change).toMatchObject({
+      projectId: PROJECT,
+      nodeId: NODE,
+      stageKey: "construction",
+      reason: "设计变更（变更单 CR-2026-0918）",
+      beforeSummary: "v1 按初版施工",
+      afterSummary: "按变更单调整孔位",
+      appliedBy: ACTOR,
+    });
+    // 新版本挂变更；文件 final → changed；会话完成
+    expect(h.repo.insertedVersions[0]!.changeRequestId).toBe(change.id);
+    expect(result.file.status).toBe("changed");
+    expect(result.version.changeRequestId).toBe(change.id);
+    expect(result.changeRequest).toMatchObject({
+      id: change.id,
+      projectId: PROJECT,
+      status: "applied",
+      reason: "设计变更（变更单 CR-2026-0918）",
+      nodeId: NODE,
+      stageKey: "construction",
+      fileId: FILE,
+      versionId: VERSION,
+      versionSeq: 1,
+      appliedBy: ACTOR,
+    });
+    expect(h.repo.sessionPatches.at(-1)!.patch.status).toBe("completed");
+    // 多态关联：project / node / change（change 指向本次变更）
+    expect(h.repo.insertedLinks.map((row) => row.objectType)).toEqual(["project", "node", "change"]);
+    expect(h.repo.insertedLinks.find((row) => row.objectType === "change")!.objectId).toBe(change.id);
+    // R01：docType ∈ deliverable_types（多值命中）的全部任务一律追加 change_refs
+    expect(h.repo.deliverableQueries).toEqual([{ projectId: PROJECT, deliverable: "CAD图纸" }]);
+    expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK, OTHER_TASK], changeRequestId: change.id }]);
+    // 审计：变更 create（objectType=change）+ 上传 complete（metadata 带 changeRequestId）
+    expect(h.audit.entries.at(-2)).toMatchObject({
+      action: "create",
+      objectType: "change",
+      objectId: change.id,
+      projectId: PROJECT,
+      changes: [{ field: "status", from: "final", to: "changed" }],
+      metadata: {
+        fileId: FILE,
+        versionId: VERSION,
+        versionSeq: 1,
+        nodeId: NODE,
+        stageKey: "construction",
+        deliverableType: "CAD图纸",
+        matchedTasks: [TASK, OTHER_TASK],
+        linkedTasks: 2,
+      },
+    });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "complete",
+      objectType: "file",
+      objectId: FILE,
+      metadata: { changeRequestId: change.id },
+    });
+    // outbox：先变更广播（change.applied）、再既有版本广播
+    expect(h.database.outbox.map((row) => (row as { topic: string }).topic)).toEqual(["change.applied", "file.version.created"]);
+    expect(h.database.outbox[0]).toMatchObject({
+      dedupeKey: "change.applied:" + change.id,
+      status: "pending",
+      payload: { changeRequestId: change.id, fileId: FILE, versionId: VERSION, matchedTasks: [TASK, OTHER_TASK] },
+    });
+  });
+
+  it("R01 无匹配（成果类型为空）→ 只记日志、不阻断变更生效", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "changed", nodeId: NODE, docType: null, version: 4, currentVersionId: VERSION_A });
+    const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
+    try {
+      const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+      expect(result.changeRequest).not.toBeNull();
+      expect(result.file.status).toBe("changed");
+      expect(h.repo.deliverableQueries).toHaveLength(0);
+      expect(h.repo.changeRefAppends).toEqual([{ taskIds: [], changeRequestId: result.changeRequest!.id }]);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("变更 R01 无匹配任务"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("会话持有期间目标被改回未定档（draft）→ 409 FILE_STATE_INVALID，版本与变更均不落", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "draft", nodeId: NODE, docType: "CAD图纸", version: 3, currentVersionId: VERSION_A });
+    await expect(h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_STATE_INVALID",
+      httpStatus: 409,
+    });
+    expect(h.repo.insertedVersions).toHaveLength(0);
+    expect(h.repo.insertedChanges).toHaveLength(0);
+    expect(h.database.outbox).toHaveLength(0);
   });
 });

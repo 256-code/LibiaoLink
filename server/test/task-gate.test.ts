@@ -63,7 +63,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     deliverableTypes: [],
     note: null,
     onTime: null,
-    changeRef: null,
+    changeRefs: [],
     version: 3,
     createdAt: new Date("2026-09-01T00:00:00Z"),
     updatedAt: new Date("2026-09-01T00:00:00Z"),
@@ -115,7 +115,10 @@ class FakeTaskRepository {
     this.touched.push(projectId);
   }
   async findListRowById(): Promise<TaskListRow | null> {
-    return this.task === null ? null : { task: this.task, ownerNames: [], changeSummary: null };
+    return this.task === null ? null : { task: this.task, ownerNames: [], changeLinks: [] };
+  }
+  async listChangeLinks(): Promise<never[]> {
+    return [];
   }
   async fileSummaries(): Promise<Map<string, TaskFileSummaryCounts>> {
     return new Map();
