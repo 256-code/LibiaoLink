@@ -28,10 +28,13 @@ export const EMPTY_LIST_QUERY: ListQueryState = {
 
 export type PlaceholderPage = "templates" | "files";
 
+/** 项目详情页顶部标签（5 视图，Push 82 / 128 / 145）在地址里的取值：`#/project/{id}?view=`。缺省「项目总览」不落参数（默认值不进 URL，与列表筛选态同一口径）。 */
+export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily";
+
 export type Route =
   | { kind: "hub" }
   | { kind: "list"; filters: ListQueryState }
-  | { kind: "project"; id: string }
+  | { kind: "project"; id: string; view: ProjectView }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null };
 
 /** 任务模板页地址：当前板块（标签栏选中的阶段）也走 URL —— 与列表页筛选态同一口径，地址即状态。 */
@@ -42,6 +45,9 @@ export const LIST_BASE_HASH = "#/projects";
 
 /** 入口页地址（顶层）：详情 / 列表 / 占位页的「上一层」最终都落到这里。 */
 export const HUB_HASH = "#/";
+
+/** 项目详情地址前缀：当前标签走 `?view=`（缺省「项目总览」不落参数）。 */
+export const PROJECT_BASE_HASH = "#/project/";
 
 const PROJECT_PATH = /^\/project\/([^/]+)$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -112,7 +118,7 @@ export function parseListQuery(search: string): ListQueryState {
   };
 }
 
-/** 任务模板页的板块参数（`?section=设计开发`）：空值 / 重复键丢弃，与列表页筛选态同口径。 */
+/** 任务模板页的板块参数（`?section=<slug>`，兼容旧链接的中文板块名）：空值 / 重复键丢弃，与列表页筛选态同口径；slug ↔ 板块名的解析在 `PlaceholderPage` 侧做。 */
 function parseSectionValue(search: string): string | null {
   let section: string | null = null;
   for (const chunk of search.split("&")) {
@@ -130,9 +136,63 @@ function parseSectionValue(search: string): string | null {
   return section;
 }
 
-/** 任务模板页某个板块的地址（板块名走 query，可直接刷新 / 收藏 / 分享）。 */
+/** 项目详情标签的合法取值（顺序与标签栏一致）。 */
+const PROJECT_VIEW_KEYS: readonly ProjectView[] = ["overview", "gantt", "owners", "progress", "daily"];
+
+/** 项目详情标签参数（`?view=`）：只认 `PROJECT_VIEW_KEYS`，不认识的取值 / 重复键一律落回「项目总览」。 */
+function parseProjectView(search: string): ProjectView {
+  for (const chunk of search.split("&")) {
+    if (chunk === "") {
+      continue;
+    }
+    const separator = chunk.indexOf("=");
+    const key = safeDecode(separator === -1 ? chunk : chunk.slice(0, separator));
+    if (key !== "view") {
+      continue;
+    }
+    const value = safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)).trim();
+    return PROJECT_VIEW_KEYS.find((view) => view === value) ?? "overview";
+  }
+  return "overview";
+}
+
+/**
+ * 任务模板页板块在地址里的取值（ASCII slug，Push 154）：URL 不带中文（`?section=design`），
+ * 页面内仍以中文板块名为唯一键（与 `PROJECT_STAGES` 口径一致）；板块增删时在这里同步补一行。
+ */
+const TEMPLATE_SECTION_SLUGS: ReadonlyArray<readonly [string, string]> = [
+  ["售前规划", "presale"],
+  ["设计开发", "design"],
+  ["加工采购", "procurement"],
+  ["组装发货", "shipping"],
+  ["硬件实施", "hardware"],
+  ["软件部署", "software"],
+  ["试运行", "trial"],
+  ["生产阶段", "production"],
+  ["验收", "acceptance"],
+];
+
+/** 板块名 → 地址 slug（未登记的板块按原名编码，保证 href 永远写得出）。 */
+export function templateSectionSlug(section: string): string {
+  return TEMPLATE_SECTION_SLUGS.find(([name]) => name === section)?.[1] ?? section;
+}
+
+/** 地址参数 → 板块名：接受 slug，也兼容旧链接里的中文板块名；不认识的取值返回 null。 */
+export function templateSectionFromParam(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  const raw = value.trim();
+  if (raw === "") {
+    return null;
+  }
+  const hit = TEMPLATE_SECTION_SLUGS.find(([name, slug]) => slug === raw || name === raw);
+  return hit === undefined ? null : hit[0];
+}
+
+/** 任务模板页某个板块的地址（板块走 query，可直接刷新 / 收藏 / 分享；取值见 `TEMPLATE_SECTION_SLUGS`）。 */
 export function templateSectionHref(section: string): string {
-  return TEMPLATE_BASE_HASH + "?section=" + encodeURIComponent(section);
+  return TEMPLATE_BASE_HASH + "?section=" + encodeURIComponent(templateSectionSlug(section));
 }
 
 /** 切换任务模板页的板块：同步渲染并写回地址（replace，不新增历史条目）。 */
@@ -146,6 +206,26 @@ export function replaceTemplateSection(section: string): void {
     window.history.replaceState(null, "", templateSectionHref(section));
   } catch {
     // URL 只是当前板块的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
+  }
+}
+
+/** 项目详情某个标签的地址（标签走 query，可直接刷新 / 收藏 / 分享；「项目总览」为缺省、不落参数）。 */
+export function projectViewHref(id: string, view: ProjectView): string {
+  const base = PROJECT_BASE_HASH + encodeURIComponent(id);
+  return view === "overview" ? base : base + "?view=" + view;
+}
+
+/** 切换项目详情标签：同步渲染并写回地址（replace，不新增历史条目）。 */
+export function replaceProjectView(id: string, view: ProjectView): void {
+  if (currentRoute.kind !== "project" || currentRoute.id !== id || currentRoute.view === view) {
+    return;
+  }
+  currentRoute = { ...currentRoute, view };
+  emit();
+  try {
+    window.history.replaceState(null, "", projectViewHref(id, view));
+  } catch {
+    // URL 只是当前标签的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
   }
 }
 
@@ -209,7 +289,7 @@ export function parseHash(hash: string): Route {
   }
   const match = PROJECT_PATH.exec(path);
   if (match) {
-    return { kind: "project", id: safeDecode(match[1] ?? "") };
+    return { kind: "project", id: safeDecode(match[1] ?? ""), view: parseProjectView(search) };
   }
   return { kind: "list", filters: parseListQuery(search) };
 }
@@ -331,7 +411,8 @@ export function replaceListQuery(filters: ListQueryState): void {
 export function openProject(id: string): void {
   listReturnHash = currentRoute.kind === "list" ? buildListHash(currentRoute.filters) : null;
   cameFromList = false;
-  window.location.hash = "/project/" + encodeURIComponent(id);
+  // 从列表进入详情固定落在缺省标签「项目总览」（地址不带 ?view=）
+  window.location.hash = projectViewHref(id, "overview").slice(1);
 }
 
 /** 顶栏 logo 与「项目空间」的落点：列表页原地不动（保留筛选态），详情页回到进入前的列表地址。 */

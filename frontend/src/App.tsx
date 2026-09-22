@@ -191,7 +191,7 @@ export default function App() {
     const project = projects.find((item) => item.id === route.id) ?? null;
     return (
       <>
-        <ProjectDetail me={state.me} project={project} onChangeManagers={handleChangeManagers} onTaskEdited={handleTaskEdited} />
+        <ProjectDetail me={state.me} project={project} view={route.view} onChangeManagers={handleChangeManagers} onTaskEdited={handleTaskEdited} />
         {editModal}
       </>
     );

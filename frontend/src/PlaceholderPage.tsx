@@ -4,7 +4,7 @@ import { AppHeader } from "./components/AppHeader";
 import { TaskNodeCard } from "./components/TaskNodeCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "./data/templatePresets";
-import { replaceTemplateSection, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
+import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
@@ -157,13 +157,12 @@ function InsertLine({ className }: { className: string }) {
 
 export default function PlaceholderPage({ me, page, section }: PlaceholderPageProps) {
   const { title, note } = PAGES[page];
-  /** 当前板块：URL 是唯一来源（点标签栏 = 换地址），缺省 / 不认识的值回落到第一个板块。 */
-  const activeSection =
-    section !== null && TEMPLATE_SECTIONS.includes(section) ? section : (TEMPLATE_SECTIONS[0] ?? "");
+  /** 当前板块：URL 是唯一来源（点标签栏 = 换地址；`?section=` 取 ASCII slug，兼容旧链接的中文板块名），缺省 / 不认识的值回落到第一个板块。 */
+  const activeSection = templateSectionFromParam(section) ?? TEMPLATE_SECTIONS[0] ?? "";
 
-  // 地址里带的是不认识的板块（手改 / 旧链接）：落回第一个板块，并把地址一并纠正，避免「地址与显示不一致」
+  // 地址里的板块参数不是规范 slug（旧中文值 / 不认识的取值 / 手改）：落回对应板块，并把地址一并纠正成规范 slug，避免「地址与显示不一致」
   useEffect(() => {
-    if (page === "templates" && section !== null && !TEMPLATE_SECTIONS.includes(section)) {
+    if (page === "templates" && section !== null && section.trim() !== templateSectionSlug(activeSection)) {
       replaceTemplateSection(activeSection);
     }
   }, [page, section, activeSection]);
@@ -474,7 +473,7 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                     key={stage}
                     type="button"
                     onClick={() => replaceTemplateSection(stage)}
-                    title={"#/templates?section=" + stage}
+                    title={templateSectionHref(stage)}
                     aria-current={active ? "page" : undefined}
                     className={
                       "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
