@@ -55,10 +55,14 @@ export const DocTypeSchema = z.enum(DOC_TYPES).openapi("DocType", {
   description: "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）",
 });
 
-export const PRIORITY_VALUES = ["重要且紧急", "紧急但不重要", "重要不紧急", "不紧急不重要"] as const;
+/**
+ * 紧急重要度（Push 163 收敛）：**口径以前端页面为准** —— 三档「高 / 中 / 低」；
+ * 原四象限（重要且紧急 / 紧急但不重要 / 重要不紧急 / 不紧急不重要）不是业务定档值，已下线，见 字段对照清单.md。
+ */
+export const PRIORITY_VALUES = ["高", "中", "低"] as const;
 
 export const PrioritySchema = z.enum(PRIORITY_VALUES).openapi("Priority", {
-  description: "紧急重要度四象限字典",
+  description: "紧急重要度字典（三档：高 / 中 / 低）",
 });
 
 export const ProjectStatusSchema = z.enum(["active", "paused", "done", "archived"]).openapi("ProjectStatus", {

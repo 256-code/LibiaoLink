@@ -5,6 +5,9 @@
  * - 编辑 PATCH /api/v1/projects/{id}/tasks/{taskId}（乐观锁 version；status 只收基础三态，进度 / 完成日期同事务联动）
  * - 进度 PATCH /api/v1/projects/{id}/tasks/{taskId}/progress（四格五档；写回 < 1 是清完成日期的唯一方式）
  * - 删除 DELETE /api/v1/projects/{id}/tasks/{taskId}（软删；重复删除 / 已删任务的写 = 404）
+ * - 创建 POST /api/v1/projects/{id}/tasks（M3-07 · Push 163：从项目节点生成或手工临时任务）
+ * - 汇总 GET /api/v1/projects/{id}/summary（M3-07 · Push 163：项目总览四格）
+ * - 项目节点 GET /api/v1/projects/{id}/flow（M3-07 · Push 163：任务节点库 / 模板接口未落地，节点池取项目节点）
  * 契约 shared/src/modules/tasks.ts；UI 模型见 data/tasks.ts（ProjectTask）。
  */
 import { apiRequest, apiSend } from "./api";
@@ -51,10 +54,10 @@ export function baseStatusOf(status: TaskStatus): "pending" | "active" | "done" 
 }
 
 /**
- * 紧急重要度（Push 162 对齐契约）：页面四档 = 契约 PRIORITY_VALUES 四象限，一一对应、不折叠 ——
- * 演示期的「高 / 中 / 低」三档已下线（折叠写回会把「紧急但不重要」静默改成别的档，属改数据）。
+ * 紧急重要度三档（Push 163）：**页面口径为准**（高 / 中 / 低），契约 `PRIORITY_VALUES` 与库值同步收敛 ——
+ * 不再做「契约四象限 → 页面三档」的折算：页面值与契约值一一对应。
  */
-export const PRIORITY_VALUES: readonly TaskPriority[] = ["重要且紧急", "紧急但不重要", "重要不紧急", "不紧急不重要"];
+export const PRIORITY_VALUES: readonly TaskPriority[] = ["高", "中", "低"];
 
 /** 变更关联项（契约 TaskChangeLink）：列表 / 详情同形。 */
 export type ApiTaskChangeLink = { id: string; reason: string | null; appliedAt: string };
@@ -99,6 +102,71 @@ export type ApiTaskListResponse = { items: ApiTaskListItem[]; page: number; limi
 
 /** 列表一次取满（契约 limit 上限 200）；总数用响应 total，超出时页面另提示。 */
 export const TASK_PAGE_LIMIT = 200;
+
+/**
+ * 中文阶段名 → 契约阶段码（STAGE_LABELS 的反查）：创建任务时带 stageKey（服务端按来源节点再校验一致）。
+ * 展示层一律用中文名（STAGE_LABELS），写面一律用阶段码 —— 两边同源，避免第三份映射。
+ */
+export function stageKeyOfLabel(stage: string): string | null {
+  const hit = Object.entries(STAGE_LABELS).find(([, label]) => label === stage);
+  return hit === undefined ? null : hit[0];
+}
+
+/**
+ * 项目总览四格（契约 ProjectSummary；M3-07 · Push 163 接线）：当前阶段 = 项目 flow 的当前阶段（stageKey），
+ * 整体进度 / 已完成数 = 任务派生（done / total）。overdue 服务端照常下发，汇总卡一期不展示（见前端功能需求 §3.4）。
+ */
+export type ApiProjectSummary = { projectId: string; currentStage: string; overdue: number; done: number; total: number };
+
+export function fetchProjectSummary(projectId: string): Promise<ApiProjectSummary> {
+  return apiRequest<ApiProjectSummary>("/api/v1/projects/" + encodeURIComponent(projectId) + "/summary");
+}
+
+/**
+ * 项目流程节点（GET /projects/{id}/flow 里展平）：「添加任务」卡片的节点池数据源 ——
+ * 节点 = 项目导入蓝图时实例化的流程节点，任务由它生成（TaskCreateBody.taskNodeId，判重按节点）。
+ * 任务节点库 / 任务模板接口（A11：GET /task-nodes、GET /task-templates）后端尚未落地，本接口是当前唯一真节点来源。
+ */
+export type ApiProjectNode = { id: string; stageKey: string; name: string; seq: number; status: string };
+
+/** 契约 ProjectNode 里本项目用到的部分：**节点上没有 stageKey**（只有 stageId）—— 阶段码挂在父级 stage 上。 */
+type ApiProjectFlowNode = { id: string; name: string; seq: number; status: string };
+
+type ApiProjectFlow = { stages: { stageKey: string; nodes: ApiProjectFlowNode[] }[] };
+
+export async function fetchProjectNodes(projectId: string): Promise<ApiProjectNode[]> {
+  const flow = await apiRequest<ApiProjectFlow>("/api/v1/projects/" + encodeURIComponent(projectId) + "/flow");
+  const items: ApiProjectNode[] = [];
+  for (const stage of flow.stages) {
+    // 分组键取父级 stage.stageKey：节点只带 stageId，直接读 node.stageKey 会全是 undefined（Push 163 联调踩过）。
+    for (const node of stage.nodes) {
+      items.push({ id: node.id, stageKey: stage.stageKey, name: node.name, seq: node.seq, status: node.status });
+    }
+  }
+  return items.sort((left, right) => left.seq - right.seq);
+}
+
+/** 创建任务（契约 TaskCreateBody · M3-07 · Push 163）：从项目节点生成（带 taskNodeId，判重 409 TASK_ALREADY_EXISTS）或手工创建。 */
+export type TaskCreateBody = {
+  stageKey?: string | null;
+  sortIndex?: number;
+  title: string;
+  titleEn?: string | null;
+  taskNodeId?: string;
+  ownerIds?: string[];
+  plannedStart?: string | null;
+  plannedEnd?: string | null;
+  estimatedDays?: number | null;
+  headcount?: number | null;
+  priority?: string | null;
+  deliverableTypes?: string[];
+  note?: string | null;
+};
+
+export function createTask(projectId: string, body: TaskCreateBody): Promise<ApiTask> {
+  return apiSend<ApiTask>(taskPath(projectId), "POST", body);
+}
+
 
 function taskPath(projectId: string, taskId?: string): string {
   const base = "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks";
@@ -163,6 +231,7 @@ export function toUiTask(item: ApiTaskListItem | ApiTaskDetail, usernameOf?: Tas
     id: item.id,
     stage: item.stageKey === null ? "" : STAGE_LABELS[item.stageKey] ?? item.stageKey,
     stageKey: item.stageKey,
+    nodeId: item.nodeId,
     title: item.title,
     titleEn: item.titleEn ?? "",
     ownerIds: item.ownerIds,

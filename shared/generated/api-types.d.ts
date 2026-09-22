@@ -6108,10 +6108,10 @@ export interface components {
          */
         PreviewTarget: "pdf" | "image" | "structured" | null;
         /**
-         * @description 紧急重要度四象限字典
+         * @description 紧急重要度字典（三档：高 / 中 / 低）
          * @enum {string|null}
          */
-        Priority: "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要" | null;
+        Priority: "高" | "中" | "低" | null;
         /** @description 项目（v0.2 §2.3 projects） */
         Project: {
             id: components["schemas"]["Uuid"];
@@ -6479,7 +6479,7 @@ export interface components {
              * @description 批量改紧急重要度（A1-08）
              * @enum {string|null}
              */
-            priority?: "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要" | null;
+            priority?: "高" | "中" | "低" | null;
             note?: string | null;
         };
         /** @description 批量失败项（逐条校验结果；失败不影响同批成功项） */

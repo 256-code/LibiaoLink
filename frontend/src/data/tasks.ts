@@ -3,10 +3,10 @@ import type { Member } from "./members";
 export type TaskStatus = "已完成" | "提前完成" | "进行中" | "待开始" | "已延期";
 
 /**
- * 紧急重要度（Push 162 对齐契约 PRIORITY_VALUES 四象限）：页面值 = 契约值，一一对应、不折叠 ——
- * 演示期的「高 / 中 / 低」三档已下线（折叠写回会把「紧急但不重要」静默改成别的档）。
+ * 紧急重要度（三档：高 / 中 / 低）—— **页面口径为准**（Push 163：契约 `PRIORITY_VALUES` 与库值都已收敛到这三档，
+ * Push 162 跟着契约走的四象限是反的，已撤回）。未填 = null（表格 / 抽屉显示「—」）。
  */
-export type TaskPriority = "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要";
+export type TaskPriority = "高" | "中" | "低";
 
 /**
  * 变更关联记录（Push 154）：与契约 `Task.changeLinks: TaskChangeLink[]` 同形（id / 变更原因短文本 / 生效时间）。
@@ -66,6 +66,11 @@ export type ProjectTask = {
   deliverableTypes?: string[];
   /** 文件摘要（契约 fileSummary，列表不下发文件名）：列表「文件」列暂无文件名，抽屉按详情给。 */
   fileSummary?: { total: number; draft: number; final: number };
+  /**
+   * 来源任务节点（契约 nodeId，M3-07 · Push 163）：有值 = 这条任务由该节点生成 ——
+   * 「添加任务」卡片据此判「已添加」（同一节点在项目里只留一份，服务端 409 TASK_ALREADY_EXISTS 兜底）。
+   */
+  nodeId?: string | null;
   /** 服务端日期原值（ISO）：写回时兜年份，跨年任务不被换算成 TASK_DATE_YEAR。 */
   dateIso?: { start: string | null; due: string | null; done: string | null };
   /**
@@ -167,7 +172,7 @@ const FILES_BY_STAGE: Record<string, string[]> = {
   验收: ["验收单.pdf", "培训材料.pptx"],
 };
 
-const PRIORITY_CYCLE: TaskPriority[] = ["重要且紧急", "重要不紧急", "重要不紧急", "不紧急不重要", "重要不紧急", "重要且紧急"];
+const PRIORITY_CYCLE: TaskPriority[] = ["高", "中", "中", "低", "中", "高"];
 
 export const PROJECT_TASKS: ProjectTask[] = BASE_TASKS.map((task, index) => {
   const done = task.doneDate !== "" || task.progress >= 1;
@@ -175,7 +180,7 @@ export const PROJECT_TASKS: ProjectTask[] = BASE_TASKS.map((task, index) => {
   return {
     ...task,
     headcount: (HEADCOUNT_BY_STAGE[task.stage] ?? 4) + (index % 3),
-    priority: task.status === "进行中" ? "重要且紧急" : PRIORITY_CYCLE[index % PRIORITY_CYCLE.length],
+    priority: task.status === "进行中" ? "高" : PRIORITY_CYCLE[index % PRIORITY_CYCLE.length],
     files: done ? pool.slice(0, 2) : task.progress > 0 ? pool.slice(0, 1) : [],
   };
 });
