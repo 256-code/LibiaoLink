@@ -274,3 +274,83 @@ export const TaskCreateFromTemplateResponseSchema = z
       .openapi({ description: "skipExisting=true 时跳过的节点及其已存在的任务" }),
   })
   .openapi("TaskCreateFromTemplateResponse");
+
+/** 批量失败原因（A1-08：部分失败返回失败清单及原因；成功后失败项留在 failures，同批成功项照常生效）。 */
+export const TASK_BATCH_FAILURE_CODES = [
+  "not_found",
+  "archived",
+  "gate_not_passed",
+  "already_done",
+  "version_conflict",
+  "invalid_state",
+] as const;
+
+export const TaskBatchFailureCodeSchema = z.enum(TASK_BATCH_FAILURE_CODES).openapi("TaskBatchFailureCode", {
+  description:
+    "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败",
+});
+
+export const TaskBatchFailureSchema = z
+  .object({
+    id: UuidSchema.openapi({ description: "失败的任务 id（原样回传，前端按行标红）" }),
+    code: TaskBatchFailureCodeSchema,
+    message: z.string().openapi({ description: "失败原因（可直接展示）" }),
+    missing: z
+      .array(TaskGateMissingSchema)
+      .optional()
+      .openapi({ description: "code=gate_not_passed 时的缺件明细（与完成门禁同形：docType / required / present）" }),
+  })
+  .openapi("TaskBatchFailure", { description: "批量失败项（逐条校验结果；失败不影响同批成功项）" });
+
+/**
+ * 批量变更字段（白名单 · M3-04 / 系统功能书 A1-08）：批量指派负责人 / 改状态（含批量完成）/ 改日期 / 改重要度 / 改人数 / 改备注。
+ * 不含任务描述 / 成果文件（A1-17 生成后锁定）与组内位次（顺序调整是「插入位置」的逐条语义）；至少给一个键，否则 400 VALIDATION_FAILED。
+ * 语义与单条 TaskUpdateBody 一致（null = 清空该字段、缺键 = 不改）；status 只收基础三态，done 走同一完成门禁。
+ */
+export const TaskBatchChangesSchema = z
+  .object({
+    ownerIds: z.array(UuidSchema).optional().openapi({ description: "批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序）" }),
+    status: TaskBaseStatusSchema.optional().openapi({
+      description:
+        "批量改状态（基础三态）：done = 批量完成（逐条走同一完成门禁，缺件项进 failures 的 gate_not_passed）；服务端同事务联动进度与完成日期（口径同单条编辑）",
+    }),
+    plannedStart: DateOnlySchema.nullable().optional(),
+    plannedEnd: DateOnlySchema.nullable().optional().openapi({ description: "批量改期（开始 / 预计完成）；提醒重算随 C2 规则引擎（i8 / i9）" }),
+    estimatedDays: z.number().int().min(0).nullable().optional(),
+    headcount: z.number().int().min(0).nullable().optional(),
+    priority: PrioritySchema.nullable().optional().openapi({ description: "批量改紧急重要度（A1-08）" }),
+    note: z.string().max(2000).nullable().optional(),
+  })
+  .openapi("TaskBatchChanges", {
+    description: "批量变更字段（白名单；语义同单条编辑：null = 清空、缺键 = 不改；至少给一个键）",
+  });
+
+/** 批量操作请求（M3-04）：ids（1~100，重复 id 只处理一次）+ 同一组变更。 */
+export const TaskBatchBodySchema = z
+  .object({
+    ids: z
+      .array(UuidSchema)
+      .min(1)
+      .max(100)
+      .openapi({ description: "目标任务 id（1~100；重复 id 去重后按首次出现顺序逐条处理；不属于本项目的 id 计为该条 not_found，不影响同批其它项）" }),
+    changes: TaskBatchChangesSchema,
+  })
+  .openapi("TaskBatchBody", {
+    description: "批量操作（系统功能书 A1-08）：逐条校验 + 逐条独立事务（避免长事务）；部分失败返回失败清单，成功项照常生效",
+  });
+
+export const TaskBatchResponseSchema = z
+  .object({
+    total: z.number().int().min(0).openapi({ description: "去重后的目标条数" }),
+    succeededCount: z.number().int().min(0),
+    failedCount: z.number().int().min(0),
+    succeeded: z.array(TaskSchema).openapi({ description: "成功项（更新后的任务全量视图，前端按行替换）" }),
+    failures: z.array(TaskBatchFailureSchema).openapi({ description: "失败项清单（含原因；顺序 = 处理顺序）" }),
+  })
+  .openapi("TaskBatchResponse", { description: "批量操作结果（整体 200：部分失败不影响成功项，失败清单给出逐条原因）" });
+
+export type TaskBatchFailureCode = z.infer<typeof TaskBatchFailureCodeSchema>;
+export type TaskBatchFailure = z.infer<typeof TaskBatchFailureSchema>;
+export type TaskBatchChanges = z.infer<typeof TaskBatchChangesSchema>;
+export type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
+export type TaskBatchResponse = z.infer<typeof TaskBatchResponseSchema>;

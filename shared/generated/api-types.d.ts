@@ -974,6 +974,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/tasks/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 任务批量操作（A1-08：批量指派 / 改状态 / 改日期 / 批量完成；逐条校验 + 部分失败清单） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskBatchBody"];
+                };
+            };
+            responses: {
+                /** @description 批量结果（succeeded + failures；部分失败不影响成功项） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskBatchResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/api/v1/projects/{id}/tasks/from-template": {
         parameters: {
             query?: never;
@@ -5686,6 +5759,57 @@ export interface components {
          * @enum {string}
          */
         TaskBaseStatus: "pending" | "active" | "done";
+        /** @description 批量操作（系统功能书 A1-08）：逐条校验 + 逐条独立事务（避免长事务）；部分失败返回失败清单，成功项照常生效 */
+        TaskBatchBody: {
+            /** @description 目标任务 id（1~100；重复 id 去重后按首次出现顺序逐条处理；不属于本项目的 id 计为该条 not_found，不影响同批其它项） */
+            ids: components["schemas"]["Uuid"][];
+            changes: components["schemas"]["TaskBatchChanges"];
+        };
+        /** @description 批量变更字段（白名单；语义同单条编辑：null = 清空、缺键 = 不改；至少给一个键） */
+        TaskBatchChanges: {
+            /** @description 批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序） */
+            ownerIds?: components["schemas"]["Uuid"][];
+            status?: components["schemas"]["TaskBaseStatus"] & unknown;
+            plannedStart?: components["schemas"]["DateOnly"] & (string | null);
+            /**
+             * Format: date
+             * @description 批量改期（开始 / 预计完成）；提醒重算随 C2 规则引擎（i8 / i9）
+             */
+            plannedEnd?: string | null;
+            estimatedDays?: number | null;
+            headcount?: number | null;
+            /**
+             * @description 批量改紧急重要度（A1-08）
+             * @enum {string|null}
+             */
+            priority?: "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要" | null;
+            note?: string | null;
+        };
+        /** @description 批量失败项（逐条校验结果；失败不影响同批成功项） */
+        TaskBatchFailure: {
+            id: components["schemas"]["Uuid"] & unknown;
+            code: components["schemas"]["TaskBatchFailureCode"];
+            /** @description 失败原因（可直接展示） */
+            message: string;
+            /** @description code=gate_not_passed 时的缺件明细（与完成门禁同形：docType / required / present） */
+            missing?: components["schemas"]["TaskGateMissing"][];
+        };
+        /**
+         * @description 批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败
+         * @enum {string}
+         */
+        TaskBatchFailureCode: "not_found" | "archived" | "gate_not_passed" | "already_done" | "version_conflict" | "invalid_state";
+        /** @description 批量操作结果（整体 200：部分失败不影响成功项，失败清单给出逐条原因） */
+        TaskBatchResponse: {
+            /** @description 去重后的目标条数 */
+            total: number;
+            succeededCount: number;
+            failedCount: number;
+            /** @description 成功项（更新后的任务全量视图，前端按行替换） */
+            succeeded: components["schemas"]["Task"][];
+            /** @description 失败项清单（含原因；顺序 = 处理顺序） */
+            failures: components["schemas"]["TaskBatchFailure"][];
+        };
         /** @description 完成预检（canComplete=false 时 missing 给缺件明细） */
         TaskCanCompleteResponse: {
             canComplete: boolean;
