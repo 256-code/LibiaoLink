@@ -1,7 +1,9 @@
+import { clearSavedFilters } from "./savedFilters";
 import type { ListQueryState } from "./useHashRoute";
 
 /**
  * 首页偏好本地记忆（A1-18「记忆并恢复用户上次选择」：URL 优先、本地次之）。
+ * 「常用筛选」的组合库另存一个键（frontend/src/savedFilters.ts），退出登录时一并清除。
  *
  * - 记忆范围：地区 / 项目类型 / 项目经理 / 时间区间 / 排序，以及分类筛选侧边栏开合；
  *   关键字（q）属于临时操作，不写入记忆。
@@ -138,11 +140,12 @@ export function saveSidebarPref(open: boolean): void {
   writeStore(store);
 }
 
-/** 清除全部本地记忆（退出登录时调用）。 */
+/** 清除全部本地记忆（退出登录时调用）：筛选 / 侧栏开合 + 「常用筛选」（同一隔离口径）。 */
 export function clearHomePrefs(): void {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
     // 与写入同一降级策略
   }
+  clearSavedFilters();
 }
