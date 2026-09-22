@@ -1610,13 +1610,13 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位） */
+                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） */
                     objectType?: components["schemas"]["AuditObjectType"];
                     /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
                     objectId?: string;
                     /** @description 操作人（按人检索 —— h7 验收项②） */
                     actorId?: components["schemas"]["Uuid"] & unknown;
-                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝 */
+                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / deny 越权拒绝 */
                     action?: components["schemas"]["AuditAction"];
                     /** @description result=denied 即越权尝试（C7-03） */
                     result?: components["schemas"]["AuditResult"] & unknown;
@@ -3412,6 +3412,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 预览状态与短时签名地址（D2：异步产物；未就绪 / 失败为 200 语义，not_ready 幂等补投，失败降级「请下载」） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 指定历史版本（A4-06）；缺省 = 当前版本；不属于该文件 / 不存在 → 404 */
+                    versionId?: components["schemas"]["Uuid"] & unknown;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 预览状态（ready / not_ready / failed） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FilePreviewResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/change-requests": {
         parameters: {
             query?: never;
@@ -4216,10 +4267,10 @@ export interface components {
             traceId: string;
         };
         /**
-         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / deny 越权拒绝
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / deny 越权拒绝
          * @enum {string}
          */
-        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "deny";
+        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "preview" | "deny";
         /** @description 字段级修改条目（C7-02） */
         AuditChange: {
             /** @description 字段名（契约口径 camelCase） */
@@ -4265,10 +4316,10 @@ export interface components {
             total: number;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
@@ -4651,6 +4702,21 @@ export interface components {
             limit: number;
             total: number;
         };
+        /** @description 文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed） */
+        FilePreviewResponse: {
+            fileId: components["schemas"]["Uuid"];
+            versionId: components["schemas"]["Uuid"] & (string | null);
+            status: components["schemas"]["PreviewStatus"];
+            target: components["schemas"]["PreviewTarget"];
+            /** @description 短时签名预览地址（仅 ready；未就绪 / 失败为空；对象存储禁止匿名读取） */
+            url: string | null;
+            expiresAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 产物对应的转换管线版本（服务端配置下发，如 PREVIEW_PIPELINE_VERSION；客户端不解析，用于缓存失效 / 排障）；未生成过为空 */
+            pipelineVersion: string | null;
+            /** @description 失败原因（仅 failed，最长 500 字；D2-05 记录原因，不影响下载） */
+            reason: string | null;
+            generatedAt: components["schemas"]["DateTime"] & (string | null);
+        };
         /** @description 彻底删除（仅管理员；对象与元数据一并清理，操作留痕） */
         FilePurgeBody: {
             version: components["schemas"]["Version"];
@@ -4770,6 +4836,16 @@ export interface components {
         PermissionMeResponse: {
             permissions: components["schemas"]["ActorPermissions"];
         };
+        /**
+         * @description 预览状态：ready 产物就绪（附短时签名 URL） / not_ready 尚未生成（服务端幂等补投生成任务、按三元组去重，前端轮询至 ready / failed —— 不引入请求约定） / failed 转换失败（记原因并降级「请下载」）
+         * @enum {string}
+         */
+        PreviewStatus: "ready" | "not_ready" | "failed";
+        /**
+         * @description 已就绪产物的目标（渲染通道）；未就绪 / 失败为空
+         * @enum {string|null}
+         */
+        PreviewTarget: "pdf" | "image" | "structured" | null;
         /**
          * @description 紧急重要度四象限字典
          * @enum {string|null}

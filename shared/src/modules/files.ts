@@ -288,6 +288,59 @@ export const FileDownloadUrlResponseSchema = z
   })
   .openapi("FileDownloadUrlResponse");
 
+/**
+ * 预览目标（渲染通道口径 · wmj 评审定案 · PR #103）：按前端渲染方式定义，不按文件格式；格式差异由产物 MIME 表达。
+ * 缓存键 = 内容哈希 + pipelineVersion + target（ADR-007 / v0.2 §5.4 三元组）。
+ * pdf = PDF 查看器通道（Office / PDF 转出；CAD 产物格式随 M4-06 PoC 定）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
+ */
+export const PREVIEW_TARGETS = ["pdf", "image", "structured"] as const;
+export const PreviewTargetSchema = z.enum(PREVIEW_TARGETS).openapi("PreviewTarget", {
+  description:
+    "预览目标（渲染通道）：pdf PDF 查看器通道（Office / PDF 转出；CAD 若 PoC 产物为 PDF 也走这里） / image 图片查看器通道（图片直出、Office 图片型兜底、含矢量 SVG 产物 —— CAD 若 PoC 只能出 SVG 也走这里） / structured 结构化表格渲染通道（一期未启用时 xlsx 走 pdf 通道）",
+});
+
+/**
+ * 预览状态（D2-05：未就绪与失败都是 200 语义，不是失败响应 —— 前端据此置占位 / 降级「请下载」）。
+ * ready 时 url 必填；not_ready / failed 时 url 为空。
+ */
+export const PREVIEW_STATUSES = ["ready", "not_ready", "failed"] as const;
+export const PreviewStatusSchema = z.enum(PREVIEW_STATUSES).openapi("PreviewStatus", {
+  description:
+    "预览状态：ready 产物就绪（附短时签名 URL） / not_ready 尚未生成（服务端幂等补投生成任务、按三元组去重，前端轮询至 ready / failed —— 不引入请求约定） / failed 转换失败（记原因并降级「请下载」）",
+});
+
+/** 预览查询参数（A4-06：任意历史版本可预览与下载；缺省 = 当前版本；不属于该文件 / 不存在 → 404）。 */
+export const FilePreviewQuerySchema = z
+  .object({
+    versionId: UuidSchema.optional().openapi({ description: "指定历史版本（A4-06）；缺省 = 当前版本；不属于该文件 / 不存在 → 404" }),
+  })
+  .openapi("FilePreviewQuery");
+
+/** 预览状态响应（GET /files/{id}/preview；D2-04 短时签名 + 禁止匿名读取、D2-05 失败降级、D2-06 缓存、D2-07 审计）。 */
+export const FilePreviewResponseSchema = z
+  .object({
+    fileId: UuidSchema,
+    versionId: UuidSchema.nullable().openapi({ description: "本次预览对应版本（查询参数指定时随指定，缺省 = 当前版本）；无版本为空" }),
+    status: PreviewStatusSchema,
+    target: PreviewTargetSchema.nullable().openapi({ description: "已就绪产物的目标（渲染通道）；未就绪 / 失败为空" }),
+    url: z
+      .string()
+      .nullable()
+      .openapi({ description: "短时签名预览地址（仅 ready；未就绪 / 失败为空；对象存储禁止匿名读取）" }),
+    expiresAt: DateTimeSchema.nullable().openapi({ description: "签名到期时间；未就绪 / 失败为空" }),
+    pipelineVersion: z
+      .string()
+      .nullable()
+      .openapi({ description: "产物对应的转换管线版本（服务端配置下发，如 PREVIEW_PIPELINE_VERSION；客户端不解析，用于缓存失效 / 排障）；未生成过为空" }),
+    reason: z
+      .string()
+      .max(500)
+      .nullable()
+      .openapi({ description: "失败原因（仅 failed，最长 500 字；D2-05 记录原因，不影响下载）" }),
+    generatedAt: DateTimeSchema.nullable().openapi({ description: "产物生成时间（仅 ready；对齐 preview_artifacts.generated_at —— 查看时间在审计里）" }),
+  })
+  .openapi("FilePreviewResponse", { description: "文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed）" });
+
 export const FileListQuerySchema = z
   .object({
     "filter[nodeId]": UuidSchema.optional(),
