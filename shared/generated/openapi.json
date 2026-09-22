@@ -4454,6 +4454,46 @@
         ],
         "description": "任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要）"
       },
+      "TaskLockedFieldsAdjustBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "例外调整原因（必填并留痕；A1-17 / C9-07）"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "任务描述（中文；锁定字段 —— 仅管理员例外修正）"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "任务描述（英文；锁定项；null = 清空）"
+          },
+          "deliverableTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocType"
+            },
+            "description": "要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）"
+          }
+        },
+        "required": [
+          "version",
+          "reason"
+        ],
+        "description": "锁定字段例外调整（仅系统管理员）：至少给出一个实际变化的字段，否则 400；原因必填并留痕（审计 + task.locked_fields_adjusted）"
+      },
       "TaskNode": {
         "type": "object",
         "properties": {
@@ -6766,6 +6806,95 @@
           },
           "400": {
             "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}/locked-fields": {
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "锁定字段例外调整（仅系统管理员 · A1-17 / C9-07）：任务描述 / 输出成果文件生成后锁定，确需修正时原因必填并留痕（审计 + outbox）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskLockedFieldsAdjustBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "调整后的任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
             "content": {
               "application/json": {
                 "schema": {

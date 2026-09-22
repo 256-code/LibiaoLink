@@ -1090,6 +1090,87 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/projects/{id}/tasks/{taskId}/locked-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 锁定字段例外调整（仅系统管理员 · A1-17 / C9-07）：任务描述 / 输出成果文件生成后锁定，确需修正时原因必填并留痕（审计 + outbox） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskLockedFieldsAdjustBody"];
+                };
+            };
+            responses: {
+                /** @description 调整后的任务 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/api/v1/projects/{id}/tasks/from-template": {
         parameters: {
             query?: never;
@@ -5982,6 +6063,18 @@ export interface components {
             page: number;
             limit: number;
             total: number;
+        };
+        /** @description 锁定字段例外调整（仅系统管理员）：至少给出一个实际变化的字段，否则 400；原因必填并留痕（审计 + task.locked_fields_adjusted） */
+        TaskLockedFieldsAdjustBody: {
+            version: components["schemas"]["Version"];
+            /** @description 例外调整原因（必填并留痕；A1-17 / C9-07） */
+            reason: string;
+            /** @description 任务描述（中文；锁定字段 —— 仅管理员例外修正） */
+            title?: string;
+            /** @description 任务描述（英文；锁定项；null = 清空） */
+            titleEn?: string | null;
+            /** @description 要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
+            deliverableTypes?: components["schemas"]["DocType"][];
         };
         /** @description 任务节点库条目（任务模板的节点来源） */
         TaskNode: {

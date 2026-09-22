@@ -386,3 +386,24 @@ export const TaskDeleteResponseSchema = z
   });
 
 export type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
+
+/**
+ * 锁定字段例外调整（A1-17 / C9-07 · M3-05 · Push 153）：任务描述、输出成果文件按流程节点模板生成后锁定，
+ * 常规编辑（PATCH /tasks/{taskId}）不可达；确需修正时由**系统管理员**执行「例外调整」—— 原因必填并留痕（模板本身由管理员修正，C9-07）。
+ * 「阶段性里程」一期任务无对应列（A1-17 映射修订），故 body 只开放下述三项。
+ */
+export const TaskLockedFieldsAdjustBodySchema = z
+  .object({
+    version: VersionSchema,
+    reason: z.string().min(1).max(500).openapi({ description: "例外调整原因（必填并留痕；A1-17 / C9-07）" }),
+    title: z.string().min(1).max(200).optional().openapi({ description: "任务描述（中文；锁定字段 —— 仅管理员例外修正）" }),
+    titleEn: z.string().max(200).nullable().optional().openapi({ description: "任务描述（英文；锁定项；null = 清空）" }),
+    deliverableTypes: z.array(DocTypeSchema).optional().openapi({
+      description:
+        "要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）",
+    }),
+  })
+  .openapi("TaskLockedFieldsAdjustBody", {
+    description:
+      "锁定字段例外调整（仅系统管理员）：至少给出一个实际变化的字段，否则 400；原因必填并留痕（审计 + task.locked_fields_adjusted）",
+  });

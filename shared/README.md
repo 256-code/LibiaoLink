@@ -90,6 +90,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 任务状态可写（A12） | `PATCH /projects/{id}/tasks/{taskId}` 开放可选 `status`（基础三态 `pending` / `active` / `done`）；服务端同事务回填进度与完成日期：done → `progress=1` 且 `actualEnd` 缺省按当天；active → 进度至少 1 格（0 → 0.25、满格 → 0.75）并清 `actualEnd`；pending → 进度 0 并清 `actualEnd`；「已延期 / 提前完成」是派生展示态、不可写（提交 400）且派生优先 |
 | 进度与完成日期（A13） | 进度为离散五档 `0 / 0.25 / 0.5 / 0.75 / 1`（迁移 / 演示数据的任意小数先归一，如 0.49 → 0.5）；`progress<1` 服务端一律清空 `actual_end`（清除完成日期的唯一方式）；`progress=1` 且缺省按当天（Asia/Shanghai）写入；完成日期不进 `PATCH /tasks/{taskId}` |
 | 是否按时交付（A14） | 服务端读时派生 `onTime`：完成且不晚于 `plannedEnd` → true；完成晚于 `plannedEnd`（或完成未填日期且已过 `plannedEnd`）→ false；未完成且已过 `plannedEnd` → false + `displayStatus=overdue`（逾期未交付）；派生不出回落迁移存储值，仍无则 `null`；前端「逾期未交付 / 逾期已交付」标签由 `onTime` + `displayStatus` 渲染，不再本地派生 |
+| 锁定字段例外调整（A1-17 / C9-07 · M3-05 续卡 · Push 153） | `PATCH /projects/{id}/tasks/{taskId}/locked-fields`：任务描述（`title`）/ 英文描述（`titleEn`）/ 输出成果文件（`deliverableTypes`）按模板生成后锁定 —— 常规编辑与批量均不含该三项；确需修正时**仅系统管理员**可例外调整、`reason` 必填（1~500）并留痕（审计 `action=update` changes=锁定字段 diff + outbox `task.locked_fields_adjusted`，不写 `task_events`）；至少一个实际变化（空调整 400）；「阶段性里程」一期 `tasks` 表无列，本期不开放（A1-17 映射修订，差异登记） |
 | 任务删除（A25 · M3-05 · Push 152） | `DELETE /api/v1/projects/{id}/tasks/{taskId}`：软删（`tasks.deleted_at` / `deleted_by`）—— 列表 / 看板 / 甘特图 / 详情 / 完成门禁一律不可见 + 写留痕；响应 `TaskDeleteResponse = { id, deleted: true }`；**重复删除与已删任务上的任何写操作 = 统一 404**（记录级 404 语义，不新增错误码）；**已有变更关联（`change_refs` 非空）409 `TASK_HAS_REFERENCES`**（系统功能书 A2-01「已产生日报 / 问题 / 变更的任务不允许删除，只能关闭或标记」；日报 / 问题两表随 M5 落地后在守卫处一并加判定）；组内位次同事务压缩、来源节点约束随软删释放（同节点可重建）；权限键 `task.update`（与编辑同一权限位） |
 | 任务批量操作（A1-08 · M3-04 · Push 150） | `PATCH /projects/{id}/tasks/batch`：同一组变更应用到 1~100 个 id（重复去重、按首次出现顺序）；`changes` 白名单 = ownerIds / status（三态，done = 批量完成，走同一完成门禁）/ plannedStart / plannedEnd / estimatedDays / headcount / priority / note（语义同单条：null = 清空、缺键 = 不改；不含任务描述 / 成果文件（A1-17 锁定）与 sortIndex）；**逐条独立事务**防长事务，条目级可预期错误降级为 `failures[]`（not_found / archived / gate_not_passed + missing / already_done / version_conflict / invalid_state），成功项照常生效、整体 200；空 changes 400、归档项目入口 409；审计双层：批次一条（`project` 域，summary + metadata = batchId / taskIds / changedFields / 计数 / failures[]，A1-08「整体写审计日志」）+ 逐条字段级一条（`metadata.entry = batch` + 同批 `batchId`）；门禁拒绝沿用 outbox `task.gate_rejected` + 审计 failed |
 
@@ -110,9 +111,11 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 > **本表状态（Push 152 · M3-05 任务软删）**：新增 `DELETE /api/v1/projects/{id}/tasks/{taskId}`（tags=tasks）—— 响应 `TaskDeleteResponse`（`{ id, deleted: true }`；软删只回标记，前端列表本地移除即可）；**错误码新增 409 `TASK_HAS_REFERENCES`**（已有变更关联的任务不允许删除，系统功能书 A2-01；`details[].code = change_ref` 带 `changeRequestId`）—— 重复删除与已删任务上的一切写操作沿用**统一 404**（不新增错误码，记录级 404 语义）；生成物已重出（**paths = 67 不变**（delete 与既有 `/tasks/{taskId}` 同路径、仅增方法）、**schemas = 165**（+`TaskDeleteResponse`），`npm run check` 零漂移）。
 
+> **本表状态（Push 153 · M3-05 续卡 · 锁定字段例外调整 A1-17 / C9-07）**：新增 `PATCH /api/v1/projects/{id}/tasks/{taskId}/locked-fields`（tags=tasks）—— body `TaskLockedFieldsAdjustBody`（`version` + `reason` 必填 1~500 + 可选 `title` / `titleEn` / `deliverableTypes`；服务端至少一个实际变化，否则 400 `VALIDATION_FAILED`）+ 200 返回 `Task`；**仅系统管理员**（非管理员 403，复用既有 `FORBIDDEN` 与控制器 `task.update` 上下文门禁）；**错误码零新增**（409 `VERSION_CONFLICT` / `PROJECT_ARCHIVED`、404 统一）；生成物已重出（**paths = 68**（+1）、**schemas = 166**（+`TaskLockedFieldsAdjustBody`）），`npm run check` 零漂移。
+
 > 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
-> 现状（契约切片 · Push 152 · M3-05 后）：**paths = 67、schemas = 165**（Push 89 · h4 基线 49 / 117；此后 h6 / h7 / h8 / M4-01~03 / M4-04-05 前置切片 / M3-03 / j6 / PR-7 变更关联多条 / M3-04 累计），生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
-> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / 删除 / from-template / 完成与预检 / 批量 / 变更关联多条）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更 / 文件库列表 GET /projects/{id}/files（M4-03 起用）/ 预览 GET /files/{id}/preview（M4-04-05 前置切片入，含可选 versionId））、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）、stakeholders（干系人台账 CRUD + 项目关联与反查 · j6）。
+> 现状（契约切片 · Push 153 · 锁定字段例外调整后）：**paths = 68、schemas = 166**（Push 89 · h4 基线 49 / 117；此后 h6 / h7 / h8 / M4-01~03 / M4-04-05 前置切片 / M3-03 / j6 / PR-7 变更关联多条 / M3-04 / M3-05 锁定字段例外调整 累计），生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
+> 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / 删除 / 锁定字段例外调整 / from-template / 完成与预检 / 批量 / 变更关联多条）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更 / 文件库列表 GET /projects/{id}/files（M4-03 起用）/ 预览 GET /files/{id}/preview（M4-04-05 前置切片入，含可选 versionId））、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发）、stakeholders（干系人台账 CRUD + 项目关联与反查 · j6）。
 
 ### M1 身份与平台底座（h1 + 平台）
 
@@ -142,7 +145,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | M3-02 进度与状态 | 已入（A12~A14）并 HTTP 落地（Push 89）；系统置位无契约变化（ADR-025，随调度卡片 i5）；新增 409 `TASK_ALREADY_EXISTS`（`taskNodeId` 判重） | 无 / 错误码 |
 | M3-03 完成门禁 | **已入并 HTTP 落地（Push 143）**：新增 `GET /projects/{id}/tasks/{taskId}/can-complete` + `POST …/complete`；`422 TASK_REQUIRED_DOC_MISSING` + `{ missing[], warnings[] }`、409 `TASK_ALREADY_DONE`；`deliverableTypes` 多值同批落地（A4-20 / ADR-024） | 端点 / 错误码 / 字段 |
 | M3-04 批量操作 | **已入并 HTTP 落地（Push 150）**：`PATCH /projects/{id}/tasks/batch`（`TaskBatchBody` / `TaskBatchChanges` / `TaskBatchResponse` + `TaskBatchFailureCode` 六值；字段白名单 + 逐条独立事务 + 部分失败清单 `failures[]`，批量完成走同一门禁） | 端点 |
-| M3-05 模板锁定与修正 | `deliverableTypes: DocType[]` **已随 M3-03 落地（Push 143）**；余「模板锁定字段修正需原因 / 例外调整留痕」（ADR-024 / A1-17）—— 与本行同卡的**任务软删（A25）已落 Push 152**（见下行） | 字段 |
+| M3-05 模板锁定与修正 | `deliverableTypes: DocType[]` **已随 M3-03 落地（Push 143）**；锁定字段例外调整（描述 / 英文描述 / 输出成果文件：仅管理员 + 原因必填留痕 + 空调整 400）**已落 Push 153**（`PATCH …/locked-fields` + `TaskLockedFieldsAdjustBody`；ADR-024 / A1-17；「阶段性里程」一期无列，差异登记）—— 与本行同卡的**任务软删（A25）已落 Push 152**（见下行） | 字段 |
 | 任务软删（A25） | **已入并 HTTP 落地（Push 152）**：`DELETE /projects/{id}/tasks/{taskId}` + `TaskDeleteResponse` + 409 `TASK_HAS_REFERENCES`；**引用口径按系统功能书 A2-01** —— 已产生变更（`change_refs` 非空）的任务不允许删除（日报 / 问题随 M5 落表后加判定），**不是「任意引用一律拒绝」**；重复删除 = 统一 404（原「被引用即拒绝 + `TASK_DELETED` 501 语义」建议作废） | 端点 / 错误码 |
 | 流程节点（h3） | 节点增删已入；权限口径按 ADR-020（403 语义声明，无字段变化） | 说明 |
 
@@ -194,7 +197,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | ADR-021 负责人标识 | Task 族 `ownerIds` 数组（空数组 = 待分配，A23 · Push 136 多位）+ `ownerNames` 同下标数组；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
 | ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层） | M2-04 |
 | ADR-023 阶段推进 | 已入（Push 83）：stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` + 缺项明细 | M2-03 |
-| ADR-024 成果文件 | **已入（Push 143）**：`deliverableTypes` 数组 + 完成 / 预检端点 + `TASK_REQUIRED_DOC_MISSING` / `TASK_ALREADY_DONE`；例外调整留痕随 M3-05 | M3-03（已落）/ M3-05 |
+| ADR-024 成果文件 | **已入（Push 143）**：`deliverableTypes` 数组 + 完成 / 预检端点 + `TASK_REQUIRED_DOC_MISSING` / `TASK_ALREADY_DONE`；锁定字段例外调整留痕 **已落 Push 153**（仅管理员 + `reason` 必填） | M3-03（已落）/ M3-05（已落） |
 | ADR-025 进行中置位 | 无契约变化（系统作业） | M3-02 |
 | ADR-026 问题 SLA | `Issue.dueAt` | M6 |
 | ADR-027 归档 | archive 端点 + `PROJECT_ARCHIVED` | M6 / M7 |

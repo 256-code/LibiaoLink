@@ -12,6 +12,7 @@ import {
   TaskListItemSchema,
   TaskListQuerySchema,
   TaskListResponseSchema,
+  TaskLockedFieldsAdjustBodySchema,
   TaskProgressUpdateBodySchema,
   TaskSchema,
   TaskUpdateBodySchema,
@@ -29,6 +30,7 @@ type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
 type TaskCompleteBody = z.infer<typeof TaskCompleteBodySchema>;
 type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
+type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchema>;
 
 const uuidParam = new ZodValidationPipe(UuidSchema);
 
@@ -116,6 +118,21 @@ export class TaskController {
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskDeleteResponseSchema>> {
     return this.tasks.remove(id, taskId, actorId);
+  }
+
+  /**
+   * 锁定字段例外调整（M3-05 · A1-17 / C9-07 · Push 153）：任务描述 / 输出成果文件生成后锁定；
+   * 确需修正时仅系统管理员可执行，原因必填并留痕（服务端 assertAdmin 复核，非管理员 403）。
+   */
+  @Patch(":id/tasks/:taskId/locked-fields")
+  @RequirePermission("task.update")
+  adjustLockedFields(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+    @Body(new ZodValidationPipe(TaskLockedFieldsAdjustBodySchema)) body: TaskLockedFieldsAdjustBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskSchema>> {
+    return this.tasks.adjustLockedFields(id, taskId, body, actorId);
   }
 
   /** 完成预检（M3-03）：门禁缺件与放行提示（UI 置灰依据；服务端仍在事务内强校验）。 */
