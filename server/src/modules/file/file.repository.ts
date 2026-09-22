@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, lte, ne, notInArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, lte, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -7,6 +7,7 @@ import { fileLinks, files, fileVersions, uploadSessions } from "../../db/schema/
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectStages, projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
+import type { ChangeRequestListFilter, ChangeRequestSort } from "./change.query.js";
 import type { FileListFilter, FileListSort } from "./file.query.js";
 
 /**
@@ -41,6 +42,27 @@ export type FileRow = typeof files.$inferSelect;
 export type FileVersionRow = typeof fileVersions.$inferSelect;
 export type UploadSessionRow = typeof uploadSessions.$inferSelect;
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
+
+/**
+ * 变更记录读面行（M4-04 读面）：变更本体 + 由 `file_versions.change_request_id` 反查的变更后文件 / 版本。
+ * 一期「一变更一版本」（写入切片在同一事务落库），读面因此用内连接 —— 数据面不允许存在「无版本的变更记录」。
+ */
+export interface ChangeRequestJoinedRow {
+  id: string;
+  projectId: string;
+  nodeId: string | null;
+  stageKey: string | null;
+  reason: string;
+  beforeSummary: string | null;
+  afterSummary: string | null;
+  status: string;
+  appliedBy: string;
+  appliedAt: Date;
+  createdAt: Date;
+  fileId: string;
+  versionId: string;
+  versionSeq: number;
+}
 
 export interface FileInsertInput {
   projectId: string;
@@ -494,6 +516,50 @@ export class FileRepository {
     return { items, total: Number(totals[0]?.value ?? 0) };
   }
 
+  /**
+   * 变更记录列表（M4-04 读面 · A4-15）：项目 + 多值阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页；
+   * `total` 与 items 走同一 where（分页元数据一致）。fileId / versionId / versionSeq 由 file_versions 反查
+   * （migration 0021 的部分索引 ix_file_versions_change_request）。
+   */
+  async listChangeRequests(
+    projectId: string,
+    filter: ChangeRequestListFilter,
+    sorts: readonly ChangeRequestSort[],
+    limit: number,
+    offset: number,
+    client: DbClient = this.database.db,
+  ): Promise<{ items: ChangeRequestJoinedRow[]; total: number }> {
+    const where = and(...changeRequestConditions(projectId, filter));
+    const items = await client
+      .select(CHANGE_REQUEST_SELECT)
+      .from(changeRequests)
+      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .where(where)
+      .orderBy(...changeRequestOrderBy(sorts))
+      .limit(limit)
+      .offset(offset);
+    const totals = await client
+      .select({ value: count() })
+      .from(changeRequests)
+      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .where(where);
+    return { items, total: Number(totals[0]?.value ?? 0) };
+  }
+
+  /** 变更记录单条（M4-04 读面 · 详情）：不存在 → null；可见性由服务层按 projectId 判定（不可见统一 404）。 */
+  async findChangeRequestJoinedById(
+    changeRequestId: string,
+    client: DbClient = this.database.db,
+  ): Promise<ChangeRequestJoinedRow | null> {
+    const rows = await client
+      .select(CHANGE_REQUEST_SELECT)
+      .from(changeRequests)
+      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .where(eq(changeRequests.id, changeRequestId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   /** 文件 → 关联（双向跳转读面；供日报 / 问题 / 变更模块与内部核对使用）。 */
   async listFileLinks(fileId: string, client: DbClient = this.database.db): Promise<FileLinkRow[]> {
     return client
@@ -529,6 +595,64 @@ export class FileRepository {
       )
       .onConflictDoNothing();
   }
+}
+
+/** 变更记录读面列（变更本体 + 反查的文件 / 版本；与 ChangeRequestJoinedRow 同形）。 */
+const CHANGE_REQUEST_SELECT = {
+  id: changeRequests.id,
+  projectId: changeRequests.projectId,
+  nodeId: changeRequests.nodeId,
+  stageKey: changeRequests.stageKey,
+  reason: changeRequests.reason,
+  beforeSummary: changeRequests.beforeSummary,
+  afterSummary: changeRequests.afterSummary,
+  status: changeRequests.status,
+  appliedBy: changeRequests.appliedBy,
+  appliedAt: changeRequests.appliedAt,
+  createdAt: changeRequests.createdAt,
+  fileId: fileVersions.fileId,
+  versionId: fileVersions.id,
+  versionSeq: fileVersions.seq,
+} as const;
+
+/**
+ * 变更记录列表条件（M4-04 读面）：项目内 + 阶段多值（OR）/ 节点 / 变更文件 / 申请人 + 关键字
+ * （变更原因 + 变更前后摘要，ILIKE 转义同文件库口径）。
+ */
+function changeRequestConditions(projectId: string, filter: ChangeRequestListFilter): SQL[] {
+  const conditions: SQL[] = [eq(changeRequests.projectId, projectId)];
+  if (filter.stageKeys !== null) conditions.push(inArray(changeRequests.stageKey, filter.stageKeys));
+  if (filter.nodeId !== null) conditions.push(eq(changeRequests.nodeId, filter.nodeId));
+  if (filter.fileId !== null) conditions.push(eq(fileVersions.fileId, filter.fileId));
+  if (filter.appliedBy !== null) conditions.push(eq(changeRequests.appliedBy, filter.appliedBy));
+  if (filter.keyword !== null) {
+    const pattern = "%" + escapeLikePattern(filter.keyword) + "%";
+    conditions.push(
+      or(
+        ilike(changeRequests.reason, pattern),
+        ilike(changeRequests.beforeSummary, pattern),
+        ilike(changeRequests.afterSummary, pattern),
+      )!,
+    );
+  }
+  return conditions;
+}
+
+/** 变更记录排序映射（白名单与 change.query.ts 一致）+ 稳定 tie-breaker（id 全库唯一，分页不跳行）。 */
+const CHANGE_REQUEST_SORT_COLUMNS = {
+  appliedAt: changeRequests.appliedAt,
+  createdAt: changeRequests.createdAt,
+} as const;
+
+function changeRequestOrderBy(sorts: readonly ChangeRequestSort[]): SQL[] {
+  const clauses: SQL[] = sorts.map((sort) =>
+    sort.direction === "desc"
+      ? desc(CHANGE_REQUEST_SORT_COLUMNS[sort.field])
+      : asc(CHANGE_REQUEST_SORT_COLUMNS[sort.field]),
+  );
+  if (sorts.length === 0) clauses.push(desc(changeRequests.createdAt));
+  clauses.push(asc(changeRequests.id));
+  return clauses;
 }
 
 /** 文件库列表条件（M4-03）：默认排除回收站（显式给出 statuses 时以给出为准）。 */

@@ -80,6 +80,10 @@ export const fileVersions = pgTable(
   },
   (table) => [
     unique("file_versions_file_id_seq_key").on(table.fileId, table.seq),
+    // 变更读面反查（migration 0021）：change_request_id → 版本（部分索引，非变更流版本不入索引）。
+    index("ix_file_versions_change_request")
+      .on(table.changeRequestId)
+      .where(sql`change_request_id is not null`),
     check("ck_file_versions_seq", sql`${table.seq} > 0`),
     check("ck_file_versions_size", sql`${table.sizeBytes} >= 0`),
   ],

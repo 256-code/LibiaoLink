@@ -10,6 +10,8 @@
  *           全部**追加 + 去重**回写 tasks.change_refs（一条任务可关联多条变更，业务要求「变更关联」列展示多条）；无匹配只记日志、不阻断生效。
  *   证据五（定档后回溯 = 变更）：POST /files/{id}/rollback 对 final 文件生成变更（changeRequest 非空）+ 新版本挂 change_request_id。
  *   证据六（定档后管控）：intent=version 对 changed 文件 409（修改须走变更）。
+ *   证据七（变更读面 · A4-15）：GET /projects/{id}/change-requests（筛选 / 关键字 / 排序 / 分页 + 派生 fileId / versionId / versionSeq）
+ *           与 GET /change-requests/{id}（含变更后文件与版本）；非成员一律 404（列表由 ProjectAccessGuard、详情由服务层判定）。
  *
  * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL）。本脚本只在本地沙箱 / 联调库跑：
  *       铸两个临时会话（管理员 + 非成员反例，跑完撤销）、建 M4CHG- 回放项目（跑完硬删项目及其文件 / 版本 / 变更 / 关联 / 会话 / 任务 / 审计 / outbox + 清桶内前缀）。
@@ -217,6 +219,7 @@ try {
     const env = envModule.loadEnv(process.env);
     storage = storageModule.createS3ObjectStorage(env);
     rawClient = storageModule.createS3Client(env);
+
   } catch (error) {
     throw new Error("无法加载 dist / S3 环境（先 npm run build，并用 --env-file-if-exists=.env 带上 S3_*）：" + String(error));
   }
@@ -570,7 +573,103 @@ try {
     "409 FILE_STATE_INVALID",
     appendAfterChange.status + " " + short({ code: appendAfterChange.body?.code }, 80),
     appendAfterChange.status === 409 && appendAfterChange.body?.code === "FILE_STATE_INVALID",
-  );} catch (error) {
+  );
+
+  // ---------- 证据七：变更读面（M4-04 读面 · A4-15：列表 / 筛选 / 详情 / 可见性） ----------
+  const changeList = await call("GET", "/api/v1/projects/" + project + "/change-requests?limit=50", undefined, admin);
+  const listItems = changeList.body?.items ?? [];
+  const expectedIds = [changeRequestId, changeRequestId2, changeB.completed.body?.changeRequest?.id, rollbackChange?.id].sort();
+  const listIds = listItems.map((item) => item.id).sort();
+  check(
+    "R1",
+    "变更列表：按项目取全量（本回放 4 条 = 两次上传变更 + 无匹配变更 + 定档回溯变更），逐条下发派生字段 fileId / versionId / versionSeq，默认 created_at 降序",
+    "200 + total=4 + id 集合一致 + 每条 fileId / versionId 为 uuid、versionSeq ≥ 1、status=applied、projectId=本项目 + 首条最新",
+    short({ status: changeList.status, total: changeList.body?.total, ids: listIds, first: listItems[0]?.id }, 360),
+    changeList.status === 200 &&
+      changeList.body?.total === 4 &&
+      JSON.stringify(listIds) === JSON.stringify(expectedIds) &&
+      listItems.every(
+        (item) =>
+          typeof item.fileId === "string" &&
+          typeof item.versionId === "string" &&
+          Number.isInteger(item.versionSeq) &&
+          item.versionSeq >= 1 &&
+          item.status === "applied" &&
+          item.projectId === project,
+      ) &&
+      (listItems[0]?.createdAt ?? "") >= (listItems[listItems.length - 1]?.createdAt ?? ""),
+  );
+
+  const expectedSeqs = (
+    await db.query("select seq from file_versions where file_id = $1 and change_request_id is not null order by seq", [fileA.fileId])
+  ).rows.map((row) => Number(row.seq));
+  const expectedStageCount = Number(
+    (await db.query("select count(*)::int as n from change_requests where project_id = $1 and stage_key = $2", [project, projectStageKey])).rows[0]?.n ?? 0,
+  );
+  const byFile = await call("GET", "/api/v1/projects/" + project + "/change-requests?filter[fileId]=" + fileA.fileId, undefined, admin);
+  const byFileSeqs = (byFile.body?.items ?? []).map((item) => Number(item.versionSeq)).sort((a, b) => a - b);
+  const byKeyword = await call("GET", "/api/v1/projects/" + project + "/change-requests?q=" + encodeURIComponent("孔径"), undefined, admin);
+  const byStage = await call("GET", "/api/v1/projects/" + project + "/change-requests?filter[stageKey]=" + projectStageKey + "&sort=appliedAt:asc", undefined, admin);
+  const byAppliedBy = await call("GET", "/api/v1/projects/" + project + "/change-requests?filter[appliedBy]=" + adminId, undefined, admin);
+  const badSort = await call("GET", "/api/v1/projects/" + project + "/change-requests?sort=fileId", undefined, admin);
+  const badProject = await call("GET", "/api/v1/projects/" + project + "/change-requests?filter[projectId]=" + otherProject, undefined, admin);
+  check(
+    "R2",
+    "变更列表筛选：filter[fileId]（同一文件两条变更，versionSeq 与 file_versions 一致）/ q 关键字（命中原因）/ filter[stageKey]（节点阶段）/ filter[appliedBy]；非法排序字段与 filter[projectId] 冲突一律 400",
+    "fileId → 2 条且 versionSeq 与库一致；q=孔径 → 仅第二次变更；stageKey → 与库计数一致且逐条 stageKey 相同；appliedBy=管理员 → 4 条；sort=fileId → 400；filter[projectId] 冲突 → 400",
+    short({ byFile: byFile.body?.total, byFileSeqs, expectedSeqs, byKeyword: byKeyword.body?.items?.map((item) => item.id), byStage: byStage.body?.total, expectedStageCount, byAppliedBy: byAppliedBy.body?.total, badSort: badSort.status, badProject: badProject.status }, 460),
+    byFile.status === 200 &&
+      byFile.body?.total === 2 &&
+      JSON.stringify(byFileSeqs) === JSON.stringify(expectedSeqs) &&
+      byKeyword.status === 200 &&
+      byKeyword.body?.total === 1 &&
+      byKeyword.body?.items?.[0]?.id === changeRequestId2 &&
+      byStage.status === 200 &&
+      byStage.body?.total === expectedStageCount &&
+      (byStage.body?.items ?? []).every((item) => item.stageKey === projectStageKey) &&
+      byAppliedBy.status === 200 &&
+      byAppliedBy.body?.total === 4 &&
+      badSort.status === 400 &&
+      badSort.body?.code === "VALIDATION_FAILED" &&
+      badProject.status === 400 &&
+      badProject.body?.code === "VALIDATION_FAILED",
+  );
+
+  const detail = await call("GET", "/api/v1/change-requests/" + changeRequestId, undefined, admin);
+  const detailFromList = listItems.find((item) => item.id === changeRequestId);
+  const missingDetail = await call("GET", "/api/v1/change-requests/00000000-0000-4000-8000-000000000000", undefined, admin);
+  const memberDetail = await call("GET", "/api/v1/change-requests/" + changeRequestId, undefined, member);
+  const memberList = await call("GET", "/api/v1/projects/" + project + "/change-requests", undefined, member);
+  const otherProjectList = await call("GET", "/api/v1/projects/" + otherProject + "/change-requests", undefined, admin);
+  check(
+    "R3",
+    "变更详情：变更记录 + 变更后文件（file 快照）+ 变更后版本（version.id / seq 与列表派生字段一致、版本挂本次变更）；不存在 404",
+    "200 + fileId / version.id / version.seq / version.changeRequestId 对齐 + appliedAt 为 ISO；不存在 → 404 NOT_FOUND",
+    short({ status: detail.status, file: detail.body?.file?.id, version: detail.body?.version?.id, seq: detail.body?.version?.seq, missing: missingDetail.status }, 380),
+    detail.status === 200 &&
+      detail.body?.id === changeRequestId &&
+      detail.body?.fileId === fileA.fileId &&
+      detail.body?.file?.id === fileA.fileId &&
+      detail.body?.file?.status === "changed" &&
+      detail.body?.version?.id === detailFromList?.versionId &&
+      detail.body?.version?.seq === detailFromList?.versionSeq &&
+      detail.body?.version?.changeRequestId === changeRequestId &&
+      typeof detail.body?.appliedAt === "string" &&
+      missingDetail.status === 404 &&
+      missingDetail.body?.code === "NOT_FOUND",
+  );
+  check(
+    "R4",
+    "读面可见性（防 IDOR）：非成员读项目变更列表 / 详情 → 404；另一个项目的变更列表为空（按项目隔离，不串项目）",
+    "非成员列表 404 NOT_FOUND + 非成员详情 404 + 另一项目 200 + total=0",
+    short({ memberList: memberList.status, memberDetail: memberDetail.status, other: otherProjectList.status, otherTotal: otherProjectList.body?.total }, 260),
+    memberList.status === 404 &&
+      memberList.body?.code === "NOT_FOUND" &&
+      memberDetail.status === 404 &&
+      otherProjectList.status === 200 &&
+      otherProjectList.body?.total === 0,
+  );
+} catch (error) {
   failures += 1;
   report.push("| FAIL | 中断：" + (error instanceof Error ? error.message : String(error)));
   process.stderr.write("M4-04 回放失败：" + (error instanceof Error ? error.message : String(error)) + "\n");
@@ -615,8 +714,8 @@ const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: serverRoot }
 const lines = [];
 lines.push("# M4-04 回放证据（S7·file 变更 · 申请即通过）");
 lines.push("");
-lines.push("> 卡片：M4-04「变更（申请即通过）」一期写入切片（主责 lan，评审 wmj）｜口径来源：系统功能书 A4-13（定档后变更须走变更流程，申请即通过、平权）/ A4-14（变更 = 新版本 + 变更记录）/ A4-17（变更统计，读面随后续切片）｜技术设计v0.2 §2.3（`change_requests`）与 §5.1-5.3｜ADR-024 §R01（输出成果文件 = 变更文件 → 自动关联任务）｜契约 shared/src/modules/files.ts（`ChangeIntentBody` / `ChangeRequest`，本卡零改动）。");
-lines.push("> 落点说明：`docs/` 属 px 线；本文件由 lan 随 M4-04 写入切片代记（回放脚本与断言同 PR，请 px 复核）。");
+lines.push("> 卡片：M4-04「变更（申请即通过）」写入 + 读面切片（PR-7 写入 / PR-8 读面；主责 lan，评审 wmj）｜口径来源：系统功能书 A4-13（定档后变更须走变更流程，申请即通过、平权）/ A4-14（变更 = 新版本 + 变更记录）/ A4-15（变更记录检索）/ A4-17（变更统计，随后续切片）｜技术设计v0.2 §2.3（`change_requests`）与 §5.1-5.3｜ADR-024 §R01（输出成果文件 = 变更文件 → 自动关联任务）｜契约 shared/src/modules/files.ts（`ChangeIntentBody` / `ChangeRequest`，本卡零改动）。");
+lines.push("> 落点说明：`docs/` 属 px 线；本文件由 lan 随 M4-04 写入 + 读面切片代记（回放脚本与断言同 PR，请 px 复核）。");
 lines.push("");
 lines.push("| 项 | 值 |");
 lines.push("|---|---|");
@@ -634,7 +733,7 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：变更入口与载荷落库 / 目标门禁 / 生效链路（变更记录 + 版本 + 状态 + 关联 + 审计 + outbox）/ R01 多值命中与多条追加 + 去重 / 无匹配 / 定档后回溯 = 变更 / 定档后管控。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：变更入口与载荷落库 / 目标门禁 / 生效链路（变更记录 + 版本 + 状态 + 关联 + 审计 + outbox）/ R01 多值命中与多条追加 + 去重 / 无匹配 / 定档后回溯 = 变更 / 定档后管控 / 变更读面（列表 + 筛选 + 详情 + 可见性 404）。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 验收对照（M4-04 写入切片）");
 lines.push("");
@@ -643,11 +742,12 @@ lines.push("- 变更生效 = C3 / C4 / C5 / C7：完成上传同一事务写 `ch
 lines.push("- R01 自动关联 = C6 / C6b / C6c / C8 / C9：按「变更文件成果类型 ∈ 任务输出成果文件（`deliverable_types` 多值）」命中全部**追加 + 去重**回写 `tasks.change_refs`（A1-07「一条任务可关联多条变更」，数组顺序 = 追加序；迁移 0020）；无匹配只记日志、不阻断（提示申请人随 M5 通知）。");
 lines.push("- 定档后回溯 = C9（A4-13）：`POST /files/{id}/rollback` 对 final 文件即变更（生成新版本 + 变更记录 + 状态 changed），不再 400。");
 lines.push("- 定档后管控 = C10：`intent=version` 对非 draft 文件 409 `FILE_STATE_INVALID`（修改须走变更）。");
+lines.push("- 变更读面 = R1 / R2 / R3 / R4（A4-15）：列表（项目 + 阶段 / 文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页）与详情（变更后文件 + 版本），派生字段 fileId / versionId / versionSeq 由 `file_versions.change_request_id` 反查（迁移 0021 部分索引）；非成员 404、`filter[projectId]` 冲突 400。");
 lines.push("- 单测回归（不连库）：server/test/file-service.test.ts 随 npm test 常跑：change 入口（载荷规范化 / 目标门禁 / 不新建文件）、change 完成链路（变更记录 / 版本挂接 / 状态 / 关联 / R01 / 审计 / outbox）、R01 无匹配只告警、定档后回溯 = 变更。");
 lines.push("");
 lines.push("## 与后续卡片的关系");
 lines.push("");
-lines.push("- 本切片只落**写入面**（变更申请即通过 + 生效链路）；**读面**（`GET /projects/{id}/change-requests` / `GET /change-requests/{id}`）与**统计**（A4-17）随 M4-04 后续切片，通知（A4-18）随 M5（outbox `change.applied` 已埋点）。");
+lines.push("- 本切片 = **写入面**（变更申请即通过 + 生效链路）+ **读面**（`GET /projects/{id}/change-requests` / `GET /change-requests/{id}`）已落地（R1~R4）；剩余**统计**（A4-17）随后续切片，通知（A4-18）随 M5（outbox `change.applied` 已埋点）。");
 lines.push("- 既有回放同步切换：`scripts/m4-lifecycle-replay.mjs` 的 L5（定档后回溯）与 `scripts/m4-upload-replay.mjs` 的 U22（change 入口）随本卡改动同步更新，避免旧断言把新行为判失败。");
 lines.push("- `server/scripts/m4-lifecycle-replay.mjs` 收尾新增 `change_requests` 清理（定档后回溯会产变更记录）。");
 lines.push("- 复跑：cd server && node --env-file-if-exists=.env scripts/m4-change-replay.mjs --out \"../docs/m4-04-回放证据(变更申请即通过).md\"");

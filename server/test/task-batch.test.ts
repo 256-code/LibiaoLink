@@ -1,5 +1,5 @@
 /**
- * M3-04 任务批量操作回归（A1-08 · Push 149）：同一组变更逐条独立事务（成功项照常生效 + 部分失败清单）、
+ * M3-04 任务批量操作回归（A1-08 · Push 150）：同一组变更逐条独立事务（成功项照常生效 + 部分失败清单）、
  * ids 去重 / 空 changes 400 / 归档项目 409、批量完成走同一完成门禁（缺件进 failures.gate_not_passed + 拒绝留痕）、
  * 已完成条目 already_done、审计标注批量入口（entry=batch + 同批 batchId）。
  * 真机口径见 server/README.md「M3-04」；门禁判定与单条写入共用同一内核（见 test/task-gate.test.ts）。
