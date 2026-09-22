@@ -82,4 +82,13 @@
 - 单测回归（不连库）：server/test/report-issue.test.ts 27 例随 npm test 常跑（日报 18 + 问题 9）；删除引用守卫 server/test/task-remove.test.ts 12 例。
 - 复跑：cd server && M6_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node scripts/m6-replay.mjs --out ../docs/m6-回放证据(日报与问题).md
 
+## 附：收尾 WARN 已在 Push 158 消除（CI 真机复跑）
 
+| 项 | 值 |
+|---|---|
+| 执行环境 | GitHub Actions `ubuntu-24.04` · job `database`（check run 106694066906） |
+| 代码版本 | `21d35b8`（PR #127 头提交；squash 合并提交 `fb1ace7`） |
+| 执行时间 | 2026-09-22 09:41:54Z ~ 09:42:44Z（北京时间 17:41 ~ 17:42） |
+
+- 上文正文为 Push 157（`fd213ac`）的逐行转写，其中最后一条 `| WARN | 收尾未完全成功：update or delete on table "users" violates foreign key constraint "audit_logs_actor_id_fkey" on table "audit_logs" |` 已在 Push 158 修复：回放收尾先按 `actor_id` 删掉合成管理员的 `audit_logs` 留痕，再删用户。
+- Push 158（`21d35b8`）CI 复跑确认：28 项断言仍全过，日志内该 WARN 已消失（仅剩容器 `POSTGRES_HOST_AUTH_METHOD=trust` 提示，与本卡无关）。
