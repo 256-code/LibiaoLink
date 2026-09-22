@@ -12,9 +12,11 @@ export const ProjectSchema = z
     customer: z.string().nullable(),
     region: z.string().openapi({ description: "项目落地地区（字典 region；缺省「未分类」）" }),
     projectType: z.string().openapi({ description: "项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码）" }),
-    managerId: UuidSchema,
-    managerName: z.string().nullable().openapi({
-      description: "项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」）",
+    managerIds: z.array(UuidSchema).min(1).openapi({
+      description: "项目经理（A22 · Push 136：一位也可、可多位）：至少一位、数组顺序 = 展示顺序（前端按「、」连接展示）；与 managerNames 同下标一一对应",
+    }),
+    managerNames: z.array(z.string().nullable()).openapi({
+      description: "项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」）",
     }),
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
@@ -50,7 +52,10 @@ export const ProjectListQuerySchema = z
   .object({
     "filter[region]": z.string().optional().openapi({ description: "地区（多值逗号分隔）" }),
     "filter[projectType]": z.string().optional().openapi({ description: "项目类型（多值逗号分隔）" }),
-    "filter[managerId]": z.string().optional().openapi({ description: "项目经理（多值逗号分隔）" }),
+    "filter[managerId]": z
+      .string()
+      .optional()
+      .openapi({ description: "项目经理（多值逗号分隔，UUID）；命中口径（A22 · Push 136）= 项目挂的任意一位经理命中即命中" }),
     "filter[stageKey]": z.string().optional().openapi({ description: "阶段 key（多值逗号分隔）" }),
     "filter[status]": z.string().optional().openapi({ description: "项目状态（多值逗号分隔）" }),
     "filter[timeFrom]": DateOnlySchema.optional().openapi({
@@ -97,7 +102,9 @@ export const ProjectCreateBodySchema = z
       .max(100)
       .default("未分类")
       .openapi({ description: "项目类型（字典 project_type）；未填写归入「未分类」（A1-12 定档）" }),
-    managerId: UuidSchema,
+    managerIds: z.array(UuidSchema).min(1).openapi({
+      description: "项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序；判空失败返回 400 VALIDATION_FAILED",
+    }),
     stageKey: StageKeySchema.optional(),
     description: z.string().max(2000).optional(),
     blueprintVersion: z.number().int().positive().optional().openapi({ description: "导入的蓝图版本；缺省 = 当前已发布版本" }),
@@ -112,7 +119,9 @@ export const ProjectUpdateBodySchema = z
     customer: z.string().max(200).nullable().optional(),
     region: z.string().min(1).max(100).optional(),
     projectType: z.string().min(1).max(100).optional(),
-    managerId: UuidSchema.optional(),
+    managerIds: z.array(UuidSchema).min(1).optional().openapi({
+      description: "项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序",
+    }),
     stageKey: StageKeySchema.optional(),
     status: ProjectStatusSchema.optional(),
     description: z.string().max(2000).nullable().optional(),
@@ -126,7 +135,9 @@ export const ProjectFacetsSchema = z
     total: z.number().int().min(0),
     region: z.record(z.string(), z.number().int().min(0)),
     projectType: z.record(z.string(), z.number().int().min(0)),
-    managerId: z.record(z.string(), z.number().int().min(0)),
+    managerId: z.record(z.string(), z.number().int().min(0)).openapi({
+      description: "项目经理维度计数：键 = users.id；一个项目挂多位经理时**每位各计一次**（A22 · Push 136）",
+    }),
     stageKey: z.record(z.string(), z.number().int().min(0)),
     status: z.record(z.string(), z.number().int().min(0)),
   })

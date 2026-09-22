@@ -3,8 +3,8 @@
  * w2 真机回放（任务落库口径 A15 / A18 / A19 / A20 · Push 124）：
  *   证据一（A15 · 阶段可空）：不传 / 显式 null 建「临时任务」→ stageKey=null（未分组）；默认读序里未分组落在九阶段之后；
  *           未分组任务不计入阶段完成度（GET /projects/{id}/stages 的 tasks 计数只算带阶段任务）。
- *   证据二（A18 · 负责人可空）：显式 ownerId=null 建任务 = 「待分配」（不兜底项目经理）；编辑支持显式置空
- *           （卡片拖进「待分配」列 = 清空负责人）；不传 ownerId = 不改（不误清）。
+ *   证据二（A18 / A23 · 负责人可空 + 可多位）：显式 ownerIds=[] 建任务 = 「待分配」（不兜底项目经理）；
+ *           编辑支持显式置空（ownerIds=[]，卡片拖进「待分配」列 = 清空负责人）；不传 ownerIds = 不改（不误清）。
  *   证据三（A19 / A20 · 顺序持久化）：插入位次 / 拖动重排写 tasks.sort_index（一组 = 同一项目 + 同一阶段，组内 0 起、密集）；
  *           刷新 / 重新拉列表顺序不变（落库不是内存态）；越界 = 组尾；旧 version 重放 409 且不部分生效；组之间互不影响。
  *   另有节点来源口径（带 taskNodeId 缺省取节点阶段、显式不一致 400、同节点重复 409）与字段级留痕（audit_logs 的 from / to）。
@@ -123,7 +123,7 @@ try {
 
   // ---------- 回放项目（导入即快照） ----------
   const code = "W2-" + new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const created = await call("POST", "/api/v1/projects", { code, name: "w2 回放项目（任务落库口径）", projectType: "default", managerId: actorId });
+  const created = await call("POST", "/api/v1/projects", { code, name: "w2 回放项目（任务落库口径）", projectType: "default", managerIds: [actorId] });
   check("P1", "建项目（导入即快照）", "201 + 项目可见", created.status + " " + short({ id: created.body?.id, stageKey: created.body?.stageKey, version: created.body?.version }, 140), created.status === 201);
   const projectId = created.body.id;
   cleanup.projectId = projectId;
@@ -144,7 +144,7 @@ try {
   const t1 = await createTask(projectId, { title: "临时任务·未分组甲" });
   const task1 = t1.body;
   check("A1", "临时任务不传 stageKey = 「未分组」，落组首位次 0", "201 + stageKey=null + sortIndex=0", t1.status + " " + short({ stageKey: task1?.stageKey, sortIndex: task1?.sortIndex }, 140), t1.status === 201 && task1?.stageKey === null && task1?.sortIndex === 0);
-  check("A2", "创建不传 ownerId = 项目经理兜底（与 A18 的显式 null 区分）", "ownerId=" + actorId, String(task1?.ownerId), task1?.ownerId === actorId);
+  check("A2", "创建不传 ownerIds = 项目全部项目经理兜底（A23 · Push 136：数组，与 A18 的显式 [] 区分）", "ownerIds=[" + actorId + "]", JSON.stringify(task1?.ownerIds), Array.isArray(task1?.ownerIds) && task1.ownerIds.length === 1 && task1.ownerIds[0] === actorId);
 
   const t2 = await createTask(projectId, { title: "临时任务·未分组乙", stageKey: null });
   const task2 = t2.body;
@@ -164,28 +164,28 @@ try {
   check("A6", "未分组任务不计入九阶段完成度（此时阶段任务数应为 0）", "sum(tasks.total)=0（未分组 3 条）", "sum=" + stageTotal1 + " ungrouped=" + group1.length, stagesView1.status === 200 && stageTotal1 === 0 && group1.length === 3);
 
   // ---------- A18 · 负责人可空（待分配） ----------
-  const t4 = await createTask(projectId, { title: "临时任务·待分配丁", ownerId: null });
+  const t4 = await createTask(projectId, { title: "临时任务·待分配丁", ownerIds: [] });
   const task4 = t4.body;
-  check("B1", "显式 ownerId=null = 「待分配」（不兜底项目经理）", "201 + ownerId=null", t4.status + " " + short({ ownerId: task4?.ownerId, sortIndex: task4?.sortIndex }, 140), t4.status === 201 && task4?.ownerId === null);
+  check("B1", "显式 ownerIds=[] = 「待分配」（不兜底项目经理）", "201 + ownerIds=[]", t4.status + " " + short({ ownerIds: task4?.ownerIds, sortIndex: task4?.sortIndex }, 140), t4.status === 201 && Array.isArray(task4?.ownerIds) && task4.ownerIds.length === 0);
 
   const detail4a = await call("GET", "/api/v1/projects/" + projectId + "/tasks/" + task4.id);
-  check("B2", "详情 ownerName = null（待分配随行下发）", "200 + ownerName=null", detail4a.status + " " + short({ ownerId: detail4a.body?.ownerId, ownerName: detail4a.body?.ownerName, sortIndex: detail4a.body?.sortIndex }, 160), detail4a.status === 200 && detail4a.body?.ownerName === null);
+  check("B2", "详情 ownerNames = []（待分配随行下发）", "200 + ownerNames=[]", detail4a.status + " " + short({ ownerIds: detail4a.body?.ownerIds, ownerNames: detail4a.body?.ownerNames, sortIndex: detail4a.body?.sortIndex }, 160), detail4a.status === 200 && Array.isArray(detail4a.body?.ownerNames) && detail4a.body.ownerNames.length === 0);
 
-  const assigned = await patchTask(projectId, task4.id, { version: task4.version, ownerId: actorId });
-  check("B3", "分配负责人（ownerId 传值）", "200 + ownerId=" + actorId, assigned.status + " " + short({ ownerId: assigned.body?.ownerId, version: assigned.body?.version }, 140), assigned.status === 200 && assigned.body?.ownerId === actorId);
+  const assigned = await patchTask(projectId, task4.id, { version: task4.version, ownerIds: [actorId] });
+  check("B3", "分配负责人（ownerIds 传数组）", "200 + ownerIds=[" + actorId + "]", assigned.status + " " + short({ ownerIds: assigned.body?.ownerIds, version: assigned.body?.version }, 140), assigned.status === 200 && Array.isArray(assigned.body?.ownerIds) && assigned.body.ownerIds.length === 1 && assigned.body.ownerIds[0] === actorId);
 
   const list2 = await listTasks(projectId);
   const item4 = (list2.body?.items ?? []).find((item) => item.id === task4.id);
-  check("B4", "列表 ownerName 随行下发（分配后非空）", "ownerName 非空", "ownerName=" + String(item4?.ownerName), item4 !== undefined && item4.ownerName !== null && item4.ownerName !== undefined);
+  check("B4", "列表 ownerNames 随行下发（分配后非空数组）", "ownerNames 非空", "ownerNames=" + JSON.stringify(item4?.ownerNames), item4 !== undefined && Array.isArray(item4.ownerNames) && item4.ownerNames.length === 1 && item4.ownerNames[0] !== null);
 
   const noteOnly = await patchTask(projectId, task4.id, { version: assigned.body.version, note: "只改备注，不动负责人" });
-  check("B5", "不传 ownerId = 不改（只改备注不误清负责人）", "200 + ownerId 保持 " + actorId, noteOnly.status + " " + short({ ownerId: noteOnly.body?.ownerId, note: noteOnly.body?.note }, 140), noteOnly.status === 200 && noteOnly.body?.ownerId === actorId && noteOnly.body?.note === "只改备注，不动负责人");
+  check("B5", "不传 ownerIds = 不改（只改备注不误清负责人）", "200 + ownerIds 保持 [" + actorId + "]", noteOnly.status + " " + short({ ownerIds: noteOnly.body?.ownerIds, note: noteOnly.body?.note }, 140), noteOnly.status === 200 && Array.isArray(noteOnly.body?.ownerIds) && noteOnly.body.ownerIds.length === 1 && noteOnly.body.ownerIds[0] === actorId && noteOnly.body?.note === "只改备注，不动负责人");
 
-  const cleared = await patchTask(projectId, task4.id, { version: noteOnly.body.version, ownerId: null });
-  check("B6", "显式 ownerId=null = 置空为「待分配」（拖进「待分配」列）", "200 + ownerId=null", cleared.status + " " + short({ ownerId: cleared.body?.ownerId, version: cleared.body?.version }, 140), cleared.status === 200 && cleared.body?.ownerId === null);
+  const cleared = await patchTask(projectId, task4.id, { version: noteOnly.body.version, ownerIds: [] });
+  check("B6", "显式 ownerIds=[] = 置空为「待分配」（拖进「待分配」列）", "200 + ownerIds=[]", cleared.status + " " + short({ ownerIds: cleared.body?.ownerIds, version: cleared.body?.version }, 140), cleared.status === 200 && Array.isArray(cleared.body?.ownerIds) && cleared.body.ownerIds.length === 0);
 
-  const dbOwner = await db.query("select owner_id from tasks where id = $1", [task4.id]);
-  check("B7", "落库为 null（tasks.owner_id 放宽可空生效）", "owner_id is null", String(dbOwner.rows[0]?.owner_id), dbOwner.rows[0]?.owner_id === null);
+  const dbOwner = await db.query("select owner_ids from tasks where id = $1", [task4.id]);
+  check("B7", "落库为空数组（tasks.owner_ids 多位口径生效）", "owner_ids = []", JSON.stringify(dbOwner.rows[0]?.owner_ids), Array.isArray(dbOwner.rows[0]?.owner_ids) && dbOwner.rows[0].owner_ids.length === 0);
 
   // ---------- A19 / A20 · 顺序持久化 ----------
   const moved = await patchTask(projectId, task4.id, { version: cleared.body.version, sortIndex: 0 });
@@ -243,9 +243,9 @@ try {
   const auditRows = await db.query("select changes from audit_logs where object_type = $1 and object_id = $2 and action = $3 order by id desc limit 20", ["task", task4.id, "update"]);
   const changes = auditRows.rows.flatMap((row) => row.changes ?? []);
   const sortChange = changes.find((change) => change.field === "sortIndex");
-  const ownerChange = changes.find((change) => change.field === "ownerId" && change.to === null);
+  const ownerChange = changes.find((change) => change.field === "ownerIds" && Array.isArray(change.to) && change.to.length === 0);
   check("E1", "C7-02 字段级留痕：sortIndex 变更记 from / to", "存在 field=sortIndex 的 from / to", short(sortChange ?? null, 160), sortChange !== undefined && typeof sortChange.from === "number" && typeof sortChange.to === "number");
-  check("E2", "A18 留痕：ownerId 置空记 from=已分配 → to=null", "存在 field=ownerId 且 to=null", short(ownerChange ?? null, 160), ownerChange !== undefined && ownerChange.from === actorId && ownerChange.to === null);
+  check("E2", "A18 / A23 留痕：ownerIds 置空记 from=已分配 → to=[]", "存在 field=ownerIds 且 to=[]", short(ownerChange ?? null, 160), ownerChange !== undefined && Array.isArray(ownerChange.from) && ownerChange.from[0] === actorId && Array.isArray(ownerChange.to) && ownerChange.to.length === 0);
 
   const outbox = await db.query("select count(*)::int as n from outbox_events where topic = $1 and payload->>$2 = $3", ["task.created", "projectId", projectId]);
   check("E3", "写路径不变：task.created 入 outbox（topic / 载荷口径未变）", ">= 6 条", "count=" + outbox.rows[0].n, outbox.rows[0].n >= 6);
@@ -301,9 +301,9 @@ lines.push("");
 lines.push("## 验收对照（A15 / A18 / A19 / A20）");
 lines.push("");
 lines.push("- A15「阶段允许为空（临时任务）」= A1 ~ A7 / C8：不传或显式 null 都落 stageKey=null；默认读序未分组在九阶段之后；阶段完成度（GET /projects/{id}/stages）只算带阶段任务，未分组不计入。");
-lines.push("- A18「负责人允许为空（待分配）」= B1 ~ B7：显式 ownerId=null = 待分配（不兜底项目经理）；传值 = 分配；不传 = 不改；再置 null = 清空（卡片拖进「待分配」列）。");
+lines.push("- A18 / A23「负责人允许为空（待分配）+ 可多位」= B1 ~ B7：显式 ownerIds=[] = 待分配（不兜底项目经理）；传数组 = 分配（原顺序即展示顺序）；不传 = 不改；再置 [] = 清空（卡片拖进「待分配」列）。");
 lines.push("- A19 / A20「顺序持久化」= C1 ~ C7：插入位次与拖动重排写 tasks.sort_index（组内 0 起、密集），刷新后不变；越界 = 组尾；旧 version 409 且不部分生效；组之间互不影响。");
-lines.push("- 契约与落库一致性：tasks.sort_index 由迁移 0015 落库（回填按迁移前默认读序，迁移前后读序一致）；shared 的 Task / TaskCreateBody / TaskUpdateBody 与 Drizzle schema 同步（check:db-schema：26 表 · 259 列 · 73 索引 · 71 CHECK 一致）。");
+lines.push("- 契约与落库一致性：tasks.sort_index 由迁移 0015 落库（回填按迁移前默认读序，迁移前后读序一致）；shared 的 Task / TaskCreateBody / TaskUpdateBody 与 Drizzle schema 同步（check:db-schema：27 表 · 265 列 · 77 索引 · 75 CHECK 一致）。");
 lines.push("- CI 回归（不连库）：server/test/task-order.test.ts（纯函数 4 例）+ server/test/task-service.test.ts（口径 5 例）随 npm test 常跑；真机闭环用本脚本复跑。");
 lines.push("- 复跑：cd server && node scripts/w2-replay.mjs --out ../docs/w2-回放证据(任务落库口径A15A18A19).md");
 lines.push("");

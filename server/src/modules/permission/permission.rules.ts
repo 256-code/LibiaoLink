@@ -51,7 +51,7 @@ export type ProjectScopeFilter = { kind: "all" } | { kind: "ids"; ids: string[] 
 export interface ProjectVisibilitySets {
   /** 名册任意角色（我参与的项目）。 */
   memberIds: readonly string[];
-  /** 我作为主数据责任人（projects.manager_id = 我）—— 建项目事务不写名册，故恒可见。 */
+  /** 我作为主数据责任人（projects.manager_ids 含我；A22 多位，任一位命中）—— 建项目事务不写名册，故恒可见。 */
   ownedIds: readonly string[];
   /** 名册里我是 project_manager（managed_projects 数据范围）。 */
   managedRosterIds: readonly string[];

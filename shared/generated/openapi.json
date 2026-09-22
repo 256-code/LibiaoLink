@@ -2234,15 +2234,23 @@
             "type": "string",
             "description": "项目类型（字典 project_type；主题色随字典元数据下发，前端不硬编码）"
           },
-          "managerId": {
-            "$ref": "#/components/schemas/Uuid"
+          "managerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "description": "项目经理（A22 · Push 136：一位也可、可多位）：至少一位、数组顺序 = 展示顺序（前端按「、」连接展示）；与 managerNames 同下标一一对应"
           },
-          "managerName": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "项目经理姓名：服务端按 managerId 解析后随行下发（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时为 null（前端显示「—」）"
+          "managerNames": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」）"
           },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
@@ -2274,8 +2282,8 @@
           "customer",
           "region",
           "projectType",
-          "managerId",
-          "managerName",
+          "managerIds",
+          "managerNames",
           "stageKey",
           "status",
           "description",
@@ -2318,8 +2326,13 @@
             "default": "未分类",
             "description": "项目类型（字典 project_type）；未填写归入「未分类」（A1-12 定档）"
           },
-          "managerId": {
-            "$ref": "#/components/schemas/Uuid"
+          "managerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "description": "项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序；判空失败返回 400 VALIDATION_FAILED"
           },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
@@ -2337,7 +2350,7 @@
         "required": [
           "code",
           "name",
-          "managerId"
+          "managerIds"
         ],
         "description": "创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回"
       },
@@ -2367,7 +2380,8 @@
             "additionalProperties": {
               "type": "integer",
               "minimum": 0
-            }
+            },
+            "description": "项目经理维度计数：键 = users.id；一个项目挂多位经理时**每位各计一次**（A22 · Push 136）"
           },
           "stageKey": {
             "type": "object",
@@ -2950,8 +2964,13 @@
             "minLength": 1,
             "maxLength": 100
           },
-          "managerId": {
-            "$ref": "#/components/schemas/Uuid"
+          "managerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "description": "项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序"
           },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
@@ -3124,19 +3143,12 @@
               "null"
             ]
           },
-          "ownerId": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "任务负责人；null = 「待分配」（A18 · Push 124：负责人为空是合法中间状态）"
-              }
-            ]
+          "ownerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应"
           },
           "status": {
             "$ref": "#/components/schemas/TaskBaseStatus"
@@ -3253,7 +3265,7 @@
           "nodeId",
           "title",
           "titleEn",
-          "ownerId",
+          "ownerIds",
           "status",
           "displayStatus",
           "progress",
@@ -3333,13 +3345,12 @@
               }
             ]
           },
-          "ownerId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "任务负责人；缺省 = 项目项目经理（projects.manager_id）兜底，显式 null = 「待分配」（A18 · Push 124：不兜底项目经理）"
+          "ownerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理（projects.manager_ids）兜底；显式 [] = 「待分配」（不兜底项目经理，沿用 A18）；数组顺序 = 展示顺序"
           },
           "plannedStart": {
             "allOf": [
@@ -3420,15 +3431,12 @@
             "default": true,
             "description": "已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409"
           },
-          "ownerId": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "description": "任务负责人；缺省 = 项目项目经理兜底"
-              }
-            ]
+          "ownerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」"
           }
         },
         "required": [
@@ -3478,11 +3486,15 @@
           {
             "type": "object",
             "properties": {
-              "ownerName": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+              "ownerNames": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "description": "负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组"
               },
               "changeSummary": {
                 "type": [
@@ -3498,7 +3510,7 @@
               }
             },
             "required": [
-              "ownerName",
+              "ownerNames",
               "changeSummary",
               "files"
             ]
@@ -3614,19 +3626,12 @@
               "null"
             ]
           },
-          "ownerId": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "任务负责人；null = 「待分配」（A18 · Push 124：负责人为空是合法中间状态）"
-              }
-            ]
+          "ownerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应"
           },
           "status": {
             "$ref": "#/components/schemas/TaskBaseStatus"
@@ -3721,12 +3726,15 @@
           "updatedAt": {
             "$ref": "#/components/schemas/DateTime"
           },
-          "ownerName": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "负责人姓名（users.display_name 随行下发）；「待分配」= null"
+          "ownerNames": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）"
           },
           "changeSummary": {
             "type": [
@@ -3747,7 +3755,7 @@
           "nodeId",
           "title",
           "titleEn",
-          "ownerId",
+          "ownerIds",
           "status",
           "displayStatus",
           "progress",
@@ -3763,7 +3771,7 @@
           "version",
           "createdAt",
           "updatedAt",
-          "ownerName",
+          "ownerNames",
           "changeSummary",
           "fileSummary"
         ]
@@ -4098,13 +4106,12 @@
       "TaskUpdateBody": {
         "type": "object",
         "properties": {
-          "ownerId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "任务负责人（A18 · Push 124）：不传 = 不改；显式 null = 置空为「待分配」（卡片拖进「待分配」列）"
+          "ownerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换、顺序 = 展示顺序"
           },
           "sortIndex": {
             "type": "integer",
@@ -4180,7 +4187,7 @@
         "required": [
           "version"
         ],
-        "description": "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerId 显式 null = 待分配，sortIndex = 组内重排）"
+        "description": "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）"
       },
       "UploadAbortResponse": {
         "type": "object",
@@ -4737,10 +4744,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "项目经理（多值逗号分隔）"
+              "description": "项目经理（多值逗号分隔，UUID）；命中口径（A22 · Push 136）= 项目挂的任意一位经理命中即命中"
             },
             "required": false,
-            "description": "项目经理（多值逗号分隔）",
+            "description": "项目经理（多值逗号分隔，UUID）；命中口径（A22 · Push 136）= 项目挂的任意一位经理命中即命中",
             "name": "filter[managerId]",
             "in": "query"
           },
@@ -4945,10 +4952,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "项目经理（多值逗号分隔）"
+              "description": "项目经理（多值逗号分隔，UUID）；命中口径（A22 · Push 136）= 项目挂的任意一位经理命中即命中"
             },
             "required": false,
-            "description": "项目经理（多值逗号分隔）",
+            "description": "项目经理（多值逗号分隔，UUID）；命中口径（A22 · Push 136）= 项目挂的任意一位经理命中即命中",
             "name": "filter[managerId]",
             "in": "query"
           },
@@ -5491,10 +5498,17 @@
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/Uuid"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "description": "任务负责人（单个 UUID）；命中口径（A23 · Push 136）= 该任务挂的任意一位负责人命中即命中"
+                }
+              ]
             },
             "required": false,
-            "description": "UUID（主键与关联 ID）",
+            "description": "任务负责人（单个 UUID）；命中口径（A23 · Push 136）= 该任务挂的任意一位负责人命中即命中",
             "name": "filter[ownerId]",
             "in": "query"
           },

@@ -14,7 +14,7 @@ import {
 import { users } from "./identity.js";
 import { PROJECT_MEMBER_ROLES, STAGE_KEYS, sqlValueList } from "./literals.js";
 
-/** projects（0001 基线 + 0002 收敛：唯一责任人为 manager_id，无 owner_id）。 */
+/** projects（0001 基线 + 0002 收敛 + 0017 多位：责任人为 manager_ids 数组，无 owner_id）。 */
 export const projects = pgTable(
   "projects",
   {
@@ -25,7 +25,8 @@ export const projects = pgTable(
     customer: text("customer"),
     region: text("region").notNull(),
     projectType: text("project_type").notNull(),
-    managerId: uuid("manager_id").notNull(),
+    /** 项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序（`ck_projects_manager_ids` 判非空）。 */
+    managerIds: uuid("manager_ids").array().notNull(),
     stageKey: text("stage_key").notNull(),
     status: text("status").notNull(),
     description: text("description"),
@@ -39,7 +40,8 @@ export const projects = pgTable(
   (table) => [
     unique("projects_code_key").on(table.code),
     unique("uq_projects_seq_no").on(table.seqNo),
-    index("ix_projects_facets").on(table.region, table.projectType, table.managerId),
+    index("ix_projects_facets").on(table.region, table.projectType),
+    index("ix_projects_manager_ids").using("gin", table.managerIds),
     index("ix_projects_stage").on(table.status, table.stageKey),
     index("ix_projects_active_updated").on(desc(table.updatedAt)).where(sql`deleted_at is null`),
     check(
@@ -48,6 +50,8 @@ export const projects = pgTable(
     ),
     check("ck_projects_status", sql`${table.status} in ${sql.raw(sqlValueList(["active", "paused", "done", "archived"]))}`),
     check("ck_projects_version", sql`${table.version} >= 0`),
+    check("ck_projects_manager_ids", sql`cardinality(${table.managerIds}) >= 1`),
+    check("ck_projects_manager_ids_no_null", sql`array_position(${table.managerIds}, null::uuid) is null`),
     check("ck_projects_seq_no", sql`${table.seqNo} > 0`),
   ],
 );

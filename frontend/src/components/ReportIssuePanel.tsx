@@ -10,7 +10,7 @@ import {
   type IssueState,
   type ReportState,
 } from "../data/reports";
-import type { ProjectTask } from "../data/tasks";
+import { ownersLabel, type ProjectTask } from "../data/tasks";
 import type { MeResponse, Project } from "../types";
 
 /**
@@ -548,7 +548,7 @@ function ReportFillForm({
                     className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
                   />
                   <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                  <span className="shrink-0 text-[10px] text-zinc-400">{task.owner === "" ? "待分配" : task.owner}</span>
+                  <span className="shrink-0 text-[10px] text-zinc-400" title={ownersLabel(task.owners, task.ownersEn)}>{task.owners.length === 0 ? "待分配" : task.owners.join("、")}</span>
                 </label>
               );
             })

@@ -46,7 +46,7 @@ function projectRow(overrides: Partial<ProjectRow> & { id: string }): ProjectRow
     customer: "XX 客户",
     region: "华东",
     projectType: "分拣",
-    managerId: UUID_A,
+    managerIds: [UUID_A],
     stageKey: "presale",
     status: "active",
     description: null,
@@ -101,7 +101,7 @@ class FakeProjectRepository {
     return this.visible(id);
   }
 
-  async insert(input: { code: string; name: string; customer: string | null; region: string; projectType: string; managerId: string; stageKey: string; description: string | null }, at: Date): Promise<ProjectRow> {
+  async insert(input: { code: string; name: string; customer: string | null; region: string; projectType: string; managerIds: string[]; stageKey: string; description: string | null }, at: Date): Promise<ProjectRow> {
     if (this.rows.some((view) => view.project.code === input.code)) {
       throw new AppError("PROJECT_CODE_EXISTS", "项目编号已存在：" + input.code);
     }
@@ -113,14 +113,14 @@ class FakeProjectRepository {
       customer: input.customer,
       region: input.region,
       projectType: input.projectType,
-      managerId: input.managerId,
+      managerIds: input.managerIds,
       stageKey: input.stageKey,
       status: "active",
       description: input.description,
       createdAt: at,
       updatedAt: at,
     });
-    this.rows.push({ project: row, managerName: "张工" });
+    this.rows.push({ project: row, managerNames: ["张工"] });
     return row;
   }
 
@@ -161,7 +161,7 @@ class FakeAuditService {
 
 function makeService(rows: ProjectRow[] = []): { service: ProjectService; repo: FakeProjectRepository } {
   const repo = new FakeProjectRepository();
-  repo.rows = rows.map((row) => ({ project: row, managerName: "张工" }));
+  repo.rows = rows.map((row) => ({ project: row, managerNames: ["张工"] }));
   const fakeDb = {
     db: { transaction: (callback: (tx: unknown) => Promise<unknown>) => callback({}) },
   };
@@ -248,11 +248,11 @@ describe("parseProjectSort（白名单 updatedAt / createdAt / seqNo）", () => 
 // ---------- 行 → 契约视图 ----------
 
 describe("toProjectView", () => {
-  it("camelCase 对齐 + managerName 随行下发 + ISO 时间", () => {
-    const view = toProjectView({ project: projectRow({ id: UUID_A, customer: null }), managerName: null });
+  it("camelCase 对齐 + managerNames 随行下发 + ISO 时间", () => {
+    const view = toProjectView({ project: projectRow({ id: UUID_A, customer: null }), managerNames: [null] });
     expect(view.id).toBe(UUID_A);
     expect(view.seqNo).toBe(1);
-    expect(view.managerName).toBeNull();
+    expect(view.managerNames).toEqual([null]);
     expect(view.customer).toBeNull();
     expect(view.createdAt).toBe("2026-09-20T06:00:00.000Z");
     expect(Object.keys(view).sort()).toEqual([
@@ -261,8 +261,8 @@ describe("toProjectView", () => {
       "customer",
       "description",
       "id",
-      "managerId",
-      "managerName",
+      "managerIds",
+      "managerNames",
       "name",
       "projectType",
       "region",
@@ -273,28 +273,37 @@ describe("toProjectView", () => {
       "version",
     ]);
   });
+
+  it("多位项目经理（A22 · Push 136）：managerIds / managerNames 同下标一一对应", () => {
+    const view = toProjectView({
+      project: projectRow({ id: UUID_A, managerIds: [UUID_A, UUID_B] }),
+      managerNames: ["张工", null],
+    });
+    expect(view.managerIds).toEqual([UUID_A, UUID_B]);
+    expect(view.managerNames).toEqual(["张工", null]);
+  });
 });
 
 // ---------- 用例（M2-01） ----------
 
 describe("ProjectService（M2-01 项目 CRUD）", () => {
-  it("创建：缺省 stageKey = presale；seq_no 由仓储分配；返回随行 managerName", async () => {
+  it("创建：缺省 stageKey = presale；seq_no 由仓储分配；返回随行 managerNames", async () => {
     const { service, repo } = makeService();
-    const created = await service.createProject({ code: "CNBJ-20260708-0002", name: "新项目", region: "华东", projectType: "分拣", managerId: UUID_A }, UUID_A);
+    const created = await service.createProject({ code: "CNBJ-20260708-0002", name: "新项目", region: "华东", projectType: "分拣", managerIds: [UUID_A] }, UUID_A);
     expect(created.stageKey).toBe("presale");
     expect(created.status).toBe("active");
     expect(created.seqNo).toBe(1);
     expect(created.version).toBe(0);
-    expect(created.managerName).toBe("张工");
+    expect(created.managerNames).toEqual(["张工"]);
     expect(repo.rows).toHaveLength(1);
   });
 
   it("创建：显式 stageKey 生效；编号重复 409 PROJECT_CODE_EXISTS", async () => {
     const { service } = makeService([projectRow({ id: UUID_A })]);
-    const created = await service.createProject({ code: "X-2", name: "新项目", region: "华东", projectType: "分拣", managerId: UUID_A, stageKey: "install" }, UUID_A);
+    const created = await service.createProject({ code: "X-2", name: "新项目", region: "华东", projectType: "分拣", managerIds: [UUID_A], stageKey: "install" }, UUID_A);
     expect(created.stageKey).toBe("install");
     await expectAppErrorAsync(
-      () => service.createProject({ code: "CNBJ-20260708-0001", name: "撞号", region: "华东", projectType: "分拣", managerId: UUID_A }, UUID_A),
+      () => service.createProject({ code: "CNBJ-20260708-0001", name: "撞号", region: "华东", projectType: "分拣", managerIds: [UUID_A] }, UUID_A),
       "PROJECT_CODE_EXISTS",
     );
   });
@@ -331,7 +340,7 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
     const updated = await service.updateProject(UUID_A, { name: "改名", version: 3 }, UUID_A);
     expect(updated.name).toBe("改名");
     expect(updated.version).toBe(4);
-    expect(updated.managerName).toBe("张工");
+    expect(updated.managerNames).toEqual(["张工"]);
   });
 
   it("更新：version 不匹配 409 VERSION_CONFLICT；期间被删则 404", async () => {

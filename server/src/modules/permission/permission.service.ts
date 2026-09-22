@@ -94,7 +94,7 @@ export class PermissionService {
     if (ref === null || ref.deletedAt !== null) return null;
     const membershipRole = await this.repository.findMembership(actorId, projectId);
     const rosterMember = membershipRole !== null;
-    const managerOfRecord = ref.managerId === actorId;
+    const managerOfRecord = ref.managerIds.includes(actorId);
     const projectManager = managerOfRecord || membershipRole === "project_manager";
     const visible = isProjectVisible(spec, {
       rosterMember,

@@ -68,7 +68,8 @@ export function CategoryFilterSidebar({
   }, [open, onClose]);
 
   const regions = countBy(projects.map((project) => project.region));
-  const managers = countBy(projects.map((project) => project.managerId)).map((option) => ({
+  // 项目经理计数（Push 136）：一个项目挂多位经理时，每位经理各计一次（计数 = 该项目里有他）
+  const managers = countBy(projects.flatMap((project) => project.managerIds)).map((option) => ({
     ...option,
     label: managerName(option.value),
   }));
