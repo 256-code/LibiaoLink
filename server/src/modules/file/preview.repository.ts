@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { previewArtifacts } from "../../db/schema/preview.js";
@@ -105,6 +105,37 @@ export class PreviewRepository {
         updatedAt: input.updatedAt,
       })
       .where(this.keyWhere(key));
+  }
+
+  /**
+   * 待清理候选（M4-05 收口 · 彻底删除 / 到期清理）：这些版本名下的 **ready** 产物行。
+   * 只有 ready 行才有对象键（库侧成对 CHECK）；not_ready / failed 无对象，行随版本级联即可。
+   */
+  async listReadyByVersionIds(
+    versionIds: readonly string[],
+    client: DbClient = this.database.db,
+  ): Promise<PreviewArtifactRow[]> {
+    if (versionIds.length === 0) return [];
+    return client
+      .select()
+      .from(previewArtifacts)
+      .where(and(inArray(previewArtifacts.versionId, [...versionIds]), eq(previewArtifacts.status, "ready")));
+  }
+
+  /**
+   * 缓存行**归属转移**（原登记版本被彻底删除、但同内容仍有存活版本）：保住 ready 行与产物对象，
+   * 不让「删掉一份重复文件」把共享缓存打回 not_ready —— 读面按三元组命中，不按版本命中，转移无副作用。
+   */
+  async reassignOwner(
+    id: string,
+    input: { fileId: string; versionId: string },
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<void> {
+    await client
+      .update(previewArtifacts)
+      .set({ fileId: input.fileId, versionId: input.versionId, updatedAt: at })
+      .where(eq(previewArtifacts.id, id));
   }
 
   private keyWhere(key: PreviewArtifactKey) {

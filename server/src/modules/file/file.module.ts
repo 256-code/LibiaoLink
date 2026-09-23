@@ -22,7 +22,7 @@ import { PreviewService } from "./preview.service.js";
  * storage（ObjectStorage 端口，@Global，经端口调用不直接碰 S3 SDK）。
  * 已落：M4-01 上传管道、M4-02 版本 / 定档 / 回溯 / 回收站、M4-03 文件库查询 + 多态关联（file_links）、
  * M4-04 变更写入 + 读面（变更记录列表 / 详情）、M4-05 预览（数据层 + 转换队列：outbox `preview.job`
- * 领取器 / 转换器客户端 / 三元组幂等 / 失败降级）+ 读 API（三态 + 短时签名 + 仅 ready 写审计）。
+ * 领取器 / 转换器客户端 / 三元组幂等 / 失败降级）+ 读 API（三态 + 短时签名 + 仅 ready 写审计）+ 产物清理（彻底删除 / 到期清理按 content_hash 反查引用：有引用归属转移、无引用清对象）。
  */
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule],

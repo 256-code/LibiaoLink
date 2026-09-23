@@ -25,6 +25,7 @@ import type {
   UploadSessionRow,
 } from "../src/modules/file/file.repository.js";
 import type { FileRepository } from "../src/modules/file/file.repository.js";
+import type { PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
 import type { FileListFilter, FileListSort } from "../src/modules/file/file.query.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
 import { ObjectStorage, StorageError } from "../src/storage/index.js";
@@ -57,6 +58,7 @@ const VERSION = "66666666-6666-4666-8666-666666666666";
 const VERSION_A = "66666666-6666-4666-8666-66666666666a";
 const VERSION_B = "66666666-6666-4666-8666-66666666666b";
 const VERSION_C = "66666666-6666-4666-8666-66666666666c";
+const ARTIFACT = "77777777-7777-4777-8777-777777777777";
 const ACTOR = "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69";
 const OTHER_ACTOR = "caa8d763-4b6a-4967-9b26-7d1086272c9c";
 const HASH = "a".repeat(64);
@@ -67,6 +69,7 @@ const STAGING_KEY = `projects/${PROJECT}/files/${FILE}/staging/${SESSION}`;
 const CONTRACT_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`;
 const CONTRACT_KEY_V2 = `projects/${PROJECT}/files/${FILE}/v2/${OTHER_HASH}.pdf`;
 const CONTRACT_KEY_V3 = `projects/${PROJECT}/files/${FILE}/v3/${HASH}.pdf`;
+const ARTIFACT_KEY = `previews/${HASH}/1.0.0/pdf`;
 const ENV = {
   UPLOAD_MAX_SIZE_MB: 2048,
   UPLOAD_SESSION_TTL_HOURS: 24,
@@ -134,6 +137,25 @@ function makeVersionRow(overrides: Partial<FileVersionRow> = {}): FileVersionRow
     uploadedBy: ACTOR,
     uploadedAt: NOW,
     changeRequestId: null,
+    ...overrides,
+  };
+}
+
+/** 产物行（M4-05 收口：只 ready 行有对象键）。 */
+function makeArtifactRow(overrides: Partial<PreviewArtifactRow> = {}): PreviewArtifactRow {
+  return {
+    id: ARTIFACT,
+    fileId: FILE,
+    versionId: VERSION_A,
+    contentHash: HASH,
+    target: "pdf",
+    pipelineVersion: "1.0.0",
+    status: "ready",
+    objectKey: ARTIFACT_KEY,
+    error: null,
+    generatedAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW,
     ...overrides,
   };
 }
@@ -396,6 +418,18 @@ class FakeFileRepository {
     this.otherFiles = this.otherFiles.filter((row) => row.id !== fileId);
   }
 
+  /** M4-05 收口：同内容哈希的存活版本（null = 唯一引用 → 产物对象可清；非 null = 归属转移目标）。 */
+  survivorVersion: { id: string; fileId: string } | null = null;
+  survivorQueries: { contentHash: string; exclude: string[] }[] = [];
+
+  async findVersionByContentHash(
+    contentHash: string,
+    excludeVersionIds: readonly string[],
+  ): Promise<{ id: string; fileId: string } | null> {
+    this.survivorQueries.push({ contentHash, exclude: [...excludeVersionIds] });
+    return this.survivorVersion;
+  }
+
   // ---------- M4-03：多态关联与文件库查询 ----------
 
   /** complete 幂等写入的关联（project 必写；node / task 有则写）。 */
@@ -506,6 +540,24 @@ class FakeObjectStorage extends ObjectStorage {
   async probe(): Promise<void> {}
 }
 
+/** 产物仓储替身（M4-05 收口：只实现清理用到的两个方法）。 */
+class FakePreviewRepository {
+  rows: PreviewArtifactRow[] = [];
+  reassignments: { id: string; fileId: string; versionId: string; at: Date }[] = [];
+  async listReadyByVersionIds(versionIds: readonly string[]): Promise<PreviewArtifactRow[]> {
+    return this.rows.filter((row) => row.status === "ready" && versionIds.includes(row.versionId));
+  }
+  async reassignOwner(id: string, input: { fileId: string; versionId: string }, at: Date): Promise<void> {
+    this.reassignments.push({ id, ...input, at });
+    const row = this.rows.find((candidate) => candidate.id === id);
+    if (row !== undefined) {
+      row.fileId = input.fileId;
+      row.versionId = input.versionId;
+      row.updatedAt = at;
+    }
+  }
+}
+
 class FakePermissionService {
   visible = true;
   canUpload = true;
@@ -555,6 +607,7 @@ class FakeDatabase {
 interface Harness {
   service: FileService;
   repo: FakeFileRepository;
+  previews: FakePreviewRepository;
   storage: FakeObjectStorage;
   permission: FakePermissionService;
   audit: FakeAuditService;
@@ -564,6 +617,7 @@ interface Harness {
 
 function makeService(env: Partial<Env> = {}): Harness {
   const repo = new FakeFileRepository();
+  const previews = new FakePreviewRepository();
   const storage = new FakeObjectStorage();
   const permission = new FakePermissionService();
   const audit = new FakeAuditService();
@@ -574,13 +628,14 @@ function makeService(env: Partial<Env> = {}): Harness {
   const service = new FileService(
     database as unknown as DatabaseService,
     repo as unknown as FileRepository,
+    previews as unknown as PreviewRepository,
     storage,
     permission as unknown as PermissionService,
     audit as unknown as AuditService,
     config,
     clock,
   );
-  return { service, repo, storage, permission, audit, database, clock };
+  return { service, repo, previews, storage, permission, audit, database, clock };
 }
 
 describe("FileService.createUpload（M4-01 发起上传）", () => {
@@ -1241,6 +1296,119 @@ describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
     });
     expect(h.repo.deletedFiles).toHaveLength(0);
     expect(h.repo.versions).toHaveLength(2);
+  });
+});
+
+describe("FileService 预览产物清理（M4-05 收口：按 content_hash 反查引用）", () => {
+  const ARTIFACT_FAILED = "88888888-8888-4888-8888-888888888888";
+
+  function recycledHarness(): Harness {
+    const h = makeService();
+    h.repo.file = makeFileRow({
+      status: "recycled",
+      version: 7,
+      currentVersionId: VERSION_B,
+      recycledAt: NOW,
+      recycledBy: ACTOR,
+      recycledFromStatus: "draft",
+      purgeAfter: new Date(NOW.getTime() + 86_400_000),
+    });
+    h.repo.versions = [
+      makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH }),
+      makeVersionRow({ id: VERSION_B, seq: 2, objectKey: CONTRACT_KEY_V2, contentHash: OTHER_HASH }),
+    ];
+    h.permission.roleCodes = ["admin"];
+    return h;
+  }
+
+  it("唯一引用：清产物对象（与版本对象同序）+ 审计记数", async () => {
+    const h = recycledHarness();
+    h.previews.rows = [makeArtifactRow({ versionId: VERSION_A })];
+
+    await h.service.purgeFile(FILE, { version: 7 }, ACTOR);
+
+    expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2, ARTIFACT_KEY]);
+    expect(h.previews.reassignments).toHaveLength(0);
+    expect(h.repo.survivorQueries).toEqual([{ contentHash: HASH, exclude: [VERSION_A, VERSION_B] }]);
+    const last = h.audit.entries.at(-1) as { summary: string; metadata: Record<string, unknown> };
+    expect(last.metadata).toMatchObject({ previewArtifactsPurged: 1, previewArtifactsReassigned: 0 });
+    expect(last.summary).toContain("1 份预览产物");
+  });
+
+  it("另一文件同内容存活：不清对象，缓存行归属转移到存活版本", async () => {
+    const h = recycledHarness();
+    h.previews.rows = [makeArtifactRow({ versionId: VERSION_A })];
+    h.repo.survivorVersion = { id: VERSION_C, fileId: OTHER_FILE };
+
+    await h.service.purgeFile(FILE, { version: 7 }, ACTOR);
+
+    expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2]);
+    expect(h.previews.reassignments).toEqual([{ id: ARTIFACT, fileId: OTHER_FILE, versionId: VERSION_C, at: NOW }]);
+    expect(h.previews.rows[0]).toMatchObject({ fileId: OTHER_FILE, versionId: VERSION_C });
+    const last = h.audit.entries.at(-1) as { summary: string; metadata: Record<string, unknown> };
+    expect(last.metadata).toMatchObject({ previewArtifactsPurged: 0, previewArtifactsReassigned: 1 });
+    expect(last.summary).not.toContain("份预览产物");
+  });
+
+  it("not_ready / failed 行（无对象键）：不反查、不调存储", async () => {
+    const h = recycledHarness();
+    h.previews.rows = [
+      makeArtifactRow({ versionId: VERSION_A, status: "not_ready", objectKey: null, generatedAt: null }),
+      makeArtifactRow({
+        id: ARTIFACT_FAILED,
+        versionId: VERSION_B,
+        status: "failed",
+        objectKey: null,
+        generatedAt: null,
+        error: "转换超时",
+      }),
+    ];
+
+    await h.service.purgeFile(FILE, { version: 7 }, ACTOR);
+
+    expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2]);
+    expect(h.repo.survivorQueries).toHaveLength(0);
+    expect(h.previews.reassignments).toHaveLength(0);
+  });
+
+  it("产物对象清理失败 → 映射契约错误并回滚（元数据与产物行都不动）", async () => {
+    const h = recycledHarness();
+    h.previews.rows = [makeArtifactRow({ versionId: VERSION_A })];
+    h.storage.purgeObject = async (objectKey: string) => {
+      if (objectKey === ARTIFACT_KEY) throw new StorageError("unavailable", "S3 不可用");
+      h.storage.purged.push(objectKey);
+      return { deletedVersions: 1, deleteMarkers: 0 };
+    };
+
+    await expect(h.service.purgeFile(FILE, { version: 7 }, ACTOR)).rejects.toMatchObject({
+      code: "INTERNAL",
+      httpStatus: 500,
+    });
+    expect(h.repo.deletedFiles).toHaveLength(0);
+    expect(h.repo.versions).toHaveLength(2);
+    expect(h.previews.rows).toHaveLength(1);
+  });
+
+  it("回收站到期清理（worker）走同一路径：连带清产物对象 + system 留痕", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({
+      status: "recycled",
+      version: 2,
+      recycledAt: new Date(NOW.getTime() - 31 * 86_400_000),
+      recycledBy: ACTOR,
+      recycledFromStatus: "draft",
+      purgeAfter: new Date(NOW.getTime() - 86_400_000),
+    });
+    h.repo.versions = [makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH })];
+    h.repo.expiredRecycledRows = [h.repo.file];
+    h.previews.rows = [makeArtifactRow({ versionId: VERSION_A })];
+
+    expect(await h.service.sweepExpiredRecycled()).toEqual({ scanned: 1, purged: 1 });
+    expect(h.storage.purged).toEqual([CONTRACT_KEY, ARTIFACT_KEY]);
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      actorId: null,
+      metadata: { source: "system", deletedVersions: 1, previewArtifactsPurged: 1 },
+    });
   });
 });
 

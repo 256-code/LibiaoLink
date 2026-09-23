@@ -1,9 +1,9 @@
-# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览（数据层 + 转换队列 + 读 API）已落地）
+# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览（数据层 + 转换队列 + 读 API + 产物清理收口）已落地）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 平台模块（platform） |
-| 职责 | 文件、版本、定档、变更（申请即通过）、预览编排、回收站 |
+| 职责 | 文件、版本、定档、变更（申请即通过）、预览编排（含产物对象清理收口）、回收站 |
 | 主责 | lan（团队分工.md §2 后端平台） |
 | 预留对外接口 | FileService、PreviewService、PreviewReadService、ChangeService |
 | 依据 | 系统功能书 A4-01~A4-18 / D2；技术设计v0.2 §5.1-5.3；契约 shared/src/modules/files.ts；ADR-006（对象键形态）/ ADR-022（不触发 projects.updated_at） |
@@ -18,19 +18,19 @@ change-library.controller.ts # HTTP 面：/api/v1/projects/{id}/change-requests 
 change.query.ts      # 变更列表查询解析（纯函数）：阶段（多值 / 九阶段字典校验）/ 节点 / 变更文件 / 申请人 / 关键字 / 排序白名单；非法一律 400
 change.service.ts    # 读面业务（M4-04 读面）：变更记录列表 / 详情（变更后文件与版本由 file_versions 反查；视图复用写入面映射）
 file.query.ts        # 文件库查询解析（纯函数）：筛选（多值 / UUID）/ 关键字 / 排序白名单；非法一律 400
-file.service.ts      # 业务：上传管道（发起 / 分片 / 状态 / 完成 / 取消 / 过期清理 EXPIRE_SWEEP_BATCH）+ 生命周期（详情 / 版本链 / 定档 / 回溯 / 回收 / 恢复 / 彻底删除 / 到期清理 RECYCLE_SWEEP_BATCH）+ 变更写入（M4-04：intent=change 完成上传 / 定档后回溯 → change_requests + 版本挂 change_request_id + R01 回写 tasks.change_refs（追加 + 去重、可多条），变更记录先行两段式；视图映射器 toFileView / toVersionView / toChangeRequestView 导出供 change.service.ts 读面复用，避免读写两处口径漂移）
-file.repository.ts   # 数据访问：files / file_versions / upload_sessions / file_links / change_requests（M4-04 写 + 读面：listChangeRequests / findChangeRequestJoinedById 内连接 file_versions 反查 fileId / versionId / versionSeq）（写路径由服务层开事务传 tx；关键路径 for update）
+file.service.ts      # 业务：上传管道（发起 / 分片 / 状态 / 完成 / 取消 / 过期清理 EXPIRE_SWEEP_BATCH）+ 生命周期（详情 / 版本链 / 定档 / 回溯 / 回收 / 恢复 / 彻底删除 / 到期清理 RECYCLE_SWEEP_BATCH）+ 变更写入（M4-04：intent=change 完成上传 / 定档后回溯 → change_requests + 版本挂 change_request_id + R01 回写 tasks.change_refs（追加 + 去重、可多条），变更记录先行两段式；视图映射器 toFileView / toVersionView / toChangeRequestView 导出供 change.service.ts 读面复用，避免读写两处口径漂移）+ 预览产物清理（M4-05 收口：purgeRecycled 按 content_hash 反查引用 —— 有引用则缓存行归属转移、无引用则清对象）
+file.repository.ts   # 数据访问：files / file_versions / upload_sessions / file_links / change_requests（M4-04 写 + 读面：listChangeRequests / findChangeRequestJoinedById 内连接 file_versions 反查 fileId / versionId / versionSeq；M4-05 收口：findVersionByContentHash 同内容存活版本反查）（写路径由服务层开事务传 tx；关键路径 for update）
 file.module.ts       # DI 装配（identity 守卫 / permission / admin 审计；ClockService；FileService + ChangeService + PreviewService（含 OutboxStore / PreviewRepository / PreviewConverter）+ PreviewReadService）
 preview.job.ts       # 预览任务契约（纯函数）：topic `preview.job` / 载荷构造与解析 / 去重键 = 三元组（投递侧与消费侧共用一份，防两端拼装漂移）
 preview.targets.ts   # 渲染通道选择（纯函数）：定档预生成投哪些 target（图片→image；PDF / Office（含 xlsx）→pdf；判不出类型不投）
 preview.converter.ts # 转换沙箱客户端（M4-05c）：POST /convert 字节流进 / 字节流出 + GET /healthz 自检；错误面分类（可重试 / 确定性）；管线版本比对
-preview.repository.ts # 数据访问：preview_artifacts（三元组读 / 首次登记 / ready 成对写 / failed 成对写）
+preview.repository.ts # 数据访问：preview_artifacts（三元组读 / 首次登记 / ready 成对写 / failed 成对写 / M4-05 收口：listReadyByVersionIds 待清理候选 + reassignOwner 归属转移）
 preview.service.ts   # 队列消费（M4-05c）：领 outbox → 读源字节 → 调转换器 → 产物回对象存储 → 更新 preview_artifacts → done / 重试 / dead
 preview-read.service.ts # 读 API（M4-05d · PR-11）：GET /files/{id}/preview 三态 / 短时签名 / 仅 ready 写审计 / 版本 404 / 读取侧幂等补投与两类终态降级
 index.ts             # 唯一公开出口（跨模块只允许 import 本文件）
 ```
 
-## 已落接口（M4-01 上传管道 · PR-4 · Push 129；M4-02 版本 / 定档 / 回溯 / 回收站 · PR-5；M4-03 文件库列表 · PR-6；M4-04 变更写入随上传管道复用 · PR-7；M4-04 变更读面 · PR-8；M4-05c 预览转换队列 · PR-10 —— worker 侧无 HTTP 接口，见下「M4-05c 预览队列口径」；M4-05d 预览读 API · PR-11 —— `GET /files/{id}/preview`，见下「M4-05d 读 API 口径」）
+## 已落接口（M4-01 上传管道 · PR-4 · Push 129；M4-02 版本 / 定档 / 回溯 / 回收站 · PR-5；M4-03 文件库列表 · PR-6；M4-04 变更写入随上传管道复用 · PR-7；M4-04 变更读面 · PR-8；M4-05c 预览转换队列 · PR-10 —— worker 侧无 HTTP 接口，见下「M4-05c 预览队列口径」；M4-05d 预览读 API · PR-11 —— `GET /files/{id}/preview`，见下「M4-05d 读 API 口径」；M4-05e 产物清理 · PR-12 —— 无新增 HTTP 接口（随彻底删除 / 回收站到期收口））
 
 | 路径 | 说明 | 响应码 | 权限 |
 |---|---|---|---|
@@ -70,7 +70,8 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 - **M4-05d 短时签名（D2-04）**：复用 `ObjectStorage.signDownloadUrl`，**不传 `fileName`** → 不改写 `Content-Disposition`（内联渲染，下载地址才用 attachment）；窗口 = `PREVIEW_URL_TTL_SECONDS`（默认 300s）。
 - **M4-05d 审计（D2-07）**：只对 **ready** 的读取写**一条** `object_type = file` + `action = preview` + metadata（`versionId` / `target` / `pipelineVersion`）；`not_ready` / `failed` / 404 一律不写（先签名后审计：地址没签发成功就不算一次「查看」）。
 - **M4-05d 两类终态降级**（不落表、不投递、不写审计）：① 文件尚无版本（未完成过上传）；② 判不出渲染通道（如 `.zip`）→ 直接 `failed` + 原因，**让前端轮询有终点**。
-- **M4-05c 已知缺口（随 M4-05 收口）**：① **预览产物对象的清理未接** —— 彻底删除 / 回收站到期目前只清 `projects/` 前缀下的版本对象，`previews/` 前缀的产物对象仍需按 `content_hash` 反查引用后清理（迁移 `0027` 的口径已写明，`preview_artifacts` 行随 `files` 级联删除，对象不会自己消失）；② **未压测**（并发 2~4 / 200MB 长跑 / 成功率 ≥95% 属 M4-05 压测 / PoC-1）。
+- **M4-05e 产物清理（PR-12 · M4-05 收口 · 迁移 `0027` 口径 3）**：彻底删除 / 回收站到期（`purgeRecycled`）连带收口 `previews/{contentHash}/{pipelineVersion}/{target}` —— 按 `content_hash` 反查是否还有存活版本引用：**有** → 缓存行**归属转移**到存活版本（行与对象都保留，D2-06「同一内容只转换一次」不因删掉一份重复文件而失效）；**无** → 与版本对象**同序**在持锁事务内清对象（`preview_artifacts` 行随 `file_versions` 外键级联；失败即回滚，不留无行可重试的孤儿对象）。审计 metadata 记 `previewArtifactsPurged` / `previewArtifactsReassigned`。
+- **M4-05 剩余**：① 下载切片 `GET /files/{id}/versions/{versionId}/download-url`（契约已在 `shared/`，A4-10「离线下载受权限控制并记日志」）；② 压测（并发 2~4 / 200MB 长跑 / 转换成功率 ≥95% 属 M4-05 压测 / PoC-1 真实样本集）。
 
 ## 上游（直接复用，不重复造）
 
@@ -82,5 +83,5 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 ## 待落地（按卡片）
 
 - **M4-04**：写入面**已落地（PR-7）**、读面**已落地（PR-8）**（列表 / 详情，见上「M4-04 变更口径」「M4-04 变更读面」）；**剩余** = 变更统计（A4-17，无对外契约，口径由后续切片 / 仪表盘定）与通知（A4-18，随 M5；outbox `change.applied` 已埋点）。
-- **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；**读 API 已落地（PR-11：三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404 + 读取侧幂等补投 + 两类终态降级）**；剩余 = 预览产物对象清理（随 M4-05 收口）与下载切片（`GET /files/{id}/versions/{versionId}/download-url` 契约已在 `shared/`，仍待实现）。
+- **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；**读 API 已落地（PR-11：三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404 + 读取侧幂等补投 + 两类终态降级）**；**产物清理已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行）**；剩余 = 下载切片（`GET /files/{id}/versions/{versionId}/download-url` 契约已在 `shared/`，仍待实现）与压测（M4-05 出口标准）。
 - 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。
