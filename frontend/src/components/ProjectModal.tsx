@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import type { RegionTools } from "../customRegions";
-import type { DictItem } from "../dicts";
+import type { ReactNode } from "react";
+import { DICT_ACCENT_PALETTE, accentOfItem, type DictItem, type Dicts } from "../dicts";
+import type { DictTools } from "../dictTools";
 import type { Member } from "../data/members";
+import { DictSelect } from "./DictSelect";
 import { MemberMultiSelect } from "./MemberSelect";
-import { RegionSelect } from "./RegionSelect";
-import { SelectMenu } from "./SelectMenu";
-import type { SelectOption } from "./SelectMenu";
 
 export type ProjectDraft = {
   code: string;
@@ -23,11 +22,12 @@ export type ProjectDraft = {
 type ProjectModalProps = {
   mode: "create" | "edit";
   initial?: ProjectDraft;
-  /** 字典下拉项（GET /api/v1/dicts）。 */
-  regions: DictItem[];
-  projectTypes: DictItem[];
-  /** 地区「＋ 添加」的落地方式（写地区字典 / 仅本项目 + 本机记住），由 App 层按 dict.manage 分派。 */
-  regionTools: RegionTools;
+  /** 字典下拉项（GET /api/v1/dicts）：地区 + 项目类型。 */
+  dicts: Dicts;
+  /** 字典「＋ 添加」与行内删除的落地方式，由 App 层实现（region 登录即可；projectType 与删除需 dict.manage）。 */
+  dictTools: DictTools;
+  /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现（服务端仍是最终裁决）。 */
+  canManageDicts: boolean;
   /** 项目经理候选（GET /api/v1/users）。 */
   managerOptions: Member[];
   onClose: () => void;
@@ -38,37 +38,30 @@ type ProjectModalProps = {
 const fieldClass =
   "block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25";
 
-/** 项目类型主题色（字典 metadata.accent；缺省品牌黄）。 */
-function accentOf(items: DictItem[], code: string): string {
-  const item = items.find((entry) => entry.code === code);
-  const accent = item === undefined ? undefined : item.metadata["accent"];
-  return typeof accent === "string" && accent !== "" ? accent : "#feca04";
+/**
+ * 项目类型下拉内容（触发器与选项行同款）：色点 + 名称 —— 色值随字典 metadata.accent 下发，前端不硬编码；
+ * 存量值（item === null：已停用 / 字典外的码）按兜底色（品牌黄）渲染。
+ */
+function projectTypeContent(name: string, item: DictItem | null): ReactNode {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span
+        className="inline-block h-3 w-3 shrink-0 rounded-full ring-1 ring-zinc-900/10"
+        style={{ backgroundColor: accentOfItem(item ?? undefined).color }}
+        aria-hidden="true"
+      />
+      <span className="truncate">{name}</span>
+    </span>
+  );
 }
 
-/** 项目类型下拉项：色点 + 名称（色值随字典 metadata.accent 下发，前端不硬编码）。 */
-function typeOptionsOf(items: DictItem[]): SelectOption[] {
-  return items.map((item) => ({
-    value: item.code,
-    label: (
-      <span className="flex min-w-0 items-center gap-2">
-        <span
-          className="inline-block h-3 w-3 shrink-0 rounded-full ring-1 ring-zinc-900/10"
-          style={{ backgroundColor: accentOf(items, item.code) }}
-          aria-hidden="true"
-        />
-        <span className="truncate">{item.name}</span>
-      </span>
-    ),
-  }));
-}
-
-export function ProjectModal({ mode, initial, regions, projectTypes, regionTools, managerOptions, onClose, onSubmit }: ProjectModalProps) {
+export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, managerOptions, onClose, onSubmit }: ProjectModalProps) {
   const isEdit = mode === "edit";
   const [code, setCode] = useState(initial?.code ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [managerIds, setManagerIds] = useState<string[]>(initial?.managerIds ?? []);
-  const [projectType, setProjectType] = useState<string>(initial?.projectType ?? projectTypes[0]?.code ?? "");
-  const [region, setRegion] = useState<string>(initial?.region ?? regions[0]?.code ?? "");
+  const [projectType, setProjectType] = useState<string>(initial?.projectType ?? dicts.projectType[0]?.code ?? "");
+  const [region, setRegion] = useState<string>(initial?.region ?? dicts.region[0]?.code ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -150,17 +143,56 @@ export function ProjectModal({ mode, initial, regions, projectTypes, regionTools
           </div>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目地区</span>
-            <RegionSelect value={region} regions={regions} tools={regionTools} onChange={setRegion} ariaLabel="选择项目地区" />
+            <DictSelect
+              value={region}
+              items={dicts.region}
+              ariaLabel="选择项目地区"
+              placeholder="请选择地区"
+              onAdd={(input) => dictTools.onAdd("region", input)}
+              addText={{
+                label: "添加地区",
+                placeholder: "输入地区名称，如 东南亚",
+                note: "保存后写入地区字典（C9）：全站可选（所有项目的地区下拉都能选到），并可在首页按它筛选；删除（= 停用）与改名由管理员维护。",
+              }}
+              onDelete={
+                canManageDicts
+                  ? (code) => dictTools.onDelete("region", code)
+                  : undefined
+              }
+              deleteLabelOf={(_code, name) => "删除地区 " + name}
+              onChange={setRegion}
+            />
           </div>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
-            <SelectMenu
+            <DictSelect
               value={projectType}
-              options={typeOptionsOf(projectTypes)}
-              onChange={setProjectType}
+              items={dicts.projectType}
               ariaLabel="选择项目类型"
               placeholder="请选择项目类型"
-              disabled={projectTypes.length === 0}
+              renderContent={projectTypeContent}
+              onAdd={
+                canManageDicts
+                  ? (input) => dictTools.onAdd("projectType", input)
+                  : undefined
+              }
+              addText={{
+                label: "添加项目类型",
+                placeholder: "输入类型名称，如 分拣机",
+                note: "保存后写入项目类型字典（C9）：全站可选；颜色模板决定卡片徽标 / 小车图标 / 悬停光晕的底色，删除（= 停用）由管理员维护。",
+              }}
+              palette={{
+                label: "颜色模板",
+                hint: "预置色板（不提供自由取色）：底色与徽标文字色成对使用，新增类型默认避开已有颜色。",
+                options: DICT_ACCENT_PALETTE,
+              }}
+              onDelete={
+                canManageDicts
+                  ? (code) => dictTools.onDelete("projectType", code)
+                  : undefined
+              }
+              deleteLabelOf={(_code, name) => "删除项目类型 " + name}
+              onChange={setProjectType}
             />
           </div>
 

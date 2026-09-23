@@ -3,6 +3,7 @@ import {
   type AnyPgColumn,
   check,
   index,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -137,4 +138,17 @@ export const userRoles = pgTable(
     primaryKey({ name: "user_roles_pkey", columns: [table.userId, table.roleId] }),
     index("ix_user_roles_role").on(table.roleId),
   ],
+);
+
+/** user_preferences（0028）：用户级 UI 偏好（A4 任务表列显隐 / A24 常用筛选）；一人一行，prefs 整体存 jsonb。 */
+export const userPreferences = pgTable(
+  "user_preferences",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    prefs: jsonb("prefs").$type<Record<string, unknown>>().notNull().default({}),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("ck_user_preferences_prefs_object", sql`jsonb_typeof(${table.prefs}) = 'object'`)],
 );

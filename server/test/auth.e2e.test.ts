@@ -16,6 +16,7 @@ import { RoleRepository } from "../src/modules/identity/role.repository.js";
 import { RoleService } from "../src/modules/identity/role.service.js";
 import { SessionRepository, type SessionRow, type SessionWithUser } from "../src/modules/identity/session.repository.js";
 import { UserRepository, type SsoProfile, type UserRow } from "../src/modules/identity/user.repository.js";
+import { UserPreferenceRepository } from "../src/modules/identity/user-preference.repository.js";
 import { CsrfGuard } from "../src/modules/identity/csrf.guard.js";
 import type { ExecutionContext } from "@nestjs/common";
 
@@ -258,6 +259,9 @@ async function createApp(idleMinutes: number): Promise<TestContext> {
     .useValue({})
     .overrideProvider(OrgSyncService)
     .useValue({})
+    // A24 偏好仓储也在 IdentityModule 里（Push 169）：本用例只跑 /auth/*，给个空替身避免去连库
+    .overrideProvider(UserPreferenceRepository)
+    .useValue({ find: async (): Promise<null> => null, upsert: async (): Promise<never> => { throw new Error("auth e2e：偏好写入未接线"); } })
     .compile();
   const app = moduleRef.createNestApplication();
   app.useLogger(false);

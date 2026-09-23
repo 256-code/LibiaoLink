@@ -15,6 +15,8 @@ import { RoleService } from "./role.service.js";
 import { SessionGuard } from "./auth.guard.js";
 import { SessionRepository } from "./session.repository.js";
 import { SessionService } from "./session.service.js";
+import { UserPreferenceRepository } from "./user-preference.repository.js";
+import { UserPreferenceService } from "./user-preference.service.js";
 import { UserRepository } from "./user.repository.js";
 import { UserService } from "./user.service.js";
 import { UsersController } from "./users.controller.js";
@@ -26,6 +28,8 @@ import { UsersController } from "./users.controller.js";
     OidcService,
     SessionService,
     UserService,
+    UserPreferenceService,
+    UserPreferenceRepository,
     SessionRepository,
     UserRepository,
     SessionGuard,

@@ -1571,7 +1571,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐等） */
+        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式） */
         get: {
             parameters: {
                 query?: never;
@@ -1606,7 +1606,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400） */
         patch: {
             parameters: {
                 query?: never;
@@ -1768,7 +1768,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 新增字典条目（仅管理员 · dict.manage；变更写审计留痕） */
+        /** 新增字典条目（region = 任何登录用户；其余类型 = dict.manage；变更写审计留痕） */
         post: {
             parameters: {
                 query?: never;
@@ -5758,7 +5758,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description 新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
         DictItemCreateBody: {
             /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
             code: string;
@@ -6306,6 +6306,21 @@ export interface components {
             description?: string | null;
             version: components["schemas"]["Version"];
         };
+        /** @description 常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters） */
+        SavedHomeFilter: {
+            /** @description 组合 id（前端生成 sf- 前缀；跨设备同步后保持不变） */
+            id: string;
+            /** @description 组合名称（≤ 20 字） */
+            name: string;
+            /** @description 地区字典码（多值任一命中） */
+            regions: string[];
+            /** @description 项目类型字典码（多值任一命中） */
+            projectTypes: string[];
+            /** @description 项目经理 id 列表（用户目录 id；多值任一命中） */
+            managerIds: string[];
+            timeFrom: components["schemas"]["DateOnly"] & (string | null);
+            timeTo: components["schemas"]["DateOnly"] & (string | null);
+        };
         /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
         /** @description 推进当前阶段：过门禁才生效；失败 422 STAGE_GATE_NOT_PASSED + 缺项明细（不部分推进） */
@@ -6678,6 +6693,11 @@ export interface components {
             note?: string;
             version: components["schemas"]["Version"];
         };
+        /**
+         * @description 任务表列 key（白名单；「任务描述」常显，不在其中）
+         * @enum {string}
+         */
+        TaskTableColumnKey: "manager" | "owner" | "status" | "priority" | "onTime" | "deliverable" | "files" | "note" | "start" | "days" | "due" | "headcount" | "doneDate" | "change";
         /** @description 任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点） */
         TaskTemplate: {
             id: components["schemas"]["Uuid"];
@@ -6865,13 +6885,19 @@ export interface components {
         };
         /** @description 用户偏好（全量；GET 返回当前值） */
         UserPreferences: {
-            /** @description 任务表隐藏列 key 列表；key 白名单与前端任务表列一致，未知 key 返回 400 VALIDATION_FAILED */
-            taskTableHiddenColumns: string[];
-            updatedAt: components["schemas"]["DateTime"] & unknown;
+            /** @description 任务表隐藏列 key 列表（白名单 = TaskTableColumnKey，「任务描述」常显；未知 key 400 VALIDATION_FAILED；整体替换语义） */
+            taskTableHiddenColumns: components["schemas"]["TaskTableColumnKey"][];
+            /** @description 常用筛选组合（最多 20 组；整体替换语义） */
+            homeSavedFilters: components["schemas"]["SavedHomeFilter"][];
+            /** @description 醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false */
+            focusMode: boolean;
+            updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH 合并语义：只传变更键；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400） */
+        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED */
         UserPreferencesUpdateBody: {
-            taskTableHiddenColumns?: string[];
+            taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
+            homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
+            focusMode?: boolean;
         } & {
             [key: string]: unknown;
         };

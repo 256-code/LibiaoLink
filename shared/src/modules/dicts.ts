@@ -51,7 +51,10 @@ export const DictReadQuerySchema = z
     description: "字典读取参数：includeDisabled=true 用于管理端维护停用项（C9-02：停用不影响存量数据展示）",
   });
 
-/** 新增字典条目（仅管理员 · dict.manage）：码建后不可改（存量数据按码引用）。 */
+/**
+ * 新增字典条目：**region = 任何登录用户**（地区是全站共享的公共标签，C9-02 修订 —— 非管理员新增同样全站可见、
+ * 可在首页按它筛选）；**其余类型（projectType）= 仅管理员 dict.manage**。码建后不可改（存量数据按码引用）。
+ */
 export const DictItemCreateBodySchema = z
   .object({
     code: z.string().min(1).max(64).openapi({ description: "字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS" }),
@@ -60,7 +63,10 @@ export const DictItemCreateBodySchema = z
     enabled: z.boolean().default(true).openapi({ description: "是否启用；缺省 true" }),
     metadata: z.record(z.string(), z.unknown()).default({}).openapi({ description: "字典元数据（projectType 必含 accent）" }),
   })
-  .openapi("DictItemCreateBody", { description: "新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典" });
+  .openapi("DictItemCreateBody", {
+    description:
+      "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典",
+  });
 
 /** 更新字典条目（仅管理员 · dict.manage）：PATCH 合并语义；code 不可改；停用替代删除。 */
 export const DictItemUpdateBodySchema = z

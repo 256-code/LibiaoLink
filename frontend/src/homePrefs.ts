@@ -1,14 +1,14 @@
-import { clearSavedFilters } from "./savedFilters";
 import type { ListQueryState } from "./useHashRoute";
 
 /**
  * 首页偏好本地记忆（A1-18「记忆并恢复用户上次选择」：URL 优先、本地次之）。
- * 「常用筛选」的组合库另存一个键（frontend/src/savedFilters.ts），退出登录时一并清除。
  *
  * - 记忆范围：地区 / 项目类型 / 项目经理 / 时间区间 / 排序，以及分类筛选侧边栏开合；
  *   关键字（q）属于临时操作，不写入记忆。
  * - 仅在不带任何列表参数的入口（书签 / 直接输域名）下恢复；带参数的链接严格按 URL 展示。
  * - 退出登录时清除（多人共用设备的隔离手段）；存储受限（隐私模式）时静默降级，不影响页面功能。
+ * - 「常用筛选」组合库不在本文件：Push 169 起按账号存服务端（A24）—— 换设备可见、退出登录不清
+ *   （那是账号自己的记忆），见 frontend/src/savedFilters.ts 与 frontend/src/preferencesApi.ts。
  */
 export type HomeFilterPrefs = Pick<
   ListQueryState,
@@ -140,12 +140,14 @@ export function saveSidebarPref(open: boolean): void {
   writeStore(store);
 }
 
-/** 清除全部本地记忆（退出登录时调用）：筛选 / 侧栏开合 + 「常用筛选」（同一隔离口径）。 */
+/**
+ * 清除本机筛选记忆（退出登录时调用）：筛选 / 侧栏开合。
+ * 「常用筛选」不在此列：Push 169 起它按账号存服务端（服务端按 actorId 隔离）—— 退出登录不清，换账号也不会串。
+ */
 export function clearHomePrefs(): void {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
     // 与写入同一降级策略
   }
-  clearSavedFilters();
 }
