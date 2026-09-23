@@ -1,4 +1,4 @@
--- LibiaoLink · 0028 outbox 领取器支撑：`locked_at`（领取时刻）+ processing 部分索引（M4-05c 预览队列 · Push 167）
+-- LibiaoLink · 0028 outbox 领取器支撑：`locked_at`（领取时刻）+ processing 部分索引（M4-05c 预览队列 · Push 168）
 -- 口径来源：技术设计v0.2-架构与数据模型.md §1.3（Outbox 至少一次投递 + dedupe_key 消费幂等）、ADR-007（在线预览管道）、
 --   Push 160 定案（outbox 领取器切片只落「领取 + 消费 + 重试 + dead」，不含规则 / 通知编排）。
 -- 口径：
