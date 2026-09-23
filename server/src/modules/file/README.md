@@ -1,4 +1,4 @@
-# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览数据层已落地）
+# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览（数据层 + 转换队列）已落地）
 
 | 字段 | 内容 |
 |---|---|
@@ -20,11 +20,16 @@ change.service.ts    # 读面业务（M4-04 读面）：变更记录列表 / 详
 file.query.ts        # 文件库查询解析（纯函数）：筛选（多值 / UUID）/ 关键字 / 排序白名单；非法一律 400
 file.service.ts      # 业务：上传管道（发起 / 分片 / 状态 / 完成 / 取消 / 过期清理 EXPIRE_SWEEP_BATCH）+ 生命周期（详情 / 版本链 / 定档 / 回溯 / 回收 / 恢复 / 彻底删除 / 到期清理 RECYCLE_SWEEP_BATCH）+ 变更写入（M4-04：intent=change 完成上传 / 定档后回溯 → change_requests + 版本挂 change_request_id + R01 回写 tasks.change_refs（追加 + 去重、可多条），变更记录先行两段式；视图映射器 toFileView / toVersionView / toChangeRequestView 导出供 change.service.ts 读面复用，避免读写两处口径漂移）
 file.repository.ts   # 数据访问：files / file_versions / upload_sessions / file_links / change_requests（M4-04 写 + 读面：listChangeRequests / findChangeRequestJoinedById 内连接 file_versions 反查 fileId / versionId / versionSeq）（写路径由服务层开事务传 tx；关键路径 for update）
-file.module.ts       # DI 装配（identity 守卫 / permission / admin 审计；ClockService；FileService + ChangeService 双服务）
+file.module.ts       # DI 装配（identity 守卫 / permission / admin 审计；ClockService；FileService + ChangeService + PreviewService（含 OutboxStore / PreviewRepository / PreviewConverter））
+preview.job.ts       # 预览任务契约（纯函数）：topic `preview.job` / 载荷构造与解析 / 去重键 = 三元组（投递侧与消费侧共用一份，防两端拼装漂移）
+preview.targets.ts   # 渲染通道选择（纯函数）：定档预生成投哪些 target（图片→image；PDF / Office（含 xlsx）→pdf；判不出类型不投）
+preview.converter.ts # 转换沙箱客户端（M4-05c）：POST /convert 字节流进 / 字节流出 + GET /healthz 自检；错误面分类（可重试 / 确定性）；管线版本比对
+preview.repository.ts # 数据访问：preview_artifacts（三元组读 / 首次登记 / ready 成对写 / failed 成对写）
+preview.service.ts   # 队列消费（M4-05c）：领 outbox → 读源字节 → 调转换器 → 产物回对象存储 → 更新 preview_artifacts → done / 重试 / dead
 index.ts             # 唯一公开出口（跨模块只允许 import 本文件）
 ```
 
-## 已落接口（M4-01 上传管道 · PR-4 · Push 129；M4-02 版本 / 定档 / 回溯 / 回收站 · PR-5；M4-03 文件库列表 · PR-6；M4-04 变更写入随上传管道复用 · PR-7；M4-04 变更读面 · PR-8）
+## 已落接口（M4-01 上传管道 · PR-4 · Push 129；M4-02 版本 / 定档 / 回溯 / 回收站 · PR-5；M4-03 文件库列表 · PR-6；M4-04 变更写入随上传管道复用 · PR-7；M4-04 变更读面 · PR-8；M4-05c 预览转换队列 · PR-10 —— worker 侧无 HTTP 接口，见下「M4-05c 预览队列口径」）
 
 | 路径 | 说明 | 响应码 | 权限 |
 |---|---|---|---|
@@ -54,14 +59,21 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 - **R01 口径（写入面）**：按「变更文件成果类型 ∈ 任务输出成果文件」（`tasks.deliverable_types @> array[doc_type]`，ADR-024 多值命中、GIN `ix_tasks_deliverable_types`；已随迁移 0018 落地）匹配同项目任务，命中多条全部**追加 + 去重**回写 `tasks.change_refs`（迁移 0020 起为 uuid[]，可多条：已关联过同一变更不重复、否则追加到数组末位 —— 数组顺序 = 关联先后，末位 = 最近一次变更；**一条任务可关联多条变更**，业务要求「变更关联」列展示多条）；回写**不递增**任务乐观锁（变更关联不视为任务编辑）；0 命中只 `warn` 不阻断。注意：`file_links`(change) 记的是**文件 ↔ 变更**，**不**承担「任务 ↔ 变更」明细（PR #111 评审订正）。读面：`Task.changeLinks` 随任务列表 / 详情下发多条（任务 ↔ 变更明细按 `change_refs` 直接取，不按 doc_type 派生）；变更记录读面（PR-8）走 `change_requests` + `file_versions` 反查，不经任务表。
 - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
 
+- **M4-05c 预览队列口径（PR-10 · D2-04 / D2-05 / D2-06 / D2-07）**：worker 领 outbox topic `preview.job`（切片边界 = 台账「outbox 领取器只落领取 + 消费 + 重试 + dead」，**不含规则 / 通知编排**），串行消费，单条最长占满客户端超时（默认 90s）。链路 = 领任务 → 读库内版本行与文件行（源对象键 / 内容哈希 / 大小 / MIME / 原名）→ `storage.getObject` 直读源字节 → `POST /convert`（**字节流进 / 字节流出**，不传对象键、不带 S3 凭证）→ `storage.putObject` 写 `previews/{contentHash}/{pipelineVersion}/{target}` → `preview_artifacts` 置 ready（`object_key` / `generated_at` 成对）→ outbox done。三元组合围：① 投递侧去重键 = 三元组（同三元组只一条任务；定档用 `appendOutboxIfAbsent`，dead 才唤醒）；② 消费侧先查 `preview_artifacts`（**ready 复用不重转**；**failed 是缓存态，不做原地重试** —— 管线修复由 `pipeline_version` 递增失效）；③ 对象键含三元组（换内容 / 换管线 / 换通道 = 新键，不覆盖旧产物）。
+- **M4-05c 失败处置（D2-05 降级「请下载」）**：可重试 = 503 SERVICE_BUSY / 503 SERVICE_UNAVAILABLE / 504 CONVERT_TIMEOUT / 连接失败 / 客户端超时 / 源对象读不到 / 存储抖动 → 按 `PREVIEW_CONVERT_BACKOFF_MS` 指数退避（封顶 30 分钟），到 `PREVIEW_CONVERT_MAX_ATTEMPTS` 次转 dead；确定性 = 400 / 413 / 415 / 422 / 501 / **管线版本不一致** / 超大源文件（> `PREVIEW_CONVERT_MAX_SOURCE_MB`，默认 100MB）/ `structured` 通道一期未启用 → 一次即写 `preview_artifacts.failed`（error ≤ 500 字，直接作降级副行）+ outbox dead。降级只影响预览：文件本体与下载不受影响（出口标准「转换失败不影响下载」）。
+- **M4-05c 触发点**：**定档预生成（P1）** = `finalizeFile` 在同一事务投 `preview.job`（只投当前版本、只投一期真能出产物的通道 —— `preview.targets.ts` 的映射：图片 → image、PDF / Office / xlsx → pdf、判不出类型不投）；**其余按需懒生成** = 读取侧（PR-11）按 `not_ready` 幂等补投（`appendOutboxIfAbsent`）。上传完成**不**投递（draft 可能被替换，白转）。
+- **M4-05c 审计口径（D2-07）**：**生成侧不写审计** —— 转换是系统内部副作用（产物状态由 `preview_artifacts` 留痕、任务进度由 `outbox_events.attempts` / `last_error` 留痕），审计只记**用户访问**（读取侧 `object_type = file` + `action = preview`，且**只对 ready 的读取**写，PR-11 落地）；否则一次预览会写两条、把「查看 / 下载」审计计数翻倍。
+- **M4-05c 已知缺口（随 M4-05 收口）**：① **预览产物对象的清理未接** —— 彻底删除 / 回收站到期目前只清 `projects/` 前缀下的版本对象，`previews/` 前缀的产物对象仍需按 `content_hash` 反查引用后清理（迁移 `0027` 的口径已写明，`preview_artifacts` 行随 `files` 级联删除，对象不会自己消失）；② **未压测**（并发 2~4 / 200MB 长跑 / 成功率 ≥95% 属 M4-05 压测 / PoC-1）。
+
 ## 上游（直接复用，不重复造）
 
-- `src/storage/`（经 `ObjectStorage` 端口注入，不直接碰 S3 SDK）：`createMultipartUpload` / `signPartUploadUrl` / `listParts` / `completeMultipartUpload` / `abortMultipartUpload` / `headObject` / `copyObject`（暂存键 → 契约键）/ `purgeObject`（**按版本**彻底删除）/ `probe`；`buildObjectKey` + `buildUploadStagingKey` + `planUpload` / `missingPartNumbers` + `toApiError`。
+- `src/storage/`（经 `ObjectStorage` 端口注入，不直接碰 S3 SDK）：`createMultipartUpload` / `signPartUploadUrl` / `listParts` / `completeMultipartUpload` / `abortMultipartUpload` / `headObject` / `copyObject`（暂存键 → 契约键）/ `purgeObject`（**按版本**彻底删除）/ `probe`；`buildObjectKey` + `buildUploadStagingKey` + `buildPreviewArtifactKey`（M4-05c：`previews/{contentHash}/{pipelineVersion}/{target}`，键片段走白名单防注入）+ `planUpload` / `missingPartNumbers` + `toApiError`。**M4-05c 新增 `getObject` / `putObject`**（服务端凭据直读 / 直写字节：源字节不出内网、转换器不带 S3 凭证；`getObject` 对象不存在返回 null，不抛错）。
 - 数据层：`files` / `file_versions` / `upload_sessions`（`database/migrations/0005_file_lifecycle.sql`；**分片状态不落表**，以 ListParts 为唯一真相）+ `idempotency_keys`（0006）+ `file_links`（`0016_file_links.sql` · M4-03：多态关联，`object_type` 六值 CHECK / 联合唯一幂等 / `(object_type, object_id)` 反查索引）+ `change_requests`（`0001_baseline.sql` · M4-04：一期申请即通过、只追加）+ `file_versions.change_request_id` 反查的部分索引（`0021_file_versions_change_request_index.sql` · M4-04 读面）+ `preview_artifacts`（`0027_preview_artifacts.sql` · M4-05 数据层：三元组缓存键 `content_hash + pipeline_version + target` 唯一 / 状态与契约 `PREVIEW_STATUSES` 同值 / `file_id` / `version_id` = 首次生成登记、读面按三元组命中）+ `audit_logs.action` CHECK 同步扩 `preview` / `download`（一次扩至十值，与契约 `AUDIT_ACTIONS` 同序同值）。
-- 横切：`AuditService`（同事务留痕）、`PermissionService`（`file.upload` / `file.download` 与记录级 404）、`ClockService`（会话到期判定，禁止直接取系统时间）。
+- 横切：`AuditService`（同事务留痕）、`PermissionService`（`file.upload` / `file.download` 与记录级 404）、`ClockService`（会话到期判定 / 预览产物 `generated_at` 与退避基准，禁止直接取系统时间）。
+- 平台：`OutboxStore`（M4-05c · `db/outbox.store.ts`：`claim` 单条 SQL 原子领取（`for update skip locked`，不把行锁握满整个转换时长）+ `markDone` / `markRetry`（退避回 pending）/ `markDead`）、`appendOutboxIfAbsent`（M4-05c · `db/outbox.ts`：同 dedupeKey 不覆盖进度、`dead` 才唤醒）。
 
 ## 待落地（按卡片）
 
 - **M4-04**：写入面**已落地（PR-7）**、读面**已落地（PR-8）**（列表 / 详情，见上「M4-04 变更口径」「M4-04 变更读面」）；**剩余** = 变更统计（A4-17，无对外契约，口径由后续切片 / 仪表盘定）与通知（A4-18，随 M5；outbox `change.applied` 已埋点）。
-- **M4-05**：预览编排（预览鉴权与产物，preview 模块）——**数据层已落地（PR-9 · 迁移 `0027`：`preview_artifacts` + `ck_audit_logs_action` 一次扩 `preview` / `download` 至十值；契约零改动、生成物零漂移）**；剩余 = 转换器与队列（outbox `preview.job` 领取 / 三元组幂等 / 失败降级）、读 API（三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404）。
+- **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；剩余 = 读 API（`GET /files/{id}/preview`：三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404 + 读取侧幂等补投，PR-11）与预览产物对象清理（随 M4-05 收口）。
 - 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。

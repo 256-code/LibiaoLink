@@ -11,6 +11,7 @@ import {
   HeadObjectCommand,
   ListObjectVersionsCommand,
   ListPartsCommand,
+  PutObjectCommand,
   S3Client,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
@@ -25,11 +26,13 @@ import {
   type CopyObjectResult,
   type CreateMultipartUploadInput,
   type DownloadUrlInput,
+  type GetObjectResult,
   type MultipartUploadKeyInput,
   type MultipartUploadRef,
   type ObjectHead,
   type PartUploadUrlInput,
   type PurgeObjectResult,
+  type PutObjectInput,
   type SignedUrl,
   type UploadedPart,
 } from "./object-storage.js";
@@ -223,6 +226,39 @@ export class S3ObjectStorage extends ObjectStorage {
       ),
     );
     return { url, expiresAt: new Date(Date.now() + ttl * 1000) };
+  }
+
+  async getObject(objectKey: string): Promise<GetObjectResult | null> {
+    try {
+      const output = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }));
+      const bytes = output.Body ? await output.Body.transformToByteArray() : new Uint8Array();
+      return {
+        objectKey,
+        bytes,
+        contentType: output.ContentType ?? null,
+        sizeBytes: bytes.byteLength,
+      };
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw this.fail("GetObject", error);
+    }
+  }
+
+  async putObject(input: PutObjectInput): Promise<{ etag: string | null }> {
+    const output = await this.call("PutObject", () =>
+      this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: input.objectKey,
+          Body: input.body,
+          ContentType: input.contentType ?? undefined,
+          Metadata: input.metadata,
+        }),
+      ),
+    );
+    return { etag: output.ETag ? output.ETag.trim() : null };
   }
 
   async copyObject(input: CopyObjectInput): Promise<CopyObjectResult> {

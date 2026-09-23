@@ -31,7 +31,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import type { DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
-import { appendOutbox } from "../../db/outbox.js";
+import { appendOutbox, appendOutboxIfAbsent } from "../../db/outbox.js";
 import {
   buildObjectKey,
   buildUploadStagingKey,
@@ -51,6 +51,8 @@ import {
   type UploadSessionRow,
 } from "./file.repository.js";
 import { parseFileListFilter, parseFileListSort, type FileListQueryInput } from "./file.query.js";
+import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey } from "./preview.job.js";
+import { previewTargetsFor } from "./preview.targets.js";
 
 type UploadCreateBody = z.infer<typeof UploadCreateBodySchema>;
 type UploadPartsBody = z.infer<typeof UploadPartsBodySchema>;
@@ -1109,6 +1111,30 @@ export class FileService {
           at: at.toISOString(),
         },
       });
+      // 定档预生成（P1 · ADR-007「定档文件预生成，其余按需懒生成」）：只投当前版本、只投一期真能出产物的通道。
+      // 用 appendOutboxIfAbsent：去重键 = 三元组（内容 + 管线版本 + 通道）—— 同三元组已有任务不重复插入、
+      // 只有 dead 才唤醒；普通 insert 会在「恢复 → 再定档」「两个文件同内容」时撞唯一约束，把整个定档事务打回 500。
+      const currentVersion = versions.find((item) => item.id === locked.currentVersionId) ?? null;
+      if (currentVersion !== null) {
+        for (const target of previewTargetsFor({ fileName: locked.name, mime: currentVersion.mime })) {
+          await appendOutboxIfAbsent(tx, {
+            topic: PREVIEW_JOB_TOPIC,
+            dedupeKey: previewJobDedupeKey({
+              contentHash: currentVersion.contentHash,
+              pipelineVersion: this.config.env.PREVIEW_PIPELINE_VERSION,
+              target,
+            }),
+            payload: buildPreviewJobPayload({
+              projectId: file.projectId,
+              fileId,
+              versionId: currentVersion.id,
+              contentHash: currentVersion.contentHash,
+              target,
+              trigger: "finalize",
+            }),
+          });
+        }
+      }
       return toFileView(updated);
     });
   }
