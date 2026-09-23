@@ -1636,6 +1636,10 @@
             "type": "boolean",
             "description": "是否启用；**兼容字段**（Push 173 起产品口径：删除走 DELETE 物理删除，前端不再有停用入口；值恒为 true）—— 保留给二期「临时下架」与存量数据"
           },
+          "usageCount": {
+            "type": "integer",
+            "description": "引用该条目的**未删除项目**数（region → projects.region、projectType → projects.project_type；其余字典维度恒 0）；> 0 时删除返回 409 DICT_ITEM_IN_USE（A3 删除守卫，Push 174），前端据此把删除入口置灰"
+          },
           "metadata": {
             "type": "object",
             "additionalProperties": {},
@@ -1647,6 +1651,7 @@
           "name",
           "sort",
           "enabled",
+          "usageCount",
           "metadata"
         ]
       },
@@ -1795,6 +1800,7 @@
           "PROJECT_CODE_EXISTS",
           "PROJECT_ARCHIVED",
           "DICT_ITEM_EXISTS",
+          "DICT_ITEM_IN_USE",
           "STAGE_GATE_NOT_PASSED",
           "BLUEPRINT_NOT_PUBLISHED",
           "NODE_REQUIRED_DOC_MISSING",
@@ -8328,7 +8334,7 @@
         "tags": [
           "dicts"
         ],
-        "summary": "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+        "summary": "全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内）",
         "parameters": [
           {
             "schema": {
@@ -8624,7 +8630,7 @@
         "tags": [
           "dicts"
         ],
-        "summary": "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕）",
+        "summary": "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕；条目被项目引用时 409 DICT_ITEM_IN_USE）",
         "parameters": [
           {
             "schema": {
@@ -8690,6 +8696,16 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {

@@ -8,6 +8,11 @@ export type SelectOption = {
   label: ReactNode;
   /** 行内删除是否可用（缺省 = 可用；字典下拉里「不在字典中的存量值」兜底项传 false，删了也是空转）。 */
   deletable?: boolean;
+  /**
+   * 删除被业务拦住时的原因（Push 174 字典引用守卫：条目正被项目卡片使用）—— 给了就渲染**置灰、点不动**的删除位，
+   * 悬停出原因（title）、无障碍名带上原因；与 deletable=false（根本不渲染删除位）是两种语义。
+   */
+  deleteDisabledReason?: string;
 };
 
 type OptionListProps = {
@@ -73,6 +78,23 @@ export function OptionList({ options, value, onPick, ariaLabel, onDeleteOption, 
           return row;
         }
         const label = deleteLabelOf === undefined ? "删除" : deleteLabelOf(option);
+        const reason = option.deleteDisabledReason;
+        if (reason !== undefined) {
+          // 业务拦住的删除位（Push 174 字典引用守卫）：置灰、点不动、悬停出原因；aria-label 把原因读全。
+          return (
+            <div key={option.value} className="group/opt relative">
+              {row}
+              <span
+                title={reason}
+                className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 cursor-not-allowed items-center justify-center rounded-md text-zinc-200 opacity-0 transition group-hover/opt:opacity-100 group-focus-within/opt:opacity-100"
+              >
+                <button type="button" disabled aria-label={label + "（" + reason + "）"} className="flex h-full w-full cursor-not-allowed items-center justify-center">
+                  <TrashIcon />
+                </button>
+              </span>
+            </div>
+          );
+        }
         return (
           <div key={option.value} className="group/opt relative">
             {row}

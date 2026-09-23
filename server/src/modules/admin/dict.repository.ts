@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, count, eq, isNull } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { dictItems, dictTypes } from "../../db/schema/admin.js";
+import { projects } from "../../db/schema/projects.js";
 
 /** dict_types 行（字典类型注册表）。 */
 export interface DictTypeRow {
@@ -94,6 +95,24 @@ export class DictRepository {
       .where(and(eq(dictItems.typeCode, type), eq(dictItems.code, code)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /**
+   * 条目的项目引用计数（A3 删除守卫 · Push 174）：每个字典码 → **未删除项目**数。
+   * 维度：region → projects.region、projectType → projects.project_type；其余字典类型不参与（返回空表 = 恒 0）。
+   * 口径：只数 deleted_at is null 的项目（软删项目不在卡片里；归档项目仍占卡片，照数）。
+   */
+  async usageCounts(type: string, client: DbClient = this.database.db): Promise<Map<string, number>> {
+    const column = type === "region" ? projects.region : type === "projectType" ? projects.projectType : null;
+    if (column === null) {
+      return new Map();
+    }
+    const rows = await client
+      .select({ code: column, total: count() })
+      .from(projects)
+      .where(isNull(projects.deletedAt))
+      .groupBy(column);
+    return new Map(rows.map((row) => [row.code, Number(row.total)]));
   }
 
   async insertItem(input: DictItemInsertInput, actorId: string, at: Date, client: DbClient): Promise<DictItemRow> {

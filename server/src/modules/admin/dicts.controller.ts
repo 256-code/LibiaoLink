@@ -87,7 +87,10 @@ export class DictsController {
     return this.dicts.updateItem(type, code, body, actorId);
   }
 
-  /** 删除条目（仅管理员 · 物理删除）：未知类型 / 未知条目 404；删除前快照写审计；响应为更新后的整个字典。 */
+  /**
+   * 删除条目（仅管理员 · 物理删除）：未知类型 / 未知条目 404；删除前快照写审计；响应为更新后的整个字典。
+   * **被未删除项目引用时 409 DICT_ITEM_IN_USE**（A3 删除守卫 · Push 174）。
+   */
   @Delete(":type/items/:code")
   @UseGuards(ProjectAccessGuard)
   @RequirePermission("dict.manage")

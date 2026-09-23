@@ -46,6 +46,10 @@ function errorMessageOf(error: unknown, fallback: string): string {
     if (error.code === "DICT_ITEM_EXISTS") {
       return "该名称已被占用：请换一个名称，或联系管理员处理。";
     }
+    if (error.code === "DICT_ITEM_IN_USE") {
+      // A3 删除守卫（Push 174）：服务端文案自带「哪个条目 + 多少个项目在用」，原样透出比前端复述更准。
+      return error.message;
+    }
     if (error.code === "VALIDATION_FAILED") {
       const first = error.details[0];
       return first !== undefined && first.message !== "" ? "参数校验失败：" + first.message : "参数校验失败，请检查填写内容。";
@@ -229,6 +233,7 @@ export default function App() {
    * 字典「删除」（Push 173 起 = **物理删行**，C9-02 修订）：仅管理员（dict.manage，服务端裁决）。
    * 删除不影响存量数据展示（项目仍按原码 / 原名渲染；projects.region / project_type 是 text 冗余码，无外键），
    * 只是不再进下拉候选与首页筛选项；成功后条目立刻从候选里消失，同码可重新新增。
+   * Push 174 引用守卫：被项目卡片引用的条目不给删 —— 前端删除位已置灰，万一缓存陈旧，服务端仍回 409 DICT_ITEM_IN_USE。
    */
   const handleDictDelete: DictTools["onDelete"] = async (type, code) => {
     try {
