@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "./api";
-import type { RegionTools } from "./regionTools";
+import type { DictTools } from "./dictTools";
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
@@ -26,8 +26,14 @@ type HomeProps = {
   dicts: Dicts;
   /** 用户目录（项目经理姓名与候选）。 */
   directory: DirectoryUser[];
-  /** 地区下拉的「自定义」能力（写地区字典，全站共享），与编辑弹窗共用同一份。 */
-  regionTools: RegionTools;
+  /** 字典（地区 / 项目类型）的「＋ 添加」与行内删除能力，与新建 / 编辑弹窗共用同一份。 */
+  dictTools: DictTools;
+  /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现。 */
+  canManageDicts: boolean;
+  /** 是否持有 project.delete（Push 172）：决定卡片上删除项目入口的呈现（服务端仍是最终裁决）。 */
+  canDeleteProject: boolean;
+  /** 卡片删除项目（软删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
+  onDeleteProject: (project: Project) => void;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
   onCreate: (draft: ProjectDraft) => Promise<string | null>;
   onEdit: (project: Project) => void;
@@ -65,7 +71,7 @@ function buildOptions(
     });
 }
 
-export default function Home({ me, dicts, directory, regionTools, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
+export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
   const route = useHashRoute();
@@ -531,6 +537,13 @@ export default function Home({ me, dicts, directory, regionTools, onCreate, onEd
                 onEdit={() => {
                   onEdit(project);
                 }}
+                onDelete={
+                  canDeleteProject
+                    ? () => {
+                        onDeleteProject(project);
+                      }
+                    : undefined
+                }
               />
             </div>
           ))}
@@ -552,9 +565,9 @@ export default function Home({ me, dicts, directory, regionTools, onCreate, onEd
       {isCreateOpen && (
         <ProjectModal
           mode="create"
-          regions={dicts.region}
-          projectTypes={dicts.projectType}
-          regionTools={regionTools}
+          dicts={dicts}
+          dictTools={dictTools}
+          canManageDicts={canManageDicts}
           managerOptions={managerChoices}
           onClose={() => setIsCreateOpen(false)}
           onSubmit={async (draft) => {

@@ -6,10 +6,11 @@ import ProjectDetail from "./ProjectDetail";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
-import type { RegionAddResult, RegionTools } from "./regionTools";
-import { createDictItem, EMPTY_DICTS, loadDicts, nextDictSort, type Dicts } from "./dicts";
+import type { DictTools } from "./dictTools";
+import { hasPermission, loadMyPermissions, type MyPermissions } from "./permissions";
+import { createDictItem, EMPTY_DICTS, loadDicts, nextDictSort, setDictItemEnabled, type Dicts } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { createProject, fetchProject, toUiProject, updateProject } from "./projectApi";
+import { createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { useHashRoute } from "./useHashRoute";
@@ -66,6 +67,10 @@ export default function App() {
   // 写操作后 +1：列表与详情按它重新取数（前端不做本地拼接，以服务端返回为准）
   const [dataVersion, setDataVersion] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  /** 权限画像（Push 172 重新接线）：管理入口的呈现层收敛 —— 字典治理（dict.manage）与删除项目（project.delete）。 */
+  const [permissions, setPermissions] = useState<MyPermissions | null>(null);
+  /** 待确认删除的项目（卡片删除先出确认条，第二下才真删）：null = 没有待确认的删除。 */
+  const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
   const route = useHashRoute();
 
   useEffect(() => {
@@ -88,16 +93,20 @@ export default function App() {
           return;
         }
         setState({ kind: "signed-in", me });
-        const [dictResult, directoryResult, prefsResult] = await Promise.allSettled([
+        const [dictResult, directoryResult, prefsResult, permissionsResult] = await Promise.allSettled([
           loadDicts(),
           loadDirectory(),
           loadMyPreferencesWithLegacyMigration(),
+          loadMyPermissions(),
         ]);
         if (cancelled) {
           return;
         }
         if (dictResult.status === "fulfilled") {
           setDicts(dictResult.value);
+        }
+        if (permissionsResult.status === "fulfilled") {
+          setPermissions(permissionsResult.value);
         }
         if (directoryResult.status === "fulfilled") {
           setDirectory(directoryResult.value);
@@ -176,22 +185,55 @@ export default function App() {
   };
 
   /**
-   * 地区「＋ 添加」（Push 167 起；Push 168 按业务口径修订）：写**地区字典**（C9-02 修订 —— 任何登录用户都能加，
-   * 保存后全站可见、可在首页按它筛选；改名 / 停用仍归管理员）。码重复 409 / 其它失败原样回显在浮层内。
+   * 字典「＋ 添加」（Push 167 地区起；Push 172 抽成两类共用一个实现）：写**数据字典**（C9-01 读 / C9-02 写）——
+   * region 任何登录用户都能加（Push 168 业务口径「全站共享、非管理员也能加」）、projectType 需 dict.manage；
+   * 保存后全站可见（所有项目的下拉都能选到）、可在首页按它筛选。码重复 409 / 无权限 403 由浮层内联提示。
    */
-  const handleAddRegion = async (name: string): Promise<RegionAddResult> => {
+  const handleDictAdd: DictTools["onAdd"] = async (type, input) => {
     try {
-      const items = await createDictItem("region", {
-        code: name,
-        name,
-        sort: nextDictSort(dicts.region),
+      const items = await createDictItem(type, {
+        code: input.name,
+        name: input.name,
+        sort: nextDictSort(dicts[type]),
         enabled: true,
-        metadata: {},
+        metadata: input.metadata,
       });
-      setDicts((previous) => ({ ...previous, region: items }));
-      return { ok: true, code: name };
+      setDicts((previous) => (type === "region" ? { ...previous, region: items } : { ...previous, projectType: items }));
+      return null;
     } catch (error: unknown) {
-      return { ok: false, message: errorMessageOf(error, "添加地区失败") };
+      return errorMessageOf(error, type === "region" ? "添加地区失败" : "添加项目类型失败");
+    }
+  };
+
+  /**
+   * 字典「删除」（= **停用**，C9-02 口径「停用替代删除」）：仅管理员（dict.manage，服务端裁决）。
+   * 停用不影响存量数据展示（项目仍按原码 / 原名渲染），只是不再进下拉候选；成功后条目立刻从候选里消失。
+   */
+  const handleDictDelete: DictTools["onDelete"] = async (type, code) => {
+    try {
+      const items = await setDictItemEnabled(type, code, false);
+      setDicts((previous) => (type === "region" ? { ...previous, region: items } : { ...previous, projectType: items }));
+      return null;
+    } catch (error: unknown) {
+      return errorMessageOf(error, type === "region" ? "删除地区失败" : "删除项目类型失败");
+    }
+  };
+
+  /**
+   * 删除项目（A5；Push 172 接上入口）：软删 + If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
+   * 点一下先出确认条（项目是数据级操作），确认后才调 DELETE —— 成功后 dataVersion +1 刷新列表 / 详情。
+   */
+  const handleConfirmDeleteProject = async (): Promise<void> => {
+    const project = pendingDelete;
+    if (project === null) {
+      return;
+    }
+    setPendingDelete(null);
+    try {
+      await deleteProject(project.id, project.version);
+      setDataVersion((value) => value + 1);
+    } catch (error: unknown) {
+      setNotice(errorMessageOf(error, "删除项目失败"));
     }
   };
 
@@ -300,10 +342,15 @@ export default function App() {
     void _id;
   };
 
-  /** 地区下拉的「自定义」能力（新建与编辑弹窗共用同一份）。 */
-  const regionTools: RegionTools = {
-    onAdd: handleAddRegion,
+  /** 字典下拉的「自定义 + 删除」能力（新建与编辑弹窗共用同一份）。 */
+  const dictTools: DictTools = {
+    onAdd: handleDictAdd,
+    onDelete: handleDictDelete,
   };
+
+  /** 权限分叉（Push 172）：字典治理 = dict.manage；删项目 = project.delete（服务端逐请求仍是最终裁决）。 */
+  const canManageDicts = hasPermission(permissions, "dict.manage");
+  const canDeleteProject = hasPermission(permissions, "project.delete");
 
   if (state.kind === "loading") {
     return (
@@ -344,24 +391,61 @@ export default function App() {
     );
   }
 
-  const noticeBar =
-    notice === null ? null : (
-      <div
-        role="alert"
-        className="fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg"
-      >
-        <span>{notice}</span>
-        <button
-          type="button"
-          onClick={() => {
-            setNotice(null);
-          }}
-          className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-medium transition hover:bg-rose-100"
+  /**
+   * 底部提示区（一个 fixed 容器装两条，避免同时出现时叠在一起）：
+   * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，项目是数据级操作；
+   * ② 既有错误提示条（如项目经理修改失败）。
+   */
+  const bottomBars = (
+    <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+      {pendingDelete === null ? null : (
+        <div
+          role="dialog"
+          aria-label="确认删除项目"
+          className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
         >
-          知道了
-        </button>
-      </div>
-    );
+          <span>
+            删除项目 <span className="font-mono font-semibold">{pendingDelete.code}</span>（{pendingDelete.description}）？删除后列表与详情不再可见。
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setPendingDelete(null);
+            }}
+            className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleConfirmDeleteProject();
+            }}
+            className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+          >
+            删除
+          </button>
+        </div>
+      )}
+      {notice === null ? null : (
+        <div
+          role="alert"
+          className="pointer-events-auto flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg"
+        >
+          <span>{notice}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setNotice(null);
+            }}
+            className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-medium transition hover:bg-rose-100"
+          >
+            知道了
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   const editModal =
     editingProject === null ? null : (
@@ -375,9 +459,9 @@ export default function App() {
           projectType: editingProject.projectType,
           region: editingProject.region,
         }}
-        regions={dicts.region}
-        projectTypes={dicts.projectType}
-        regionTools={regionTools}
+        dicts={dicts}
+        dictTools={dictTools}
+        canManageDicts={canManageDicts}
         managerOptions={directoryMemberOptions(directory)}
         onClose={() => {
           setEditingProject(null);
@@ -396,7 +480,7 @@ export default function App() {
     return (
       <>
         <Hub me={state.me} />
-        {noticeBar}
+        {bottomBars}
       </>
     );
   }
@@ -405,7 +489,7 @@ export default function App() {
     return (
       <>
         <PlaceholderPage me={state.me} page={route.page} section={route.section} />
-        {noticeBar}
+        {bottomBars}
       </>
     );
   }
@@ -432,7 +516,7 @@ export default function App() {
           onFocusModeChange={handleSaveFocusMode}
         />
         {editModal}
-        {noticeBar}
+        {bottomBars}
       </>
     );
   }
@@ -443,7 +527,12 @@ export default function App() {
         me={state.me}
         dicts={dicts}
         directory={directory}
-        regionTools={regionTools}
+        dictTools={dictTools}
+        canManageDicts={canManageDicts}
+        canDeleteProject={canDeleteProject}
+        onDeleteProject={(project) => {
+          setPendingDelete(project);
+        }}
         savedFilters={savedFilters}
         onSavedFiltersChange={handleSaveSavedFilters}
         onCreate={handleCreateProject}
@@ -451,7 +540,7 @@ export default function App() {
         refreshToken={dataVersion}
       />
       {editModal}
-      {noticeBar}
+      {bottomBars}
     </>
   );
 }
