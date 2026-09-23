@@ -415,8 +415,8 @@ export function CategoryFilterSidebar({
               <span
                 role="img"
                 tabIndex={0}
-                aria-label="项目时间口径：项目最近活动时间——修改项目信息、推进阶段或变更任务时更新；上传文件、写日报不更新"
-                title="项目最近活动时间：修改项目信息、推进阶段或变更任务时更新；上传文件、写日报不更新。"
+                aria-label="项目时间口径：按项目创建时间筛选（Push 175 修订；原「最近活动时间」口径已作废）"
+                title="按项目创建时间筛选（与卡片上的创建时间同一口径）。"
                 className="inline-flex h-4 w-4 shrink-0 cursor-help items-center justify-center rounded-full border border-zinc-300 text-[10px] font-semibold tracking-normal text-zinc-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
               >
                 i

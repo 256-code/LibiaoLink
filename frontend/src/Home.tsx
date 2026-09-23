@@ -16,7 +16,7 @@ import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toU
 import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
-import type { ListQueryState } from "./useHashRoute";
+import type { ListQueryState, SortField } from "./useHashRoute";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 
@@ -48,6 +48,15 @@ type HomeProps = {
   /** 保存 / 删除常用筛选（整体替换 PATCH）；返回 null = 成功，返回文案 = 失败提示（文案口径由父层给）。 */
   onSavedFiltersChange: (items: SavedFilter[]) => Promise<string | null>;
 };
+
+/**
+ * 排序维度（Push 175，业务口径「这个 TIME 改成按创建时间 和更新时间排序 默认按创建时间」）：
+ * 默认 = 创建时间；「更新时间」= 原「最近活动」口径（改项目信息 / 推进阶段 / 变更任务会刷新）。
+ */
+const SORT_FIELDS: readonly { field: SortField; label: string; title: string }[] = [
+  { field: "createdAt", label: "创建时间", title: "按项目创建时间排序（默认）" },
+  { field: "updatedAt", label: "更新时间", title: "按项目更新时间排序（修改项目信息、推进阶段或变更任务会刷新）" },
+];
 
 /** 点「新建项目」但缺 project.create 时的提示（Push 173；服务端仍是最终裁决）。 */
 const NO_CREATE_PERMISSION = "当前账号没有建项目权限，请联系管理员分配角色。";
@@ -118,6 +127,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const keyword = query.trim();
   const hasFilters = hasListFilters(activeFilters);
   const sortDesc = activeFilters.sortDesc;
+  const sortField = activeFilters.sortField;
+  const sortFieldLabel = sortField === "createdAt" ? "创建时间" : "更新时间";
   const dateRange: DateRange | null =
     activeFilters.timeFrom !== null && activeFilters.timeTo !== null
       ? { from: activeFilters.timeFrom, to: activeFilters.timeTo }
@@ -219,6 +230,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               timeFrom: filter.timeFrom,
               timeTo: filter.timeTo,
               q: "",
+              sortField: "createdAt",
               sortDesc: true,
             });
             return [filter.id, result.total];
@@ -383,18 +395,37 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           />
           <div
             role="group"
-            aria-label="按项目时间排序"
+            aria-label="排序方式（维度 × 方向）"
             className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
           >
             <span className="px-1 text-[10px] font-semibold tracking-[0.18em] text-zinc-400 select-none" aria-hidden="true">
               TIME
             </span>
             <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
+            {SORT_FIELDS.map((option) => (
+              <button
+                key={option.field}
+                type="button"
+                aria-pressed={sortField === option.field}
+                aria-label={option.title}
+                title={option.title}
+                onClick={() => {
+                  updateFilters({ sortField: option.field });
+                }}
+                className={
+                  "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition " +
+                  (sortField === option.field ? "bg-zinc-900 font-medium text-white" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700")
+                }
+              >
+                {option.label}
+              </button>
+            ))}
+            <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
             <button
               type="button"
               aria-pressed={sortDesc}
-              aria-label="按项目时间降序排列"
-              title="按项目时间降序排列（最近活动在前）"
+              aria-label={"按" + sortFieldLabel + "降序排列"}
+              title={"按" + sortFieldLabel + "降序排列（新的在前）"}
               onClick={() => {
                 updateFilters({ sortDesc: true });
               }}
@@ -411,8 +442,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             <button
               type="button"
               aria-pressed={!sortDesc}
-              aria-label="按项目时间升序排列"
-              title="按项目时间升序排列（最早活动在前）"
+              aria-label={"按" + sortFieldLabel + "升序排列"}
+              title={"按" + sortFieldLabel + "升序排列（旧的在前）"}
               onClick={() => {
                 updateFilters({ sortDesc: false });
               }}

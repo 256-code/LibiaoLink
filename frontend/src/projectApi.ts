@@ -74,12 +74,14 @@ export function buildListQuery(filters: ListQueryState, skip: FacetSkip | null =
   if (filters.q.trim() !== "") {
     parts.push("q=" + encodeURIComponent(filters.q.trim()));
   }
+  // 排序也进同一条查询串（Push 175 修）：Home 的请求键 = 本函数，排序不进键时切换升 / 降序不触发重新取数
+  // —— 旧实现把 sort 拼在 fetchProjectList 里，切换后列表纹丝不动（业务反馈「根据时间排序没用了」）。
+  parts.push("sort=" + filters.sortField + ":" + (filters.sortDesc ? "desc" : "asc"));
   return parts.join("&");
 }
 
 export function fetchProjectList(filters: ListQueryState): Promise<ProjectListResult> {
   const parts = [buildListQuery(filters)];
-  parts.push("sort=" + (filters.sortDesc ? "updatedAt:desc" : "updatedAt:asc"));
   parts.push("page=1");
   parts.push("limit=" + String(PROJECT_PAGE_LIMIT));
   const query = parts.filter((part) => part !== "").join("&");

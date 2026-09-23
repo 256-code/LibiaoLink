@@ -74,7 +74,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 变更 | 一期申请即通过（status=applied）：提交变更后文件与变更字段，完成上传时同事务写 change_requests + 新版本 + 状态 changed + Outbox（R01 / 通知由消费方处理）；缺变更后文件不允许提交 |
 | 回收站 | 任意状态可回收（默认保留 30 天，可恢复回原状态）；彻底删除仅管理员且留痕（权限模型落地前为临时口径） |
 | 下载与预览地址 | 短时签名 URL + 审计；对象存储禁止匿名读取 |
-| 时间区间（A1） | `filter[timeFrom]` / `filter[timeTo]`：`YYYY-MM-DD` 闭区间，按 Asia/Shanghai 日界截断（下界含当日 00:00、上界按次日 00:00 不含）；一期维度映射 `projects.updated_at`（语义以 v0.3 §7#4 ADR 为准）；只传一端合法，`timeFrom > timeTo` 或格式非法返回 400；列表与 facets 同 schema 同口径；列表 `sort` 缺省 = `updatedAt:desc`（最近活动在前）；白名单 `updatedAt` / `createdAt` / `seqNo`（A9 · Push 69：补 `createdAt`，供前端后续「按创建时间」维度升级） |
+| 时间区间（A1） | `filter[timeFrom]` / `filter[timeTo]`：`YYYY-MM-DD` 闭区间，按 Asia/Shanghai 日界截断（下界含当日 00:00、上界按次日 00:00 不含）；**Push 175 起维度映射 `projects.created_at`（项目创建时间；原「最近活动 `updated_at`」口径作废，语义以 v0.3 §7#4 ADR + Push 175 修订为准）**；只传一端合法，`timeFrom > timeTo` 或格式非法返回 400；列表与 facets 同 schema 同口径；列表 `sort` **缺省 = `createdAt:desc`（最近创建的在前，Push 175 修订；原 `updatedAt:desc` 作废）**；白名单 `updatedAt` / `createdAt` / `seqNo`（A9 · Push 69 补 `createdAt`；**Push 175 前端「维度 × 方向」已落地**） |
 | 用户目录（A2） | `GET /users`：`q` + 分页，只返回 `status=active`；项为 `{ id, username, displayName, email, status }`（不含 casdoorId / owner / 部门 / 手机号）；默认按 `username` 升序（分页不跳行）；登录用户全员可读，不做数据范围裁剪；项目侧随行下发 `Project.managerNames`（与 `managerIds` 同下标数组；列表 / 详情 / 创建与编辑返回；人员停用 / 离职仍返回姓名，取不到该位为 `null`） |
 | 字典（A3） | `GET /dicts` / `GET /dicts/{type}`：一期只下发可运营数据字典 `region` / `projectType`（项 `{ code, name, sort, enabled, metadata }`，`projectType` 必含 `metadata.accent`）；阶段 / 成果文件类型 / 紧急重要度属契约枚举（`src/common/dicts.ts`），前端直接引用、不走接口（避免同一事实两处来源） |
 | 用户偏好（A4） | `GET / PATCH /users/me/preferences`：PATCH 合并语义（只传变更键），响应回全量 + `updatedAt`；一期键 `taskTableHiddenColumns`（列 key 白名单校验，未知 key 400）；存储 `user_preferences`（与项目视图 `project_views` 分离）；单用户单写者不带 `version` |
@@ -141,7 +141,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | M2-03 阶段推进 / 回退 | 已入（Push 83）：`GET /projects/{id}/stages`、`POST …/stages/{key}/advance`（正文仅 `version`）、`POST …/rollback`（`reason` 必填 + `version`）；`StageListResponse` = 阶段状态 + 节点 / 任务完成度 + 留痕字段；新增 422 `STAGE_GATE_NOT_PASSED`（+ `BLUEPRINT_NOT_PUBLISHED`）与 409 `NODE_HAS_FILES` / `STAGE_STATE_INVALID` / `NODE_ALREADY_EXISTS` 错误码（ADR-023） | 端点 / 错误码 |
 | M2-05 成员与记录级权限 | 已入：`GET / POST / DELETE /projects/{id}/members`（幂等 upsert / 不是成员统一 404，Push 81）；记录级**过滤**（列表 / 详情 / facets / 搜索按成员裁剪）随 h6 | 端点 |
 | M2-06 视图 / 关注 | 新增 `/views`（个人 / 公共 CRUD）与 `/follows`（关注 / 取关） | 端点 |
-| M2-04 列表 / facets | 已入（A1 / A9）并 HTTP 落地（Push 80：列表与 facets 同一 filter 构造器、上海时区日界、排序白名单 `updatedAt` / `createdAt` / `seqNo`），无新增 | 无 |
+| M2-04 列表 / facets | 已入（A1 / A9）并 HTTP 落地（Push 80：列表与 facets 同一 filter 构造器、上海时区日界、排序白名单 `updatedAt` / `createdAt` / `seqNo`）；**Push 175 修订：时间区间维度改 `created_at`、`sort` 缺省改 `createdAt:desc`（契约描述 + 生成物重出，无 schema 结构变化）** | 无 |
 
 ### M3 任务纵切（h3 / h4）
 
@@ -201,7 +201,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | ADR-019 蓝图组织 | 已入（Push 83）：`BlueprintSchema.projectType`、`BlueprintView` 类型标识与发布版本 | M2-02 |
 | ADR-020 节点权限 | 已入（Push 83）：接口 403 语义（模板写 = 管理员、增删 / 推进 = 项目经理）；权限矩阵用例随 h6 | M2-05 |
 | ADR-021 负责人标识 | Task 族 `ownerIds` 数组（空数组 = 待分配，A23 · Push 136 多位）+ `ownerNames` 同下标数组；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
-| ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层） | M2-04 |
+| ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层）；**Push 175 修订：列表缺省排序与「项目时间」区间筛选维度均由「最近活动 `updated_at`」改为「创建时间 `created_at`」** | M2-04 |
 | ADR-023 阶段推进 | 已入（Push 83）：stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` + 缺项明细 | M2-03 |
 | ADR-024 成果文件 | **已入（Push 143）**：`deliverableTypes` 数组 + 完成 / 预检端点 + `TASK_REQUIRED_DOC_MISSING` / `TASK_ALREADY_DONE`；锁定字段例外调整留痕 **已落 Push 153**（仅管理员 + `reason` 必填） | M3-03（已落）/ M3-05（已落） |
 | ADR-025 进行中置位 | 无契约变化（系统作业） | M3-02 |

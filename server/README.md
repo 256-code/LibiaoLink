@@ -147,7 +147,7 @@ server/
 ## 项目接口（h2 · S6·project：M2-01 / M2-04 / M2-05）
 
 - 契约 `shared/src/modules/projects.ts`（OpenAPI tags=projects）；实现 `src/modules/project/`（controller / service / repository / query + `index.ts` 唯一出口）；整组路由挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`），`GET /facets` 注册在 `GET /{id}` 之前。
-- `GET /api/v1/projects`：分页 + 多维筛选（`filter[region|projectType|managerId|stageKey|status]` 多值英文逗号分隔；`managerId` 命中口径 = 项目挂的任意一位经理，A22 · Push 136）+ 关键字 `q`（编号 / 名称 / 客户 / 序号）+ 时间闭区间（`filter[timeFrom]` / `filter[timeTo]`，Asia/Shanghai 日界，映射 `updated_at`）+ 排序白名单（`updatedAt` / `createdAt` / `seqNo`，缺省 `updatedAt:desc`）；非法枚举 / 非法 uuid / 区间反向一律 400（不返回静默空列表）。
+- `GET /api/v1/projects`：分页 + 多维筛选（`filter[region|projectType|managerId|stageKey|status]` 多值英文逗号分隔；`managerId` 命中口径 = 项目挂的任意一位经理，A22 · Push 136）+ 关键字 `q`（编号 / 名称 / 客户 / 序号）+ 时间闭区间（`filter[timeFrom]` / `filter[timeTo]`，Asia/Shanghai 日界，**映射 `created_at` = 项目创建时间，Push 175 修订**）+ 排序白名单（`updatedAt` / `createdAt` / `seqNo`，**缺省 `createdAt:desc`，Push 175 修订**）；非法枚举 / 非法 uuid / 区间反向一律 400（不返回静默空列表）。
 - `GET /api/v1/projects/facets`：与列表共用同一个 filter 构造器（五组计数 + `total`），计数与列表同口径（v0.2 §8.2 / A6）。
 - `POST /api/v1/projects`（201）：编号 `code` 由创建人填写、唯一性由数据库约束兜底（409 `PROJECT_CODE_EXISTS`）；`seq_no` 由序列分配（不接受传入）；缺省 `stageKey=presale`。`PATCH`（乐观锁：正文 `version`，409 `VERSION_CONFLICT`）、`DELETE`（`If-Match` 回传当前 `version`，缺头 400；软删落 `deleted_at` / `deleted_by`）。
 - 归档写保护（ADR-027）：`status=archived` 的项目 PATCH / DELETE 一律 409 `PROJECT_ARCHIVED`（错误码随本批入契约与映射表）。软删（A5）：列表 / 详情 / facets 统一 `deleted_at is null`；`seq_no` 不回收、同编号再建仍 409。

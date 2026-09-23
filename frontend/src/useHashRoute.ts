@@ -6,6 +6,9 @@ import { readStoredFilters } from "./homePrefs";
  * 参数命名与技术设计 v0.2 §8.2（GET /api/v1/projects 与 /projects/facets）同口径，
  * 键名与实际取值见《前端功能需求》§一.3「筛选态与 URL query」。
  */
+/** 排序维度（Push 175）：创建时间（默认）/ 更新时间（原「项目时间 = 最近活动」口径）。 */
+export type SortField = "createdAt" | "updatedAt";
+
 export type ListQueryState = {
   regions: string[];
   projectTypes: string[];
@@ -13,6 +16,8 @@ export type ListQueryState = {
   timeFrom: string | null;
   timeTo: string | null;
   q: string;
+  /** 排序维度：默认创建时间（业务口径「默认按创建时间」）。 */
+  sortField: SortField;
   sortDesc: boolean;
 };
 
@@ -23,6 +28,7 @@ export const EMPTY_LIST_QUERY: ListQueryState = {
   timeFrom: null,
   timeTo: null,
   q: "",
+  sortField: "createdAt",
   sortDesc: true,
 };
 
@@ -87,7 +93,7 @@ function parseDayValue(value: string | null): string | null {
   return trimmed;
 }
 
-/** 解析 hash 里的 query 串（形如 filter[region]=A,B&filter[projectType]=..&filter[managerId]=..&filter[timeFrom]=..&filter[timeTo]=..&q=..&sort=updatedAt:asc）。 */
+/** 解析 hash 里的 query 串（形如 filter[region]=A,B&filter[projectType]=..&filter[managerId]=..&filter[timeFrom]=..&filter[timeTo]=..&q=..&sort=createdAt:asc）。 */
 export function parseListQuery(search: string): ListQueryState {
   const params = new Map<string, string>();
   for (const chunk of search.split("&")) {
@@ -114,7 +120,19 @@ export function parseListQuery(search: string): ListQueryState {
     timeFrom,
     timeTo,
     q: params.get("q") ?? "",
-    sortDesc: (params.get("sort") ?? "") !== "updatedAt:asc",
+    ...parseSortValue(params.get("sort") ?? null),
+  };
+}
+
+/**
+ * 排序参数（Push 175）：`sort=<field>:<asc|desc>` —— field 缺省 / 未知一律按创建时间（旧链接里的 updatedAt:asc 仍认得）。
+ * 默认值（创建时间 × 降序）不落 URL，见 buildListHash。
+ */
+function parseSortValue(value: string | null): { sortField: SortField; sortDesc: boolean } {
+  const [rawField = "", rawDirection] = (value ?? "").split(":");
+  return {
+    sortField: rawField === "updatedAt" ? "updatedAt" : "createdAt",
+    sortDesc: rawDirection !== "asc",
   };
 }
 
@@ -229,7 +247,7 @@ export function replaceProjectView(id: string, view: ProjectView): void {
   }
 }
 
-/** 序列化筛选态：默认值不落 URL（排序默认降序省略 sort；时间区间两端齐全才写入）。 */
+/** 序列化筛选态：默认值不落 URL（排序默认「创建时间 × 降序」省略 sort；时间区间两端齐全才写入）。 */
 export function buildListHash(filters: ListQueryState): string {
   const parts: string[] = [];
   const pushList = (key: string, values: string[]): void => {
@@ -247,8 +265,8 @@ export function buildListHash(filters: ListQueryState): string {
   if (filters.q !== "") {
     parts.push("q=" + encodeURIComponent(filters.q));
   }
-  if (!filters.sortDesc) {
-    parts.push("sort=updatedAt:asc");
+  if (filters.sortField !== "createdAt" || !filters.sortDesc) {
+    parts.push("sort=" + filters.sortField + ":" + (filters.sortDesc ? "desc" : "asc"));
   }
   return parts.length === 0 ? LIST_BASE_HASH : LIST_BASE_HASH + "?" + parts.join("&");
 }

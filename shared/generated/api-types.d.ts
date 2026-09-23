@@ -24,15 +24,15 @@ export interface paths {
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
                     "filter[status]"?: string;
-                    /** @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00） */
+                    /** @description 项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at） */
                     "filter[timeFrom]"?: components["schemas"]["DateOnly"];
-                    /** @description 项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
+                    /** @description 项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间） */
                     sort?: string;
                 };
                 header?: never;
@@ -135,15 +135,15 @@ export interface paths {
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
                     "filter[status]"?: string;
-                    /** @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00） */
+                    /** @description 项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at） */
                     "filter[timeFrom]"?: components["schemas"]["DateOnly"];
-                    /** @description 项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
+                    /** @description 项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间） */
                     sort?: string;
                 };
                 header?: never;
@@ -5799,7 +5799,7 @@ export interface components {
         DataScope: "all" | "managed_projects" | "involved_projects" | "own_stakeholders" | "granted";
         /**
          * Format: date
-         * @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）
+         * @description 项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）
          */
         DateOnly: string;
         /**

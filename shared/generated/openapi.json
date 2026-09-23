@@ -1587,7 +1587,7 @@
       "DateOnly": {
         "type": "string",
         "format": "date",
-        "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）"
+        "description": "项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）"
       },
       "DateTime": {
         "type": "string",
@@ -6347,7 +6347,7 @@
               "$ref": "#/components/schemas/DateOnly"
             },
             "required": false,
-            "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）",
+            "description": "项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）",
             "name": "filter[timeFrom]",
             "in": "query"
           },
@@ -6358,12 +6358,12 @@
                   "$ref": "#/components/schemas/DateOnly"
                 },
                 {
-                  "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
+                  "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
                 }
               ]
             },
             "required": false,
-            "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
+            "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
             "name": "filter[timeTo]",
             "in": "query"
           },
@@ -6402,11 +6402,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
             "name": "sort",
             "in": "query"
           }
@@ -6555,7 +6555,7 @@
               "$ref": "#/components/schemas/DateOnly"
             },
             "required": false,
-            "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）",
+            "description": "项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）",
             "name": "filter[timeFrom]",
             "in": "query"
           },
@@ -6566,12 +6566,12 @@
                   "$ref": "#/components/schemas/DateOnly"
                 },
                 {
-                  "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
+                  "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
                 }
               ]
             },
             "required": false,
-            "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
+            "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
             "name": "filter[timeTo]",
             "in": "query"
           },
@@ -6610,11 +6610,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
             "name": "sort",
             "in": "query"
           }

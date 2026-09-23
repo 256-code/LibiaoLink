@@ -106,7 +106,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
       >
         <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
         <p className="mt-1 text-sm text-zinc-500">
-          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后按项目时间出现在列表里。"}
+          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后按创建时间出现在列表里。"}
         </p>
 
         <form className="mt-5 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
