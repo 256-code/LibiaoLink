@@ -1,0 +1,102 @@
+# ============================================================
+# 预览转换器沙箱（M4-05 / ADR-007：converter = 无外网 + 只读 + 非 root + 限额）
+# ------------------------------------------------------------
+# 用法：
+#   cp .env.example .env
+#   docker compose build
+#   docker compose up -d
+#   curl -fsS http://127.0.0.1:9900/healthz
+#   docker compose exec -T converter node /app/smoke.mjs   # 容器内自检（含中文乱码验收）
+#
+# 拓扑（沙箱 dev 形态）：
+#   worker(宿主) --127.0.0.1:9900--> [edge 哑中继] --preview-internal--> [converter]
+#   - converter 只挂 internal 网络 = 真无外网（Docker internal 网络同时会断掉端口发布，
+#     所以本机可达由 edge 承担；edge 只搬 TCP 字节、不解析文件内容）；
+#   - 生产形态（M8）：worker 容器与 converter 同处 internal 网络，删掉 edge 与 ports 即可。
+# ============================================================
+name: libiaolink-preview
+
+services:
+  converter:
+    image: "${PREVIEW_CONVERTER_IMAGE:-libiaolink/preview-converter}:${PREVIEW_CONVERTER_TAG:-1.0.0}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PIPELINE_VERSION: "${PREVIEW_PIPELINE_VERSION:-1.0.0}"
+    container_name: libiaolink-preview-converter
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=${PREVIEW_CONVERTER_TMPFS:-1g},mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PORT: "9900"
+      PIPELINE_VERSION: "${PREVIEW_PIPELINE_VERSION:-1.0.0}"
+      CONVERT_TIMEOUT_MS: "${PREVIEW_CONVERT_TIMEOUT_MS:-60000}"
+      CONVERT_MAX_BYTES: "${PREVIEW_CONVERT_MAX_BYTES:-268435456}"
+      CONVERT_MAX_CONCURRENCY: "${PREVIEW_CONVERT_MAX_CONCURRENCY:-2}"
+      CONVERT_MAX_QUEUE: "${PREVIEW_CONVERT_MAX_QUEUE:-8}"
+    mem_limit: ${PREVIEW_CONVERTER_MEM_LIMIT:-2g}
+    cpus: ${PREVIEW_CONVERTER_CPUS:-2}
+    pids_limit: ${PREVIEW_CONVERTER_PIDS:-512}
+    networks: [preview-internal]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch(\"http://127.0.0.1:9900/healthz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # 沙箱 dev 专用：把本机回环端口转给「无外网」的 converter。生产形态删掉本服务。
+  edge:
+    image: "${PREVIEW_CONVERTER_IMAGE:-libiaolink/preview-converter}:${PREVIEW_CONVERTER_TAG:-1.0.0}"
+    container_name: libiaolink-preview-edge
+    command: ["node", "/app/edge-forward.mjs"]
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      EDGE_LISTEN_PORT: "9900"
+      EDGE_UPSTREAM_HOST: converter
+      EDGE_UPSTREAM_PORT: "9900"
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 256
+    ports:
+      - "127.0.0.1:${PREVIEW_CONVERTER_PORT:-9900}:9900"
+    depends_on:
+      converter:
+        condition: service_healthy
+    networks: [preview-edge, preview-internal]
+    healthcheck:
+      test: ["CMD", "node", "-e", "const net=require(\"net\");const s=net.connect(9900,\"127.0.0.1\",()=>{s.destroy();process.exit(0)});s.on(\"error\",()=>process.exit(1));setTimeout(()=>process.exit(1),3000);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  preview-internal:
+    name: libiaolink-preview-internal
+    internal: true
+  preview-edge:
+    name: libiaolink-preview-edge
