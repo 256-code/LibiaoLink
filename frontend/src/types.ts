@@ -24,7 +24,7 @@ export type Project = {
   code: string;
   /** 前端「项目描述」= 契约 name（唯一展示名）；备注长文本是契约 description，一期表单不采集。 */
   description: string;
-  /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（停用 / 存量值回落码本身）。 */
+  /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（已删除条目的存量值回落码本身）。 */
   region: string;
   /** 项目类型：契约 projects.projectType 存字典 projectType 的码；主题色由字典 metadata 下发（前端不硬编码）。 */
   projectType: string;

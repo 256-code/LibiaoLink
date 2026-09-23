@@ -8,7 +8,16 @@ import { Loader } from "./components/Loader";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
 import { hasPermission, loadMyPermissions, type MyPermissions } from "./permissions";
-import { createDictItem, EMPTY_DICTS, loadDicts, nextDictSort, setDictItemEnabled, type Dicts } from "./dicts";
+import {
+  createDictItem,
+  deleteDictItem,
+  EMPTY_DICTS,
+  loadDicts,
+  nextDictSort,
+  type DictTypeCode,
+  type DictTypeResult,
+  type Dicts,
+} from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
@@ -33,6 +42,9 @@ function errorMessageOf(error: unknown, fallback: string): string {
     }
     if (error.code === "PROJECT_ARCHIVED") {
       return "项目已归档，不能修改。";
+    }
+    if (error.code === "DICT_ITEM_EXISTS") {
+      return "该名称已被占用：请换一个名称，或联系管理员处理。";
     }
     if (error.code === "VALIDATION_FAILED") {
       const first = error.details[0];
@@ -184,21 +196,29 @@ export default function App() {
     }
   };
 
+  /** 字典写操作后的缓存替换（Push 173）：只换**当前类型**（写响应只带该类型；不本地拼接顺序，以服务端返回为准）。 */
+  const applyDictType = (type: DictTypeCode, result: DictTypeResult): void => {
+    setDicts((previous) => (type === "region" ? { ...previous, region: result.items } : { ...previous, projectType: result.items }));
+  };
+
   /**
    * 字典「＋ 添加」（Push 167 地区起；Push 172 抽成两类共用一个实现）：写**数据字典**（C9-01 读 / C9-02 写）——
    * region 任何登录用户都能加（Push 168 业务口径「全站共享、非管理员也能加」）、projectType 需 dict.manage；
    * 保存后全站可见（所有项目的下拉都能选到）、可在首页按它筛选。码重复 409 / 无权限 403 由浮层内联提示。
+   * Push 173：删除 = **物理删行**，删除无记忆 —— 同码可重新新增（按全新条目：本次颜色、排到末尾），界面无「恢复」字样。
    */
   const handleDictAdd: DictTools["onAdd"] = async (type, input) => {
     try {
-      const items = await createDictItem(type, {
-        code: input.name,
-        name: input.name,
-        sort: nextDictSort(dicts[type]),
-        enabled: true,
-        metadata: input.metadata,
-      });
-      setDicts((previous) => (type === "region" ? { ...previous, region: items } : { ...previous, projectType: items }));
+      applyDictType(
+        type,
+        await createDictItem(type, {
+          code: input.name,
+          name: input.name,
+          sort: nextDictSort(dicts[type]),
+          enabled: true,
+          metadata: input.metadata,
+        }),
+      );
       return null;
     } catch (error: unknown) {
       return errorMessageOf(error, type === "region" ? "添加地区失败" : "添加项目类型失败");
@@ -206,13 +226,13 @@ export default function App() {
   };
 
   /**
-   * 字典「删除」（= **停用**，C9-02 口径「停用替代删除」）：仅管理员（dict.manage，服务端裁决）。
-   * 停用不影响存量数据展示（项目仍按原码 / 原名渲染），只是不再进下拉候选；成功后条目立刻从候选里消失。
+   * 字典「删除」（Push 173 起 = **物理删行**，C9-02 修订）：仅管理员（dict.manage，服务端裁决）。
+   * 删除不影响存量数据展示（项目仍按原码 / 原名渲染；projects.region / project_type 是 text 冗余码，无外键），
+   * 只是不再进下拉候选与首页筛选项；成功后条目立刻从候选里消失，同码可重新新增。
    */
   const handleDictDelete: DictTools["onDelete"] = async (type, code) => {
     try {
-      const items = await setDictItemEnabled(type, code, false);
-      setDicts((previous) => (type === "region" ? { ...previous, region: items } : { ...previous, projectType: items }));
+      applyDictType(type, await deleteDictItem(type, code));
       return null;
     } catch (error: unknown) {
       return errorMessageOf(error, type === "region" ? "删除地区失败" : "删除项目类型失败");
@@ -351,6 +371,12 @@ export default function App() {
   /** 权限分叉（Push 172）：字典治理 = dict.manage；删项目 = project.delete（服务端逐请求仍是最终裁决）。 */
   const canManageDicts = hasPermission(permissions, "dict.manage");
   const canDeleteProject = hasPermission(permissions, "project.delete");
+  /**
+   * 建 / 改项目（Push 173）：画像**未到时乐观放行**（网络抖动不该把有权限的账号挡在门外；服务端仍是最终裁决），
+   * 已知缺位才收敛入口 —— 首页「新建项目」出禁用观感 + 提示条、卡片编辑入口不渲染。
+   */
+  const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
+  const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
 
   if (state.kind === "loading") {
     return (
@@ -530,6 +556,8 @@ export default function App() {
         dictTools={dictTools}
         canManageDicts={canManageDicts}
         canDeleteProject={canDeleteProject}
+        canCreateProject={canCreateProject}
+        canUpdateProject={canUpdateProject}
         onDeleteProject={(project) => {
           setPendingDelete(project);
         }}

@@ -601,7 +601,7 @@ export function buildOpenApiDocument() {
     method: "patch",
     path: "/api/v1/dicts/{type}/items/{code}",
     tags: ["dicts"],
-    summary: "更新字典条目（部分更新；停用替代删除；变更写审计留痕）",
+    summary: "更新字典条目（部分更新；仅 dict.manage；变更写审计留痕）",
     request: { params: dictTypeParams.extend({ code: z.string() }), body: json(DictItemUpdateBodySchema) },
     responses: {
       200: { description: "更新后的整个字典", ...json(DictSchema) },
@@ -611,6 +611,21 @@ export function buildOpenApiDocument() {
       404: commonErrors[404],
     },
   });
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/dicts/{type}/items/{code}",
+    tags: ["dicts"],
+    summary: "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕）",
+    request: { params: dictTypeParams.extend({ code: z.string() }) },
+    responses: {
+      200: { description: "删除成功（更新后的整个字典）", ...json(DictSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
 
   // ---- 操作审计（C7；admin 模块：按对象 / 操作人检索） ----
   registry.registerPath({

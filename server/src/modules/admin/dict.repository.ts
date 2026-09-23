@@ -60,7 +60,7 @@ const ITEM_COLUMNS = {
   updatedAt: dictItems.updatedAt,
 };
 
-/** 字典数据访问（h7 · C9）：类型注册表 + 条目；「删除」= enabled=false（无物理删除）。 */
+/** 字典数据访问（h7 · C9）：类型注册表 + 条目；「删除」= 物理删行（DELETE /dicts/{type}/items/{code}，Push 173 起），enabled 仅作兼容字段。 */
 @Injectable()
 export class DictRepository {
   constructor(private readonly database: DatabaseService) {}
@@ -133,6 +133,15 @@ export class DictRepository {
     const rows = await client
       .update(dictItems)
       .set(set)
+      .where(and(eq(dictItems.typeCode, type), eq(dictItems.code, code)))
+      .returning(ITEM_COLUMNS);
+    return rows[0] ?? null;
+  }
+
+  /** 物理删除条目：返回 null = 条目不存在（服务层转 404）；调用方负责 touchType 与审计留痕。 */
+  async deleteItem(type: string, code: string, client: DbClient): Promise<DictItemRow | null> {
+    const rows = await client
+      .delete(dictItems)
       .where(and(eq(dictItems.typeCode, type), eq(dictItems.code, code)))
       .returning(ITEM_COLUMNS);
     return rows[0] ?? null;

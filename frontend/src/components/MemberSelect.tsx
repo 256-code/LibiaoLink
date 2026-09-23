@@ -296,9 +296,11 @@ type MemberMultiSelectProps = {
  * 人员多选下拉（Push 136）：已选成员以胶囊列出（每颗可单个 ×移除），点右侧「添加 / 继续添加」开搜索列表接着勾选。
  * 用于「一个项目多位项目经理」「一个任务多位负责人」；与任务表行内多选 `InlineMemberMultiCell` 共用同一个搜索列表，
  * 浮层不随勾选关闭（可以连着点好几位）。
+ * 浮层落点（Push 173）：与「项目地区 / 项目类型」字典下拉同口径，优先从触发器右侧弹出（不压住弹窗里其余表单字段），
+ * 右侧放不下（窄屏 / 靠右的任务抽屉）自动回落 below；触发器右侧的箭头同步朝右（与弹出的方向一致）。
  */
 export function MemberMultiSelect({ values, onChange, options, placeholder = "选择成员", ariaLabel }: MemberMultiSelectProps) {
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, 286);
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, 286, "right");
   const selected = values
     .map((id) => options.find((member) => member.id === id))
     .filter((member): member is Member => member !== undefined);
@@ -342,7 +344,7 @@ export function MemberMultiSelect({ values, onChange, options, placeholder = "�
           className="inline-flex min-w-[104px] flex-1 items-center gap-1 rounded-md px-2 py-1 text-left text-sm text-zinc-400 transition hover:bg-zinc-50"
         >
           {selected.length === 0 ? placeholder : "继续添加"}
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 -rotate-90 text-zinc-400">
             <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>

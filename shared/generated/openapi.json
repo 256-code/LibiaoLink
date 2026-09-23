@@ -1634,7 +1634,7 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "普通用户只见 enabled=true 的项；管理员可见全集（二期）"
+            "description": "是否启用；**兼容字段**（Push 173 起产品口径：删除走 DELETE 物理删除，前端不再有停用入口；值恒为 true）—— 保留给二期「临时下架」与存量数据"
           },
           "metadata": {
             "type": "object",
@@ -1703,7 +1703,7 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "停用（false）替代删除：存量数据仍按原值展示（C9-02）"
+            "description": "启用状态（兼容字段；一期删除走 DELETE 物理删除，前端不再调它）"
           },
           "metadata": {
             "type": "object",
@@ -8337,10 +8337,10 @@
                 "true",
                 "false"
               ],
-              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明"
             },
             "required": false,
-            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明",
             "name": "includeDisabled",
             "in": "query"
           }
@@ -8395,10 +8395,10 @@
                 "true",
                 "false"
               ],
-              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明"
             },
             "required": false,
-            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明",
             "name": "includeDisabled",
             "in": "query"
           }
@@ -8535,7 +8535,7 @@
         "tags": [
           "dicts"
         ],
-        "summary": "更新字典条目（部分更新；停用替代删除；变更写审计留痕）",
+        "summary": "更新字典条目（部分更新；仅 dict.manage；变更写审计留痕）",
         "parameters": [
           {
             "schema": {
@@ -8570,6 +8570,86 @@
         "responses": {
           "200": {
             "description": "更新后的整个字典",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+            },
+            "required": true,
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "name": "type",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "code",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除成功（更新后的整个字典）",
             "content": {
               "application/json": {
                 "schema": {

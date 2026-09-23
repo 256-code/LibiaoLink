@@ -5,7 +5,7 @@ export type PopoverPosition = { top: number; left: number; width: number };
 /**
  * 浮层优先落点（Push 167）：
  * - below（默认，全站既有口径）= 触发器的下 / 上，宽度至少与触发器等宽；
- * - right = 触发器右侧、垂直对齐（宽屏放得下时用，如弹窗里的「项目地区」——避免长列表压住表单其它字段），
+ * - right = 触发器右侧、垂直对齐（宽屏放得下时用，如弹窗里的「项目地区 / 项目类型」「项目经理」——避免长列表压住表单其它字段），
  *   右侧放不下（窄屏 / 靠右面板）自动回落 below，不出现半截浮层。
  */
 export type PopoverPlacement = "below" | "right";

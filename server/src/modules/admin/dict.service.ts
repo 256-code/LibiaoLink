@@ -14,8 +14,8 @@ function itemSnapshot(row: DictItemRow): Record<string, unknown> {
 
 /**
  * 字典用例（h7 · C9）：读下发 + 管理端维护。
- * 口径：类型是契约枚举（region / projectType），条目可维护；「删除」= 停用（C9-02：停用不影响存量数据展示，
- * 历史数据保留原值）；每次变更写审计留痕（对象 = dict_item，字段级 before / after）。
+ * 口径：类型是契约枚举（region / projectType），条目可维护；「删除」= 物理删行（Push 173 起 DELETE 接口直接从 dict_items
+ * 删除，删除前快照写审计；存量项目按原码 / 原名渲染，不受影响）；每次变更写审计留痕（对象 = dict_item，字段级 before / after）。
  */
 @Injectable()
 export class DictService {
@@ -118,6 +118,33 @@ export class DictService {
         summary:
           "修改字典项：" + typeRow.name + " · " + updated.name + "（" + code + "）" + (updated.enabled ? "" : " —— 已停用"),
         changes: changes.length > 0 ? changes : null,
+        metadata: { type },
+      });
+    });
+    return this.get(type, true);
+  }
+
+  /** DELETE /api/v1/dicts/{type}/items/{code}（dict.manage）：物理删除该条目；删除前快照写审计（action=delete）；未知条目 404。 */
+  async deleteItem(type: string, code: string, actorId: string): Promise<Dict> {
+    const typeRow = await this.requireType(type);
+    const at = new Date();
+    await this.database.db.transaction(async (tx) => {
+      const before = await this.dicts.findItem(type, code, tx);
+      if (before === null) {
+        throw new AppError("NOT_FOUND", "字典项不存在：" + type + "/" + code);
+      }
+      const deleted = await this.dicts.deleteItem(type, code, tx);
+      if (deleted === null) {
+        throw new AppError("NOT_FOUND", "字典项不存在：" + type + "/" + code);
+      }
+      await this.dicts.touchType(type, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "dict_item",
+        objectId: type + ":" + code,
+        summary: "删除字典项：" + typeRow.name + " · " + before.name + "（" + before.code + "）",
+        changes: diffRecords({ code: before.code, ...itemSnapshot(before) }, {}),
         metadata: { type },
       });
     });
