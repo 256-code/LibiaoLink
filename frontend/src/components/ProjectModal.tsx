@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import type { RegionTools } from "../customRegions";
 import type { DictItem } from "../dicts";
 import type { Member } from "../data/members";
 import { MemberMultiSelect } from "./MemberSelect";
+import { RegionSelect } from "./RegionSelect";
+import { SelectMenu } from "./SelectMenu";
+import type { SelectOption } from "./SelectMenu";
 
 export type ProjectDraft = {
   code: string;
@@ -22,6 +26,8 @@ type ProjectModalProps = {
   /** 字典下拉项（GET /api/v1/dicts）。 */
   regions: DictItem[];
   projectTypes: DictItem[];
+  /** 地区「＋ 添加」的落地方式（写地区字典 / 仅本项目 + 本机记住），由 App 层按 dict.manage 分派。 */
+  regionTools: RegionTools;
   /** 项目经理候选（GET /api/v1/users）。 */
   managerOptions: Member[];
   onClose: () => void;
@@ -39,7 +45,24 @@ function accentOf(items: DictItem[], code: string): string {
   return typeof accent === "string" && accent !== "" ? accent : "#feca04";
 }
 
-export function ProjectModal({ mode, initial, regions, projectTypes, managerOptions, onClose, onSubmit }: ProjectModalProps) {
+/** 项目类型下拉项：色点 + 名称（色值随字典 metadata.accent 下发，前端不硬编码）。 */
+function typeOptionsOf(items: DictItem[]): SelectOption[] {
+  return items.map((item) => ({
+    value: item.code,
+    label: (
+      <span className="flex min-w-0 items-center gap-2">
+        <span
+          className="inline-block h-3 w-3 shrink-0 rounded-full ring-1 ring-zinc-900/10"
+          style={{ backgroundColor: accentOf(items, item.code) }}
+          aria-hidden="true"
+        />
+        <span className="truncate">{item.name}</span>
+      </span>
+    ),
+  }));
+}
+
+export function ProjectModal({ mode, initial, regions, projectTypes, regionTools, managerOptions, onClose, onSubmit }: ProjectModalProps) {
   const isEdit = mode === "edit";
   const [code, setCode] = useState(initial?.code ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -125,35 +148,21 @@ export function ProjectModal({ mode, initial, regions, projectTypes, managerOpti
             />
             <span className="mt-1 block text-[11px] text-zinc-400">至少一位；多位时按勾选顺序展示（Push 136）。</span>
           </div>
-          <label className="block">
+          <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目地区</span>
-            <select className={fieldClass} value={region} onChange={(event) => setRegion(event.target.value)}>
-              {regions.length === 0 ? <option value="">（字典加载中…）</option> : null}
-              {regions.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-zinc-700">
-              项目类型
-              <span
-                className="inline-block h-3 w-3 rounded-full ring-1 ring-zinc-900/10"
-                style={{ backgroundColor: accentOf(projectTypes, projectType) }}
-                aria-hidden="true"
-              />
-            </span>
-            <select className={fieldClass} value={projectType} onChange={(event) => setProjectType(event.target.value)}>
-              {projectTypes.length === 0 ? <option value="">（字典加载中…）</option> : null}
-              {projectTypes.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            <RegionSelect value={region} regions={regions} tools={regionTools} onChange={setRegion} ariaLabel="选择项目地区" />
+          </div>
+          <div className="block">
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
+            <SelectMenu
+              value={projectType}
+              options={typeOptionsOf(projectTypes)}
+              onChange={setProjectType}
+              ariaLabel="选择项目类型"
+              placeholder="请选择项目类型"
+              disabled={projectTypes.length === 0}
+            />
+          </div>
 
           {error === null ? null : (
             <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
