@@ -119,7 +119,12 @@ export abstract class ObjectStorage {
 
   /** 对象元数据；对象不存在返回 null（不抛错）。 */
   abstract headObject(objectKey: string): Promise<ObjectHead | null>;
-  /** 短时签名下载地址（ADR-006：对象存储禁止匿名读取）。 */
+  /**
+   * 短时签名地址（ADR-006：对象存储禁止匿名读取）。
+   *
+   * 传 `fileName` = 签名 `Content-Disposition: attachment`（下载）；不传 = 不改写响应头，
+   * 浏览器按对象自身 Content-Type 内联渲染（预览读 API 走这条）。
+   */
   abstract signDownloadUrl(input: DownloadUrlInput): Promise<SignedUrl>;
   /**
    * 读对象字节（M4-05c：worker 把预览源文件字节送进转换沙箱）。

@@ -12,6 +12,7 @@ import { FileLibraryController } from "./file-library.controller.js";
 import { FileRepository } from "./file.repository.js";
 import { FileService } from "./file.service.js";
 import { PreviewConverter } from "./preview.converter.js";
+import { PreviewReadService } from "./preview-read.service.js";
 import { PreviewRepository } from "./preview.repository.js";
 import { PreviewService } from "./preview.service.js";
 
@@ -21,7 +22,7 @@ import { PreviewService } from "./preview.service.js";
  * storage（ObjectStorage 端口，@Global，经端口调用不直接碰 S3 SDK）。
  * 已落：M4-01 上传管道、M4-02 版本 / 定档 / 回溯 / 回收站、M4-03 文件库查询 + 多态关联（file_links）、
  * M4-04 变更写入 + 读面（变更记录列表 / 详情）、M4-05 预览（数据层 + 转换队列：outbox `preview.job`
- * 领取器 / 转换器客户端 / 三元组幂等 / 失败降级）；剩余 M4-05 读 API（三态 + 短时签名）。
+ * 领取器 / 转换器客户端 / 三元组幂等 / 失败降级）+ 读 API（三态 + 短时签名 + 仅 ready 写审计）。
  */
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule],
@@ -36,6 +37,8 @@ import { PreviewService } from "./preview.service.js";
     PreviewRepository,
     PreviewConverter,
     PreviewService,
+    // M4-05 读 API：api 侧三态 + 短时签名 + 仅 ready 写审计（worker 侧队列见 PreviewService）。
+    PreviewReadService,
   ],
   exports: [FileService, ChangeService, PreviewService],
 })

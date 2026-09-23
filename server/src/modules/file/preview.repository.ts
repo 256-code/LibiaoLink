@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { previewArtifacts } from "../../db/schema/preview.js";
+import type { PreviewTarget } from "./preview.job.js";
 
 /**
  * preview_artifacts 数据访问（M4-05c · ADR-007：三元组缓存键 = content_hash + pipeline_version + target）。
@@ -14,11 +15,16 @@ import { previewArtifacts } from "../../db/schema/preview.js";
 
 export type PreviewArtifactRow = typeof previewArtifacts.$inferSelect;
 
-/** 三元组缓存键（三个字段一起唯一：uq_preview_artifacts_cache_key）。 */
+/**
+ * 三元组缓存键（三个字段一起唯一：uq_preview_artifacts_cache_key）。
+ *
+ * `target` 用契约通道联合类型（不是裸 string）：键的持有者直接拿去拼任务载荷 / 写响应，
+ * 在这里就挡住「写进一个不存在的通道」—— 库侧 CHECK ck_preview_artifacts_target 只是最后一道。
+ */
 export interface PreviewArtifactKey {
   contentHash: string;
   pipelineVersion: string;
-  target: string;
+  target: PreviewTarget;
 }
 
 @Injectable()

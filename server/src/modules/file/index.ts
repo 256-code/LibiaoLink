@@ -3,6 +3,7 @@ export { FileModule } from "./file.module.js";
 export { FileService, EXPIRE_SWEEP_BATCH } from "./file.service.js";
 export { ChangeService } from "./change.service.js";
 export { PreviewService } from "./preview.service.js";
+export { PreviewReadService } from "./preview-read.service.js";
 export type { PreviewDrainStats } from "./preview.service.js";
 export { PreviewConverter } from "./preview.converter.js";
 export type { ConverterHealth } from "./preview.converter.js";
