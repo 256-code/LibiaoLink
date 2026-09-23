@@ -43,3 +43,97 @@ export function redirectToLogin(): void {
   const returnTo = window.location.pathname + window.location.search + window.location.hash;
   window.location.replace("/auth/login?returnTo=" + encodeURIComponent(returnTo));
 }
+
+
+/** 业务接口统一错误信封（服务端 ApiErrorFilter 输出：{ code, message, details, traceId }）。 */
+export type ApiErrorDetail = { code: string; message: string; path?: string };
+
+/** 业务接口错误：页面按 code 分支（409 PROJECT_CODE_EXISTS / VERSION_CONFLICT …），details 给字段级提示。 */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly details: ApiErrorDetail[];
+  readonly traceId: string | null;
+
+  constructor(status: number, code: string, message: string, details: ApiErrorDetail[] = [], traceId: string | null = null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+    this.traceId = traceId;
+  }
+
+  /** 字段级错误的落点（details[0].path，如 code / managerIds）；无字段级错误返回 null。 */
+  fieldPath(): string | null {
+    const first = this.details[0];
+    return first === undefined || first.path === undefined ? null : first.path;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** 解析错误信封；非 JSON / 形状不符时按 INTERNAL 兜底（前端只做提示，不改变状态）。 */
+async function toApiError(response: Response): Promise<ApiError> {
+  let code = response.status === 401 ? "AUTH_REQUIRED" : "INTERNAL";
+  let message = "请求失败（HTTP " + String(response.status) + "）";
+  let details: ApiErrorDetail[] = [];
+  let traceId: string | null = null;
+  try {
+    const payload: unknown = await response.json();
+    if (isRecord(payload)) {
+      if (typeof payload.code === "string") {
+        code = payload.code;
+      }
+      if (typeof payload.message === "string" && payload.message !== "") {
+        message = payload.message;
+      }
+      if (Array.isArray(payload.details)) {
+        details = payload.details.filter(isRecord).map((item) => ({
+          code: typeof item.code === "string" ? item.code : "VALIDATION_FAILED",
+          message: typeof item.message === "string" ? item.message : "",
+          path: typeof item.path === "string" ? item.path : undefined,
+        }));
+      }
+      if (typeof payload.traceId === "string") {
+        traceId = payload.traceId;
+      }
+    }
+  } catch {
+    // 非 JSON 响应（网关 / 代理错误页）：保留上面的兜底文案
+  }
+  return new ApiError(response.status, code, message, details, traceId);
+}
+
+/**
+ * 业务接口请求（/api/v1/**）：同源 Cookie + 写请求自动带 CSRF 头（apiFetch）+ 统一错误信封。
+ * - 2xx：返回 JSON（204 返回 undefined）
+ * - 401：跳 SSO 登录（returnTo = 当前页）并抛错
+ * - 其它非 2xx：抛 ApiError（status / code / details 供页面分支）
+ */
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await apiFetch(path, init);
+  if (response.status === 401) {
+    redirectToLogin();
+    throw await toApiError(response);
+  }
+  if (!response.ok) {
+    throw await toApiError(response);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+}
+
+/** 写请求（JSON body；CSRF 头由 apiFetch 补齐）。 */
+export function apiSend<T>(path: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown): Promise<T> {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  return apiRequest<T>(path, init);
+}

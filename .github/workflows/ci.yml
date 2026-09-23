@@ -180,3 +180,41 @@ jobs:
         env:
           DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
         run: npm run check:db-schema
+      # ---- 真机回放（M3-06 压测 / M6 日报与问题）：空库种子 + 起 api + 脚本自证（报告逐行落 CI 日志） ----
+      - name: Seed base data (roles / dicts / blueprint)
+        working-directory: database
+        env:
+          DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/seed.mjs
+      - name: Start api in background
+        working-directory: server
+        env:
+          NODE_ENV: test
+          PORT: "3011"
+          LOG_LEVEL: warn
+          DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+        run: |
+          set -euo pipefail
+          setsid nohup node dist/entry/api.js > api.log 2>&1 < /dev/null &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3011/healthz > /dev/null; then
+              echo "api ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "api 未在 60s 内就绪；日志尾部："
+          tail -n 80 api.log
+          exit 1
+      - name: M3-06 stress replay (10k tasks + index comparison)
+        working-directory: server
+        env:
+          M3_STRESS_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M3_STRESS_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m3-06-stress.mjs
+      - name: M6 replay (daily reports + issues)
+        working-directory: server
+        env:
+          M6_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M6_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m6-replay.mjs

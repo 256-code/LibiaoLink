@@ -1944,7 +1944,7 @@ export interface paths {
                     objectId?: string;
                     /** @description 操作人（按人检索 —— h7 验收项②） */
                     actorId?: components["schemas"]["Uuid"] & unknown;
-                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / deny 越权拒绝 */
+                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝 */
                     action?: components["schemas"]["AuditAction"];
                     /** @description result=denied 即越权尝试（C7-03） */
                     result?: components["schemas"]["AuditResult"] & unknown;
@@ -5360,10 +5360,10 @@ export interface components {
             traceId: string;
         };
         /**
-         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / deny 越权拒绝
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
          * @enum {string}
          */
-        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "preview" | "deny";
+        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "preview" | "download" | "deny";
         /** @description 字段级修改条目（C7-02） */
         AuditChange: {
             /** @description 字段名（契约口径 camelCase） */

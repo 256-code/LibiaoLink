@@ -4,7 +4,7 @@ import { fileVersions, files } from "./files.js";
 import { PREVIEW_STATUS_KEYS, PREVIEW_TARGET_KEYS, sqlValueList } from "./literals.js";
 
 /**
- * preview_artifacts（M4-05 预览管道 · 数据层 · migration 0024）。
+ * preview_artifacts（M4-05 预览管道 · 数据层 · migration 0027）。
  * 三元组缓存键 = content_hash + pipeline_version + target（ADR-007 / v0.2 §5.4，D2-06 同一内容只转换一次）；
  * file_id / version_id = 首次生成该产物的版本（登记 + 引用判定），读面按三元组命中、不按版本命中。
  * 状态值集与契约 PREVIEW_STATUSES 同值（not_ready = 已请求未就绪，生成任务由 outbox 重试兜底）。

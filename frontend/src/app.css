@@ -387,3 +387,9 @@ body {
 .scrollbar-hidden::-webkit-scrollbar {
   display: none;
 }
+
+
+/* 项目卡片：悬停投影取字典主题色（--card-glow 由 Card 组件按 metadata.accent 内联注入，M2-07 · A3） */
+.project-card:hover {
+  box-shadow: 0 12px 28px var(--card-glow, rgba(15, 23, 42, 0.18));
+}

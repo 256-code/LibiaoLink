@@ -7,10 +7,10 @@ import { DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../commo
  */
 
 /** 审计动作（audit_logs.action）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 预览 / 越权拒绝（C7-03；preview 随 M4-05 预览管道）。 */
-export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "preview", "deny"] as const;
+export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "preview", "download", "deny"] as const;
 export const AuditActionSchema = z.enum(AUDIT_ACTIONS).openapi("AuditAction", {
   description:
-    "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / deny 越权拒绝",
+    "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝",
 });
 
 /** 审计对象类型（audit_logs.object_type）：覆盖 h7 全部写入点 + h8 工作日历 + M4 file（文件与上传会话生命周期 / 预览）+ 变更记录 + M6 日报 / 问题。 */

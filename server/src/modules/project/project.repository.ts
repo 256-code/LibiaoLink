@@ -241,7 +241,8 @@ function projectConditions(filter: ProjectFilter, scope: ProjectScopeFilter): SQ
   if (filter.regions !== null) conditions.push(inArray(projects.region, filter.regions));
   if (filter.projectTypes !== null) conditions.push(inArray(projects.projectType, filter.projectTypes));
   if (filter.managerIds !== null) {
-    conditions.push(sql`${projects.managerIds} && ${filter.managerIds}::uuid[]`);
+    // sql.param：数组必须作为单个参数下发（直接内插会被展开成 ($1) 的文本参数，PG 报 malformed array literal）
+    conditions.push(sql`${projects.managerIds} && ${sql.param(filter.managerIds)}::uuid[]`);
   }
   if (filter.stageKeys !== null) conditions.push(inArray(projects.stageKey, filter.stageKeys));
   if (filter.statuses !== null) conditions.push(inArray(projects.status, filter.statuses));
