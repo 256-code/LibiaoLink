@@ -38,7 +38,9 @@ import type {
   MultipartUploadRef,
   ObjectHead,
   PartUploadUrlInput,
+  GetObjectResult,
   PurgeObjectResult,
+  PutObjectInput,
   SignedUrl,
   UploadedPart,
 } from "../src/storage/index.js";
@@ -69,6 +71,7 @@ const ENV = {
   UPLOAD_MAX_SIZE_MB: 2048,
   UPLOAD_SESSION_TTL_HOURS: 24,
   FILE_RECYCLE_RETENTION_DAYS: 30,
+  PREVIEW_PIPELINE_VERSION: "1.0.0",
 } as unknown as Env;
 
 function makeFileRow(overrides: Partial<FileRow> = {}): FileRow {
@@ -483,6 +486,23 @@ class FakeObjectStorage extends ObjectStorage {
     return { etag: "\"copy-etag\"", versionId: null };
   }
 
+  // ---- M4-05c：预览队列用（源字节直读 / 产物字节直写）----
+  /** 预置源对象（null = 对象不存在，用于「源对象缺失」用例）。 */
+  source: GetObjectResult | null = null;
+  readonly puts: PutObjectInput[] = [];
+  putError: Error | null = null;
+
+  async getObject(objectKey: string): Promise<GetObjectResult | null> {
+    if (this.source === null) return null;
+    return { ...this.source, objectKey };
+  }
+
+  async putObject(input: PutObjectInput): Promise<{ etag: string | null }> {
+    if (this.putError !== null) throw this.putError;
+    this.puts.push(input);
+    return { etag: "\"put-etag\"" };
+  }
+
   async probe(): Promise<void> {}
 }
 
@@ -521,8 +541,11 @@ class FakeDatabase {
   makeTx() {
     return {
       insert: () => ({
-        values: async (value: unknown) => {
+        // appendOutbox 只 await values()（普通对象 await 仍是它自己）；appendOutboxIfAbsent 会继续挂
+        // onConflictDoUpdate —— 替身两种都记一笔（唯一约束冲突的真行为由真库回放覆盖）。
+        values: (value: unknown) => {
           this.outbox.push(value);
+          return { onConflictDoUpdate: async () => {} };
         },
       }),
     };
@@ -1562,9 +1585,18 @@ describe("FileService.finalizeFile（定档锁版）", () => {
     expect(result.version).toBe(6);
     expect(h.repo.filePatches.at(-1)!.patch).toMatchObject({ status: "final", finalizedBy: ACTOR, version: 6 });
     expect(h.audit.entries.at(-1)).toMatchObject({ action: "complete", objectType: "file", objectId: FILE });
-    expect(h.database.outbox.at(-1)).toMatchObject({
+    expect(
+      h.database.outbox.find((entry) => (entry as { topic: string }).topic === "file.finalized"),
+    ).toMatchObject({
       topic: "file.finalized",
       dedupeKey: "file.finalized:" + FILE + ":6",
+      status: "pending",
+    });
+    // M4-05c 定档预生成（P1）：当前版本（.pdf）投一条 preview.job，去重键 = 三元组（内容 + 管线版本 + 通道）
+    expect(h.database.outbox.at(-1)).toMatchObject({
+      topic: "preview.job",
+      dedupeKey: "preview.job:" + HASH + ":1.0.0:pdf",
+      payload: { projectId: PROJECT, fileId: FILE, versionId: VERSION, target: "pdf", trigger: "finalize" },
       status: "pending",
     });
   });
@@ -1601,6 +1633,27 @@ describe("FileService.finalizeFile（定档锁版）", () => {
       details: [{ code: "no_version", path: "version" }],
     });
     expect(h.database.outbox).toHaveLength(0);
+  });
+
+  it("定档预生成：非预览类型（.zip）不投 preview.job —— 判不出通道就不占转换配额", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 1, name: "交付包.zip" });
+    h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    await h.service.finalizeFile(FILE, { version: 1 }, ACTOR);
+
+    expect((h.database.outbox as { topic: string }[]).map((entry) => entry.topic)).toEqual(["file.finalized"]);
+  });
+
+  it("定档预生成：图片版本（.png）投 image 通道（不是 pdf）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 1, name: "现场照片.png" });
+    h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1, mime: "image/png" })];
+    await h.service.finalizeFile(FILE, { version: 1 }, ACTOR);
+
+    expect((h.database.outbox.at(-1) as { topic: string; dedupeKey: string })).toMatchObject({
+      topic: "preview.job",
+      dedupeKey: "preview.job:" + HASH + ":1.0.0:image",
+    });
   });
 });
 

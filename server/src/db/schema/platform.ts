@@ -25,11 +25,14 @@ export const outboxEvents = pgTable(
     availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
     attempts: integer("attempts").notNull().default(0),
     lastError: text("last_error"),
+    /** 领取时刻（migration 0028）：worker 崩溃 / 重启后按超阈值重领，避免行永久卡在 processing。 */
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     unique("outbox_events_dedupe_key_key").on(table.dedupeKey),
     index("ix_outbox_ready").on(table.status, table.availableAt),
+    index("ix_outbox_processing").on(table.lockedAt).where(sql`status = 'processing'`),
     check(
       "ck_outbox_status",
       sql`${table.status} in ${sql.raw(sqlValueList(["pending", "processing", "done", "dead"]))}`,

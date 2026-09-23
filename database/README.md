@@ -35,6 +35,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0025_priority_three_levels.sql` | 紧急重要度收敛三档（M3-07 · Push 163 · px 线）：契约 PrioritySchema 四象限 → 三档「高 / 中 / 低」+ 存量折算（重要且紧急 → 高；重要不紧急 / 紧急但不重要 → 中；不紧急不重要 → 低）；**该口径已由 Push 164 回退**（见下行 0026）。 |
 | `migrations/0026_priority_foldback_four_quadrants.sql` | 紧急重要度回折四象限（Push 164 · px 线 · 整体回退 Push 159）：三档 → 四象限（高 → 重要且紧急；中 → 重要不紧急；低 → 不紧急不重要），幂等、**有损**（三档的「中」区分不了两个象限，统一回折「重要不紧急」）、无 DDL；契约 PRIORITY_VALUES 同步回四象限。 |
 | `migrations/0027_preview_artifacts.sql` | 预览产物表 + 审计动作扩值（M4-05 数据层 · S7·file · Push 165；**编号两度顺延：原取 0022 → 撞 `0022_task_soft_delete`；改取 0024 → 撞主线先入的 `0024_drop_tasks_legacy_order_index` / `0025_priority_three_levels` / `0026_priority_foldback_four_quadrants`**）：`preview_artifacts`（**三元组缓存键** `content_hash + pipeline_version + target` 唯一（ADR-007 / D2-06：同一内容只转换一次）+ `(version_id, target)` / `file_id` 索引 + **5 CHECK**：target / status / ready 成对 / failed 成对 / error <= 500；`file_id` / `version_id` = 首次生成该产物的版本，读面按三元组命中）+ `ck_audit_logs_action` 由八值**一次扩至十值**（新增 `preview`（D2-07）+ `download`（Push 160 定案 · A4-10），顺序与契约 `AUDIT_ACTIONS` 一致：`preview` 在前、`download` 紧随） |
+| `migrations/0028_outbox_claim.sql` | Outbox 领取器支撑（M4-05c 预览转换队列 · S7·file · Push 168）：`outbox_events.locked_at`（领取时刻，可空）+ 部分索引 `ix_outbox_processing on (locked_at) where status = 'processing'`。口径：worker 把 `pending` 领为 `processing` 时必须记下领取时刻 —— 没有它，worker 崩溃 / 重启会把行永久留在 `processing`（预览任务静默丢失、无痕迹可查）；崩溃遗留 = `locked_at` 早于阈值（worker 侧默认 10 分钟）可重领，常规领取仍走既有 `ix_outbox_ready (status, available_at)`，部分索引只服务重领这条窄路径。只追加列与索引、不动既有行与状态值集（pending / processing / done / dead 四值不变） |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |
@@ -157,7 +158,7 @@ seed: 完成，本次执行 4 个种子
 
 ## 验证（g3 验收）
 
-- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 17 行、业务表 27 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表；h3 新增 `blueprints` / `blueprint_versions`；h7 新增 `dict_types` / `dict_items` / `audit_logs`；h8 新增 `calendar_days` / `calendar_settings`；w2 给 `tasks` 加 `sort_index` 并放宽两列可空；M4-03 新增 `file_links`；Push 136 由 `0017` 把 `projects.manager_id` / `tasks.owner_id` 换成 `manager_ids` / `owner_ids` 数组列（表 / 列总数不变））。本地演练库 `check:db-schema`：27 表 / 265 列 / 77 索引（含唯一）/ 75 CHECK。
+- **空库迁移成功**：按「迁移命令」执行；迁移后 `schema_migrations` 17 行、业务表 27 张 + 迁移记录表 1 张（h1 起含 0007 的 4 张身份 / 角色表；h3 新增 `blueprints` / `blueprint_versions`；h7 新增 `dict_types` / `dict_items` / `audit_logs`；h8 新增 `calendar_days` / `calendar_settings`；w2 给 `tasks` 加 `sort_index` 并放宽两列可空；M4-03 新增 `file_links`；Push 136 由 `0017` 把 `projects.manager_id` / `tasks.owner_id` 换成 `manager_ids` / `owner_ids` 数组列（表 / 列总数不变））。本地演练库 `check:db-schema`（**Push 168 实测**）：**33 表 / 341 列 / 107 索引（含唯一）/ 108 CHECK**（此前的 27 表 / 265 列 / 77 / 75 是早期快照，随各线切片累积；每次迁移后以 `npm run check:db-schema` 实测为准）。
 - **种子幂等**：`node scripts/seed.mjs` 连续执行两次，第二次零变更（`dicts` 地区 / 项目类型字典、`roles` 六个内置角色、`role-permissions` 六角色矩阵、`blueprint` 的 default 模板 —— 后两者按「键序归一化后的 payload 比较」判等，库内已修订时不覆盖；`--dry-run` 不改库）。
 - **应用角色可写新表**：新表 / 新列由 `roles/0001` 的 default privileges 自动授权（应用角色无需额外 GRANT 即可读写 `upload_sessions` / `idempotency_keys`）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。

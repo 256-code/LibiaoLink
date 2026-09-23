@@ -41,6 +41,28 @@ export const EnvSchema = z
     UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
     /** 回收站保留期（天）：移入回收站时写 `files.purge_after = recycled_at + 保留期`（A4-12，默认 30）。 */
     FILE_RECYCLE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+    // ---- 预览转换沙箱（M4-05c · ADR-007：converter 落点 deploy/preview/，接口契约见其 README「五」） ----
+    /** 转换器基址：dev = 本机哑中继 `127.0.0.1:9900`；生产 = worker 与 converter 同处 internal 网络的内部地址。 */
+    PREVIEW_CONVERTER_URL: z.string().min(1).default("http://127.0.0.1:9900"),
+    /** 转换管线版本（进预览产物三元组缓存键）：与镜像标签同值，换镜像必须一并递增（deploy/preview/README「四」）。 */
+    PREVIEW_PIPELINE_VERSION: z.string().min(1).default("1.0.0"),
+    /** 客户端超时（毫秒）：比容器内硬超时（60000）留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
+    PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(90000),
+    /** 可重试失败的最大尝试次数（含首次）：到顶写产物 failed + outbox dead（D2-05 降级「请下载」）。 */
+    PREVIEW_CONVERT_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+    /** 重试退避基数（毫秒）：第 n 次失败后等 min(基数 × 2^(n-1), 30 分钟)。 */
+    PREVIEW_CONVERT_BACKOFF_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
+    /** 直接降级「仅下载」的源文件上限（MB）：转换峰值内存约为源文件数倍，别把沙箱配额打满（deploy/preview「七」）。 */
+    PREVIEW_CONVERT_MAX_SOURCE_MB: z.coerce.number().int().min(1).max(512).default(100),
+    /** 预览转换队列开关（worker）：`false` = 只投递不消费（排障 / 压测用）。 */
+    PREVIEW_JOB_ENABLED: z.enum(["true", "false"]).default("true"),
+    // ---- Outbox 领取器（M4-05c：领取 + 消费 + 重试 + dead；不含规则 / 通知编排） ----
+    /** 领取轮询周期（毫秒）。 */
+    OUTBOX_POLL_MS: z.coerce.number().int().min(200).max(600000).default(5000),
+    /** 单轮领取条数上限：单条最长占满客户端超时（90s），默认 2 与转换器沙箱并发 2 对齐。 */
+    OUTBOX_BATCH_LIMIT: z.coerce.number().int().min(1).max(50).default(2),
+    /** 领取后超过该时长未回写视为 worker 崩溃遗留、可重新领取（毫秒；必须 > 单条最长耗时）。 */
+    OUTBOX_STALE_MS: z.coerce.number().int().min(60000).max(86400000).default(600000),
   })
   .superRefine((value, context) => {
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
@@ -50,6 +72,22 @@ export const EnvSchema = z
         code: "custom",
         message: "UPLOAD_MAX_SIZE_MB 不得超过 5120（S3 单次 CopyObject 上限 5 GiB；放开需先补分片复制）",
         path: ["UPLOAD_MAX_SIZE_MB"],
+      });
+    }
+    // PREVIEW_PIPELINE_VERSION 进对象键（storage/object-key.ts 的片段白名单同口径）：非法字符会在构造键时抛错，
+    // 提前到启动期拦下（fail fast）；「与镜像标签同值」的规则见 deploy/preview/README「四」。
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.PREVIEW_PIPELINE_VERSION)) {
+      context.addIssue({
+        code: "custom",
+        message: "PREVIEW_PIPELINE_VERSION 只允许字母 / 数字 / . _ -（首字符须为字母或数字，最长 64）",
+        path: ["PREVIEW_PIPELINE_VERSION"],
+      });
+    }
+    if (value.OUTBOX_STALE_MS < value.PREVIEW_CONVERT_TIMEOUT_MS) {
+      context.addIssue({
+        code: "custom",
+        message: "OUTBOX_STALE_MS 必须 >= PREVIEW_CONVERT_TIMEOUT_MS，否则正在转换的行会被当成崩溃遗留重复领取",
+        path: ["OUTBOX_STALE_MS"],
       });
     }
     if (value.NODE_ENV !== "production") {

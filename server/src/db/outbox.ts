@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { outboxEvents } from "./schema/platform.js";
 import type { DbClient } from "./db-client.js";
 
@@ -19,4 +20,27 @@ export async function appendOutbox(client: DbClient, event: OutboxEventInput): P
     dedupeKey: event.dedupeKey,
     status: "pending",
   });
+}
+
+/**
+ * 幂等投递（M4-05c 预览任务：「同一三元组只转一次」的投递侧落点）。
+ *
+ * - 同 `dedupeKey` 已存在：**不重复插入**（不覆盖已有进度）；
+ * - 该行处于 `dead`：**重新唤醒**为 `pending`（重试次数归零、`last_error` 清空）——
+ *   预览任务的 dead 只代表「这一轮重试到顶」，读取侧再次请求时应当可以重投（不是永久丢弃）。
+ */
+export async function appendOutboxIfAbsent(client: DbClient, event: OutboxEventInput): Promise<void> {
+  await client
+    .insert(outboxEvents)
+    .values({
+      topic: event.topic,
+      payload: event.payload,
+      dedupeKey: event.dedupeKey,
+      status: "pending",
+    })
+    .onConflictDoUpdate({
+      target: outboxEvents.dedupeKey,
+      set: { status: "pending", availableAt: sql`now()`, attempts: 0, lastError: null },
+      setWhere: sql`${outboxEvents.status} = 'dead'`,
+    });
 }
