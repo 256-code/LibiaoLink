@@ -561,7 +561,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/dicts",
     tags: ["dicts"],
-    summary: "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+    summary: "全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内）",
     request: { query: DictReadQuerySchema },
     responses: {
       200: { description: "全部字典", ...json(DictListResponseSchema) },
@@ -615,7 +615,7 @@ export function buildOpenApiDocument() {
     method: "delete",
     path: "/api/v1/dicts/{type}/items/{code}",
     tags: ["dicts"],
-    summary: "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕）",
+    summary: "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕；条目被项目引用时 409 DICT_ITEM_IN_USE）",
     request: { params: dictTypeParams.extend({ code: z.string() }) },
     responses: {
       200: { description: "删除成功（更新后的整个字典）", ...json(DictSchema) },
@@ -623,6 +623,7 @@ export function buildOpenApiDocument() {
       401: commonErrors[401],
       403: commonErrors[403],
       404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

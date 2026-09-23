@@ -74,7 +74,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 变更 | 一期申请即通过（status=applied）：提交变更后文件与变更字段，完成上传时同事务写 change_requests + 新版本 + 状态 changed + Outbox（R01 / 通知由消费方处理）；缺变更后文件不允许提交 |
 | 回收站 | 任意状态可回收（默认保留 30 天，可恢复回原状态）；彻底删除仅管理员且留痕（权限模型落地前为临时口径） |
 | 下载与预览地址 | 短时签名 URL + 审计；对象存储禁止匿名读取 |
-| 时间区间（A1） | `filter[timeFrom]` / `filter[timeTo]`：`YYYY-MM-DD` 闭区间，按 Asia/Shanghai 日界截断（下界含当日 00:00、上界按次日 00:00 不含）；一期维度映射 `projects.updated_at`（语义以 v0.3 §7#4 ADR 为准）；只传一端合法，`timeFrom > timeTo` 或格式非法返回 400；列表与 facets 同 schema 同口径；列表 `sort` 缺省 = `updatedAt:desc`（最近活动在前）；白名单 `updatedAt` / `createdAt` / `seqNo`（A9 · Push 69：补 `createdAt`，供前端后续「按创建时间」维度升级） |
+| 时间区间（A1） | `filter[timeFrom]` / `filter[timeTo]`：`YYYY-MM-DD` 闭区间，按 Asia/Shanghai 日界截断（下界含当日 00:00、上界按次日 00:00 不含）；**Push 175 起维度映射 `projects.created_at`（项目创建时间；原「最近活动 `updated_at`」口径作废，语义以 v0.3 §7#4 ADR + Push 175 修订为准）**；只传一端合法，`timeFrom > timeTo` 或格式非法返回 400；列表与 facets 同 schema 同口径；列表 `sort` **缺省 = `createdAt:desc`（最近创建的在前，Push 175 修订；原 `updatedAt:desc` 作废）**；白名单 `updatedAt` / `createdAt` / `seqNo`（A9 · Push 69 补 `createdAt`；**Push 175 前端「维度 × 方向」已落地**） |
 | 用户目录（A2） | `GET /users`：`q` + 分页，只返回 `status=active`；项为 `{ id, username, displayName, email, status }`（不含 casdoorId / owner / 部门 / 手机号）；默认按 `username` 升序（分页不跳行）；登录用户全员可读，不做数据范围裁剪；项目侧随行下发 `Project.managerNames`（与 `managerIds` 同下标数组；列表 / 详情 / 创建与编辑返回；人员停用 / 离职仍返回姓名，取不到该位为 `null`） |
 | 字典（A3） | `GET /dicts` / `GET /dicts/{type}`：一期只下发可运营数据字典 `region` / `projectType`（项 `{ code, name, sort, enabled, metadata }`，`projectType` 必含 `metadata.accent`）；阶段 / 成果文件类型 / 紧急重要度属契约枚举（`src/common/dicts.ts`），前端直接引用、不走接口（避免同一事实两处来源） |
 | 用户偏好（A4） | `GET / PATCH /users/me/preferences`：PATCH 合并语义（只传变更键），响应回全量 + `updatedAt`；一期键 `taskTableHiddenColumns`（列 key 白名单校验，未知 key 400）；存储 `user_preferences`（与项目视图 `project_views` 分离）；单用户单写者不带 `version` |
@@ -118,6 +118,8 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 > 用途：按 ADR-018 八步流水线的第 2 步，「每张卡开工前先登记契约增量」——本表是各里程碑卡片在契约层的预计改动；落地时逐卡把「待新增 / 待修改」改为「已入（Push N）」并同步生成物。
 > **本表状态（Push 155 · M6-01 ~ M6-03 日报 / 问题第一刀）**：新增契约 `shared/src/modules/reports.ts`（`DailyReportState` 三值 / `DailyReportWriteState` 二值 / `DailyReport` / `DailyReportCreateBody`（`foundIssue` 非空 → 问题归类必填的 superRefine）/ `DailyReportUpdateBody`（乐观锁 + `date` 不可改）/ `DailyReportListQuery` / `DailyReportListResponse`）与 `shared/src/modules/issues.ts`（`IssueState` 四态 / `IssueCategory` 十项 / `IssueSchema` / `IssueListQuery` / `IssueListResponse` / `IssueUpdateBody` / `IssueEvent` / `IssueDetail`）；路由**项目嵌套**（`GET|POST /api/v1/projects/{id}/reports`、`GET|PATCH …/reports/{reportId}`、`GET …/issues`、`GET|PATCH …/issues/{issueId}`；tags = reports / issues）—— A21 提案的扁平路径（`/reports/{id}`）在 `ProjectAccessGuard` 下拿不到项目上下文，差异登记（前端功能需求.md §3.8 A21）；`PERMISSION_KEYS` 补四键（`report.view` / `report.fill` / `issue.view` / `issue.manage`，27 → 31 键；admin 全量、成员平权经 `PROJECT_MEMBER_IMPLIED_KEYS`）；`AUDIT_OBJECT_TYPES` 增 `daily_report` / `issue`；错误码增 `REPORT_ALREADY_EXISTS`（409）。
 > **本表状态（Push 173 · C9-02 字典删除口径修订）**：`shared/src/modules/dicts.ts` 新增 `DELETE /api/v1/dicts/{type}/items/{code}`（物理删除 · 仅 `dict.manage` · 删除前快照写审计 · 未知类型 / 未知条目 404 · 200 = 删除后的整个字典）并在 `shared/src/openapi.ts` 注册 delete path（**paths = 72 不变** —— 与既有 PATCH 同路径、仅增方法，**operations 92 → 93**；**schemas = 182 不变**）；`DictItemSchema.enabled`、`DictReadQuerySchema`（includeDisabled）与 `DictItemUpdateBodySchema.enabled` 标注为**兼容字段 / 兼容参数**（Push 173 起删除走 DELETE，一期不再产生停用项；保留给二期「临时下架」与存量数据）。生成物已重出（`generated/openapi.json` + `generated/api-types.d.ts`），`npm run check` 零漂移。（跨线：契约 + 后端 + 迁移已获业务批准同批落地，请 wmj 评审。）
+>
+> **Push 174 追加（C9-02 引用守卫）**：`DictItemSchema` 新增 `usageCount`（引用该码的**未删除项目**数：region → `projects.region`、projectType → `projects.project_type`；其余维度恒 0；读侧派生、非库内列），`shared/src/common/errors.ts` 新增错误码 `DICT_ITEM_IN_USE`（409），`openapi.ts` 的 `DELETE /api/v1/dicts/{type}/items/{code}` 补 409 响应、`GET /api/v1/dicts` 摘要点明 `usageCount`；**paths / operations / schemas 计数不变**（只加字段与错误码），生成物重出、`npm run check` 零漂移。
 > 现状（契约切片 · Push 155 · M6-01 ~ M6-03 日报 / 问题第一刀后）：**paths = 72、schemas = 180**（Push 89 · h4 基线 49 / 117；此后 h6 / h7 / h8 / M4-01~03 / M4-04-05 前置切片 / M3-03 / j6 / PR-7 变更关联多条 / M3-04 / M3-05 锁定字段例外调整 / M6-01~03 日报与问题 累计），生成物与源码零漂移（Push 71 基线 44 / 108；Push 80 / 81 / 83 / 89 未新增路径，h4 仅新增错误码）。
 > 已入契约的族：projects（列表 / 详情 / 创建 / 更新 / 软删 / facets / 时间区间 / 排序白名单）、tasks（列表 / 详情 / 创建 / 编辑 / 进度 / 删除 / 锁定字段例外调整 / from-template / 完成与预检 / 批量 / 变更关联多条）、flow（蓝图保存发布导入导出与版本化 / 项目流程 / 阶段列表与推进回退 / 节点增删 / 完成与预检）、templates（任务节点库 / 任务模板 CRUD）、files（上传会话 / 版本 / 定档 / 回滚 / 回收站 / 下载 / 变更 / 文件库列表 GET /projects/{id}/files（M4-03 起用）/ 预览 GET /files/{id}/preview（M4-04-05 前置切片入，含可选 versionId））、identity（/auth/* 四条 + /auth/me）、users（目录 / 偏好）、dicts（region / projectType 下发 + 条目新增 / 更新 / 删除）、stakeholders（干系人台账 CRUD + 项目关联与反查 · j6）。
 
@@ -126,7 +128,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
 | 组织 / 角色 / 通讯录同步 | 组织同步为内部作业（worker），**暂无新端点**（数据面 0007 已落 · Push 74；端点仍未开）；用户目录 `q` 补拼音检索口径（ADR-021）。管理端组织维护（D1-06）若做，另补 /departments、/roles 族 | 说明 |
-| 字典管理（C9-01 / C9-02） | 已入（h7 · Push 97；Push 168 权限修订；**Push 173 删除口径修订**）：`POST /dicts/{type}/items`（region 登录即可、其余 `dict.manage`）、`PATCH /dicts/{type}/items/{code}`、**`DELETE /dicts/{type}/items/{code}`（物理删行；删除前快照写审计 `action=delete`；未知类型 / 未知条目 404；响应 = 删除后的整个字典）**；`DictItem.enabled` 与 `includeDisabled` 降级为**兼容字段 / 兼容参数**（二期「临时下架」用） | 端点 |
+| 字典管理（C9-01 / C9-02） | 已入（h7 · Push 97；Push 168 权限修订；**Push 173 删除口径修订**）：`POST /dicts/{type}/items`（region 登录即可、其余 `dict.manage`）、`PATCH /dicts/{type}/items/{code}`、**`DELETE /dicts/{type}/items/{code}`（物理删行；删除前快照写审计 `action=delete`；未知类型 / 未知条目 404；响应 = 删除后的整个字典）**；`DictItem.enabled` 与 `includeDisabled` 降级为**兼容字段 / 兼容参数**（二期「临时下架」用）；**Push 174：条目被未删除项目引用时 `DELETE` 返回 409 `DICT_ITEM_IN_USE`（不删行、不写审计），下发条目带 `usageCount` 供前端置灰** | 端点 |
 | 高风险重认证（D1-05） | 新增 `POST /auth/mfa/verify` | 端点 |
 | 幂等 / outbox / 权限策略 | 内部实现，无契约变化（`Idempotency-Key` 已在约定层） | 无 |
 
@@ -139,7 +141,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | M2-03 阶段推进 / 回退 | 已入（Push 83）：`GET /projects/{id}/stages`、`POST …/stages/{key}/advance`（正文仅 `version`）、`POST …/rollback`（`reason` 必填 + `version`）；`StageListResponse` = 阶段状态 + 节点 / 任务完成度 + 留痕字段；新增 422 `STAGE_GATE_NOT_PASSED`（+ `BLUEPRINT_NOT_PUBLISHED`）与 409 `NODE_HAS_FILES` / `STAGE_STATE_INVALID` / `NODE_ALREADY_EXISTS` 错误码（ADR-023） | 端点 / 错误码 |
 | M2-05 成员与记录级权限 | 已入：`GET / POST / DELETE /projects/{id}/members`（幂等 upsert / 不是成员统一 404，Push 81）；记录级**过滤**（列表 / 详情 / facets / 搜索按成员裁剪）随 h6 | 端点 |
 | M2-06 视图 / 关注 | 新增 `/views`（个人 / 公共 CRUD）与 `/follows`（关注 / 取关） | 端点 |
-| M2-04 列表 / facets | 已入（A1 / A9）并 HTTP 落地（Push 80：列表与 facets 同一 filter 构造器、上海时区日界、排序白名单 `updatedAt` / `createdAt` / `seqNo`），无新增 | 无 |
+| M2-04 列表 / facets | 已入（A1 / A9）并 HTTP 落地（Push 80：列表与 facets 同一 filter 构造器、上海时区日界、排序白名单 `updatedAt` / `createdAt` / `seqNo`）；**Push 175 修订：时间区间维度改 `created_at`、`sort` 缺省改 `createdAt:desc`（契约描述 + 生成物重出，无 schema 结构变化）** | 无 |
 
 ### M3 任务纵切（h3 / h4）
 
@@ -199,7 +201,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | ADR-019 蓝图组织 | 已入（Push 83）：`BlueprintSchema.projectType`、`BlueprintView` 类型标识与发布版本 | M2-02 |
 | ADR-020 节点权限 | 已入（Push 83）：接口 403 语义（模板写 = 管理员、增删 / 推进 = 项目经理）；权限矩阵用例随 h6 | M2-05 |
 | ADR-021 负责人标识 | Task 族 `ownerIds` 数组（空数组 = 待分配，A23 · Push 136 多位）+ `ownerNames` 同下标数组；撤回 A10 兜底描述；用户目录 q 拼音口径 | M1 / M3 |
-| ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层） | M2-04 |
+| ADR-022 项目时间语义 | 无契约变化（`updatedAt` 已在，语义在服务层）；**Push 175 修订：列表缺省排序与「项目时间」区间筛选维度均由「最近活动 `updated_at`」改为「创建时间 `created_at`」** | M2-04 |
 | ADR-023 阶段推进 | 已入（Push 83）：stages 查询 / advance / rollback + `STAGE_GATE_NOT_PASSED` + 缺项明细 | M2-03 |
 | ADR-024 成果文件 | **已入（Push 143）**：`deliverableTypes` 数组 + 完成 / 预检端点 + `TASK_REQUIRED_DOC_MISSING` / `TASK_ALREADY_DONE`；锁定字段例外调整留痕 **已落 Push 153**（仅管理员 + `reason` 必填） | M3-03（已落）/ M3-05（已落） |
 | ADR-025 进行中置位 | 无契约变化（系统作业） | M3-02 |

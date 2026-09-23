@@ -43,6 +43,14 @@ type DictSelectProps = {
  * 兜底项必须保留：编辑一个值不在字典候选里的项目时，触发器仍要显示当前值（不能空白）；
  * 兜底项不给删除入口（它已经不在字典里，删了也是空转）。
  */
+/**
+ * 引用守卫（A3 · Push 174）：条目正被项目卡片引用时不给删 —— 删除位置灰并在悬停时说明原因（服务端同样会 409
+ * DICT_ITEM_IN_USE 兜底，缓存陈旧时不会误删）；无引用返回 undefined（正常可删）。
+ */
+function deleteBlockReason(item: DictItem): string | undefined {
+  return item.usageCount > 0 ? "正被 " + String(item.usageCount) + " 个项目使用，不能删除" : undefined;
+}
+
 function buildOptions(
   items: DictItem[],
   value: string,
@@ -57,7 +65,7 @@ function buildOptions(
       continue;
     }
     seen.add(item.code);
-    options.push({ value: item.code, label: labelOf(item.name, item) });
+    options.push({ value: item.code, label: labelOf(item.name, item), deleteDisabledReason: deleteBlockReason(item) });
   }
   if (value !== "" && !seen.has(value)) {
     options.push({ value, label: labelOf(value, null), deletable: false });
@@ -82,6 +90,8 @@ function availableAccents(items: DictItem[], options: readonly DictAccent[]): re
  * - 新增：写字典（region = 任何登录用户 · 全站共享；projectType = dict.manage）；项目类型随颜色模板落 metadata；
  * - 删除：行内隐式（悬停 / 聚焦才浮现，与任务表行内删除同一套语言）= **物理删行**（Push 173，dict.manage）——
  *   条目从候选与首页筛选里消失，但存量项目仍按原码 / 原名渲染（无外键引用）；
+ *   **Push 174 引用守卫**：条目正被项目卡片引用（usageCount > 0）时删除位置灰、点不动、悬停说明原因，
+ *   服务端同样 409 DICT_ITEM_IN_USE 兜底（缓存陈旧也不会误删）；
  * - 删除无记忆（业务口径「删除了就没有记忆了」）：同码可以重新添加，按**全新条目**处理（本次所选颜色、排到末尾），
  *   界面不出现「已停用 / 恢复」字样；缓存陈旧时服务端仍可能回 409 DICT_ITEM_EXISTS，按浮层内提示处理；
  * - 名称校验：非空、≤ DICT_NAME_MAX 字、不含英文逗号（filter[...] 是多值逗号分隔，逗号会被拆成两个筛选值）；

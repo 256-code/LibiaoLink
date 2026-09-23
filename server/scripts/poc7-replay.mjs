@@ -6,6 +6,7 @@
  *   字典（C9）：GET /dicts 默认只回启用项（前端启动拉一次）；includeDisabled 无 dict.manage → 403（管理端口径）；
  *     管理员新增条目 201、**删除条目 = 物理删行 200**（Push 173：`DELETE /dicts/{type}/items/{code}`），响应即「更新后的整个字典」（前端直接替换缓存）；同码重复 409 DICT_ITEM_EXISTS；
  *     未知类型 404；删除无记忆 —— 库里不留行、管理端全集也不含，同码可重新新增（存量数据仍按原码 / 原名展示）。
+ *     **Push 174 引用守卫**：条目被未删除项目引用时删除 → 409 DICT_ITEM_IN_USE（不删行、不写审计）；下发条目带 usageCount 供前端置灰。
  *   审计（C7）：写动作留痕（谁 / 何时 / 对什么 / 从什么改成什么）→ 按对象（objectType + objectId）与操作人（actorId）检索命中；
  *     越权 403 → result=denied 行（C7-03，可按人筛出）；普通读 404 不产生噪声行；审计接口仅 audit.view（受限账号 403）。
  *
@@ -212,6 +213,24 @@ try {
   const recreatedItem = (recreated.body?.items ?? []).find((item) => item.code === CODE);
   check("D12", "删除无记忆：同码可重新新增（不 409），按本次参数落库", "201 + " + CODE + "（name=重建后、sort=1001）", recreated.status + " " + truncate(recreatedItem, 200), recreated.status === 201 && recreatedItem?.name === "PoC-7 回放区（重建）" && recreatedItem?.sort === 1001);
 
+  // ---------- 引用守卫（A3 · Push 174：有项目卡片在用就不给删） ----------
+  const guardDict = await adminCall("GET", "/api/v1/dicts");
+  const guardRegions = ((guardDict.body?.items ?? []).find((item) => item.type === "region")?.items) ?? [];
+  const usedRegion = guardRegions.find((item) => item.usageCount > 0);
+  const unusedRegion = guardRegions.find((item) => item.usageCount === 0);
+  const usedDbCount = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from projects where deleted_at is null and region = $1", [usedRegion.code]);
+  check("D13", "下发条目带 usageCount（引用守卫的输入）= 未删除项目引用数", "被引用地区的 usageCount 与库内计数一致、且存在 usageCount=0 的条目", truncate({ used: usedRegion === undefined ? null : { code: usedRegion.code, api: usedRegion.usageCount, db: usedDbCount }, unused: unusedRegion?.code ?? null }, 220), usedRegion !== undefined && unusedRegion !== undefined && usedRegion.usageCount === usedDbCount, "只数 deleted_at is null 的项目（软删项目不在卡片里）");
+
+  const beforeRows = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from dict_items where type_code = $$region$$ and code = $1", [usedRegion.code]);
+  const beforeAudit = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from audit_logs where object_type = $$dict_item$$ and object_id = $1", ["region:" + usedRegion.code]);
+  const blocked = usedRegion === undefined ? { status: 0, body: null } : await adminCall("DELETE", "/api/v1/dicts/region/items/" + encodeURIComponent(usedRegion.code));
+  const afterRows = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from dict_items where type_code = $$region$$ and code = $1", [usedRegion.code]);
+  const afterAudit = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from audit_logs where object_type = $$dict_item$$ and object_id = $1", ["region:" + usedRegion.code]);
+  const stillListedAfterBlock = ((((await adminCall("GET", "/api/v1/dicts")).body?.items ?? []).find((item) => item.type === "region")?.items) ?? []).some((item) => item.code === usedRegion?.code);
+  const expectedD14 = "409 DICT_ITEM_IN_USE + 库里仍有该行（" + String(beforeRows) + " → " + String(afterRows) + "）+ 审计行数不变（" + String(beforeAudit) + "）+ 下发仍在；被引用地区 = " + (usedRegion?.code ?? "无");
+  const actualD14 = blocked.status + " " + truncate(blocked.body, 200) + "；行数 " + String(beforeRows) + " → " + String(afterRows) + "、审计 " + String(beforeAudit) + " → " + String(afterAudit) + "、下发仍在 = " + String(stillListedAfterBlock);
+  check("D14", "引用守卫：被项目卡片引用的地区删除 → 409 DICT_ITEM_IN_USE（不删行、不写审计）", expectedD14, actualD14, usedRegion !== undefined && blocked.status === 409 && blocked.body?.code === "DICT_ITEM_IN_USE" && beforeRows === 1 && afterRows === 1 && beforeAudit === afterAudit && stillListedAfterBlock === true, "服务端在事务内判定（count > 0 即抛错，不 touchType、不落审计）；前端同款判定已把删除位置灰");
+
   // ---------- 审计检索（C7-04 服务端） ----------
   const auditByObject = await adminCall("GET", "/api/v1/audit-logs?objectType=dict_item&objectId=" + encodeURIComponent("region:" + CODE) + "&limit=50");
   const byObjectItems = auditByObject.body?.items ?? [];
@@ -279,11 +298,12 @@ lines.push("");
 lines.push("## 验收对照（团队分工.md §6 · h7）");
 lines.push("");
 lines.push("- 「字典（C9）唯一口径」= D1 ~ D12：下发只含启用项、includeDisabled 需 dict.manage（403，兼容参数）、新增条目 201 / 删除条目 200（**物理删行**：库表无该行、默认下发与管理端全集都不含）且响应即更新后的整个字典、同码 409 `DICT_ITEM_EXISTS`、未知类型 404、删除无记忆（同码可重建为全新条目）。");
+  lines.push("- 「引用守卫（A3 · Push 174）」= D13 / D14：下发条目带 `usageCount`（= 未删除项目引用数，与库内计数一致；无引用为 0）；被项目卡片引用的地区删除 → **409 `DICT_ITEM_IN_USE`**（不删行、不写审计、下发仍在）—— 卡片在用就不给删。");
 lines.push("- 「审计留痕（谁 / 何时 / 对什么 / 从什么改成什么）」= A1 / A2：dict_item 对象上的 create（changes 含 code）/ delete（字段级 `code / name / sort / enabled / metadata → null`：删除前快照）两行，actorId 为管理员、entry=api、result=succeeded；写入与业务同事务（读库直证）。");
 lines.push("- 「按对象与操作人可检索」= A3 / A4 + D11b：`GET /api/v1/audit-logs?objectType=dict_item&objectId=region:<code>` 命中 create + delete；`actorId=<受限账号>&result=denied` 命中全部越权行；越权行对象 id 与成功写同形（type[:code]）。");
 lines.push("- 「越权留痕（C7-03）」= D3 / D3b / D8b / D8c / D11 / A5：403 一律记 denied（含 includeDisabled 越权读、projectType 新增越权、删除越权）；普通读 404（未知类型）不写噪声行（D5b）。");
 lines.push("- 项目 / 任务 / 节点与阶段推进的写路径留痕由单测覆盖（`server/test/project-crud.test.ts` / `task-service.test.ts` / `flow-gate-rejection.test.ts` 的 FakeAuditService 断言 record 入参）；真机不造项目数据（回放脚本只跑字典与审计域）。");
-lines.push("- 「自动化用例全绿」= `cd server && node node_modules/vitest/vitest.mjs run`（`test/admin-audit.test.ts` 18 例 + 全量 476 例 / 32 文件，随 `npm test` 常跑，不连库）与 `node scripts/check-db-schema.mjs` / `check-permission-matrix.mjs`。");
+lines.push("- 「自动化用例全绿」= `cd server && node node_modules/vitest/vitest.mjs run`（`test/admin-audit.test.ts` 21 例 + 全量 484 例 / 32 文件，随 `npm test` 常跑，不连库）与 `node scripts/check-db-schema.mjs` / `check-permission-matrix.mjs`。");
 lines.push("- 复跑：cd server && node scripts/poc7-replay.mjs --out ../docs/PoC-7-回放证据(字典C9与审计留痕C7).md");
 lines.push("");
 

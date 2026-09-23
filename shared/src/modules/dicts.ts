@@ -20,6 +20,10 @@ export const DictItemSchema = z
     enabled: z
       .boolean()
       .openapi({ description: "是否启用；**兼容字段**（Push 173 起产品口径：删除走 DELETE 物理删除，前端不再有停用入口；值恒为 true）—— 保留给二期「临时下架」与存量数据" }),
+    usageCount: z.number().int().openapi({
+      description:
+        "引用该条目的**未删除项目**数（region → projects.region、projectType → projects.project_type；其余字典维度恒 0）；> 0 时删除返回 409 DICT_ITEM_IN_USE（A3 删除守卫，Push 174），前端据此把删除入口置灰",
+    }),
     metadata: z.record(z.string(), z.unknown()).openapi({
       description:
         "字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码",
@@ -80,6 +84,8 @@ export const DictItemCreateBodySchema = z
 /**
  * 删除字典条目（**物理删除** · 仅管理员 dict.manage）：DELETE /dicts/{type}/items/{code}。
  * 删除 = 从 dict_items 直接删行，不保留停用位；删除前快照写审计（action = delete，objectId = "{type}:{code}"，C7-02）。
+ * **引用守卫（A3 · Push 174）**：条目正被未删除项目引用（projects.region / project_type 命中，见 DictItem.usageCount > 0）时
+ * 拒绝删除 —— 409 DICT_ITEM_IN_USE，不落审计、不改动任何行；前端不复刻判定，一律以服务端为准（缓存陈旧时同样被拦）。
  * 未知类型 / 未知条目 404；响应为更新后的整个字典。删除后同码可重新新增：按全新条目处理（本次颜色、排到末尾，界面无「恢复」提示）。
  */
 export const DictItemUpdateBodySchema = z

@@ -5,6 +5,8 @@
  * Push 172：新增项目类型时从预置色板（DICT_ACCENT_PALETTE，「颜色模板」）选色。
  * Push 173：删除 = **物理删行**（DELETE /dicts/{type}/items/{code}，仅管理员 dict.manage）—— 删除无记忆：同码可重新新增，
  *   按全新条目处理（本次所选颜色、排到末尾），界面不出现「已停用 / 恢复」字样。
+ * Push 174：**引用守卫** —— 条目正被项目卡片引用（usageCount > 0）时删除入口置灰（服务端 409 DICT_ITEM_IN_USE 兜底），
+ *   业务口径「有项目在用就不给删」，避免已上卡片的地区 / 类型被删掉。
  */
 import { apiRequest, apiSend } from "./api";
 
@@ -15,6 +17,8 @@ export type DictItem = {
   name: string;
   sort: number;
   enabled: boolean;
+  /** 引用该条目的**未删除项目**数（region / projectType 两个维度；其余恒 0）—— > 0 时不给删（Push 174 引用守卫）。 */
+  usageCount: number;
   metadata: Record<string, unknown>;
 };
 

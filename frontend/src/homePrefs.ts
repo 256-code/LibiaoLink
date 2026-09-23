@@ -71,6 +71,7 @@ function sanitizeFilters(value: unknown): HomeFilterPrefs | null {
   ) {
     return null;
   }
+  // 排序维度（Push 177 起固定创建时间）：旧记忆里的 sortField 字段直接忽略，不做校验（只保留方向）。
   return { regions, projectTypes, managerIds, timeFrom, timeTo, sortDesc: record.sortDesc };
 }
 

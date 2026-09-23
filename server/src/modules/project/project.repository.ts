@@ -256,8 +256,9 @@ function projectConditions(filter: ProjectFilter, scope: ProjectScopeFilter): SQ
     );
     if (keywordCondition !== undefined) conditions.push(keywordCondition);
   }
-  if (filter.updatedFrom !== null) conditions.push(gte(projects.updatedAt, filter.updatedFrom));
-  if (filter.updatedToExclusive !== null) conditions.push(lt(projects.updatedAt, filter.updatedToExclusive));
+  // 「项目时间」区间 = **项目创建时间**（Push 175 业务定调；原 updated_at 口径作废）
+  if (filter.createdFrom !== null) conditions.push(gte(projects.createdAt, filter.createdFrom));
+  if (filter.createdToExclusive !== null) conditions.push(lt(projects.createdAt, filter.createdToExclusive));
   return conditions;
 }
 

@@ -40,13 +40,15 @@ export const ProjectSummarySchema = z
 
 /**
  * 列表查询：多维筛选 + 分页 + 排序；多值筛选用英文逗号分隔（与 v0.2 §8.2 filter[...] 口径一致）。
- * A1（Push 49）：filter[timeFrom] / filter[timeTo] 为 DateOnly 闭区间，按 Asia/Shanghai 日界截断
- * —— 下界取当日 00:00:00+08:00（含）、上界取次日 00:00:00+08:00（不含）；一期维度映射 projects.updated_at，
- * 语义以 v0.3 §7 第 4 项「项目时间」ADR 为准（主数据变更 / 阶段推进 / 任务变更触发，文件与日报不触发）。
+ * A1（Push 49；**Push 175 维度修订**）：filter[timeFrom] / filter[timeTo] 为 DateOnly 闭区间，按 Asia/Shanghai 日界截断
+ * —— 下界取当日 00:00:00+08:00（含）、上界取次日 00:00:00+08:00（不含）；维度映射 **projects.created_at（项目创建时间）**
+ * （业务定调 2026-09-23：「这个筛选是按照项目创建时间筛选」；原「最近活动时间（updated_at）」口径随之作废，
+ * 卡片上展示的也是创建时间 —— 两处同一维度，不再出现「筛选看活动、卡片看创建」的错位）。
  * 边界：只传一端合法；timeFrom 晚于 timeTo 或格式非法返回 400 VALIDATION_FAILED（不返回空列表）。
  * 列表与 facets 共用本 schema 与同一 QueryBuilder（禁止两套 SQL）。
- * 缺省排序：updatedAt:desc（项目最近活动在前）；排序白名单 updatedAt / createdAt / seqNo。
- * A9（Push 69）：白名单补 createdAt（sort=createdAt:asc|desc），前端后续把 TIME 升级为「维度（创建时间 / 最近活动时间）× 方向」时无需再动契约；默认序仍为 updatedAt:desc。
+ * 缺省排序（**Push 175 修订**）：createdAt:desc（最近创建的在前，与「项目时间筛选 = 创建时间」同一维度）；
+ * 排序白名单 updatedAt / createdAt / seqNo。
+ * A9（Push 69）：白名单补 createdAt（sort=createdAt:asc|desc）；**Push 175 起前端 TIME 升级为「维度（创建时间 / 更新时间）× 方向」**，默认 = 创建时间 × 降序。
  */
 export const ProjectListQuerySchema = z
   .object({
@@ -59,16 +61,16 @@ export const ProjectListQuerySchema = z
     "filter[stageKey]": z.string().optional().openapi({ description: "阶段 key（多值逗号分隔）" }),
     "filter[status]": z.string().optional().openapi({ description: "项目状态（多值逗号分隔）" }),
     "filter[timeFrom]": DateOnlySchema.optional().openapi({
-      description: "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）",
+      description: "项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）",
     }),
     "filter[timeTo]": DateOnlySchema.optional().openapi({
-      description: "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
+      description: "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
     }),
     q: z.string().optional().openapi({ description: "关键字（编号 / 名称 / 客户 / 序号）" }),
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
     sort: SortQuerySchema.optional().openapi({
-      description: "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+      description: "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
     }),
   })
   .openapi("ProjectListQuery", {

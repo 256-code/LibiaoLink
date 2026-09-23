@@ -49,6 +49,15 @@ type HomeProps = {
   onSavedFiltersChange: (items: SavedFilter[]) => Promise<string | null>;
 };
 
+/**
+ * 排序维度显示名（Push 177：业务口径「取消按更新时间排序 只保留创建时间」）——
+ * 维度**固定创建时间**，工具条只留方向（降序 / 升序）；这枚文本只作说明用，不可点。
+ */
+const SORT_FIELD_LABEL = "创建时间";
+
+/** 该维度的口径说明（挂在方向按钮的悬停提示里）。 */
+const SORT_FIELD_TITLE = "项目创建的那一刻，此后不再变化";
+
 /** 点「新建项目」但缺 project.create 时的提示（Push 173；服务端仍是最终裁决）。 */
 const NO_CREATE_PERMISSION = "当前账号没有建项目权限，请联系管理员分配角色。";
 
@@ -383,18 +392,17 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           />
           <div
             role="group"
-            aria-label="按项目时间排序"
+            aria-label={"按" + SORT_FIELD_LABEL + "排序（降序 / 升序）"}
             className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
           >
-            <span className="px-1 text-[10px] font-semibold tracking-[0.18em] text-zinc-400 select-none" aria-hidden="true">
-              TIME
-            </span>
+            {/* 排序维度（Push 177）：固定创建时间，只作说明（不参与点击），维度切换按钮已下线 */}
+            <span className="px-2.5 py-1.5 text-zinc-400 select-none">{SORT_FIELD_LABEL}</span>
             <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
             <button
               type="button"
               aria-pressed={sortDesc}
-              aria-label="按项目时间降序排列"
-              title="按项目时间降序排列（最近活动在前）"
+              aria-label={"按" + SORT_FIELD_LABEL + "降序排列"}
+              title={"按" + SORT_FIELD_LABEL + "降序排列（新的在前）——" + SORT_FIELD_TITLE}
               onClick={() => {
                 updateFilters({ sortDesc: true });
               }}
@@ -411,8 +419,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             <button
               type="button"
               aria-pressed={!sortDesc}
-              aria-label="按项目时间升序排列"
-              title="按项目时间升序排列（最早活动在前）"
+              aria-label={"按" + SORT_FIELD_LABEL + "升序排列"}
+              title={"按" + SORT_FIELD_LABEL + "升序排列（旧的在前）——" + SORT_FIELD_TITLE}
               onClick={() => {
                 updateFilters({ sortDesc: false });
               }}

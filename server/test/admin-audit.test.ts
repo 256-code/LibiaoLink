@@ -74,6 +74,13 @@ class FakeDictRepository {
     return row === undefined ? null : { ...row };
   }
 
+  /** 项目引用计数（A3 删除守卫 · Push 174）：用例按需注入；缺省空表 = 没有任何项目在用它。 */
+  usage: Map<string, number> = new Map();
+
+  async usageCounts(_type: string): Promise<Map<string, number>> {
+    return new Map(this.usage);
+  }
+
   async touchType(type: string, at: Date): Promise<void> {
     this.touched.push(type);
     const row = this.types.find((item) => item.code === type);
@@ -279,6 +286,30 @@ describe("DictService（字典 C9）", () => {
     expect(dicts.items.filter((item) => item.code === "华东旧")).toHaveLength(1);
   });
 
+
+  it("引用守卫：条目正被项目引用时 409 DICT_ITEM_IN_USE，不删行 / 不写审计 / 不触碰字典版本", async () => {
+    const { service, dicts, audit } = makeDictService();
+    dicts.usage.set("华东", 2);
+    await expectAppErrorAsync(() => service.deleteItem("region", "华东", UUID_ACTOR), "DICT_ITEM_IN_USE");
+    expect(dicts.items.some((item) => item.code === "华东")).toBe(true);
+    expect(dicts.touched).toEqual([]);
+    expect(audit.inserted).toHaveLength(0);
+  });
+
+  it("引用守卫：计数为 0（无引用 / 项目已软删）时照常物理删除", async () => {
+    const { service, dicts, audit } = makeDictService();
+    dicts.usage.set("华东旧", 0);
+    const dict = await service.deleteItem("region", "华东旧", UUID_ACTOR);
+    expect(dict.items.map((item) => item.code)).toEqual(["华东"]);
+    expect(audit.inserted[0]).toMatchObject({ action: "delete", objectId: "region:华东旧" });
+  });
+
+  it("下发条目带 usageCount（未删除项目引用数；无引用为 0，删掉的条目不再出现）", async () => {
+    const { service, dicts } = makeDictService();
+    dicts.usage.set("华东", 3);
+    const dict = await service.get("region", true);
+    expect(dict.items.map((item) => [item.code, item.usageCount])).toEqual([["华东", 3], ["华东旧", 0]]);
+  });
   it("删除未知类型 / 未知条目 404 NOT_FOUND，且不写审计", async () => {
     const { service, dicts, audit } = makeDictService();
     await expectAppErrorAsync(() => service.deleteItem("priority", "华东", UUID_ACTOR), "NOT_FOUND");
