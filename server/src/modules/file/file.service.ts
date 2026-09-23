@@ -51,6 +51,7 @@ import {
   type UploadSessionRow,
 } from "./file.repository.js";
 import { parseFileListFilter, parseFileListSort, type FileListQueryInput } from "./file.query.js";
+import { PreviewRepository } from "./preview.repository.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey } from "./preview.job.js";
 import { previewTargetsFor } from "./preview.targets.js";
 
@@ -129,6 +130,12 @@ export const RECYCLE_SWEEP_BATCH = 100;
  * - R01（`docs/rules/R01-R07-内置规则文案.md`）：按「任务输出成果文件（多值）命中变更文件成果类型」匹配任务，
  *   命中多条全部关联、无匹配只记日志（不阻断变更生效）；`tasks.change_refs` 落「追加 + 去重」的多条关联
  *   （A1-07 / A4-13「一条任务可关联多条变更」；数组顺序 = 关联先后，末位 = 最近一次变更，迁移 0020）。
+ *
+ * M4-05 增补（预览管道 · 收口）：
+ * - 上传完成 / 定档 / 回溯在事务内投 `preview.job`（定档预生成）或登记产物（读取侧懒生成见 PreviewReadService）；
+ * - **彻底删除 / 回收站到期（purgeRecycled）连带收口预览产物对象**：按 `content_hash` 反查是否还有存活版本引用
+ *   （迁移 `0027` 口径 3）—— 有 → 缓存行**归属转移**到存活版本（行与对象都保留，D2-06 复用不打回 not_ready）；
+ *   无 → 与版本对象同序在持锁事务内清对象（同时删的 `preview_artifacts` 行由外键级联）。
  */
 @Injectable()
 export class FileService {
@@ -137,6 +144,7 @@ export class FileService {
   constructor(
     private readonly database: DatabaseService,
     private readonly repository: FileRepository,
+    private readonly previews: PreviewRepository,
     private readonly storage: ObjectStorage,
     private readonly permission: PermissionService,
     private readonly audit: AuditService,
@@ -1276,9 +1284,32 @@ export class FileService {
         return null;
       }
       const versions = await this.repository.listVersions(file.id, tx);
+      // M4-05 收口：预览产物按 content_hash 反查引用（迁移 `0027` 口径 3）—— 还有存活版本引用就把缓存行
+      // 归属转移过去（行不随级联消失、对象保留）；无引用才清对象。与版本对象同序：清对象在删行之前、失败即回滚。
+      const versionIds = versions.map((version) => version.id);
+      const artifactRows = await this.previews.listReadyByVersionIds(versionIds, tx);
+      const artifactKeys: string[] = [];
+      let artifactsReassigned = 0;
+      for (const row of artifactRows) {
+        if (row.objectKey === null) continue;
+        const survivor = await this.repository.findVersionByContentHash(row.contentHash, versionIds, tx);
+        if (survivor !== null) {
+          await this.previews.reassignOwner(row.id, { fileId: survivor.fileId, versionId: survivor.id }, at, tx);
+          artifactsReassigned += 1;
+          continue;
+        }
+        artifactKeys.push(row.objectKey);
+      }
       for (const version of versions) {
         try {
           await this.storage.purgeObject(version.objectKey);
+        } catch (error) {
+          throw toApiError(error);
+        }
+      }
+      for (const key of artifactKeys) {
+        try {
+          await this.storage.purgeObject(key);
         } catch (error) {
           throw toApiError(error);
         }
@@ -1292,12 +1323,21 @@ export class FileService {
         objectType: "file",
         objectId: file.id,
         projectId: locked.projectId,
-        summary: "彻底删除：" + locked.name + "（" + deletedVersions + " 个版本与对象一并清理）",
+        summary:
+          "彻底删除：" +
+          locked.name +
+          "（" +
+          deletedVersions +
+          " 个版本与对象" +
+          (artifactKeys.length > 0 ? "、" + artifactKeys.length + " 份预览产物" : "") +
+          "一并清理）",
         changes: [{ field: "status", from: "recycled", to: null }],
         metadata: {
           source: options.actorId === null ? "system" : "api",
           reason: options.reason,
           deletedVersions,
+          previewArtifactsPurged: artifactKeys.length,
+          previewArtifactsReassigned: artifactsReassigned,
           purgedAt: at.toISOString(),
           objectKeys: versions.map((version) => version.objectKey),
         },
