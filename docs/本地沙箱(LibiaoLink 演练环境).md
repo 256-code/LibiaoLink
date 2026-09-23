@@ -2,7 +2,7 @@
 
 > 这份文档只讲**本机 Docker 里那一套 Casdoor**（`deploy/casdoor/`）的现状与用法。
 > 它与公司环境（正式 `auth.libiaorobot.com` / 测试 `authtest.libiaorobot.com`）是**两套完全独立的用户库** —— 同名同邮箱也不是同一个人。
-> 最后更新：2026-09-16
+> 最后更新：2026-09-23
 
 ## 一、用途与边界
 
@@ -142,3 +142,30 @@ npm run dev                       # http://localhost:3000
 - 令牌交换与验签在后端（`server/src/modules/identity/`），`client_secret` 只存在于 `server/.env`；生产环境由站点域名直接承载 4 个 `/auth/*` 路由，细节见 `frontend/README.md`
 
 > 本地前端只对接本地 Casdoor；验证公司账号走登录页下方「公司统一登录（测试环境）」（第五节），上线时把 `server/.env` 换成公司环境地址与正式应用凭据。
+
+## 十、用户角色（写操作 403 的常见原因）
+
+从公司 SSO 联邦进来的账号，本地 Casdoor 会自动建号；但业务库里的角色（`user_roles`）**不会自动分配** —— 权限位为空时写接口一律 403，列表也按「我管的 / 我参与的」裁剪（服务端是最终裁决）。
+
+**当前阶段口径（业务已定：「我们当前这个系统就不要考虑权限」）**：沙箱里**所有在用账号一律 `admin`** —— 数据范围 `all`（看得见全部项目，不再按「我管的项目」裁剪）+ 全权限位。新账号从公司 SSO 登进来后**重跑下面第一条**即可（幂等）：
+
+```sql
+-- 全员管理员（当前阶段口径）：全量可见 + 全权限
+insert into user_roles (user_id, role_id)
+select u.id, r.id from users u cross join roles r
+where r.code = 'admin' and u.status = 'active' and u.removed_at is null
+on conflict do nothing;
+
+-- 只给单人 / 换别的角色（例：项目经理 = 只看得见自己管的项目 + 建改删项目）
+insert into user_roles (user_id, role_id)
+select u.id, r.id from users u, roles r
+where u.username = 'zhangsan' and r.code = 'project_manager'
+on conflict do nothing;
+
+-- 撤销某人的全部角色
+delete from user_roles where user_id = (select id from users where username = 'zhangsan');
+```
+
+- 直连串：`postgres://libiaolink_migrator@127.0.0.1:5433/libiaolink`（见 `database/README.md`）；查现有绑定：`select u.username, r.code from user_roles ur join users u on u.id = ur.user_id join roles r on r.id = ur.role_id order by 1;`
+- 权限画像有 10 秒缓存：改完角色**刷新页面**即可生效（最迟 10 秒）。
+- 角色集与权限位（`project.create` / `project.update` / `project.delete` / `dict.manage` 等）由种子维护（`database/seeds/roles.mjs` / `role-permissions.mjs`）；**分配角色的管理界面还没做**（成员管理 u3 / u12 待建）。**「全员全权」要落到线上还有两条路（待 wmj 拍）**：① identity 建号流程里落默认角色；② 做成员与角色管理界面。

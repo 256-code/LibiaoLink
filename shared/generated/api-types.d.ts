@@ -1662,7 +1662,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明 */
                     includeDisabled?: "true" | "false";
                 };
                 header?: never;
@@ -1710,7 +1710,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明 */
                     includeDisabled?: "true" | "false";
                 };
                 header?: never;
@@ -1857,10 +1857,70 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** 删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
+                    code: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除成功（更新后的整个字典） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
-        /** 更新字典条目（部分更新；停用替代删除；变更写审计留痕） */
+        /** 更新字典条目（部分更新；仅 dict.manage；变更写审计留痕） */
         patch: {
             parameters: {
                 query?: never;
@@ -5751,7 +5811,7 @@ export interface components {
             name: string;
             /** @description 展示顺序（升序） */
             sort: number;
-            /** @description 普通用户只见 enabled=true 的项；管理员可见全集（二期） */
+            /** @description 是否启用；**兼容字段**（Push 173 起产品口径：删除走 DELETE 物理删除，前端不再有停用入口；值恒为 true）—— 保留给二期「临时下架」与存量数据 */
             enabled: boolean;
             /** @description 字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码 */
             metadata: {
@@ -5786,7 +5846,7 @@ export interface components {
         DictItemUpdateBody: {
             name?: string;
             sort?: number;
-            /** @description 停用（false）替代删除：存量数据仍按原值展示（C9-02） */
+            /** @description 启用状态（兼容字段；一期删除走 DELETE 物理删除，前端不再调它） */
             enabled?: boolean;
             metadata?: {
                 [key: string]: unknown;

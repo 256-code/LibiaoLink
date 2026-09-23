@@ -32,6 +32,10 @@ type HomeProps = {
   canManageDicts: boolean;
   /** 是否持有 project.delete（Push 172）：决定卡片上删除项目入口的呈现（服务端仍是最终裁决）。 */
   canDeleteProject: boolean;
+  /** 是否持有 project.create（Push 173）：无权限时「新建项目」出禁用观感、点击给提示条（服务端仍是最终裁决）。 */
+  canCreateProject: boolean;
+  /** 是否持有 project.update（Push 173）：无权限时卡片编辑入口不渲染（与删除同款收敛口径）。 */
+  canUpdateProject: boolean;
   /** 卡片删除项目（软删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
   onDeleteProject: (project: Project) => void;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
@@ -44,6 +48,9 @@ type HomeProps = {
   /** 保存 / 删除常用筛选（整体替换 PATCH）；返回 null = 成功，返回文案 = 失败提示（文案口径由父层给）。 */
   onSavedFiltersChange: (items: SavedFilter[]) => Promise<string | null>;
 };
+
+/** 点「新建项目」但缺 project.create 时的提示（Push 173；服务端仍是最终裁决）。 */
+const NO_CREATE_PERMISSION = "当前账号没有建项目权限，请联系管理员分配角色。";
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -71,7 +78,7 @@ function buildOptions(
     });
 }
 
-export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
+export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
   const route = useHashRoute();
@@ -80,6 +87,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   // 常用筛选（Push 138；Push 169 起按账号存服务端）：组合由父层持有（同账号换设备可见），点一下套用到当前筛选
   // 「哪组正在生效」由条件比较派生，不另存状态；保存 / 删除失败的提示条见 savedFilterError
   const [savedFilterError, setSavedFilterError] = useState<string | null>(null);
+  // 无建项目权限时点「新建项目」的提示（Push 173；与 savedFilterError 同款琥珀提示条）
+  const [createHint, setCreateHint] = useState<string | null>(null);
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
   const [filterOpen, setFilterOpen] = useState(() => {
     if (initialRouteRestored()) {
@@ -424,8 +433,21 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             <button
               type="button"
-              onClick={() => setIsCreateOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              aria-disabled={canCreateProject ? undefined : true}
+              title={canCreateProject ? undefined : NO_CREATE_PERMISSION}
+              onClick={() => {
+                if (!canCreateProject) {
+                  setCreateHint(NO_CREATE_PERMISSION);
+                  return;
+                }
+                setIsCreateOpen(true);
+              }}
+              className={
+                "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 " +
+                (canCreateProject
+                  ? "bg-[#feca04] text-zinc-900 hover:brightness-95 active:brightness-90"
+                  : "cursor-not-allowed bg-zinc-200 text-zinc-400 hover:brightness-100 active:brightness-100")
+              }
             >
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -454,6 +476,21 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
             >
               重试
+            </button>
+          </div>
+        )}
+
+        {createHint === null ? null : (
+          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>{createHint}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setCreateHint(null);
+              }}
+              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
+            >
+              关闭
             </button>
           </div>
         )}
@@ -534,9 +571,13 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 accentText={typeAccent(dicts, project.projectType).text}
                 managerNames={projectManagerText(project)}
                 time={project.createdAt}
-                onEdit={() => {
-                  onEdit(project);
-                }}
+                onEdit={
+                  canUpdateProject
+                    ? () => {
+                        onEdit(project);
+                      }
+                    : undefined
+                }
                 onDelete={
                   canDeleteProject
                     ? () => {

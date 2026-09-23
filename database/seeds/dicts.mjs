@@ -2,7 +2,7 @@
 // 口径来源：技术设计v0.2 §2.5（字典第一批）+ v0.3 §3.2（dict_types / dict_items：code、name、sort、enabled、metadata 含 accent）。
 // 范围：只写 region / projectType 两类（阶段 / 成果文件类型 / 紧急重要度走契约枚举，不进字典接口 —— 契约 shared/src/modules/dicts.ts）。
 // 修订语义：幂等 —— 类型 / 条目按 (type_code, code) 存在即跳过，**不覆盖库内已修订的口径**（管理端改过的值不被种子回滚），不删除；
-//   停用 = enabled=false（由管理端维护，C9-02：停用不影响存量数据展示）。
+//   删除 = 物理删行（Push 173 起由管理端走 `DELETE /dicts/{type}/items/{code}`，删除前快照写审计）；`enabled` 为兼容字段（二期「临时下架」用），种子一律带 true。
 // 取值状态：业务尚未回执（技术设计v0.3 §7.3 #10），本文件为「最小样例 · 可修订」；回执后改常量区并重跑。
 
 export const name = "dicts";

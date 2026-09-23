@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   DictItemCreateBodySchema,
   DictItemUpdateBodySchema,
@@ -16,10 +16,10 @@ const segmentParam = new ZodValidationPipe(z.string().min(1).max(64));
 
 /**
  * 字典接口（h7 · C9；契约 shared/src/modules/dicts.ts）：
- * 读 = 登录即可（前端启动拉一次后缓存）；includeDisabled=true（管理端维护停用项）需要 dict.manage；
+ * 读 = 登录即可（前端启动拉一次后缓存）；includeDisabled=true（兼容参数，一期不再产生停用项）需要 dict.manage；
  * 写 = 新增条目按类型分权（C9-02 修订：**region 任何登录用户**，地区是全站共享的公共标签；projectType 仍 dict.manage），
- * 更新 / 停用条目 = 仅管理员（dict.manage）；每次变更写审计留痕，响应为更新后的整个字典（前端直接替换缓存）。
- * 停用替代删除：停用不影响存量数据展示，项目仍按原码 / 原名渲染。
+ * 更新 / 删除条目 = 仅管理员（dict.manage）；每次变更写审计留痕，响应为更新后的整个字典（前端直接替换缓存）。
+ * 删除 = DELETE 物理删除（Push 173）：删除不影响存量数据展示，项目仍按原码 / 原名渲染；同码可重新新增（按全新条目）。
  */
 @Controller("api/v1/dicts")
 @UseGuards(SessionGuard, CsrfGuard)
@@ -74,7 +74,7 @@ export class DictsController {
     return this.dicts.createItem(type, body, actorId);
   }
 
-  /** 更新条目（仅管理员）：code 不可改；停用（enabled=false）替代删除。 */
+  /** 更新条目（仅管理员）：code 不可改；enabled 为兼容字段（一期删除走 DELETE，前端不再调它）。 */
   @Patch(":type/items/:code")
   @UseGuards(ProjectAccessGuard)
   @RequirePermission("dict.manage")
@@ -85,5 +85,17 @@ export class DictsController {
     @CurrentActorId() actorId: string,
   ): Promise<Dict> {
     return this.dicts.updateItem(type, code, body, actorId);
+  }
+
+  /** 删除条目（仅管理员 · 物理删除）：未知类型 / 未知条目 404；删除前快照写审计；响应为更新后的整个字典。 */
+  @Delete(":type/items/:code")
+  @UseGuards(ProjectAccessGuard)
+  @RequirePermission("dict.manage")
+  deleteItem(
+    @Param("type", segmentParam) type: string,
+    @Param("code", segmentParam) code: string,
+    @CurrentActorId() actorId: string,
+  ): Promise<Dict> {
+    return this.dicts.deleteItem(type, code, actorId);
   }
 }
