@@ -1,5 +1,6 @@
 /**
  * 用户偏好（A4 / A24）：GET / PATCH /api/v1/users/me/preferences。
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）。
  * 常用筛选（A24）自 Push 169 起按账号存服务端（user_preferences.prefs.homeSavedFilters）——
  * 同一账号换设备可见；同一设备换账号互不可见（服务端按会话 actorId 隔离，路径不接受用户 id）。
  * 契约 shared/src/modules/users.ts：PATCH 为合并语义（只传变更键、数组键整体替换）。
@@ -12,6 +13,8 @@ import type { SavedFilter } from "./savedFilters";
 export type UserPreferences = {
   taskTableHiddenColumns: string[];
   homeSavedFilters: SavedFilter[];
+  /** 醒目模式（A4 · §6.13 · Push 171）：按账号记住开关状态；默认 false。 */
+  focusMode: boolean;
   updatedAt: string | null;
 };
 
@@ -28,6 +31,11 @@ export function saveHomeSavedFilters(items: SavedFilter[]): Promise<UserPreferen
 /** 任务表列显隐整体替换（A4 · Push 170）：只传这一个键，返回服务端收敛后的全量偏好。 */
 export function saveTaskTableHiddenColumns(keys: string[]): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { taskTableHiddenColumns: keys });
+}
+
+/** 醒目模式（A4 · §6.13 · Push 171）单键 PATCH：返回服务端收敛后的全量偏好，前端以返回值覆盖本地。 */
+export function saveFocusMode(value: boolean): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { focusMode: value });
 }
 
 /**

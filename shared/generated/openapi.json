@@ -6172,6 +6172,10 @@
             "maxItems": 20,
             "description": "常用筛选组合（最多 20 组；整体替换语义）"
           },
+          "focusMode": {
+            "type": "boolean",
+            "description": "醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -6190,6 +6194,7 @@
         "required": [
           "taskTableHiddenColumns",
           "homeSavedFilters",
+          "focusMode",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -6210,10 +6215,13 @@
               "$ref": "#/components/schemas/SavedHomeFilter"
             },
             "maxItems": 20
+          },
+          "focusMode": {
+            "type": "boolean"
           }
         },
         "additionalProperties": {},
-        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内，未知 key 400 VALIDATION_FAILED"
+        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED"
       },
       "UserStatus": {
         "type": "string",
@@ -8243,7 +8251,7 @@
         "tags": [
           "users"
         ],
-        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选）",
+        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式）",
         "responses": {
           "200": {
             "description": "偏好全量",
@@ -8271,7 +8279,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400）",
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400）",
         "requestBody": {
           "content": {
             "application/json": {

@@ -118,9 +118,13 @@ type ProjectDetailProps = {
   taskHiddenColumns?: string[] | null;
   /** 保存列显隐（整体替换 PATCH）；返回 null = 成功，返回文案 = 失败提示。 */
   onTaskHiddenColumnsChange?: (keys: string[]) => Promise<string | null>;
+  /** 醒目模式（A4 · §6.13 · Push 171）：服务端偏好里的开关值；null / 缺省 = 偏好尚未取到（按默认「关」渲染）。 */
+  focusMode?: boolean | null;
+  /** 保存醒目模式（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。 */
+  onFocusModeChange?: (value: boolean) => Promise<string | null>;
 };
 
-export default function ProjectDetail({ me, project, view, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
@@ -367,9 +371,10 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
   const [tableOverflow, setTableOverflow] = useState(false);
 
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
-  // 列显隐偏好异步到达：只在首次拿到时套用（之后以用户自己的勾选为准，不被回写覆盖）；保存失败的提示条见 columnError
+  // 列显隐偏好异步到达：只在首次拿到时套用（之后以用户自己的勾选为准，不被回写覆盖）；保存失败的提示条见 toolError
   const appliedColumnPrefsRef = useRef(false);
-  const [columnError, setColumnError] = useState<string | null>(null);
+  /** 标签栏右侧工具区（列显隐 / 醒目模式）的保存失败文案；null = 无提示。 */
+  const [toolError, setToolError] = useState<string | null>(null);
   useEffect(() => {
     if (appliedColumnPrefsRef.current || taskHiddenColumns === null || taskHiddenColumns === undefined) {
       return;
@@ -378,10 +383,11 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     setVisibleColumns(visibleColumnsFromHidden(taskHiddenColumns));
   }, [taskHiddenColumns]);
   /**
-   * 醒目模式（Push 134，业务口径「默认不启用」）：打开后项目总览的每张任务卡片整行铺该任务状态的底色；
-   * 关掉 = 保持现状。原型阶段存浏览器内存（换项目时保留、刷新回默认关），正式版口径见 `前端功能需求.md` §6.13。
+   * 醒目模式（Push 134，业务口径「默认不启用」）：打开后项目总览的每张任务卡片整行铺该任务状态的底色；关掉 = 保持现状。
+   * Push 171 起改**按账号存服务端**（用户偏好键 focusMode，`前端功能需求.md` §6.13）：值由父层给
+   * （null = 偏好尚未取到 → 按默认「关」渲染），点击即生效 + 单键 PATCH（父层乐观更新 + 失败回滚）。
    */
-  const [focusMode, setFocusMode] = useState(false);
+  const focus = focusMode === true;
   const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
   /**
    * 阶段骨架常显（Push 61 调整）：没有任务的阶段也保留分组头（只有阶段名、组内没有任务行），
@@ -407,7 +413,11 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
   // 列显隐改动 = 立即生效 + 整体替换 PATCH（父层乐观更新 + 失败回滚）；返回文案时在标签栏下方出提示条。
   // 失败时表格保持本次改动（提示条说明「没保存到账号」），下一次改动会带上当前状态整体重存 —— 自愈，不会半套状态。
   const persistColumns = async (next: VisibleColumns): Promise<void> => {
-    setColumnError((await onTaskHiddenColumnsChange?.(hiddenColumnsOf(next))) ?? null);
+    setToolError((await onTaskHiddenColumnsChange?.(hiddenColumnsOf(next))) ?? null);
+  };
+  // 醒目模式改动 = 立即生效（父层乐观更新）+ 单键 PATCH；失败回滚并在同一提示条出文案。
+  const handleToggleFocusMode = async (checked: boolean): Promise<void> => {
+    setToolError((await onFocusModeChange?.(checked)) ?? null);
   };
   const handleToggleColumn = (key: ColumnKey, checked: boolean) => {
     const next = { ...visibleColumns, [key]: checked };
@@ -463,19 +473,19 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
           </div>
           {activeView === "项目总览" ? (
             <div className="flex shrink-0 items-center gap-4">
-              <FocusModeToggle checked={focusMode} onToggle={setFocusMode} />
+              <FocusModeToggle checked={focus} onToggle={(checked) => { void handleToggleFocusMode(checked); }} />
               <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
             </div>
           ) : null}
         </div>
 
-        {columnError === null ? null : (
+        {toolError === null ? null : (
           <div role="alert" className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-            <span>{columnError}</span>
+            <span>{toolError}</span>
             <button
               type="button"
               onClick={() => {
-                setColumnError(null);
+                setToolError(null);
               }}
               className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
             >
@@ -488,7 +498,7 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
           {activeView === "项目总览" ? (
             <>
               <ProjectSummary tasks={tasks} />
-              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focusMode} />
+              <TaskBoard tasks={tasks} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（含内存态新增 / 编辑 / 删除）；拖动改期 / 改进度写回同一张内存态覆盖表

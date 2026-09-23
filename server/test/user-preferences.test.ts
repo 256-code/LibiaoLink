@@ -68,7 +68,7 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
@@ -119,6 +119,28 @@ describe("用户偏好（A4 / A24）", () => {
     expect(prefs.homeSavedFilters[1]?.timeFrom).toBeNull();
     expect(prefs.homeSavedFilters[1]?.timeTo).toBe("2026-09-30");
     expect(prefs.updatedAt).toBe(AT.toISOString());
+  });
+
+  it("醒目模式（A4 / §6.13 · Push 171）：只传 focusMode 落库，未传键保持原值；false 可显式写回", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { taskTableHiddenColumns: ["owner"], focusMode: true }, AT);
+    expect((await service.get(USER_ID)).focusMode).toBe(true);
+    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ taskTableHiddenColumns: ["owner"], focusMode: true });
+    const after = await service.update(USER_ID, { homeSavedFilters: [filterOf(9)] }, AT);
+    expect(after.focusMode).toBe(true);
+    expect(after.taskTableHiddenColumns).toEqual(["owner"]);
+    expect((await service.update(USER_ID, { focusMode: false }, AT)).focusMode).toBe(false);
+  });
+
+  it("醒目模式读侧收敛 + 契约：jsonb 里非布尔一律回 false；PATCH 非布尔 400", async () => {
+    const { service, repo } = makeService();
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { focusMode: "yes" }, updatedAt: AT } as unknown as UserPreferenceRow);
+    const prefs = await service.get(USER_ID);
+    expect(prefs.focusMode).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: true }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: false }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: "yes" }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: 1 }).success).toBe(false);
   });
 
   it("契约上限：第 21 组 / 名称 21 字由 schema 拒绝（服务端 400）", () => {

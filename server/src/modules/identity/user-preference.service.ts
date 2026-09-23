@@ -71,6 +71,11 @@ function savedFiltersOf(value: unknown): SavedHomeFilter[] {
   return result;
 }
 
+/** 布尔偏好（醒目模式 · §6.13）：jsonb 是自由对象，只认严格布尔，字符串 / 数字 / 缺失一律回默认 false（不抛错）。 */
+function booleanOf(value: unknown): boolean {
+  return value === true;
+}
+
 const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 function dayOf(value: unknown): string | null {
@@ -78,7 +83,8 @@ function dayOf(value: unknown): string | null {
 }
 
 /**
- * 用户级 UI 偏好用例（A4 / A24）：GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
+ * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）；
+ * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
  * 偏好是界面状态（非业务数据），不写审计；单用户单写者，无乐观锁。
  */
@@ -103,6 +109,7 @@ export class UserPreferenceService {
     return {
       taskTableHiddenColumns: columnKeysOf(prefs["taskTableHiddenColumns"]),
       homeSavedFilters: savedFiltersOf(prefs["homeSavedFilters"]),
+      focusMode: booleanOf(prefs["focusMode"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }

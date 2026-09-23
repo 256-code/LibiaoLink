@@ -10,7 +10,7 @@ import type { RegionAddResult, RegionTools } from "./regionTools";
 import { createDictItem, EMPTY_DICTS, loadDicts, nextDictSort, type Dicts } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { createProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
+import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
@@ -57,6 +57,8 @@ export default function App() {
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   // 任务表列显隐（A4 · Push 170）：同样按账号存服务端；null = 偏好尚未取到（先用页面默认列）
   const [taskTableHiddenColumns, setTaskTableHiddenColumns] = useState<string[] | null>(null);
+  // 醒目模式（A4 · §6.13 · Push 171）：同样按账号存服务端；null = 偏好尚未取到（页面按默认「关」渲染，不回写）
+  const [focusMode, setFocusMode] = useState<boolean | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
@@ -103,6 +105,7 @@ export default function App() {
         if (prefsResult.status === "fulfilled") {
           setSavedFilters(prefsResult.value.homeSavedFilters);
           setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
+          setFocusMode(prefsResult.value.focusMode);
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -223,6 +226,23 @@ export default function App() {
     } catch (error: unknown) {
       setTaskTableHiddenColumns((current) => (current === keys ? previous : current));
       return errorMessageOf(error, "列显隐保存失败");
+    }
+  };
+
+  /**
+   * 醒目模式（A4 · §6.13 · Push 171）：点一下即生效 + 单键 PATCH —— 与列显隐同一套乐观更新 + 失败回滚；
+   * 返回文案交给 ProjectDetail 的提示条（服务端没落库，界面不能停在假状态）。
+   */
+  const handleSaveFocusMode = async (value: boolean): Promise<string | null> => {
+    const previous = focusMode;
+    setFocusMode(value);
+    try {
+      const prefs = await saveFocusMode(value);
+      setFocusMode(prefs.focusMode);
+      return null;
+    } catch (error: unknown) {
+      setFocusMode((current) => (current === value ? previous : current));
+      return errorMessageOf(error, "醒目模式保存失败");
     }
   };
 
@@ -408,6 +428,8 @@ export default function App() {
           onTaskEdited={handleTaskEdited}
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
+          focusMode={focusMode}
+          onFocusModeChange={handleSaveFocusMode}
         />
         {editModal}
         {noticeBar}
