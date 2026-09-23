@@ -10,6 +10,8 @@ import type { RegionAddResult, RegionTools } from "./regionTools";
 import { createDictItem, EMPTY_DICTS, loadDicts, nextDictSort, type Dicts } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { createProject, fetchProject, toUiProject, updateProject } from "./projectApi";
+import { loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters } from "./preferencesApi";
+import type { SavedFilter } from "./savedFilters";
 import { useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
 
@@ -48,9 +50,11 @@ function errorMessageOf(error: unknown, fallback: string): string {
 
 export default function App() {
   const [state, setState] = useState<ViewState>({ kind: "loading" });
-  // 参考数据：字典（地区 / 项目类型 + 主题色）与用户目录（项目经理）；失败不阻塞登录，页面用兜底值
+  // 参考数据：字典（地区 / 项目类型 + 主题色）、用户目录（项目经理）与本人偏好（常用筛选）；失败不阻塞登录，页面用兜底值
   const [dicts, setDicts] = useState<Dicts>(EMPTY_DICTS);
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
+  // 常用筛选（A24 · Push 169 落库）：按账号存服务端，换设备同账号可见（契约 users.ts homeSavedFilters）
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
@@ -80,7 +84,11 @@ export default function App() {
           return;
         }
         setState({ kind: "signed-in", me });
-        const [dictResult, directoryResult] = await Promise.allSettled([loadDicts(), loadDirectory()]);
+        const [dictResult, directoryResult, prefsResult] = await Promise.allSettled([
+          loadDicts(),
+          loadDirectory(),
+          loadMyPreferencesWithLegacyMigration(),
+        ]);
         if (cancelled) {
           return;
         }
@@ -89,6 +97,9 @@ export default function App() {
         }
         if (directoryResult.status === "fulfilled") {
           setDirectory(directoryResult.value);
+        }
+        if (prefsResult.status === "fulfilled") {
+          setSavedFilters(prefsResult.value.homeSavedFilters);
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -175,6 +186,23 @@ export default function App() {
       return { ok: true, code: name };
     } catch (error: unknown) {
       return { ok: false, message: errorMessageOf(error, "添加地区失败") };
+    }
+  };
+
+  /**
+   * 常用筛选（A24 · Push 169）：整体替换 PATCH —— 乐观更新（胶囊立即出现 / 消失），服务端返回后以它为准。
+   * 失败回滚到上一次状态（服务端没落库，界面不能停在假状态）并把文案交给 Home 顶部的提示条。
+   */
+  const handleSaveSavedFilters = async (items: SavedFilter[]): Promise<string | null> => {
+    const previous = savedFilters;
+    setSavedFilters(items);
+    try {
+      const prefs = await saveHomeSavedFilters(items);
+      setSavedFilters(prefs.homeSavedFilters);
+      return null;
+    } catch (error: unknown) {
+      setSavedFilters((current) => (current === items ? previous : current));
+      return errorMessageOf(error, "常用筛选保存失败");
     }
   };
 
@@ -366,6 +394,8 @@ export default function App() {
         dicts={dicts}
         directory={directory}
         regionTools={regionTools}
+        savedFilters={savedFilters}
+        onSavedFiltersChange={handleSaveSavedFilters}
         onCreate={handleCreateProject}
         onEdit={setEditingProject}
         refreshToken={dataVersion}

@@ -1571,7 +1571,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐等） */
+        /** 读取当前用户偏好（任务表列显隐 / 常用筛选） */
         get: {
             parameters: {
                 query?: never;
@@ -1606,7 +1606,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换） */
         patch: {
             parameters: {
                 query?: never;
@@ -6306,6 +6306,21 @@ export interface components {
             description?: string | null;
             version: components["schemas"]["Version"];
         };
+        /** @description 常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters） */
+        SavedHomeFilter: {
+            /** @description 组合 id（前端生成 sf- 前缀；跨设备同步后保持不变） */
+            id: string;
+            /** @description 组合名称（≤ 20 字） */
+            name: string;
+            /** @description 地区字典码（多值任一命中） */
+            regions: string[];
+            /** @description 项目类型字典码（多值任一命中） */
+            projectTypes: string[];
+            /** @description 项目经理 id 列表（用户目录 id；多值任一命中） */
+            managerIds: string[];
+            timeFrom: components["schemas"]["DateOnly"] & (string | null);
+            timeTo: components["schemas"]["DateOnly"] & (string | null);
+        };
         /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
         /** @description 推进当前阶段：过门禁才生效；失败 422 STAGE_GATE_NOT_PASSED + 缺项明细（不部分推进） */
@@ -6865,13 +6880,16 @@ export interface components {
         };
         /** @description 用户偏好（全量；GET 返回当前值） */
         UserPreferences: {
-            /** @description 任务表隐藏列 key 列表；key 白名单与前端任务表列一致，未知 key 返回 400 VALIDATION_FAILED */
+            /** @description 任务表隐藏列 key 列表；key 白名单与前端任务表列一致（白名单校验随列显隐接线落地），未知 key 返回 400 VALIDATION_FAILED */
             taskTableHiddenColumns: string[];
-            updatedAt: components["schemas"]["DateTime"] & unknown;
+            /** @description 常用筛选组合（最多 20 组；整体替换语义） */
+            homeSavedFilters: components["schemas"]["SavedHomeFilter"][];
+            updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH 合并语义：只传变更键；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400） */
+        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400，白名单随列显隐接线落地） */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: string[];
+            homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
         } & {
             [key: string]: unknown;
         };

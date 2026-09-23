@@ -13,7 +13,7 @@ import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
 import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toUiProject, type ProjectFacets } from "./projectApi";
-import { newSavedFilterId, persistSavedFilters, readSavedFilters, sameCriteria } from "./savedFilters";
+import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
@@ -33,6 +33,10 @@ type HomeProps = {
   onEdit: (project: Project) => void;
   /** 服务端写操作后的刷新信号（父层 +1 → 列表与计数重新取数）。 */
   refreshToken: number;
+  /** 常用筛选（A24 · 服务端 user_preferences.homeSavedFilters）：父层持有，本组件只展示与触发保存。 */
+  savedFilters: SavedFilter[];
+  /** 保存 / 删除常用筛选（整体替换 PATCH）；返回 null = 成功，返回文案 = 失败提示（文案口径由父层给）。 */
+  onSavedFiltersChange: (items: SavedFilter[]) => Promise<string | null>;
 };
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -61,14 +65,15 @@ function buildOptions(
     });
 }
 
-export default function Home({ me, dicts, directory, regionTools, onCreate, onEdit, refreshToken }: HomeProps) {
+export default function Home({ me, dicts, directory, regionTools, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
   const route = useHashRoute();
   const filters = route.kind === "list" ? route.filters : EMPTY_LIST_QUERY;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  // 常用筛选（Push 138）：本地记忆的组合，点一下套用到当前筛选；「哪组正在生效」由条件比较派生，不另存状态
-  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => readSavedFilters());
+  // 常用筛选（Push 138；Push 169 起按账号存服务端）：组合由父层持有（同账号换设备可见），点一下套用到当前筛选
+  // 「哪组正在生效」由条件比较派生，不另存状态；保存 / 删除失败的提示条见 savedFilterError
+  const [savedFilterError, setSavedFilterError] = useState<string | null>(null);
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
   const [filterOpen, setFilterOpen] = useState(() => {
     if (initialRouteRestored()) {
@@ -275,10 +280,12 @@ export default function Home({ me, dicts, directory, regionTools, onCreate, onEd
       timeTo: filter.timeTo,
     });
   };
+  // 保存 / 删除 = 整体替换 PATCH（父层乐观更新 + 失败回滚）；返回文案时在页面顶部出提示条，不静默吞失败
+  const persistSavedFilters = async (next: SavedFilter[]): Promise<void> => {
+    setSavedFilterError(await onSavedFiltersChange(next));
+  };
   const deleteSavedFilter = (id: string) => {
-    const next = savedFilters.filter((item) => item.id !== id);
-    setSavedFilters(next);
-    persistSavedFilters(next);
+    void persistSavedFilters(savedFilters.filter((item) => item.id !== id));
   };
   const saveSavedFilter = ({ id, name, criteria }: { id: string | null; name: string; criteria: FilterCriteria }) => {
     // 保存前按当前字典 / 计数兜底：丢弃已不存在的地区 / 类型 / 经理（与 URL 参数归一化同一收敛口径）
@@ -296,8 +303,7 @@ export default function Home({ me, dicts, directory, regionTools, onCreate, onEd
       id === null
         ? [...savedFilters, { id: newSavedFilterId(), name, ...normalized }]
         : savedFilters.map((item) => (item.id === id ? { ...item, name, ...normalized } : item));
-    setSavedFilters(next);
-    persistSavedFilters(next);
+    void persistSavedFilters(next);
     // 保存即应用（刚定义的一组就是要看的那组）；当前筛选保留的部分以这组为准整体替换
     updateFilters({
       regions: normalized.regions,
@@ -442,6 +448,21 @@ export default function Home({ me, dicts, directory, regionTools, onCreate, onEd
               className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
             >
               重试
+            </button>
+          </div>
+        )}
+
+        {savedFilterError === null ? null : (
+          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>{savedFilterError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSavedFilterError(null);
+              }}
+              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
+            >
+              关闭
             </button>
           </div>
         )}

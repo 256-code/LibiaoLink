@@ -3876,6 +3876,82 @@
           "version"
         ]
       },
+      "SavedHomeFilter": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "组合 id（前端生成 sf- 前缀；跨设备同步后保持不变）"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20,
+            "description": "组合名称（≤ 20 字）"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "地区字典码（多值任一命中）"
+          },
+          "projectTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "项目类型字典码（多值任一命中）"
+          },
+          "managerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "项目经理 id 列表（用户目录 id；多值任一命中）"
+          },
+          "timeFrom": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "项目时间区间起（闭区间；与 timeTo 成对，单边不生效）"
+              }
+            ]
+          },
+          "timeTo": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "项目时间区间止（闭区间；与 timeFrom 成对，单边不生效）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "regions",
+          "projectTypes",
+          "managerIds",
+          "timeFrom",
+          "timeTo"
+        ],
+        "description": "常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters）"
+      },
       "Sha256": {
         "type": "string",
         "pattern": "^[a-f0-9]{64}$/i",
@@ -6065,7 +6141,15 @@
             "items": {
               "type": "string"
             },
-            "description": "任务表隐藏列 key 列表；key 白名单与前端任务表列一致，未知 key 返回 400 VALIDATION_FAILED"
+            "description": "任务表隐藏列 key 列表；key 白名单与前端任务表列一致（白名单校验随列显隐接线落地），未知 key 返回 400 VALIDATION_FAILED"
+          },
+          "homeSavedFilters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedHomeFilter"
+            },
+            "maxItems": 20,
+            "description": "常用筛选组合（最多 20 组；整体替换语义）"
           },
           "updatedAt": {
             "allOf": [
@@ -6073,13 +6157,18 @@
                 "$ref": "#/components/schemas/DateTime"
               },
               {
-                "description": "偏好最后更新时间（前端乐观更新用）"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "偏好最后更新时间（尚未保存过 = null）"
               }
             ]
           }
         },
         "required": [
           "taskTableHiddenColumns",
+          "homeSavedFilters",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -6092,10 +6181,17 @@
             "items": {
               "type": "string"
             }
+          },
+          "homeSavedFilters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedHomeFilter"
+            },
+            "maxItems": 20
           }
         },
         "additionalProperties": {},
-        "description": "PATCH 合并语义：只传变更键；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400）"
+        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400，白名单随列显隐接线落地）"
       },
       "UserStatus": {
         "type": "string",
@@ -8125,7 +8221,7 @@
         "tags": [
           "users"
         ],
-        "summary": "读取当前用户偏好（任务表列显隐等）",
+        "summary": "读取当前用户偏好（任务表列显隐 / 常用筛选）",
         "responses": {
           "200": {
             "description": "偏好全量",
@@ -8153,7 +8249,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键）",
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换）",
         "requestBody": {
           "content": {
             "application/json": {
