@@ -41,7 +41,7 @@ export class DictService {
     return this.toDict(row, includeDisabled);
   }
 
-  /** POST /api/v1/dicts/{type}/items（dict.manage）：同类型内码唯一 409 DICT_ITEM_EXISTS；写审计 create。 */
+  /** POST /api/v1/dicts/{type}/items（C9-02 修订：region = 登录即可；其余类型 dict.manage）：同类型内码唯一 409 DICT_ITEM_EXISTS；写审计 create。 */
   async createItem(type: string, body: DictItemCreateBody, actorId: string): Promise<Dict> {
     const typeRow = await this.requireType(type);
     const at = new Date();

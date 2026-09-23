@@ -5,7 +5,7 @@
 | 类型 | 领域模块（domain） |
 | 职责 | SSO 接入、会话、用户、组织同步与角色（h1） |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | getUser、listUsers（用户目录）、listDepartments、SessionGuard + CurrentUser + CurrentActorId、CsrfGuard、revokeAllForUser、RoleService（授权画像 / 绑定）、OrgSyncService（快照 → 差异报告）、CasdoorDirectorySource（目录拉取）、InternalUserService（离职回收）；HTTP：GET /api/v1/users、POST /internal/users/*、POST /internal/org-sync/run |
+| 对外接口 | getUser、listUsers（用户目录）、listDepartments、SessionGuard + CurrentUser + CurrentActorId、CsrfGuard、revokeAllForUser、RoleService（授权画像 / 绑定）、OrgSyncService（快照 → 差异报告）、CasdoorDirectorySource（目录拉取）、InternalUserService（离职回收）、UserPreferenceService（用户偏好 A4 / A24）；HTTP：GET /api/v1/users、GET|PATCH /api/v1/users/me/preferences、POST /internal/users/*、POST /internal/org-sync/run |
 
 ## 已实现（g6）
 
@@ -17,6 +17,7 @@
 - 请求级用户口径（h2 起）：`@CurrentUser()` 返回 `/auth/me` 同口径的用户（`id` 为 Casdoor 侧标识）；`@CurrentActorId()` 返回本库 `users.id`（uuid）—— 落库外键 / 审计字段用后者（首个使用方：项目软删 `deleted_by`）。
 - 回跳：`/auth/login?returnTo=` 仅允许同源相对路径（`safeReturnTo` 白名单，防开放重定向）。
 - 文件：`auth.controller.ts` / `oidc.service.ts` / `session.service.ts` / `user.service.ts` / `auth.guard.ts` / `csrf.guard.ts` / 两个 repository；四层结构与 index 出口约定见 `server/README.md`。
+- 用户偏好（A4 / A24 · Push 169）：`GET / PATCH /api/v1/users/me/preferences` —— 落 `user_preferences`（迁移 `0029_user_preferences.sql`，`user_id` 主键一人一行、`prefs` jsonb 默认 `{}`、`updated_at`）；GET 无记录 = 默认值 + `updatedAt: null`，PATCH **合并语义**（只传变更键 / 数组键整体替换 / 未声明键保留）+ `CsrfGuard`；**只读写会话 actor 自己那一行**；读侧规范化（坏条目丢弃 / id 去重 / 名称截断 20 / 非法日期置 null / ≤ 20 组）在服务层，偏好属界面状态**不写审计**；`taskTableHiddenColumns` 为枚举白名单（`TaskTableColumnKey` = 前端 `TABLE_COLUMNS` 非锁定列；未知 key 400，读侧白名单外一律丢弃）；`focusMode` 为布尔（A4 §6.13 醒目模式 · Push 171；读侧非布尔回 false）；实现 `user-preference.repository.ts`（读一行 / `onConflictDoUpdate` 覆盖写）+ `user-preference.service.ts`，单测 `test/user-preferences.test.ts`（11 例：合并语义 / 读侧规范 / 上限 / 白名单 / 醒目模式布尔与收敛）。
 
 ## 已实现（h1 · S6·identity/org）
 

@@ -4,13 +4,14 @@
  * 静止 24px 幽灵态（无底色、浅灰垃圾桶图标，行悬停才浮现 —— 业务反馈「鼠标触碰列表时候黑的太突兀了 还是要比较看不出来吧」），
  * 悬停 / 聚焦展开到 48px 小号红胶囊（业务反馈「这个状态下有点太大了 要再小一点」），
  * 展开只吃 TaskBoard 任务描述列右侧预留的 48px 动作槽位、不挤动四格进度条与描述文字；图标放大下滑离场、文字同步浮出（参考代码同款节奏）。
+ * Push 172：首页项目卡片复用同一个按钮（`label="删除项目"`），形态与行内一套、只有无障碍名不同。
  */
-export function RowDeleteButton({ onDelete }: { onDelete: () => void }) {
+export function RowDeleteButton({ onDelete, label = "删除任务" }: { onDelete: () => void; label?: string }) {
   return (
     <button
       type="button"
-      aria-label="删除任务"
-      title="删除任务"
+      aria-label={label}
+      title={label}
       onClick={(event) => {
         event.stopPropagation();
         onDelete();

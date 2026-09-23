@@ -74,6 +74,28 @@ export function resolveColumns(visible: VisibleColumns): ColumnDef[] {
   return columns;
 }
 
+/**
+ * 显隐映射 → 隐藏列 key 列表（A4「列显隐」· Push 170）：按表头顺序、跳过常显列。
+ * 这份列表就是落库值（`user_preferences.prefs.taskTableHiddenColumns`；服务端按白名单校验）。
+ */
+export function hiddenColumnsOf(visible: VisibleColumns): ColumnKey[] {
+  return TABLE_COLUMNS.filter((column) => column.locked !== true && visible[column.key] === false).map((column) => column.key);
+}
+
+/**
+ * 隐藏列 key 列表 → 显隐映射（未列出的列一律显示）。未知 key 忽略（白名单外的旧值 / 新版本列），不抛错 ——
+ * 与服务端读侧规范化同一收敛口径。
+ */
+export function visibleColumnsFromHidden(hidden: readonly string[]): VisibleColumns {
+  const next: VisibleColumns = {};
+  for (const column of TABLE_COLUMNS) {
+    if (column.locked !== true && hidden.includes(column.key)) {
+      next[column.key] = false;
+    }
+  }
+  return next;
+}
+
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
   高: "bg-rose-50 text-rose-600",
   中: "bg-amber-50 text-amber-700",

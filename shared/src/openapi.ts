@@ -537,7 +537,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "读取当前用户偏好（任务表列显隐等）",
+    summary: "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式）",
     responses: {
       200: { description: "偏好全量", ...json(UserPreferencesSchema) },
       401: commonErrors[401],
@@ -548,7 +548,7 @@ export function buildOpenApiDocument() {
     method: "patch",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键）",
+    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400）",
     request: { body: json(UserPreferencesUpdateBodySchema) },
     responses: {
       200: { description: "更新后的偏好全量", ...json(UserPreferencesSchema) },
@@ -585,7 +585,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/dicts/{type}/items",
     tags: ["dicts"],
-    summary: "新增字典条目（仅管理员 · dict.manage；变更写审计留痕）",
+    summary: "新增字典条目（region = 任何登录用户；其余类型 = dict.manage；变更写审计留痕）",
     request: { params: dictTypeParams, body: json(DictItemCreateBodySchema) },
     responses: {
       201: { description: "创建成功（更新后的整个字典）", ...json(DictSchema) },

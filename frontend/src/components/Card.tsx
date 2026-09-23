@@ -1,8 +1,11 @@
 import type { CSSProperties, ReactNode } from "react";
+import { RowDeleteButton } from "./RowDeleteButton";
 
 /**
  * 项目卡片（首页）：主题色由字典 projectType 条目的 metadata.accent / accentText 下发（M2-07 · A3），
  * 前端不再硬编码「类型 → 颜色」映射；缺省色在 dicts.ts 的 typeAccent 里兜底。
+ * 底部动作条（Push 172）：编辑与删除都是**隐式**的 —— 静止不显示，鼠标悬停卡片 / 键盘聚焦才浮现；
+ * 删除 = 任务表行内同款（RowDeleteButton，红底胶囊），排在编辑右侧，占固定 48px 槽位、展开不挤动右侧时间。
  */
 
 /** 半透明投影色（悬停光晕用）：十六进制色 → rgba；其它写法（rgb / 变量）原样返回。 */
@@ -31,7 +34,10 @@ type CardProps = {
   /** 项目经理展示文本（多位时按「、」连接；Push 136）。 */
   managerNames: string;
   time: string;
+  /** 编辑入口（隐式：悬停 / 聚焦才显示）。 */
   onEdit?: () => void;
+  /** 删除项目（软删，隐式：与编辑同款；不传 = 不渲染）。 */
+  onDelete?: () => void;
 };
 
 export function Card({
@@ -45,6 +51,7 @@ export function Card({
   managerNames,
   time,
   onEdit,
+  onDelete,
 }: CardProps) {
   const seqNoText = String(seqNo).padStart(2, "0");
   const style = { "--card-glow": glowOf(accentColor) } as CSSProperties;
@@ -80,12 +87,22 @@ export function Card({
             }}
             aria-label="编辑项目"
             title="编辑项目"
-            className="relative z-10 -ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 transition duration-200 group-hover:text-zinc-400 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+            className="relative z-10 -ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 opacity-0 transition duration-200 group-hover:text-zinc-400 group-hover:opacity-100 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-amber-400/60"
           >
             <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
               <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
+        )}
+        {onDelete === undefined ? null : (
+          <span className="flex h-6 w-12 shrink-0 items-center">
+            <RowDeleteButton
+              onDelete={() => {
+                onDelete();
+              }}
+              label="删除项目"
+            />
+          </span>
         )}
         <p className="ml-auto font-mono text-sm text-zinc-400">{time}</p>
       </div>
