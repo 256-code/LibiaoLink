@@ -1571,7 +1571,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐 / 常用筛选） */
+        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选） */
         get: {
             parameters: {
                 query?: never;
@@ -1606,7 +1606,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400） */
         patch: {
             parameters: {
                 query?: never;
@@ -6693,6 +6693,11 @@ export interface components {
             note?: string;
             version: components["schemas"]["Version"];
         };
+        /**
+         * @description 任务表列 key（白名单；「任务描述」常显，不在其中）
+         * @enum {string}
+         */
+        TaskTableColumnKey: "manager" | "owner" | "status" | "priority" | "onTime" | "deliverable" | "files" | "note" | "start" | "days" | "due" | "headcount" | "doneDate" | "change";
         /** @description 任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点） */
         TaskTemplate: {
             id: components["schemas"]["Uuid"];
@@ -6880,15 +6885,15 @@ export interface components {
         };
         /** @description 用户偏好（全量；GET 返回当前值） */
         UserPreferences: {
-            /** @description 任务表隐藏列 key 列表；key 白名单与前端任务表列一致（白名单校验随列显隐接线落地），未知 key 返回 400 VALIDATION_FAILED */
-            taskTableHiddenColumns: string[];
+            /** @description 任务表隐藏列 key 列表（白名单 = TaskTableColumnKey，「任务描述」常显；未知 key 400 VALIDATION_FAILED；整体替换语义） */
+            taskTableHiddenColumns: components["schemas"]["TaskTableColumnKey"][];
             /** @description 常用筛选组合（最多 20 组；整体替换语义） */
             homeSavedFilters: components["schemas"]["SavedHomeFilter"][];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400，白名单随列显隐接线落地） */
+        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内，未知 key 400 VALIDATION_FAILED */
         UserPreferencesUpdateBody: {
-            taskTableHiddenColumns?: string[];
+            taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
         } & {
             [key: string]: unknown;

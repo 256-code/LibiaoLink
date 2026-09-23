@@ -5453,6 +5453,26 @@
           "version"
         ]
       },
+      "TaskTableColumnKey": {
+        "type": "string",
+        "enum": [
+          "manager",
+          "owner",
+          "status",
+          "priority",
+          "onTime",
+          "deliverable",
+          "files",
+          "note",
+          "start",
+          "days",
+          "due",
+          "headcount",
+          "doneDate",
+          "change"
+        ],
+        "description": "任务表列 key（白名单；「任务描述」常显，不在其中）"
+      },
       "TaskTemplate": {
         "type": "object",
         "properties": {
@@ -6139,9 +6159,10 @@
           "taskTableHiddenColumns": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/TaskTableColumnKey"
             },
-            "description": "任务表隐藏列 key 列表；key 白名单与前端任务表列一致（白名单校验随列显隐接线落地），未知 key 返回 400 VALIDATION_FAILED"
+            "maxItems": 30,
+            "description": "任务表隐藏列 key 列表（白名单 = TaskTableColumnKey，「任务描述」常显；未知 key 400 VALIDATION_FAILED；整体替换语义）"
           },
           "homeSavedFilters": {
             "type": "array",
@@ -6179,8 +6200,9 @@
           "taskTableHiddenColumns": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "$ref": "#/components/schemas/TaskTableColumnKey"
+            },
+            "maxItems": 30
           },
           "homeSavedFilters": {
             "type": "array",
@@ -6191,7 +6213,7 @@
           }
         },
         "additionalProperties": {},
-        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400，白名单随列显隐接线落地）"
+        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内，未知 key 400 VALIDATION_FAILED"
       },
       "UserStatus": {
         "type": "string",
@@ -8221,7 +8243,7 @@
         "tags": [
           "users"
         ],
-        "summary": "读取当前用户偏好（任务表列显隐 / 常用筛选）",
+        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选）",
         "responses": {
           "200": {
             "description": "偏好全量",
@@ -8249,7 +8271,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换）",
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400）",
         "requestBody": {
           "content": {
             "application/json": {

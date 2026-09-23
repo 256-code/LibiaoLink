@@ -5,7 +5,7 @@ import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { TableScrollbar } from "./components/TableScrollbar";
-import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
+import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
 import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
@@ -114,9 +114,13 @@ type ProjectDetailProps = {
   onChangeManagers?: (projectId: string, managerIds: string[]) => void;
   /** 任务字段被编辑（按口径刷新项目时间 updatedAt）。 */
   onTaskEdited?: (projectId: string) => void;
+  /** 任务表列显隐（A4 · Push 170）：服务端偏好里的隐藏列 key；null / 缺省 = 尚未取到（先用页面默认列）。 */
+  taskHiddenColumns?: string[] | null;
+  /** 保存列显隐（整体替换 PATCH）；返回 null = 成功，返回文案 = 失败提示。 */
+  onTaskHiddenColumnsChange?: (keys: string[]) => Promise<string | null>;
 };
 
-export default function ProjectDetail({ me, project, view, onChangeManagers, onTaskEdited }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const [progressOverrides, setProgressOverrides] = useState<Record<string, number>>({});
@@ -363,6 +367,16 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
   const [tableOverflow, setTableOverflow] = useState(false);
 
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
+  // 列显隐偏好异步到达：只在首次拿到时套用（之后以用户自己的勾选为准，不被回写覆盖）；保存失败的提示条见 columnError
+  const appliedColumnPrefsRef = useRef(false);
+  const [columnError, setColumnError] = useState<string | null>(null);
+  useEffect(() => {
+    if (appliedColumnPrefsRef.current || taskHiddenColumns === null || taskHiddenColumns === undefined) {
+      return;
+    }
+    appliedColumnPrefsRef.current = true;
+    setVisibleColumns(visibleColumnsFromHidden(taskHiddenColumns));
+  }, [taskHiddenColumns]);
   /**
    * 醒目模式（Push 134，业务口径「默认不启用」）：打开后项目总览的每张任务卡片整行铺该任务状态的底色；
    * 关掉 = 保持现状。原型阶段存浏览器内存（换项目时保留、刷新回默认关），正式版口径见 `前端功能需求.md` §6.13。
@@ -390,12 +404,21 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
     setCollapsedStages((previous) => ({ ...previous, [stage]: previous[stage] !== true }));
   };
 
+  // 列显隐改动 = 立即生效 + 整体替换 PATCH（父层乐观更新 + 失败回滚）；返回文案时在标签栏下方出提示条。
+  // 失败时表格保持本次改动（提示条说明「没保存到账号」），下一次改动会带上当前状态整体重存 —— 自愈，不会半套状态。
+  const persistColumns = async (next: VisibleColumns): Promise<void> => {
+    setColumnError((await onTaskHiddenColumnsChange?.(hiddenColumnsOf(next))) ?? null);
+  };
   const handleToggleColumn = (key: ColumnKey, checked: boolean) => {
-    setVisibleColumns((previous) => ({ ...previous, [key]: checked }));
+    const next = { ...visibleColumns, [key]: checked };
+    setVisibleColumns(next);
+    void persistColumns(next);
   };
 
   const resetColumns = () => {
-    setVisibleColumns({ ...DEFAULT_VISIBLE_COLUMNS });
+    const next = { ...DEFAULT_VISIBLE_COLUMNS };
+    setVisibleColumns(next);
+    void persistColumns(next);
   };
 
   if (project === null) {
@@ -445,6 +468,21 @@ export default function ProjectDetail({ me, project, view, onChangeManagers, onT
             </div>
           ) : null}
         </div>
+
+        {columnError === null ? null : (
+          <div role="alert" className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+            <span>{columnError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setColumnError(null);
+              }}
+              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
+            >
+              关闭
+            </button>
+          </div>
+        )}
 
         <div className="mt-6 space-y-4">
           {activeView === "项目总览" ? (

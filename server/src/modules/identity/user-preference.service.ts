@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { SAVED_HOME_FILTER_LIMIT, type SavedHomeFilter, type UserPreferences, type UserPreferencesUpdateBody } from "@libiaolink/contracts";
+import { SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -13,6 +13,27 @@ function stringArrayOf(value: unknown): string[] {
   const result: string[] = [];
   for (const item of value) {
     if (typeof item === "string" && item !== "" && !result.includes(item)) {
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+/** 任务表列 key 白名单（契约 `TaskTableColumnKey`）：jsonb 里可能残留旧版本 / 手改的 key，读侧一律丢弃。 */
+const COLUMN_KEY_SET: ReadonlySet<TaskTableColumnKey> = new Set(TASK_TABLE_COLUMN_KEYS);
+
+function isColumnKey(value: unknown): value is TaskTableColumnKey {
+  return typeof value === "string" && COLUMN_KEY_SET.has(value as TaskTableColumnKey);
+}
+
+/** 隐藏列 key 列表：只留白名单内、去重（顺序保持写入顺序，界面按表头顺序渲染不受影响）。 */
+function columnKeysOf(value: unknown): TaskTableColumnKey[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: TaskTableColumnKey[] = [];
+  for (const item of value) {
+    if (isColumnKey(item) && !result.includes(item)) {
       result.push(item);
     }
   }
@@ -80,7 +101,7 @@ export class UserPreferenceService {
   private toContract(row: UserPreferenceRow | null): UserPreferences {
     const prefs: PrefsRecord = row?.prefs ?? {};
     return {
-      taskTableHiddenColumns: stringArrayOf(prefs["taskTableHiddenColumns"]),
+      taskTableHiddenColumns: columnKeysOf(prefs["taskTableHiddenColumns"]),
       homeSavedFilters: savedFiltersOf(prefs["homeSavedFilters"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };

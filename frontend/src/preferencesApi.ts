@@ -25,6 +25,11 @@ export function saveHomeSavedFilters(items: SavedFilter[]): Promise<UserPreferen
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { homeSavedFilters: items });
 }
 
+/** 任务表列显隐整体替换（A4 · Push 170）：只传这一个键，返回服务端收敛后的全量偏好。 */
+export function saveTaskTableHiddenColumns(keys: string[]): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { taskTableHiddenColumns: keys });
+}
+
 /**
  * 登录后取偏好（含 Push 169 一次性迁移）：服务端为空 + 本机仍有 Push 138–168 的 localStorage 旧键
  * （libiaolink.home.savedFilters.v1）时，把本机组合整体推上云，成功后再清本机键（老用户不丢数据）。

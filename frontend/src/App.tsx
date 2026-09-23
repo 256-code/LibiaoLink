@@ -10,7 +10,7 @@ import type { RegionAddResult, RegionTools } from "./regionTools";
 import { createDictItem, EMPTY_DICTS, loadDicts, nextDictSort, type Dicts } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { createProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters } from "./preferencesApi";
+import { loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
@@ -55,6 +55,8 @@ export default function App() {
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
   // 常用筛选（A24 · Push 169 落库）：按账号存服务端，换设备同账号可见（契约 users.ts homeSavedFilters）
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
+  // 任务表列显隐（A4 · Push 170）：同样按账号存服务端；null = 偏好尚未取到（先用页面默认列）
+  const [taskTableHiddenColumns, setTaskTableHiddenColumns] = useState<string[] | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
@@ -100,6 +102,7 @@ export default function App() {
         }
         if (prefsResult.status === "fulfilled") {
           setSavedFilters(prefsResult.value.homeSavedFilters);
+          setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -203,6 +206,23 @@ export default function App() {
     } catch (error: unknown) {
       setSavedFilters((current) => (current === items ? previous : current));
       return errorMessageOf(error, "常用筛选保存失败");
+    }
+  };
+
+  /**
+   * 任务表列显隐（A4 · Push 170）：整体替换 PATCH —— 与常用筛选同一套乐观更新 + 失败回滚；
+   * 返回文案交给 ProjectDetail 的提示条。
+   */
+  const handleSaveTaskHiddenColumns = async (keys: string[]): Promise<string | null> => {
+    const previous = taskTableHiddenColumns;
+    setTaskTableHiddenColumns(keys);
+    try {
+      const prefs = await saveTaskTableHiddenColumns(keys);
+      setTaskTableHiddenColumns(prefs.taskTableHiddenColumns);
+      return null;
+    } catch (error: unknown) {
+      setTaskTableHiddenColumns((current) => (current === keys ? previous : current));
+      return errorMessageOf(error, "列显隐保存失败");
     }
   };
 
@@ -380,7 +400,15 @@ export default function App() {
     }
     return (
       <>
-        <ProjectDetail me={state.me} project={detail} view={route.view} onChangeManagers={handleChangeManagers} onTaskEdited={handleTaskEdited} />
+        <ProjectDetail
+          me={state.me}
+          project={detail}
+          view={route.view}
+          onChangeManagers={handleChangeManagers}
+          onTaskEdited={handleTaskEdited}
+          taskHiddenColumns={taskTableHiddenColumns}
+          onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
+        />
         {editModal}
         {noticeBar}
       </>

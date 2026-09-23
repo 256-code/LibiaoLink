@@ -52,14 +52,41 @@ export const SavedHomeFilterSchema = z
   .openapi("SavedHomeFilter", { description: "常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters）" });
 
 /**
+ * 任务表列 key 白名单（A4「列显隐」· Push 170）：与前端 `TaskBoard.tsx` 的 `TABLE_COLUMNS` **非锁定列**逐项同源
+ * （顺序 = 表头顺序；「任务描述」常显、不可隐藏，故不在白名单内）。服务端按它校验 `taskTableHiddenColumns`：
+ * 未知 key → 400 VALIDATION_FAILED（契约描述里承诺的白名单，随本片落地）。
+ */
+export const TASK_TABLE_COLUMN_KEYS = [
+  "manager",
+  "owner",
+  "status",
+  "priority",
+  "onTime",
+  "deliverable",
+  "files",
+  "note",
+  "start",
+  "days",
+  "due",
+  "headcount",
+  "doneDate",
+  "change",
+] as const;
+
+export const TaskTableColumnKeySchema = z
+  .enum(TASK_TABLE_COLUMN_KEYS)
+  .openapi("TaskTableColumnKey", { description: "任务表列 key（白名单；「任务描述」常显，不在其中）" });
+
+/**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
  */
 export const UserPreferencesSchema = z
   .object({
     taskTableHiddenColumns: z
-      .array(z.string())
-      .openapi({ description: "任务表隐藏列 key 列表；key 白名单与前端任务表列一致（白名单校验随列显隐接线落地），未知 key 返回 400 VALIDATION_FAILED" }),
+      .array(TaskTableColumnKeySchema)
+      .max(30)
+      .openapi({ description: "任务表隐藏列 key 列表（白名单 = TaskTableColumnKey，「任务描述」常显；未知 key 400 VALIDATION_FAILED；整体替换语义）" }),
     homeSavedFilters: z
       .array(SavedHomeFilterSchema)
       .max(SAVED_HOME_FILTER_LIMIT)
@@ -71,16 +98,17 @@ export const UserPreferencesSchema = z
 /** PATCH 合并语义：只传变更键，未传键保持原值（数组键为整体替换）；未声明键原样保存（新增偏好键不必改契约即可前向兼容）。 */
 export const UserPreferencesUpdateBodySchema = z
   .object({
-    taskTableHiddenColumns: z.array(z.string()).optional(),
+    taskTableHiddenColumns: z.array(TaskTableColumnKeySchema).max(30).optional(),
     homeSavedFilters: z.array(SavedHomeFilterSchema).max(SAVED_HOME_FILTER_LIMIT).optional(),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400，白名单随列显隐接线落地）",
+      "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内，未知 key 400 VALIDATION_FAILED"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */
+export type TaskTableColumnKey = z.infer<typeof TaskTableColumnKeySchema>;
 export type SavedHomeFilter = z.infer<typeof SavedHomeFilterSchema>;
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 export type UserPreferencesUpdateBody = z.infer<typeof UserPreferencesUpdateBodySchema>;
