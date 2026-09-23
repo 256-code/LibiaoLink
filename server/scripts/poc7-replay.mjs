@@ -10,7 +10,8 @@
  *   审计（C7）：写动作留痕（谁 / 何时 / 对什么 / 从什么改成什么）→ 按对象（objectType + objectId）与操作人（actorId）检索命中；
  *     越权 403 → result=denied 行（C7-03，可按人筛出）；普通读 404 不产生噪声行；审计接口仅 audit.view（受限账号 403）。
  *
- * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL）。只在本地沙箱 / 联调库跑，会：铸两个临时会话（跑完删除）、
+ * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL，**须以 PERMISSION_ENFORCED=true 启动** —— 本脚本验的是 ADR-011 判定语义；
+ *      一期默认 false = 不判权限时受限账号也是等效管理员，S0 守卫会直接失败并给出重启指引）。只在本地沙箱 / 联调库跑，会：铸两个临时会话（跑完删除）、
  *      建 POC7-xxx 字典条目（跑完硬删；api 角色无权删审计 → 用 migrator 连接）、清掉本次写入的审计行。
  * 用法：cd server && node scripts/poc7-replay.mjs [--out <报告.md>] [--json <证据.json>] [--actor <userId>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
@@ -137,6 +138,10 @@ try {
 
   const meActor = await actorCall("GET", "/api/v1/permissions/me");
   const actorKeys = meActor.body?.permissions?.permissionKeys ?? [];
+  // 前置守卫（Push 178 · PERMISSION_ENFORCED）：本脚本的 403 / 记录级断言验证的是 ADR-011 判定，
+  // 目标 api 须以 PERMISSION_ENFORCED=true 启动；一期默认 false = 不判权限（受限账号也是等效管理员）。
+  const actorScopes = meActor.body?.permissions?.dataScopes ?? [];
+  check("S0", "前置：目标 api 处于「按 ADR-011 判定」模式（PERMISSION_ENFORCED=true）", "受限账号 dataScopes 不含 all", "dataScopes=" + truncate(actorScopes, 80), meActor.status === 200 && !actorScopes.includes("all"), "一期「不判权限」口径下请先以 PERMISSION_ENFORCED=true 重启 api 再跑本脚本");
   check("S2", "受限账号会话（越权拒绝基准账号）", "200 + 不含 dict.manage / audit.view", meActor.status + " " + truncate({ roleCodes: meActor.body?.permissions?.roleCodes, keys: actorKeys.length }, 160), meActor.status === 200 && !actorKeys.includes("dict.manage") && !actorKeys.includes("audit.view"), "账号 " + actorRow.username + "（" + actorRow.id + "）；--actor 可指定");
 
   // ---------- 字典读（C9） ----------

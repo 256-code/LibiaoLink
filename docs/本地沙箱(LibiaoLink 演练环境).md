@@ -145,12 +145,14 @@ npm run dev                       # http://localhost:3000
 
 ## 十、用户角色（写操作 403 的常见原因）
 
-从公司 SSO 联邦进来的账号，本地 Casdoor 会自动建号；但业务库里的角色（`user_roles`）**不会自动分配** —— 权限位为空时写接口一律 403，列表也按「我管的 / 我参与的」裁剪（服务端是最终裁决）。
+从公司 SSO 联邦进来的账号，本地 Casdoor 会自动建号；但业务库里的角色（`user_roles`）**不会自动分配** —— **打开权限判定时**（`PERMISSION_ENFORCED=true`）权限位为空即写接口 403、列表按「我管的 / 我参与的」裁剪（服务端是最终裁决）。
 
-**当前阶段口径（业务已定：「我们当前这个系统就不要考虑权限」）**：沙箱里**所有在用账号一律 `admin`** —— 数据范围 `all`（看得见全部项目，不再按「我管的项目」裁剪）+ 全权限位。新账号从公司 SSO 登进来后**重跑下面第一条**即可（幂等）：
+**当前阶段口径（业务已定：「我们当前这个系统就不要考虑权限」）= 服务端开关 `PERMISSION_ENFORCED` 默认 `false`（Push 178 起）**：授权画像一律**等效管理员**（数据范围 `all` + 契约全量权限位 + `admin` 角色码）—— 与 `user_roles` 有没有绑定无关：新账号从公司 SSO 登进来**直接用，不必再执行任何 SQL**（服务端不再读角色，本机 / 沙箱 / 生产同口径）。
+
+下面的绑定 SQL 仍然有用 —— 它现在是**打开开关（`PERMISSION_ENFORCED=true`，即回到 ADR-011 判定）时**给账号配权限（或本地复现「受限账号」场景）的手段：
 
 ```sql
--- 全员管理员（当前阶段口径）：全量可见 + 全权限
+-- 全员管理员（打开判定 PERMISSION_ENFORCED=true 时给账号配全权）：全量可见 + 全权限
 insert into user_roles (user_id, role_id)
 select u.id, r.id from users u cross join roles r
 where r.code = 'admin' and u.status = 'active' and u.removed_at is null
@@ -168,4 +170,6 @@ delete from user_roles where user_id = (select id from users where username = 'z
 
 - 直连串：`postgres://libiaolink_migrator@127.0.0.1:5433/libiaolink`（见 `database/README.md`）；查现有绑定：`select u.username, r.code from user_roles ur join users u on u.id = ur.user_id join roles r on r.id = ur.role_id order by 1;`
 - 权限画像有 10 秒缓存：改完角色**刷新页面**即可生效（最迟 10 秒）。
-- 角色集与权限位（`project.create` / `project.update` / `project.delete` / `dict.manage` 等）由种子维护（`database/seeds/roles.mjs` / `role-permissions.mjs`）；**分配角色的管理界面还没做**（成员管理 u3 / u12 待建）。**「全员全权」要落到线上还有两条路（待 wmj 拍）**：① identity 建号流程里落默认角色；② 做成员与角色管理界面。
+- 角色集与权限位（`project.create` / `project.update` / `project.delete` / `dict.manage` 等）由种子维护（`database/seeds/roles.mjs` / `role-permissions.mjs`）；**分配角色的管理界面还没做**（成员管理 u3 / u12 待建）。
+- **「全员全权」的落点（Push 178 定案）**= 服务端开关（一期默认 `false`，无需改数据）；二期打开 `PERMISSION_ENFORCED=true` 恢复按角色判定时，再走 ① identity 建号流程落默认角色 / ② 角色管理界面（u12）两条路。
+- 想在本机验「按 ADR-011 判定」：以 `PERMISSION_ENFORCED=true` 重启 api（`server/.env` 或进程环境变量，重启生效），再按上面的 SQL 给账号配角色；两态对照证据见 `docs/权限开关回放证据(PERMISSION_ENFORCED).md`（A 站默认 / B 站 true，同一账号同一份数据）。
