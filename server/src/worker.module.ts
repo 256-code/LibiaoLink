@@ -8,7 +8,8 @@ import { StorageModule } from "./storage/index.js";
 
 /**
  * worker 进程：Outbox 投递 / 调度 / 规则执行 / 转换编排 / 导出。
- * 已接入：上传会话过期清理（M4-01 定时档，见 entry/worker.ts）；Outbox 投递与预览编排随 M4-05 / M7 接入。
+ * 已接入：上传会话过期清理（M4-01）、回收站到期清理（M4-02）、预览转换队列（M4-05c：outbox `preview.job`
+ * 领取 + 消费 + 重试 + dead，见 entry/worker.ts 的轮询循环）；通用 Outbox 投递与规则编排随 M5 / M7 接入。
  */
 @Module({})
 export class WorkerModule {

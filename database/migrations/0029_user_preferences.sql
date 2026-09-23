@@ -1,4 +1,5 @@
--- LibiaoLink · 0028 用户级 UI 偏好表（A4 任务表列显隐 / A24 常用筛选跨设备记忆 · Push 169）
+-- LibiaoLink · 0029 用户级 UI 偏好表（A4 任务表列显隐 / A24 常用筛选跨设备记忆 · Push 169）
+-- 编号顺延：原取 0028，撞 M4-05c 先入的 0028_outbox_claim（见 database/README.md），随 PR #146 顺延为 0029。
 -- 口径来源：契约 shared/src/modules/users.ts（UserPreferencesSchema / UserPreferencesUpdateBodySchema /
 --   SavedHomeFilterSchema）、前端功能需求.md §3.1 #15 / #23、§3.8 A24、系统功能书 C9-02（偏好不属于字典口径）。
 -- 口径：

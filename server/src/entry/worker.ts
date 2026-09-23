@@ -3,7 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { Logger } from "nestjs-pino";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
-import { FileService } from "../modules/file/index.js";
+import { FileService, PreviewService } from "../modules/file/index.js";
 import { WorkerModule } from "../worker.module.js";
 
 const HEARTBEAT_MS = 60_000;
@@ -23,6 +23,7 @@ async function bootstrap(): Promise<void> {
 
   const database = app.get(DatabaseService);
   const files = app.get(FileService);
+  const previews = app.get(PreviewService);
 
   if (process.argv.includes("--health-check")) {
     try {
@@ -37,7 +38,9 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  logger.log("worker 已启动（已接入上传会话过期清理 / 回收站到期清理；Outbox 投递 / 调度 / 规则 / 转换编排随后续卡片接入）");
+  logger.log(
+    "worker 已启动（已接入上传会话过期清理 / 回收站到期清理 / 预览转换队列；通用 Outbox 投递 / 调度 / 规则随后续卡片接入）",
+  );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
   const sweepUploads = async (): Promise<void> => {
@@ -66,10 +69,54 @@ async function bootstrap(): Promise<void> {
   const recycleSweep = setInterval(() => void sweepRecycled(), RECYCLE_SWEEP_INTERVAL_MS);
   void sweepRecycled();
 
+  // 预览转换队列（M4-05c）：一轮最多领 OUTBOX_BATCH_LIMIT 条（默认 2），串行消费；
+  // 单条最长占满客户端超时（默认 90s），用 draining 闸门避免上一轮没跑完就叠加下一轮。
+  const previewEnabled = env.PREVIEW_JOB_ENABLED === "true";
+  if (previewEnabled) {
+    // 启动自检：转换器可达性 + 管线版本比对（不一致只会让任务按确定性失败降级，绝不写错缓存键 ——
+    // 「换镜像必须递增 PREVIEW_PIPELINE_VERSION」，deploy/preview/README「四」）。
+    const health = await previews.checkConverter();
+    if (health.ok && health.versionMatches) {
+      logger.log("预览转换器自检通过：" + health.detail);
+    } else {
+      logger.warn("预览转换器自检未通过（预览任务会降级为 failed，不影响其它任务）：" + health.detail);
+    }
+  } else {
+    logger.warn("预览转换队列已关闭（PREVIEW_JOB_ENABLED=false）：preview.job 只投递不消费");
+  }
+
+  let draining = false;
+  const drainPreviews = async (): Promise<void> => {
+    if (draining) {
+      return;
+    }
+    draining = true;
+    try {
+      const stats = await previews.drainOnce();
+      if (stats.claimed > 0) {
+        logger.log(
+          "预览队列：领取 " + stats.claimed + " / 就绪 " + stats.ready + " / 复用 " + stats.reused + " / 重试 " +
+            stats.retried + " / 放弃 " + stats.dead + " / 跳过 " + stats.skipped,
+        );
+      }
+    } catch (error) {
+      logger.error("预览队列领取失败：" + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      draining = false;
+    }
+  };
+  const previewPoll = previewEnabled ? setInterval(() => void drainPreviews(), env.OUTBOX_POLL_MS) : null;
+  if (previewPoll !== null) {
+    void drainPreviews();
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     clearInterval(heartbeat);
     clearInterval(sweep);
     clearInterval(recycleSweep);
+    if (previewPoll !== null) {
+      clearInterval(previewPoll);
+    }
     logger.log("worker 收到 " + signal + "，正在退出");
     await app.close();
     process.exit(0);
