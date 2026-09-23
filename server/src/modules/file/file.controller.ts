@@ -1,8 +1,10 @@
-import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from "@nestjs/common";
 import {
   FileDetailSchema,
   FileFinalizeBodySchema,
   FilePurgeBodySchema,
+  FilePreviewQuerySchema,
+  FilePreviewResponseSchema,
   FilePurgeResponseSchema,
   FileRecycleBodySchema,
   FileRestoreBodySchema,
@@ -24,6 +26,7 @@ import {
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { FileService } from "./file.service.js";
+import { PreviewReadService } from "./preview-read.service.js";
 
 type UploadCreateBody = z.infer<typeof UploadCreateBodySchema>;
 type UploadCreateResponse = z.infer<typeof UploadCreateResponseSchema>;
@@ -43,6 +46,8 @@ type FileRecycleBody = z.infer<typeof FileRecycleBodySchema>;
 type FileRestoreBody = z.infer<typeof FileRestoreBodySchema>;
 type FilePurgeBody = z.infer<typeof FilePurgeBodySchema>;
 type FilePurgeResponse = z.infer<typeof FilePurgeResponseSchema>;
+type FilePreviewQuery = z.infer<typeof FilePreviewQuerySchema>;
+type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
 const uuidParam = new ZodValidationPipe(UuidSchema);
 
@@ -51,12 +56,15 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
  *
  * 权限在服务层判定（`file.upload` 需项目上下文：成员平权；读取会话状态 = 项目可见即可），
  * 因此这里只用会话 + CSRF 守卫；记录级可见性（非成员 404）在 FileService 装载文件时按项目判定。
- * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览（M4-05）为后续切片。
+ * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览读 API（M4-05）三态 + 短时签名 + 仅 ready 写审计。
  */
 @Controller("api/v1/files")
 @UseGuards(SessionGuard, CsrfGuard)
 export class FileController {
-  constructor(private readonly files: FileService) {}
+  constructor(
+    private readonly files: FileService,
+    private readonly previews: PreviewReadService,
+  ) {}
 
   /** 发起上传（分片直传；返回文件、会话与秒传提示）。 */
   @Post("uploads")
@@ -122,6 +130,19 @@ export class FileController {
   @Get(":id/versions")
   versions(@Param("id", uuidParam) id: string, @CurrentActorId() actorId: string): Promise<FileVersionList> {
     return this.files.listFileVersions(id, actorId);
+  }
+
+  /**
+   * 预览状态与短时签名地址（M4-05 读 API）：ready 附签名 URL 并写 preview 审计；not_ready 幂等补投生成任务；
+   * failed 记原因并降级「请下载查看」；可选 `versionId` 指定历史版本（不属于该文件 / 不存在 → 404）。
+   */
+  @Get(":id/preview")
+  preview(
+    @Param("id", uuidParam) id: string,
+    @Query(new ZodValidationPipe(FilePreviewQuerySchema)) query: FilePreviewQuery,
+    @CurrentActorId() actorId: string,
+  ): Promise<FilePreviewResponse> {
+    return this.previews.getPreview(id, query.versionId ?? null, actorId);
   }
 
   /** 定档锁版（draft → final；乐观锁 version 不匹配 409）。契约响应码 = 200。 */

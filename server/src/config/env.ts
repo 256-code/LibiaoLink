@@ -54,6 +54,8 @@ export const EnvSchema = z
     PREVIEW_CONVERT_BACKOFF_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
     /** 直接降级「仅下载」的源文件上限（MB）：转换峰值内存约为源文件数倍，别把沙箱配额打满（deploy/preview「七」）。 */
     PREVIEW_CONVERT_MAX_SOURCE_MB: z.coerce.number().int().min(1).max(512).default(100),
+    /** 预览地址短时签名有效期（秒）：D2-04 短时签名 + 禁匿名；越长越接近「把产物地址变成长期免鉴权入口」。 */
+    PREVIEW_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(300),
     /** 预览转换队列开关（worker）：`false` = 只投递不消费（排障 / 压测用）。 */
     PREVIEW_JOB_ENABLED: z.enum(["true", "false"]).default("true"),
     // ---- Outbox 领取器（M4-05c：领取 + 消费 + 重试 + dead；不含规则 / 通知编排） ----
