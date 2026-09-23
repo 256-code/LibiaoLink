@@ -144,6 +144,21 @@ server/
   - `POST /internal/users/disable` / `/enable` / `/delete`：离职回收（接入标准第五部分）；入参 `{"name","email"}`（name 为准、email 兜底），幂等 200（目录中不存在也成功）；disable / delete 撤销该用户全部在线会话（`affectedSessions`）；delete 为软删（`removed_at` 置位 + `status=disabled`，不物理删行）。
   - `POST /internal/org-sync/run`：手动触发一次 Casdoor 目录拉取 + 差异应用（`{"missingUserPolicy":"report|disable"}`，默认 report）；定时调度随 i5 接 worker。
 
+## 权限判定开关（PERMISSION_ENFORCED · 一期「不判权限」）
+
+- 环境变量 `PERMISSION_ENFORCED`（默认 `false`，见 `.env.example` / `src/config/env.ts`）：**只影响裁定、不动数据**。
+  - `false`（默认 · 一期口径 ——「我们当前这个系统就不要考虑权限」2026-09-23 业务已定）：授权画像一律**等效管理员** ——
+    数据范围 `all` + 契约全量权限位（`PERMISSION_KEYS`，31 键）+ `admin` 角色码。四处判定一并放开：
+    功能权限（`can` / `@RequirePermission`）、记录级可见集（列表 / 详情不再按「我管的 / 我参与的」裁剪）、
+    字段级投影（干系人联系方式等不再裁剪）、角色内硬检查（任务手工创建 / 节点增删与阶段推进 / 文件彻底删除三处读 `roleCodes` 含 `admin`）。
+  - `true`（二期打开）：按 `roles` / `role_permissions` / `user_roles` 判定（ADR-011 原口径）。
+- **唯一注入点** = `src/modules/identity/role.service.ts` 的 `RoleService.getActorAuthorization()`：h6 策略服务的
+  `PermissionService.getAuthorization()` 与 task / flow 两处直调都经它（不判权限时不读库、无缓存分叉）；
+  `GET /api/v1/permissions/me` 与前端管理入口（字典治理 / 卡片删除 / 新建 / 编辑）随之自动收敛，前端零改动。
+- 用户偏好（`user_preferences`：常用筛选 / 醒目模式 / 任务表列显隐）**不随开关变化**，仍按账号各存一行。
+- 生效方式：进程启动时读一次（`AppConfig`）→ 改后**重启 api / worker** 生效。
+- 单测（不连库，随 `npm test` 常跑）：`test/identity-org.test.ts`「权限判定开关」4 例 + `test/permission-matrix.test.ts`「一期不判权限：等效管理员画像把五出口一并放开」4 例。
+
 ## 项目接口（h2 · S6·project：M2-01 / M2-04 / M2-05）
 
 - 契约 `shared/src/modules/projects.ts`（OpenAPI tags=projects）；实现 `src/modules/project/`（controller / service / repository / query + `index.ts` 唯一出口）；整组路由挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`），`GET /facets` 注册在 `GET /{id}` 之前。
@@ -328,6 +343,17 @@ server/
 - 矩阵门禁（不连库，随 `npm test` 与 CI 常跑）：`check:permission-matrix`（种子 #6b ↔ 契约枚举 ↔ 角色集三方对齐）+ `test/permission-matrix.test.ts` 34 例（五类出口的策略层用例）。
 - 差异与后续：搜索 / 通知模块（lan 线）尚未落地、投影入口已就绪；字段级真实出口随 j6 干系人；导出 / 搜索 / 通知出口的调用方接线随 i 系列与 M7 —— 明细见 `src/modules/permission/README.md` 差异 1~5。
 
+## 权限开关回放（Push 178 · PERMISSION_ENFORCED · 一期不判权限）
+
+- 脚本：`scripts/permission-switch-replay.mjs`（连真 PG + **两个真 api**：A = 默认 `PERMISSION_ENFORCED=false`、B = `PERMISSION_ENFORCED=true`；
+  临时清空回放账号的角色绑定再原样恢复、铸临时会话跑完删除）—— 同一个「零角色」账号、同一份数据，只有开关不同：
+  A 站画像 = 等效管理员（`admin` / `all` / 全量权限位），`audit-logs`、`stakeholders`、`dicts?includeDisabled=true` 全 200，项目列表不做裁剪；
+  B 站同一批请求：画像为空、受限读面 403、列表按名册裁剪（两站均以库内计数核对）。
+  - 复跑：`cd server && node scripts/permission-switch-replay.mjs --out ../docs/权限开关回放证据(PERMISSION_ENFORCED).md`（两个 api 的启动方式见脚本头部）。
+- 证据入库：`docs/权限开关回放证据(PERMISSION_ENFORCED).md`。
+- **既有 ADR-011 回放脚本的口径提醒**：`poc6` / `poc7` / `poc8` / `m4-lifecycle` 里的受限账号 403 与记录级 404 断言验证的是「按 ADR-011 判定」，
+  目标 api 须以 `PERMISSION_ENFORCED=true` 启动 —— 四个脚本均已加前置守卫：口径不符立即失败并给出重启指引（不会误判成回归）。
+
 ## PoC-7 回放（h7 · S6·admin：字典 C9 与审计留痕 C7）
 
 - 脚本：`scripts/poc7-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、建 `POC7-xxx` 字典条目 —— 跑完硬删字典条目与本次审计行（api 角色无权删审计，用 migrator 连接）与两个会话）。
@@ -498,7 +524,7 @@ server/
 - h3：流程节点（蓝图版本化 / 建项目快照 / 阶段推进与回退 / 节点增删 / 完成门禁）—— 已落地（Push 83）；记录级 404 与权限矩阵随 h6，文件门禁口径随 i1（file）与 h4（task）。
 - h4：task 模块（任务列表 / 详情 / 创建 / 编辑 / 进度 / 项目总览四格 / 五态与按时交付派生）—— 已落地（Push 89）；任务侧完成门禁（M3-03 · Push 143）、批量操作（M3-04 · Push 150）、软删（M3-05 · Push 152）与锁定字段例外调整（M3-05 续卡 · Push 153）已落；从模板实例化与快筛、1 万行压测（M3-06）为后续卡片，记录级 404 与权限矩阵随 h6。
 - h5：PoC-9 回放（蓝图 round-trip 与门禁拒绝的证据入库：回放脚本 + `docs/` 证据 + CI 回归测试）—— 已落地（Push 93）；任务侧完成门禁（M3-03）仍为后续卡片。
-- h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。
+- h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。**开关口径（Push 178）**：一期 `PERMISSION_ENFORCED=false` 默认不判权限（等效管理员画像），二期置 `true` 打开（task / flow / file 三处直调同样经 `RoleService`）。
 - h7：字典 C9 与审计留痕 C7（`dict_types` / `dict_items` / `audit_logs` + 字典读写出口 + 审计写入 / 越权留痕 / 检索 + 种子 #5 + 真机回放）—— 已落地（Push 97）；剩余：前端改读字典（u12 · px 线）、审计页面与导出（u12）、告警推送（M5 通知）、蓝图字段级留痕（随蓝图维护卡片）、按月清理（运维）。
 - h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
 - j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、「干系人角色」列（口径未定）、前端台账页与项目「干系人」面板（u 系列 · px 线）。
