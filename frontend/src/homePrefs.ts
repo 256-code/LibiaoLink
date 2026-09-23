@@ -12,7 +12,7 @@ import type { ListQueryState } from "./useHashRoute";
  */
 export type HomeFilterPrefs = Pick<
   ListQueryState,
-  "regions" | "projectTypes" | "managerIds" | "timeFrom" | "timeTo" | "sortField" | "sortDesc"
+  "regions" | "projectTypes" | "managerIds" | "timeFrom" | "timeTo" | "sortDesc"
 >;
 
 type StoredPrefs = {
@@ -71,12 +71,8 @@ function sanitizeFilters(value: unknown): HomeFilterPrefs | null {
   ) {
     return null;
   }
-  // 排序维度（Push 175）：旧记忆里没有该字段 → 按默认「创建时间」；取值非法才作废整条记忆。
-  const sortField = record.sortField === undefined ? "createdAt" : record.sortField;
-  if (sortField !== "createdAt" && sortField !== "updatedAt") {
-    return null;
-  }
-  return { regions, projectTypes, managerIds, timeFrom, timeTo, sortField, sortDesc: record.sortDesc };
+  // 排序维度（Push 177 起固定创建时间）：旧记忆里的 sortField 字段直接忽略，不做校验（只保留方向）。
+  return { regions, projectTypes, managerIds, timeFrom, timeTo, sortDesc: record.sortDesc };
 }
 
 /** 读取存储；损坏或缺失一律按「无记忆」处理，不抛错。 */
@@ -133,7 +129,6 @@ export function saveFiltersPref(filters: ListQueryState): void {
     managerIds: filters.managerIds.slice(),
     timeFrom: filters.timeFrom,
     timeTo: filters.timeTo,
-    sortField: filters.sortField,
     sortDesc: filters.sortDesc,
   };
   writeStore(store);

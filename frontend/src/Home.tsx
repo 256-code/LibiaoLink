@@ -16,7 +16,7 @@ import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toU
 import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
-import type { ListQueryState, SortField } from "./useHashRoute";
+import type { ListQueryState } from "./useHashRoute";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 
@@ -49,17 +49,14 @@ type HomeProps = {
   onSavedFiltersChange: (items: SavedFilter[]) => Promise<string | null>;
 };
 
-/** 排序维度显示名（Push 176：TIME 标识下线，维度 = 一枚可点灰字文本，点一次换一个维度）。 */
-const SORT_FIELD_LABELS: Record<SortField, string> = {
-  createdAt: "创建时间",
-  updatedAt: "更新时间",
-};
+/**
+ * 排序维度显示名（Push 177：业务口径「取消按更新时间排序 只保留创建时间」）——
+ * 维度**固定创建时间**，工具条只留方向（降序 / 升序）；这枚文本只作说明用，不可点。
+ */
+const SORT_FIELD_LABEL = "创建时间";
 
-/** 排序维度口径说明（挂在这枚文本的悬停提示里）。 */
-const SORT_FIELD_TITLES: Record<SortField, string> = {
-  createdAt: "项目创建的那一刻，此后不再变化",
-  updatedAt: "最近一次改动：修改项目信息、推进阶段或变更任务会刷新",
-};
+/** 该维度的口径说明（挂在方向按钮的悬停提示里）。 */
+const SORT_FIELD_TITLE = "项目创建的那一刻，此后不再变化";
 
 /** 点「新建项目」但缺 project.create 时的提示（Push 173；服务端仍是最终裁决）。 */
 const NO_CREATE_PERMISSION = "当前账号没有建项目权限，请联系管理员分配角色。";
@@ -130,11 +127,6 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const keyword = query.trim();
   const hasFilters = hasListFilters(activeFilters);
   const sortDesc = activeFilters.sortDesc;
-  const sortField = activeFilters.sortField;
-  const sortFieldLabel = SORT_FIELD_LABELS[sortField];
-  // 点一次换个维度（Push 176）：这枚文本显示当前维度，点一下切到另一个
-  const otherSortField: SortField = sortField === "createdAt" ? "updatedAt" : "createdAt";
-  const otherSortFieldLabel = SORT_FIELD_LABELS[otherSortField];
   const dateRange: DateRange | null =
     activeFilters.timeFrom !== null && activeFilters.timeTo !== null
       ? { from: activeFilters.timeFrom, to: activeFilters.timeTo }
@@ -236,7 +228,6 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               timeFrom: filter.timeFrom,
               timeTo: filter.timeTo,
               q: "",
-              sortField: "createdAt",
               sortDesc: true,
             });
             return [filter.id, result.total];
@@ -401,26 +392,17 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           />
           <div
             role="group"
-            aria-label="排序方式（维度 × 方向）"
+            aria-label={"按" + SORT_FIELD_LABEL + "排序（降序 / 升序）"}
             className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
           >
-            <button
-              type="button"
-              aria-label={"排序维度：" + sortFieldLabel + "（点击切换为" + otherSortFieldLabel + "）"}
-              title={"当前按" + sortFieldLabel + "排序（" + SORT_FIELD_TITLES[sortField] + "）；点击切换为" + otherSortFieldLabel}
-              onClick={() => {
-                updateFilters({ sortField: otherSortField });
-              }}
-              className="inline-flex items-center rounded-md px-2.5 py-1.5 font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700"
-            >
-              {sortFieldLabel}
-            </button>
+            {/* 排序维度（Push 177）：固定创建时间，只作说明（不参与点击），维度切换按钮已下线 */}
+            <span className="px-2.5 py-1.5 text-zinc-400 select-none">{SORT_FIELD_LABEL}</span>
             <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
             <button
               type="button"
               aria-pressed={sortDesc}
-              aria-label={"按" + sortFieldLabel + "降序排列"}
-              title={"按" + sortFieldLabel + "降序排列（新的在前）"}
+              aria-label={"按" + SORT_FIELD_LABEL + "降序排列"}
+              title={"按" + SORT_FIELD_LABEL + "降序排列（新的在前）——" + SORT_FIELD_TITLE}
               onClick={() => {
                 updateFilters({ sortDesc: true });
               }}
@@ -437,8 +419,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             <button
               type="button"
               aria-pressed={!sortDesc}
-              aria-label={"按" + sortFieldLabel + "升序排列"}
-              title={"按" + sortFieldLabel + "升序排列（旧的在前）"}
+              aria-label={"按" + SORT_FIELD_LABEL + "升序排列"}
+              title={"按" + SORT_FIELD_LABEL + "升序排列（旧的在前）——" + SORT_FIELD_TITLE}
               onClick={() => {
                 updateFilters({ sortDesc: false });
               }}
