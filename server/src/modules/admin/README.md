@@ -11,7 +11,7 @@
 
 - 迁移 `database/migrations/0013_admin_dict_audit.sql`：`dict_types`（类型注册表）+ `dict_items`（条目，`uq_dict_items_type_code` 同类型内码唯一）+ `audit_logs`（追加写）。防篡改：库级收回 api 角色对 audit_logs 的 UPDATE / DELETE（`database/roles/0001_roles.sql` 每次执行显式重放；migrator 保留全量）。
 - 字典读（C9-01 / C9-03）：GET /api/v1/dicts 与 /{type}，默认只回 `enabled=true`；`includeDisabled=true`（管理端维护停用项）需 dict.manage；未知类型 404；响应 `updatedAt` 取类型版本（条目变更 touchType），供前端做缓存刷新。
-- 字典写（C9-02）：POST / PATCH 仅 dict.manage；同类型内码唯一（重复 409 DICT_ITEM_EXISTS）；「删除」= 停用（`enabled=false`，无物理删除；停用不影响存量数据按原码 / 原名渲染）；响应为更新后的整个字典（前端直接替换缓存）。
+- 字典写（C9-02，2026-09-23 修订）：POST `{type}/items` 按类型分权 —— **region 登录即可**（全站共享的公共标签；重复码仍 409）、其余类型 dict.manage；PATCH（改名 / 排序 / 停用）仍仅 dict.manage（治理权不放开）；同类型内码唯一（重复 409 DICT_ITEM_EXISTS）；「删除」= 停用（`enabled=false`，无物理删除；停用不影响存量数据按原码 / 原名渲染）；响应为更新后的整个字典（前端直接替换缓存）。
 - 字典类型固定为契约枚举（region / projectType，`DICT_TYPES`）；阶段与成果文件类型走契约枚举、不下发。种子 `database/seeds/dicts.mjs`（#5）：region 8 项、projectType 3 项（metadata 携带主题色 accent / accentText），幂等且不覆盖库内已修订值。
 - 审计写入（C7-01 / C7-02）：`record()` 由业务用例在**同一事务**内调用，落「谁 / 何时 / 对什么 / 从什么改成什么」（`changes` 字段级 before / after；null = 无字段级变化）；操作人姓名快照（60s 缓存）保证改名后仍可追溯。
   - h7 已接线写路径：项目创建 / 修改 / 归档（project）、名册增删（project_member）、任务创建 / 修改 / 进度（task）、节点新增 / 删除 / 完成与阶段推进 / 回退（node / stage）；门禁拒绝在 catch 内补写 `result=failed`。

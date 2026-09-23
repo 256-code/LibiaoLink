@@ -585,7 +585,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/dicts/{type}/items",
     tags: ["dicts"],
-    summary: "新增字典条目（仅管理员 · dict.manage；变更写审计留痕）",
+    summary: "新增字典条目（region = 任何登录用户；其余类型 = dict.manage；变更写审计留痕）",
     request: { params: dictTypeParams, body: json(DictItemCreateBodySchema) },
     responses: {
       201: { description: "创建成功（更新后的整个字典）", ...json(DictSchema) },

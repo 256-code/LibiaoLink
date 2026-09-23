@@ -17,7 +17,8 @@ const segmentParam = new ZodValidationPipe(z.string().min(1).max(64));
 /**
  * 字典接口（h7 · C9；契约 shared/src/modules/dicts.ts）：
  * 读 = 登录即可（前端启动拉一次后缓存）；includeDisabled=true（管理端维护停用项）需要 dict.manage；
- * 写 = 仅管理员（dict.manage），每次变更写审计留痕（C9-02），响应为更新后的整个字典（前端直接替换缓存）。
+ * 写 = 新增条目按类型分权（C9-02 修订：**region 任何登录用户**，地区是全站共享的公共标签；projectType 仍 dict.manage），
+ * 更新 / 停用条目 = 仅管理员（dict.manage）；每次变更写审计留痕，响应为更新后的整个字典（前端直接替换缓存）。
  * 停用替代删除：停用不影响存量数据展示，项目仍按原码 / 原名渲染。
  */
 @Controller("api/v1/dicts")
@@ -55,15 +56,21 @@ export class DictsController {
     return this.dicts.get(type, includeDisabled);
   }
 
-  /** 新增条目（仅管理员）：同类型内码唯一，重复 409 DICT_ITEM_EXISTS。 */
+  /**
+   * 新增条目（C9-02 修订）：**region 任何登录用户可增**（地区是全站共享的公共标签 —— 非管理员新增同样全站可见、
+   * 可在首页按它筛选；治理仍归管理员：改名 / 停用走 PATCH + dict.manage）；**projectType 等其余类型仍 dict.manage**。
+   * 同类型内码唯一，重复 409 DICT_ITEM_EXISTS。
+   */
   @Post(":type/items")
   @UseGuards(ProjectAccessGuard)
-  @RequirePermission("dict.manage")
-  createItem(
+  async createItem(
     @Param("type", segmentParam) type: string,
     @Body(new ZodValidationPipe(DictItemCreateBodySchema)) body: DictItemCreateBody,
     @CurrentActorId() actorId: string,
   ): Promise<Dict> {
+    if (type !== "region") {
+      await this.permission.assertCan(actorId, "dict.manage", undefined, "新增该字典条目需要 dict.manage");
+    }
     return this.dicts.createItem(type, body, actorId);
   }
 

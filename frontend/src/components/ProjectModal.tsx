@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import type { RegionTools } from "../customRegions";
+import type { RegionTools } from "../regionTools";
 import type { DictItem } from "../dicts";
 import type { Member } from "../data/members";
 import { MemberMultiSelect } from "./MemberSelect";
@@ -26,7 +26,7 @@ type ProjectModalProps = {
   /** 字典下拉项（GET /api/v1/dicts）。 */
   regions: DictItem[];
   projectTypes: DictItem[];
-  /** 地区「＋ 添加」的落地方式（写地区字典 / 仅本项目 + 本机记住），由 App 层按 dict.manage 分派。 */
+  /** 地区「＋ 添加」的落地方式（写地区字典，全站共享），由 App 层实现。 */
   regionTools: RegionTools;
   /** 项目经理候选（GET /api/v1/users）。 */
   managerOptions: Member[];

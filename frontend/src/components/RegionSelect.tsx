@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { REGION_NAME_MAX, type RegionTools } from "../customRegions";
+import { REGION_NAME_MAX, type RegionTools } from "../regionTools";
 import type { DictItem } from "../dicts";
 import { OptionList } from "./SelectMenu";
 import type { SelectOption } from "./SelectMenu";
@@ -12,63 +12,44 @@ type RegionSelectProps = {
   value: string;
   /** 字典 region 项（GET /api/v1/dicts，已按 sort 升序）。 */
   regions: DictItem[];
-  /** 「＋ 添加地区」的落地方式（写字典 / 仅本项目），由 App 层按权限决定。 */
+  /** 「＋ 添加地区」的落地方式（写地区字典，全站共享），由 App 层实现。 */
   tools: RegionTools;
   onChange: (value: string) => void;
   ariaLabel: string;
 };
 
-/** 选项行右侧的「自定义」标签：字典项不带（全站可见），自定义项带（提示来源）。 */
-function CustomTag() {
-  return <span className="shrink-0 rounded bg-zinc-100 px-1 py-0.5 text-[10px] font-normal text-zinc-500">自定义</span>;
-}
-
 /**
- * 地区下拉候选：字典项（按 sort）→ 本机自定义 → 当前值兜底（存量值 / 他机自定义），按值去重。
- * 兜底项必须保留：编辑一个地区不在本机候选里的项目时，触发器仍要显示当前值（不能空白）。
+ * 地区下拉候选：字典项（按 sort 升序）→ 当前值兜底（存量值 / 已停用或他处自定义的值），按值去重。
+ * 兜底项必须保留：编辑一个地区不在字典候选里的项目时，触发器仍要显示当前值（不能空白）。
  */
-function buildRegionOptions(regions: DictItem[], customRegions: readonly string[], value: string): SelectOption[] {
+function buildRegionOptions(regions: DictItem[], value: string): SelectOption[] {
   const options: SelectOption[] = [];
   const seen = new Set<string>();
-  const push = (code: string, label: ReactNode): void => {
+  const push = (code: string, name: string): void => {
     if (seen.has(code)) {
       return;
     }
     seen.add(code);
-    options.push({ value: code, label });
+    options.push({ value: code, label: <span className="truncate">{name}</span> });
   };
   for (const item of regions) {
-    push(item.code, <span className="truncate">{item.name}</span>);
-  }
-  for (const name of customRegions) {
-    push(
-      name,
-      <span className="flex min-w-0 items-center gap-2">
-        <span className="truncate">{name}</span>
-        <CustomTag />
-      </span>,
-    );
+    push(item.code, item.name);
   }
   if (value !== "") {
-    push(
-      value,
-      <span className="flex min-w-0 items-center gap-2">
-        <span className="truncate">{value}</span>
-        <CustomTag />
-      </span>,
-    );
+    push(value, value);
   }
   return options;
 }
 
 /**
- * 项目地区下拉（Push 167）：与任务域 SelectMenu 同一套自绘下拉（原实现是原生 select —— 弹层样式由浏览器控制，与全站不一致），
- * 顶部固定一行「＋ 添加地区」：有 dict.manage = 写地区字典（C9，全站可见、可在首页筛选）；
- * 无权限 = 该地区只用于本项目 + 记在本机（契约 projects.region 是自由文本，服务端不校验字典）。
- * 名称校验：非空、不超过 REGION_NAME_MAX 字、不含英文逗号（filter[region] 是多值逗号分隔，逗号会被拆成两个筛选值）。
+ * 项目地区下拉（Push 167；Push 168 按业务口径修订）：与任务域 SelectMenu 同一套自绘下拉（原实现是原生 select ——
+ * 弹层样式由浏览器控制，与全站不一致），浮层贴弹窗右侧弹出；顶部固定一行「＋ 添加地区」。
+ * 新增落点 = **地区字典**（C9-02 修订：任何登录用户都能加 —— 保存后全站可见、可在首页按它筛选；
+ * 改名 / 排序 / 停用仍归管理员）。名称校验：非空、不超过 REGION_NAME_MAX 字、不含英文逗号
+ * （filter[region] 是多值逗号分隔，逗号会被拆成两个筛选值）。
  */
 export function RegionSelect({ value, regions, tools, onChange, ariaLabel }: RegionSelectProps) {
-  const options = useMemo(() => buildRegionOptions(regions, tools.customRegions, value), [regions, tools.customRegions, value]);
+  const options = useMemo(() => buildRegionOptions(regions, value), [regions, value]);
   /** 浮层高度估算：选项最多按 8 行 + 顶部「添加地区」一行（超出部分列表内滚动）。 */
   const visibleRows = Math.min(options.length, 8);
   // 优先贴触发器右侧（Push 167）：地区列表长，落上下会压住弹窗里的其它字段；右侧放不下自动回落上下定位
@@ -191,9 +172,7 @@ export function RegionSelect({ value, regions, tools, onChange, ariaLabel }: Reg
                     className="w-full rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:bg-white focus:ring-1 focus:ring-zinc-300"
                   />
                   <p className="mt-1.5 text-[11px] text-zinc-400">
-                    {tools.canManageDict
-                      ? "地区字典（C9）：保存后全站可选，并可在首页按它筛选。"
-                      : "当前账号没有字典维护权限：该地区只用于本项目，并记在这台机器上（下次可直接选）。"}
+                    保存后写入地区字典（C9）：全站可选（所有项目的地区下拉都能选到），并可在首页按它筛选；改名 / 停用由管理员维护。
                   </p>
                   {error === null ? null : (
                     <p role="alert" className="mt-1 text-[11px] text-rose-600">

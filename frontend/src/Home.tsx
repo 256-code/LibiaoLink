@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "./api";
-import type { RegionTools } from "./customRegions";
+import type { RegionTools } from "./regionTools";
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
@@ -26,7 +26,7 @@ type HomeProps = {
   dicts: Dicts;
   /** 用户目录（项目经理姓名与候选）。 */
   directory: DirectoryUser[];
-  /** 地区下拉的「自定义」能力（写地区字典 / 仅本项目 + 本机记住），与编辑弹窗共用同一份。 */
+  /** 地区下拉的「自定义」能力（写地区字典，全站共享），与编辑弹窗共用同一份。 */
   regionTools: RegionTools;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
   onCreate: (draft: ProjectDraft) => Promise<string | null>;

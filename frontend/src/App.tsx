@@ -6,10 +6,9 @@ import ProjectDetail from "./ProjectDetail";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
-import { loadCustomRegions, rememberCustomRegion, type RegionAddResult, type RegionTools } from "./customRegions";
+import type { RegionAddResult, RegionTools } from "./regionTools";
 import { createDictItem, EMPTY_DICTS, loadDicts, nextDictSort, type Dicts } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { hasPermission, loadMyPermissions, type MyPermissions } from "./permissions";
 import { createProject, fetchProject, toUiProject, updateProject } from "./projectApi";
 import { useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
@@ -52,10 +51,6 @@ export default function App() {
   // 参考数据：字典（地区 / 项目类型 + 主题色）与用户目录（项目经理）；失败不阻塞登录，页面用兜底值
   const [dicts, setDicts] = useState<Dicts>(EMPTY_DICTS);
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
-  // 权限画像（GET /permissions/me）：决定「＋ 添加地区」是写字典还是仅本项目；拉取失败按无权限呈现（服务端仍是最终裁决）
-  const [permissions, setPermissions] = useState<MyPermissions | null>(null);
-  // 本机记住的自定义地区（localStorage，Push 167）：无 dict.manage 时新增的地区记在这里，供下次直接选
-  const [customRegions, setCustomRegions] = useState<string[]>(() => loadCustomRegions());
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
@@ -85,7 +80,7 @@ export default function App() {
           return;
         }
         setState({ kind: "signed-in", me });
-        const [dictResult, directoryResult, permissionResult] = await Promise.allSettled([loadDicts(), loadDirectory(), loadMyPermissions()]);
+        const [dictResult, directoryResult] = await Promise.allSettled([loadDicts(), loadDirectory()]);
         if (cancelled) {
           return;
         }
@@ -94,9 +89,6 @@ export default function App() {
         }
         if (directoryResult.status === "fulfilled") {
           setDirectory(directoryResult.value);
-        }
-        if (permissionResult.status === "fulfilled") {
-          setPermissions(permissionResult.value);
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -167,14 +159,10 @@ export default function App() {
   };
 
   /**
-   * 地区「＋ 添加」（Push 167）：管理员（dict.manage）写地区字典（C9-02）—— 保存后全站可见、可在首页按它筛选；
-   * 无权限降级为「仅本项目 + 记在本机」（契约 projects.region 是自由文本，服务端不校验字典，历史遗留口径不变）。
+   * 地区「＋ 添加」（Push 167 起；Push 168 按业务口径修订）：写**地区字典**（C9-02 修订 —— 任何登录用户都能加，
+   * 保存后全站可见、可在首页按它筛选；改名 / 停用仍归管理员）。码重复 409 / 其它失败原样回显在浮层内。
    */
   const handleAddRegion = async (name: string): Promise<RegionAddResult> => {
-    if (!hasPermission(permissions, "dict.manage")) {
-      setCustomRegions(rememberCustomRegion(name));
-      return { ok: true, code: name };
-    }
     try {
       const items = await createDictItem("region", {
         code: name,
@@ -246,8 +234,6 @@ export default function App() {
 
   /** 地区下拉的「自定义」能力（新建与编辑弹窗共用同一份）。 */
   const regionTools: RegionTools = {
-    canManageDict: hasPermission(permissions, "dict.manage"),
-    customRegions,
     onAdd: handleAddRegion,
   };
 

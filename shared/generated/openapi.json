@@ -1687,7 +1687,7 @@
           "code",
           "name"
         ],
-        "description": "新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典"
+        "description": "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典"
       },
       "DictItemUpdateBody": {
         "type": "object",
@@ -8316,7 +8316,7 @@
         "tags": [
           "dicts"
         ],
-        "summary": "新增字典条目（仅管理员 · dict.manage；变更写审计留痕）",
+        "summary": "新增字典条目（region = 任何登录用户；其余类型 = dict.manage；变更写审计留痕）",
         "parameters": [
           {
             "schema": {

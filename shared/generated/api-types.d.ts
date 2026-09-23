@@ -1768,7 +1768,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 新增字典条目（仅管理员 · dict.manage；变更写审计留痕） */
+        /** 新增字典条目（region = 任何登录用户；其余类型 = dict.manage；变更写审计留痕） */
         post: {
             parameters: {
                 query?: never;
@@ -5758,7 +5758,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description 新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
         DictItemCreateBody: {
             /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
             code: string;
