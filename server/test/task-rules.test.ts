@@ -15,6 +15,7 @@ const TODAY = "2026-09-20";
 function input(overrides: Partial<TaskDerivationInput>): TaskDerivationInput {
   return {
     status: "pending",
+    statusOverride: null,
     plannedEnd: null,
     actualEnd: null,
     storedOnTime: null,
@@ -40,6 +41,14 @@ describe("deriveDisplayStatus（A1-06 / A12 / A14 五态派生）", () => {
     expect(deriveDisplayStatus(input({ status: "done", plannedEnd: "2026-09-25", actualEnd: "2026-09-25" }))).toBe("done");
     expect(deriveDisplayStatus(input({ status: "done", plannedEnd: "2026-09-25", actualEnd: "2026-09-28" }))).toBe("done");
     expect(deriveDisplayStatus(input({ status: "done", plannedEnd: null, actualEnd: "2026-09-28" }))).toBe("done");
+  });
+
+  it("显式覆盖优先，且边界按基础态判定（early_done 仅已完成生效、overdue 仅未完成生效）", () => {
+    expect(deriveDisplayStatus(input({ status: "active", plannedEnd: "2026-09-30", statusOverride: "overdue" }))).toBe("overdue");
+    expect(deriveDisplayStatus(input({ status: "done", plannedEnd: "2026-09-25", actualEnd: "2026-09-24", statusOverride: "early_done" }))).toBe("early_done");
+    expect(deriveDisplayStatus(input({ status: "done", plannedEnd: "2026-09-25", actualEnd: "2026-09-25", statusOverride: "early_done" }))).toBe("early_done");
+    expect(deriveDisplayStatus(input({ status: "done", plannedEnd: "2026-09-25", actualEnd: "2026-09-25", statusOverride: "overdue" }))).toBe("done");
+    expect(deriveDisplayStatus(input({ status: "active", plannedEnd: "2026-09-30", statusOverride: "early_done" }))).toBe("active");
   });
 
   it("预计完成日期 = 今天不算逾期（日界口径）", () => {
@@ -69,53 +78,77 @@ describe("deriveOnTime（A14 是否按时交付）", () => {
   });
 });
 
-describe("applyStatusWrite（A12 状态写入联动）", () => {
-  it("done → 满格 + 缺省当天完成日期；已有完成日期保留", () => {
-    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: null }, "done", TODAY)).toEqual({
+describe("applyStatusWrite（A12 状态写入联动 · 2026-09-24 五态可写）", () => {
+  it("done → 满格 + 缺省当天完成日期；已有完成日期保留；清覆盖", () => {
+    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: null, statusOverride: null }, "done", TODAY)).toEqual({
       status: "done",
       progress: 1,
       actualEnd: TODAY,
+      statusOverride: null,
     });
-    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: "2026-09-18" }, "done", TODAY)).toEqual({
+    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: "2026-09-18", statusOverride: "overdue" }, "done", TODAY)).toEqual({
       status: "done",
       progress: 1,
       actualEnd: "2026-09-18",
+      statusOverride: null,
     });
   });
 
-  it("active → 至少 1 格（0 → 0.25、满格 → 0.75）、清完成日期", () => {
-    expect(applyStatusWrite({ status: "pending", progress: 0, actualEnd: null }, "active", TODAY)).toEqual({
+  it("active → 至少 1 格（0 → 0.25、满格 → 0.75）、清完成日期、清覆盖", () => {
+    expect(applyStatusWrite({ status: "pending", progress: 0, actualEnd: null, statusOverride: null }, "active", TODAY)).toEqual({
       status: "active",
       progress: 0.25,
       actualEnd: null,
+      statusOverride: null,
     });
-    expect(applyStatusWrite({ status: "done", progress: 1, actualEnd: "2026-09-18" }, "active", TODAY)).toEqual({
+    expect(applyStatusWrite({ status: "done", progress: 1, actualEnd: "2026-09-18", statusOverride: "early_done" }, "active", TODAY)).toEqual({
       status: "active",
       progress: 0.75,
       actualEnd: null,
+      statusOverride: null,
     });
-    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: null }, "active", TODAY).progress).toBe(0.5);
+    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: null, statusOverride: null }, "active", TODAY).progress).toBe(0.5);
   });
 
-  it("pending → 清进度、清完成日期", () => {
-    expect(applyStatusWrite({ status: "done", progress: 1, actualEnd: "2026-09-18" }, "pending", TODAY)).toEqual({
+  it("pending → 清进度、清完成日期、清覆盖", () => {
+    expect(applyStatusWrite({ status: "done", progress: 1, actualEnd: "2026-09-18", statusOverride: "early_done" }, "pending", TODAY)).toEqual({
       status: "pending",
       progress: 0,
       actualEnd: null,
+      statusOverride: null,
     });
+  });
+
+  it("overdue（已延期）→ 保持当前格数与完成日期、只落覆盖（原型「已延期 = 保持当前格数」）", () => {
+    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: null, statusOverride: null }, "overdue", TODAY)).toEqual({
+      status: "active",
+      progress: 0.5,
+      actualEnd: null,
+      statusOverride: "overdue",
+    });
+  });
+
+  it("early_done（提前完成）→ 四格全亮 + 缺省当天完成日期 + 覆盖", () => {
+    expect(applyStatusWrite({ status: "active", progress: 0.5, actualEnd: null, statusOverride: null }, "early_done", TODAY)).toEqual({
+      status: "done",
+      progress: 1,
+      actualEnd: TODAY,
+      statusOverride: "early_done",
+    });
+    expect(applyStatusWrite({ status: "done", progress: 1, actualEnd: "2026-09-15", statusOverride: null }, "early_done", TODAY).actualEnd).toBe("2026-09-15");
   });
 });
 
 describe("applyProgressWrite（A13 进度写入联动）", () => {
   it("0 → 待开始；0.25~0.75 → 进行中，都清完成日期（清除的唯一方式）", () => {
-    expect(applyProgressWrite(0, null, TODAY)).toEqual({ status: "pending", progress: 0, actualEnd: null });
-    expect(applyProgressWrite(0.5, null, TODAY)).toEqual({ status: "active", progress: 0.5, actualEnd: null });
-    expect(applyProgressWrite(0.75, "2026-09-10", TODAY)).toEqual({ status: "active", progress: 0.75, actualEnd: null });
+    expect(applyProgressWrite(0, null, TODAY)).toEqual({ status: "pending", progress: 0, actualEnd: null, statusOverride: null });
+    expect(applyProgressWrite(0.5, null, TODAY)).toEqual({ status: "active", progress: 0.5, actualEnd: null, statusOverride: null });
+    expect(applyProgressWrite(0.75, "2026-09-10", TODAY)).toEqual({ status: "active", progress: 0.75, actualEnd: null, statusOverride: null });
   });
 
   it("1 → 已完成 + 完成日期（缺省当天；显式传入用传入值）", () => {
-    expect(applyProgressWrite(1, null, TODAY)).toEqual({ status: "done", progress: 1, actualEnd: TODAY });
-    expect(applyProgressWrite(1, "2026-09-15", TODAY)).toEqual({ status: "done", progress: 1, actualEnd: "2026-09-15" });
+    expect(applyProgressWrite(1, null, TODAY)).toEqual({ status: "done", progress: 1, actualEnd: TODAY, statusOverride: null });
+    expect(applyProgressWrite(1, "2026-09-15", TODAY)).toEqual({ status: "done", progress: 1, actualEnd: "2026-09-15", statusOverride: null });
   });
 });
 

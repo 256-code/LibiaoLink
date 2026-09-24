@@ -34,6 +34,7 @@ server/
   scripts/m4-preview-replay.mjs  # M4-05c 预览转换队列真机回放（真 PG + 真对象存储 + 真 api + 真 worker + 真转换沙箱；断言全过退出码 0）
   scripts/m4-preview-cleanup-replay.mjs # M4-05e 预览产物清理真机回放（同口径：共享缓存 / 归属转移 / 无引用清对象）
   scripts/m3-06-stress.mjs    # M3-06 压测真机回放（1 万行任务数据集 + 索引调优评估；真 PG + 真 api；断言全过退出码 0）
+  scripts/m3-07-replay.mjs    # M3-07 刀 1 真机回放（五态可写 + 汇总卡「最慢 / 最新阶段」+ 紧急重要度三档；真 PG + 真 api；断言全过退出码 0）
   scripts/m6-replay.mjs         # M6 日报 / 问题真机回放（A3-01 ~ A3-13 + A2-01 引用守卫；同上口径）
   test/                          # vitest（health / auth 端到端 + 校验管道单测；auth 用进程内桩 IdP，不依赖 PG 与 Casdoor）
 ```
@@ -472,6 +473,13 @@ server/
 - 复跑：`cd server && M3_STRESS_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m3-06-stress.mjs [--tasks 10000] [--rounds 6] [--out <报告.md>]`；退出码 0 = 断言全过（可当门禁），`--no-api` 只跑 SQL 面、`--keep` 保留回放数据。
 - 索引结论（已定案 · Push 158）：真机对照达标（最差 p50 倍率 1.02x / 阈值 1.5x；下线后默认读序 4.1 ms / 阈值 800 ms）→ 旧索引 `ix_tasks_project_stage_order` 由迁移 `0024_drop_tasks_legacy_order_index.sql` 下线（Drizzle schema 同步移除，避免双索引写放大），读面由部分索引 `ix_tasks_active_group` 兜底；证据：`docs/m3-06-压测证据(CI).md`。
 
+## M3-07 刀 1 回放（任务五态可写 + 汇总卡两阶段 · Push 179）
+
+- 口径来源：业务 2026-09-24 定案三条 —— 「状态下拉都要有 要5态 但是他们的逻辑要和之前的一样」/「（`currentStage` 保持 = 项目当前阶段）有了最快最慢这个就不需要了」/「紧急重要度 和前端一致只有三档」；按用户授权替 wmj 线落地（契约 + 服务端 + 迁移），跨线请 wmj 复核。
+- 脚本：`scripts/m3-07-replay.mjs`（真 PG + 真 api；铸管理员临时会话，自建临时项目 A / B 与 4 + 1 条任务，跑完软删任务与项目、删除会话 —— 零残留）。
+- 断言（24 项）：① 基础态联动与汇总卡（完成 / 进行中 → `slowestStage=design` / `latestStage=acceptance` / `done=1` / `total=4`，未分组任务不参与阶段判定）；② 五态覆盖（`overdue` 保持格数与完成日期只落覆盖、`early_done` 四格全亮 + 当天完成日期、写进度 / 写基础三态清覆盖；`filter[status]=overdue` / `early_done` 命中覆盖来源、`pending` 不再重复命中）；③ 优先级三档（`高` 200 / `重要且紧急` 400 `VALIDATION_FAILED`）；④ 留痕（只改覆盖也写 `status_change`，事件负载含 `statusOverride`）；⑤ 批量五态（`changes.status = overdue`）；⑥ 汇总卡两个 null 边界（全部完成 → `slowestStage=null`；尚无动工 → `latestStage=null`）；⑦ 临时数据 / 会话零残留。
+- 复跑：`cd server && node scripts/m3-07-replay.mjs --out ../docs/m3-07-回放证据(五态与汇总卡).md [--base-url http://127.0.0.1:3001] [--json <证据.json>] [--keep]`；退出码 0 = 断言全过（可当门禁）。前置：api 跑新构建（`npm run build` 后 `PORT=3001 node --env-file-if-exists=.env dist/entry/api.js`）、迁移 `0031` 已执行（`cd database && DATABASE_URL=postgres://libiaolink_migrator@127.0.0.1:5433/libiaolink npm run migrate`）。
+- 证据：`docs/m3-07-回放证据(五态与汇总卡).md`（+ 同名 `.json`）。落点说明：`docs/` 属 px 线；本卡脚本与证据由 px 随本卡代记，请 wmj 复核。
 ## M6 回放（S6·report-issue：日报 / 问题）
 
 - 脚本：`scripts/m6-replay.mjs`（真 PG + 真 api；铸管理员会话 / 跑完撤销、空库自动补合成管理员，建 `M6RPL-` 回放项目与 2 个任务 / 跑完硬删日报 / 问题 / 事件 / 任务 / 审计 / outbox / 项目 / 合成账号）。

@@ -4,8 +4,8 @@ import { AppError } from "../../common/errors/app-error.js";
 /**
  * 任务列表 / 详情的查询解析（M3-01 · A7 / A8）：纯函数、不做 IO。
  * 非法枚举 / uuid 一律 400（明确失败，不返回静默空列表）；排序白名单外 400（A8）。
- * 展示态筛选（filter[status]）按派生定义下推 SQL（task.repository 的 displayStatusCondition），
- * 保证与读时派生同一口径（overdue / early_done 不是存储态）。
+ * 展示态筛选（filter[status]）按「覆盖 + 派生」定义下推 SQL（task.repository 的 displayStatusExpression），
+ * 保证与读时派生同一口径（overdue / early_done 不是存储态，可由显式覆盖或读时派生命中）。
  */
 
 export const TASK_DISPLAY_STATUSES = ["pending", "active", "done", "overdue", "early_done"] as const;

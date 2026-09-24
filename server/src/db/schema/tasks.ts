@@ -35,6 +35,12 @@ export const tasks = pgTable(
      */
     ownerIds: uuid("owner_ids").array().notNull().default(sql`array[]::uuid[]`),
     status: text("status").notNull(),
+    /**
+     * 状态显式覆盖（2026-09-24 定案 · 迁移 0031）：五态下拉里的「已延期 / 提前完成」落这里（原型 statusOverride 的落库版）。
+     * 读时优先：overdue 仅在未完成时生效、early_done 仅在已完成时生效，其余回落派生（task.rules.ts）；
+     * 写进度 / 写基础三态 / 门禁完成即清空（回到派生）。null = 无覆盖。
+     */
+    statusOverride: text("status_override"),
     progress: numeric("progress", { precision: 3, scale: 2 }).notNull().default("0"),
     plannedStart: date("planned_start"),
     plannedEnd: date("planned_end"),
@@ -87,6 +93,10 @@ export const tasks = pgTable(
       sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,
     ),
     check("ck_tasks_status", sql`${table.status} in ${sql.raw(sqlValueList(["pending", "active", "done"]))}`),
+    check(
+      "ck_tasks_status_override",
+      sql`${table.statusOverride} is null or ${table.statusOverride} in ${sql.raw(sqlValueList(["overdue", "early_done"]))}`,
+    ),
     check("ck_tasks_progress", sql`${table.progress} in (0, 0.25, 0.5, 0.75, 1)`),
     check("ck_tasks_headcount", sql`${table.headcount} is null or ${table.headcount} >= 0`),
     check(
