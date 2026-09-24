@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
@@ -132,6 +132,20 @@ export class ReportRepository {
     return (rows[0] ?? null) as DailyReportRow | null;
   }
 
+  /** 当日全量行（A7-01 汇总 / A7-05 应填未填）：项目 × 日期单日；提交时刻升序（草稿 submittedAt 为空，PG 默认排最后）。 */
+  async listByDate(
+    projectId: string,
+    reportDate: string,
+    client: DbClient = this.database.db,
+  ): Promise<DailyReportRow[]> {
+    const rows = await client
+      .select(REPORT_COLUMNS)
+      .from(dailyReports)
+      .leftJoin(users, eq(users.id, dailyReports.authorId))
+      .where(and(eq(dailyReports.projectId, projectId), eq(dailyReports.reportDate, reportDate)))
+      .orderBy(asc(dailyReports.submittedAt), asc(dailyReports.authorId));
+    return rows as DailyReportRow[];
+  }
   async insert(input: DailyReportInsertInput, at: Date, client: DbClient): Promise<DailyReportRow> {
     const inserted = await client
       .insert(dailyReports)

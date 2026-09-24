@@ -1,6 +1,8 @@
 import { z } from "../zod.ts";
 import { DateOnlySchema, DateTimeSchema, PageQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { IssueCategorySchema } from "./issues.ts";
+import { CalendarDayKindSchema } from "./calendar.ts";
+import { ProjectMemberRoleSchema } from "./projects.ts";
 
 /**
  * 日报契约（M6-01 / M6-02 · A3-01 / A3-02 / A3-03 / A3-04 / A3-08 / A3-09）。
@@ -112,3 +114,57 @@ export const DailyReportListResponseSchema = z
     total: z.number().int().min(0),
   })
   .openapi("DailyReportListResponse", { description: "日报列表（项目内成员可见）" });
+
+/** 日报当日查询（A7-01 汇总 / A7-05 应填未填共用）：日期缺省 = 今天（Asia/Shanghai）；未来日期 400（与 A3-04 同口径）。 */
+export const DailyReportDayQuerySchema = z
+  .object({
+    date: DateOnlySchema.optional().openapi({ description: "业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）；未来日期 400" }),
+  })
+  .openapi("DailyReportDayQuery", { description: "日报当日视图查询（汇总 / 应填未填共用；缺省今天）" });
+
+export type DailyReportDayQuery = z.infer<typeof DailyReportDayQuerySchema>;
+
+/** 名册成员当日填报状态（A7-05 一行）：名册是应填范围，state 为 null = 当日未填报。 */
+export const DailyReportRosterEntrySchema = z
+  .object({
+    userId: UuidSchema,
+    username: z.string().nullable().openapi({ description: "登录名 / 工号" }),
+    displayName: z.string().nullable().openapi({ description: "显示名" }),
+    roleInProject: ProjectMemberRoleSchema,
+    reportId: UuidSchema.nullable().openapi({ description: "当日日报 id；未填报为 null" }),
+    state: DailyReportStateSchema.nullable().openapi({ description: "当日日报状态；null = 未填报（draft 草稿未提交，仍计「应填未填」）" }),
+    submittedAt: DateTimeSchema.nullable().openapi({ description: "提交时间（草稿 / 未填报为 null）" }),
+  })
+  .openapi("DailyReportRosterEntry", { description: "名册成员当日填报状态（A7-05 应填未填的一行）" });
+
+/** 应填未填清单（A7-05）：项目名册 × 工作日历 × 当日未提交 —— 非工作日整列为空；提醒发送记录（A7-05 后半）随 M5-06 发送记录。 */
+export const DailyReportMissingResponseSchema = z
+  .object({
+    date: DateOnlySchema,
+    isWorkday: z.boolean().openapi({ description: "当日是否工作日（日历例外优先，D5-03 同口径）" }),
+    dayKind: CalendarDayKindSchema,
+    dayName: z.string().nullable().openapi({ description: "日历例外名称（如「国庆节」）；无例外为 null" }),
+    memberCount: z.number().int().min(0).openapi({ description: "项目名册人数" }),
+    submittedCount: z.number().int().min(0).openapi({ description: "当日已提交（submitted / supplement）人数" }),
+    draftCount: z.number().int().min(0).openapi({ description: "仅有草稿（未提交）的人数" }),
+    missingCount: z.number().int().min(0).openapi({ description: "应填未填人数（非工作日为 0）" }),
+    members: z.array(DailyReportRosterEntrySchema).openapi({ description: "项目名册全员（按名册顺序）" }),
+    missingUserIds: z.array(UuidSchema).openapi({ description: "应填未填人 id（非工作日为空数组；顺序同名册）" }),
+  })
+  .openapi("DailyReportMissing", { description: "当日应填未填清单（A7-05：项目成员 × 工作日历 × 当日未提交）" });
+
+/** 当日日报汇总（A7-01）：替代人工「填写后添加到日报」—— 按项目 × 日期聚合已提交条目；A02 每日 19:00 群推送的正文数据面。 */
+export const DailyReportSummaryResponseSchema = z
+  .object({
+    date: DateOnlySchema,
+    isWorkday: z.boolean(),
+    dayKind: CalendarDayKindSchema,
+    dayName: z.string().nullable(),
+    entryCount: z.number().int().min(0).openapi({ description: "已提交（submitted / supplement）条目数" }),
+    draftCount: z.number().int().min(0).openapi({ description: "草稿条目数（不计入汇总正文）" }),
+    headcountTotal: z.number().int().min(0).openapi({ description: "今日施工人数合计（未填按 0 计）" }),
+    issueCount: z.number().int().min(0).openapi({ description: "「现场发现问题」非空的条目数" }),
+    entries: z.array(DailyReportSchema).openapi({ description: "已提交条目（提交时间升序，同刻按作者 id 兜底）" }),
+  })
+  .openapi("DailyReportSummary", { description: "当日日报汇总（A7-01）" });
+
