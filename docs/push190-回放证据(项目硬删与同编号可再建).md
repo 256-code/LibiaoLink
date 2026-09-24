@@ -8,7 +8,7 @@
 | 回放时间 | 2026-09-24 18:00 +08:00（推送前最后一轮复跑） |
 | api | http://127.0.0.1:3001 |
 | 数据库 | postgres://libiaolink_api@127.0.0.1:5433/libiaolink |
-| 代码版本 | 待回填（推送后补 commit） |
+| 代码版本 | `72abe30`（并入 main 的合并提交 `ef40f39`） |
 | 回放账号（临时会话，跑完删除） | 管理员账号的临时会话（脚本自建 `sessions` 行 → 跑完 DELETE，零残留） |
 | 脚本 | server/scripts/px-project-hard-delete-replay.mjs |
 | 结果 | **18 / 18 全过** |
