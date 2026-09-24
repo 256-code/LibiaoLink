@@ -8,9 +8,11 @@ export {
   mondayOf,
   renderTemplate,
   resolveScheduleFire,
+  REPLAY_SUBJECT_KINDS,
 } from "./automation.rules.js";
 export type {
   ConditionEvaluation,
+  ReplaySubjectKind,
   RuleContext,
   RuleEvaluation,
   RuleEvaluationOptions,
@@ -18,13 +20,26 @@ export type {
   ScheduleFire,
   ScheduleFireInput,
 } from "./automation.rules.js";
-export { BUILTIN_MESSAGE_TEMPLATES, BUILTIN_RULES, R01_NOTE, findTemplate } from "./builtin-rules.js";
-export { cronTime, replayRules } from "./automation.replay.js";
+export {
+  BUILTIN_MESSAGE_TEMPLATES,
+  BUILTIN_RULES,
+  BUILTIN_RULE_SUBJECT_KINDS,
+  MERGED_TEMPLATE_SPECS,
+  R01_NOTE,
+  SUBJECT_TEMPLATE_VARIABLES,
+  findMergedSpec,
+  findTemplate,
+  subjectKindOf,
+} from "./builtin-rules.js";
+export type { MergedTemplateSpec } from "./builtin-rules.js";
+export { cronTime, replayRules, toTaskSubject } from "./automation.replay.js";
 export type {
   ReplayDetail,
   ReplayInput,
   ReplayMessage,
   ReplayReport,
   ReplaySkipReason,
+  ReplaySubject,
+  ReplaySubjectRecipient,
   ReplayTask,
 } from "./automation.replay.js";

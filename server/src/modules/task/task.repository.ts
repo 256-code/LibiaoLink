@@ -61,6 +61,8 @@ export interface TaskInsertInput {
   /** null = 「未分组」（A15 · Push 124）。 */
   stageKey: string | null;
   nodeId: string | null;
+  /** 来源任务节点库节点（迁移 0034 · M3-07 刀 3）：手工创建 / 流程节点任务为 null。 */
+  sourceNodeId: string | null;
   title: string;
   titleEn: string | null;
   /** 空数组 = 「待分配」（A18 · Push 124 / A23 · Push 136）。 */
@@ -287,7 +289,7 @@ export class TaskRepository {
     return rows[0] ?? null;
   }
 
-  /** 节点判重（A10 / A11）：同一节点在项目里只留一份任务。 */
+  /** 节点判重（A10 / A11）：同一节点在项目里只留一份任务（node_id = 项目流程节点）。 */
   async findTaskIdByNode(projectId: string, nodeId: string, client: DbClient = this.database.db): Promise<string | null> {
     const rows = await client
       .select({ id: tasks.id })
@@ -295,6 +297,31 @@ export class TaskRepository {
       .where(and(eq(tasks.projectId, projectId), eq(tasks.nodeId, nodeId), isNull(tasks.deletedAt)))
       .limit(1);
     return rows[0]?.id ?? null;
+  }
+
+  /**
+   * 节点库来源判重（迁移 0034 · A1-16）：同一项目内同一节点库节点只留一份（未删行参与）。
+   * 模板实例化按一批 node_id 一次查完（避免逐条查），返回 nodeId → 已存在任务 id。
+   */
+  async findTaskIdsBySourceNodes(
+    projectId: string,
+    sourceNodeIds: readonly string[],
+    client: DbClient = this.database.db,
+  ): Promise<Map<string, string>> {
+    if (sourceNodeIds.length === 0) {
+      return new Map();
+    }
+    const rows = await client
+      .select({ id: tasks.id, taskNodeId: tasks.taskNodeId })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.projectId, projectId),
+          inArray(tasks.taskNodeId, [...sourceNodeIds]),
+          isNull(tasks.deletedAt),
+        ),
+      );
+    return new Map(rows.filter((row) => row.taskNodeId !== null).map((row) => [row.taskNodeId as string, row.id]));
   }
 
   /** 完成门禁目标读（无锁）：can-complete 预检与写入口的事务内判定共用字段。 */
@@ -414,6 +441,7 @@ export class TaskRepository {
         projectId: input.projectId,
         stageKey: input.stageKey,
         nodeId: input.nodeId,
+        taskNodeId: input.sourceNodeId,
         title: input.title,
         titleEn: input.titleEn,
         ownerIds: input.ownerIds,

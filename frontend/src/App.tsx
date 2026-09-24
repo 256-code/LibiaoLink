@@ -361,10 +361,12 @@ export default function App() {
   };
 
   /**
-   * 任务字段被编辑：任务域仍是内存态原型（M3-07 接线），服务端没有变化，故只留口子不刷新。
+   * 任务字段被编辑（M3-07 刀 1 后半接线）：任务写入会 touch 项目 updated_at（ADR-022 ④），
+   * 这里只轻量刷新项目列表（详情里那一行已由 ProjectDetail 自己回读），下次回到首页能看到新时间。
    */
   const handleTaskEdited = (_id: string): void => {
     void _id;
+    setDataVersion((value) => value + 1);
   };
 
   /** 字典下拉的「自定义 + 删除」能力（新建与编辑弹窗共用同一份）。 */
@@ -382,6 +384,11 @@ export default function App() {
    */
   const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
   const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
+  /**
+   * 任务模板页的维护权（左列节点库的新增 / 编辑 / 删除 + 右侧模板的新建 / 保存 / 删除 / 拖拽改内容）= blueprint.manage
+   * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
+   */
+  const canManageBlueprint = hasPermission(permissions, "blueprint.manage");
 
   if (state.kind === "loading") {
     return (
@@ -519,7 +526,7 @@ export default function App() {
   if (route.kind === "placeholder") {
     return (
       <>
-        <PlaceholderPage me={state.me} page={route.page} section={route.section} />
+        <PlaceholderPage me={state.me} page={route.page} section={route.section} canManageBlueprint={canManageBlueprint} />
         {bottomBars}
       </>
     );
@@ -539,6 +546,7 @@ export default function App() {
           me={state.me}
           project={detail}
           view={route.view}
+          members={directoryMemberOptions(directory)}
           onChangeManagers={handleChangeManagers}
           onTaskEdited={handleTaskEdited}
           taskHiddenColumns={taskTableHiddenColumns}

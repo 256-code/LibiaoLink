@@ -39,6 +39,11 @@ export const TaskSchema = z
         "组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它",
     }),
     nodeId: UuidSchema.nullable(),
+    /**
+     * 来源任务节点库节点（A1-16 · M3-07 刀 3）：与 nodeId（**项目流程节点** / 蓝图实例）并行、互不替代 ——
+     * 节点库节点回答「任务从哪来」；手工创建与流程节点生成的任务为 null；同一项目内同一节点只留一份（重复添加 409）。
+     */
+    sourceNodeId: UuidSchema.nullable(),
     title: z.string(),
     titleEn: z.string().nullable(),
     ownerIds: z.array(UuidSchema).openapi({
@@ -228,7 +233,11 @@ export const TaskCreateBodySchema = z
     titleEn: z.string().max(200).nullable().optional(),
     taskNodeId: UuidSchema.optional().openapi({
       description:
-        "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409 TASK_ALREADY_EXISTS）并建立节点关联；节点必须属于本项目（否则 400）",
+        "来源**项目流程节点**（project_nodes）id：从流程节点生成任务（成员可建）—— 校验节点属于本项目且与 stageKey 一致；同一节点在项目里只留一份（重复 409 TASK_ALREADY_EXISTS）。与 sourceNodeId（节点库节点）二选一",
+    }),
+    sourceNodeId: UuidSchema.optional().openapi({
+      description:
+        "来源任务节点库节点（task_nodes）id：从节点库生成任务（A1-16，成员可建）—— 任务描述 / 英文名 / 阶段取节点现值（A1-17 锁定字段），同一项目内同一节点只留一份（重复 409 TASK_ALREADY_EXISTS）；与 taskNodeId（项目流程节点）二选一",
     }),
     ownerIds: z.array(UuidSchema).optional().openapi({
       description:
@@ -294,6 +303,12 @@ export const TaskCreateFromTemplateBodySchema = z
     nodeIds: z.array(UuidSchema).optional().openapi({ description: "只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400" }),
     skipExisting: z.boolean().default(true).openapi({ description: "已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409" }),
     ownerIds: z.array(UuidSchema).optional().openapi({ description: "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」" }),
+    sortIndex: z.number().int().min(0).optional().openapi({
+      description: "起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾",
+    }),
+    priority: PrioritySchema.nullable().optional().openapi({
+      description: "生成任务的紧急重要度（可空 = 不写）；节点库暂无「默认紧急重要度」列（A1-17 映射待补），先由调用方给",
+    }),
   })
   .openapi("TaskCreateFromTemplateBody", { description: "从任务模板生成任务（批量；同一节点在项目里只留一份）" });
 

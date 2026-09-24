@@ -4,5 +4,7 @@ import * as dicts from "./dicts.mjs";
 import * as roles from "./roles.mjs";
 import * as rolePermissions from "./role-permissions.mjs";
 import * as blueprint from "./blueprint.mjs";
+import * as taskNodes from "./task-nodes.mjs";
+import * as taskTemplates from "./task-templates.mjs";
 
-export const SEEDS = [dicts, roles, rolePermissions, blueprint];
+export const SEEDS = [dicts, roles, rolePermissions, blueprint, taskNodes, taskTemplates];

@@ -16,6 +16,7 @@ import { ProjectModule } from "./modules/project/index.js";
 import { ReportIssueModule } from "./modules/report-issue/index.js";
 import { StakeholderModule } from "./modules/stakeholder/index.js";
 import { TaskModule } from "./modules/task/index.js";
+import { TemplateModule } from "./modules/template/index.js";
 import { StorageModule } from "./storage/index.js";
 
 /** api 进程：HTTP 入口（无状态、不跑 CPU 密集任务）。 */
@@ -35,6 +36,7 @@ export class AppModule {
         ProjectModule,
         StakeholderModule,
         TaskModule,
+        TemplateModule,
         ReportIssueModule,
         AdminModule,
         CalendarModule,

@@ -1,4 +1,4 @@
-# task 模块（h4 · S6·task：任务主表 / 五态派生 + 显式覆盖 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整）
+# task 模块（h4 · S6·task：任务主表 / 五态派生 + 显式覆盖 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整 / 节点库来源与模板实例化（M3-07 刀 3））
 
 | 字段 | 内容 |
 |---|---|
@@ -20,7 +20,8 @@
   - `GET /{id}/summary` 汇总卡（**M3-07 刀 1 起**：`slowestStage` 最慢 = 九阶段序第一个存在未完成任务的阶段 / `latestStage` 最新 = 已动工任务（基础态 active / done）里阶段序最靠后者的所属阶段，均 `nullable`；`overdue` / `done` / `total` 三计数照旧）—— 原 `currentStage`（= `projects.stage_key`）下线；
   - `GET /{id}/tasks` 分页列表：阶段 / 负责人 / 展示态（可多值，条件下推 SQL）/ 关键字 `q` 筛选 + 排序白名单（plannedStart / plannedEnd / actualEnd / progress / title / createdAt；默认序 = 阶段序 + 组内位次 `sort_index` + id（A15 / A19 / A20 · Push 124：未分组落最后，与看板列内顺序同口径））；非法参数 400；
   - `GET /{id}/tasks/{taskId}` 详情：抽屉全字段 + 文件清单 + 负责人名与变更摘要（`fileSummaries` 聚合，免 N+1）；
-  - `POST /{id}/tasks` 创建：① 从任务节点生成（节点须属本项目，`stageKey` 与节点阶段不一致 400；同节点已有未删任务 409 `TASK_ALREADY_EXISTS`）；② 手工创建（**仅管理员**，系统功能书 A1-13，非管理员 403）；`stageKey` 缺省 / 显式 null = 「未分组」、`ownerIds` 缺省 = 项目全部项目经理（A23 · Push 136；**显式 `[]` = 「待分配」**）、`sortIndex` = 插入位次（A15 / A18 / A20 · Push 124）；
+  - `POST /{id}/tasks` 创建：① 从任务节点生成（来源二选一：`taskNodeId` = **项目流程节点**；`sourceNodeId` = **节点库节点（Push 183）**，同传 400 `VALIDATION_FAILED`，`sourceNodeId` 时描述 / 英文名 / 阶段取节点库现值；节点须属本项目，`stageKey` 与节点阶段不一致 400；同节点已有未删任务 409 `TASK_ALREADY_EXISTS`）；② 手工创建（**仅管理员**，系统功能书 A1-13，非管理员 403）；`stageKey` 缺省 / 显式 null = 「未分组」、`ownerIds` 缺省 = 项目全部项目经理（A23 · Push 136；**显式 `[]` = 「待分配」**）、`sortIndex` = 插入位次（A15 / A18 / A20 · Push 124）；
+  - `POST /{id}/tasks/from-template` 模板实例化（M3-07 刀 3 · A1-16 · Push 183）：`templateId` + 可选 `nodeIds`（子集，模板外节点 400）/ `skipExisting`（缺省 true → 已加过的进 `skipped`；false 遇重复 409 且**整批回滚**）/ `ownerIds` / `sortIndex` / `priority` → `{ created: Task[], skipped: { nodeId, taskId }[] }`；整批同事务、顺序 = 模板内顺序、阶段取模板阶段、位次从 `sortIndex` 起顺延；空模板 / 空 `nodeIds` 返回空数组且不 touch 项目；模板不存在或已软删 404；口径见下节「节点库来源与模板实例化」。
   - `PATCH /{id}/tasks/{taskId}` 编辑：乐观锁 `version`（不一致 409 `VERSION_CONFLICT`）+ **五态写入联动（A12 · M3-07 刀 1）**+ `ownerIds` 显式置空（不传 = 不改；传数组 = 整体替换、顺序 = 展示顺序）+ 组内重排（`sortIndex`，越界 = 组尾）+ 字段级留痕（A18 / A19 / A20 · Push 124）；任务描述 / 成果文件锁定不在本接口；
   - `PATCH /{id}/tasks/{taskId}/progress` 进度写入：响应与列表行同形（`TaskListItem`），联动状态与完成日期；`note` 写 note_change 事件留痕；
   - `PATCH /{id}/tasks/batch` 批量操作（M3-04 · Push 150 / A1-08）：`ids`（1~100、重复去重）+ `changes` 白名单（ownerIds / status / plannedStart / plannedEnd / estimatedDays / headcount / priority / note；null = 清空、缺键 = 不改；不含描述 / 成果文件（A1-17）与 sortIndex）；逐条独立事务 + 部分失败清单 `failures[]`（复用单条写入内核 `applyUpdate`）；空 changes 400、归档项目 409；审计 = 批次一条（`project` 域，metadata 记 batchId / 计数 / 失败清单）+ 逐条字段级一条（`metadata.entry = batch` + 同批 `batchId`）；
@@ -29,7 +30,7 @@
   - 归档项目写入口径 409 `PROJECT_ARCHIVED`（ADR-027）；任务变更 touch 项目 `updated_at`（ADR-022 ④）。
 - 留痕与队列：`task_events` 四类型 `status_change / progress_change / date_change / note_change`（before / after 为 JSON 键值对）+ outbox 五个 topic `task.created / task.updated / task.progress_changed / task.deleted / task.locked_fields_adjusted`（dedupeKey 带版本；锁定字段调整 payload 带 `reason` 与实际变化字段）；软删与锁定字段例外调整不写 `task_events`（四值闭集）。
 - 与 h3 门禁的衔接（**过渡口径收口**）：`node/gate.repository` 不再直读 `tasks` 表；阶段推进门禁的「任务全 done」与 `GET /projects/{id}/stages` 的任务计数改经 `TaskStatsService` 出口，`StageProgressRow` 不再携带任务字段，门禁语义不变；`files` 表直读仍为过渡口径（随 i1 收口）。
-- 单测：`test/task-rules.test.ts`（17 例，纯规则）+ `test/task-service.test.ts`（18 例，桩仓储不连库）+ `test/task-order.test.ts`（4 例，顺序纯函数）+ `test/task-locked-fields.test.ts`（8 例，锁定字段例外调整：桩仓储 + 角色 / 门禁替身）；Push 153 后全量 387 例 / 26 文件（任务族：rules 17 / service 22 / order 4 / gate 8 / batch 9 / remove 10 / locked-fields 8）；**Push 155（M6-01 ~ M6-03 日报 / 问题）后全量 416 例 / 27 文件** —— `test/task-remove.test.ts` 10 → **12 例**（引用守卫补齐：日报 `report_ref` / 问题 `issue_ref`，与变更记录同一 409 `TASK_HAS_REFERENCES`）。
+- 单测：`test/task-rules.test.ts`（17 例，纯规则）+ `test/task-service.test.ts`（18 例，桩仓储不连库）+ `test/task-order.test.ts`（4 例，顺序纯函数）+ `test/task-locked-fields.test.ts`（8 例，锁定字段例外调整：桩仓储 + 角色 / 门禁替身）；**Push 183 后全量 622 例 / 40 文件（任务族新增 `test/task-from-template.test.ts` 12 例：节点库来源与模板实例化）**；Push 153 后全量 387 例 / 26 文件（任务族：rules 17 / service 22 / order 4 / gate 8 / batch 9 / remove 10 / locked-fields 8）；**Push 155（M6-01 ~ M6-03 日报 / 问题）后全量 416 例 / 27 文件** —— `test/task-remove.test.ts` 10 → **12 例**（引用守卫补齐：日报 `report_ref` / 问题 `issue_ref`，与变更记录同一 409 `TASK_HAS_REFERENCES`）。
 
 ## 完成门禁（M3-03 · Push 143）
 
@@ -99,10 +100,19 @@
 - 数据面与契约：迁移 `0015_task_order_and_nullable_scope.sql`（回填按迁移前默认读序 → 迁移前后读序一致；`ck_tasks_sort_index` + `ix_tasks_project_stage_order`）与 `0017_multi_manager_and_owner.sql`（`owner_id` → `owner_ids` uuid[] + `ck_tasks_owner_ids_no_null` + `ix_tasks_owner_ids` GIN；回填空数组 / `array[owner_id]`）、Drizzle `src/db/schema/tasks.ts`、契约 `shared/src/modules/tasks.ts` 三处同步（`check:db-schema`：27 表 / 265 列 / 78 索引 / 77 CHECK · Push 143 后）；outbox topic 与 `task_events` 类型不变，`sortIndex` / `ownerIds` 进审计快照（C7-02 字段级留痕）。
 - 真机回放：`server/scripts/w2-replay.mjs`（真 PG + 真 api :3011，33 项断言，退出码即门禁）；证据入 `docs/w2-回放证据(任务落库口径A15A18A19).md`。
 
+## 节点库来源与模板实例化（M3-07 刀 3 · A1-16 / A1-17 · Push 183）
+
+- 落库：迁移 `0034_task_source_node.sql` —— `tasks.task_node_id uuid references task_nodes (id) on delete set null`（**节点库来源**）+ 部分唯一索引 `uq_tasks_active_source_node on tasks (project_id, task_node_id) where deleted_at is null and task_node_id is not null`。与 `tasks.node_id`（**项目流程节点** `project_nodes`）**并存互不替代**：一个说「这条任务从项目流程的哪个节点来」，一个说「从节点库的哪个节点来」。
+- 逐条来源（`create()` 带 `sourceNodeId`）：任务描述 / 英文名 / 阶段取**节点库现值**（A1-17 锁定字段）；缺省负责人 = 项目全部项目经理；`sourceNodeId` 与 `taskNodeId` 二选一（同传 400）、节点不存在 / 与 `stageKey` 不一致 400、**同一项目同一节点重复 409 `TASK_ALREADY_EXISTS`**；审计 `metadata = { sourceNodeId, source: "task_node" }`、outbox `task.created` 与逐条路径同形。
+- 模板实例化（`createFromTemplate()` · `POST /projects/{id}/tasks/from-template`）：`templateId` + 可选 `nodeIds` / `skipExisting`（缺省 true）/ `ownerIds` / `sortIndex` / `priority` → `{ created: Task[], skipped: { nodeId, taskId }[] }`。**整批同事务**（撞到任何一条冲突都整批回滚 —— 真机回放 B9 用「n1 在前会插入、n2 已存在」验住）、顺序 = 模板内顺序、位次从 `sortIndex` 起依次落位（同组其余顺延）、阶段取模板阶段、`ownerIds` 缺省 = 项目经理；`nodeIds` 子集校验（模板外节点 400）；空模板 / 空 `nodeIds` 返回空数组且**不 touch 项目**（不写 outbox、不推 `updated_at`）。
+- 判重粒度 =（项目 × 节点库节点）且**只约束未删行**：软删该任务后同一节点回到「可添加」（再实例化时进 `created`）；节点在节点库被物理删 → `task_node_id` 置 null、**任务保留**（`on delete set null`）。
+- 读面：列表与详情下发 `sourceNodeId`（= `tasks.task_node_id`，可空）。
+- 真机回放：`server/scripts/m3-07-replay-from-template.mjs`（真 PG + 真 api :3001，47 项断言，退出码即门禁）；证据入 `docs/m3-07-回放证据(添加任务模板化).md`（前端侧 `frontend/scripts/m3-07-from-template-e2e.mjs` · 21 项 · 证据 `docs/m3-07-回放证据(添加任务模板化·前端).md`）。
+
 ## 边界与后续（差异登记）
 
 - 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；
-- M3-07 刀 1 后半（前端接线）不在本模块：前端 `taskApi.ts` 接线与服务端零改动；刀 2（门禁三入口 / 批量 failures 消费）、刀 3（添加任务模板化 + 快筛）待后续切片。
+- M3-07 刀 1 后半（前端接线）不在本模块：前端 `taskApi.ts` 接线与服务端零改动；刀 2（门禁三入口 / 批量 failures 消费）已随 M3-03 / M3-04 落地，**刀 3（添加任务模板化）已落 Push 183**；只剩快筛参数待后续切片。
 - 不在本卡（Push 152 后更新）：列表快捷筛选参数、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；**M3-05 软删已落 Push 152**：`DELETE …/tasks/{taskId}` + 统一 404 + 位次压缩；**锁定字段例外调整已落 Push 153**：仅管理员可执行（非管理员 403）/ 原因必填并留痕（审计 + outbox）/ 空调整 400 / 阶段性里程一期无列；模板实例化与快筛随 M3-05 其余切片、1 万行压测随 M3-06）；
 - A1-17 差异登记（Push 153）：系统功能书锁定字段含「阶段性里程」，一期 `tasks` 表无该列（A1-17 映射修订），本期只开放任务描述 / 英文描述 / 输出成果文件三项；里程碑列落地后再开；
 - 列表默认序已有 `ix_tasks_project_stage_order (project_id, stage_key, sort_index)` 复合索引（0015 · Push 124）；1 万行压测与索引调优仍随压测卡 M3-06；

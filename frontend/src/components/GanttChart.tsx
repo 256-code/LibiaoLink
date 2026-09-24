@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { memberByName } from "../data/members";
+import type { Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROGRESS_STEPS, TASK_DATE_YEAR, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, ownersLabel, taskStatus, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
 
@@ -12,7 +12,7 @@ import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
  * 形态与交互参考 VTable 甘特图基本用法（https://visactor.io/vtable/demo/gantt/gantt-basic?version=1.26.6）：
  * 左侧固定任务列表（行号 / 任务 / 开始 / 结束 / 进展）+ 右侧时间轴（月份 + 日期两级表头、逐日网格、周末底纹、
  * 任务条、里程碑菱形、今天虚线）。用 Tailwind + 绝对定位手绘，不引入第三方图表库 ——
- * 本仓库前端目前零图表依赖，而 VTable 的甘特图要真实 Date 记录与自有表格实例，和现有内存态数据模型对不上。
+ * 本仓库前端目前零图表依赖，而 VTable 的甘特图要真实 Date 记录与自有表格实例，和现有任务数据模型对不上。
  *
  * 已对齐的官方开关（尽量还原官方功能）：
  * - `taskListTable` 左表 + `frame.verticalSplitLineMoveable`：左表横向不滚、右边线可拖（列宽固定，拖的是「右侧时间轴盖住左表多少」的边界，双击复位）；
@@ -32,7 +32,7 @@ import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
  * - `taskBar.labelText: "{title} {progress}%"`：条内写「任务名 + 进度」；
  * - `gantt-locate-taskbar`：点左表任务行 = 选中它并把条定位到时间轴可视区；
  * - `taskBar.{startDateField,endDateField,progressField}`：拖动只写 `startDate` / `dueDate` / `days` / `progress`
- *   这批既有字段（与表格行内编辑同一套换算），落点进 `ProjectDetail` 的内存态覆盖表（原型口径，刷新复位）。
+ *   这批既有字段（与表格行内编辑同一套换算），松手写回服务端（进度走 /progress、日期走 PATCH）。
  *
  * 其余口径（详见 `前端功能需求.md` §6.14）：
  * - 分组 = 施工阶段（九个阶段按项目总览顺序，空阶段照样出骨架行；非九阶段的任务落「未分组」垫底）；
@@ -172,11 +172,9 @@ const OWNER_ANY = "all";
 const OWNER_NONE = "__none__";
 
 /**
- * 任务日期域：数据里的「M月D日」固定按 TASK_DATE_YEAR（2026）解释（isoFromCnDate / cnDateFromIso 都不带年份），
- * 所以拖动 / 改工期不许跨出这一年 —— 否则写回的日期会悄悄丢掉年份。
+ * 任务日期域（M3-07 刀 1 后半）：任务日期一律 ISO（YYYY-MM-DD，契约 DateOnly），年份带着走 ——
+ * 原「演示模型固定按 2026 解释、拖动不许跨年」的夹取口径随「M月D日」演示模型一起下线，拖动不再有年份边界。
  */
-const YEAR_FIRST = Date.UTC(TASK_DATE_YEAR, 0, 1);
-const YEAR_LAST = Date.UTC(TASK_DATE_YEAR, 11, 31);
 
 /** 自绘滚动条：轨道两端留白、滑块最短长度（与 `ScrollArea` 同一套手感）。 */
 const BAR_TRACK_INSET = 4;
@@ -217,10 +215,6 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function clampToYear(utc: number): number {
-  return clampNumber(utc, YEAR_FIRST, YEAR_LAST);
-}
-
 function utcFromIso(iso: string): number {
   return Date.parse(iso + "T00:00:00Z");
 }
@@ -234,13 +228,13 @@ function isoOf(utc: number): string {
   return new Date(utc).toISOString().slice(0, 10);
 }
 
-/** 拖动的落点（写回任务字段）：日期写回「M月D日」、天数 = 含首尾（与表格行内编辑同一口径）。 */
+/** 拖动的落点（写回任务字段）：日期写回 ISO（契约 DateOnly）、天数 = 含首尾（与表格行内编辑同一口径）。 */
 function rangePatch(start: number, end: number): TaskPatch {
   const startIso = isoOf(start);
   const endIso = isoOf(end);
   return {
-    startDate: cnDateFromIso(startIso),
-    dueDate: cnDateFromIso(endIso),
+    startDate: startIso,
+    dueDate: endIso,
     days: daysBetweenInclusive(startIso, endIso),
   };
 }
@@ -250,7 +244,7 @@ function dayDiff(from: number, to: number): number {
   return Math.round((to - from) / DAY_MS);
 }
 
-/** 今天（本地日历日的 UTC 零点）—— 任务日期统一按 TASK_DATE_YEAR 的 UTC 零点换算，两边同一尺度。 */
+/** 今天（本地日历日的 UTC 零点）—— 任务日期统一按 UTC 零点换算，两边同一尺度。 */
 function localToday(): number {
   const now = new Date();
   return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
@@ -363,24 +357,23 @@ type GanttDrag = {
   percent: number;
 };
 
-/** 任务 → 甘特条：日期按 isoFromCnDate 换算（「M月D日」→ 2026 年的 UTC 零点）。 */
+/** 任务 → 甘特条：日期直接吃 ISO（契约 DateOnly，空串 = 未填）。 */
 function buildBar(task: ProjectTask): GanttBar {
-  const startIso = isoFromCnDate(task.startDate);
-  const dueIso = isoFromCnDate(task.dueDate);
-  const doneIso = isoFromCnDate(task.doneDate);
-  const rawStart = startIso === "" ? null : utcFromIso(startIso);
-  const rawEnd = dueIso === "" ? null : utcFromIso(dueIso);
-  const done = doneIso === "" ? null : utcFromIso(doneIso);
+  const rawStart = task.startDate === "" ? null : utcFromIso(task.startDate);
+  const rawEnd = task.dueDate === "" ? null : utcFromIso(task.dueDate);
+  const done = task.doneDate === "" ? null : utcFromIso(task.doneDate);
   // 两个日期都齐才画条（只填一个 = 未排期）；数据反了（开始晚于预计完成）按小 → 大画。
   const start = rawStart === null || rawEnd === null ? null : Math.min(rawStart, rawEnd);
   const end = rawStart === null || rawEnd === null ? null : Math.max(rawStart, rawEnd);
-  const status = taskStatus(task);
+  const status = task.status;
   const percent = Math.max(0, Math.min(100, Math.round(task.progress * 100)));
-  const owners = ownersLabel(task.owners, task.ownersEn);
+  const owners = ownersLabel(task.owners);
+  /** 悬停提示里的日期按「M月D日」展示（模型里存的是 ISO）。 */
+  const dayText = (iso: string): string => (iso === "" ? "—" : cnDateFromIso(iso));
   const label = [
     task.title + (task.titleEn === "" ? "" : "（" + task.titleEn + "）"),
-    "开始 " + (task.startDate === "" ? "—" : task.startDate) + "　预计完成 " + (task.dueDate === "" ? "—" : task.dueDate),
-    task.doneDate === "" ? "" : "实际完成 " + task.doneDate,
+    "开始 " + dayText(task.startDate) + "　预计完成 " + dayText(task.dueDate),
+    task.doneDate === "" ? "" : "实际完成 " + dayText(task.doneDate),
     "进度 " + String(percent) + "%　状态 " + status,
     "负责人 " + (owners === "" ? "待分配" : owners),
     "拖动条 = 整体改期 · 拖两端 = 改工期 · 拖圆点 = 改进度",
@@ -560,10 +553,11 @@ function centerOnToday(element: HTMLDivElement | null, todayLeft: number | null,
 }
 
 /**
- * 甘特图视图（项目详情第二个标签页）。数据 = 项目任务列表同一份；
+ * 甘特图视图（项目详情第二个标签页）。数据 = 项目任务列表同一份（服务端任务接口）；
  * 传了 onPatchTask / onSetProgress 就能拖动改期 / 改进度（不传 = 拖动照常预览、松手不写回）。
+ * members = 人员目录（负责人筛选项的成员行渲染）。
  */
-export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
+export function GanttChart({ tasks, members, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
   const today = useMemo(localToday, []);
   const [zoom, setZoom] = useState<ZoomKey>("standard");
   /** 时间轴粒度（官方 timelineHeader.scales：日 / 周 / 月）—— 只换表头与网格密度，条仍按天精确落点。 */
@@ -609,41 +603,41 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
   const scaleConfig = SCALES[scale];
   const dayWidth = scaleConfig.dayWidth[zoom];
 
-  /** 负责人筛选项：按任务出现顺序排（与看板「负责人按任务出现顺序」同口径）；有「没负责人」的任务才出「待分配」。 */
+  /** 负责人筛选项（M3-07 刀 1 后半）：按任务出现顺序收集**负责人 id**（与看板「负责人按任务出现顺序」同口径）；有「没负责人」的任务才出「待分配」。 */
   const ownerOptions = useMemo(() => {
-    const names: string[] = [];
+    const ids: string[] = [];
     let hasUnassigned = false;
     for (const task of tasks) {
-      if (task.owners.length === 0) {
+      if (task.ownerIds.length === 0) {
         hasUnassigned = true;
         continue;
       }
-      for (const owner of task.owners) {
-        if (!names.includes(owner)) {
-          names.push(owner);
+      for (const ownerId of task.ownerIds) {
+        if (!ids.includes(ownerId)) {
+          ids.push(ownerId);
         }
       }
     }
-    return { names, hasUnassigned };
+    return { ids, hasUnassigned };
   }, [tasks]);
 
   /**
-   * 负责人筛选项（Push 142）：全部 → 各负责人 → 待分配。
-   * 负责人能对上人员目录（`../data/members`）的按成员行渲染（头像 + 姓名 + 拼音 + 角色）；
-   * 对不上的（目录外的姓名）退化成普通行 —— 不因为查不到人就把这个筛选项弄丢。
-   * 选中值仍走任务里的姓名（与 visibleTasks 的过滤口径同一套字符串空间）。
+   * 负责人筛选项（Push 142 / M3-07 刀 1 后半）：全部 → 各负责人 → 待分配。
+   * 负责人在人员目录（GET /api/v1/users → 本组件的 members）里的按成员行渲染（头像 + 姓名 + 工号 + 角色）；
+   * 对不上的（目录外 / 已停用）退化成普通行 —— 不因为查不到人就把这个筛选项弄丢。
+   * 选中值走**负责人 id**（与 visibleTasks 的过滤口径同一套字符串空间）。
    */
   const ownerItems = useMemo<SearchSelectItem[]>(() => {
     const items: SearchSelectItem[] = [{ kind: "plain", value: OWNER_ANY, name: "全部", hint: "不限负责人" }];
-    for (const name of ownerOptions.names) {
-      const member = memberByName(name);
-      items.push(member === undefined ? { kind: "plain", value: name, name, hint: "负责人" } : { kind: "member", value: name, member });
+    for (const ownerId of ownerOptions.ids) {
+      const member = members.find((item) => item.id === ownerId);
+      items.push(member === undefined ? { kind: "plain", value: ownerId, name: ownerId, hint: "负责人" } : { kind: "member", value: ownerId, member });
     }
     if (ownerOptions.hasUnassigned) {
       items.push({ kind: "plain", value: OWNER_NONE, name: "待分配", hint: "未填负责人" });
     }
     return items;
-  }, [ownerOptions]);
+  }, [ownerOptions, members]);
 
   /** 筛选后的任务：时间轴范围、阶段汇总、左表行数全部跟着它走（业务口径「甘特内筛选」）。 */
   const visibleTasks = useMemo(() => {
@@ -652,16 +646,16 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
         ownerFilter === OWNER_ANY
           ? true
           : ownerFilter === OWNER_NONE
-            ? task.owners.length === 0
-            : task.owners.includes(ownerFilter);
+            ? task.ownerIds.length === 0
+            : task.ownerIds.includes(ownerFilter);
       if (!matchesOwner) {
         return false;
       }
-      if (rowFilter === "overdue" && taskStatus(task) !== "已延期") {
+      if (rowFilter === "overdue" && task.status !== "已延期") {
         return false;
       }
       // 未排期 = 没填齐「开始 + 预计完成」（与条、左表日期列同一口径）—— 只看未排期时反过来：排期齐了的都筛掉。
-      const scheduled = isoFromCnDate(task.startDate) !== "" && isoFromCnDate(task.dueDate) !== "";
+      const scheduled = task.startDate !== "" && task.dueDate !== "";
       if (rowFilter === "unscheduled" && scheduled) {
         return false;
       }
@@ -792,7 +786,7 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
   };
 
   /**
-   * 拖动预览的唯一算法：每次都从 base 出发重算（不累加），按任务日期域（2026）与「起点不晚于终点」夹住。
+   * 拖动预览的唯一算法：每次都从 base 出发重算（不累加），只按「起点不晚于终点」夹住（日期是 ISO，不再有年份边界）。
    * 入参是**等效 clientX** —— 画面滚了多少 = 指针在日期轴上等效多走多少（边缘自动滚动、拖动途中滚画面都走这条），
    * 条因此始终跟着指针，也才可能一次拖到当前屏幕外的日期。
    */
@@ -811,16 +805,16 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
         return { ...previous, percent: clampNumber((step * 100) / PROGRESS_STEPS, 0, 100) };
       }
       if (previous.mode === "start") {
-        // 只动起点：不许越过终点（单日任务拖左端仍是单日），也不许跨出 2026。
-        return { ...previous, start: Math.min(clampToYear(shiftDays(previous.baseStart, deltaDays)), previous.baseEnd), end: previous.baseEnd };
+        // 只动起点：不许越过终点（单日任务拖左端仍是单日）。
+        return { ...previous, start: Math.min(shiftDays(previous.baseStart, deltaDays), previous.baseEnd), end: previous.baseEnd };
       }
       if (previous.mode === "end") {
-        // 只动终点：不许越过起点，也不许跨出 2026。
-        return { ...previous, start: previous.baseStart, end: Math.max(clampToYear(shiftDays(previous.baseEnd, deltaDays)), previous.baseStart) };
+        // 只动终点：不许越过起点。
+        return { ...previous, start: previous.baseStart, end: Math.max(shiftDays(previous.baseEnd, deltaDays), previous.baseStart) };
       }
-      // 整条平移：工期不变；顶到年初 / 年末时按工期回夹，不把工期拖变形。
+      // 整条平移：工期不变，两端一起挪。
       const span = dayDiff(previous.baseStart, previous.baseEnd);
-      const start = clampNumber(shiftDays(previous.baseStart, deltaDays), YEAR_FIRST, shiftDays(YEAR_LAST, -span));
+      const start = shiftDays(previous.baseStart, deltaDays);
       return { ...previous, start, end: shiftDays(start, span) };
     });
   };
@@ -1329,7 +1323,7 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
             <span
               className="absolute inset-y-0 w-[2px] bg-zinc-900/60"
               style={{ left: doneLeft }}
-              title={"实际完成 " + (bar.task.doneDate === "" ? "—" : bar.task.doneDate)}
+              title={"实际完成 " + (bar.task.doneDate === "" ? "—" : cnDateFromIso(bar.task.doneDate))}
             />
           )}
           {showHandles ? (
@@ -1504,7 +1498,7 @@ export function GanttChart({ tasks, onPatchTask, onSetProgress }: { tasks: reado
                 setOwnerFilter(next);
               }}
               ariaLabel="按负责人筛选"
-              footer={"共 " + String(ownerOptions.names.length) + " 位负责人 · 按姓名 / 拼音搜索 · 演示数据"}
+              footer={"共 " + String(ownerOptions.ids.length) + " 位负责人 · 按姓名 / 工号搜索"}
               triggerClassName={"flex min-w-[88px] items-center gap-1 rounded-lg border py-1 pl-2 pr-1.5 text-xs text-zinc-600 transition " + GLASS_SURFACE}
             />
           </label>
