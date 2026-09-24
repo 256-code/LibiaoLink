@@ -4,7 +4,8 @@ import { z } from "../zod.ts";
  * 自动化与通知中心（automation 模块）契约 —— 规则模型 / 触发 / 条件 / 动作 / 投递与运行枚举（M5-01 切片）。
  * 口径来源：系统功能书 C2-01 ~ C2-12、技术设计v0.2 §6.1（规则模型：参数化 + 启停，不做可视化编排）/
  *   §6.2（执行保证：幂等执行键 / 调度 / 投递 / 合并免打扰 / 留痕 / 可测试）、
- *   docs/rules/R01-R07-内置规则文案.md（逐字文案基准）、ADR-028（时区固定 Asia/Shanghai）。
+ *   docs/rules/R01-R07-内置规则文案.md（R 系列逐字文案基准）、
+ *   docs/rules/A01-A03-A14-扩展规则文案.md（A 系列建议稿 + 待确认清单）、ADR-028（时区固定 Asia/Shanghai）。
  * 边界：本切片交付「规则模型 + 求值口径 + 回放基准」；规则管理端点（M5-06）、调度 / 补发（M5-02）、
  *   企微与站内信投递（M5-03 / M5-04）由 lan 线接手 —— 端点入契约时以本文件枚举与 schema 为准扩 paths。
  */
@@ -53,10 +54,10 @@ export const RuleEventTopicSchema = z.enum(RULE_EVENT_TOPICS).openapi("RuleEvent
 export type RuleEventTopic = z.infer<typeof RuleEventTopicSchema>;
 
 /** 调度窗口：以规则声明的基准日期字段（如任务预计完成日期 / 开始日期）偏移求触发日，窗口键用于幂等。 */
-export const RULE_SCHEDULE_WINDOWS = ["T_MINUS_1", "SAME_DAY", "T_PLUS_1", "WEEKLY"] as const;
+export const RULE_SCHEDULE_WINDOWS = ["T_MINUS_1", "SAME_DAY", "T_PLUS_1", "T_PLUS_3", "WEEKLY"] as const;
 export const RuleScheduleWindowSchema = z.enum(RULE_SCHEDULE_WINDOWS).openapi("RuleScheduleWindow", {
   description:
-    "调度窗口：T_MINUS_1 基准日前 1 天（R03）/ SAME_DAY 基准日当天（R04）/ T_PLUS_1 基准日后 1 天（R05）/ WEEKLY 周窗口（R07，键 = ISO 周）",
+    "调度窗口：T_MINUS_1 基准日前 1 天（R03）/ SAME_DAY 基准日当天（R04 / A01 / A02 / A14）/ T_PLUS_1 基准日后 1 天（R05 / A03 提醒）/ T_PLUS_3 基准日后 3 天（A03 升级）/ WEEKLY 周窗口（R07，键 = ISO 周）",
 });
 export type RuleScheduleWindow = z.infer<typeof RuleScheduleWindowSchema>;
 
@@ -104,10 +105,11 @@ export const RULE_RECIPIENTS = [
   "project.group",
   "issue.owner",
   "rule.members",
+  "report.member",
 ] as const;
 export const RuleRecipientSchema = z.enum(RULE_RECIPIENTS).openapi("RuleRecipient", {
   description:
-    "收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理（R02）/ project.manager 项目经理 / project.group 项目群（R03 / R04 / R05 / R06）/ issue.owner 问题责任人（A03）/ rule.members 规则显式成员（A14 自定义待办）",
+    "收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理（R02）/ project.manager 项目经理（A03 升级）/ project.group 项目群（R03 / R04 / R05 / R06 / A02）/ issue.owner 问题责任人（A03 提醒）/ rule.members 规则显式成员（A14 自定义待办）/ report.member 日报名册成员（A01 应填未填）",
 });
 export type RuleRecipient = z.infer<typeof RuleRecipientSchema>;
 
