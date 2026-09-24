@@ -1,0 +1,205 @@
+{
+  "baseUrl": "http://127.0.0.1:3001",
+  "commit": "411514d",
+  "ranAt": "2026-09-24 09:31:50 +08:00",
+  "failures": 0,
+  "residue": {
+    "projects": 0,
+    "tasks": 0,
+    "sessions": 0
+  },
+  "checks": [
+    {
+      "id": "S1",
+      "title": "真机 api 在跑",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "note": "http://127.0.0.1:3001"
+    },
+    {
+      "id": "S2",
+      "title": "临时管理员会话可用",
+      "expected": "200",
+      "actual": "200 {\"user\":{\"id\":\"1ccd08b2-e1b5-404e-8b18-3c0da4e6ec3c\",\"name\":\"wmj\",\"displayName\":\"吴孟杰\",\"email\":\"wumengjie@libiaorobot.com\",\"owner\":\"libiaorobot\"},\"claims\":{},\"ex…",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "S3",
+      "title": "临时项目 A + 4 条夹具任务（售前 / 设计 / 验收 / 未分组）",
+      "expected": "项目 201 + 任务 4 × 201",
+      "actual": "项目 201 / 任务 4 条",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "A1",
+      "title": "售前任务置完成（基础三态联动：满格 + 完成日期缺省当天）",
+      "expected": "200 + status=done + progress=1 + actualEnd=2026-09-24",
+      "actual": "200 {\"status\":\"done\",\"progress\":1,\"actualEnd\":\"2026-09-24\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "A2",
+      "title": "验收任务置进行中（0 → 0.25 格）",
+      "expected": "200 + active + progress=0.25",
+      "actual": "200 {\"status\":\"active\",\"progress\":0.25}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "A3",
+      "title": "汇总卡：最慢 = 第一个存在未完成任务的阶段；最新 = 已动工里阶段序最靠后",
+      "expected": "slowestStage=design / latestStage=acceptance / done=1 / total=4",
+      "actual": "200 {\"slowestStage\":\"design\",\"latestStage\":\"acceptance\",\"overdue\":0,\"done\":1,\"total\":4}",
+      "ok": true,
+      "note": "「未分组」任务（pending）不参与阶段判定、只进 total"
+    },
+    {
+      "id": "B1",
+      "title": "status=overdue（已延期）→ 保持格数与完成日期、只落覆盖；展示态 = 已延期",
+      "expected": "200 + displayStatus=overdue + status=pending + progress=0 + actualEnd=null",
+      "actual": "200 {\"status\":\"pending\",\"progress\":0,\"actualEnd\":null,\"displayStatus\":\"overdue\"}",
+      "ok": true,
+      "note": "存储基础态不变，展示态 = 读时派生 + 显式覆盖"
+    },
+    {
+      "id": "B2",
+      "title": "落库口径：基础态 / 进度不变，仅 status_override=overdue",
+      "expected": "pending / 0 / overdue",
+      "actual": "pending / 0.00 / overdue",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "B3",
+      "title": "filter[status]=overdue 命中「覆盖生效」的任务（筛选与读时派生同口径）",
+      "expected": "含设计任务（覆盖来源）",
+      "actual": "200 命中 1 条",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "B4",
+      "title": "同一任务不再命中 filter[status]=pending（归类唯一，不重复计数）",
+      "expected": "不含设计任务",
+      "actual": "200 命中 1 条",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "B5",
+      "title": "点进度条一律清覆盖（回到读时派生：进行中）",
+      "expected": "200 + displayStatus=active + status=active + progress=0.25",
+      "actual": "200 {\"status\":\"active\",\"progress\":0.25,\"displayStatus\":\"active\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "B6",
+      "title": "落库：写进度后 status_override 已清空",
+      "expected": "null",
+      "actual": "null",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "B7",
+      "title": "status=early_done（提前完成）→ 四格全亮 + 完成日期缺省当天 + 落覆盖",
+      "expected": "200 + done + progress=1 + actualEnd=2026-09-24 + displayStatus=early_done",
+      "actual": "200 {\"status\":\"done\",\"progress\":1,\"actualEnd\":\"2026-09-24\",\"displayStatus\":\"early_done\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "B8",
+      "title": "filter[status]=early_done 同样命中覆盖来源",
+      "expected": "含设计任务",
+      "actual": "200 命中 2 条",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "B9",
+      "title": "写基础三态清覆盖：pending 后展示态回派生（未到期 → 待开始）",
+      "expected": "200 + displayStatus=pending + progress=0",
+      "actual": "200 {\"status\":\"pending\",\"progress\":0,\"displayStatus\":\"pending\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "C1",
+      "title": "紧急重要度三档可写（高）",
+      "expected": "200 + priority=高",
+      "actual": "200 {\"priority\":\"高\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "C2",
+      "title": "四象限值 → 400 VALIDATION_FAILED（旧口径已作废）",
+      "expected": "400 + VALIDATION_FAILED",
+      "actual": "400 {\"code\":\"VALIDATION_FAILED\",\"message\":\"参数校验失败\",\"details\":[{\"code\":\"invalid_value\",\"message\":\"Invalid option: expected one of \\\"高\\\"|\\\"中\\\"|\\\"低\\\"\",\"path\":\"priority\"}],\"traceId\":\"8097db33-f450-4642-87af-1…",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "D1",
+      "title": "只改覆盖（基础态 / 进度都不变）也写 status_change 留痕",
+      "expected": "存在 before={\"statusOverride\":null} → after={\"statusOverride\":\"overdue\"}",
+      "actual": "9 条事件；命中 1",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "D2",
+      "title": "五态写入的事件负载同时带 status 与 statusOverride",
+      "expected": "存在 after 含 done + early_done 的 status_change",
+      "actual": "命中 1",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "E1",
+      "title": "批量改状态支持五态（overdue = 显式覆盖）",
+      "expected": "200 + succeededCount=1 + failedCount=0 + displayStatus=overdue",
+      "actual": "200 {\"total\":1,\"succeededCount\":1,\"failedCount\":0,\"displayStatus\":\"overdue\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "E2",
+      "title": "全部完成 → slowestStage=null；latestStage 仍取已动工里最靠后（acceptance）",
+      "expected": "slowestStage=null / latestStage=acceptance / done=4 / total=4",
+      "actual": "200 {\"slowestStage\":null,\"latestStage\":\"acceptance\",\"done\":4,\"total\":4}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "F1",
+      "title": "尚无任务动工 → latestStage=null；最慢 = 唯一未完成阶段 install",
+      "expected": "slowestStage=install / latestStage=null / done=0 / total=1",
+      "actual": "200 {\"slowestStage\":\"install\",\"latestStage\":null,\"done\":0,\"total\":1}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "Z1",
+      "title": "临时项目 / 任务软删（读面零残留）",
+      "expected": "项目 0 行 / 任务 0 行可见",
+      "actual": "0 / 0",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "Z2",
+      "title": "临时会话清理（零残留）",
+      "expected": "0 行",
+      "actual": "0",
+      "ok": true,
+      "note": ""
+    }
+  ]
+}

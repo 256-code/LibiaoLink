@@ -291,7 +291,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/projects/{id}/summary",
     tags: ["projects"],
-    summary: "项目总览四格（当前阶段 / 逾期 / 已完成 / 总数）",
+    summary: "项目总览四格（最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数）",
     request: { params: idParams },
     responses: {
       200: { description: "总览统计", ...json(ProjectSummarySchema) },

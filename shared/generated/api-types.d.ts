@@ -506,7 +506,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 项目总览四格（当前阶段 / 逾期 / 已完成 / 总数） */
+        /** 项目总览四格（最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数） */
         get: {
             parameters: {
                 query?: never;
@@ -6349,10 +6349,10 @@ export interface components {
          */
         PreviewTarget: "pdf" | "image" | "structured" | null;
         /**
-         * @description 紧急重要度四象限字典
+         * @description 紧急重要度三档字典（高 / 中 / 低）；2026-09-24 定案「与页面口径一致」—— 四象限口径作废，存量值由迁移 0031 折算（有损：中 = 重要不紧急 / 紧急但不重要）
          * @enum {string|null}
          */
-        Priority: "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要" | null;
+        Priority: "高" | "中" | "低" | null;
         /** @description 项目（v0.2 §2.3 projects） */
         Project: {
             id: components["schemas"]["Uuid"];
@@ -6522,10 +6522,11 @@ export interface components {
          * @enum {string}
          */
         ProjectStatus: "active" | "paused" | "done" | "archived";
-        /** @description 项目总览统计（任务派生，口径见 v0.2 §2.4） */
+        /** @description 项目总览汇总卡统计（任务派生；口径见 v0.2 §2.4 与前端功能需求 §3.4） */
         ProjectSummary: {
             projectId: components["schemas"]["Uuid"];
-            currentStage: components["schemas"]["StageKey"];
+            slowestStage: components["schemas"]["StageKey"] & (string | null);
+            latestStage: components["schemas"]["StageKey"] & (string | null);
             overdue: number;
             done: number;
             total: number;
@@ -6722,7 +6723,7 @@ export interface components {
         TaskBatchChanges: {
             /** @description 批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序） */
             ownerIds?: components["schemas"]["Uuid"][];
-            status?: components["schemas"]["TaskBaseStatus"] & unknown;
+            status?: components["schemas"]["TaskStatusWrite"];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             /**
              * Format: date
@@ -6735,7 +6736,7 @@ export interface components {
              * @description 批量改紧急重要度（A1-08）
              * @enum {string|null}
              */
-            priority?: "重要且紧急" | "紧急但不重要" | "重要不紧急" | "不紧急不重要" | null;
+            priority?: "高" | "中" | "低" | null;
             note?: string | null;
         };
         /** @description 批量失败项（逐条校验结果；失败不影响同批成功项） */
@@ -6849,7 +6850,7 @@ export interface components {
             files: components["schemas"]["TaskFileBrief"][];
         };
         /**
-         * @description 任务展示五态（服务端读时派生，A12 / A14 · Push 70）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；派生优先 —— 未完成且已过预计完成日期一律「已延期」，不因状态写入改写；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）
+         * @description 任务展示五态（服务端读时派生 + 显式覆盖，A12 / A14 · Push 70；2026-09-24 起五态可写）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；有显式覆盖（tasks.status_override，仅 overdue / early_done 两值）时优先取覆盖值，否则派生 —— 未完成且已过预计完成日期一律「已延期」；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）
          * @enum {string}
          */
         TaskDisplayStatus: "pending" | "active" | "done" | "overdue" | "early_done";
@@ -6935,6 +6936,11 @@ export interface components {
             version: components["schemas"]["Version"];
         };
         /**
+         * @description 批量改状态（五态可选，口径同单条编辑）：done = 批量完成（逐条走同一完成门禁，缺件项进 failures 的 gate_not_passed）；overdue / early_done = 显式覆盖
+         * @enum {string}
+         */
+        TaskStatusWrite: "pending" | "active" | "done" | "overdue" | "early_done";
+        /**
          * @description 任务表列 key（白名单；「任务描述」常显，不在其中）
          * @enum {string}
          */
@@ -6995,7 +7001,7 @@ export interface components {
             ownerIds?: components["schemas"]["Uuid"][];
             /** @description 组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
             sortIndex?: number;
-            status?: components["schemas"]["TaskBaseStatus"] & unknown;
+            status?: components["schemas"]["TaskStatusWrite"] & unknown;
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
             estimatedDays?: number | null;
