@@ -825,7 +825,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                       data-template-panel={template.id}
                       aria-label={"模板 " + template.name}
                       className={
-                        "group flex w-full flex-col rounded-2xl border bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 transition lg:w-[370px] lg:shrink-0 " +
+                        "group/panel flex w-full flex-col rounded-2xl border bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 transition lg:w-[370px] lg:shrink-0 " +
                         (hovered
                           ? duplicate
                             ? "border-amber-400/70 ring-2 ring-amber-300/40"
@@ -863,6 +863,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                           <RowDeleteButton
                             onDelete={() => removeTemplate(template.id)}
                             label={"删除模板 " + template.name}
+                            scope="panel"
                           />
                         </div>
                         {/* 提示行固定高度：出现 / 消失都不顶动下方列表（否则拖拽时会跟着抖） */}

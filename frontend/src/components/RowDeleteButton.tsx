@@ -5,8 +5,23 @@
  * 悬停 / 聚焦展开到 48px 小号红胶囊（业务反馈「这个状态下有点太大了 要再小一点」），
  * 展开只吃 TaskBoard 任务描述列右侧预留的 48px 动作槽位、不挤动四格进度条与描述文字；图标放大下滑离场、文字同步浮出（参考代码同款节奏）。
  * Push 172：首页项目卡片复用同一个按钮（`label="删除项目"`），形态与行内一套、只有无障碍名不同。
+ * Push 181：加 `scope` —— 模板面板标题行那枚用 `scope="panel"`（随面板浮现），面板里的卡片按钮保持默认（随卡片自己浮现）。
  */
-export function RowDeleteButton({ onDelete, label = "删除任务" }: { onDelete: () => void; label?: string }) {
+export function RowDeleteButton({
+  onDelete,
+  label = "删除任务",
+  scope = "default",
+}: {
+  onDelete: () => void;
+  label?: string;
+  /**
+   * 显示作用域（Push 181 业务口径「为什么我鼠标放上去全显示了 我不要这样的」）：
+   * `default` = 随**最近的 `group`**（任务表行 / 项目卡片 / 任务节点卡片自己那一个）浮现；
+   * `panel` = 随**所在模板面板**（`group/panel`）浮现 —— 用在「删除这份模板」这类面板级动作上，
+   * 这样鼠标扫过面板时不会再让面板里每一张卡片的按钮一起亮。
+   */
+  scope?: "default" | "panel";
+}) {
   return (
     <button
       type="button"
@@ -17,7 +32,10 @@ export function RowDeleteButton({ onDelete, label = "删除任务" }: { onDelete
         onDelete();
       }}
       onKeyDown={(event) => event.stopPropagation()}
-      className="group/del relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-transparent text-zinc-300 opacity-0 transition-[width,background-color,color,opacity] duration-300 ease-out hover:w-12 hover:bg-red-500 hover:text-white focus-visible:w-12 focus-visible:bg-red-500 focus-visible:text-white focus-visible:opacity-100 focus-visible:outline-none group-hover:opacity-100"
+      className={
+        "group/del relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-transparent text-zinc-300 opacity-0 transition-[width,background-color,color,opacity] duration-300 ease-out hover:w-12 hover:bg-red-500 hover:text-white focus-visible:w-12 focus-visible:bg-red-500 focus-visible:text-white focus-visible:opacity-100 focus-visible:outline-none " +
+        (scope === "panel" ? "group-hover/panel:opacity-100" : "group-hover:opacity-100")
+      }
     >
       <span className="pointer-events-none absolute -translate-y-3 text-[11px] font-semibold opacity-0 transition-all duration-300 group-hover/del:translate-y-0 group-hover/del:opacity-100 group-focus-visible/del:translate-y-0 group-focus-visible/del:opacity-100">
         删除
