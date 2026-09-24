@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent a
 import type { Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { addedNodeKeysOf, cnDateFromIso, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -229,7 +229,7 @@ type TaskKanbanProps = {
    * 列底「添加 → 阶段任务」：从该阶段节点池 / 模板挑的节点加进项目，并带上所在列的负责人 / 状态。
    * Push 111：`nodes` 支持一次多个（「整套添加」按列表顺序整段插入），`placement` = 该阶段内的插入位置（业务口径「人员要指定位置放入」）。
    */
-  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
+  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 任务编辑保存（与表格共用同一张覆盖表）。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
   /** 卡片上直接改字段（Push 98：实际完成日期；与表格行内同一套口径）。 */
@@ -501,6 +501,7 @@ function KanbanColumn({
   group,
   mode,
   addedNodeKeys,
+  addedNodeIds,
   overlay,
   setOverlay,
   onOpenTask,
@@ -515,8 +516,10 @@ function KanbanColumn({
 }: {
   group: KanbanGroup;
   mode: KanbanMode;
-  /** 项目里已添加的节点判重键（`data/tasks.ts` 的 addedNodeKey）：添加卡片按「同阶段同名」判重。 */
+  /** 项目里已添加的节点判重键（`data/tasks.ts` 的 addedNodeKey）：添加卡片按「同阶段同名」判重（旧行兜底）。 */
   addedNodeKeys: ReadonlySet<string>;
+  /** 来源节点 id 集合（`addedNodeIdsOf` · M3-07 刀 3）：精确判重，优先于同阶段同名。 */
+  addedNodeIds: ReadonlySet<string>;
   /** 整块看板共用的浮层状态（Push 118）：只有 `key` 是本列时，浮层才归本列渲染。 */
   overlay: AddOverlay | null;
   /** 改浮层状态（Push 118）：点本列的「添加」= 本列接管，上一列的浮层自然被顶掉。 */
@@ -533,7 +536,7 @@ function KanbanColumn({
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下 / 拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
   onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
-  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
+  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 该阶段现有任务（Push 111）：给「插入位置」当锚点 —— 顺序 = 项目总览里这些任务的先后。 */
   stageTasksOf: (stage: string) => readonly { id: string; title: string }[];
 }) {
@@ -745,8 +748,9 @@ function KanbanColumn({
         <StageAddCard
           stage={templateStage}
           addedNodeKeys={addedNodeKeys}
+          addedNodeIds={addedNodeIds}
           placement={{ tasks: stageTasksOf(templateStage) }}
-          onAddNodes={(stage, nodes, placement) => { onAddStageTask(context, stage, nodes, placement); }}
+          onAddNodes={(stage, nodes, placement, templateId) => { onAddStageTask(context, stage, nodes, placement, templateId); }}
           onClose={() => {
             // 只关「本列这张模板卡片」（Push 118）：卡片自己关得比点别处晚时，不误伤刚打开的那个浮层
             setOverlay((prev) => (prev !== null && prev.kind === "template" && prev.key === group.key ? null : prev));
@@ -796,6 +800,8 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
   /** 项目里已添加的节点判重键（见 `addedNodeKeysOf`）：添加卡片的节点 / 模板条目按它显示「已添加」并跳过重复。 */
   const addedNodeKeys = addedNodeKeysOf(tasks);
+  /** 来源节点 id 集合（见 `addedNodeIdsOf` · M3-07 刀 3）：精确判重，优先于同阶段同名兜底。 */
+  const addedNodeIds = addedNodeIdsOf(tasks);
   /**
    * 该阶段现有任务（Push 111）：给「添加 → 阶段任务」的插入位置当锚点。
    * `tasks` 已经是展示顺序（阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
@@ -1105,6 +1111,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
               group={group}
               mode={mode}
               addedNodeKeys={addedNodeKeys}
+              addedNodeIds={addedNodeIds}
               overlay={addOverlay}
               setOverlay={setAddOverlay}
               onOpenTask={openTask}

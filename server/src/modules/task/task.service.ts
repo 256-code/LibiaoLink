@@ -12,6 +12,8 @@ import {
   TaskCompleteBodySchema,
   TaskCompleteResponseSchema,
   TaskCreateBodySchema,
+  TaskCreateFromTemplateBodySchema,
+  TaskCreateFromTemplateResponseSchema,
   TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskGateMissingSchema,
@@ -32,6 +34,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
 import { RoleService } from "../identity/index.js";
+import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { clampSortIndex } from "./task.order.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
 import {
@@ -69,6 +72,8 @@ type TaskGateMissing = z.infer<typeof TaskGateMissingSchema>;
 type TaskGateWarning = z.infer<typeof TaskGateWarningSchema>;
 type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
+type TaskCreateFromTemplateBody = z.infer<typeof TaskCreateFromTemplateBodySchema>;
+type TaskCreateFromTemplateResponse = z.infer<typeof TaskCreateFromTemplateResponseSchema>;
 type TaskBatchFailure = z.infer<typeof TaskBatchFailureSchema>;
 type TaskBatchResponse = z.infer<typeof TaskBatchResponseSchema>;
 type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
@@ -110,6 +115,8 @@ export class TaskService {
     private readonly gate: TaskGateRepository,
     private readonly roles: RoleService,
     private readonly audit: AuditService,
+    private readonly nodes: TaskNodeRepository,
+    private readonly templates: TemplateService,
   ) {}
 
   /**
@@ -190,7 +197,13 @@ export class TaskService {
   async create(projectId: string, body: TaskCreateBody, actorId: string): Promise<Task> {
     const project = await this.loadProjectForWrite(projectId);
     const nodeId = body.taskNodeId ?? null;
+    const sourceNodeId = body.sourceNodeId ?? null;
+    if (nodeId !== null && sourceNodeId !== null) {
+      throw new AppError("VALIDATION_FAILED", "taskNodeId（项目流程节点）与 sourceNodeId（节点库节点）二选一");
+    }
     let stageKey: string | null = body.stageKey ?? null;
+    let title = body.title;
+    let titleEn = body.titleEn ?? null;
     if (nodeId !== null) {
       const node = await this.repository.findProjectNode(projectId, nodeId);
       if (node === null || node.status === "deleted") {
@@ -200,6 +213,18 @@ export class TaskService {
         throw new AppError("VALIDATION_FAILED", "stageKey 与来源节点所属阶段不一致（节点阶段：" + node.stageKey + "）");
       }
       stageKey = node.stageKey;
+    } else if (sourceNodeId !== null) {
+      // 节点库来源（M3-07 刀 3 · A1-16）：描述 / 英文名 / 阶段取节点库现值（A1-17 锁定字段），节点必须存在
+      const node = await this.nodes.findById(sourceNodeId);
+      if (node === null) {
+        throw new AppError("VALIDATION_FAILED", "sourceNodeId 不存在或节点已从节点库删除");
+      }
+      if (stageKey !== null && node.stageKey !== stageKey) {
+        throw new AppError("VALIDATION_FAILED", "stageKey 与来源节点所属阶段不一致（节点阶段：" + node.stageKey + "）");
+      }
+      stageKey = node.stageKey;
+      title = node.title;
+      titleEn = node.titleEn;
     } else {
       await this.assertAdmin(actorId, "手工创建非标准任务");
     }
@@ -212,6 +237,13 @@ export class TaskService {
           throw new AppError("TASK_ALREADY_EXISTS", "该项目已存在该节点生成的任务：" + existing);
         }
       }
+      if (sourceNodeId !== null) {
+        const existing = await this.repository.findTaskIdsBySourceNodes(projectId, [sourceNodeId], tx);
+        const hit = existing.get(sourceNodeId);
+        if (hit !== undefined) {
+          throw new AppError("TASK_ALREADY_EXISTS", "该项目已添加过该节点（任务：" + hit + "）");
+        }
+      }
       const groupSize = await this.repository.countGroup(projectId, stageKey, tx);
       const sortIndex = clampSortIndex(body.sortIndex ?? groupSize, groupSize);
       if (sortIndex < groupSize) {
@@ -222,8 +254,9 @@ export class TaskService {
           projectId,
           stageKey,
           nodeId,
-          title: body.title,
-          titleEn: body.titleEn ?? null,
+          sourceNodeId,
+          title,
+          titleEn,
           ownerIds,
           sortIndex,
           plannedStart: body.plannedStart ?? null,
@@ -265,12 +298,121 @@ export class TaskService {
           { field: "ownerIds", from: null, to: created.ownerIds },
           { field: "plannedEnd", from: null, to: created.plannedEnd },
         ].filter((change) => change.to !== null),
+        metadata: sourceNodeId === null ? undefined : { sourceNodeId, source: "task_node" },
       });
       return created;
     });
     return toTaskView(row, shanghaiToday(at), []);
   }
 
+  /**
+   * POST /projects/{id}/tasks/from-template（A1-16「批量生成节点任务」· M3-07 刀 3）：整批按模板内顺序生成 ——
+   * 阶段取模板阶段、任务描述 / 英文名取节点库现值（A1-17 锁定字段）、负责人缺省 = 项目全部项目经理（A23）。
+   * 判重（系统功能书 A1-16「同一项目已生成过的节点默认不重复生成」）：已存在的节点进 skipped；skipExisting=false 时 409。
+   * 整批**同事务**（要么全落、要么不落）；位次按模板内顺序依次落位（sortIndex 起，缺省 = 组尾，同组顺延）。
+   * 留痕：逐条审计（action=create，metadata 记 templateId / sourceNodeId）+ outbox task.created；不写 task_events（非字段级变更）。
+   */
+  async createFromTemplate(
+    projectId: string,
+    body: TaskCreateFromTemplateBody,
+    actorId: string,
+  ): Promise<TaskCreateFromTemplateResponse> {
+    const project = await this.loadProjectForWrite(projectId);
+    const template = await this.templates.getTemplate(body.templateId);
+    const ordered = template.nodes;
+    let picked = ordered;
+    if (body.nodeIds !== undefined) {
+      const wanted = new Set(body.nodeIds);
+      const unknown = [...wanted].filter((id) => !ordered.some((node) => node.nodeId === id));
+      if (unknown.length > 0) {
+        throw new AppError("VALIDATION_FAILED", "nodeIds 不属于该模板：" + unknown.join("、"));
+      }
+      picked = ordered.filter((node) => wanted.has(node.nodeId));
+    }
+    if (picked.length === 0) {
+      return { created: [], skipped: [] };
+    }
+    const ownerIds = body.ownerIds !== undefined ? body.ownerIds : project.managerIds;
+    const stageKey = template.stageKey as string;
+    const at = new Date();
+    const today = shanghaiToday(at);
+    return this.database.db.transaction(async (tx) => {
+      const existing = await this.repository.findTaskIdsBySourceNodes(projectId, picked.map((node) => node.nodeId), tx);
+      const skipped: { nodeId: string; taskId: string }[] = [];
+      const toCreate = picked.filter((node) => {
+        const hit = existing.get(node.nodeId);
+        if (hit === undefined) return true;
+        if (!body.skipExisting) {
+          throw new AppError("TASK_ALREADY_EXISTS", "该项目已添加过该节点（任务：" + hit + "）");
+        }
+        skipped.push({ nodeId: node.nodeId, taskId: hit });
+        return false;
+      });
+      const groupSize = await this.repository.countGroup(projectId, stageKey, tx);
+      const base = clampSortIndex(body.sortIndex ?? groupSize, groupSize);
+      if (toCreate.length > 0 && base < groupSize) {
+        await this.repository.shiftGroupIndexes(projectId, stageKey, base, null, toCreate.length, tx);
+      }
+      const created: Task[] = [];
+      for (let index = 0; index < toCreate.length; index += 1) {
+        const node = toCreate[index]!;
+        const row = await this.repository.insert(
+          {
+            projectId,
+            stageKey,
+            nodeId: null,
+            sourceNodeId: node.nodeId,
+            title: node.title,
+            titleEn: node.titleEn,
+            ownerIds,
+            sortIndex: base + index,
+            plannedStart: null,
+            plannedEnd: null,
+            estimatedDays: null,
+            headcount: null,
+            priority: body.priority ?? null,
+            deliverableTypes: [],
+            note: null,
+          },
+          at,
+          tx,
+        );
+        await appendOutbox(tx, {
+          topic: "task.created",
+          dedupeKey: "task.created:" + row.id,
+          payload: {
+            projectId,
+            taskId: row.id,
+            stageKey,
+            nodeId: null,
+            status: row.status,
+            progress: Number(row.progress),
+            actorId,
+            at: at.toISOString(),
+          },
+        });
+        await this.audit.record(tx, {
+          actorId,
+          action: "create",
+          objectType: "task",
+          objectId: row.id,
+          projectId,
+          summary: "从模板创建任务：" + row.title,
+          changes: [
+            { field: "stageKey", from: null, to: row.stageKey },
+            { field: "title", from: null, to: row.title },
+            { field: "ownerIds", from: null, to: row.ownerIds },
+          ].filter((change) => change.to !== null),
+          metadata: { sourceNodeId: node.nodeId, templateId: template.id, templateName: template.name, kind: "from_template" },
+        });
+        created.push(toTaskView(row, today, []));
+      }
+      if (created.length > 0) {
+        await this.repository.touchProject(projectId, at, tx);
+      }
+      return { created, skipped };
+    });
+  }
   /**
    * PATCH /projects/{id}/tasks/{taskId}：字段编辑 +（可选）基础三态写入联动（A12）+ 组内重排（A19 / A20，Push 124）；
    * 乐观锁 + 字段留痕。ownerIds 显式 [] = 「待分配」；sortIndex = 移到该组第 N 位（越界 = 组尾）。
@@ -1034,6 +1176,7 @@ function toTaskView(row: TaskRow, today: string, changeLinks: Task["changeLinks"
     stageKey: row.stageKey as Task["stageKey"],
     sortIndex: row.sortIndex,
     nodeId: row.nodeId,
+    sourceNodeId: row.taskNodeId,
     title: row.title,
     titleEn: row.titleEn,
     ownerIds: row.ownerIds,

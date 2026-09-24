@@ -7,6 +7,8 @@ import {
   TaskCompleteBodySchema,
   TaskCompleteResponseSchema,
   TaskCreateBodySchema,
+  TaskCreateFromTemplateBodySchema,
+  TaskCreateFromTemplateResponseSchema,
   TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskListItemSchema,
@@ -26,6 +28,7 @@ import { TaskService } from "./task.service.js";
 
 type TaskListQuery = z.infer<typeof TaskListQuerySchema>;
 type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
+type TaskCreateFromTemplateBody = z.infer<typeof TaskCreateFromTemplateBodySchema>;
 type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
 type TaskCompleteBody = z.infer<typeof TaskCompleteBodySchema>;
@@ -78,6 +81,20 @@ export class TaskController {
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
     return this.tasks.create(id, body, actorId);
+  }
+
+  /**
+   * 从任务模板批量生成任务（A1-16「批量生成节点任务」· 模板实例化 · 契约 Push 62 已入 paths）：
+   * 阶段取模板阶段、描述取节点库现值；同一项目已存在的节点默认跳过（skipped），skipExisting=false 时 409。
+   */
+  @Post(":id/tasks/from-template")
+  @RequirePermission("task.create")
+  createFromTemplate(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(TaskCreateFromTemplateBodySchema)) body: TaskCreateFromTemplateBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskCreateFromTemplateResponseSchema>> {
+    return this.tasks.createFromTemplate(id, body, actorId);
   }
 
   /**

@@ -19,6 +19,7 @@ import { TaskRepository } from "../src/modules/task/task.repository.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 import { TaskService } from "../src/modules/task/task.service.js";
+import type { TaskNodeRepository, TemplateService } from "../src/modules/template/index.js";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const TASK = "22222222-2222-4222-8222-222222222222";
@@ -33,6 +34,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     projectId: PROJECT,
     stageKey: "install",
     nodeId: NODE,
+    taskNodeId: null,
     title: "货架组装",
     titleEn: null,
     ownerIds: [MANAGER],
@@ -252,6 +254,8 @@ function makeService(
     gate as unknown as TaskGateRepository,
     roles as unknown as RoleService,
     new FakeAuditService() as unknown as AuditService,
+    {} as unknown as TaskNodeRepository,
+    {} as unknown as TemplateService,
   );
 }
 

@@ -6858,6 +6858,7 @@ export interface components {
             /** @description 组内位次（A19 / A20 · Push 124）：一组 = 同一项目 + 同一阶段（null = 未分组），0 起、密集；看板列内顺序与项目总览排序都按它 */
             sortIndex: number;
             nodeId: components["schemas"]["Uuid"] & (string | null);
+            sourceNodeId: components["schemas"]["Uuid"] & (string | null);
             title: string;
             titleEn: string | null;
             /** @description 任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应 */
@@ -6979,6 +6980,7 @@ export interface components {
             title: string;
             titleEn?: string | null;
             taskNodeId?: components["schemas"]["Uuid"] & unknown;
+            sourceNodeId?: components["schemas"]["Uuid"] & unknown;
             /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理（projects.manager_ids）兜底；显式 [] = 「待分配」（不兜底项目经理，沿用 A18）；数组顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
@@ -7002,6 +7004,13 @@ export interface components {
             skipExisting: boolean;
             /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」 */
             ownerIds?: components["schemas"]["Uuid"][];
+            /** @description 起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾 */
+            sortIndex?: number;
+            /**
+             * @description 生成任务的紧急重要度（可空 = 不写）；节点库暂无「默认紧急重要度」列（A1-17 映射待补），先由调用方给
+             * @enum {string|null}
+             */
+            priority?: "高" | "中" | "低" | null;
         };
         TaskCreateFromTemplateResponse: {
             created: components["schemas"]["Task"][];

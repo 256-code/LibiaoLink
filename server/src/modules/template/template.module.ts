@@ -19,6 +19,6 @@ import { TemplateService } from "./template.service.js";
   imports: [IdentityModule, PermissionModule, AdminModule],
   controllers: [TemplateController, TaskTemplateController],
   providers: [TaskNodeRepository, TaskTemplateRepository, TemplateService],
-  exports: [TemplateService],
+  exports: [TemplateService, TaskNodeRepository],
 })
 export class TemplateModule {}

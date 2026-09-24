@@ -4664,6 +4664,19 @@
               }
             ]
           },
+          "sourceNodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -4791,6 +4804,7 @@
           "stageKey",
           "sortIndex",
           "nodeId",
+          "sourceNodeId",
           "title",
           "titleEn",
           "ownerIds",
@@ -5160,7 +5174,17 @@
                 "$ref": "#/components/schemas/Uuid"
               },
               {
-                "description": "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409 TASK_ALREADY_EXISTS）并建立节点关联；节点必须属于本项目（否则 400）"
+                "description": "来源**项目流程节点**（project_nodes）id：从流程节点生成任务（成员可建）—— 校验节点属于本项目且与 stageKey 一致；同一节点在项目里只留一份（重复 409 TASK_ALREADY_EXISTS）。与 sourceNodeId（节点库节点）二选一"
+              }
+            ]
+          },
+          "sourceNodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "来源任务节点库节点（task_nodes）id：从节点库生成任务（A1-16，成员可建）—— 任务描述 / 英文名 / 阶段取节点现值（A1-17 锁定字段），同一项目内同一节点只留一份（重复 409 TASK_ALREADY_EXISTS）；与 taskNodeId（项目流程节点）二选一"
               }
             ]
           },
@@ -5260,6 +5284,24 @@
               "$ref": "#/components/schemas/Uuid"
             },
             "description": "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」"
+          },
+          "sortIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾"
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "高",
+              "中",
+              "低",
+              null
+            ],
+            "description": "生成任务的紧急重要度（可空 = 不写）；节点库暂无「默认紧急重要度」列（A1-17 映射待补），先由调用方给"
           }
         },
         "required": [
