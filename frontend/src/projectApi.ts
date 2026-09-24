@@ -124,9 +124,9 @@ export function updateProject(id: string, input: ProjectWriteInput, version: num
 }
 
 /**
- * 删除项目（软删 · A5；Push 172 接上卡片入口）：DELETE /api/v1/projects/{id} —— 版本走 **If-Match 请求头**（不是正文），
+ * 删除项目（硬删 · A5；Push 190 起物理删，Push 172 接上卡片入口）：DELETE /api/v1/projects/{id} —— 版本走 **If-Match 请求头**（不是正文），
  * 缺头 / 非数字 400 VALIDATION_FAILED；版本不一致 409 VERSION_CONFLICT；归档项目 409 PROJECT_ARCHIVED；
- * 不存在 / 不可见 404。响应 = 被删项目（此后列表 / 详情 / facets 均不可见）。
+ * 不存在 / 不可见 404。响应 = 删除前快照（此后列表 / 详情 / facets 均不可见；项目连同任务等聚合子表物理删、编号可再用、序号不回收）。
  */
 export function deleteProject(id: string, version: number): Promise<ApiProject> {
   return apiRequest<ApiProject>("/api/v1/projects/" + encodeURIComponent(id), {

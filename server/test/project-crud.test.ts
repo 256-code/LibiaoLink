@@ -4,6 +4,7 @@ import { buildProjectFilter, parseProjectSort, type ProjectFilter } from "../src
 import {
   ProjectRepository,
   isUniqueViolation,
+  type ProjectChildrenCounts,
   type ProjectRow,
   type ProjectViewRow,
 } from "../src/modules/project/project.repository.js";
@@ -65,7 +66,7 @@ class FakeProjectRepository {
   rows: ProjectViewRow[] = [];
   lastList: { filter: ProjectFilter; sorts: unknown; limit: number; offset: number } | null = null;
   lastFacetFilter: ProjectFilter | null = null;
-  lastSoftDelete: { id: string; expectedVersion: number; deletedBy: string } | null = null;
+  lastHardDelete: { id: string; expectedVersion: number } | null = null;
   lastTouched: { id: string; at: Date } | null = null;
 
   private visible(id: string): ProjectViewRow | null {
@@ -131,14 +132,16 @@ class FakeProjectRepository {
     return found.project;
   }
 
-  async softDeleteWithVersion(id: string, expectedVersion: number, deletedBy: string, at: Date): Promise<ProjectRow | null> {
-    this.lastSoftDelete = { id, expectedVersion, deletedBy };
-    const found = this.visible(id);
-    if (found === null || found.project.version !== expectedVersion) return null;
-    found.project.deletedAt = at;
-    found.project.deletedBy = deletedBy;
-    found.project.version += 1;
-    return found.project;
+  // Push 190：项目删除 = 物理删行（连同聚合子表）——替身同样把行从内存里摘掉。
+  async hardDeleteWithVersion(id: string, expectedVersion: number): Promise<{ project: ProjectRow; children: ProjectChildrenCounts } | null> {
+    this.lastHardDelete = { id, expectedVersion };
+    const index = this.rows.findIndex((view) => view.project.id === id && view.project.deletedAt === null && view.project.version === expectedVersion);
+    const removed = index < 0 ? undefined : this.rows.splice(index, 1)[0];
+    if (removed === undefined) return null;
+    return {
+      project: removed.project,
+      children: { tasks: 0, nodes: 0, stages: 0, members: 0, stakeholders: 0, reports: 0, issues: 0, changeRequests: 0, files: 0 },
+    };
   }
 
   async touch(id: string, at: Date): Promise<void> {
@@ -159,7 +162,8 @@ class FakeAuditService {
   }
 }
 
-function makeService(rows: ProjectRow[] = []): { service: ProjectService; repo: FakeProjectRepository } {
+function makeService(rows: ProjectRow[] = []): { service: ProjectService; repo: FakeProjectRepository; audit: FakeAuditService } {
+  const audit = new FakeAuditService();
   const repo = new FakeProjectRepository();
   repo.rows = rows.map((row) => ({ project: row, managerNames: ["张工"] }));
   const fakeDb = {
@@ -180,9 +184,10 @@ function makeService(rows: ProjectRow[] = []): { service: ProjectService; repo: 
       fakeDb as unknown as DatabaseService,
       repo as unknown as ProjectRepository,
       fakeFlow as unknown as FlowService,
-      new FakeAuditService() as unknown as AuditService,
+      audit as unknown as AuditService,
     ),
     repo,
+    audit,
   };
 }
 
@@ -308,7 +313,7 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
     );
   });
 
-  it("列表：分页透传 + total；软删项目不可见（A5）", async () => {
+  it("列表：分页透传 + total；历史软删行（deleted_at 兼容列）不可见", async () => {
     const alive = projectRow({ id: UUID_A, seqNo: 1 });
     const removed = projectRow({ id: UUID_B, seqNo: 2, deletedAt: AT });
     const { service, repo } = makeService([alive, removed]);
@@ -356,14 +361,20 @@ describe("ProjectService（M2-01 项目 CRUD）", () => {
     await expectAppErrorAsync(() => service.deleteProject(UUID_A, 0, UUID_B), "PROJECT_ARCHIVED");
   });
 
-  it("删除：If-Match version 透传 + 记录操作人；删除后列表 / 详情不可见", async () => {
-    const { service, repo } = makeService([projectRow({ id: UUID_A, version: 2 })]);
+  it("删除：If-Match 透传；物理删行（Push 190）后列表 / 详情不可见、同编号可再建", async () => {
+    const { service, repo, audit } = makeService([projectRow({ id: UUID_A, version: 2 })]);
     const removed = await service.deleteProject(UUID_A, 2, UUID_B);
     expect(removed.id).toBe(UUID_A);
-    expect(removed.version).toBe(3);
-    expect(repo.lastSoftDelete).toEqual({ id: UUID_A, expectedVersion: 2, deletedBy: UUID_B });
+    expect(removed.version).toBe(2); // 硬删返回删除前快照（不再 version + 1）
+    expect(repo.lastHardDelete).toEqual({ id: UUID_A, expectedVersion: 2 });
+    expect(repo.rows).toEqual([]); // 物理删行：库里不再留这一行
     await expectAppErrorAsync(() => service.getProject(UUID_A), "NOT_FOUND");
     expect((await service.listProjects({ page: 1, limit: 20 }, { kind: "all" })).total).toBe(0);
+    // 删除前快照 + 子表行数写审计（C7-02 · action=project.delete）
+    expect(audit.entries[0]).toMatchObject({ action: "delete", objectType: "project", objectId: UUID_A, metadata: { hardDelete: true } });
+    // 编号随行释放：同编号可再建（Push 190 前是 409 PROJECT_CODE_EXISTS）
+    const again = await service.createProject({ code: "CNBJ-20260708-0001", name: "重开同编号", region: "华东", projectType: "分拣", managerIds: [UUID_A] }, UUID_A);
+    expect(again.code).toBe("CNBJ-20260708-0001");
   });
 
   it("删除：version 不匹配 409 VERSION_CONFLICT；不存在 404", async () => {
