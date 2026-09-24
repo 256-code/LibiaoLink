@@ -537,7 +537,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "读取当前用户偏好（任务表列显隐等）",
+    summary: "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式）",
     responses: {
       200: { description: "偏好全量", ...json(UserPreferencesSchema) },
       401: commonErrors[401],
@@ -548,7 +548,7 @@ export function buildOpenApiDocument() {
     method: "patch",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键）",
+    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400）",
     request: { body: json(UserPreferencesUpdateBodySchema) },
     responses: {
       200: { description: "更新后的偏好全量", ...json(UserPreferencesSchema) },
@@ -561,7 +561,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/dicts",
     tags: ["dicts"],
-    summary: "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+    summary: "全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内）",
     request: { query: DictReadQuerySchema },
     responses: {
       200: { description: "全部字典", ...json(DictListResponseSchema) },
@@ -585,7 +585,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/dicts/{type}/items",
     tags: ["dicts"],
-    summary: "新增字典条目（仅管理员 · dict.manage；变更写审计留痕）",
+    summary: "新增字典条目（region = 任何登录用户；其余类型 = dict.manage；变更写审计留痕）",
     request: { params: dictTypeParams, body: json(DictItemCreateBodySchema) },
     responses: {
       201: { description: "创建成功（更新后的整个字典）", ...json(DictSchema) },
@@ -601,7 +601,7 @@ export function buildOpenApiDocument() {
     method: "patch",
     path: "/api/v1/dicts/{type}/items/{code}",
     tags: ["dicts"],
-    summary: "更新字典条目（部分更新；停用替代删除；变更写审计留痕）",
+    summary: "更新字典条目（部分更新；仅 dict.manage；变更写审计留痕）",
     request: { params: dictTypeParams.extend({ code: z.string() }), body: json(DictItemUpdateBodySchema) },
     responses: {
       200: { description: "更新后的整个字典", ...json(DictSchema) },
@@ -611,6 +611,22 @@ export function buildOpenApiDocument() {
       404: commonErrors[404],
     },
   });
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/dicts/{type}/items/{code}",
+    tags: ["dicts"],
+    summary: "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕；条目被项目引用时 409 DICT_ITEM_IN_USE）",
+    request: { params: dictTypeParams.extend({ code: z.string() }) },
+    responses: {
+      200: { description: "删除成功（更新后的整个字典）", ...json(DictSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
 
   // ---- 操作审计（C7；admin 模块：按对象 / 操作人检索） ----
   registry.registerPath({

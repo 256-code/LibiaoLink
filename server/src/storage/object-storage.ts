@@ -37,6 +37,21 @@ export interface SignedUrl {
   expiresAt: Date;
 }
 
+export interface GetObjectResult {
+  objectKey: string;
+  bytes: Uint8Array;
+  contentType: string | null;
+  sizeBytes: number;
+}
+
+export interface PutObjectInput {
+  objectKey: string;
+  body: Uint8Array;
+  contentType?: string | null;
+  /** 对象元数据（只放 ASCII：三元组版本 / 通道等排障标识）。 */
+  metadata?: Record<string, string>;
+}
+
 export interface CreateMultipartUploadInput {
   objectKey: string;
   contentType?: string | null;
@@ -104,8 +119,27 @@ export abstract class ObjectStorage {
 
   /** 对象元数据；对象不存在返回 null（不抛错）。 */
   abstract headObject(objectKey: string): Promise<ObjectHead | null>;
-  /** 短时签名下载地址（ADR-006：对象存储禁止匿名读取）。 */
+  /**
+   * 短时签名地址（ADR-006：对象存储禁止匿名读取）。
+   *
+   * 传 `fileName` = 签名 `Content-Disposition: attachment`（下载）；不传 = 不改写响应头，
+   * 浏览器按对象自身 Content-Type 内联渲染（预览读 API 走这条）。
+   */
   abstract signDownloadUrl(input: DownloadUrlInput): Promise<SignedUrl>;
+  /**
+   * 读对象字节（M4-05c：worker 把预览源文件字节送进转换沙箱）。
+   *
+   * 走服务端凭据直读，**不签发预签名地址**：源文件字节不出内网、转换器不带任何 S3 凭证（deploy/preview/README「一」）。
+   * 对象不存在返回 null（不抛错）—— 与 `headObject` 同口径，由调用方决定是失败降级还是重试。
+   */
+  abstract getObject(objectKey: string): Promise<GetObjectResult | null>;
+  /**
+   * 写对象字节（M4-05c：预览产物回对象存储）。
+   *
+   * 键内含三元组版本（`previews/{contentHash}/{pipelineVersion}/{target}`，ADR-007），
+   * 同键重写只在「同一内容 + 同一管线版本 + 同一通道」发生，属幂等覆盖。
+   */
+  abstract putObject(input: PutObjectInput): Promise<{ etag: string | null }>;
   /**
    * **彻底删除**：删掉该键的所有版本（含 delete marker）。
    *

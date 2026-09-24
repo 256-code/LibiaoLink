@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { PERMISSION_KEYS, type PermissionKey } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
 import type { ActorAuthorization, RoleService } from "../src/modules/identity/index.js";
+import { equivalentAdminAuthorization } from "../src/modules/identity/role.service.js";
 import type { PermissionRepository } from "../src/modules/permission/permission.repository.js";
 import { PermissionService } from "../src/modules/permission/permission.service.js";
 import {
@@ -259,6 +260,42 @@ describe("五出口：页面 / 导出 / 搜索 / 通知同源（C3-08 不变量�
 
   it("出口集合固定为四类（页面 / 导出 / 搜索 / 通知）+ 记录级 = 五出口口径", () => {
     expect([...EXIT_KINDS]).toEqual(["page", "export", "search", "notify"]);
+  });
+});
+
+// ---------- 权限判定开关（PERMISSION_ENFORCED=false · 一期不判权限，业务口径 2026-09-23） ----------
+
+describe("一期不判权限：等效管理员画像把五出口一并放开", () => {
+  const admin = equivalentAdminAuthorization(ACTOR_ID);
+
+  it("画像：admin 角色码 + 数据范围 all + 契约全量权限位", () => {
+    expect(admin).toEqual({
+      userId: ACTOR_ID,
+      roleCodes: ["admin"],
+      dataScopes: ["all"],
+      permissionKeys: [...PERMISSION_KEYS],
+    });
+  });
+
+  it("功能权限：全键放行（含「导出单独授权」的 project.export，不因二期口径被拦）", () => {
+    for (const key of PERMISSION_KEYS) {
+      expect(can(admin, key)).toBe(true);
+    }
+  });
+
+  it("记录级：不裁剪（all）—— 非名册成员 / 非责任人的项目同样可见", () => {
+    expect(projectScopeSpec(admin)).toEqual(ALL_SPEC);
+    expect(isProjectVisible(ALL_SPEC, { rosterMember: false, managerOfRecord: false, rosterProjectManager: false })).toBe(true);
+  });
+
+  it("字段级：无隐藏字段（联系人 / 备注不再裁剪），导出出口同样全量", () => {
+    for (const entity of ["stakeholder", "user"] as const) {
+      expect(hiddenFields(admin, entity)).toEqual([]);
+      expect(visibleFields(admin, entity)).toEqual(ENTITY_FIELDS[entity]);
+    }
+    const plan = planExit(admin, "export", "stakeholder");
+    expect(plan.allowed).toBe(true);
+    expect(plan.hidden).toEqual([]);
   });
 });
 

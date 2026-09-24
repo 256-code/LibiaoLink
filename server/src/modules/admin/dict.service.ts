@@ -14,8 +14,9 @@ function itemSnapshot(row: DictItemRow): Record<string, unknown> {
 
 /**
  * 字典用例（h7 · C9）：读下发 + 管理端维护。
- * 口径：类型是契约枚举（region / projectType），条目可维护；「删除」= 停用（C9-02：停用不影响存量数据展示，
- * 历史数据保留原值）；每次变更写审计留痕（对象 = dict_item，字段级 before / after）。
+ * 口径：类型是契约枚举（region / projectType），条目可维护；「删除」= 物理删行（Push 173 起 DELETE 接口直接从 dict_items
+ * 删除，删除前快照写审计；存量项目按原码 / 原名渲染，不受影响）；每次变更写审计留痕（对象 = dict_item，字段级 before / after）。
+ * Push 174：删除前判**引用**（未删除项目数 > 0 → 409 DICT_ITEM_IN_USE，不删不写审计）；下发条目带 usageCount 供前端置灰。
  */
 @Injectable()
 export class DictService {
@@ -41,7 +42,7 @@ export class DictService {
     return this.toDict(row, includeDisabled);
   }
 
-  /** POST /api/v1/dicts/{type}/items（dict.manage）：同类型内码唯一 409 DICT_ITEM_EXISTS；写审计 create。 */
+  /** POST /api/v1/dicts/{type}/items（C9-02 修订：region = 登录即可；其余类型 dict.manage）：同类型内码唯一 409 DICT_ITEM_EXISTS；写审计 create。 */
   async createItem(type: string, body: DictItemCreateBody, actorId: string): Promise<Dict> {
     const typeRow = await this.requireType(type);
     const at = new Date();
@@ -124,15 +125,56 @@ export class DictService {
     return this.get(type, true);
   }
 
+  /**
+   * DELETE /api/v1/dicts/{type}/items/{code}（dict.manage）：物理删除该条目；删除前快照写审计（action=delete）；未知条目 404。
+   * **引用守卫（A3 · Push 174）**：条目正被未删除项目引用时拒绝删除 —— 409 DICT_ITEM_IN_USE（不落审计、不改任何行、事务内判定）。
+   */
+  async deleteItem(type: string, code: string, actorId: string): Promise<Dict> {
+    const typeRow = await this.requireType(type);
+    const at = new Date();
+    await this.database.db.transaction(async (tx) => {
+      const before = await this.dicts.findItem(type, code, tx);
+      if (before === null) {
+        throw new AppError("NOT_FOUND", "字典项不存在：" + type + "/" + code);
+      }
+      const usage = (await this.dicts.usageCounts(type, tx)).get(code) ?? 0;
+      if (usage > 0) {
+        throw new AppError(
+          "DICT_ITEM_IN_USE",
+          "该" + typeRow.name + "正被 " + String(usage) + " 个项目使用，不能删除：" + before.name + "（" + type + "/" + code + "）",
+        );
+      }
+      const deleted = await this.dicts.deleteItem(type, code, tx);
+      if (deleted === null) {
+        throw new AppError("NOT_FOUND", "字典项不存在：" + type + "/" + code);
+      }
+      await this.dicts.touchType(type, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "dict_item",
+        objectId: type + ":" + code,
+        summary: "删除字典项：" + typeRow.name + " · " + before.name + "（" + before.code + "）",
+        changes: diffRecords({ code: before.code, ...itemSnapshot(before) }, {}),
+        metadata: { type },
+      });
+    });
+    return this.get(type, true);
+  }
+
   private async requireType(type: string): Promise<DictTypeRow> {
     const row = await this.dicts.findType(type);
     if (row === null) throw new AppError("NOT_FOUND", "未知字典类型：" + type);
     return row;
   }
 
-  /** 行 → 契约：updatedAt 取字典类型版本（条目变更会 touchType），供前端做 ETag 缓存。 */
+  /**
+   * 行 → 契约：updatedAt 取字典类型版本（条目变更会 touchType），供前端做 ETag 缓存；
+   * usageCount = **未删除项目**对该码的引用数（A3 删除守卫 · Push 174；region / projectType 之外恒 0），前端据此把删除入口置灰。
+   */
   private async toDict(type: DictTypeRow, includeDisabled: boolean): Promise<Dict> {
     const items = await this.dicts.listItems(type.code, includeDisabled);
+    const usage = await this.dicts.usageCounts(type.code);
     return {
       type: type.code as Dict["type"],
       items: items.map((item) => ({
@@ -140,6 +182,7 @@ export class DictService {
         name: item.name,
         sort: item.sort,
         enabled: item.enabled,
+        usageCount: usage.get(item.code) ?? 0,
         metadata: item.metadata,
       })),
       updatedAt: type.updatedAt.toISOString(),

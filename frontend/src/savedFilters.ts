@@ -5,9 +5,10 @@ import type { Project } from "./types";
  * 不同员工关注的项目不一样 —— 把一组分类条件（地区 / 项目类型 / 项目经理 / 项目时间）
  * 存成可命名的组合，一键复用：点「添加」→ 在分类里勾选多项 → 命名保存 → 出现在「常用筛选」。
  *
- * 原型为本地记忆（localStorage，与首页筛选记忆同一条降级策略：隐私模式 / 存储受限静默跳过）；
- * 接线后建议存用户偏好 `PATCH /api/v1/users/me/preferences` 的 `homeSavedFilters` 键
- * （A4；契约 PATCH 为合并语义 + catchall，新增偏好键不必改契约，见 shared/src/modules/users.ts）。
+ * 存储（A24 · Push 169 落库）：按账号存服务端 `user_preferences.prefs.homeSavedFilters`
+ * （GET / PATCH /api/v1/users/me/preferences；同一账号换设备可见，同一设备换账号互不可见）。
+ * 本文件只保留类型 / 常量 / 纯函数，外加 Push 138–168 期间 localStorage 旧键的**迁移读取**
+ * （服务端为空时把本机组合推上云，一次性迁移见 frontend/src/preferencesApi.ts）。
  */
 export type FilterCriteria = {
   regions: string[];
@@ -28,6 +29,7 @@ export const SAVED_FILTER_NAME_MAX = 20;
 /** 最多保存的组合数（超出后「添加」置灰并提示）。 */
 export const SAVED_FILTER_LIMIT = 20;
 
+/** Push 138–168 的本机记忆键（**只读迁移用**：Push 169 起不再写入，见 preferencesApi.ts）。 */
 export const SAVED_FILTERS_STORAGE_KEY = "libiaolink.home.savedFilters.v1";
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -153,8 +155,8 @@ function sanitizeSavedFilter(value: unknown): SavedFilter | null {
   return { id, name, ...criteria };
 }
 
-/** 读取本地记忆；损坏 / 缺失一律按「无常用筛选」处理，不抛错，最多回 SAVED_FILTER_LIMIT 条。 */
-export function readSavedFilters(): SavedFilter[] {
+/** 读取本机旧键（迁移用）；损坏 / 缺失一律按「无常用筛选」处理，不抛错，最多回 SAVED_FILTER_LIMIT 条。 */
+export function readLegacySavedFilters(): SavedFilter[] {
   try {
     const raw = window.localStorage.getItem(SAVED_FILTERS_STORAGE_KEY);
     if (raw === null) {
@@ -180,24 +182,14 @@ export function readSavedFilters(): SavedFilter[] {
   }
 }
 
-/** 整体写入（空数组 = 清除该键）；存储受限时静默降级，不影响页面功能。 */
-export function persistSavedFilters(items: SavedFilter[]): void {
-  try {
-    if (items.length === 0) {
-      window.localStorage.removeItem(SAVED_FILTERS_STORAGE_KEY);
-      return;
-    }
-    window.localStorage.setItem(SAVED_FILTERS_STORAGE_KEY, JSON.stringify(items));
-  } catch {
-    // 与首页筛选记忆同一降级策略
-  }
-}
-
-/** 退出登录时清除（与 homePrefs.clearHomePrefs 同一隔离口径：多人共用设备不留痕）。 */
-export function clearSavedFilters(): void {
+/**
+ * 迁移成功（或服务端已有值）后清除本机旧键。
+ * 「退出登录清空」的口径随之取消：常用筛选是账号自己的记忆（服务端按 actorId 隔离），换账号不会串。
+ */
+export function clearLegacySavedFilters(): void {
   try {
     window.localStorage.removeItem(SAVED_FILTERS_STORAGE_KEY);
   } catch {
-    // 同上
+    // 存储受限（隐私模式）静默跳过
   }
 }

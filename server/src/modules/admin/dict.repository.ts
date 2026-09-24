@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, count, eq, isNull } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { dictItems, dictTypes } from "../../db/schema/admin.js";
+import { projects } from "../../db/schema/projects.js";
 
 /** dict_types 行（字典类型注册表）。 */
 export interface DictTypeRow {
@@ -60,7 +61,7 @@ const ITEM_COLUMNS = {
   updatedAt: dictItems.updatedAt,
 };
 
-/** 字典数据访问（h7 · C9）：类型注册表 + 条目；「删除」= enabled=false（无物理删除）。 */
+/** 字典数据访问（h7 · C9）：类型注册表 + 条目；「删除」= 物理删行（DELETE /dicts/{type}/items/{code}，Push 173 起），enabled 仅作兼容字段。 */
 @Injectable()
 export class DictRepository {
   constructor(private readonly database: DatabaseService) {}
@@ -94,6 +95,24 @@ export class DictRepository {
       .where(and(eq(dictItems.typeCode, type), eq(dictItems.code, code)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /**
+   * 条目的项目引用计数（A3 删除守卫 · Push 174）：每个字典码 → **未删除项目**数。
+   * 维度：region → projects.region、projectType → projects.project_type；其余字典类型不参与（返回空表 = 恒 0）。
+   * 口径：只数 deleted_at is null 的项目（软删项目不在卡片里；归档项目仍占卡片，照数）。
+   */
+  async usageCounts(type: string, client: DbClient = this.database.db): Promise<Map<string, number>> {
+    const column = type === "region" ? projects.region : type === "projectType" ? projects.projectType : null;
+    if (column === null) {
+      return new Map();
+    }
+    const rows = await client
+      .select({ code: column, total: count() })
+      .from(projects)
+      .where(isNull(projects.deletedAt))
+      .groupBy(column);
+    return new Map(rows.map((row) => [row.code, Number(row.total)]));
   }
 
   async insertItem(input: DictItemInsertInput, actorId: string, at: Date, client: DbClient): Promise<DictItemRow> {
@@ -133,6 +152,15 @@ export class DictRepository {
     const rows = await client
       .update(dictItems)
       .set(set)
+      .where(and(eq(dictItems.typeCode, type), eq(dictItems.code, code)))
+      .returning(ITEM_COLUMNS);
+    return rows[0] ?? null;
+  }
+
+  /** 物理删除条目：返回 null = 条目不存在（服务层转 404）；调用方负责 touchType 与审计留痕。 */
+  async deleteItem(type: string, code: string, client: DbClient): Promise<DictItemRow | null> {
+    const rows = await client
+      .delete(dictItems)
       .where(and(eq(dictItems.typeCode, type), eq(dictItems.code, code)))
       .returning(ITEM_COLUMNS);
     return rows[0] ?? null;

@@ -10,16 +10,18 @@ export type {
   CopyObjectResult,
   CreateMultipartUploadInput,
   DownloadUrlInput,
+  GetObjectResult,
   MultipartUploadKeyInput,
   MultipartUploadRef,
   ObjectHead,
   PartUploadUrlInput,
   PurgeObjectResult,
+  PutObjectInput,
   SignedUrl,
   StorageFailureCode,
   UploadedPart,
 } from "./object-storage.js";
-export { buildObjectKey, buildUploadStagingKey, extensionOf } from "./object-key.js";
+export { buildObjectKey, buildPreviewArtifactKey, buildUploadStagingKey, extensionOf } from "./object-key.js";
 export type { ObjectKeyInput } from "./object-key.js";
 export {
   DEFAULT_PART_SIZE_BYTES,

@@ -4,12 +4,14 @@
  *
  * 真机（真 PG + 真 api）验到的部分：
  *   字典（C9）：GET /dicts 默认只回启用项（前端启动拉一次）；includeDisabled 无 dict.manage → 403（管理端口径）；
- *     管理员新增 / 停用条目 200，响应即「更新后的整个字典」（前端直接替换缓存）；同码重复 409 DICT_ITEM_EXISTS；
- *     未知类型 404；停用替代删除 —— 停用项不再出现在默认下发里（存量数据仍按原值展示）。
+ *     管理员新增条目 201、**删除条目 = 物理删行 200**（Push 173：`DELETE /dicts/{type}/items/{code}`），响应即「更新后的整个字典」（前端直接替换缓存）；同码重复 409 DICT_ITEM_EXISTS；
+ *     未知类型 404；删除无记忆 —— 库里不留行、管理端全集也不含，同码可重新新增（存量数据仍按原码 / 原名展示）。
+ *     **Push 174 引用守卫**：条目被未删除项目引用时删除 → 409 DICT_ITEM_IN_USE（不删行、不写审计）；下发条目带 usageCount 供前端置灰。
  *   审计（C7）：写动作留痕（谁 / 何时 / 对什么 / 从什么改成什么）→ 按对象（objectType + objectId）与操作人（actorId）检索命中；
  *     越权 403 → result=denied 行（C7-03，可按人筛出）；普通读 404 不产生噪声行；审计接口仅 audit.view（受限账号 403）。
  *
- * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL）。只在本地沙箱 / 联调库跑，会：铸两个临时会话（跑完删除）、
+ * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL，**须以 PERMISSION_ENFORCED=true 启动** —— 本脚本验的是 ADR-011 判定语义；
+ *      一期默认 false = 不判权限时受限账号也是等效管理员，S0 守卫会直接失败并给出重启指引）。只在本地沙箱 / 联调库跑，会：铸两个临时会话（跑完删除）、
  *      建 POC7-xxx 字典条目（跑完硬删；api 角色无权删审计 → 用 migrator 连接）、清掉本次写入的审计行。
  * 用法：cd server && node scripts/poc7-replay.mjs [--out <报告.md>] [--json <证据.json>] [--actor <userId>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
@@ -136,6 +138,10 @@ try {
 
   const meActor = await actorCall("GET", "/api/v1/permissions/me");
   const actorKeys = meActor.body?.permissions?.permissionKeys ?? [];
+  // 前置守卫（Push 178 · PERMISSION_ENFORCED）：本脚本的 403 / 记录级断言验证的是 ADR-011 判定，
+  // 目标 api 须以 PERMISSION_ENFORCED=true 启动；一期默认 false = 不判权限（受限账号也是等效管理员）。
+  const actorScopes = meActor.body?.permissions?.dataScopes ?? [];
+  check("S0", "前置：目标 api 处于「按 ADR-011 判定」模式（PERMISSION_ENFORCED=true）", "受限账号 dataScopes 不含 all", "dataScopes=" + truncate(actorScopes, 80), meActor.status === 200 && !actorScopes.includes("all"), "一期「不判权限」口径下请先以 PERMISSION_ENFORCED=true 重启 api 再跑本脚本");
   check("S2", "受限账号会话（越权拒绝基准账号）", "200 + 不含 dict.manage / audit.view", meActor.status + " " + truncate({ roleCodes: meActor.body?.permissions?.roleCodes, keys: actorKeys.length }, 160), meActor.status === 200 && !actorKeys.includes("dict.manage") && !actorKeys.includes("audit.view"), "账号 " + actorRow.username + "（" + actorRow.id + "）；--actor 可指定");
 
   // ---------- 字典读（C9） ----------
@@ -154,7 +160,7 @@ try {
 
   const hiddenAdmin = await adminCall("GET", "/api/v1/dicts?includeDisabled=true");
   const hiddenRegionCount = ((hiddenAdmin.body?.items ?? []).find((item) => item.type === "region")?.items?.length) ?? 0;
-  check("D4", "管理口径：管理员 includeDisabled=true 返回全集", "200 + 条数 ≥ 默认下发（" + regionItems.length + "）", hiddenAdmin.status + " regionItems=" + hiddenRegionCount + " " + truncate(hiddenAdmin.body, 120), hiddenAdmin.status === 200 && hiddenRegionCount >= regionItems.length, "无停用项时两者相等；停用后见 D9 / D10");
+  check("D4", "管理口径：管理员 includeDisabled=true 返回全集", "200 + 条数 ≥ 默认下发（" + regionItems.length + "）", hiddenAdmin.status + " regionItems=" + hiddenRegionCount + " " + truncate(hiddenAdmin.body, 120), hiddenAdmin.status === 200 && hiddenRegionCount >= regionItems.length, "兼容参数：Push 173 起删除 = 物理删行，一期不再产生停用项，故两者相等（历史停用行见 D10b）");
 
   const deniedAdminBefore = await sqlCount(DENIED_SQL, [adminRow.id]);
   const unknown = await adminCall("GET", "/api/v1/dicts/priority");
@@ -162,7 +168,7 @@ try {
   const deniedAdminAfter = await sqlCount(DENIED_SQL, [adminRow.id]);
   check("D5b", "噪声边界：普通读 404 不产生 denied 行（shouldRecordDenied）", "管理员 denied 行数不变（" + deniedAdminBefore + "）", "实际 " + deniedAdminAfter, deniedAdminAfter === deniedAdminBefore, "404 只记写请求与项目域路径（server/src/common/audit/audit-path.ts）", false);
 
-  // ---------- 字典写（C9-02）：新增 → 停用替代删除 ----------
+  // ---------- 字典写（C9-02）：新增 → 物理删除（Push 173：删除无记忆，同码可重建） ----------
   const created = await adminCall("POST", "/api/v1/dicts/region/items", { code: CODE, name: "PoC-7 回放区", sort: 999, enabled: true, metadata: {} });
   const createdItem = (created.body?.items ?? []).find((item) => item.code === CODE);
   check("D6", "新增条目（dict.manage）：响应是更新后的整个字典（前端替换缓存）", "201 + 含 " + CODE + "（enabled=true）", created.status + " " + truncate({ type: created.body?.type, hit: createdItem, items: created.body?.items?.length }, 200), created.status === 201 && createdItem?.enabled === true);
@@ -174,32 +180,66 @@ try {
   const duplicate = await adminCall("POST", "/api/v1/dicts/region/items", { code: CODE, name: "重复码", sort: 1000, enabled: true, metadata: {} });
   check("D7", "同类型内码唯一：重复新增 409 DICT_ITEM_EXISTS", "409 DICT_ITEM_EXISTS", duplicate.status + " " + truncate(duplicate.body, 140), duplicate.status === 409 && duplicate.body?.code === "DICT_ITEM_EXISTS");
 
-  const actorCreate = await actorCall("POST", "/api/v1/dicts/region/items", { code: CODE + "-X", name: "越权新增", sort: 1000, enabled: true, metadata: {} });
-  check("D8", "写 = 仅管理员：受限账号新增 403", "403 FORBIDDEN", actorCreate.status + " " + truncate(actorCreate.body, 140), actorCreate.status === 403 && actorCreate.body?.code === "FORBIDDEN");
+  const actorCreateRegion = await actorCall("POST", "/api/v1/dicts/region/items", { code: CODE + "-X", name: "受限账号新增区", sort: 1000, enabled: true, metadata: {} });
+  const actorRegionItem = (actorCreateRegion.body?.items ?? []).find((item) => item.code === CODE + "-X");
+  check("D8", "region 新增 = 登录即可（Push 168：地区是全站共享的公共标签）：受限账号可新增", "201 + 含 " + CODE + "-X", actorCreateRegion.status + " " + truncate(actorRegionItem, 200), actorCreateRegion.status === 201 && actorRegionItem?.enabled === true);
+
+  const actorCreateType = await actorCall("POST", "/api/v1/dicts/projectType/items", { code: CODE + "-T", name: "越权新增类型", sort: 1000, enabled: true, metadata: { accent: "#3b82f6" } });
+  check("D8b", "projectType 新增 = 仅管理员：受限账号 403 FORBIDDEN", "403 FORBIDDEN", actorCreateType.status + " " + truncate(actorCreateType.body, 140), actorCreateType.status === 403 && actorCreateType.body?.code === "FORBIDDEN");
   const deniedActorRows = await waitForCount(DENIED_SQL, [actorRow.id], deniedBefore + 2);
-  check("D8b", "越权写留痕：denied 行 +1（objectRefOfUrl → dict_item / region）", "denied 行数 ≥ " + (deniedBefore + 2), "实际 " + deniedActorRows, deniedActorRows >= deniedBefore + 2, "POST /dicts/region/items（items 是结构段，对象 id 取 type）", false);
+  check("D8c", "越权写留痕：denied 行 +1（objectRefOfUrl → dict_item / projectType）", "denied 行数 ≥ " + (deniedBefore + 2), "实际 " + deniedActorRows, deniedActorRows >= deniedBefore + 2, "POST /dicts/projectType/items（items 是结构段，对象 id 取 type）", false);
 
-  const disabled = await adminCall("PATCH", "/api/v1/dicts/region/items/" + encodeURIComponent(CODE), { enabled: false });
-  const disabledItem = (disabled.body?.items ?? []).find((item) => item.code === CODE);
-  check("D9", "停用替代删除：PATCH enabled=false 200 + 管理端回显停用项", "200 + " + CODE + " enabled=false（仍在管理端全集里）", disabled.status + " " + truncate(disabledItem, 160), disabled.status === 200 && disabledItem?.enabled === false);
-
-  const dictAfterDisable = await adminCall("GET", "/api/v1/dicts");
-  const stillListed = (((dictAfterDisable.body?.items ?? []).find((item) => item.type === "region")?.items) ?? []).some((item) => item.code === CODE);
-  check("D10", "停用项不再出现在默认下发（存量数据仍按原值展示）", "默认下发不含 " + CODE, "含 " + CODE + " = " + stillListed, dictAfterDisable.status === 200 && stillListed === false);
-
-  const updateRow = (await db.query("select action, actor_id, result, changes from audit_logs where object_type = $$dict_item$$ and object_id = $1 order by id desc limit 1", ["region:" + CODE])).rows[0];
-  const enabledChange = Array.isArray(updateRow?.changes) ? updateRow.changes.find((change) => change.field === "enabled") : undefined;
-  check("A2", "按对象检索命中修改留痕：字段级 before / after（enabled true → false）", "action=update + changes 含 {enabled, true, false}", truncate({ action: updateRow?.action, actor: updateRow?.actor_id, change: enabledChange }, 220), updateRow?.action === "update" && updateRow?.actor_id === adminRow.id && enabledChange?.from === true && enabledChange?.to === false);
-
-  const actorUpdate = await actorCall("PATCH", "/api/v1/dicts/region/items/" + encodeURIComponent(CODE), { enabled: true });
-  check("D11", "写 = 仅管理员：受限账号停用 / 恢复 403", "403 FORBIDDEN", actorUpdate.status + " " + truncate(actorUpdate.body, 140), actorUpdate.status === 403 && actorUpdate.body?.code === "FORBIDDEN");
+  const actorDelete = await actorCall("DELETE", "/api/v1/dicts/region/items/" + encodeURIComponent(CODE));
+  check("D11", "写 = 仅管理员：受限账号删除 403", "403 FORBIDDEN", actorDelete.status + " " + truncate(actorDelete.body, 140), actorDelete.status === 403 && actorDelete.body?.code === "FORBIDDEN");
   const deniedSameObject = await waitForCount("select count(*)::int as n from audit_logs where result = $$denied$$ and object_type = $$dict_item$$ and object_id = $1 and actor_id = $2", ["region:" + CODE, actorRow.id], 1);
   check("D11b", "越权行与成功写同对象 id（可直接按对象检索同一条目）", "≥1 行（objectId=region:" + CODE + "）", "实际 " + deniedSameObject, deniedSameObject >= 1, "objectRefOfUrl 对字典取 type[:code] 且路径段先解码", false);
+
+  const deleted = await adminCall("DELETE", "/api/v1/dicts/region/items/" + encodeURIComponent(CODE));
+  const deletedStillListed = (deleted.body?.items ?? []).some((item) => item.code === CODE);
+  check("D9", "删除条目 = 物理删行（Push 173）：DELETE 200 + 响应不含该条目", "200 + " + CODE + " 不在响应的 region 条目里", deleted.status + " " + truncate({ type: deleted.body?.type, stillListed: deletedStillListed, items: deleted.body?.items?.length }, 200), deleted.status === 200 && deletedStillListed === false);
+
+  const rowGone = await sqlCount("select count(*)::int as n from dict_items where type_code = $$region$$ and code = $1", [CODE]);
+  check("D9b", "物理删除：库里 dict_items 无该行（不是 enabled=false）", "行数 0", "实际 " + rowGone, rowGone === 0, "直读库表（api 角色 DELETE 权限来自 0013；无物理删除的旧口径见 database/migrations/0030_dict_item_hard_delete.sql）");
+
+  const dictAfterDelete = await adminCall("GET", "/api/v1/dicts");
+  const stillListed = (((dictAfterDelete.body?.items ?? []).find((item) => item.type === "region")?.items) ?? []).some((item) => item.code === CODE);
+  check("D10", "删除后默认下发不含该条目", "默认下发不含 " + CODE, "含 " + CODE + " = " + stillListed, dictAfterDelete.status === 200 && stillListed === false);
+
+  const adminAllAfterDelete = await adminCall("GET", "/api/v1/dicts?includeDisabled=true");
+  const stillInAdminAll = (((adminAllAfterDelete.body?.items ?? []).find((item) => item.type === "region")?.items) ?? []).some((item) => item.code === CODE);
+  check("D10b", "管理端全集（includeDisabled=true）也不含该条目：删除无残留、无停用位", "管理端全集不含 " + CODE, "含 " + CODE + " = " + stillInAdminAll, adminAllAfterDelete.status === 200 && stillInAdminAll === false, "Push 173：删除 = 物理删行；includeDisabled 降级为兼容参数");
+
+  const deleteRow = (await db.query("select action, actor_id, result, changes from audit_logs where object_type = $$dict_item$$ and object_id = $1 order by id desc limit 1", ["region:" + CODE])).rows[0];
+  const codeChange = Array.isArray(deleteRow?.changes) ? deleteRow.changes.find((change) => change.field === "code") : undefined;
+  const nameChange = Array.isArray(deleteRow?.changes) ? deleteRow.changes.find((change) => change.field === "name") : undefined;
+  check("A2", "按对象检索命中删除留痕：action=delete + 字段级 from → null（删除前快照）", "action=delete + changes 含 {code, " + CODE + ", null} 与 {name, 原名, null}", truncate({ action: deleteRow?.action, actor: deleteRow?.actor_id, codeChange, nameChange }, 260), deleteRow?.action === "delete" && deleteRow?.actor_id === adminRow.id && codeChange?.from === CODE && codeChange?.to === null && nameChange?.to === null);
+
+  const recreated = await adminCall("POST", "/api/v1/dicts/region/items", { code: CODE, name: "PoC-7 回放区（重建）", sort: 1001, enabled: true, metadata: {} });
+  const recreatedItem = (recreated.body?.items ?? []).find((item) => item.code === CODE);
+  check("D12", "删除无记忆：同码可重新新增（不 409），按本次参数落库", "201 + " + CODE + "（name=重建后、sort=1001）", recreated.status + " " + truncate(recreatedItem, 200), recreated.status === 201 && recreatedItem?.name === "PoC-7 回放区（重建）" && recreatedItem?.sort === 1001);
+
+  // ---------- 引用守卫（A3 · Push 174：有项目卡片在用就不给删） ----------
+  const guardDict = await adminCall("GET", "/api/v1/dicts");
+  const guardRegions = ((guardDict.body?.items ?? []).find((item) => item.type === "region")?.items) ?? [];
+  const usedRegion = guardRegions.find((item) => item.usageCount > 0);
+  const unusedRegion = guardRegions.find((item) => item.usageCount === 0);
+  const usedDbCount = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from projects where deleted_at is null and region = $1", [usedRegion.code]);
+  check("D13", "下发条目带 usageCount（引用守卫的输入）= 未删除项目引用数", "被引用地区的 usageCount 与库内计数一致、且存在 usageCount=0 的条目", truncate({ used: usedRegion === undefined ? null : { code: usedRegion.code, api: usedRegion.usageCount, db: usedDbCount }, unused: unusedRegion?.code ?? null }, 220), usedRegion !== undefined && unusedRegion !== undefined && usedRegion.usageCount === usedDbCount, "只数 deleted_at is null 的项目（软删项目不在卡片里）");
+
+  const beforeRows = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from dict_items where type_code = $$region$$ and code = $1", [usedRegion.code]);
+  const beforeAudit = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from audit_logs where object_type = $$dict_item$$ and object_id = $1", ["region:" + usedRegion.code]);
+  const blocked = usedRegion === undefined ? { status: 0, body: null } : await adminCall("DELETE", "/api/v1/dicts/region/items/" + encodeURIComponent(usedRegion.code));
+  const afterRows = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from dict_items where type_code = $$region$$ and code = $1", [usedRegion.code]);
+  const afterAudit = usedRegion === undefined ? 0 : await sqlCount("select count(*)::int as n from audit_logs where object_type = $$dict_item$$ and object_id = $1", ["region:" + usedRegion.code]);
+  const stillListedAfterBlock = ((((await adminCall("GET", "/api/v1/dicts")).body?.items ?? []).find((item) => item.type === "region")?.items) ?? []).some((item) => item.code === usedRegion?.code);
+  const expectedD14 = "409 DICT_ITEM_IN_USE + 库里仍有该行（" + String(beforeRows) + " → " + String(afterRows) + "）+ 审计行数不变（" + String(beforeAudit) + "）+ 下发仍在；被引用地区 = " + (usedRegion?.code ?? "无");
+  const actualD14 = blocked.status + " " + truncate(blocked.body, 200) + "；行数 " + String(beforeRows) + " → " + String(afterRows) + "、审计 " + String(beforeAudit) + " → " + String(afterAudit) + "、下发仍在 = " + String(stillListedAfterBlock);
+  check("D14", "引用守卫：被项目卡片引用的地区删除 → 409 DICT_ITEM_IN_USE（不删行、不写审计）", expectedD14, actualD14, usedRegion !== undefined && blocked.status === 409 && blocked.body?.code === "DICT_ITEM_IN_USE" && beforeRows === 1 && afterRows === 1 && beforeAudit === afterAudit && stillListedAfterBlock === true, "服务端在事务内判定（count > 0 即抛错，不 touchType、不落审计）；前端同款判定已把删除位置灰");
 
   // ---------- 审计检索（C7-04 服务端） ----------
   const auditByObject = await adminCall("GET", "/api/v1/audit-logs?objectType=dict_item&objectId=" + encodeURIComponent("region:" + CODE) + "&limit=50");
   const byObjectItems = auditByObject.body?.items ?? [];
-  check("A3", "审计接口·按对象检索（objectType + objectId）", "200 + total ≥ 2（create + update）", auditByObject.status + " total=" + (auditByObject.body?.total ?? "?") + " " + truncate(byObjectItems.map((item) => item.action), 120), auditByObject.status === 200 && (auditByObject.body?.total ?? 0) >= 2 && byObjectItems.every((item) => item.objectType === "dict_item"));
+  check("A3", "审计接口·按对象检索（objectType + objectId）", "200 + total ≥ 2（create + delete）", auditByObject.status + " total=" + (auditByObject.body?.total ?? "?") + " " + truncate(byObjectItems.map((item) => item.action), 120), auditByObject.status === 200 && (auditByObject.body?.total ?? 0) >= 2 && byObjectItems.every((item) => item.objectType === "dict_item"));
 
   const auditByActor = await adminCall("GET", "/api/v1/audit-logs?actorId=" + actorRow.id + "&result=denied&limit=50");
   const byActorItems = auditByActor.body?.items ?? [];
@@ -215,7 +255,7 @@ try {
   if (db !== undefined) {
     try {
       if (args.keep !== true) {
-        await db.query("delete from dict_items where type_code = $$region$$ and code = $1", [CODE]);
+        await db.query("delete from dict_items where code like $1", ["POC7-%"]);
         await db.query("delete from audit_logs where object_id like $$region:POC7-%$$ or (actor_id = any($1::uuid[]) and occurred_at >= $2)", [[cleanup.adminId, cleanup.actorId], cleanup.startedAt]);
         await db.query("delete from sessions where token_hash = any($1::text[])", [cleanup.tokens.map((token) => sha256(token))]);
         const residue = {
@@ -258,16 +298,17 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：默认只下发启用项、管理口径 403、新增 / 停用 200 且同码 409、未知类型 404 无噪声、审计按对象与按人检索命中、越权 403 落 denied 行、审计接口仅 audit.view、回放数据零残留。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：默认只下发启用项、管理口径 403、新增 201 / 删除 200（物理删行 + 删除无记忆）且同码 409、未知类型 404 无噪声、审计按对象与按人检索命中、越权 403 落 denied 行、审计接口仅 audit.view、回放数据零残留。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 验收对照（团队分工.md §6 · h7）");
 lines.push("");
-lines.push("- 「字典（C9）唯一口径」= D1 ~ D11：下发只含启用项、includeDisabled 需 dict.manage（403）、新增 / 停用条目 200 且响应即更新后的整个字典、同码 409 `DICT_ITEM_EXISTS`、未知类型 404、停用替代删除（停用后不再默认下发，无物理删除）。");
-lines.push("- 「审计留痕（谁 / 何时 / 对什么 / 从什么改成什么）」= A1 / A2：dict_item 对象上的 create（changes 含 code）/ update（字段级 `enabled: true → false`）两行，actorId 为管理员、entry=api、result=succeeded；写入与业务同事务（读库直证）。");
-lines.push("- 「按对象与操作人可检索」= A3 / A4 + D11b：`GET /api/v1/audit-logs?objectType=dict_item&objectId=region:<code>` 命中 create + update；`actorId=<受限账号>&result=denied` 命中全部越权行；越权行对象 id 与成功写同形（type[:code]）。");
-lines.push("- 「越权留痕（C7-03）」= D3 / D3b / D8 / D8b / A5：403 一律记 denied（含 includeDisabled 越权读、字典写越权）；普通读 404（未知类型）不写噪声行（D5b）。");
+lines.push("- 「字典（C9）唯一口径」= D1 ~ D12：下发只含启用项、includeDisabled 需 dict.manage（403，兼容参数）、新增条目 201 / 删除条目 200（**物理删行**：库表无该行、默认下发与管理端全集都不含）且响应即更新后的整个字典、同码 409 `DICT_ITEM_EXISTS`、未知类型 404、删除无记忆（同码可重建为全新条目）。");
+  lines.push("- 「引用守卫（A3 · Push 174）」= D13 / D14：下发条目带 `usageCount`（= 未删除项目引用数，与库内计数一致；无引用为 0）；被项目卡片引用的地区删除 → **409 `DICT_ITEM_IN_USE`**（不删行、不写审计、下发仍在）—— 卡片在用就不给删。");
+lines.push("- 「审计留痕（谁 / 何时 / 对什么 / 从什么改成什么）」= A1 / A2：dict_item 对象上的 create（changes 含 code）/ delete（字段级 `code / name / sort / enabled / metadata → null`：删除前快照）两行，actorId 为管理员、entry=api、result=succeeded；写入与业务同事务（读库直证）。");
+lines.push("- 「按对象与操作人可检索」= A3 / A4 + D11b：`GET /api/v1/audit-logs?objectType=dict_item&objectId=region:<code>` 命中 create + delete；`actorId=<受限账号>&result=denied` 命中全部越权行；越权行对象 id 与成功写同形（type[:code]）。");
+lines.push("- 「越权留痕（C7-03）」= D3 / D3b / D8b / D8c / D11 / A5：403 一律记 denied（含 includeDisabled 越权读、projectType 新增越权、删除越权）；普通读 404（未知类型）不写噪声行（D5b）。");
 lines.push("- 项目 / 任务 / 节点与阶段推进的写路径留痕由单测覆盖（`server/test/project-crud.test.ts` / `task-service.test.ts` / `flow-gate-rejection.test.ts` 的 FakeAuditService 断言 record 入参）；真机不造项目数据（回放脚本只跑字典与审计域）。");
-lines.push("- 「自动化用例全绿」= `cd server && node node_modules/vitest/vitest.mjs run`（`test/admin-audit.test.ts` 15 例 + 全量 184 例 / 14 文件，随 `npm test` 常跑，不连库）与 `node scripts/check-db-schema.mjs` / `check-permission-matrix.mjs`。");
+lines.push("- 「自动化用例全绿」= `cd server && node node_modules/vitest/vitest.mjs run`（`test/admin-audit.test.ts` 21 例 + 全量 484 例 / 32 文件，随 `npm test` 常跑，不连库）与 `node scripts/check-db-schema.mjs` / `check-permission-matrix.mjs`。");
 lines.push("- 复跑：cd server && node scripts/poc7-replay.mjs --out ../docs/PoC-7-回放证据(字典C9与审计留痕C7).md");
 lines.push("");
 

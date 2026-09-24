@@ -14,10 +14,10 @@ export interface ProjectFilter {
   stageKeys: string[] | null;
   statuses: string[] | null;
   keyword: string | null;
-  /** 下界（含）：filter[timeFrom] 当日 00:00:00+08:00。 */
-  updatedFrom: Date | null;
-  /** 上界（不含）：filter[timeTo] 次日 00:00:00+08:00。 */
-  updatedToExclusive: Date | null;
+  /** 创建时间下界（含）：filter[timeFrom] 当日 00:00:00+08:00（Push 175：维度 = projects.created_at）。 */
+  createdFrom: Date | null;
+  /** 创建时间上界（不含）：filter[timeTo] 次日 00:00:00+08:00。 */
+  createdToExclusive: Date | null;
 }
 
 export type ProjectSortField = "updatedAt" | "createdAt" | "seqNo";
@@ -70,9 +70,9 @@ export function buildProjectFilter(query: ProjectListQueryInput): ProjectFilter 
       }
     }
   }
-  const updatedFrom = query["filter[timeFrom]"] === undefined ? null : shanghaiDayStart(query["filter[timeFrom]"]);
+  const createdFrom = query["filter[timeFrom]"] === undefined ? null : shanghaiDayStart(query["filter[timeFrom]"]);
   const toDayStart = query["filter[timeTo]"] === undefined ? null : shanghaiDayStart(query["filter[timeTo]"]);
-  if (updatedFrom !== null && toDayStart !== null && updatedFrom.getTime() > toDayStart.getTime()) {
+  if (createdFrom !== null && toDayStart !== null && createdFrom.getTime() > toDayStart.getTime()) {
     throw new AppError("VALIDATION_FAILED", "filter[timeFrom] 不能晚于 filter[timeTo]");
   }
   const keyword = query.q?.trim() ?? "";
@@ -83,15 +83,15 @@ export function buildProjectFilter(query: ProjectListQueryInput): ProjectFilter 
     stageKeys,
     statuses,
     keyword: keyword === "" ? null : keyword,
-    updatedFrom,
-    updatedToExclusive: toDayStart === null ? null : new Date(toDayStart.getTime() + DAY_MS),
+    createdFrom,
+    createdToExclusive: toDayStart === null ? null : new Date(toDayStart.getTime() + DAY_MS),
   };
 }
 
-/** 排序解析：白名单 updatedAt / createdAt / seqNo（A9）；缺省 updatedAt:desc（A1「最近活动在前」）。 */
+/** 排序解析：白名单 updatedAt / createdAt / seqNo（A9）；缺省 createdAt:desc（Push 175：默认按创建时间，最近创建的在前）。 */
 export function parseProjectSort(sort: string | undefined): ProjectSort[] {
   if (sort === undefined || sort === "") {
-    return [{ field: "updatedAt", direction: "desc" }];
+    return [{ field: "createdAt", direction: "desc" }];
   }
   const parsed: ProjectSort[] = [];
   for (const segment of sort.split(",")) {

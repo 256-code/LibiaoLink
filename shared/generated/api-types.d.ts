@@ -24,15 +24,15 @@ export interface paths {
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
                     "filter[status]"?: string;
-                    /** @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00） */
+                    /** @description 项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at） */
                     "filter[timeFrom]"?: components["schemas"]["DateOnly"];
-                    /** @description 项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
+                    /** @description 项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间） */
                     sort?: string;
                 };
                 header?: never;
@@ -135,15 +135,15 @@ export interface paths {
                     "filter[stageKey]"?: string;
                     /** @description 项目状态（多值逗号分隔） */
                     "filter[status]"?: string;
-                    /** @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00） */
+                    /** @description 项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at） */
                     "filter[timeFrom]"?: components["schemas"]["DateOnly"];
-                    /** @description 项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
+                    /** @description 项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
                     limit?: number;
-                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前） */
+                    /** @description 排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间） */
                     sort?: string;
                 };
                 header?: never;
@@ -1571,7 +1571,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐等） */
+        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式） */
         get: {
             parameters: {
                 query?: never;
@@ -1606,7 +1606,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400） */
         patch: {
             parameters: {
                 query?: never;
@@ -1658,11 +1658,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内） */
+        /** 全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内） */
         get: {
             parameters: {
                 query?: {
-                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明 */
                     includeDisabled?: "true" | "false";
                 };
                 header?: never;
@@ -1710,7 +1710,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403） */
+                    /** @description 是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明 */
                     includeDisabled?: "true" | "false";
                 };
                 header?: never;
@@ -1768,7 +1768,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 新增字典条目（仅管理员 · dict.manage；变更写审计留痕） */
+        /** 新增字典条目（region = 任何登录用户；其余类型 = dict.manage；变更写审计留痕） */
         post: {
             parameters: {
                 query?: never;
@@ -1857,10 +1857,79 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** 删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕；条目被项目引用时 409 DICT_ITEM_IN_USE） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    type: string;
+                    code: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除成功（更新后的整个字典） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
-        /** 更新字典条目（部分更新；停用替代删除；变更写审计留痕） */
+        /** 更新字典条目（部分更新；仅 dict.manage；变更写审计留痕） */
         patch: {
             parameters: {
                 query?: never;
@@ -5730,7 +5799,7 @@ export interface components {
         DataScope: "all" | "managed_projects" | "involved_projects" | "own_stakeholders" | "granted";
         /**
          * Format: date
-         * @description 项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）
+         * @description 项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）
          */
         DateOnly: string;
         /**
@@ -5751,14 +5820,16 @@ export interface components {
             name: string;
             /** @description 展示顺序（升序） */
             sort: number;
-            /** @description 普通用户只见 enabled=true 的项；管理员可见全集（二期） */
+            /** @description 是否启用；**兼容字段**（Push 173 起产品口径：删除走 DELETE 物理删除，前端不再有停用入口；值恒为 true）—— 保留给二期「临时下架」与存量数据 */
             enabled: boolean;
+            /** @description 引用该条目的**未删除项目**数（region → projects.region、projectType → projects.project_type；其余字典维度恒 0）；> 0 时删除返回 409 DICT_ITEM_IN_USE（A3 删除守卫，Push 174），前端据此把删除入口置灰 */
+            usageCount: number;
             /** @description 字典元数据；projectType 必含 accent（CSS 颜色字符串，如 #3b82f6）；另有 accentText（徽标文字色，可缺省，缺省按 #fff 处理；浅色底如品牌黄 #feca04 用深灰 #313033）。前端据此渲染，不硬编码 */
             metadata: {
                 [key: string]: unknown;
             };
         };
-        /** @description 新增字典条目：变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
         DictItemCreateBody: {
             /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
             code: string;
@@ -5786,7 +5857,7 @@ export interface components {
         DictItemUpdateBody: {
             name?: string;
             sort?: number;
-            /** @description 停用（false）替代删除：存量数据仍按原值展示（C9-02） */
+            /** @description 启用状态（兼容字段；一期删除走 DELETE 物理删除，前端不再调它） */
             enabled?: boolean;
             metadata?: {
                 [key: string]: unknown;
@@ -5818,7 +5889,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -6306,6 +6377,21 @@ export interface components {
             description?: string | null;
             version: components["schemas"]["Version"];
         };
+        /** @description 常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters） */
+        SavedHomeFilter: {
+            /** @description 组合 id（前端生成 sf- 前缀；跨设备同步后保持不变） */
+            id: string;
+            /** @description 组合名称（≤ 20 字） */
+            name: string;
+            /** @description 地区字典码（多值任一命中） */
+            regions: string[];
+            /** @description 项目类型字典码（多值任一命中） */
+            projectTypes: string[];
+            /** @description 项目经理 id 列表（用户目录 id；多值任一命中） */
+            managerIds: string[];
+            timeFrom: components["schemas"]["DateOnly"] & (string | null);
+            timeTo: components["schemas"]["DateOnly"] & (string | null);
+        };
         /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
         /** @description 推进当前阶段：过门禁才生效；失败 422 STAGE_GATE_NOT_PASSED + 缺项明细（不部分推进） */
@@ -6678,6 +6764,11 @@ export interface components {
             note?: string;
             version: components["schemas"]["Version"];
         };
+        /**
+         * @description 任务表列 key（白名单；「任务描述」常显，不在其中）
+         * @enum {string}
+         */
+        TaskTableColumnKey: "manager" | "owner" | "status" | "priority" | "onTime" | "deliverable" | "files" | "note" | "start" | "days" | "due" | "headcount" | "doneDate" | "change";
         /** @description 任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点） */
         TaskTemplate: {
             id: components["schemas"]["Uuid"];
@@ -6865,13 +6956,19 @@ export interface components {
         };
         /** @description 用户偏好（全量；GET 返回当前值） */
         UserPreferences: {
-            /** @description 任务表隐藏列 key 列表；key 白名单与前端任务表列一致，未知 key 返回 400 VALIDATION_FAILED */
-            taskTableHiddenColumns: string[];
-            updatedAt: components["schemas"]["DateTime"] & unknown;
+            /** @description 任务表隐藏列 key 列表（白名单 = TaskTableColumnKey，「任务描述」常显；未知 key 400 VALIDATION_FAILED；整体替换语义） */
+            taskTableHiddenColumns: components["schemas"]["TaskTableColumnKey"][];
+            /** @description 常用筛选组合（最多 20 组；整体替换语义） */
+            homeSavedFilters: components["schemas"]["SavedHomeFilter"][];
+            /** @description 醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false */
+            focusMode: boolean;
+            updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH 合并语义：只传变更键；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单内（未知 key 400） */
+        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED */
         UserPreferencesUpdateBody: {
-            taskTableHiddenColumns?: string[];
+            taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
+            homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
+            focusMode?: boolean;
         } & {
             [key: string]: unknown;
         };

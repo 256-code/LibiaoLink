@@ -12,7 +12,8 @@
  *   审计（h7 复用）：calendar_day（对象 id = 业务日期）与 calendar_settings（对象 id = default）的字段级留痕可按对象检索。
  *
  * 数据隔离：合成日历落在 2099 年（不与真实业务日历冲突），回放结束硬删（api 角色对 audit_logs 无 DELETE，用 migrator 连接）。
- * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL）。
+ * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL，**须以 PERMISSION_ENFORCED=true 启动** —— 本脚本验的是 ADR-011 判定语义；
+ *      一期默认 false = 不判权限时受限账号也是等效管理员，S0 守卫会直接失败并给出重启指引）。
  * 用法：cd server && node scripts/poc8-replay.mjs [--out <报告.md>] [--json <证据.json>] [--actor <userId>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
  */
@@ -143,6 +144,10 @@ try {
 
   const meActor = await actorCall("GET", "/api/v1/permissions/me");
   const actorKeys = meActor.body?.permissions?.permissionKeys ?? [];
+  // 前置守卫（Push 178 · PERMISSION_ENFORCED）：本脚本的 403 / 记录级断言验证的是 ADR-011 判定，
+  // 目标 api 须以 PERMISSION_ENFORCED=true 启动；一期默认 false = 不判权限（受限账号也是等效管理员）。
+  const actorScopes = meActor.body?.permissions?.dataScopes ?? [];
+  check("S0", "前置：目标 api 处于「按 ADR-011 判定」模式（PERMISSION_ENFORCED=true）", "受限账号 dataScopes 不含 all", "dataScopes=" + truncate(actorScopes, 80), meActor.status === 200 && !actorScopes.includes("all"), "一期「不判权限」口径下请先以 PERMISSION_ENFORCED=true 重启 api 再跑本脚本");
   check("S2", "受限账号会话（越权拒绝基准账号）", "200 + 不含 calendar.manage", meActor.status + " " + truncate({ roles: meActor.body?.permissions?.roleCodes, keys: actorKeys.length }, 160), meActor.status === 200 && !actorKeys.includes("calendar.manage"), "账号 " + actorRow.username + "（" + actorRow.id + "）；--actor 可指定");
 
   cleanup.settingsBefore = (await db.query("select reminder_shift_enabled, shift_direction from calendar_settings where id = true")).rows[0] ?? null;

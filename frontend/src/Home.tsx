@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "./api";
+import type { DictTools } from "./dictTools";
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
@@ -12,7 +13,7 @@ import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
 import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toUiProject, type ProjectFacets } from "./projectApi";
-import { newSavedFilterId, persistSavedFilters, readSavedFilters, sameCriteria } from "./savedFilters";
+import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
@@ -25,12 +26,40 @@ type HomeProps = {
   dicts: Dicts;
   /** 用户目录（项目经理姓名与候选）。 */
   directory: DirectoryUser[];
+  /** 字典（地区 / 项目类型）的「＋ 添加」与行内删除能力，与新建 / 编辑弹窗共用同一份。 */
+  dictTools: DictTools;
+  /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现。 */
+  canManageDicts: boolean;
+  /** 是否持有 project.delete（Push 172）：决定卡片上删除项目入口的呈现（服务端仍是最终裁决）。 */
+  canDeleteProject: boolean;
+  /** 是否持有 project.create（Push 173）：无权限时「新建项目」出禁用观感、点击给提示条（服务端仍是最终裁决）。 */
+  canCreateProject: boolean;
+  /** 是否持有 project.update（Push 173）：无权限时卡片编辑入口不渲染（与删除同款收敛口径）。 */
+  canUpdateProject: boolean;
+  /** 卡片删除项目（软删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
+  onDeleteProject: (project: Project) => void;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
   onCreate: (draft: ProjectDraft) => Promise<string | null>;
   onEdit: (project: Project) => void;
   /** 服务端写操作后的刷新信号（父层 +1 → 列表与计数重新取数）。 */
   refreshToken: number;
+  /** 常用筛选（A24 · 服务端 user_preferences.homeSavedFilters）：父层持有，本组件只展示与触发保存。 */
+  savedFilters: SavedFilter[];
+  /** 保存 / 删除常用筛选（整体替换 PATCH）；返回 null = 成功，返回文案 = 失败提示（文案口径由父层给）。 */
+  onSavedFiltersChange: (items: SavedFilter[]) => Promise<string | null>;
 };
+
+/**
+ * 排序维度显示名（Push 177：业务口径「取消按更新时间排序 只保留创建时间」）——
+ * 维度**固定创建时间**，工具条只留方向（降序 / 升序）；这枚文本只作说明用，不可点。
+ */
+const SORT_FIELD_LABEL = "创建时间";
+
+/** 该维度的口径说明（挂在方向按钮的悬停提示里）。 */
+const SORT_FIELD_TITLE = "项目创建的那一刻，此后不再变化";
+
+/** 点「新建项目」但缺 project.create 时的提示（Push 173；服务端仍是最终裁决）。 */
+const NO_CREATE_PERMISSION = "当前账号没有建项目权限，请联系管理员分配角色。";
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -58,14 +87,17 @@ function buildOptions(
     });
 }
 
-export default function Home({ me, dicts, directory, onCreate, onEdit, refreshToken }: HomeProps) {
+export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
   const route = useHashRoute();
   const filters = route.kind === "list" ? route.filters : EMPTY_LIST_QUERY;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  // 常用筛选（Push 138）：本地记忆的组合，点一下套用到当前筛选；「哪组正在生效」由条件比较派生，不另存状态
-  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => readSavedFilters());
+  // 常用筛选（Push 138；Push 169 起按账号存服务端）：组合由父层持有（同账号换设备可见），点一下套用到当前筛选
+  // 「哪组正在生效」由条件比较派生，不另存状态；保存 / 删除失败的提示条见 savedFilterError
+  const [savedFilterError, setSavedFilterError] = useState<string | null>(null);
+  // 无建项目权限时点「新建项目」的提示（Push 173；与 savedFilterError 同款琥珀提示条）
+  const [createHint, setCreateHint] = useState<string | null>(null);
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
   const [filterOpen, setFilterOpen] = useState(() => {
     if (initialRouteRestored()) {
@@ -272,10 +304,12 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
       timeTo: filter.timeTo,
     });
   };
+  // 保存 / 删除 = 整体替换 PATCH（父层乐观更新 + 失败回滚）；返回文案时在页面顶部出提示条，不静默吞失败
+  const persistSavedFilters = async (next: SavedFilter[]): Promise<void> => {
+    setSavedFilterError(await onSavedFiltersChange(next));
+  };
   const deleteSavedFilter = (id: string) => {
-    const next = savedFilters.filter((item) => item.id !== id);
-    setSavedFilters(next);
-    persistSavedFilters(next);
+    void persistSavedFilters(savedFilters.filter((item) => item.id !== id));
   };
   const saveSavedFilter = ({ id, name, criteria }: { id: string | null; name: string; criteria: FilterCriteria }) => {
     // 保存前按当前字典 / 计数兜底：丢弃已不存在的地区 / 类型 / 经理（与 URL 参数归一化同一收敛口径）
@@ -293,8 +327,7 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
       id === null
         ? [...savedFilters, { id: newSavedFilterId(), name, ...normalized }]
         : savedFilters.map((item) => (item.id === id ? { ...item, name, ...normalized } : item));
-    setSavedFilters(next);
-    persistSavedFilters(next);
+    void persistSavedFilters(next);
     // 保存即应用（刚定义的一组就是要看的那组）；当前筛选保留的部分以这组为准整体替换
     updateFilters({
       regions: normalized.regions,
@@ -359,18 +392,17 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
           />
           <div
             role="group"
-            aria-label="按项目时间排序"
+            aria-label={"按" + SORT_FIELD_LABEL + "排序（降序 / 升序）"}
             className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
           >
-            <span className="px-1 text-[10px] font-semibold tracking-[0.18em] text-zinc-400 select-none" aria-hidden="true">
-              TIME
-            </span>
+            {/* 排序维度（Push 177）：固定创建时间，只作说明（不参与点击），维度切换按钮已下线 */}
+            <span className="px-2.5 py-1.5 text-zinc-400 select-none">{SORT_FIELD_LABEL}</span>
             <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
             <button
               type="button"
               aria-pressed={sortDesc}
-              aria-label="按项目时间降序排列"
-              title="按项目时间降序排列（最近活动在前）"
+              aria-label={"按" + SORT_FIELD_LABEL + "降序排列"}
+              title={"按" + SORT_FIELD_LABEL + "降序排列（新的在前）——" + SORT_FIELD_TITLE}
               onClick={() => {
                 updateFilters({ sortDesc: true });
               }}
@@ -387,8 +419,8 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
             <button
               type="button"
               aria-pressed={!sortDesc}
-              aria-label="按项目时间升序排列"
-              title="按项目时间升序排列（最早活动在前）"
+              aria-label={"按" + SORT_FIELD_LABEL + "升序排列"}
+              title={"按" + SORT_FIELD_LABEL + "升序排列（旧的在前）——" + SORT_FIELD_TITLE}
               onClick={() => {
                 updateFilters({ sortDesc: false });
               }}
@@ -409,8 +441,21 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             <button
               type="button"
-              onClick={() => setIsCreateOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              aria-disabled={canCreateProject ? undefined : true}
+              title={canCreateProject ? undefined : NO_CREATE_PERMISSION}
+              onClick={() => {
+                if (!canCreateProject) {
+                  setCreateHint(NO_CREATE_PERMISSION);
+                  return;
+                }
+                setIsCreateOpen(true);
+              }}
+              className={
+                "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 " +
+                (canCreateProject
+                  ? "bg-[#feca04] text-zinc-900 hover:brightness-95 active:brightness-90"
+                  : "cursor-not-allowed bg-zinc-200 text-zinc-400 hover:brightness-100 active:brightness-100")
+              }
             >
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -439,6 +484,36 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
               className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
             >
               重试
+            </button>
+          </div>
+        )}
+
+        {createHint === null ? null : (
+          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>{createHint}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setCreateHint(null);
+              }}
+              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
+            >
+              关闭
+            </button>
+          </div>
+        )}
+
+        {savedFilterError === null ? null : (
+          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>{savedFilterError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSavedFilterError(null);
+              }}
+              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
+            >
+              关闭
             </button>
           </div>
         )}
@@ -504,9 +579,20 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
                 accentText={typeAccent(dicts, project.projectType).text}
                 managerNames={projectManagerText(project)}
                 time={project.createdAt}
-                onEdit={() => {
-                  onEdit(project);
-                }}
+                onEdit={
+                  canUpdateProject
+                    ? () => {
+                        onEdit(project);
+                      }
+                    : undefined
+                }
+                onDelete={
+                  canDeleteProject
+                    ? () => {
+                        onDeleteProject(project);
+                      }
+                    : undefined
+                }
               />
             </div>
           ))}
@@ -528,8 +614,9 @@ export default function Home({ me, dicts, directory, onCreate, onEdit, refreshTo
       {isCreateOpen && (
         <ProjectModal
           mode="create"
-          regions={dicts.region}
-          projectTypes={dicts.projectType}
+          dicts={dicts}
+          dictTools={dictTools}
+          canManageDicts={canManageDicts}
           managerOptions={managerChoices}
           onClose={() => setIsCreateOpen(false)}
           onSubmit={async (draft) => {

@@ -197,8 +197,8 @@ describe("buildProjectFilter（列表 / facets 共用口径）", () => {
     expect(filter.managerIds).toBeNull();
     expect(filter.stageKeys).toBeNull();
     expect(filter.keyword).toBeNull();
-    expect(filter.updatedFrom).toBeNull();
-    expect(filter.updatedToExclusive).toBeNull();
+    expect(filter.createdFrom).toBeNull();
+    expect(filter.createdToExclusive).toBeNull();
   });
 
   it("非法枚举 / uuid 一律 400（不静默返回空列表）", () => {
@@ -207,15 +207,15 @@ describe("buildProjectFilter（列表 / facets 共用口径）", () => {
     expectAppError(() => buildProjectFilter({ "filter[managerId]": "not-a-uuid", page: 1, limit: 20 }), "VALIDATION_FAILED");
   });
 
-  it("时间区间按 Asia/Shanghai 日界：下界含当日 00:00、上界取次日 00:00（不含）", () => {
+  it("时间区间（项目**创建时间**，Push 175）按 Asia/Shanghai 日界：下界含当日 00:00、上界取次日 00:00（不含）", () => {
     const filter = buildProjectFilter({ "filter[timeFrom]": "2026-09-14", "filter[timeTo]": "2026-09-15", page: 1, limit: 20 });
-    expect(filter.updatedFrom?.toISOString()).toBe("2026-09-13T16:00:00.000Z");
-    expect(filter.updatedToExclusive?.toISOString()).toBe("2026-09-15T16:00:00.000Z");
+    expect(filter.createdFrom?.toISOString()).toBe("2026-09-13T16:00:00.000Z");
+    expect(filter.createdToExclusive?.toISOString()).toBe("2026-09-15T16:00:00.000Z");
   });
 
   it("只传一端合法；timeFrom 晚于 timeTo 返回 400", () => {
-    expect(buildProjectFilter({ "filter[timeFrom]": "2026-09-14", page: 1, limit: 20 }).updatedToExclusive).toBeNull();
-    expect(buildProjectFilter({ "filter[timeTo]": "2026-09-15", page: 1, limit: 20 }).updatedFrom).toBeNull();
+    expect(buildProjectFilter({ "filter[timeFrom]": "2026-09-14", page: 1, limit: 20 }).createdToExclusive).toBeNull();
+    expect(buildProjectFilter({ "filter[timeTo]": "2026-09-15", page: 1, limit: 20 }).createdFrom).toBeNull();
     expectAppError(() => buildProjectFilter({ "filter[timeFrom]": "2026-09-15", "filter[timeTo]": "2026-09-14", page: 1, limit: 20 }), "VALIDATION_FAILED");
   });
 
@@ -226,9 +226,9 @@ describe("buildProjectFilter（列表 / facets 共用口径）", () => {
 });
 
 describe("parseProjectSort（白名单 updatedAt / createdAt / seqNo）", () => {
-  it("缺省 = updatedAt:desc（最近活动在前）", () => {
-    expect(parseProjectSort(undefined)).toEqual([{ field: "updatedAt", direction: "desc" }]);
-    expect(parseProjectSort("")).toEqual([{ field: "updatedAt", direction: "desc" }]);
+  it("缺省 = createdAt:desc（Push 175：默认按创建时间，最近创建的在前）", () => {
+    expect(parseProjectSort(undefined)).toEqual([{ field: "createdAt", direction: "desc" }]);
+    expect(parseProjectSort("")).toEqual([{ field: "createdAt", direction: "desc" }]);
   });
 
   it("多字段与方向；省略方向按 asc", () => {

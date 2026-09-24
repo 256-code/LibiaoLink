@@ -2,7 +2,7 @@
  * 项目接口封装（M2-07 首页联调）：
  * - 列表 GET /api/v1/projects（filter[...] + q + sort + page/limit）
  * - 分类计数 GET /api/v1/projects/facets（与列表同一套参数，禁止两套口径；《前端功能需求》§3.2）
- * - 新建 POST /api/v1/projects、编辑 PATCH /api/v1/projects/{id}（乐观锁 version）
+ * - 新建 POST /api/v1/projects、编辑 PATCH /api/v1/projects/{id}（乐观锁 version）、删除 DELETE /api/v1/projects/{id}（If-Match 版本）
  * 契约 shared/src/modules/projects.ts；UI 模型见 types.ts（前端「项目描述」= 契约 name）。
  */
 import { apiRequest, apiSend } from "./api";
@@ -74,12 +74,15 @@ export function buildListQuery(filters: ListQueryState, skip: FacetSkip | null =
   if (filters.q.trim() !== "") {
     parts.push("q=" + encodeURIComponent(filters.q.trim()));
   }
+  // 排序也进同一条查询串（Push 175 修）：Home 的请求键 = 本函数，排序不进键时切换升 / 降序不触发重新取数
+  // —— 旧实现把 sort 拼在 fetchProjectList 里，切换后列表纹丝不动（业务反馈「根据时间排序没用了」）。
+  // 维度固定创建时间（Push 177：业务口径「取消按更新时间排序 只保留创建时间」），只切方向。
+  parts.push("sort=createdAt:" + (filters.sortDesc ? "desc" : "asc"));
   return parts.join("&");
 }
 
 export function fetchProjectList(filters: ListQueryState): Promise<ProjectListResult> {
   const parts = [buildListQuery(filters)];
-  parts.push("sort=" + (filters.sortDesc ? "updatedAt:desc" : "updatedAt:asc"));
   parts.push("page=1");
   parts.push("limit=" + String(PROJECT_PAGE_LIMIT));
   const query = parts.filter((part) => part !== "").join("&");
@@ -118,6 +121,18 @@ export function updateProject(id: string, input: ProjectWriteInput, version: num
     version,
   };
   return apiSend<ApiProject>("/api/v1/projects/" + encodeURIComponent(id), "PATCH", body);
+}
+
+/**
+ * 删除项目（软删 · A5；Push 172 接上卡片入口）：DELETE /api/v1/projects/{id} —— 版本走 **If-Match 请求头**（不是正文），
+ * 缺头 / 非数字 400 VALIDATION_FAILED；版本不一致 409 VERSION_CONFLICT；归档项目 409 PROJECT_ARCHIVED；
+ * 不存在 / 不可见 404。响应 = 被删项目（此后列表 / 详情 / facets 均不可见）。
+ */
+export function deleteProject(id: string, version: number): Promise<ApiProject> {
+  return apiRequest<ApiProject>("/api/v1/projects/" + encodeURIComponent(id), {
+    method: "DELETE",
+    headers: { "If-Match": String(version) },
+  });
 }
 
 /** ISO8601（UTC）→ 展示用「YYYY-MM-DD HH:mm」（Asia/Shanghai，时区口径 ADR-028）。 */
