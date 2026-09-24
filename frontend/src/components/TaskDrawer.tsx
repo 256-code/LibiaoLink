@@ -1,17 +1,12 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberById, memberByName, type Member } from "../data/members";
+import type { Member } from "../data/members";
 import {
-  PROJECT_MANAGER,
   cnDateFromIso,
+  dateOnlyText,
   ownersLabel,
   daysBetweenInclusive,
-  isCompleteStatus,
-  isTaskOverdue,
-  isoFromCnDate,
   lateDeliveryLabel,
-  progressAfterStatus,
-  taskStatus,
   type ProjectTask,
   type TaskPriority,
   type TaskStatus,
@@ -21,7 +16,6 @@ import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
-import type { TaskPatch } from "./TaskBoard";
 import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } from "./Tracker";
 
 const CLOSE_ANIMATION_MS = 170;
@@ -75,9 +69,9 @@ export type TaskEditSubmit = {
   taskId: string;
   /** 项目经理 id 名单（项目级字段，Push 136）：至少一位，回写项目。 */
   managerIds: string[];
-  /** 任务负责人（多位）：空数组 = 待分配。 */
-  owners: string[];
-  ownersEn: string[];
+  /** 任务负责人 id（多位，契约 ownerIds）：空数组 = 待分配。 */
+  ownerIds: string[];
+  /** 开始 / 预计完成日期（ISO，YYYY-MM-DD；空串 = 未填）。 */
   startDate: string;
   dueDate: string;
   days: number;
@@ -97,19 +91,18 @@ type Draft = {
 };
 
 function rangeOf(task: ProjectTask): DateRange | null {
-  const from = isoFromCnDate(task.startDate);
-  const to = isoFromCnDate(task.dueDate);
+  const from = task.startDate;
+  const to = task.dueDate;
   return from === "" || to === "" ? null : { from, to };
 }
 
 function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
   return {
     managerIds,
-    ownerIds:
-      task === null ? [] : task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== ""),
+    ownerIds: task === null ? [] : [...task.ownerIds],
     range: task === null ? null : rangeOf(task),
     headcount: task !== null && task.headcount > 0 ? String(task.headcount) : "",
-    priority: task === null ? "中" : task.priority,
+    priority: task === null || task.priority === null ? "中" : task.priority,
     note: task === null ? "" : task.note,
   };
 }
@@ -124,8 +117,12 @@ type TaskDrawerProps = {
   onSubmit?: (values: TaskEditSubmit) => void;
   /** 点四格进度条（Push 98；联动口径同任务表 §6.4：0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生）。 */
   onProgress?: (taskId: string, progress: number) => void;
-  /** 抽屉内直接改任务状态 / 实际完成日期（口径同任务表行内与看板卡片，§6.9）；不传 = 这两项也只读。 */
-  onPatch?: (taskId: string, patch: TaskPatch) => void;
+  /** 任务状态下拉（五态；联动由服务端裁决）；不传 = 状态字段只读。 */
+  onSetStatus?: (taskId: string, status: TaskStatus) => void;
+  /** 实际完成日期（填 = 完成、清 = 退回进行中）；不传 = 该字段只读。 */
+  onSetActualEnd?: (taskId: string, iso: string) => void;
+  /** 人员候选（GET /api/v1/users 目录）：项目经理 / 任务负责人两个多选共用。 */
+  members: readonly Member[];
   onClose: () => void;
 };
 
@@ -138,7 +135,7 @@ type TaskDrawerProps = {
  * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
  * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、文件（走文件库）、变更关联。
  */
-export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgress, onPatch, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onProgress, onSetStatus, onSetActualEnd, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -223,16 +220,14 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
         return;
       }
       const next = updateDraft(patch);
-      const owners = next.ownerIds.map((id) => memberById(id)).filter((member): member is Member => member !== undefined);
       const headcountText = next.headcount.trim();
       const headcountValue = headcountText === "" ? 0 : Number(headcountText);
       onSubmit({
         taskId: current.id,
         managerIds: next.managerIds,
-        owners: owners.map((member) => member.name),
-        ownersEn: owners.map((member) => member.handle),
-        startDate: next.range === null ? "" : cnDateFromIso(next.range.from),
-        dueDate: next.range === null ? "" : cnDateFromIso(next.range.to),
+        ownerIds: next.ownerIds,
+        startDate: next.range === null ? "" : next.range.from,
+        dueDate: next.range === null ? "" : next.range.to,
         days: next.range === null ? 0 : daysBetweenInclusive(next.range.from, next.range.to),
         headcount: headcountText === "" || Number.isNaN(headcountValue) ? 0 : Math.floor(headcountValue),
         priority: next.priority,
@@ -248,17 +243,19 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
   }
 
   const editable = onSubmit !== undefined;
-  const canPatch = onPatch !== undefined;
-  const overdue = isTaskOverdue(task);
-  /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期字段）。 */
+  const canEditStatus = onSetStatus !== undefined;
+  const canEditActualEnd = onSetActualEnd !== undefined;
+  /** 逾期提示与服务端展示态同一口径（已延期 = 未完成且过了预计完成日期）。 */
+  const overdue = task.status === "已延期";
+  /** 「是否按时交付」的逾期标注（服务端展示态 + onTime 派生）。 */
   const late = lateDeliveryLabel(task);
-  const status = taskStatus(task);
+  const status = task.status;
   const step = trackerStep(task.progress);
   /** 悬停预览：还没点就先亮到悬停那一档（进度条长度不变，只有填充随预览走）。 */
   const shownStep = hoveredStep > 0 ? hoveredStep : step;
   const stepPct = Math.round((shownStep / TRACKER_STEPS) * 100);
   const progressText = hoveredStep > 0 ? TRACKER_LABELS[hoveredStep] ?? "" : trackerLabel(task.progress);
-  const fullOwners = ownersLabel(task.owners, task.ownersEn);
+  const fullOwners = ownersLabel(task.owners);
   /** 进度条与条上那四颗点一律用绿色（与任务表四格点 `bg-emerald-500` 同一个绿）—— 进度条只表达「做了多少」，
    *  状态色由状态签与色点单独表达；业务反馈：灰的看不懂，要和任务表一样绿。 */
   const barClass = "bg-emerald-500";
@@ -300,7 +297,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
         <>
           <MemberMultiSelect
             values={draft.managerIds}
-            options={PROJECT_MANAGERS}
+            options={members}
             onChange={(memberIds) => {
               // 至少留一位（对齐契约 projects.manager_ids 非空）：全取消时不写
               if (memberIds.length === 0) {
@@ -314,7 +311,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
           <span className={CAPTION_CLASS}>项目级字段（可多位，按勾选顺序展示），改后全项目同步</span>
         </>
       ) : (
-        <span className="font-medium text-zinc-800">{managers ?? PROJECT_MANAGER}</span>
+        <span className="font-medium text-zinc-800">{managers ?? ""}</span>
       ),
     },
     {
@@ -323,7 +320,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
         <>
           <MemberMultiSelect
             values={draft.ownerIds}
-            options={MEMBER_DIRECTORY}
+            options={members}
             onChange={(memberIds) => {
               commit({ ownerIds: memberIds });
             }}
@@ -340,23 +337,14 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
     },
     {
       label: "任务状态",
-      value: canPatch ? (
+      value: canEditStatus ? (
         <>
           <SelectMenu
             value={status}
             options={STATUS_OPTIONS}
             onChange={(next) => {
-              if (onPatch === undefined) {
-                return;
-              }
-              const value = next as TaskStatus;
-              // 与任务表行内同一套联动（§6.4 / §6.9）：完成态 = 四格全亮、进行中 = 至少一格、待开始 = 清零、已延期 = 保持格数；
-              // 手动改成非完成态时，实际完成日期一并清空（Push 67 业务定案）
-              onPatch(task.id, {
-                statusOverride: value,
-                progress: progressAfterStatus(value, task.progress),
-                doneDate: isCompleteStatus(value) ? task.doneDate : "",
-              });
+              // 五态写入（2026-09-24 定案）：进度与完成日期的联动由服务端同事务裁决（口径与原型一致）
+              onSetStatus(task.id, next as TaskStatus);
               setSavedTick(Date.now());
             }}
             ariaLabel="选择任务状态"
@@ -381,6 +369,8 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
           }}
           ariaLabel="选择紧急重要度"
         />
+      ) : task.priority === null ? (
+        dash
       ) : (
         <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
           {task.priority}
@@ -394,25 +384,39 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
           <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
         ) : late === "逾期已交付" ? (
           <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
-        ) : task.onTime === "" ? (
+        ) : task.onTime !== true ? (
           dash
         ) : (
-          <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">{task.onTime}</span>
+          <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">按时交付</span>
         ),
     },
-    { label: "输出成果文件", value: task.deliverable === "" ? dash : task.deliverable },
     {
-      label: "文件",
+      label: "输出成果文件",
       value:
-        task.files.length === 0 ? (
+        task.deliverableTypes.length === 0 ? (
           dash
         ) : (
           <span className="flex flex-wrap gap-1.5">
-            {task.files.map((file) => (
-              <span key={file} className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600">
-                {file}
+            {task.deliverableTypes.map((docType) => (
+              <span key={docType} className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600">
+                {docType}
               </span>
             ))}
+          </span>
+        ),
+    },
+    {
+      label: "文件",
+      value:
+        task.files.total === 0 ? (
+          dash
+        ) : (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600">
+              共 {task.files.total} 份
+            </span>
+            {task.files.draft > 0 ? <span className="text-[11px] text-amber-600">未定档 {task.files.draft}</span> : null}
+            {task.files.final > 0 ? <span className="text-[11px] text-zinc-500">已定档 {task.files.final}</span> : null}
           </span>
         ),
     },
@@ -445,7 +449,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
             onChange={(next) => {
               commit({ range: next });
             }}
-            hintDate={isoFromCnDate(task.startDate)}
+            hintDate={task.startDate}
             placeholder="选择开始与预计完成日期"
             ariaLabel="选择开始与预计完成日期"
           />
@@ -454,7 +458,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
       ) : task.startDate === "" && task.dueDate === "" ? (
         dash
       ) : (
-        (task.startDate === "" ? "—" : task.startDate) + " → " + (task.dueDate === "" ? "—" : task.dueDate)
+        (task.startDate === "" ? "—" : cnDateFromIso(task.startDate)) + " → " + (task.dueDate === "" ? "—" : cnDateFromIso(task.dueDate))
       ),
     },
     { label: "预计所需天数", value: shownDays > 0 ? shownDays + " 天" : dash },
@@ -494,31 +498,24 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
     },
     {
       label: "实际完成日期",
-      value: canPatch ? (
+      value: canEditActualEnd ? (
         <>
           <InlineDateCell
-            valueIso={isoFromCnDate(task.doneDate)}
+            valueIso={task.doneDate}
             ariaLabel="修改实际完成日期"
             display={
-              task.doneDate !== "" ? <span className="text-zinc-600">{task.doneDate}</span> : <span className="text-zinc-400">—</span>
+              task.doneDate !== "" ? <span className="text-zinc-600">{cnDateFromIso(task.doneDate)}</span> : <span className="text-zinc-400">—</span>
             }
             onChange={(iso) => {
-              if (onPatch === undefined) {
-                return;
-              }
-              // 与任务表行内 / 看板卡片同一套口径：填 = 完成（四格全亮、按工期派生 已完成 / 提前完成）；清 = 退回进行中（3 格）
-              onPatch(task.id, {
-                doneDate: iso === "" ? "" : cnDateFromIso(iso),
-                progress: iso === "" ? (TRACKER_STEPS - 1) / TRACKER_STEPS : 1,
-                statusOverride: iso === "" ? "进行中" : undefined,
-              });
+              // 填 = 完成（四格全亮）；清 = 退回进行中（进度 3 格）—— 状态联动交给服务端
+              onSetActualEnd(task.id, iso);
               setSavedTick(Date.now());
             }}
           />
           <span className={CAPTION_CLASS}>填上 = 完成；清空 = 退回进行中</span>
         </>
       ) : task.doneDate !== "" ? (
-        task.doneDate
+        cnDateFromIso(task.doneDate)
       ) : (
         dash
       ),
@@ -533,7 +530,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
             {task.changes.map((change) => (
               <span key={change.id} className="flex flex-wrap items-center gap-1.5">
                 <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
-                  变更 {change.appliedAt}
+                  变更 {dateOnlyText(change.appliedAt)}
                 </span>
                 {change.reason === "" ? null : <span className="text-xs text-zinc-500">{change.reason}</span>}
               </span>
@@ -563,7 +560,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
         <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage}</span>
+              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage === "" ? "未分组" : task.stage}</span>
               <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
             </div>
             <button
@@ -610,7 +607,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
           )}
           {overdue ? (
             <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">
-              已超过预计完成日期（{task.dueDate}），当前仍未完成。
+              已超过预计完成日期（{cnDateFromIso(task.dueDate)}），当前仍未完成。
             </p>
           ) : null}
         </div>
@@ -634,7 +631,7 @@ export function TaskDrawer({ task, managers, managerIds = [], onSubmit, onProgre
           {savedTick !== 0 ? (
             <p className="text-[11px] font-medium text-emerald-600">已保存</p>
           ) : editable ? (
-            <p className="text-[11px] text-zinc-400">改动即时保存（原型暂存浏览器内存）</p>
+            <p className="text-[11px] text-zinc-400">改动即时保存</p>
           ) : null}
         </footer>
       </aside>

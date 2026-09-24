@@ -361,10 +361,12 @@ export default function App() {
   };
 
   /**
-   * 任务字段被编辑：任务域仍是内存态原型（M3-07 接线），服务端没有变化，故只留口子不刷新。
+   * 任务字段被编辑（M3-07 刀 1 后半接线）：任务写入会 touch 项目 updated_at（ADR-022 ④），
+   * 这里只轻量刷新项目列表（详情里那一行已由 ProjectDetail 自己回读），下次回到首页能看到新时间。
    */
   const handleTaskEdited = (_id: string): void => {
     void _id;
+    setDataVersion((value) => value + 1);
   };
 
   /** 字典下拉的「自定义 + 删除」能力（新建与编辑弹窗共用同一份）。 */
@@ -539,6 +541,7 @@ export default function App() {
           me={state.me}
           project={detail}
           view={route.view}
+          members={directoryMemberOptions(directory)}
           onChangeManagers={handleChangeManagers}
           onTaskEdited={handleTaskEdited}
           taskHiddenColumns={taskTableHiddenColumns}
