@@ -10,7 +10,8 @@
  *   字段级（出口二）：键位数据面（stakeholder.contact.view）+ 投影用例；干系人数据面随 j6，本脚本不造干系人数据。
  *   搜索 / 通知（出口四 / 五）：模块归 lan 线、尚未落地 —— 出口策略与投影一致性由不连库用例覆盖（server/test/permission-matrix.test.ts）。
  *
- * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL）。只在本地沙箱 / 联调库跑，会：铸两个临时会话（跑完删除）、
+ * 前置：真 PG（DATABASE_URL）+ 真 api（BASE_URL，**须以 PERMISSION_ENFORCED=true 启动** —— 本脚本验的是 ADR-011 判定语义；
+ *      一期默认 false = 不判权限时受限账号也是等效管理员，S0 守卫会直接失败并给出重启指引）。只在本地沙箱 / 联调库跑，会：铸两个临时会话（跑完删除）、
  *      建 POC6-xxx 回放项目（跑完硬删，含任务 / 节点 / 阶段 / outbox 事件）、临时把受限账号加入名册（跑完移除）。
  * 用法：cd server && node scripts/poc6-replay.mjs [--out <报告.md>] [--json <证据.json>] [--actor <userId>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
@@ -125,6 +126,10 @@ try {
   const meActor = await actorCall("GET", "/api/v1/permissions/me");
   const actorKeys = meActor.body?.permissions?.permissionKeys ?? [];
   const actorScopes = meActor.body?.permissions?.dataScopes ?? [];
+  // 前置守卫（Push 178 · PERMISSION_ENFORCED）：本脚本的 404 / 403 断言验证的是 ADR-011 判定，
+  // 目标 api 须以 PERMISSION_ENFORCED=true 启动；一期默认 false = 不判权限（受限账号也是等效管理员）。
+  check("S0", "前置：目标 api 处于「按 ADR-011 判定」模式（PERMISSION_ENFORCED=true）", "受限账号 dataScopes 不含 all", "dataScopes=" + truncate(actorScopes, 80), meActor.status === 200 && !actorScopes.includes("all"), "一期「不判权限」口径下请先以 PERMISSION_ENFORCED=true 重启 api 再跑本脚本");
+
   check("S2", "受限账号会话可用（全局位，项目位需项目上下文）", "200 + 不含 all 数据范围", meActor.status + " roleCodes=" + truncate(meActor.body?.permissions?.roleCodes, 80) + " keys=" + actorKeys.length, meActor.status === 200 && !actorScopes.includes("all"));
   const writeKeys = ["project.create", "project.update", "project.delete", "member.manage", "node.advance", "node.rollback", "node.create", "node.delete"];
   const leaked = writeKeys.filter((key) => actorKeys.includes(key));

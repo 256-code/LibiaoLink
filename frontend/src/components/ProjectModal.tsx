@@ -40,7 +40,7 @@ const fieldClass =
 
 /**
  * 项目类型下拉内容（触发器与选项行同款）：色点 + 名称 —— 色值随字典 metadata.accent 下发，前端不硬编码；
- * 存量值（item === null：已停用 / 字典外的码）按兜底色（品牌黄）渲染。
+ * 存量值（item === null：已删除条目的存量值 / 字典外的码）按兜底色（品牌黄）渲染。
  */
 function projectTypeContent(name: string, item: DictItem | null): ReactNode {
   return (
@@ -106,7 +106,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
       >
         <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
         <p className="mt-1 text-sm text-zinc-500">
-          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后按项目时间出现在列表里。"}
+          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后按创建时间出现在列表里。"}
         </p>
 
         <form className="mt-5 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
@@ -152,7 +152,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               addText={{
                 label: "添加地区",
                 placeholder: "输入地区名称，如 东南亚",
-                note: "保存后写入地区字典（C9）：全站可选（所有项目的地区下拉都能选到），并可在首页按它筛选；删除（= 停用）与改名由管理员维护。",
+                note: "保存后写入地区字典（C9）：全站可选（所有项目的地区下拉都能选到），并可在首页按它筛选；删除与改名由管理员维护。",
               }}
               onDelete={
                 canManageDicts
@@ -179,11 +179,9 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               addText={{
                 label: "添加项目类型",
                 placeholder: "输入类型名称，如 分拣机",
-                note: "保存后写入项目类型字典（C9）：全站可选；颜色模板决定卡片徽标 / 小车图标 / 悬停光晕的底色，删除（= 停用）由管理员维护。",
               }}
               palette={{
                 label: "颜色模板",
-                hint: "预置色板（不提供自由取色）：底色与徽标文字色成对使用，新增类型默认避开已有颜色。",
                 options: DICT_ACCENT_PALETTE,
               }}
               onDelete={

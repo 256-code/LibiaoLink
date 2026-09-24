@@ -144,10 +144,25 @@ server/
   - `POST /internal/users/disable` / `/enable` / `/delete`：离职回收（接入标准第五部分）；入参 `{"name","email"}`（name 为准、email 兜底），幂等 200（目录中不存在也成功）；disable / delete 撤销该用户全部在线会话（`affectedSessions`）；delete 为软删（`removed_at` 置位 + `status=disabled`，不物理删行）。
   - `POST /internal/org-sync/run`：手动触发一次 Casdoor 目录拉取 + 差异应用（`{"missingUserPolicy":"report|disable"}`，默认 report）；定时调度随 i5 接 worker。
 
+## 权限判定开关（PERMISSION_ENFORCED · 一期「不判权限」）
+
+- 环境变量 `PERMISSION_ENFORCED`（默认 `false`，见 `.env.example` / `src/config/env.ts`）：**只影响裁定、不动数据**。
+  - `false`（默认 · 一期口径 ——「我们当前这个系统就不要考虑权限」2026-09-23 业务已定）：授权画像一律**等效管理员** ——
+    数据范围 `all` + 契约全量权限位（`PERMISSION_KEYS`，31 键）+ `admin` 角色码。四处判定一并放开：
+    功能权限（`can` / `@RequirePermission`）、记录级可见集（列表 / 详情不再按「我管的 / 我参与的」裁剪）、
+    字段级投影（干系人联系方式等不再裁剪）、角色内硬检查（任务手工创建 / 节点增删与阶段推进 / 文件彻底删除三处读 `roleCodes` 含 `admin`）。
+  - `true`（二期打开）：按 `roles` / `role_permissions` / `user_roles` 判定（ADR-011 原口径）。
+- **唯一注入点** = `src/modules/identity/role.service.ts` 的 `RoleService.getActorAuthorization()`：h6 策略服务的
+  `PermissionService.getAuthorization()` 与 task / flow 两处直调都经它（不判权限时不读库、无缓存分叉）；
+  `GET /api/v1/permissions/me` 与前端管理入口（字典治理 / 卡片删除 / 新建 / 编辑）随之自动收敛，前端零改动。
+- 用户偏好（`user_preferences`：常用筛选 / 醒目模式 / 任务表列显隐）**不随开关变化**，仍按账号各存一行。
+- 生效方式：进程启动时读一次（`AppConfig`）→ 改后**重启 api / worker** 生效。
+- 单测（不连库，随 `npm test` 常跑）：`test/identity-org.test.ts`「权限判定开关」4 例 + `test/permission-matrix.test.ts`「一期不判权限：等效管理员画像把五出口一并放开」4 例。
+
 ## 项目接口（h2 · S6·project：M2-01 / M2-04 / M2-05）
 
 - 契约 `shared/src/modules/projects.ts`（OpenAPI tags=projects）；实现 `src/modules/project/`（controller / service / repository / query + `index.ts` 唯一出口）；整组路由挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`），`GET /facets` 注册在 `GET /{id}` 之前。
-- `GET /api/v1/projects`：分页 + 多维筛选（`filter[region|projectType|managerId|stageKey|status]` 多值英文逗号分隔；`managerId` 命中口径 = 项目挂的任意一位经理，A22 · Push 136）+ 关键字 `q`（编号 / 名称 / 客户 / 序号）+ 时间闭区间（`filter[timeFrom]` / `filter[timeTo]`，Asia/Shanghai 日界，映射 `updated_at`）+ 排序白名单（`updatedAt` / `createdAt` / `seqNo`，缺省 `updatedAt:desc`）；非法枚举 / 非法 uuid / 区间反向一律 400（不返回静默空列表）。
+- `GET /api/v1/projects`：分页 + 多维筛选（`filter[region|projectType|managerId|stageKey|status]` 多值英文逗号分隔；`managerId` 命中口径 = 项目挂的任意一位经理，A22 · Push 136）+ 关键字 `q`（编号 / 名称 / 客户 / 序号）+ 时间闭区间（`filter[timeFrom]` / `filter[timeTo]`，Asia/Shanghai 日界，**映射 `created_at` = 项目创建时间，Push 175 修订**）+ 排序白名单（`updatedAt` / `createdAt` / `seqNo`，**缺省 `createdAt:desc`，Push 175 修订**）；非法枚举 / 非法 uuid / 区间反向一律 400（不返回静默空列表）。
 - `GET /api/v1/projects/facets`：与列表共用同一个 filter 构造器（五组计数 + `total`），计数与列表同口径（v0.2 §8.2 / A6）。
 - `POST /api/v1/projects`（201）：编号 `code` 由创建人填写、唯一性由数据库约束兜底（409 `PROJECT_CODE_EXISTS`）；`seq_no` 由序列分配（不接受传入）；缺省 `stageKey=presale`。`PATCH`（乐观锁：正文 `version`，409 `VERSION_CONFLICT`）、`DELETE`（`If-Match` 回传当前 `version`，缺头 400；软删落 `deleted_at` / `deleted_by`）。
 - 归档写保护（ADR-027）：`status=archived` 的项目 PATCH / DELETE 一律 409 `PROJECT_ARCHIVED`（错误码随本批入契约与映射表）。软删（A5）：列表 / 详情 / facets 统一 `deleted_at is null`；`seq_no` 不回收、同编号再建仍 409。
@@ -185,8 +200,8 @@ server/
 ## 字典与审计接口（h7 · S6·admin：C9 字典 + C7 审计留痕）
 
 - 契约 `shared/src/modules/dicts.ts`（读取参数 / 维护请求，tags=dicts）与 `shared/src/modules/audits.ts`（审计读取面，tags=audit）；实现 `src/modules/admin/`（dicts.controller / audit.controller + dict.service / audit.service + repository + audit.rules + `index.ts` 出口）；`AdminModule` 导入 identity（守卫）/ permission（统一判定出口），业务模块反向 import 其 `AuditService` 注入留痕。
-- 字典读（C9-01 / C9-03）：`GET /api/v1/dicts` 与 `/{type}` 登录即可读，默认只回 `enabled=true`；`includeDisabled=true`（管理端维护停用项）需 `dict.manage`（缺位 403）；未知类型 404（路径参数不做枚举硬拦，未知类型由服务层统一 404）；响应 `updatedAt` 取类型版本（条目变更 touchType）供前端缓存刷新；类型固定 region / projectType（契约 `DICT_TYPES`；阶段 / 成果文件类型走契约枚举，不下发）。
-- 字典写（C9-02，2026-09-23 修订）：`POST /api/v1/dicts/{type}/items`（201）—— **`type=region` 登录即可**（地区是全站共享的公共标签，非管理员新增同样全站可见、可在首页按它筛选），其余类型（projectType）仍 `dict.manage`；`PATCH /api/v1/dicts/{type}/items/{code}`（200，改名 / 排序 / 停用）仍仅 `dict.manage`（治理权不放开）；同类型内码唯一（重复 409 `DICT_ITEM_EXISTS`）；「删除」= 停用（`enabled=false`，无物理删除；停用不影响存量数据按原码 / 原名渲染）；响应为更新后的整个字典（前端直接替换缓存）；每次变更写审计（无字段级变化时 `changes=null`）。种子 #5 `database/seeds/dicts.mjs`（region 8 项 / projectType 3 项，metadata 带 accent / accentText）。
+- 字典读（C9-01 / C9-03）：`GET /api/v1/dicts` 与 `/{type}` 登录即可读，默认只回 `enabled=true`；`includeDisabled=true`（**兼容参数**：Push 173 起删除 = 物理删行，一期不再产生停用项；保留给二期「临时下架」）需 `dict.manage`（缺位 403）；未知类型 404（路径参数不做枚举硬拦，未知类型由服务层统一 404）；响应 `updatedAt` 取类型版本（条目变更 touchType）供前端缓存刷新；**条目带 `usageCount`**（Push 174：该码被多少**未删除项目**引用，region / projectType 两个维度；服务端按 `projects.region` / `project_type` 现算，其余维度恒 0）；类型固定 region / projectType（契约 `DICT_TYPES`；阶段 / 成果文件类型走契约枚举，不下发）。
+- 字典写（C9-02；2026-09-23 Push 168 权限修订 + **Push 173 删除口径修订**）：`POST /api/v1/dicts/{type}/items`（201）—— **`type=region` 登录即可**（地区是全站共享的公共标签，非管理员新增同样全站可见、可在首页按它筛选），其余类型（projectType）仍 `dict.manage`；`PATCH /api/v1/dicts/{type}/items/{code}`（200，改名 / 排序；`enabled` 为兼容字段）与 **`DELETE /api/v1/dicts/{type}/items/{code}`（200，**物理删行**：事务内先取条目快照 → 删行 → `touchType` → 写审计 `action=delete`（`objectId=type:code`，changes = `code/name/sort/enabled/metadata → null`）→ 返回删除后的整个字典；未知类型 / 未知条目 404；**被未删除项目引用 → 409 `DICT_ITEM_IN_USE`：事务内先数引用，不删行、不 touchType、不写审计** —— A3 引用守卫 · Push 174，业务口径「有项目在用就不给删」）** 均仅 `dict.manage`（治理权不放开）；同类型内码唯一（重复 409 `DICT_ITEM_EXISTS`）；删除**不影响存量数据**（`projects.region` / `project_type` 是冗余名、无外键引用 `dict_items`，存量项目仍按原码 / 原名渲染），且**删除无记忆** —— 同码可重新新增、按全新条目处理；响应为更新后的整个字典（前端直接替换缓存）；每次变更写审计（无字段级变化时 `changes=null`）。种子 #5 `database/seeds/dicts.mjs`（region 8 项 / projectType 3 项，metadata 带 accent / accentText）。
 - 审计写入（C7-01 / C7-02）：`AuditService.record()` 由业务用例在**同一事务**内调用（谁 / 何时 / 对什么 / 从什么改成什么；`changes` = 字段级 before / after），操作人姓名快照 60s 缓存。已接线写路径：项目创建 / 修改 / 归档（project）、名册增删（project_member）、任务创建 / 修改 / 进度（task）、节点新增 / 删除 / 完成与阶段推进 / 回退（node / stage）；阶段 / 节点门禁拒绝在 catch 内补写 `result=failed`。
 - 越权留痕（C7-03）：全局异常过滤器（`common/errors/api-error.filter.ts`）在 403 与项目域 404 时经 `AUDIT_SINK` 令牌调用 `recordDenied()`（异步补写、失败只告警、不阻塞响应）；路径 → 对象解析在 `common/audit/audit-path.ts`（403 全记；404 只记写请求与项目域路径，避免普通 404 噪声；字典对象 id 与写入侧同形 `type[:code]`）；告警推送（企微）随 M5 通知模块。
 - 审计检索（C7-04 服务端）：`GET /api/v1/audit-logs` 仅 `audit.view`；按 objectType + objectId（按对象）/ actorId（按人）/ action / result / projectId / from-to 时间区间筛选，occurredAt 降序（同毫秒按 id 降序）；`result=denied` 即越权尝试筛法。页面 / 导出随 u12（px 线）。
@@ -303,7 +318,7 @@ server/
 - 任务规则测试（`test/task-rules.test.ts` · h4）：五态派生（待开始 / 进行中 / 已延期 / 已完成 / 提前完成）、按时交付派生（含回落存储值）、状态写入联动、进度写入联动（清完成日期 = 唯一方式）、上海日界、列表筛选 / 排序解析（非法值 400），共 17 例；
 - 门禁拒绝测试（`test/flow-gate-rejection.test.ts` · h5 · PoC-9）：服务端强校验 422 + `details[].code=required_doc`、拒绝留痕 `node.gate_rejected`（含 missing 明细与操作人）、不部分生效（未 `markNodeDone` / 未 touch）、can-complete 预检（缺件 false / 齐备 true / 已完成 false）、门禁通过对照（`node.completed`），共 5 例；**h5 后全量 135 例（12 文件）**。
 - 权限矩阵测试（`test/permission-matrix.test.ts` · h6 · PoC-6）：**记录级 9 例**（六角色数据范围的可见集规格、多角色并集、主数据责任人恒可见、单项目谓词与可见 id 同源）＋**功能权限 7 例**（全局位、任务负责人、项目内项目经理 / 成员平权、非成员先 404、项目上下文外只看全局位、隐含位 ⊆ 且全在契约枚举内）＋**字段级 6 例**（联系方式三字段 / 商务字段 / 备注三级、行投影删字段不落 null、员工邮箱一期全员可见、策略表字段登记校验）＋**五出口 5 例**（四出口投影一致、导出单独授权、导出字段仍按同一策略裁剪、任一出口不含被裁字段、出口集合 = 四类 + 记录级）＋**策略服务 7 例**（projectScope all / ids、resolveProjectAccess 的 404 语义与角色位、软删、assertCan 403、画像缓存单次查库），共 34 例；**h6 后全量 169 例（13 文件）**。
-- 字典与审计测试（`test/admin-audit.test.ts` · h7 · S6·admin）：**纯函数 3 例**（字段级 diff 与稳定序列化）＋**越权判定 3 例**（路径 → 对象解析、403 全记 / 404 白名单、uuid 判定）＋**DictService 5 例**（默认只发启用项 / 未知类型 404 / 同码 409 + 审计入参 / 停用替代删除的字段级留痕 / 无变更仍留痕 changes=null）＋**AuditService 4 例**（写入口径补全、越权写入吞错不抛、按对象与按人检索、人员快照缓存），共 15 例；**h7 后全量 184 例（14 文件）**。
+- 字典与审计测试（`test/admin-audit.test.ts` · h7 · S6·admin）：**纯函数 3 例**（字段级 diff 与稳定序列化）＋**越权判定 3 例**（路径 → 对象解析、403 全记 / 404 白名单、uuid 判定）＋**DictService 8 例**（默认只发启用项 / 未知类型 404 / 同码 409 + 审计入参 / 物理删行 + 审计 `action=delete` 字段级 from→null / 删除后同码可重新新增 / 删除未知条目 404 不写审计 / 兼容路径 `enabled=false` 的字段级留痕 / 无变更仍留痕 changes=null / **引用守卫 3 例：引用中 409 且不删行不写审计不 touchType、计数为 0 照常删、下发带 usageCount**）＋**AuditService 4 例**（写入口径补全、越权写入吞错不抛、按对象与按人检索、人员快照缓存），共 21 例；**Push 174 后全量 484 例（32 文件）**。
 - 工作日历测试（`test/calendar-rules.test.ts` + `test/calendar-service.test.ts` · h8 · S6·工作日历）：**规则 17 例**（默认规则与例外优先、窗口外 null、日期算术、顺延金标 forward / backward / 已是工作日 / 跨年 / exhausted、T-1·T+N 开关两态与改期重算、上海时刻换算）＋**服务 12 例**（年历与排序、缺省今天走时钟、setDay 审计与幂等、deleteDay 404、updateSettings 空变更、shift 方向覆盖、offset T-1 / T+1），共 29 例；**h8 后全量 213 例（16 文件）**。
 - 任务用例测试（`test/task-service.test.ts` · h4 + **Push 146 变更关联多条 3 例**）：带节点创建缺省项目经理 / 节点判重 409 / 手工创建仅管理员 403 / 阶段不一致 400 / 归档 409、状态联动（done 满格补当天、active 退 0.75 清日期、过期保持已延期）、乐观锁 409 / 跨项目 404、进度写回清完成日期、项目总览四格，共 **22 例**（含 w2 · Push 124 追加 5 例：未分组 / 位次顺延 / 显式置空 / 组内重排；Push 136 追加 1 例：`ownerIds` 缺省兜底项目全部经理；Push 146 追加 3 例：变更关联多条）；**w2 后全量 222 例（17 文件）**、**Push 136 后全量 310 例（19 文件）**、**Push 143（M3-03）后全量 318 例（20 文件）**（新增 `test/task-gate.test.ts` 8 例：预检缺件明细 / 无节点 `deliverable_types` 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done` 与 `progress=1` 同一门禁）；**j6（Push 144）后全量 345 例（22 文件）**；**Push 146 后全量 353 例（22 文件）**；**M3-04（Push 150）后全量 369 例（24 文件）**；**M3-05（Push 152）后全量 379 例（25 文件）**（新增 `test/task-remove.test.ts` 10 例：软删置位 + 审计快照 / 位次压缩 / outbox `task.deleted` / 重复删除 404 / 不存在与跨项目 404 + 并发兜底 / 归档 409 / 已删任务写路径全 404 / can-complete 404 / 节点释放可重建 / 位次仍 0 起密集 / 已有变更关联 409 `TASK_HAS_REFERENCES` / 无关联照常软删）（新增 `test/task-batch.test.ts` 9 例：批量改字段 + 审计同 batchId / 部分失败 not_found / ids 去重 / 空 changes 400 / 归档 409 / 批量指派置空 / 批量完成 / 缺件 gate_not_passed + 留痕 / already_done）；**M3-05 续卡 · 锁定字段例外调整（Push 153）后全量 387 例（26 文件）**（新增 `test/task-locked-fields.test.ts` 8 例：管理员改 title + deliverableTypes → 落库 / 版本 +1 / 审计含原因 / outbox / touch / 不写 task_events；非管理员 403 且无留痕；空调整 400；乐观锁 409；归档 409；不存在 / 跨项目 / 已软删 404；去重与非法值过滤 + 无节点任务门禁联动；titleEn 清空）。
 - 日报与问题测试（`test/report-issue.test.ts` · M6-01 ~ M6-03 · S6·report-issue · **Push 155**）：**日报 18 例**（提交当天 = submitted + 审计 + outbox / 草稿 / **一人一项目一天一条重复 409 `REPORT_ALREADY_EXISTS`**（明细带已存在 id，不插第二行）/ 补填 = 对过去日期首次提交推导 `supplement` / 未来日期 400 / 关联任务跨项目 400 / 提交自动生成问题（未分组 + 按归类落责任部门 + created 事件 + 审计 + outbox）/ 原因类归类不自动分派 / **A3-09 幂等**（重编辑重复提交不重复生成）/ **A3-08 回写**（追加 `【日报 <日期>】` + `task_events(note_change)`，重复提交不重复追加）/ 草稿 → 提交 / 已提交不可退回草稿 400 / 编辑后 `foundIssue` 非空但缺归类 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 列表筛选与日期倒序 + `dateFrom > dateTo` 400 / 状态取值非法 400）＋**问题 9 例**（状态流转写 `state_change` + 审计 / **四态允许回退**：done → open 清 `closed_at` / `closed_by`，`action=complete` 记在关闭那一次 / 分派与时限写 `assignment` / 空更新 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 详情留痕时间正序 / 列表与看板同源），共 **27 例**；**Push 155 后全量 416 例（27 文件）**（另 `test/task-remove.test.ts` 10 → **12 例**：日报 / 问题引用守卫 409 `TASK_HAS_REFERENCES` + `details[].code = report_ref` / `issue_ref`）。
@@ -327,6 +342,17 @@ server/
 - 证据入库：`docs/PoC-6-回放证据(权限矩阵与脱敏五出口).md`（真机 24 项断言：记录级列表 / 详情 / 子资源统一 404 + 名册即刻可见 + 可见但无权限位 403 + 成员平权 200 + 出口键位数据面 + 收尾零残留）。
 - 矩阵门禁（不连库，随 `npm test` 与 CI 常跑）：`check:permission-matrix`（种子 #6b ↔ 契约枚举 ↔ 角色集三方对齐）+ `test/permission-matrix.test.ts` 34 例（五类出口的策略层用例）。
 - 差异与后续：搜索 / 通知模块（lan 线）尚未落地、投影入口已就绪；字段级真实出口随 j6 干系人；导出 / 搜索 / 通知出口的调用方接线随 i 系列与 M7 —— 明细见 `src/modules/permission/README.md` 差异 1~5。
+
+## 权限开关回放（Push 178 · PERMISSION_ENFORCED · 一期不判权限）
+
+- 脚本：`scripts/permission-switch-replay.mjs`（连真 PG + **两个真 api**：A = 默认 `PERMISSION_ENFORCED=false`、B = `PERMISSION_ENFORCED=true`；
+  临时清空回放账号的角色绑定再原样恢复、铸临时会话跑完删除）—— 同一个「零角色」账号、同一份数据，只有开关不同：
+  A 站画像 = 等效管理员（`admin` / `all` / 全量权限位），`audit-logs`、`stakeholders`、`dicts?includeDisabled=true` 全 200，项目列表不做裁剪；
+  B 站同一批请求：画像为空、受限读面 403、列表按名册裁剪（两站均以库内计数核对）。
+  - 复跑：`cd server && node scripts/permission-switch-replay.mjs --out ../docs/权限开关回放证据(PERMISSION_ENFORCED).md`（两个 api 的启动方式见脚本头部）。
+- 证据入库：`docs/权限开关回放证据(PERMISSION_ENFORCED).md`。
+- **既有 ADR-011 回放脚本的口径提醒**：`poc6` / `poc7` / `poc8` / `m4-lifecycle` 里的受限账号 403 与记录级 404 断言验证的是「按 ADR-011 判定」，
+  目标 api 须以 `PERMISSION_ENFORCED=true` 启动 —— 四个脚本均已加前置守卫：口径不符立即失败并给出重启指引（不会误判成回归）。
 
 ## PoC-7 回放（h7 · S6·admin：字典 C9 与审计留痕 C7）
 
@@ -498,7 +524,7 @@ server/
 - h3：流程节点（蓝图版本化 / 建项目快照 / 阶段推进与回退 / 节点增删 / 完成门禁）—— 已落地（Push 83）；记录级 404 与权限矩阵随 h6，文件门禁口径随 i1（file）与 h4（task）。
 - h4：task 模块（任务列表 / 详情 / 创建 / 编辑 / 进度 / 项目总览四格 / 五态与按时交付派生）—— 已落地（Push 89）；任务侧完成门禁（M3-03 · Push 143）、批量操作（M3-04 · Push 150）、软删（M3-05 · Push 152）与锁定字段例外调整（M3-05 续卡 · Push 153）已落；从模板实例化与快筛、1 万行压测（M3-06）为后续卡片，记录级 404 与权限矩阵随 h6。
 - h5：PoC-9 回放（蓝图 round-trip 与门禁拒绝的证据入库：回放脚本 + `docs/` 证据 + CI 回归测试）—— 已落地（Push 93）；任务侧完成门禁（M3-03）仍为后续卡片。
-- h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。
+- h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。**开关口径（Push 178）**：一期 `PERMISSION_ENFORCED=false` 默认不判权限（等效管理员画像），二期置 `true` 打开（task / flow / file 三处直调同样经 `RoleService`）。
 - h7：字典 C9 与审计留痕 C7（`dict_types` / `dict_items` / `audit_logs` + 字典读写出口 + 审计写入 / 越权留痕 / 检索 + 种子 #5 + 真机回放）—— 已落地（Push 97）；剩余：前端改读字典（u12 · px 线）、审计页面与导出（u12）、告警推送（M5 通知）、蓝图字段级留痕（随蓝图维护卡片）、按月清理（运维）。
 - h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
 - j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、「干系人角色」列（口径未定）、前端台账页与项目「干系人」面板（u 系列 · px 线）。

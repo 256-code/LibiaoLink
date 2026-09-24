@@ -12,14 +12,14 @@ type DictAddText = {
   label: string;
   /** 名称输入框占位文案。 */
   placeholder: string;
-  /** 保存口径说明（浮层里的一行小字）。 */
-  note: string;
+  /** 保存口径说明（浮层里的一行小字；业务口径「这个文字不用显示」时由调用方省略）。 */
+  note?: string;
 };
 
 type DictSelectProps = {
   /** 当前值（字典码 / 存量自定义值）。 */
   value: string;
-  /** 字典项（GET /api/v1/dicts，已按 sort 升序、已过滤停用项）。 */
+  /** 字典项（GET /api/v1/dicts，已按 sort 升序、只含启用项）。 */
   items: DictItem[];
   ariaLabel: string;
   /** 值为空时触发器上的占位文案。 */
@@ -29,9 +29,9 @@ type DictSelectProps = {
   /** 「＋ 添加」入口（不传 = 不渲染）：返回 null = 成功；返回文案 = 浮层内提示。 */
   onAdd?: (input: { name: string; metadata: Record<string, unknown> }) => Promise<string | null>;
   addText: DictAddText;
-  /** 颜色模板（项目类型）：新增时选一个，写进条目 metadata.accent / metadata.accentText。 */
-  palette?: { label: string; hint: string; options: readonly DictAccent[] };
-  /** 行内删除（= 停用，C9-02；不传 = 不渲染）：返回 null = 成功；返回文案 = 浮层内提示。 */
+  /** 颜色模板（项目类型）：新增时选一个，写进条目 metadata.accent / metadata.accentText；已在用的颜色不进候选。 */
+  palette?: { label: string; options: readonly DictAccent[] };
+  /** 行内删除（物理删行 · 仅管理员 dict.manage；不传 = 不渲染）：返回 null = 成功；返回文案 = 浮层内提示。 */
   onDelete?: (code: string) => Promise<string | null>;
   /** 删除按钮的无障碍名（如「删除地区 华东」）。 */
   deleteLabelOf?: (code: string, name: string) => string;
@@ -39,10 +39,18 @@ type DictSelectProps = {
 };
 
 /**
- * 字典下拉候选：字典项（按 sort 升序）→ 当前值兜底（存量值 / 已停用或他处自定义的值），按值去重。
+ * 字典下拉候选：字典项（按 sort 升序）→ 当前值兜底（已删除条目的存量值 / 他处自定义的值），按值去重。
  * 兜底项必须保留：编辑一个值不在字典候选里的项目时，触发器仍要显示当前值（不能空白）；
  * 兜底项不给删除入口（它已经不在字典里，删了也是空转）。
  */
+/**
+ * 引用守卫（A3 · Push 174）：条目正被项目卡片引用时不给删 —— 删除位置灰并在悬停时说明原因（服务端同样会 409
+ * DICT_ITEM_IN_USE 兜底，缓存陈旧时不会误删）；无引用返回 undefined（正常可删）。
+ */
+function deleteBlockReason(item: DictItem): string | undefined {
+  return item.usageCount > 0 ? "正被 " + String(item.usageCount) + " 个项目使用，不能删除" : undefined;
+}
+
 function buildOptions(
   items: DictItem[],
   value: string,
@@ -57,7 +65,7 @@ function buildOptions(
       continue;
     }
     seen.add(item.code);
-    options.push({ value: item.code, label: labelOf(item.name, item) });
+    options.push({ value: item.code, label: labelOf(item.name, item), deleteDisabledReason: deleteBlockReason(item) });
   }
   if (value !== "" && !seen.has(value)) {
     options.push({ value, label: labelOf(value, null), deletable: false });
@@ -66,13 +74,28 @@ function buildOptions(
 }
 
 /**
+ * 新增时可选的颜色模板：**已在用的颜色不再出现**（Push 173 业务口径「已经使用的颜色就不要出现不就好了」——
+ * 卡片底色按类型去重、各类型一眼可分）；11 色全用满时回落完整色板（否则加不了新类型，属「没有空位」的兜底，不另加文案）。
+ * 「已用」= 本次拿到的条目（前端缓存只留启用项；已删除的条目不在候选里，其颜色视为可复用）。
+ */
+function availableAccents(items: DictItem[], options: readonly DictAccent[]): readonly DictAccent[] {
+  const used = new Set(items.map((item) => accentOfItem(item).color));
+  const free = options.filter((entry) => !used.has(entry.color));
+  return free.length > 0 ? free : options;
+}
+
+/**
  * 字典下拉（Push 167 地区；Push 172 抽成两类共用的一个组件）：与任务域 SelectMenu 同一套自绘下拉（原生 select 的弹层样式
  * 由浏览器控制，与全站不一致），浮层贴弹窗右侧弹出；顶部固定一行「＋ 添加…」，下面是可选条目。
  * - 新增：写字典（region = 任何登录用户 · 全站共享；projectType = dict.manage）；项目类型随颜色模板落 metadata；
- * - 删除：行内隐式（悬停 / 聚焦才浮现，与任务表行内删除同一套语言）= 停用（C9-02，dict.manage）——
- *   不在候选里出现，但存量项目仍按原码 / 原名渲染；
+ * - 删除：行内隐式（悬停 / 聚焦才浮现，与任务表行内删除同一套语言）= **物理删行**（Push 173，dict.manage）——
+ *   条目从候选与首页筛选里消失，但存量项目仍按原码 / 原名渲染（无外键引用）；
+ *   **Push 174 引用守卫**：条目正被项目卡片引用（usageCount > 0）时删除位置灰、点不动、悬停说明原因，
+ *   服务端同样 409 DICT_ITEM_IN_USE 兜底（缓存陈旧也不会误删）；
+ * - 删除无记忆（业务口径「删除了就没有记忆了」）：同码可以重新添加，按**全新条目**处理（本次所选颜色、排到末尾），
+ *   界面不出现「已停用 / 恢复」字样；缓存陈旧时服务端仍可能回 409 DICT_ITEM_EXISTS，按浮层内提示处理；
  * - 名称校验：非空、≤ DICT_NAME_MAX 字、不含英文逗号（filter[...] 是多值逗号分隔，逗号会被拆成两个筛选值）；
- *   输入的名称已存在时直接选中、不重复添加；同码重复由服务端兜 409 DICT_ITEM_EXISTS。
+ *   输入的名称已存在时直接选中、不重复添加。
  */
 export function DictSelect({ value, items, ariaLabel, placeholder, renderContent, onAdd, addText, palette, onDelete, deleteLabelOf, onChange }: DictSelectProps) {
   const options = useMemo(() => buildOptions(items, value, renderContent), [items, value, renderContent]);
@@ -118,30 +141,15 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
   }, [open]);
 
-  /** 新增时的默认色：预置色板里第一个「现有条目还没用过」的颜色（新类型默认不与既有类型撞色）；全用过则取第一个。 */
-  const defaultAccentKey = (): string | null => {
-    if (palette === undefined) {
-      return null;
-    }
-    const used = new Set(items.map((item) => accentOfItem(item).color));
-    let fallback: string | null = null;
-    for (const entry of palette.options) {
-      if (fallback === null) {
-        fallback = entry.key;
-      }
-      if (!used.has(entry.color)) {
-        return entry.key;
-      }
-    }
-    return fallback;
-  };
-
+  /** 可选的色板：已在用的颜色不出现（业务口径）；全用满时回落完整色板。 */
+  const accentChoices: readonly DictAccent[] = palette === undefined ? [] : availableAccents(items, palette.options);
   const enterAdd = (): void => {
     setAdding(true);
     setDraft("");
     setError(null);
     setListError(null);
-    setAccentKey(defaultAccentKey());
+    const [firstAccent] = accentChoices;
+    setAccentKey(firstAccent === undefined ? null : firstAccent.key);
   };
 
   const submitAdd = async (): Promise<void> => {
@@ -169,7 +177,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
     let metadata: Record<string, unknown> = {};
     if (palette !== undefined) {
-      const entry = palette.options.find((option) => option.key === accentKey);
+      const entry = accentChoices.find((option) => option.key === accentKey);
       if (entry === undefined) {
         setError("请先选一个颜色模板。");
         return;
@@ -188,7 +196,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
   };
 
   /**
-   * 删除条目（= 停用，C9-02）：成功后该条目立刻从候选里消失（父层替换缓存）。
+   * 删除条目（物理删行）：成功后该条目立刻从候选里消失（父层替换缓存；服务端 404 由提示行兜住）。
    * 删掉的正好是当前值时**不改当前选中** —— 存量项目仍按原值展示，兜底项继续兜住它。
    */
   const submitDelete = async (code: string): Promise<void> => {
@@ -241,7 +249,8 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
         ) : (
           <span className="truncate font-medium text-zinc-800">{selected.label}</span>
         )}
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-zinc-400">
+        {/* 箭头朝右：与「贴右侧弹出」的落点同向（Push 173）。 */}
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 -rotate-90 text-zinc-400">
           <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
@@ -272,7 +281,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                     <div className="mt-2">
                       <p className="text-[11px] font-medium text-zinc-500">{palette.label}</p>
                       <div className="mt-1.5 grid grid-cols-8 gap-1.5">
-                        {palette.options.map((entry) => (
+                        {accentChoices.map((entry) => (
                           <button
                             key={entry.key}
                             type="button"
@@ -296,10 +305,11 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                           </button>
                         ))}
                       </div>
-                      <p className="mt-1 text-[11px] text-zinc-400">{palette.hint}</p>
                     </div>
                   )}
-                  <p className="mt-1.5 text-[11px] text-zinc-400">{addText.note}</p>
+                  {addText.note === undefined || addText.note === "" ? null : (
+                    <p className="mt-1.5 text-[11px] text-zinc-400">{addText.note}</p>
+                  )}
                   {error === null ? null : (
                     <p role="alert" className="mt-1 text-[11px] text-rose-600">
                       {error}

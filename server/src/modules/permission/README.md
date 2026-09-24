@@ -22,6 +22,8 @@
   - 无项目路径参数的路由（列表 / facets / 创建）→ 过滤挂到 request，由 @ProjectScope() 取用。
 - 矩阵种子：#6b `database/seeds/role-permissions.mjs`（六角色 × 24 键，键唯一来源 = 契约 `PERMISSION_KEYS`；移除键会删除 —— 权限吊销必须生效）。
 
+- **权限判定开关（Push 178 · 一期「不判权限」）**：画像入口 `RoleService.getActorAuthorization()` 在 `PERMISSION_ENFORCED=false`（默认）时返回**等效管理员**（`roleCodes=[admin]` + `dataScopes=[all]` + 契约全量权限位）—— 本模块判定链（`can` / `projectScopeSpec` / `FIELD_POLICIES` / `assertCan` / 五出口）**零改动即整体放开**，记录级不再裁剪、字段级不再隐藏、导出不再单独授权；`true`（二期）回到 ADR-011 判定。画像缓存（TTL 10s + `invalidate`）与 404 / 403 语义不变（开关只决定画像内容）。
+
 ## 与其它模块的边界
 
 - 依赖方向：permission → identity（角色画像）。project / task / blueprint 反向依赖本模块（守卫与策略出口），**本模块不 import project / task**（可见性判定直接读名册与节点表，避免循环；check:boundaries 无违规）。

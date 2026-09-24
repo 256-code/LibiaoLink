@@ -24,13 +24,13 @@ export type Project = {
   code: string;
   /** 前端「项目描述」= 契约 name（唯一展示名）；备注长文本是契约 description，一期表单不采集。 */
   description: string;
-  /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（停用 / 存量值回落码本身）。 */
+  /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（已删除条目的存量值回落码本身）。 */
   region: string;
   /** 项目类型：契约 projects.projectType 存字典 projectType 的码；主题色由字典 metadata 下发（前端不硬编码）。 */
   projectType: string;
   /** 创建时间（契约 createdAt，展示用「YYYY-MM-DD HH:mm」，Asia/Shanghai）：创建时生成、编辑不修改。 */
   createdAt: string;
-  /** 项目时间（契约 updatedAt）：项目最近活动时间——主数据变更 / 阶段推进 / 任务变更刷新；排序 / 搜索 / 区间筛选口径。 */
+  /** 最近活动时间（契约 updatedAt）：主数据变更 / 阶段推进 / 任务变更刷新；「更新时间」排序维度（Push 175 起区间筛选与默认排序都看 createdAt）。 */
   updatedAt: string;
   /**
    * 项目经理（多位，Push 136）：至少一位、可多位，数组顺序 = 展示顺序。

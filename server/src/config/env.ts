@@ -23,6 +23,13 @@ export const EnvSchema = z
     SESSION_COOKIE_SECURE: z.enum(["auto", "true", "false"]).default("auto"),
     /** 内部作业接口凭证（请求头 X-Internal-Token；docs/开发者接入注意事项(SSO接入标准).md 第五部分）。 */
     INTERNAL_SYNC_TOKEN: z.string().default(""),
+    /**
+     * 权限判定开关（一期口径「我们当前这个系统就不要考虑权限」，2026-09-23 业务已定）：
+     * `false`（默认）= **不判权限** —— 授权画像一律等效管理员（数据范围 all + 契约全量权限位 + admin 角色码），
+     * 功能权限 / 记录级可见性 / 字段级投影 / 角色内硬检查全部放开；`true` = 按 ADR-011 判定（二期打开）。
+     * 只影响**裁定**，不动数据：用户偏好（常用筛选 / 醒目模式 / 任务表列显隐）仍按账号各存一行（user_preferences）。
+     */
+    PERMISSION_ENFORCED: z.enum(["true", "false"]).default("false"),
     // ---- 对象存储（ADR-006：S3 协议抽象 + 一期 MinIO 单节点；本地沙箱见 deploy/minio/） ----
     S3_ENDPOINT: z.string().min(1).default("http://127.0.0.1:9000"),
     S3_REGION: z.string().min(1).default("us-east-1"),

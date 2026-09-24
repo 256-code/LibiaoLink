@@ -1587,7 +1587,7 @@
       "DateOnly": {
         "type": "string",
         "format": "date",
-        "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）"
+        "description": "项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）"
       },
       "DateTime": {
         "type": "string",
@@ -1634,7 +1634,11 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "普通用户只见 enabled=true 的项；管理员可见全集（二期）"
+            "description": "是否启用；**兼容字段**（Push 173 起产品口径：删除走 DELETE 物理删除，前端不再有停用入口；值恒为 true）—— 保留给二期「临时下架」与存量数据"
+          },
+          "usageCount": {
+            "type": "integer",
+            "description": "引用该条目的**未删除项目**数（region → projects.region、projectType → projects.project_type；其余字典维度恒 0）；> 0 时删除返回 409 DICT_ITEM_IN_USE（A3 删除守卫，Push 174），前端据此把删除入口置灰"
           },
           "metadata": {
             "type": "object",
@@ -1647,6 +1651,7 @@
           "name",
           "sort",
           "enabled",
+          "usageCount",
           "metadata"
         ]
       },
@@ -1703,7 +1708,7 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "停用（false）替代删除：存量数据仍按原值展示（C9-02）"
+            "description": "启用状态（兼容字段；一期删除走 DELETE 物理删除，前端不再调它）"
           },
           "metadata": {
             "type": "object",
@@ -1795,6 +1800,7 @@
           "PROJECT_CODE_EXISTS",
           "PROJECT_ARCHIVED",
           "DICT_ITEM_EXISTS",
+          "DICT_ITEM_IN_USE",
           "STAGE_GATE_NOT_PASSED",
           "BLUEPRINT_NOT_PUBLISHED",
           "NODE_REQUIRED_DOC_MISSING",
@@ -6341,7 +6347,7 @@
               "$ref": "#/components/schemas/DateOnly"
             },
             "required": false,
-            "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）",
+            "description": "项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）",
             "name": "filter[timeFrom]",
             "in": "query"
           },
@@ -6352,12 +6358,12 @@
                   "$ref": "#/components/schemas/DateOnly"
                 },
                 {
-                  "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
+                  "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
                 }
               ]
             },
             "required": false,
-            "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
+            "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
             "name": "filter[timeTo]",
             "in": "query"
           },
@@ -6396,11 +6402,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
             "name": "sort",
             "in": "query"
           }
@@ -6549,7 +6555,7 @@
               "$ref": "#/components/schemas/DateOnly"
             },
             "required": false,
-            "description": "项目时间下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00）",
+            "description": "项目**创建时间**下界（YYYY-MM-DD，含当日；按 Asia/Shanghai 取当日 00:00:00+08:00；Push 175 起维度 = projects.created_at）",
             "name": "filter[timeFrom]",
             "in": "query"
           },
@@ -6560,12 +6566,12 @@
                   "$ref": "#/components/schemas/DateOnly"
                 },
                 {
-                  "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
+                  "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）"
                 }
               ]
             },
             "required": false,
-            "description": "项目时间上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
+            "description": "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
             "name": "filter[timeTo]",
             "in": "query"
           },
@@ -6604,11 +6610,11 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?(,[a-zA-Z][a-zA-Z0-9]*(:(asc|desc))?)*$",
-              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+              "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
               "example": "plannedEnd:asc"
             },
             "required": false,
-            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = updatedAt:desc（项目最近活动在前）",
+            "description": "排序（field:asc|desc）；一期白名单 updatedAt / createdAt / seqNo；缺省 = createdAt:desc（最近创建的在前；Push 175 起默认维度 = 创建时间）",
             "name": "sort",
             "in": "query"
           }
@@ -8328,7 +8334,7 @@
         "tags": [
           "dicts"
         ],
-        "summary": "全量字典（region / projectType，含元数据与主题色；阶段与成果文件类型走契约枚举，不在字典内）",
+        "summary": "全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内）",
         "parameters": [
           {
             "schema": {
@@ -8337,10 +8343,10 @@
                 "true",
                 "false"
               ],
-              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明"
             },
             "required": false,
-            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明",
             "name": "includeDisabled",
             "in": "query"
           }
@@ -8395,10 +8401,10 @@
                 "true",
                 "false"
               ],
-              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）"
+              "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明"
             },
             "required": false,
-            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）",
+            "description": "是否包含停用项（缺省 / false = 只见 enabled=true）；true 需要 dict.manage（缺权限 403）；兼容参数，见字段说明",
             "name": "includeDisabled",
             "in": "query"
           }
@@ -8535,7 +8541,7 @@
         "tags": [
           "dicts"
         ],
-        "summary": "更新字典条目（部分更新；停用替代删除；变更写审计留痕）",
+        "summary": "更新字典条目（部分更新；仅 dict.manage；变更写审计留痕）",
         "parameters": [
           {
             "schema": {
@@ -8610,6 +8616,96 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "dicts"
+        ],
+        "summary": "删除字典条目（物理删除；仅 dict.manage；删除前快照写审计留痕；条目被项目引用时 409 DICT_ITEM_IN_USE）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+            },
+            "required": true,
+            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "name": "type",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "code",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除成功（更新后的整个字典）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {

@@ -67,6 +67,20 @@ class FakeDictRepository {
     return { ...row };
   }
 
+  async deleteItem(type: string, code: string): Promise<DictItemRow | null> {
+    const index = this.items.findIndex((item) => item.typeCode === type && item.code === code);
+    if (index < 0) return null;
+    const [row] = this.items.splice(index, 1);
+    return row === undefined ? null : { ...row };
+  }
+
+  /** 项目引用计数（A3 删除守卫 · Push 174）：用例按需注入；缺省空表 = 没有任何项目在用它。 */
+  usage: Map<string, number> = new Map();
+
+  async usageCounts(_type: string): Promise<Map<string, number>> {
+    return new Map(this.usage);
+  }
+
   async touchType(type: string, at: Date): Promise<void> {
     this.touched.push(type);
     const row = this.types.find((item) => item.code === type);
@@ -218,7 +232,7 @@ describe("DictService（字典 C9）", () => {
     });
   });
 
-  it("停用替代删除：enabled=false 写审计（字段级 before / after），不物理删除", async () => {
+  it("兼容路径：PATCH enabled=false 仍可写（一期前端已改走物理删除），不删行", async () => {
     const { service, dicts, audit } = makeDictService();
     const dict = await service.updateItem("region", "华东", { enabled: false }, UUID_ACTOR);
     expect(dicts.items.find((item) => item.code === "华东")?.enabled).toBe(false);
@@ -236,6 +250,74 @@ describe("DictService（字典 C9）", () => {
     await service.updateItem("region", "华东", { name: "华东" }, UUID_ACTOR);
     expect(audit.inserted[0]?.changes).toBeNull();
   });
+  it("物理删除：删行 + 审计 action=delete（字段级 from→null）+ 触碰字典版本，响应不含该条目", async () => {
+    const { service, dicts, audit } = makeDictService();
+    const dict = await service.deleteItem("region", "华东旧", UUID_ACTOR);
+    expect(dicts.items.some((item) => item.code === "华东旧")).toBe(false);
+    expect(dict.items.map((item) => item.code)).toEqual(["华东"]);
+    expect(dicts.touched).toEqual(["region"]);
+    expect(audit.inserted).toHaveLength(1);
+    expect(audit.inserted[0]).toMatchObject({
+      action: "delete",
+      objectType: "dict_item",
+      objectId: "region:华东旧",
+      actorId: UUID_ACTOR,
+      actorName: "张三",
+      result: "succeeded",
+      entry: "api",
+      summary: "删除字典项：地区 · 华东（停用）（华东旧）",
+    });
+    expect(audit.inserted[0]?.changes).toEqual([
+      { field: "code", from: "华东旧", to: null },
+      { field: "enabled", from: false, to: null },
+      { field: "metadata", from: {}, to: null },
+      { field: "name", from: "华东（停用）", to: null },
+      { field: "sort", from: 20, to: null },
+    ]);
+  });
+
+  it("删除后同码可重新新增（全新条目，不是「恢复」）：不 409，按本次参数落库", async () => {
+    const { service, dicts } = makeDictService();
+    await service.deleteItem("region", "华东旧", UUID_ACTOR);
+    const dict = await service.createItem("region", { code: "华东旧", name: "华东新名", sort: 90, enabled: true, metadata: { accent: "#3b82f6" } }, UUID_ACTOR);
+    const created = dict.items.filter((item) => item.code === "华东旧");
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ name: "华东新名", sort: 90, enabled: true, metadata: { accent: "#3b82f6" } });
+    expect(dicts.items.filter((item) => item.code === "华东旧")).toHaveLength(1);
+  });
+
+
+  it("引用守卫：条目正被项目引用时 409 DICT_ITEM_IN_USE，不删行 / 不写审计 / 不触碰字典版本", async () => {
+    const { service, dicts, audit } = makeDictService();
+    dicts.usage.set("华东", 2);
+    await expectAppErrorAsync(() => service.deleteItem("region", "华东", UUID_ACTOR), "DICT_ITEM_IN_USE");
+    expect(dicts.items.some((item) => item.code === "华东")).toBe(true);
+    expect(dicts.touched).toEqual([]);
+    expect(audit.inserted).toHaveLength(0);
+  });
+
+  it("引用守卫：计数为 0（无引用 / 项目已软删）时照常物理删除", async () => {
+    const { service, dicts, audit } = makeDictService();
+    dicts.usage.set("华东旧", 0);
+    const dict = await service.deleteItem("region", "华东旧", UUID_ACTOR);
+    expect(dict.items.map((item) => item.code)).toEqual(["华东"]);
+    expect(audit.inserted[0]).toMatchObject({ action: "delete", objectId: "region:华东旧" });
+  });
+
+  it("下发条目带 usageCount（未删除项目引用数；无引用为 0，删掉的条目不再出现）", async () => {
+    const { service, dicts } = makeDictService();
+    dicts.usage.set("华东", 3);
+    const dict = await service.get("region", true);
+    expect(dict.items.map((item) => [item.code, item.usageCount])).toEqual([["华东", 3], ["华东旧", 0]]);
+  });
+  it("删除未知类型 / 未知条目 404 NOT_FOUND，且不写审计", async () => {
+    const { service, dicts, audit } = makeDictService();
+    await expectAppErrorAsync(() => service.deleteItem("priority", "华东", UUID_ACTOR), "NOT_FOUND");
+    await expectAppErrorAsync(() => service.deleteItem("region", "不存在", UUID_ACTOR), "NOT_FOUND");
+    expect(audit.inserted).toHaveLength(0);
+    expect(dicts.touched).toEqual([]);
+  });
+
 });
 
 // ---------- 审计写入与检索（C7-01 / C7-04） ----------

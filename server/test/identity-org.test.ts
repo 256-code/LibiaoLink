@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { PERMISSION_KEYS } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
+import { AppConfig } from "../src/config/config.module.js";
+import type { Env } from "../src/config/env.js";
 import { sortDataScopes, widestDataScope } from "../src/modules/identity/data-scope.js";
 import { DepartmentRepository, type DepartmentRow, type DepartmentUpsertInput } from "../src/modules/identity/department.repository.js";
 import { DepartmentService } from "../src/modules/identity/department.service.js";
@@ -221,8 +224,10 @@ class FakeRoleRepository {
   }
 }
 
-function buildRoleService(fake: FakeRoleRepository): RoleService {
-  return new RoleService(fake as unknown as RoleRepository);
+/** 构造被测服务：默认按 ADR-011 判定（PERMISSION_ENFORCED=true）—— 一期「不判权限」的开关单独成组验证。 */
+function buildRoleService(fake: FakeRoleRepository, enforced = true): RoleService {
+  const env = { PERMISSION_ENFORCED: enforced ? "true" : "false" } as unknown as Env;
+  return new RoleService(new AppConfig(env), fake as unknown as RoleRepository);
 }
 
 describe("角色数据范围用例（h1 验收 · v0.2 §4.1 六角色）", () => {
@@ -266,6 +271,48 @@ describe("角色数据范围用例（h1 验收 · v0.2 §4.1 六角色）", () =
     await expect(service.assignRole("user-4", "nobody")).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(await service.revokeRole("user-4", "admin")).toBe(true);
     expect(await service.revokeRole("user-4", "admin")).toBe(false);
+  });
+});
+
+// ---------- 权限判定开关（PERMISSION_ENFORCED · 业务口径 2026-09-23「我们当前这个系统就不要考虑权限」） ----------
+
+describe("权限判定开关：一期不判权限（默认 false）/ 二期按 ADR-011 判定（true）", () => {
+  it("默认（false）：无角色账号也拿到等效管理员画像 —— roleCodes=admin、范围 all、契约全量权限位", async () => {
+    const auth = await buildRoleService(new FakeRoleRepository(), false).getActorAuthorization("user-anon");
+    expect(auth.userId).toBe("user-anon");
+    expect(auth.roleCodes).toEqual(["admin"]);
+    expect(auth.dataScopes).toEqual(["all"]);
+    expect(auth.permissionKeys).toEqual([...PERMISSION_KEYS]);
+  });
+
+  it("默认（false）：不读 user_roles（裁定与角色绑定无关）", async () => {
+    const exploding = {
+      listByUser: () => {
+        throw new Error("不判权限时不应读库");
+      },
+      listPermissionKeys: () => {
+        throw new Error("不判权限时不应读库");
+      },
+    } as unknown as RoleRepository;
+    const service = new RoleService(new AppConfig({ PERMISSION_ENFORCED: "false" } as unknown as Env), exploding);
+    await expect(service.getActorAuthorization("user-anon")).resolves.toMatchObject({ roleCodes: ["admin"] });
+  });
+
+  it("打开（true）：按库判 —— 无角色即空画像（不得放行数据）", async () => {
+    const auth = await buildRoleService(new FakeRoleRepository()).getActorAuthorization("user-anon");
+    expect(auth.roleCodes).toEqual([]);
+    expect(auth.dataScopes).toEqual([]);
+    expect(auth.permissionKeys).toEqual([]);
+  });
+
+  it("打开（true）：有角色绑定时按角色下发（角色 / 范围 / 权限位三类原样）", async () => {
+    const fake = new FakeRoleRepository();
+    fake.bound.set("user-1", ["project_manager"]);
+    fake.permissions.set("role-2", ["project.create"]);
+    const auth = await buildRoleService(fake).getActorAuthorization("user-1");
+    expect(auth.roleCodes).toEqual(["project_manager"]);
+    expect(auth.dataScopes).toEqual(["managed_projects"]);
+    expect(auth.permissionKeys).toEqual(["project.create"]);
   });
 });
 
