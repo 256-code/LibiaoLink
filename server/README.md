@@ -26,7 +26,7 @@ server/
     modules/report-issue/  # 日报与问题（S6·report-issue · M6-01 ~ M6-03 + M6-01 收口）：日报五端点（list/create / detail/edit / summary / missing）+ 问题三端点 + A3-08 回写 + A3-09 幂等 + 问题四态与留痕 + A7-01 / A7-05 当日读（见 src/modules/report-issue/README.md）
     modules/stakeholder/  # 干系人台账（S8·stakeholder · j6）：台账 CRUD + 项目关联与反查 + 字段级脱敏（导入随 M8-01、导出随 M7-03；见 src/modules/stakeholder/README.md）
     modules/automation/   # 自动化规则引擎（S6·automation · M5-01）：规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器（见 src/modules/automation/README.md）
-    modules/template/   # 任务节点库（A1-16 / A1-17 · M3-05 余第一段 · Push 181）：节点列表 / 新增 / 编辑 / 删除 + blueprint.manage 写门禁 + 审计留痕（见 src/modules/template/README.md）
+    modules/template/   # 任务节点库 + 任务模板（A1-16 / A1-17 · M3-05 余第一段 / 第二段 · Push 181 / 182）：节点列表 / 新增 / 编辑 / 删除 + 模板列表 / 详情 / 新建 / 编辑 / 软删 + blueprint.manage 写门禁 + 审计留痕（见 src/modules/template/README.md）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
@@ -184,13 +184,17 @@ server/
 - 完成门禁（v0.2 §3.6）：`POST /api/v1/nodes/{id}/complete`（**成员平权**，服务端事务内强校验；缺 `required_doc` → 422 `NODE_REQUIRED_DOC_MISSING` + `missing[]` 明细；重复完成 409 `NODE_ALREADY_DONE`；响应按契约 `NodeCompleteResponse`（{ node }））、`GET /api/v1/nodes/{id}/can-complete`（预检，只是 UI 置灰依据）。门禁拒绝写 outbox 留痕（`node.gate_rejected` / `stage.gate_rejected`，audit_logs 随 h7）。
 - 写保护与留痕：归档项目（`status=archived`）的流程写操作一律 409 `PROJECT_ARCHIVED`；节点 / 阶段事件同事务写 outbox（`node.added`（还原带 `restored: true`）/ `node.completed` / `node.deleted` / `stage.advanced` / `stage.rolled_back`）。
 - 权限与过渡口径（登记待收口）：① 记录级 404 语义（非成员不可见）与权限矩阵随 h6 策略服务 —— 当前流程读接口登录即可读、完成门禁无成员校验；② `GateService` 仍直接读 `files` 表（file 模块未落地）：文件计入口径 = `deleted_at is null` 且 `status ∈ (final, changed)` 且 `current_version_id is not null`，i1 落地后改为对端 index 出口；**任务侧计数已随 h4 收口** —— 阶段门禁与阶段完成度的任务计数经 task 模块 `TaskStatsService`（node → task）；③ 蓝图写权限按角色码 `admin` 判定，待 h6 矩阵换成功能权限 `admin.blueprint.manage`。
-## 任务节点库接口（M3-05 余第一段 · A1-16 / A1-17 · Push 181）
+## 任务节点库与任务模板接口（M3-05 余 · A1-16 / A1-17 · Push 181 / 182）
 
 - 契约 `shared/src/modules/templates.ts`（OpenAPI tags=templates）；实现 `src/modules/template/`（controller / service / repository + `index.ts` 出口 + README）；`TemplateController` 挂 `api/v1/task-nodes`（整组 `SessionGuard + CsrfGuard`）：`GET /api/v1/task-nodes?stage=`（读 = 登录即可；缺省全部阶段）、`POST`（新增，201）、`PATCH /{id}`（改名 / 英文名，`version` 乐观锁必传）、`DELETE /{id}`（物理删行）。
 - 写门禁：三个写端点一律服务层 `blueprint.manage` 复核（ADR-019 / ADR-020：仅系统管理员；非管理员 403 `FORBIDDEN`），每次变更同事务写审计（`action=create/update/delete`、`objectType="task_node"`；编辑写字段级 `changes`、删除把删除前快照写进 `changes`）—— **不写 outbox**（与字典维护同口径）。
 - 判重与排序：同阶段同名唯一（`uq_task_nodes_stage_title`，跨阶段可同名）→ 应用层 409 `NODE_ALREADY_EXISTS`；缺省 `seq` = 该阶段末位 + 10；读序 = 九阶段顺序 → `seq` → `id`。
-- 边界：不碰 `tasks` / `project_nodes` —— `tasks.node_id` 指向流程节点（`project_nodes`），节点库只回答「任务从哪来」；节点删除不影响已生成的项目任务（任务侧无外键）。模板（TaskTemplate）读写随第二段（契约已定：`GET/POST/PATCH/DELETE /task-templates`）。
-- 测试：`test/template-nodes.test.ts`（17 例：列表 / 新增 / 编辑（乐观锁 + 同名）/ 删除 / 权限 / 审计）。
+- 任务模板（第二段 · Push 182）：契约 `shared/src/modules/templates.ts` 的模板侧别名（`TaskTemplate` / `TaskTemplateNode` / 列表 / 创建 / 编辑 / 删除 body + response）；`TaskTemplateController` 挂 `api/v1/task-templates`（同 Guard）：`GET /api/v1/task-templates?stage=`（读 = 登录即可；读序 = 九阶段顺序 → `created_at` 倒序 → id = 最新在最左）、`GET /{id}`、`POST`（201；名称 trim 后空 400）、`PATCH /{id}`（改名 / `nodeIds` 全量替换 + `version` 乐观锁）、`DELETE /{id}`（**body 带 `version`**，软删）。
+- 模板写口径：写门禁与节点库同一套（`blueprint.manage` 仅系统管理员，403 `FORBIDDEN`）；`nodeIds` 在写入前同事务校验（重复 id / 节点不存在 / 节点跨阶段 → 400 `VALIDATION_FAILED`）；`version` 过期 409 `VERSION_CONFLICT`、已软删 / 不存在 404 `NOT_FOUND`；`replaceNodes` 全量替换、`seq = (下标 + 1) × 10`。
+- 模板留痕：每次变更同事务写审计（`objectType = task_template`，`AUDIT_OBJECT_TYPES` 已登记；`changes` 记名称 + 节点名顺序、删除写删除前快照），同样**不写 outbox**；节点删除审计的 `metadata.removedFromTemplates` 记「连带从几份模板里移除」。
+- 模板删除 = 软删（`deleted_at` / `deleted_by` + `version` 前进）：读面恒 `deleted_at is null`，**引用行（`task_template_nodes`）保留**（软删只打标、不连带清子表 —— 照 0009 / 0022 口径）；已按它生成的项目任务不受影响。
+- 边界：不碰 `tasks` / `project_nodes` —— `tasks.node_id` 指向流程节点（`project_nodes`），节点库只回答「任务从哪来」；节点删除不影响已生成的项目任务（任务侧无外键）。**模板实例化 `POST /api/v1/projects/{id}/tasks/from-template` 仍未实现**（已入契约，随任务域那一条；前端「添加任务」卡片目前逐条 `POST /projects/{id}/tasks`、判重 = 同阶段同名）。
+- 测试：`test/template-nodes.test.ts`（18 例：列表 / 新增 / 编辑（乐观锁 + 同名）/ 删除（被模板引用时也照删）/ 权限 / 审计）+ `test/template-templates.test.ts`（16 例：列表（按阶段 / 全部）/ 详情（404）/ 新建（trim + 空 nodeIds + 全空白名 400 + 重复 id / 未知节点 / 跨阶段 400 + 403）/ 编辑（改名 + `nodeIds` 全量替换 + 清空 + 409 + 404）/ 删除（软删回包 + 读面消失 + 审计快照 + 409 + 404 + 403））；`npm test` 610 项 · 39 文件全绿，`check:db-schema` 37 表 · 364 列 · 115 索引 / 唯一 · 118 CHECK，`check:boundaries` 169 文件 / 699 依赖 / 0 违规。
 
 ## 任务接口（h4 · S6·task：M3-01 列表 / 详情 + M3-02 进度与状态 + M3-03 完成门禁 + M3-04 批量操作 + M3-05 软删 + 锁定字段例外调整 + 项目总览四格）
 

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { addedNodeKey } from "../data/tasks";
-import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "../data/templatePresets";
-import { fetchStageNodes } from "../templateApi";
+import type { TemplatePresetNode } from "../data/templatePresets";
+import { fetchStageNodes, fetchStageTemplates, type TemplateItem } from "../templateApi";
 import { ScrollArea } from "./ScrollArea";
 import { usePopover } from "./usePopover";
 
@@ -214,15 +214,21 @@ export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, plac
    * 勾上 = 点「＋ 添加」直接按顺序加到该阶段末尾（不动顺序表）；取消勾选 = 点「＋ 添加」才弹位置浮层手动选。每次开卡片都回到默认。
    */
   const [sequential, setSequential] = useState(true);
-  const presets = useMemo(() => STAGE_TEMPLATE_PRESETS[stage] ?? [], [stage]);
   /**
-   * 「任务节点」标签的节点池（Push 181）：改吃节点库接口（GET /api/v1/task-nodes?stage=…），
-   * 写死的预设节点只留给「模板」标签（模板接口是第二段）。
+   * 「任务节点」标签的节点池（Push 181）：节点库接口（GET /api/v1/task-nodes?stage=…）。
    */
   const [nodes, setNodes] = useState<TemplatePresetNode[]>([]);
   const [nodesLoading, setNodesLoading] = useState(true);
   const [nodesError, setNodesError] = useState<string | null>(null);
   const [nodesRetry, setNodesRetry] = useState(0);
+  /**
+   * 「模板」标签的模板清单（Push 182）：模板接口（GET /api/v1/task-templates?stage=…）——
+   * 写死的预设已由种子 #9 灌进库，这里与任务模板页看的是同一份数据。
+   */
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [templatesRetry, setTemplatesRetry] = useState(0);
   const [activeTab, setActiveTab] = useState("nodes");
   const cardRef = useRef<HTMLElement | null>(null);
 
@@ -256,6 +262,32 @@ export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, plac
       alive = false;
     };
   }, [stage, nodesRetry]);
+
+  // 模板取数（换阶段 / 重试重取）：与节点库同样只在卡片里提示失败
+  useEffect(() => {
+    let alive = true;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    void (async () => {
+      try {
+        const items = await fetchStageTemplates(stage);
+        if (alive) {
+          setTemplates(items);
+        }
+      } catch (error) {
+        if (alive) {
+          setTemplatesError(error instanceof Error ? error.message : "模板加载失败");
+        }
+      } finally {
+        if (alive) {
+          setTemplatesLoading(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [stage, templatesRetry]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -291,14 +323,32 @@ export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, plac
     };
   }, [onClose]);
 
-  const templateIndex = presets.findIndex((_, index) => "tpl-" + String(index) === activeTab);
-  const currentPreset = templateIndex === -1 ? undefined : presets[templateIndex];
-  const isNodesTab = currentPreset === undefined;
-  const items = currentPreset?.nodes ?? nodes;
+  const currentTemplate = templates.find((item) => item.id === activeTab);
+  const isNodesTab = currentTemplate === undefined;
+  const items = currentTemplate?.nodes ?? nodes;
   const pendingCount = items.filter((node) => !addedNodeKeys.has(addedNodeKey(stage, node.title))).length;
-  /** 节点库取数中的占位 / 失败提示（只在「任务节点」标签里出；「模板」标签是本地预设、不受影响）。 */
-  const nodeListNotice =
-    !isNodesTab ? null : nodesLoading ? "正在加载节点库…" : nodesError === null ? null : "节点库加载失败：" + nodesError;
+  /** 取数中的占位 / 失败提示（按当前标签取节点库或模板的加载状态）。 */
+  const listNotice = isNodesTab
+    ? nodesLoading
+      ? "正在加载节点库…"
+      : nodesError === null
+        ? null
+        : "节点库加载失败：" + nodesError
+    : templatesLoading
+      ? "正在加载模板…"
+      : templatesError === null
+        ? null
+        : "模板加载失败：" + templatesError;
+  /** 失败时「重试」按钮该重取哪一边。 */
+  const retryCurrent = (): void => {
+    if (isNodesTab) {
+      setNodesRetry((count) => count + 1);
+      return;
+    }
+    setTemplatesRetry((count) => count + 1);
+  };
+  /** 当前标签取数失败了吗（决定出不出重试按钮）。 */
+  const listFailed = isNodesTab ? nodesError !== null : templatesError !== null;
   const addedCount = items.length - pendingCount;
 
   /** 位置选好了（Push 113）：交给上层按这个位置插进项目；没给批量入口时逐条加。 */
@@ -339,7 +389,7 @@ export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, plac
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-zinc-800">{stage}</p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
-            节点 {nodes.length} 个 · 模板 {presets.length} 块
+            节点 {nodes.length} 个 · 模板 {templates.length} 块
           </p>
         </div>
         <button
@@ -369,22 +419,21 @@ export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, plac
           任务节点
           <span className="ml-1 text-[10px] text-zinc-400">{nodes.length}</span>
         </button>
-        {presets.map((preset, index) => {
-          const key = "tpl-" + String(index);
-          const active = key === activeTab;
+        {templates.map((template) => {
+          const active = template.id === activeTab;
           return (
             <button
-              key={key}
+              key={template.id}
               type="button"
-              onClick={() => setActiveTab(key)}
+              onClick={() => setActiveTab(template.id)}
               aria-current={active ? "true" : undefined}
               className={
                 "whitespace-nowrap border-b-2 px-2.5 py-1.5 text-xs font-medium transition " +
                 (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800")
               }
             >
-              {preset.name}
-              <span className="ml-1 text-[10px] text-zinc-400">{preset.nodes.length}</span>
+              {template.name}
+              <span className="ml-1 text-[10px] text-zinc-400">{template.nodes.length}</span>
             </button>
           );
         })}
@@ -410,13 +459,13 @@ export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, plac
         </div>
       </div>
 
-      {nodeListNotice !== null ? (
+      {listNotice !== null ? (
         <p className="mt-2 flex min-h-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-200 px-3 text-center text-xs text-zinc-500">
-          {nodeListNotice}
-          {nodesError === null ? null : (
+          {listNotice}
+          {!listFailed ? null : (
             <button
               type="button"
-              onClick={() => { setNodesRetry((count) => count + 1); }}
+              onClick={retryCurrent}
               className="rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 transition hover:bg-zinc-100"
             >
               重试
@@ -467,7 +516,7 @@ export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, plac
           onClose={() => { setArmed(null); }}
         />
       )}
-      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">「任务节点」来自节点库（GET /api/v1/task-nodes，可增删）：「模板」仍是写死的预设，模板接口随第二段接线。加进项目即落库；「已添加」按同阶段同名折算（任务侧还没有节点库来源字段）。</p>
+      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">「任务节点」来自节点库、「模板」来自模板接口（GET /api/v1/task-nodes · task-templates，任务模板页可维护）。加进项目即落库；「已添加」按同阶段同名折算（任务侧还没有节点库来源字段）。</p>
     </aside>
   );
 }

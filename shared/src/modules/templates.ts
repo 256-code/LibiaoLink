@@ -122,3 +122,14 @@ export type TaskNodeCreateBody = z.infer<typeof TaskNodeCreateBodySchema>;
 export type TaskNodeDeleteResponse = z.infer<typeof TaskNodeDeleteResponseSchema>;
 export type TaskNodeListResponse = z.infer<typeof TaskNodeListResponseSchema>;
 export type TaskNodeUpdateBody = z.infer<typeof TaskNodeUpdateBodySchema>;
+
+/** 模板侧别名（第二段落库：名称 + 阶段 + 节点顺序，全量替换 + 乐观锁）。 */
+export type TaskTemplateNode = z.infer<typeof TaskTemplateNodeSchema>;
+export type TaskTemplate = z.infer<typeof TaskTemplateSchema>;
+export type TaskTemplateListQuery = z.infer<typeof TaskTemplateListQuerySchema>;
+export type TaskTemplateListResponse = z.infer<typeof TaskTemplateListResponseSchema>;
+export type TaskTemplateCreateBody = z.infer<typeof TaskTemplateCreateBodySchema>;
+export type TaskTemplateUpdateBody = z.infer<typeof TaskTemplateUpdateBodySchema>;
+export type TaskTemplateDeleteBody = z.infer<typeof TaskTemplateDeleteBodySchema>;
+export type TaskTemplateDeleteResponse = z.infer<typeof TaskTemplateDeleteResponseSchema>;
+

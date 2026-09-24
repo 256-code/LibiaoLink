@@ -4,14 +4,26 @@ import { AppHeader } from "./components/AppHeader";
 import { RowDeleteButton } from "./components/RowDeleteButton";
 import { TaskNodeCard } from "./components/TaskNodeCard";
 import { PROJECT_STAGES } from "./data/projects";
-import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "./data/templatePresets";
 import { ApiError } from "./api";
-import { createStageNode, deleteTaskNode, fetchStageNodes, nodeWriteMessage, updateStageNode, type TaskNodeItem } from "./templateApi";
+import {
+  createStageNode,
+  createTaskTemplate,
+  deleteTaskNode,
+  deleteTaskTemplate,
+  fetchStageNodes,
+  fetchStageTemplates,
+  nodeWriteMessage,
+  templateWriteMessage,
+  updateStageNode,
+  updateTaskTemplate,
+  type TaskNodeItem,
+  type TemplateItem,
+} from "./templateApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
-  templates: { title: "任务模板", note: "左侧「任务节点」已接节点库接口（Push 181：`GET /api/v1/task-nodes`，可新增 / 编辑 / 删除，写 = 系统管理员；编辑 = 点卡片上的铅笔图标）；右侧模板面板仍是业务写死的预设（`data/templatePresets.ts`，模板接口随第二段落库）。把左侧节点拖进模板 = 定这份模板的节点顺序。" },
+  templates: { title: "任务模板", note: "左侧「任务节点」= 节点库接口（Push 181：`GET /api/v1/task-nodes`，可新增 / 编辑 / 删除）；右侧模板面板 = 模板接口（Push 182：`GET/POST/PATCH/DELETE /api/v1/task-templates`，改名 / 拖入拖出 / 排序改完点「保存」落库，删模板走同款红胶囊 + 底部确认条）。写 = 系统管理员（blueprint.manage）。把左侧节点拖进模板 = 定这份模板的节点顺序。" },
   files: { title: "文件库", note: "文件库还没开工：先把入口与路由占好，后续按需求填充。" },
 };
 
@@ -21,50 +33,37 @@ const TEMPLATE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => st
 /** 左列节点池的兜底空数组（取不到该板块那份时用，避免每次渲染都新建一个）。 */
 const EMPTY_NODE_LIST: readonly TaskNodeItem[] = [];
 
-type TemplateNode = TemplatePresetNode;
+type TemplateNode = TaskNodeItem;
 
-/** 右侧一块模板面板 = 一份模板草稿（当前原型都在内存里：可新建、可改名，未接保存；正式版落库）。 */
+/**
+ * 右侧一块模板面板 = 一份模板草稿（Push 182 起 = 模板接口的本地副本）：
+ * 服务端下发的 `name` / `nodes` / `version` 是基线，「保存」= PATCH 全量回传（改名 + 节点顺序 + version）。
+ */
 type TemplateDraft = {
   id: string;
-  /** 模板名（本地草稿字段，可直接改） */
+  /** 模板名（可直接改；保存时 trim 后落库） */
   name: string;
   /** 这份模板里已选的节点，顺序即模板里的顺序 */
   nodes: TemplateNode[];
-  /** 上次「保存」时的样子（当前原型存浏览器内存、未接后端；正式版由后端持久化；用来判断有没有未保存的改动） */
+  /** 上次「保存 / 加载」时的样子（服务端当前值；用来判断有没有未保存的改动） */
   saved: string;
+  /** 乐观锁版本（服务端下发；保存 / 删除原样回传，过期 = 409 VERSION_CONFLICT） */
+  version: number;
 };
 
 /** 模板的「样子」快照：名字 + 节点顺序，序列化后直接比字符串。 */
 const snapshotOf = (template: Pick<TemplateDraft, "name" | "nodes">): string =>
   JSON.stringify({ name: template.name, nodes: template.nodes.map((node) => node.id) });
 
-/** 空阶段兜底用的空数组（避免每次渲染都新建一个）。 */
-const EMPTY_TEMPLATE_LIST: TemplateDraft[] = [];
-
-/**
- * 每个阶段的初始模板面板：**业务写死的模板预设**（名称 + 节点顺序）——
- * 硬件实施两套（机器人 / 导轨型 18 条、格口 / 滑槽型 11 条），软件部署一套，其余阶段各一套；
- * 面板初始就是「已保存」，之后改名 / 拖拽 / 增删才会变回「保存」。
- */
-function initialTemplatesByStage(): Record<string, TemplateDraft[]> {
-  const map: Record<string, TemplateDraft[]> = {};
-  let seq = 1;
-  for (const stage of TEMPLATE_SECTIONS) {
-    map[stage] = (STAGE_TEMPLATE_PRESETS[stage] ?? []).map((preset) => {
-      const id = "tpl-" + String(seq);
-      seq += 1;
-      const nodes = preset.nodes.slice();
-      return { id, name: preset.name, nodes, saved: snapshotOf({ name: preset.name, nodes }) };
-    });
-  }
-  return map;
+/** 服务端模板 → 面板草稿（saved 记服务端当前的样子，之后任何本地改动都会让按钮变回「保存」）。 */
+function toTemplateDraft(template: TemplateItem): TemplateDraft {
+  const name = template.name;
+  const nodes = template.nodes.slice();
+  return { id: template.id, name, nodes, saved: snapshotOf({ name, nodes }), version: template.version };
 }
 
-/** 预设面板总数：「＋ 新建模板」的序号从这里往后排，避免 id 撞车。 */
-const INITIAL_TEMPLATE_COUNT = TEMPLATE_SECTIONS.reduce(
-  (total, stage) => total + (STAGE_TEMPLATE_PRESETS[stage]?.length ?? 0),
-  0,
-);
+/** 空阶段兜底用的空数组（避免每次渲染都新建一个）。 */
+const EMPTY_TEMPLATE_LIST: TemplateDraft[] = [];
 
 /** 按住卡片后位移超过这个数才算「拖动」（没过阈值就是点一下，什么都不改）。 */
 const DRAG_THRESHOLD = 4;
@@ -93,10 +92,11 @@ type PlaceholderPageProps = {
   /** 任务模板页当前板块（来自 URL 的 `?section=`；缺省 / 不认识的值回落到第一个板块） */
   section: string | null;
   /**
-   * 是否持有 blueprint.manage（节点库维护 = 系统管理员，ADR-019 / ADR-020）：
-   * 决定「＋ 添加节点」与节点卡片上的删除按钮渲不渲染；服务端逐请求仍是最终裁决（无权 = 403）。
+   * 是否持有 blueprint.manage（节点库与任务模板的维护 = 系统管理员，ADR-019 / ADR-020）：
+   * 决定左列「＋ 添加节点」/ 节点卡片的编辑删除、右侧「＋ 新建模板」/「保存」/ 删除模板 / 拖拽改模板渲不渲染、可不可用；
+   * 服务端逐请求仍是最终裁决（无权 = 403 FORBIDDEN）。
    */
-  canManageNodes: boolean;
+  canManageBlueprint: boolean;
 };
 
 /** 占位卡：页面主体内容未定稿前统一用它撑住版面。 */
@@ -136,7 +136,7 @@ function InsertLine({ className }: { className: string }) {
   );
 }
 
-export default function PlaceholderPage({ me, page, section, canManageNodes }: PlaceholderPageProps) {
+export default function PlaceholderPage({ me, page, section, canManageBlueprint }: PlaceholderPageProps) {
   const { title, note } = PAGES[page];
   /** 当前板块：URL 是唯一来源（点标签栏 = 换地址；`?section=` 取 ASCII slug，兼容旧链接的中文板块名），缺省 / 不认识的值回落到第一个板块。 */
   const activeSection = templateSectionFromParam(section) ?? TEMPLATE_SECTIONS[0] ?? "";
@@ -147,10 +147,15 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
       replaceTemplateSection(activeSection);
     }
   }, [page, section, activeSection]);
-  /** 右侧的模板面板：**按阶段分开存**，每个阶段一套、互不影响（当前原型都是内存草稿、未接后端）。 */
-  const [templatesByStage, setTemplatesByStage] =
-    useState<Record<string, TemplateDraft[]>>(initialTemplatesByStage);
-  const nextTemplateSeq = useRef(INITIAL_TEMPLATE_COUNT + 1);
+  /**
+   * 右侧的模板面板（Push 182 起 = 模板接口）：**按阶段分开存**，每个阶段一套；
+   * 服务端下发即基线，本地改名 / 拖拽 = 未保存改动（「保存」才回写）。
+   */
+  const [templatesByStage, setTemplatesByStage] = useState<Record<string, TemplateDraft[]>>({});
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  /** 模板取数版本号：首次进入 / 失败重试 / 节点库改动后 +1 重取（本地有未保存改动时不会被覆盖）。 */
+  const [templatesVersion, setTemplatesVersion] = useState(0);
   /** 当前阶段的模板面板。 */
   const templates = templatesByStage[activeSection] ?? EMPTY_TEMPLATE_LIST;
   /**
@@ -217,6 +222,41 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
       alive = false;
     };
   }, [page, activeSection, nodesVersion]);
+  // 模板取数（换板块 / 重取）：服务端是模板内容的真相 —— 本地**没有未保存改动**时整块替换；
+  // 有未保存改动的面板保持原样（避免把用户刚拖好的顺序冲掉），保存 / 删除各自按回包更新那一块。
+  useEffect(() => {
+    if (page !== "templates") {
+      return;
+    }
+    let alive = true;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    void (async () => {
+      try {
+        const items = await fetchStageTemplates(activeSection);
+        if (alive) {
+          setTemplatesByStage((previous) => {
+            const current = previous[activeSection] ?? EMPTY_TEMPLATE_LIST;
+            if (current.some((draft) => draft.saved !== snapshotOf(draft))) {
+              return previous;
+            }
+            return { ...previous, [activeSection]: items.map(toTemplateDraft) };
+          });
+        }
+      } catch (error) {
+        if (alive) {
+          setTemplatesError(error instanceof Error ? error.message : "模板加载失败");
+        }
+      } finally {
+        if (alive) {
+          setTemplatesLoading(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [page, activeSection, templatesVersion]);
 
   const normalizedQuery = nodeQuery.trim().toLowerCase();
   const visibleNodes =
@@ -269,36 +309,92 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
     setDropTarget(null);
   };
 
-  /** 新建模板：在「任务节点」右侧插一块空白面板、原来的模板往右挪，并把焦点落到新面板的名字上。 */
+  /**
+   * 新建模板 = `POST /api/v1/task-templates`（默认名「未命名模板」、空节点，回来再拖节点进去）：
+   * 成功 = 新面板插到最前（原来的往右挪）并把焦点 / 全选落到它的名字上；失败 = 底部提示条。
+   */
   const startNewTemplate = (): void => {
-    const id = "tpl-" + String(nextTemplateSeq.current);
-    nextTemplateSeq.current += 1;
-    updateTemplates((previous) => [{ id, name: "未命名模板", nodes: [], saved: "" }, ...previous]);
-    // 等这次 state 更新渲染完，再把焦点 / 全选落到新面板的名称输入框上
-    setTimeout(() => {
-      const input = document.getElementById("template-name-" + id);
-      if (input instanceof HTMLInputElement) {
-        input.focus();
-        input.select();
+    if (newTemplateBusy) {
+      return;
+    }
+    setNewTemplateBusy(true);
+    setTemplateNotice(null);
+    void (async () => {
+      try {
+        const created = await createTaskTemplate(activeSection, "未命名模板", []);
+        const draft = toTemplateDraft(created);
+        updateTemplates((previous) => [draft, ...previous]);
+        // 焦点 / 全选等这块面板渲染出来再落（下面那个 useEffect 里做 —— 不用 setTimeout 抢时机）
+        setFocusTemplateId(draft.id);
+      } catch (error) {
+        setTemplateNotice("新建模板失败：" + templateErrorMessage(error, "请稍后重试"));
+      } finally {
+        setNewTemplateBusy(false);
       }
-    }, 0);
+    })();
   };
 
   const renameTemplate = (templateId: string, name: string): void => {
     updateTemplates((previous) => previous.map((item) => (item.id === templateId ? { ...item, name } : item)));
   };
 
-  /** 保存这份模板：当前原型没有后端，就把当前样子记进内存（正式版落库；之后再改动会重新变回「保存」）。 */
+  /**
+   * 保存这份模板 = `PATCH /api/v1/task-templates/{id}`：**改名 + 节点顺序全量回传**（含增删 / 重排）+ `version` 乐观锁。
+   * 成功 = 用服务端回包替换这块面板（version 前进、名字按库里的 trim 结果、节点名取节点库当前值）；
+   * 失败 = 底部提示条；version 过期（409）额外重取该板块（没有未保存改动的面板会跟着刷新）。
+   */
   const saveTemplate = (templateId: string): void => {
-    updateTemplates((previous) =>
-      previous.map((item) => (item.id === templateId ? { ...item, saved: snapshotOf(item) } : item)),
-    );
+    const draft = templates.find((item) => item.id === templateId);
+    if (draft === undefined || savingTemplateId !== null) {
+      return;
+    }
+    const name = draft.name.trim() === "" ? "未命名模板" : draft.name.trim();
+    setSavingTemplateId(templateId);
+    setTemplateNotice(null);
+    void (async () => {
+      try {
+        const saved = await updateTaskTemplate(draft.id, {
+          name,
+          nodeIds: draft.nodes.map((node) => node.id),
+          version: draft.version,
+        });
+        const next = toTemplateDraft(saved);
+        updateTemplates((previous) => previous.map((item) => (item.id === templateId ? next : item)));
+      } catch (error) {
+        setTemplateNotice("保存「" + draft.name + "」失败：" + templateErrorMessage(error, "请稍后重试"));
+        if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
+          setTemplatesVersion((version) => version + 1);
+        }
+      } finally {
+        setSavingTemplateId(null);
+      }
+    })();
   };
 
-  /** 删除这份模板面板（本地草稿）。 */
+  /** 删除这份模板（红胶囊第一下）：第二下在底部确认条上 —— `DELETE` 带 version，软删，面板随即消失。 */
   const removeTemplate = (templateId: string): void => {
     resetDrag();
-    updateTemplates((previous) => previous.filter((item) => item.id !== templateId));
+    const draft = templates.find((item) => item.id === templateId);
+    if (draft !== undefined) {
+      setPendingDeleteTemplate(draft);
+    }
+  };
+
+  /** 确认删除（底部确认条的第二下）：软删成功 = 面板消失；失败 = 提示条。 */
+  const confirmDeleteTemplate = (): void => {
+    const draft = pendingDeleteTemplate;
+    if (draft === null) {
+      return;
+    }
+    setPendingDeleteTemplate(null);
+    void (async () => {
+      try {
+        await deleteTaskTemplate(draft.id, draft.version);
+        updateTemplates((previous) => previous.filter((item) => item.id !== draft.id));
+      } catch (error) {
+        setTemplateNotice("删除「" + draft.name + "」失败：" + templateErrorMessage(error, "请稍后重试"));
+      }
+    })();
   };
 
   /**
@@ -313,10 +409,34 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
   /** 待确认删除的节点（同款红胶囊的第一下：第二下在底部确认条上）+ 写入失败的提示文案。 */
   const [pendingDeleteNode, setPendingDeleteNode] = useState<TaskNodeItem | null>(null);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
+  /** 模板写入的本地状态：正在新建 / 正在保存哪一块、待确认删除的模板、失败提示。 */
+  const [newTemplateBusy, setNewTemplateBusy] = useState(false);
+  /** 新建模板后，等这块面板渲染出来再把焦点 / 全选落到它的名字输入框上。 */
+  const [focusTemplateId, setFocusTemplateId] = useState<string | null>(null);
+  const [savingTemplateId, setSavingTemplateId] = useState<string | null>(null);
+  const [pendingDeleteTemplate, setPendingDeleteTemplate] = useState<TemplateDraft | null>(null);
+  const [templateNotice, setTemplateNotice] = useState<string | null>(null);
+
+  /** 新建模板后的聚焦：状态一置上就等这次渲染提交完，把名字输入框聚焦 + 全选（落完即清）。 */
+  useEffect(() => {
+    if (focusTemplateId === null) {
+      return;
+    }
+    const input = document.getElementById("template-name-" + focusTemplateId);
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+      input.select();
+    }
+    setFocusTemplateId(null);
+  }, [focusTemplateId]);
 
   /** 写节点库失败的统一文案（ApiError 带业务码；其它异常给兜底话术，不把原始堆栈抛给用户）。 */
   const nodeErrorMessage = (error: unknown, fallback: string): string =>
     error instanceof ApiError ? nodeWriteMessage(error) : fallback;
+
+  /** 写模板失败的统一文案（与节点库同一套：业务码转人话，其它异常给兜底话术）。 */
+  const templateErrorMessage = (error: unknown, fallback: string): string =>
+    error instanceof ApiError ? templateWriteMessage(error) : fallback;
 
   /** 打开「新增节点」表单（清空旧输入；已开着就收起）。 */
   const openCreateForm = (): void => {
@@ -372,6 +492,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
         setFormTitle("");
         setFormTitleEn("");
         setNodesVersion((version) => version + 1);
+        // 节点名变了：模板面板里的节点摘要跟着刷新（本地没有未保存改动时才会被覆盖）
+        setTemplatesVersion((version) => version + 1);
       } catch (error) {
         setFormError(nodeErrorMessage(error, form.mode === "create" ? "新增失败，请稍后重试" : "保存失败，请稍后重试"));
       } finally {
@@ -391,6 +513,18 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
       try {
         await deleteTaskNode(node.id);
         setNodesVersion((version) => version + 1);
+        setTemplatesVersion((version) => version + 1);
+        // 服务端随外键级联把该节点从各模板移除；本地草稿同步摘掉，避免保存时撞「节点不存在」
+        setTemplatesByStage((previous) => {
+          const next: Record<string, TemplateDraft[]> = {};
+          for (const [stage, list] of Object.entries(previous)) {
+            next[stage] = list.map((draft) => ({
+              ...draft,
+              nodes: draft.nodes.filter((item) => item.id !== node.id),
+            }));
+          }
+          return next;
+        });
       } catch (error) {
         setNodeNotice("删除「" + node.title + "」失败：" + nodeErrorMessage(error, "请稍后重试"));
       }
@@ -622,15 +756,21 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                 );
               })}
             </div>
-            {/* 新建模板的入口在板块标签栏这一行：点一下在「任务节点」右侧生成一块空白模板面板，原来的模板往右挪 */}
-            <button
-              type="button"
-              onClick={startNewTemplate}
-              title="新建模板：在「任务节点」右侧加一块空白模板面板"
-              className="shrink-0 rounded-lg border border-white/80 bg-white/70 px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-[0_2px_10px_rgba(15,23,42,0.08)] transition hover:bg-white hover:text-zinc-900"
-            >
-              ＋ 新建模板
-            </button>
+            {/*
+              新建模板的入口在板块标签栏这一行：点一下 = POST 一份空模板（默认名「未命名模板」），
+              新面板插到「任务节点」右侧、原来的模板往右挪。写 = blueprint.manage，无权不渲染（服务端仍是最终裁决）。
+            */}
+            {canManageBlueprint ? (
+              <button
+                type="button"
+                onClick={startNewTemplate}
+                disabled={newTemplateBusy}
+                title="新建模板：在「任务节点」右侧加一块空白模板面板（落库）"
+                className="shrink-0 rounded-lg border border-white/80 bg-white/70 px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-[0_2px_10px_rgba(15,23,42,0.08)] transition hover:bg-white hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {newTemplateBusy ? "新建中…" : "＋ 新建模板"}
+              </button>
+            ) : null}
           </div>
 
           <div className="relative mt-6">
@@ -657,7 +797,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                         ? activeNodes.length + " 个节点"
                         : visibleNodes.length + " / " + activeNodes.length + " 个节点"}
                     </span>
-                    {canManageNodes ? (
+                    {canManageBlueprint ? (
                       <button
                         type="button"
                         onClick={openCreateForm}
@@ -783,19 +923,23 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                       key={item.id}
                       title={item.title}
                       subtitle={item.titleEn}
-                      grab
-                      onPointerDown={(event) => {
-                        beginDrag({ nodeId: item.id, source: "left", fromTemplateId: null }, event);
-                      }}
+                      grab={canManageBlueprint}
+                      onPointerDown={
+                        canManageBlueprint
+                          ? (event) => {
+                              beginDrag({ nodeId: item.id, source: "left", fromTemplateId: null }, event);
+                            }
+                          : undefined
+                      }
                       onEdit={
-                        canManageNodes
+                        canManageBlueprint
                           ? () => {
                               openEditForm(item);
                             }
                           : undefined
                       }
                       onDelete={
-                        canManageNodes
+                        canManageBlueprint
                           ? () => {
                               resetDrag();
                               setPendingDeleteNode(item);
@@ -840,31 +984,46 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                             type="text"
                             value={template.name}
                             onChange={(event) => renameTemplate(template.id, event.target.value)}
+                            disabled={!canManageBlueprint}
                             aria-label="模板名称"
                             placeholder="模板名称"
-                            className="-mx-1 min-w-0 flex-1 truncate rounded px-1 font-semibold text-zinc-800 outline-none transition hover:bg-white/40 focus:bg-white/70"
+                            title={canManageBlueprint ? "模板名称（改完点「保存」落库）" : "维护任务模板需要系统管理员权限（blueprint.manage）"}
+                            className="-mx-1 min-w-0 flex-1 truncate rounded px-1 font-semibold text-zinc-800 outline-none transition hover:bg-white/40 focus:bg-white/70 disabled:cursor-not-allowed"
                           />
                           <span aria-label="已选节点数" className="shrink-0 text-xs text-zinc-500">
                             {nodeCount} 个
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => saveTemplate(template.id)}
-                            title="保存这份模板：当前原型未接后端、只写浏览器内存（正式版落库）；保存后再改动会重新变回「保存」"
-                            className={
-                              "shrink-0 rounded-md px-2 py-0.5 text-xs font-medium transition " +
-                              (savedOk
-                                ? "border border-white/70 bg-white/50 text-zinc-400 hover:bg-white"
-                                : "bg-zinc-900 text-white hover:bg-zinc-800")
-                            }
-                          >
-                            {savedOk ? "已保存" : "保存"}
-                          </button>
-                          <RowDeleteButton
-                            onDelete={() => removeTemplate(template.id)}
-                            label={"删除模板 " + template.name}
-                            scope="panel"
-                          />
+                          {canManageBlueprint ? (
+                            <button
+                              type="button"
+                              onClick={() => saveTemplate(template.id)}
+                              disabled={savedOk || savingTemplateId !== null}
+                              title="保存这份模板：名称 + 节点顺序全量回传（PATCH /api/v1/task-templates/{id}，带 version 乐观锁）"
+                              className={
+                                "shrink-0 rounded-md px-2 py-0.5 text-xs font-medium transition disabled:cursor-not-allowed " +
+                                (savedOk
+                                  ? "border border-white/70 bg-white/50 text-zinc-400"
+                                  : "bg-zinc-900 text-white hover:bg-zinc-800 disabled:bg-zinc-400")
+                              }
+                            >
+                              {savingTemplateId === template.id ? "保存中…" : savedOk ? "已保存" : "保存"}
+                            </button>
+                          ) : (
+                            <span
+                              aria-label="已保存"
+                              title="维护任务模板需要系统管理员权限（blueprint.manage）"
+                              className="shrink-0 rounded-md border border-white/70 bg-white/50 px-2 py-0.5 text-xs font-medium text-zinc-400"
+                            >
+                              只读
+                            </span>
+                          )}
+                          {canManageBlueprint ? (
+                            <RowDeleteButton
+                              onDelete={() => removeTemplate(template.id)}
+                              label={"删除模板 " + template.name}
+                              scope="panel"
+                            />
+                          ) : null}
                         </div>
                         {/* 提示行固定高度：出现 / 消失都不顶动下方列表（否则拖拽时会跟着抖） */}
                         <p className={"h-4 text-xs font-medium text-amber-600 " + (duplicate ? "visible" : "invisible")}>
@@ -900,21 +1059,28 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                                 <TaskNodeCard
                                   title={item.title}
                                   subtitle={item.titleEn}
-                                  grab
+                                  grab={canManageBlueprint}
                                   highlighted={duplicate && item.id === drag?.nodeId}
                                   dimmed={drag?.source === "right" && item.id === drag.nodeId}
-                                  onPointerDown={(event) => {
-                                    beginDrag({ nodeId: item.id, source: "right", fromTemplateId: template.id }, event);
-                                  }}
+                                  onPointerDown={
+                                    canManageBlueprint
+                                      ? (event) => {
+                                          beginDrag({ nodeId: item.id, source: "right", fromTemplateId: template.id }, event);
+                                        }
+                                      : undefined
+                                  }
                                   deleteLabel={"从模板移除 " + item.title}
-                                  onDelete={() =>
-                                    updateTemplates((previous) =>
-                                      previous.map((entry) =>
-                                        entry.id === template.id
-                                          ? { ...entry, nodes: entry.nodes.filter((node) => node.id !== item.id) }
-                                          : entry,
-                                      ),
-                                    )
+                                  onDelete={
+                                    canManageBlueprint
+                                      ? () =>
+                                          updateTemplates((previous) =>
+                                            previous.map((entry) =>
+                                              entry.id === template.id
+                                                ? { ...entry, nodes: entry.nodes.filter((node) => node.id !== item.id) }
+                                                : entry,
+                                            ),
+                                          )
+                                      : undefined
                                   }
                                 />
                               </div>
@@ -925,16 +1091,33 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                     </section>
                   );
                 })}
-              {templates.length === 0 ? (
+              {templatesLoading && templates.length === 0 ? (
+                <p className="flex min-h-[160px] w-full items-center justify-center rounded-2xl border border-dashed border-white/80 bg-white/35 px-6 text-center text-xs text-zinc-500">
+                  正在加载模板…
+                </p>
+              ) : null}
+              {templatesError === null ? null : (
+                <p className="flex min-h-[160px] w-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-rose-200 bg-rose-50/70 px-6 text-center text-xs text-rose-700">
+                  模板加载失败：{templatesError}
+                  <button
+                    type="button"
+                    onClick={() => { setTemplatesVersion((version) => version + 1); }}
+                    className="rounded border border-rose-200 bg-white px-2 py-0.5 text-[11px] text-rose-700 transition hover:bg-rose-50"
+                  >
+                    重试
+                  </button>
+                </p>
+              )}
+              {templates.length === 0 && !templatesLoading && templatesError === null ? (
                 <p className="flex min-h-[160px] w-full items-center justify-center rounded-2xl border border-dashed border-zinc-300 bg-white/40 px-6 text-center text-xs text-zinc-500">
-                  还没有模板面板：点右上角「＋ 新建模板」建一份
+                  这个板块还没有模板：点右上角「＋ 新建模板」建一份
                 </p>
               ) : null}
               </div>
             </div>
           </div>
-          {/* 节点库写入的第二下 / 失败提示（Fixed 底栏，与首页「删除项目」确认条同款 —— 非阻断） */}
-          {pendingDeleteNode === null && nodeNotice === null ? null : (
+          {/* 节点库 / 模板写入的第二下与失败提示（Fixed 底栏，与首页「删除项目」确认条同款 —— 非阻断） */}
+          {pendingDeleteNode === null && nodeNotice === null && pendingDeleteTemplate === null && templateNotice === null ? null : (
             <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
               {pendingDeleteNode === null ? null : (
                 <div
@@ -970,6 +1153,46 @@ export default function PlaceholderPage({ me, page, section, canManageNodes }: P
                   <button
                     type="button"
                     onClick={() => { setNodeNotice(null); }}
+                    className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
+                  >
+                    关闭
+                  </button>
+                </div>
+              )}
+              {pendingDeleteTemplate === null ? null : (
+                <div
+                  role="dialog"
+                  aria-label="确认删除任务模板"
+                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+                >
+                  <span>
+                    删除模板「<span className="font-semibold">{pendingDeleteTemplate.name}</span>」（{activeSection}）？模板库里的这一份会被删掉，已经按它生成的项目任务不受影响。
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setPendingDeleteTemplate(null); }}
+                    className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmDeleteTemplate}
+                    className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+                  >
+                    删除
+                  </button>
+                </div>
+              )}
+              {templateNotice === null ? null : (
+                <div
+                  role="alert"
+                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg"
+                >
+                  <span>{templateNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => { setTemplateNotice(null); }}
                     className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
                   >
                     关闭

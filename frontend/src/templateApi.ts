@@ -1,9 +1,11 @@
 /**
- * 任务节点库接口封装（M3-05 余 · 第一段接线）：契约 shared/src/modules/templates.ts。
+ * 任务节点库 / 任务模板接口封装（M3-05 余 · 第一段接线 + 第二段模板落库）：契约 shared/src/modules/templates.ts。
  * - 列表 GET /api/v1/task-nodes?stage=<九阶段 key>（任务模板页左列与「添加任务」卡片的「任务节点」标签同源）
  * - 新增 POST /api/v1/task-nodes（写 = blueprint.manage：仅系统管理员；同阶段同名 409 NODE_ALREADY_EXISTS）
  * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = blueprint.manage；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
+ * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
+ *   —— 写同样 = blueprint.manage；PATCH 是「改名 + nodeIds 全量替换」，version 乐观锁必传；DELETE 是软删（带 version）。
  * 阶段名（界面板块）↔ 阶段 key 的换算复用 taskApi 的 stageKeyOfName（同一份九阶段字典，避免两处各写一份）。
  * 注意：任务侧还没有「节点库来源」字段（契约 taskNodeId 现解析为项目流程节点），
  * 「已添加」一律按「同阶段同名」折算（见 data/tasks.ts 的 addedNodeKeysOf）。
@@ -93,6 +95,97 @@ export function nodeWriteMessage(error: { code: string; message: string }): stri
   }
   if (error.code === "VALIDATION_FAILED") {
     return "节点名称不合规：" + error.message;
+  }
+  return error.message;
+}
+
+// ---------- 任务模板（第二段 · A1-16 / A1-17）----------
+
+/** 契约 TaskTemplate（只取界面用得到的字段）。 */
+export type ApiTaskTemplate = {
+  id: string;
+  name: string;
+  stageKey: string;
+  nodes: { nodeId: string; seq: number; title: string; titleEn: string | null }[];
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** 界面用的模板形状：`nodes` 与节点卡片同形（id = 节点库 UUID），`version` 供 PATCH / DELETE 回传。 */
+export type TemplateItem = {
+  id: string;
+  name: string;
+  nodes: TaskNodeItem[];
+  version: number;
+};
+
+export function toTemplateItem(template: ApiTaskTemplate): TemplateItem {
+  return {
+    id: template.id,
+    name: template.name,
+    nodes: template.nodes.map((node) => ({
+      id: node.nodeId,
+      title: node.title,
+      titleEn: node.titleEn ?? "",
+      version: 0,
+    })),
+    version: template.version,
+  };
+}
+
+/** 某个板块（阶段名）的模板列表；板块名不认识 = 空列表（不发请求）。 */
+export async function fetchStageTemplates(stageName: string): Promise<TemplateItem[]> {
+  const stageKey = stageKeyOfName(stageName);
+  if (stageKey === null) {
+    return [];
+  }
+  const payload = await apiRequest<{ items: ApiTaskTemplate[]; total: number }>(
+    "/api/v1/task-templates?stage=" + encodeURIComponent(stageKey),
+  );
+  return payload.items.map(toTemplateItem);
+}
+
+/** 新建模板（名称 + 所属阶段 + 节点顺序；nodeIds 允许空 —— 新建后逐步拖入）。 */
+export async function createTaskTemplate(stageName: string, name: string, nodeIds: string[]): Promise<TemplateItem> {
+  const stageKey = stageKeyOfName(stageName);
+  if (stageKey === null) {
+    throw new Error("未知阶段：" + stageName);
+  }
+  const payload = await apiSend<ApiTaskTemplate>("/api/v1/task-templates", "POST", { name, stageKey, nodeIds });
+  return toTemplateItem(payload);
+}
+
+/**
+ * 保存模板（PATCH）：改名 / `nodeIds` 全量替换（含增删与重排）；不动的字段不传。
+ * `version` 必传（读接口带回来的那一个）：过期 = 409 VERSION_CONFLICT，由调用方提示刷新。
+ */
+export async function updateTaskTemplate(
+  id: string,
+  patch: { name?: string; nodeIds?: string[]; version: number },
+): Promise<TemplateItem> {
+  const payload = await apiSend<ApiTaskTemplate>("/api/v1/task-templates/" + encodeURIComponent(id), "PATCH", patch);
+  return toTemplateItem(payload);
+}
+
+/** 删除模板（软删；`version` 乐观锁随 body 带上）—— 删除即生效，已生成的项目任务不变。 */
+export async function deleteTaskTemplate(id: string, version: number): Promise<{ id: string; deletedAt: string }> {
+  return apiSend<{ id: string; deletedAt: string }>("/api/v1/task-templates/" + encodeURIComponent(id), "DELETE", { version });
+}
+
+/** 模板写入失败的统一文案（409 VERSION_CONFLICT / 403 FORBIDDEN 等；服务端仍是最终裁决）。 */
+export function templateWriteMessage(error: { code: string; message: string }): string {
+  if (error.code === "FORBIDDEN") {
+    return "只有系统管理员能维护任务模板（blueprint.manage）";
+  }
+  if (error.code === "VERSION_CONFLICT") {
+    return "这份模板刚被别人改过，刷新后再试（version 过期）";
+  }
+  if (error.code === "NOT_FOUND") {
+    return "这份模板已经不在模板库里了，刷新看看";
+  }
+  if (error.code === "VALIDATION_FAILED") {
+    return "模板内容不合规：" + error.message;
   }
   return error.message;
 }
