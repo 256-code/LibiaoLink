@@ -26,6 +26,33 @@ export const TaskNodeListQuerySchema = z.object({
   stage: StageKeySchema.optional().openapi({ description: "按阶段过滤；缺省 = 全部阶段" }),
 });
 
+/** 新增节点（管理端维护节点库；同阶段同名 409 NODE_ALREADY_EXISTS）。 */
+export const TaskNodeCreateBodySchema = z
+  .object({
+    stageKey: StageKeySchema,
+    title: z.string().min(1).max(200).openapi({ example: "货架组装", description: "节点名称（中文；同阶段内唯一）" }),
+    titleEn: z.string().max(200).nullable().optional().openapi({ description: "英文名（可空）" }),
+    seq: z.number().int().positive().optional().openapi({ description: "库内排序；缺省 = 追加到该阶段末尾（末位 seq + 10）" }),
+  })
+  .openapi("TaskNodeCreateBody", { description: "新增任务节点（管理端）" });
+
+/**
+ * 编辑节点（改名 / 英文名；不动的字段不传）：乐观锁 version 必传 —— 过期 409 VERSION_CONFLICT、
+ * 改成同阶段已有的名字 409 NODE_ALREADY_EXISTS。
+ */
+export const TaskNodeUpdateBodySchema = z
+  .object({
+    title: z.string().min(1).max(200).optional().openapi({ example: "货架组装", description: "节点名称（中文；同阶段内唯一）" }),
+    titleEn: z.string().max(200).nullable().optional().openapi({ description: "英文名（可空；显式 null = 清空）" }),
+    version: VersionSchema,
+  })
+  .openapi("TaskNodeUpdateBody", { description: "编辑任务节点（改名 / 英文名；乐观锁 version 必传）" });
+
+/** 节点物理删行结果（删除前快照写审计；不留软删标记 —— 与字典条目硬删同口径）。 */
+export const TaskNodeDeleteResponseSchema = z
+  .object({ id: UuidSchema, deleted: z.boolean() })
+  .openapi("TaskNodeDeleteResponse");
+
 export const TaskNodeListResponseSchema = z
   .object({ items: z.array(TaskNodeSchema), total: z.number().int().min(0) })
   .openapi("TaskNodeListResponse");
@@ -87,3 +114,11 @@ export const TaskTemplateDeleteBodySchema = z.object({ version: VersionSchema })
 export const TaskTemplateDeleteResponseSchema = z
   .object({ id: UuidSchema, deletedAt: DateTimeSchema })
   .openapi("TaskTemplateDeleteResponse", { description: "删除即生效；已生成的受影响项目任务不变" });
+
+/** 类型别名（z.infer 单一真相）：服务端与前端只消费这里导出的类型。 */
+export type TaskNode = z.infer<typeof TaskNodeSchema>;
+export type TaskNodeListQuery = z.infer<typeof TaskNodeListQuerySchema>;
+export type TaskNodeCreateBody = z.infer<typeof TaskNodeCreateBodySchema>;
+export type TaskNodeDeleteResponse = z.infer<typeof TaskNodeDeleteResponseSchema>;
+export type TaskNodeListResponse = z.infer<typeof TaskNodeListResponseSchema>;
+export type TaskNodeUpdateBody = z.infer<typeof TaskNodeUpdateBodySchema>;

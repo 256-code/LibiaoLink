@@ -3,8 +3,6 @@
  * 数据来源 = 服务端任务接口（frontend/src/taskApi.ts 负责契约 → 本模型的映射）；本文件不再含演示数据，
  * 也不做任何状态 / 逾期的本地派生 —— 展示态（displayStatus）、是否按时交付（onTime）、阶段汇总均由服务端裁决。
  */
-import { stageNodesOf } from "./templatePresets";
-
 export type TaskStatus = "已完成" | "提前完成" | "进行中" | "待开始" | "已延期";
 
 /** 紧急重要度三档（契约 Priority：高 / 中 / 低；2026-09-24 定案四象限口径作废）。 */
@@ -119,23 +117,24 @@ export function ownersLabel(owners: readonly string[]): string {
 }
 
 /**
- * 项目里「已添加的模板节点 id」（添加卡片的「已添加」标记与整套添加的判重依据）。
- * 节点库（契约 GET /api/v1/task-nodes；M3-05 余「模板实例化与快筛」）尚未落地：预设节点不是节点库 UUID、
- * 服务端也拿不到 taskNodeId 判重 —— 先按「同阶段同名」把预设节点对到已建任务上（`nodeId` 命中的也一并算）。
+ * 「已添加」判重键（阶段名 + 描述）：节点库同阶段内名称唯一（`uq_task_nodes_stage_title`），
+ * 任务侧还没有「节点库来源」字段（契约 `taskNodeId` 现解析为项目流程节点），所以「这条节点加过没有」一律按同阶段同名折算。
  */
-export function addedPresetNodeIds(tasks: readonly ProjectTask[]): Set<string> {
-  const ids = new Set<string>();
+export function addedNodeKey(stage: string, title: string): string {
+  return stage + "\n" + title;
+}
+
+/**
+ * 项目里「已添加的节点」判重键集合（添加卡片的「已添加」标记与整套添加的判重依据）：
+ * Push 181 起节点池来自节点库接口（`GET /api/v1/task-nodes`），判重不能再按预设 id（预设 id 不是节点库 UUID）——
+ * 键只由「阶段 + 描述」构成，节点侧用 `addedNodeKey(stage, node.title)` 比对。
+ */
+export function addedNodeKeysOf(tasks: readonly ProjectTask[]): Set<string> {
+  const keys = new Set<string>();
   for (const task of tasks) {
-    if (task.nodeId !== null) {
-      ids.add(task.nodeId);
-    }
-    for (const node of stageNodesOf(task.stage)) {
-      if (node.title === task.title) {
-        ids.add(node.id);
-      }
-    }
+    keys.add(addedNodeKey(task.stage, task.title));
   }
-  return ids;
+  return keys;
 }
 /** ISO（YYYY-MM-DD）→ 展示用「M月D日」；空值 / 非法值返回空串（界面显示「—」）。 */
 export function cnDateFromIso(value: string): string {

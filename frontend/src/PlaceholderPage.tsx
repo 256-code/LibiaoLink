@@ -1,44 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AppHeader } from "./components/AppHeader";
+import { RowDeleteButton } from "./components/RowDeleteButton";
 import { TaskNodeCard } from "./components/TaskNodeCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "./data/templatePresets";
+import { ApiError } from "./api";
+import { createStageNode, deleteTaskNode, fetchStageNodes, nodeWriteMessage, updateStageNode, type TaskNodeItem } from "./templateApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
-  templates: { title: "任务模板", note: "任务模板当前由业务写死的模板预设驱动（`data/templatePresets.ts`，前端原型、未接后端）：左侧是该板块的节点池，右侧每块面板预置该板块的节点顺序（硬件实施两套）；正式的节点 / 模板数据由后端下发、落库（接口待后端）。" },
+  templates: { title: "任务模板", note: "左侧「任务节点」已接节点库接口（Push 181：`GET /api/v1/task-nodes`，可新增 / 编辑 / 删除，写 = 系统管理员；编辑 = 点卡片上的铅笔图标）；右侧模板面板仍是业务写死的预设（`data/templatePresets.ts`，模板接口随第二段落库）。把左侧节点拖进模板 = 定这份模板的节点顺序。" },
   files: { title: "文件库", note: "文件库还没开工：先把入口与路由占好，后续按需求填充。" },
 };
 
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
 const TEMPLATE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
-/**
- * 某个板块的「任务节点」池：取该板块**业务写死的模板预设**里的节点，按出现顺序去重
- * （硬件实施因此会多出「模板二（格口 / 滑槽型）」里的节点）。
- */
-function presetNodesOf(stage: string): TemplatePresetNode[] {
-  const seen = new Set<string>();
-  const items: TemplatePresetNode[] = [];
-  for (const preset of STAGE_TEMPLATE_PRESETS[stage] ?? []) {
-    for (const node of preset.nodes) {
-      if (seen.has(node.id)) {
-        continue;
-      }
-      seen.add(node.id);
-      items.push(node);
-    }
-  }
-  return items;
-}
-
-/** 任务节点（当前原型写死）：一个任务节点一张卡片，备用节点池的正式来源接后端后再换。 */
-const TEMPLATE_NODES = TEMPLATE_SECTIONS.map((stage) => ({
-  stage,
-  items: presetNodesOf(stage),
-}));
+/** 左列节点池的兜底空数组（取不到该板块那份时用，避免每次渲染都新建一个）。 */
+const EMPTY_NODE_LIST: readonly TaskNodeItem[] = [];
 
 type TemplateNode = TemplatePresetNode;
 
@@ -85,11 +66,6 @@ const INITIAL_TEMPLATE_COUNT = TEMPLATE_SECTIONS.reduce(
   0,
 );
 
-/** 拖拽只传 id，落点时按 id 找回节点内容（相当于复制一份到右侧模板）。 */
-const TEMPLATE_NODE_BY_ID = new Map<string, TemplateNode>(
-  TEMPLATE_NODES.flatMap((section) => section.items.map((item) => [item.id, item] as const)),
-);
-
 /** 按住卡片后位移超过这个数才算「拖动」（没过阈值就是点一下，什么都不改）。 */
 const DRAG_THRESHOLD = 4;
 
@@ -116,6 +92,11 @@ type PlaceholderPageProps = {
   page: PlaceholderPageKey;
   /** 任务模板页当前板块（来自 URL 的 `?section=`；缺省 / 不认识的值回落到第一个板块） */
   section: string | null;
+  /**
+   * 是否持有 blueprint.manage（节点库维护 = 系统管理员，ADR-019 / ADR-020）：
+   * 决定「＋ 添加节点」与节点卡片上的删除按钮渲不渲染；服务端逐请求仍是最终裁决（无权 = 403）。
+   */
+  canManageNodes: boolean;
 };
 
 /** 占位卡：页面主体内容未定稿前统一用它撑住版面。 */
@@ -155,7 +136,7 @@ function InsertLine({ className }: { className: string }) {
   );
 }
 
-export default function PlaceholderPage({ me, page, section }: PlaceholderPageProps) {
+export default function PlaceholderPage({ me, page, section, canManageNodes }: PlaceholderPageProps) {
   const { title, note } = PAGES[page];
   /** 当前板块：URL 是唯一来源（点标签栏 = 换地址；`?section=` 取 ASCII slug，兼容旧链接的中文板块名），缺省 / 不认识的值回落到第一个板块。 */
   const activeSection = templateSectionFromParam(section) ?? TEMPLATE_SECTIONS[0] ?? "";
@@ -190,7 +171,16 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
   /** 最新的落点计算 / 落地实现（每帧回调里读，免得闭包吃到旧值）。 */
   const dropTargetAtRef = useRef<(x: number, y: number) => DropSpot | null>(() => null);
   const commitDropRef = useRef<(info: DragInfo, spot: DropSpot | null) => void>(() => undefined);
-  const activeNodes = TEMPLATE_NODES.find((section) => section.stage === activeSection)?.items ?? [];
+  /**
+   * 左列「任务节点」= 节点库接口（Push 181：`GET /api/v1/task-nodes?stage=`）。
+   * 按板块缓存：切走再切回来不必重取，只有写入（新增 / 删除）后才按版本号重取。
+   */
+  const [nodesByStage, setNodesByStage] = useState<Record<string, readonly TaskNodeItem[]>>({});
+  const [nodesLoading, setNodesLoading] = useState(false);
+  const [nodesError, setNodesError] = useState<string | null>(null);
+  /** 取数版本号：新增 / 删除成功后 +1 重取，保证左列与节点库一致。 */
+  const [nodesVersion, setNodesVersion] = useState(0);
+  const activeNodes = nodesByStage[activeSection] ?? EMPTY_NODE_LIST;
   /** 左列「任务节点」的搜索词：按中 / 英文名过滤当前板块的节点卡片。 */
   const [nodeQuery, setNodeQuery] = useState("");
 
@@ -198,6 +188,35 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
   useEffect(() => {
     setNodeQuery("");
   }, [activeSection]);
+
+  // 节点库取数（换板块 / 写入后重取）：失败在左列里提示 + 可重试，不静默吞
+  useEffect(() => {
+    if (page !== "templates") {
+      return;
+    }
+    let alive = true;
+    setNodesLoading(true);
+    setNodesError(null);
+    void (async () => {
+      try {
+        const items = await fetchStageNodes(activeSection);
+        if (alive) {
+          setNodesByStage((previous) => ({ ...previous, [activeSection]: items }));
+        }
+      } catch (error) {
+        if (alive) {
+          setNodesError(error instanceof Error ? error.message : "节点库加载失败");
+        }
+      } finally {
+        if (alive) {
+          setNodesLoading(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [page, activeSection, nodesVersion]);
 
   const normalizedQuery = nodeQuery.trim().toLowerCase();
   const visibleNodes =
@@ -207,8 +226,28 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
           (node.title + "\n" + node.titleEn).toLowerCase().includes(normalizedQuery),
         );
 
+  /**
+   * 拖拽只传 id，落点时按 id 找回节点内容（相当于复制一份到右侧模板）：
+   * 左侧卡片来自节点库（当前板块那一份），右侧卡片来自各模板面板 —— 两处都查一遍。
+   */
+  const nodeById = (id: string): TemplateNode | null => {
+    const fromLibrary = activeNodes.find((node) => node.id === id);
+    if (fromLibrary !== undefined) {
+      return fromLibrary;
+    }
+    for (const list of Object.values(templatesByStage)) {
+      for (const template of list) {
+        const found = template.nodes.find((node) => node.id === id);
+        if (found !== undefined) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
   /** 拖动中的那个节点（Push 116）：用来画跟着鼠标走的拖动卡片。 */
-  const dragNode = drag === null ? null : TEMPLATE_NODE_BY_ID.get(drag.nodeId) ?? null;
+  const dragNode = drag === null ? null : nodeById(drag.nodeId);
 
   /** 这块面板里是不是已经有正在拖的那个节点（只有从左侧拖过来才可能重复）。 */
   const isDuplicateIn = (template: TemplateDraft): boolean =>
@@ -260,6 +299,102 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
   const removeTemplate = (templateId: string): void => {
     resetDrag();
     updateTemplates((previous) => previous.filter((item) => item.id !== templateId));
+  };
+
+  /**
+   * 节点表单状态（面板内联，不弹窗）：新增与编辑**共用一套表单**（Push 181 后半 —— 业务口径「任务节点编辑也要」）。
+   * `mode === "edit"` 时带着被编辑的那一行（含乐观锁 version），保存走 PATCH；`"create"` 走 POST。
+   */
+  const [nodeForm, setNodeForm] = useState<{ mode: "create" } | { mode: "edit"; node: TaskNodeItem } | null>(null);
+  const [formTitle, setFormTitle] = useState("");
+  const [formTitleEn, setFormTitleEn] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formBusy, setFormBusy] = useState(false);
+  /** 待确认删除的节点（同款红胶囊的第一下：第二下在底部确认条上）+ 写入失败的提示文案。 */
+  const [pendingDeleteNode, setPendingDeleteNode] = useState<TaskNodeItem | null>(null);
+  const [nodeNotice, setNodeNotice] = useState<string | null>(null);
+
+  /** 写节点库失败的统一文案（ApiError 带业务码；其它异常给兜底话术，不把原始堆栈抛给用户）。 */
+  const nodeErrorMessage = (error: unknown, fallback: string): string =>
+    error instanceof ApiError ? nodeWriteMessage(error) : fallback;
+
+  /** 打开「新增节点」表单（清空旧输入；已开着就收起）。 */
+  const openCreateForm = (): void => {
+    setFormError(null);
+    if (nodeForm?.mode === "create") {
+      setNodeForm(null);
+      return;
+    }
+    setFormTitle("");
+    setFormTitleEn("");
+    setNodeForm({ mode: "create" });
+  };
+
+  /** 打开「编辑节点」表单（预填当前中 / 英文名；再点一次同一个节点 = 收起）。 */
+  const openEditForm = (node: TaskNodeItem): void => {
+    resetDrag();
+    setFormError(null);
+    if (nodeForm?.mode === "edit" && nodeForm.node.id === node.id) {
+      setNodeForm(null);
+      return;
+    }
+    setFormTitle(node.title);
+    setFormTitleEn(node.titleEn);
+    setNodeForm({ mode: "edit", node });
+  };
+
+  /** 收起表单（取消按钮 / 保存成功后）。 */
+  const closeNodeForm = (): void => {
+    setNodeForm(null);
+    setFormError(null);
+  };
+
+  /**
+   * 提交节点表单：新增 = POST；编辑 = PATCH（乐观锁 version 原样回传，过期由服务端 409 裁决）。
+   * 成功 = 收起表单 + 重取当前板块（卡片上的名字随即更新）；失败 = 表单内就地提示。
+   */
+  const submitNodeForm = (): void => {
+    const form = nodeForm;
+    const title = formTitle.trim();
+    if (form === null || title === "" || formBusy) {
+      return;
+    }
+    setFormBusy(true);
+    setFormError(null);
+    void (async () => {
+      try {
+        if (form.mode === "create") {
+          await createStageNode(activeSection, title, formTitleEn.trim());
+        } else {
+          await updateStageNode(form.node.id, { title, titleEn: formTitleEn.trim(), version: form.node.version });
+        }
+        setNodeForm(null);
+        setFormTitle("");
+        setFormTitleEn("");
+        setNodesVersion((version) => version + 1);
+      } catch (error) {
+        setFormError(nodeErrorMessage(error, form.mode === "create" ? "新增失败，请稍后重试" : "保存失败，请稍后重试"));
+      } finally {
+        setFormBusy(false);
+      }
+    })();
+  };
+
+  /** 删除节点（DELETE /api/v1/task-nodes/{id}）：成功 = 重取该板块（卡片消失就是反馈）；失败出提示条。 */
+  const confirmDeleteNode = (): void => {
+    const node = pendingDeleteNode;
+    if (node === null) {
+      return;
+    }
+    setPendingDeleteNode(null);
+    void (async () => {
+      try {
+        await deleteTaskNode(node.id);
+        setNodesVersion((version) => version + 1);
+      } catch (error) {
+        setNodeNotice("删除「" + node.title + "」失败：" + nodeErrorMessage(error, "请稍后重试"));
+      }
+    })();
   };
 
   /**
@@ -322,8 +457,8 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
       );
       return;
     }
-    const node = TEMPLATE_NODE_BY_ID.get(info.nodeId);
-    if (node === undefined) {
+    const node = nodeById(info.nodeId);
+    if (node === null) {
       return;
     }
     updateTemplates((previous) =>
@@ -512,15 +647,77 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
             {/* 左列「任务节点」固定不动（宽屏滚动时钉住），右侧模板面板一行放不下就换到下一行 */}
             <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-start">
               <section className="flex w-full flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 lg:sticky lg:top-[81px] lg:w-[370px] lg:shrink-0 lg:self-start">
-                <p className="mb-2 flex items-baseline justify-between text-sm">
-                  <span className="font-semibold text-zinc-800">任务节点</span>
-                  <span className="text-xs text-zinc-500">
-                    {activeSection} ·{" "}
-                    {visibleNodes.length === activeNodes.length
-                      ? activeNodes.length + " 个节点"
-                      : visibleNodes.length + " / " + activeNodes.length + " 个节点"}
+                {/* 列头行（Push 181）：左边板块标题、右边计数 + 「＋ 添加节点」——业务口径「在图二任务节点的位置加一个添加节点的按钮」 */}
+                <div className="mb-2 flex items-center justify-between gap-2 text-sm">
+                  <span className="shrink-0 font-semibold text-zinc-800">任务节点</span>
+                  <span className="flex min-w-0 shrink-0 items-center gap-2">
+                    <span className="truncate text-xs text-zinc-500">
+                      {activeSection} ·{" "}
+                      {visibleNodes.length === activeNodes.length
+                        ? activeNodes.length + " 个节点"
+                        : visibleNodes.length + " / " + activeNodes.length + " 个节点"}
+                    </span>
+                    {canManageNodes ? (
+                      <button
+                        type="button"
+                        onClick={openCreateForm}
+                        aria-expanded={nodeForm?.mode === "create"}
+                        title={"在「" + activeSection + "」新增一个任务节点（写进节点库）"}
+                        className="shrink-0 rounded-md border border-white/70 bg-white/60 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-white hover:text-zinc-900"
+                      >
+                        ＋ 添加节点
+                      </button>
+                    ) : null}
                   </span>
-                </p>
+                </div>
+                {nodeForm === null ? null : (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      submitNodeForm();
+                    }}
+                    className="mb-3 rounded-xl border border-white/80 bg-white/70 p-3"
+                  >
+                    <p className="mb-2 text-xs font-medium text-zinc-700">
+                      {nodeForm.mode === "create" ? "新增节点" : "编辑节点"} · {activeSection}
+                    </p>
+                    <input
+                      type="text"
+                      value={formTitle}
+                      onChange={(event) => { setFormTitle(event.target.value); }}
+                      placeholder="节点名称（中文，必填）"
+                      aria-label="节点名称"
+                      maxLength={200}
+                      className="mb-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-300"
+                    />
+                    <input
+                      type="text"
+                      value={formTitleEn}
+                      onChange={(event) => { setFormTitleEn(event.target.value); }}
+                      placeholder="英文名（可空）"
+                      aria-label="节点英文名"
+                      maxLength={200}
+                      className="mb-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-300"
+                    />
+                    {formError === null ? null : <p className="mb-2 text-xs text-rose-600">{formError}</p>}
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={closeNodeForm}
+                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={formBusy || formTitle.trim() === ""}
+                        className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
+                      >
+                        {formBusy ? "保存中…" : "保存"}
+                      </button>
+                    </div>
+                  </form>
+                )}
                 {/* 搜索框：按中 / 英文名过滤左列的节点卡片（切板块时自动清空） */}
                 <div className="relative mb-3">
                   <svg
@@ -566,6 +763,21 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                   )}
                 </div>
                 <div className="space-y-3">
+                  {nodesLoading && activeNodes.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-white/80 bg-white/35 px-4 py-8 text-center text-xs text-zinc-500">正在加载节点库…</p>
+                  ) : null}
+                  {nodesError === null ? null : (
+                    <p className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-6 text-center text-xs text-rose-700">
+                      节点库加载失败：{nodesError}
+                      <button
+                        type="button"
+                        onClick={() => { setNodesVersion((version) => version + 1); }}
+                        className="ml-2 rounded border border-rose-200 bg-white px-2 py-0.5 text-[11px] text-rose-700 transition hover:bg-rose-50"
+                      >
+                        重试
+                      </button>
+                    </p>
+                  )}
                   {visibleNodes.map((item) => (
                     <TaskNodeCard
                       key={item.id}
@@ -575,9 +787,24 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                       onPointerDown={(event) => {
                         beginDrag({ nodeId: item.id, source: "left", fromTemplateId: null }, event);
                       }}
+                      onEdit={
+                        canManageNodes
+                          ? () => {
+                              openEditForm(item);
+                            }
+                          : undefined
+                      }
+                      onDelete={
+                        canManageNodes
+                          ? () => {
+                              resetDrag();
+                              setPendingDeleteNode(item);
+                            }
+                          : undefined
+                      }
                     />
                   ))}
-                  {visibleNodes.length === 0 && (
+                  {visibleNodes.length === 0 && !nodesLoading && nodesError === null && (
                     <p className="rounded-xl border border-dashed border-white/80 bg-white/35 px-4 py-8 text-center text-xs text-zinc-500">
                       没有匹配的节点，换个关键词试试
                     </p>
@@ -598,7 +825,7 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                       data-template-panel={template.id}
                       aria-label={"模板 " + template.name}
                       className={
-                        "flex w-full flex-col rounded-2xl border bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 transition lg:w-[370px] lg:shrink-0 " +
+                        "group/panel flex w-full flex-col rounded-2xl border bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 transition lg:w-[370px] lg:shrink-0 " +
                         (hovered
                           ? duplicate
                             ? "border-amber-400/70 ring-2 ring-amber-300/40"
@@ -633,14 +860,11 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                           >
                             {savedOk ? "已保存" : "保存"}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => removeTemplate(template.id)}
-                            title="删除这份模板面板（本地草稿，删掉不回来）"
-                            className="shrink-0 rounded-md border border-white/70 bg-white/50 px-2 py-0.5 text-xs font-medium text-zinc-600 transition hover:bg-white hover:text-red-600"
-                          >
-                            删除
-                          </button>
+                          <RowDeleteButton
+                            onDelete={() => removeTemplate(template.id)}
+                            label={"删除模板 " + template.name}
+                            scope="panel"
+                          />
                         </div>
                         {/* 提示行固定高度：出现 / 消失都不顶动下方列表（否则拖拽时会跟着抖） */}
                         <p className={"h-4 text-xs font-medium text-amber-600 " + (duplicate ? "visible" : "invisible")}>
@@ -682,7 +906,8 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
                                   onPointerDown={(event) => {
                                     beginDrag({ nodeId: item.id, source: "right", fromTemplateId: template.id }, event);
                                   }}
-                                  onRemove={() =>
+                                  deleteLabel={"从模板移除 " + item.title}
+                                  onDelete={() =>
                                     updateTemplates((previous) =>
                                       previous.map((entry) =>
                                         entry.id === template.id
@@ -708,6 +933,51 @@ export default function PlaceholderPage({ me, page, section }: PlaceholderPagePr
               </div>
             </div>
           </div>
+          {/* 节点库写入的第二下 / 失败提示（Fixed 底栏，与首页「删除项目」确认条同款 —— 非阻断） */}
+          {pendingDeleteNode === null && nodeNotice === null ? null : (
+            <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+              {pendingDeleteNode === null ? null : (
+                <div
+                  role="dialog"
+                  aria-label="确认删除任务节点"
+                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+                >
+                  <span>
+                    删除节点「<span className="font-semibold">{pendingDeleteNode.title}</span>」（{activeSection}）？节点库里的这一条会被删掉，已经生成的项目任务不受影响。
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setPendingDeleteNode(null); }}
+                    className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmDeleteNode}
+                    className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+                  >
+                    删除
+                  </button>
+                </div>
+              )}
+              {nodeNotice === null ? null : (
+                <div
+                  role="alert"
+                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg"
+                >
+                  <span>{nodeNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => { setNodeNotice(null); }}
+                    className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
+                  >
+                    关闭
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </main>
         {dragNode === null || drag === null ? null : (
           <div

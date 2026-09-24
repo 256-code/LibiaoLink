@@ -1,8 +1,8 @@
 /**
- * 任务模板预设（前端原型数据）。
- * 节点库 / 模板接口（契约 `GET /api/v1/task-nodes` / `GET /api/v1/task-templates`）尚未落地（M3-05 余「模板实例化与快筛」）——
- * 本文件在 M3-07 刀 1 后半接线后仍以写死的预设驱动「项目总览」的添加卡片与任务模板页；后端下发后整份下线。
- * 节点 id 沿用原型 id（不是节点库 UUID）：从预设建任务时**不带** `taskNodeId`（节点关联随 M3-05 余接线）。
+ * 任务模板预设（前端原型数据）—— **Push 181 起只管「模板」这一半**：任务模板页右列的默认模板面板、
+ * 「项目总览 → 添加任务」卡片的「模板」标签仍由本文件写死（模板接口 = M3-05 余第二段，`GET/POST /api/v1/task-templates`）；
+ * 「任务节点」那一半已改吃节点库接口（`frontend/src/templateApi.ts`，`GET /api/v1/task-nodes`）—— 节点不再来自本文件。
+ * 节点 id 沿用原型 id（不是节点库 UUID）：从预设建任务时**不带** `taskNodeId`（该字段现解析为项目流程节点，节点关联的落点待定）。
  */
 export type TemplatePresetNode = {
   id: string;
@@ -113,13 +113,6 @@ const SOFTWARE_DEPLOY: TemplatePresetNode[] = [
   { id: "sw04", title: "与WMS联调", titleEn: "Combined with WMS" },
 ];
 
-/**
- * 某个阶段的节点池（与任务模板页左列 / 添加卡片的「任务节点」标签同源）：
- * 「软件部署」按业务给的清单（SOFTWARE_DEPLOY）、其余阶段按 STAGE_NODES；不在预设里的阶段（「未分组」等）返回空数组。
- */
-export function stageNodesOf(stage: string): TemplatePresetNode[] {
-  return stage === "软件部署" ? SOFTWARE_DEPLOY : stageNodes(stage);
-}
 /**
  * 当前原型写死：任务模板页每个阶段的默认模板（名称 + 节点顺序）；正式版由后端下发、落库。
  * - 硬件实施：两套（模板一 = 业务给的 18 条长清单；模板二 = 格口 / 滑槽型 11 条）。

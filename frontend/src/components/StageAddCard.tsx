@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { addedNodeKey } from "../data/tasks";
 import { STAGE_TEMPLATE_PRESETS, type TemplatePresetNode } from "../data/templatePresets";
+import { fetchStageNodes } from "../templateApi";
 import { ScrollArea } from "./ScrollArea";
 import { usePopover } from "./usePopover";
 
@@ -175,7 +177,11 @@ function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (
 
 type StageAddCardProps = {
   stage: string;
-  existingTaskIds: ReadonlySet<string>;
+  /**
+   * 项目里「已添加的节点」判重键（`data/tasks.ts` 的 addedNodeKey = 阶段名 + 换行 + 任务描述）：
+   * Push 181 起节点池来自节点库（UUID），判重按「同阶段同名」折算 —— 键与节点标题在卡片内比对。
+   */
+  addedNodeKeys: ReadonlySet<string>;
   /** 点一条节点直接加进项目（没有「插入位置」时走这条 —— 项目总览里点阶段标签加节点）。 */
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一批 + 指定插入位置（看板那条路径）。 */
@@ -194,29 +200,13 @@ type StageAddCardProps = {
   style?: CSSProperties;
 };
 
-/** 这个阶段的节点池（与任务模板页左列同口径）：该阶段全部预设节点按出现顺序去重。 */
-function presetNodesOf(stage: string): TemplatePresetNode[] {
-  const seen = new Set<string>();
-  const items: TemplatePresetNode[] = [];
-  for (const preset of STAGE_TEMPLATE_PRESETS[stage] ?? []) {
-    for (const node of preset.nodes) {
-      if (seen.has(node.id)) {
-        continue;
-      }
-      seen.add(node.id);
-      items.push(node);
-    }
-  }
-  return items;
-}
-
 /**
  * 任务表里点阶段标签（「售前规划」…「验收」）打开的右侧中等卡片：
  * 顶部是标签导航 —— 第一个「任务节点」（这个阶段的节点池，点一条就加进项目），
  * 其余每个标签 = 这个阶段的一块模板（按预设顺序预览、可鼠标滚动，也能逐条 / 整套加）。
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
-export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
+export function StageAddCard({ stage, addedNodeKeys, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
   /** 点了「＋ 添加」/「整套添加」之后、还没选位置的那一次（Push 113）：`nodes` = 这次要加的一条 / 一批，`anchor` = 贴哪一行浮出。 */
   const [armed, setArmed] = useState<{ nodes: readonly TemplatePresetNode[]; anchor: HTMLElement } | null>(null);
   /**
@@ -225,7 +215,14 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
    */
   const [sequential, setSequential] = useState(true);
   const presets = useMemo(() => STAGE_TEMPLATE_PRESETS[stage] ?? [], [stage]);
-  const nodes = useMemo(() => presetNodesOf(stage), [stage]);
+  /**
+   * 「任务节点」标签的节点池（Push 181）：改吃节点库接口（GET /api/v1/task-nodes?stage=…），
+   * 写死的预设节点只留给「模板」标签（模板接口是第二段）。
+   */
+  const [nodes, setNodes] = useState<TemplatePresetNode[]>([]);
+  const [nodesLoading, setNodesLoading] = useState(true);
+  const [nodesError, setNodesError] = useState<string | null>(null);
+  const [nodesRetry, setNodesRetry] = useState(0);
   const [activeTab, setActiveTab] = useState("nodes");
   const cardRef = useRef<HTMLElement | null>(null);
 
@@ -233,6 +230,32 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
   useEffect(() => {
     setActiveTab("nodes");
   }, [stage]);
+
+  // 节点库取数（换阶段 / 重试重取）：失败只在卡片里提示（卡片本来就是临时浮层，不占全局提示条）
+  useEffect(() => {
+    let alive = true;
+    setNodesLoading(true);
+    setNodesError(null);
+    void (async () => {
+      try {
+        const items = await fetchStageNodes(stage);
+        if (alive) {
+          setNodes(items);
+        }
+      } catch (error) {
+        if (alive) {
+          setNodesError(error instanceof Error ? error.message : "节点库加载失败");
+        }
+      } finally {
+        if (alive) {
+          setNodesLoading(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [stage, nodesRetry]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -272,7 +295,10 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
   const currentPreset = templateIndex === -1 ? undefined : presets[templateIndex];
   const isNodesTab = currentPreset === undefined;
   const items = currentPreset?.nodes ?? nodes;
-  const pendingCount = items.filter((node) => !existingTaskIds.has(node.id)).length;
+  const pendingCount = items.filter((node) => !addedNodeKeys.has(addedNodeKey(stage, node.title))).length;
+  /** 节点库取数中的占位 / 失败提示（只在「任务节点」标签里出；「模板」标签是本地预设、不受影响）。 */
+  const nodeListNotice =
+    !isNodesTab ? null : nodesLoading ? "正在加载节点库…" : nodesError === null ? null : "节点库加载失败：" + nodesError;
   const addedCount = items.length - pendingCount;
 
   /** 位置选好了（Push 113）：交给上层按这个位置插进项目；没给批量入口时逐条加。 */
@@ -373,7 +399,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
             <button
               type="button"
               disabled={pendingCount === 0}
-              onClick={(event) => { startAdd(items.filter((node) => !existingTaskIds.has(node.id)), event.currentTarget); }}
+              onClick={(event) => { startAdd(items.filter((node) => !addedNodeKeys.has(addedNodeKey(stage, node.title))), event.currentTarget); }}
               title="把这块模板里还没加过的节点一次全加到项目"
               className="shrink-0 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
             >
@@ -384,9 +410,23 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
         </div>
       </div>
 
+      {nodeListNotice !== null ? (
+        <p className="mt-2 flex min-h-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-200 px-3 text-center text-xs text-zinc-500">
+          {nodeListNotice}
+          {nodesError === null ? null : (
+            <button
+              type="button"
+              onClick={() => { setNodesRetry((count) => count + 1); }}
+              className="rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 transition hover:bg-zinc-100"
+            >
+              重试
+            </button>
+          )}
+        </p>
+      ) : (
       <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
         {items.map((node, index) => {
-          const added = existingTaskIds.has(node.id);
+          const added = addedNodeKeys.has(addedNodeKey(stage, node.title));
           return (
             <li key={node.id}>
               <button
@@ -416,6 +456,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
           );
         })}
       </ul>
+      )}
 
       {armed === null ? null : (
         <PlacementPopover
@@ -426,7 +467,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
           onClose={() => { setArmed(null); }}
         />
       )}
-      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">节点与模板来自写死的预设（节点库接口尚未落地）：加进项目即落库；节点 id 的判重按「同阶段同名」折算，节点关联随节点库接线。</p>
+      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">「任务节点」来自节点库（GET /api/v1/task-nodes，可增删）：「模板」仍是写死的预设，模板接口随第二段接线。加进项目即落库；「已添加」按同阶段同名折算（任务侧还没有节点库来源字段）。</p>
     </aside>
   );
 }

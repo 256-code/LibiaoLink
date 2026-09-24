@@ -1,4 +1,6 @@
 import type { PointerEvent } from "react";
+import { RowDeleteButton } from "./RowDeleteButton";
+import { RowEditButton } from "./RowEditButton";
 
 type TaskNodeCardProps = {
   /** 任务中文名（参考稿的 message-text） */
@@ -14,8 +16,20 @@ type TaskNodeCardProps = {
   onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
   /** 拖动中跟着鼠标走的那一块（半透明 + 轻磨砂，能透出底下的插入线）。 */
   ghost?: boolean;
-  /** 传了就把叉号渲染成「移除」按钮；不传则保持参考稿里的装饰语义（当前原型无点击行为） */
-  onRemove?: () => void;
+  /**
+   * 删除入口（Push 181）：传了就渲染**任务表行 / 项目卡片同款的红底胶囊删除按钮**（RowDeleteButton：静止隐式、
+   * 悬停 / 聚焦展开成「删除」）。左列节点库卡片 = 删节点库条目；模板面板里的卡片 = 从这份模板移除（都同一个按钮）。
+   */
+  onDelete?: () => void;
+  /** 删除按钮的无障碍名（默认「删除节点 {标题}」；模板面板里传「从模板移除 {标题}」）。 */
+  deleteLabel?: string;
+  /**
+   * 编辑入口（Push 181，业务口径「任务节点编辑也要」）：传了就渲染**铅笔编辑按钮**（`RowEditButton`，与删除成对：
+   * 静止隐式、悬停 / 聚焦展开成「编辑」胶囊）。目前只有左列节点库卡片挂它（点开就地编辑表单，PATCH 改名）。
+   */
+  onEdit?: () => void;
+  /** 编辑按钮的无障碍名（默认「编辑节点 {标题}」）。 */
+  editLabel?: string;
   /** 高亮描边（拖拽时提示「这个节点已经在右侧了」） */
   highlighted?: boolean;
   /** 半透明（右侧卡片正在被拖动排序时，原位置留个虚影） */
@@ -26,6 +40,9 @@ type TaskNodeCardProps = {
  * 任务节点卡片：按业务给的参考稿用 Tailwind 复刻（左侧波浪 + 圆形图标 + 中英文标题 + 右侧叉形图标），
  * 未引入 styled-components 或新依赖。Push 116 起拖动改指针拖动（见 `grab` / `ghost`）。叉形图标在参考稿里是装饰，这里不做点击行为：
  * 默认隐藏（占位但不可见，避免卡片右侧抖动），只有鼠标移到叉号自己的小区域（28×28 命中区）才显示。
+ * Push 181：参考稿里的叉号（装饰）换成**同款红底胶囊删除按钮**（`onDelete`，静止隐式、悬停卡片才浮现；无障碍名默认「删除节点 X」）——
+ * 左列节点库卡片 = 删节点库条目，模板面板里的卡片 = 从这份模板移除（同一个按钮，`deleteLabel` 只改无障碍名）；卡片根节点因此新增 `group`。
+ * 同刀后续：左列节点库卡片再挂一枚**铅笔编辑按钮**（`onEdit`，与删除成对 —— 动作槽位固定 76px，任一按钮展开都不挤动文字）。
  */
 export function TaskNodeCard({
   title,
@@ -33,14 +50,17 @@ export function TaskNodeCard({
   grab,
   onPointerDown,
   ghost,
-  onRemove,
+  onDelete,
+  deleteLabel,
+  onEdit,
+  editLabel,
   highlighted,
   dimmed,
 }: TaskNodeCardProps) {
   return (
     <article
       className={
-        "relative flex h-20 w-full items-center gap-[15px] overflow-hidden rounded-lg px-[15px] py-[10px] " +
+        "group relative flex h-20 w-full items-center gap-[15px] overflow-hidden rounded-lg px-[15px] py-[10px] " +
         (ghost === true
           ? "bg-white/[0.6] shadow-[0_18px_40px_-18px_rgba(15,23,42,0.35)] backdrop-blur-[5px] backdrop-saturate-150"
           : "bg-white shadow-[0_8px_24px_rgba(149,157,165,0.2)]") +
@@ -79,42 +99,29 @@ export function TaskNodeCard({
         <p className="w-full truncate text-[17px] font-bold text-[#269b24]">{title}</p>
         {subtitle === undefined || subtitle === "" ? null : <p className="w-full truncate text-sm text-[#555]">{subtitle}</p>}
       </span>
-      {onRemove === undefined ? (
-        <span className="group/cross flex h-7 w-7 shrink-0 items-center justify-center">
-          <CrossIcon />
-        </span>
-      ) : (
-        <button
-          type="button"
-          onClick={onRemove}
-          aria-label={"移除 " + title}
-          className="group/cross flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full transition hover:bg-zinc-100"
-        >
-          <CrossIcon />
-        </button>
-      )}
+      <span
+        className={
+          "flex h-6 shrink-0 items-center justify-end gap-1 " + (onEdit === undefined ? "w-12" : "w-[76px]")
+        }
+      >
+        {onEdit === undefined ? null : (
+          <RowEditButton
+            onEdit={() => {
+              onEdit();
+            }}
+            label={editLabel ?? "编辑节点 " + title}
+          />
+        )}
+        {onDelete === undefined ? null : (
+          <RowDeleteButton
+            onDelete={() => {
+              onDelete();
+            }}
+            label={deleteLabel ?? "删除节点 " + title}
+          />
+        )}
+      </span>
     </article>
   );
 }
 
-/** 参考稿右侧的叉形图标：默认隐藏，鼠标进入叉号自己的命中区（28×28）才显示。 */
-function CrossIcon() {
-  return (
-    <svg
-      className="h-[18px] w-[18px] text-[#555] opacity-0 transition-opacity duration-150 group-hover/cross:opacity-100"
-      viewBox="0 0 15 15"
-      xmlns="http://www.w3.org/2000/svg"
-      strokeWidth={0}
-      fill="none"
-      stroke="currentColor"
-      aria-hidden="true"
-    >
-      <path
-        fill="currentColor"
-        d="M11.7816 4.03157C12.0062 3.80702 12.0062 3.44295 11.7816 3.2184C11.5571 2.99385 11.193 2.99385 10.9685 3.2184L7.50005 6.68682L4.03164 3.2184C3.80708 2.99385 3.44301 2.99385 3.21846 3.2184C2.99391 3.44295 2.99391 3.80702 3.21846 4.03157L6.68688 7.49999L3.21846 10.9684C2.99391 11.193 2.99391 11.557 3.21846 11.7816C3.44301 12.0061 3.80708 12.0061 4.03164 11.7816L7.50005 8.31316L10.9685 11.7816C11.193 12.0061 11.5571 12.0061 11.7816 11.7816C12.0062 11.557 12.0062 11.193 11.7816 10.9684L8.31322 7.49999L11.7816 4.03157Z"
-        clipRule="evenodd"
-        fillRule="evenodd"
-      />
-    </svg>
-  );
-}
