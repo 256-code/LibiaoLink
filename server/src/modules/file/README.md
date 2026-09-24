@@ -31,7 +31,7 @@ file-download.service.ts # 下载切片（M4-05f · PR-13）：GET /files/{id}/v
 index.ts             # 唯一公开出口（跨模块只允许 import 本文件）
 ```
 
-## 已落接口（M4-01 上传管道 · PR-4 · Push 129；M4-02 版本 / 定档 / 回溯 / 回收站 · PR-5；M4-03 文件库列表 · PR-6；M4-04 变更写入随上传管道复用 · PR-7；M4-04 变更读面 · PR-8；M4-05c 预览转换队列 · PR-10 —— worker 侧无 HTTP 接口，见下「M4-05c 预览队列口径」；M4-05d 预览读 API · PR-11 —— `GET /files/{id}/preview`，见下「M4-05d 读 API 口径」；M4-05e 产物清理 · PR-12 —— 无新增 HTTP 接口（随彻底删除 / 回收站到期收口））
+## 已落接口（M4-01 上传管道 · PR-4 · Push 129；M4-02 版本 / 定档 / 回溯 / 回收站 · PR-5；M4-03 文件库列表 · PR-6；M4-04 变更写入随上传管道复用 · PR-7；M4-04 变更读面 · PR-8；M4-05c 预览转换队列 · PR-10 —— worker 侧无 HTTP 接口，见下「M4-05c 预览队列口径」；M4-05d 预览读 API · PR-11 —— `GET /files/{id}/preview`，见下「M4-05d 读 API 口径」；M4-05e 产物清理 · PR-12 —— 无新增 HTTP 接口（随彻底删除 / 回收站到期收口）；M4-05f 下载切片 · PR-13 —— `GET /files/{id}/versions/{versionId}/download-url`；M4-05g 压测 · PR-14 —— 无新增接口（只读断言，见下「M4-05g 压测」））
 
 | 路径 | 说明 | 响应码 | 权限 |
 |---|---|---|---|
@@ -75,7 +75,7 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 - **M4-05e 产物清理（PR-12 · M4-05 收口 · 迁移 `0027` 口径 3）**：彻底删除 / 回收站到期（`purgeRecycled`）连带收口 `previews/{contentHash}/{pipelineVersion}/{target}` —— 按 `content_hash` 反查是否还有存活版本引用：**有** → 缓存行**归属转移**到存活版本（行与对象都保留，D2-06「同一内容只转换一次」不因删掉一份重复文件而失效）；**无** → 与版本对象**同序**在持锁事务内清对象（`preview_artifacts` 行随 `file_versions` 外键级联；失败即回滚，不留无行可重试的孤儿对象）。审计 metadata 记 `previewArtifactsPurged` / `previewArtifactsReassigned`。
 - **M4-05f 下载切片（PR-13 · A4-06 / A4-10 · `file-download.service.ts`）**：`GET /files/{id}/versions/{versionId}/download-url` —— `versionId` **必填**（前端从详情 / 版本链拿明确版本；任意历史版本可下载，不属于该文件 / 不存在 404）；**签名传 `fileName`** → `Content-Disposition: attachment`（原名 URL 编码回写），窗口 = `S3_DOWNLOAD_URL_TTL_SECONDS`（与 `PREVIEW_URL_TTL_SECONDS` 两键独立）；响应 `url` / `fileName` / `sizeBytes`（该版本体积）/ `expiresAt`。
 - **M4-05f 权限与审计**：可见性（不可见 404，防 IDOR）→ `file.download`（缺权限 403；成员 / 项目经理隐含该键，故一期「可见 ⇒ 可下载」）→ 版本 → 签名 → **一条 `action = download` 审计**（`object_type = file`、metadata `versionId`；先签名后审计，一次下载一条，不写 preview 行）。
-- **M4-05 剩余**：压测（并发 2~4 / 200MB 长跑 / 转换成功率 ≥95% 属 M4-05 压测 / PoC-1 真实样本集）—— 下载切片已随 **PR-13** 落地（见上「M4-05f」两条）。
+- **M4-05g 压测（PR-14 · PoC-1 出口验证 · `scripts/m4-05-stress.mjs`）**：两档实跑（沙箱现值 2C2G / 并发 2 与 ADR-013 生产起点 2C4G / 并发 4）—— 断言组 = 配置与限额登记（X0~X5：含 cgroup v2 memory.peak 可读性）/ 串行基线与成功率 ≥95% 与中文不乱码（A0~A3）/ 并发背压 `inflight≤maxConcurrency` 与三元组幂等与沙箱边界 503（B1~B4）/ 200MB 断点续传与秒传与确定性降级与读回一致（C1~C5）/ 读面 200 并发与审计不放大（D1~D2）/ 长跑内存曲线（E1~E3）/ 对账与零残留（F1~F4）；证据见 `docs/m4-05-压测证据(PoC-1·沙箱档).md` 与 `docs/m4-05-压测证据(PoC-1·ADR013档).md`；两档成功率均 **100%**（48/48）、长跑 118/118、容器 cgroup 峰值 ≤ 限额 90%、读面 p95 ≤ 381 ms。
 
 ## 上游（直接复用，不重复造）
 
@@ -87,5 +87,5 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 ## 待落地（按卡片）
 
 - **M4-04**：写入面**已落地（PR-7）**、读面**已落地（PR-8）**（列表 / 详情，见上「M4-04 变更口径」「M4-04 变更读面」）；**剩余** = 变更统计（A4-17，无对外契约，口径由后续切片 / 仪表盘定）与通知（A4-18，随 M5；outbox `change.applied` 已埋点）。
-- **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；**读 API 已落地（PR-11：三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404 + 读取侧幂等补投 + 两类终态降级）**；**产物清理已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行）**；**下载切片已落地（PR-13：attachment 签名 + `file.download` + download 审计 + 真机两态回放 14/14）**；剩余 = 压测（M4-05 出口标准）。
+- **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；**读 API 已落地（PR-11：三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404 + 读取侧幂等补投 + 两类终态降级）**；**产物清理已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行）**；**下载切片已落地（PR-13：attachment 签名 + `file.download` + download 审计 + 真机两态回放 14/14）**；**压测已落地（PR-14 · M4-05g：两档实跑 —— 成功率 / 200MB 续传 / 并发背压 / 长跑内存）**；剩余 = 无。
 - 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。
