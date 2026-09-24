@@ -426,7 +426,7 @@ export function StageAddCard({ stage, existingTaskIds, onAddNode, onAddNodes, pl
           onClose={() => { setArmed(null); }}
         />
       )}
-      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">节点与模板来自「任务模板」的预设；当前原型未接后端，数据存浏览器内存、刷新回到初始数据 —— 正式版（一期）由后端落库。</p>
+      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">节点与模板来自写死的预设（节点库接口尚未落地）：加进项目即落库；节点 id 的判重按「同阶段同名」折算，节点关联随节点库接线。</p>
     </aside>
   );
 }

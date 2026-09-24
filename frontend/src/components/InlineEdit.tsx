@@ -103,7 +103,7 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
 type InlineMemberMultiCellProps = {
   /** 已选成员 id（有序，Push 136）。 */
   values: string[];
-  options: Member[];
+  options: readonly Member[];
   ariaLabel: string;
   /** 勾选 / 取消勾选一位成员（浮层不自动关 —— 接着点下一位）。 */
   onPick: (member: Member) => void;
