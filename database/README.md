@@ -48,10 +48,11 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `seeds/role-permissions.mjs` | 种子 #6b：六角色 × 权限位矩阵（h6 · Push 95，h8 补 `calendar.manage`，M6-01 ~ M6-03 补 `report.view` / `report.fill` / `issue.view` / `issue.manage`（Push 155 · 27 → 31 键）；键唯一来源 = 契约 `PERMISSION_KEYS`，移除键会删除 —— 权限吊销必须生效） |
 | `seeds/dicts.mjs` | 种子 #5：地区 8 项 + 项目类型 3 项（h7 · Push 97；metadata 带 accent / accentText 主题色，幂等、不覆盖库内已修订值、不删除） |
 | `seeds/task-nodes.mjs` | 种子 #8：任务节点库九阶段 52 条（售前 4 / 设计 5 / 采购 3 / 组装 6 / 实施 26 / 部署 4 / 试运行 2 / 生产 1 / 验收 1；Push 181；从原前端预设 `templatePresets.ts` 抽出，`seq = (序号+1)×10`，幂等可重跑、不覆盖库内已修订行） |
+| `seeds/demo-projects.mjs` | 种子 #11（**可选**）：演示数据 —— 项目空间 + 地图「地区分布」（Push 189：地区 41 项 + 演示项目 100 个）；`optional = true` → 整跑默认跳过，`--only=demo-projects` / `--with-optional` 显式播；项目经理按用户名解析、缺账号退兜底并报 `managerFallback`，幂等、不覆盖库内改动 |
 | `seeds/task-templates.mjs` | 种子 #9：任务模板九阶段 10 套（Push 182；源 = 原前端预设 `STAGE_TEMPLATE_PRESETS`；硬件实施两套 18 / 11 条、软件部署一套 4 条，其余阶段各一套；节点按「同阶段 + 同名」解析节点库 id、解析不到计 `skippedNodes`；`created_at` 按清单顺序**倒排**（列表按 `created_at` 倒序读，业务清单第一套仍在最左）；按 `(stage_key, name)` 幂等跳过、不覆盖库内修订） |
 | `roles/0001_roles.sql` | 最小权限角色（迁移器 / 应用 / 只读）+ 默认权限（幂等） |
 | `scripts/migrate.mjs` | 迁移器：只追加、逐文件事务、advisory lock、checksum 漂移校验 |
-| `scripts/seed.mjs` | 种子执行器（h1 · Push 74）：每个种子独立事务、`--dry-run` 全回滚、`--only=<name>`；advisory lock 20260919（与迁移器分开） |
+| `scripts/seed.mjs` | 种子执行器（h1 · Push 74；Push 189 补 `--with-optional` 与「可选种子默认跳过」）：每个种子独立事务、`--dry-run` 全回滚、`--only=<name>`；advisory lock 20260919（与迁移器分开） |
 | `package.json` / `package-lock.json` | 独立 npm 包，唯一依赖 `pg`（不引入根 package.json） |
 
 ## 角色与权限
@@ -82,6 +83,8 @@ DATABASE_URL=... node scripts/migrate.mjs --dry-run   # 只列出待执行，不
 DATABASE_URL=... node scripts/seed.mjs                 # 全部种子
 DATABASE_URL=... node scripts/seed.mjs --dry-run       # 只打印将执行的变更摘要（全部回滚）
 DATABASE_URL=... node scripts/seed.mjs --only=roles    # 只跑指定种子
+DATABASE_URL=... node scripts/seed.mjs --only=demo-projects   # 只跑可选种子（#11 演示数据）
+DATABASE_URL=... node scripts/seed.mjs --with-optional        # 连可选种子一起跑（默认跳过 #11）
 ```
 
 > 连接串：优先 `DATABASE_URL`；未设置时回退 `PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE`（node-postgres 约定）。
