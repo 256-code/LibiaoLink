@@ -3,6 +3,8 @@ import { AdminModule } from "../admin/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { PermissionModule } from "../permission/index.js";
 import { TaskNodeRepository } from "./task-node.repository.js";
+import { TaskTemplateController } from "./task-template.controller.js";
+import { TaskTemplateRepository } from "./template.repository.js";
 import { TemplateController } from "./template.controller.js";
 import { TemplateService } from "./template.service.js";
 
@@ -11,12 +13,12 @@ import { TemplateService } from "./template.service.js";
  * 「项目总览 → 添加任务」卡片的节点来源；可新增 / 删除（写 = blueprint.manage，仅管理员）。
  * 依赖：identity（会话 / CSRF / 当前用户）、permission（blueprint.manage 判定）、admin（审计留痕，同事务）。
  * 边界：不碰 tasks / project_nodes —— tasks.node_id 指向流程节点（project_nodes），节点库只回答「任务从哪来」；
- * 模板（TaskTemplate）读写随本域第二段落（契约已定：GET/POST/PATCH/DELETE /task-templates）。
+ * 第二段（任务模板 TaskTemplate）已随本刀落地：GET/POST/PATCH/DELETE /task-templates（写同门禁，留痕 objectType = task_template，删除为软删）。
  */
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule],
-  controllers: [TemplateController],
-  providers: [TaskNodeRepository, TemplateService],
-  exports: [TemplateService],
+  controllers: [TemplateController, TaskTemplateController],
+  providers: [TaskNodeRepository, TaskTemplateRepository, TemplateService],
+  exports: [TemplateService, TaskNodeRepository],
 })
 export class TemplateModule {}

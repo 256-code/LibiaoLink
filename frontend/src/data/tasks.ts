@@ -29,8 +29,10 @@ export type TaskFileSummary = {
  */
 export type ProjectTask = {
   id: string;
-  /** 来源任务节点（契约 nodeId）：从节点库 / 模板生成时用于同项目判重；手工创建的空任务为 null。 */
+  /** 来源流程节点（契约 nodeId）：蓝图实例上的节点；节点库来源的任务为 null。 */
   nodeId: string | null;
+  /** 来源任务节点库节点（契约 sourceNodeId · M3-07 刀 3）：「已添加」判重的精确依据；手工创建 / 流程节点任务为 null。 */
+  sourceNodeId: string | null;
   /** 所属阶段 key；null = 「未分组」（看板临时任务）。 */
   stageKey: string | null;
   /** 所属阶段中文名（展示与分组用；未分组 = 空串）。 */
@@ -117,8 +119,8 @@ export function ownersLabel(owners: readonly string[]): string {
 }
 
 /**
- * 「已添加」判重键（阶段名 + 描述）：节点库同阶段内名称唯一（`uq_task_nodes_stage_title`），
- * 任务侧还没有「节点库来源」字段（契约 `taskNodeId` 现解析为项目流程节点），所以「这条节点加过没有」一律按同阶段同名折算。
+ * **兜底**判重键（阶段名 + 描述）：M3-07 刀 3 起主口径是 `addedNodeIdsOf`（任务侧落 `sourceNodeId`，精确）；
+ * 本键只兜两类行 —— 本刀之前建的任务（来源列为空）与手工创建的同名任务（节点库同阶段内名称唯一，`uq_task_nodes_stage_title`）。
  */
 export function addedNodeKey(stage: string, title: string): string {
   return stage + "\n" + title;
@@ -129,6 +131,20 @@ export function addedNodeKey(stage: string, title: string): string {
  * Push 181 起节点池来自节点库接口（`GET /api/v1/task-nodes`），判重不能再按预设 id（预设 id 不是节点库 UUID）——
  * 键只由「阶段 + 描述」构成，节点侧用 `addedNodeKey(stage, node.title)` 比对。
  */
+/**
+ * 项目里「已添加的节点」来源 id 集合（M3-07 刀 3）：读任务行的 `sourceNodeId`（模板实例化 / 节点库添加都写它）——
+ * 与 `addedNodeKeysOf` 一起用：命中 id = 精确「已添加」，命中键 = 旧行 / 手工同名任务的兜底。
+ */
+export function addedNodeIdsOf(tasks: readonly ProjectTask[]): Set<string> {
+  const ids = new Set<string>();
+  for (const task of tasks) {
+    if (task.sourceNodeId !== null) {
+      ids.add(task.sourceNodeId);
+    }
+  }
+  return ids;
+}
+
 export function addedNodeKeysOf(tasks: readonly ProjectTask[]): Set<string> {
   const keys = new Set<string>();
   for (const task of tasks) {

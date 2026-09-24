@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { taskNodes } from "../../db/schema/templates.js";
@@ -55,6 +55,16 @@ export class TaskNodeRepository {
     const db = tx ?? this.database.db;
     const rows = await db.select().from(taskNodes).where(eq(taskNodes.id, id)).limit(1);
     return rows.length === 0 ? null : toRow(rows[0] as TaskNodeRow);
+  }
+
+  /** 一批节点（按 id，顺序不保证）：模板写入前校验「节点存在且与模板同阶段」（缺失 = 调用方判 400）。 */
+  async listByIds(ids: string[], tx?: DbClient): Promise<TaskNodeRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const db = tx ?? this.database.db;
+    const rows = await db.select().from(taskNodes).where(inArray(taskNodes.id, ids));
+    return rows.map(toRow);
   }
 
   /** 同阶段同名判重（唯一约束 uq_task_nodes_stage_title 的应用层前置 —— 撞库时仍由约束兜底）。 */

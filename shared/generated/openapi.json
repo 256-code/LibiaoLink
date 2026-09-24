@@ -333,9 +333,10 @@
           "stakeholder",
           "daily_report",
           "issue",
-          "task_node"
+          "task_node",
+          "task_template"
         ],
-        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 删除）"
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删）"
       },
       "AuditResult": {
         "type": "string",
@@ -4663,6 +4664,19 @@
               }
             ]
           },
+          "sourceNodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -4790,6 +4804,7 @@
           "stageKey",
           "sortIndex",
           "nodeId",
+          "sourceNodeId",
           "title",
           "titleEn",
           "ownerIds",
@@ -5159,7 +5174,17 @@
                 "$ref": "#/components/schemas/Uuid"
               },
               {
-                "description": "来源任务节点库节点 id：用于按项目判重（同一节点在项目里只留一份，重复返回 409 TASK_ALREADY_EXISTS）并建立节点关联；节点必须属于本项目（否则 400）"
+                "description": "来源**项目流程节点**（project_nodes）id：从流程节点生成任务（成员可建）—— 校验节点属于本项目且与 stageKey 一致；同一节点在项目里只留一份（重复 409 TASK_ALREADY_EXISTS）。与 sourceNodeId（节点库节点）二选一"
+              }
+            ]
+          },
+          "sourceNodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "来源任务节点库节点（task_nodes）id：从节点库生成任务（A1-16，成员可建）—— 任务描述 / 英文名 / 阶段取节点现值（A1-17 锁定字段），同一项目内同一节点只留一份（重复 409 TASK_ALREADY_EXISTS）；与 taskNodeId（项目流程节点）二选一"
               }
             ]
           },
@@ -5259,6 +5284,24 @@
               "$ref": "#/components/schemas/Uuid"
             },
             "description": "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」"
+          },
+          "sortIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾"
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "高",
+              "中",
+              "低",
+              null
+            ],
+            "description": "生成任务的紧急重要度（可空 = 不写）；节点库暂无「默认紧急重要度」列（A1-17 映射待补），先由调用方给"
           }
         },
         "required": [
@@ -9249,7 +9292,7 @@
               "$ref": "#/components/schemas/AuditObjectType"
             },
             "required": false,
-            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 删除）",
+            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删）",
             "name": "objectType",
             "in": "query"
           },

@@ -17,6 +17,7 @@ import type { AuditRecordInput, AuditService } from "../src/modules/admin/index.
 import type { PermissionService } from "../src/modules/permission/index.js";
 import { TemplateService } from "../src/modules/template/template.service.js";
 import type { TaskNodeInsertInput, TaskNodeRepository, TaskNodeRow, TaskNodeUpdatePatch } from "../src/modules/template/index.js";
+import type { TaskTemplateRepository } from "../src/modules/template/index.js";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const NODE = "22222222-2222-4222-8222-222222222222";
@@ -103,6 +104,14 @@ class FakeAuditService {
   }
 }
 
+/** 模板侧最小替身：删节点时只问「多少份未删模板引用了它」（审计影响面）。 */
+class FakeTemplateRepository {
+  referencing = 0;
+  async countActiveByNodeId(_nodeId: string): Promise<number> {
+    return this.referencing;
+  }
+}
+
 class FakeDatabase {
   readonly tx = {} as DbClient;
   readonly db = {
@@ -112,15 +121,17 @@ class FakeDatabase {
 
 function makeService(options: { allowed?: boolean; repo?: FakeTaskNodeRepository } = {}) {
   const repo = options.repo ?? new FakeTaskNodeRepository();
+  const templates = new FakeTemplateRepository();
   const audit = new FakeAuditService();
   const permission = new FakePermissionService(options.allowed ?? true);
   const service = new TemplateService(
     repo as unknown as TaskNodeRepository,
+    templates as unknown as TaskTemplateRepository,
     permission as unknown as PermissionService,
     audit as unknown as AuditService,
     new FakeDatabase() as unknown as DatabaseService,
   );
-  return { service, repo, audit, permission };
+  return { service, repo, templates, audit, permission };
 }
 
 describe("节点库列表（读 = 登录即可）", () => {
@@ -224,7 +235,7 @@ describe("删除节点（物理删行 + 删除前快照留痕）", () => {
       objectType: "task_node",
       objectId: NODE,
       summary: "删除任务节点：硬件实施 · 货架组装",
-      metadata: { stageKey: "install", seq: 10 },
+      metadata: { stageKey: "install", seq: 10, removedFromTemplates: 0 },
     });
     expect(audit.records[0]?.changes).toEqual([
       { field: "seq", from: 10, to: null },
@@ -232,6 +243,13 @@ describe("删除节点（物理删行 + 删除前快照留痕）", () => {
       { field: "title", from: "货架组装", to: null },
       { field: "titleEn", from: "Shelf Assembly", to: null },
     ]);
+  });
+
+  it("被模板引用时照删：审计记 removedFromTemplates = 影响面（引用行随外键级联清掉）", async () => {
+    const { service, templates, audit } = makeService();
+    templates.referencing = 2;
+    await service.deleteNode(NODE, ACTOR);
+    expect(audit.records[0]?.metadata).toMatchObject({ removedFromTemplates: 2 });
   });
 
   it("节点不存在 → 404 NOT_FOUND，不留痕", async () => {

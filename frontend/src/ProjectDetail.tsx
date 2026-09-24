@@ -32,6 +32,7 @@ import {
   type ApiTask,
   type ApiTaskListItem,
   type TaskCreateInput,
+  createTasksFromTemplate,
   type TaskUpdateInput,
 } from "./taskApi";
 
@@ -434,17 +435,40 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   /**
    * 「＋ 添加 / 整套添加」（项目总览的添加卡片与看板「添加 → 阶段任务」，Push 113）：按阶段建任务，
    * 位置浮层的锚点换算成组内位次；一次多条按传入顺序依次落位（第 k 条的位次 = 锚点位次 + k，整体不颠倒）。
-   * 仍不带 taskNodeId（契约里这个字段现解析为**项目流程节点**，见 server/src/modules/task/task.service.ts）——
- * 节点库只有「同阶段同名」折算的判重（见 `addedNodeKeysOf`），来源关联的落点待 wmj 定案。
+   * M3-07 刀 3 起都带**来源节点库节点**（`sourceNodeId`）：判重由服务端按（项目 × 节点）精确裁决；
+   * 来自某块模板的「整套添加」改走模板实例化接口（`POST …/tasks/from-template`，整批同事务 + skipped 清单）。
    */
-  const handleAddNodes = (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => {
+  const handleAddNodes = (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => {
     const stageKey = stageKeyOfName(stage);
     const base = sortIndexFor(placement);
     void (async () => {
+      if (templateId !== undefined && projectId !== null && nodes.length > 0) {
+        try {
+          const result = await createTasksFromTemplate(projectId, {
+            templateId,
+            nodeIds: nodes.map((node) => node.id),
+            skipExisting: true,
+            priority: "中",
+            ...(base === undefined ? {} : { sortIndex: base }),
+          });
+          if (result.skipped.length > 0) {
+            setToolError("有 " + String(result.skipped.length) + " 条节点在这个项目里已经加过，本次已跳过（没有重复创建）。");
+          }
+          if (result.created.length > 0) {
+            afterCreate();
+          } else {
+            reloadAll();
+          }
+          return;
+        } catch (error) {
+          reportWriteError(error);
+          return;
+        }
+      }
       let created = false;
       for (let index = 0; index < nodes.length; index += 1) {
         const node = nodes[index];
-        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, priority: "中" };
+        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, sourceNodeId: node.id, priority: "中" };
         if (base !== undefined) {
           body.sortIndex = base + index;
         }
@@ -462,14 +486,44 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   };
 
   /** 看板「添加 → 阶段任务」：节点自带阶段，并带上所在列的负责人 / 状态（与「临时任务」同一套列上下文）。 */
-  const handleKanbanAddNode = (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => {
+  const handleKanbanAddNode = (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => {
     const stageKey = stageKeyOfName(stage);
     const base = sortIndexFor(placement);
     void (async () => {
+      // 来自某块模板的「整套添加」（M3-07 刀 3）：走模板实例化接口一次落库，再按所在列补一次状态写入（创建体没有 status）
+      if (templateId !== undefined && projectId !== null && nodes.length > 0) {
+        try {
+          const result = await createTasksFromTemplate(projectId, {
+            templateId,
+            nodeIds: nodes.map((node) => node.id),
+            skipExisting: true,
+            ownerIds: context.ownerIds,
+            priority: "中",
+            ...(base === undefined ? {} : { sortIndex: base }),
+          });
+          if (context.status !== "待开始") {
+            for (const task of result.created) {
+              await updateTask(projectId, task.id, { status: statusWriteValue(context.status), version: task.version });
+            }
+          }
+          if (result.skipped.length > 0) {
+            setToolError("有 " + String(result.skipped.length) + " 条节点在这个项目里已经加过，本次已跳过（没有重复创建）。");
+          }
+          if (result.created.length > 0) {
+            afterCreate();
+          } else {
+            reloadAll();
+          }
+          return;
+        } catch (error) {
+          reportWriteError(error);
+          return;
+        }
+      }
       let created = false;
       for (let index = 0; index < nodes.length; index += 1) {
         const node = nodes[index];
-        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, ownerIds: context.ownerIds, priority: "中" };
+        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, sourceNodeId: node.id, ownerIds: context.ownerIds, priority: "中" };
         if (base !== undefined) {
           body.sortIndex = base + index;
         }
