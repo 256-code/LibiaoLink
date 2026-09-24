@@ -179,7 +179,7 @@ function SearchList({ items, isSelected, onPick, ariaLabel, footer }: SearchList
 }
 
 type MemberSearchListProps = {
-  options: Member[];
+  options: readonly Member[];
   /** 当前选中成员 id（"" = 未选）。 */
   value: string;
   /** 多选模式（Push 136）：已选成员 id 列表；给出时选中判定改看「在不在列表里」，value 只作单选回退。 */
@@ -287,7 +287,7 @@ type MemberMultiSelectProps = {
   values: string[];
   /** 勾选 / 取消勾选后回传完整选中集（顺序 = 展示顺序）。 */
   onChange: (memberIds: string[]) => void;
-  options: Member[];
+  options: readonly Member[];
   placeholder?: string;
   ariaLabel: string;
 };

@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
-import { MEMBER_DIRECTORY, PROJECT_MANAGERS, memberByName, type Member } from "../data/members";
-import { PROGRESS_STEPS, PROJECT_MANAGER, cnDateFromIso, ownersFromMembers, ownersLabel, daysBetweenInclusive, isCompleteStatus, isTaskDone, isoFromCnDate, lateDeliveryLabel, progressAfterStatus, taskStatus, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import type { Member } from "../data/members";
+import { addedPresetNodeIds, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { stageNameOf, type ApiProjectSummary } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
@@ -180,7 +181,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "owners" | "ownersEn" | "startDate" | "dueDate" | "doneDate" | "days" | "headcount" | "priority" | "note" | "progress" | "statusOverride">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -191,12 +192,18 @@ const PRIORITY_OPTIONS = [
 type TaskBoardProps = {
   tasks: ProjectTask[];
   onSetProgress?: (taskId: string, progress: number) => void;
+  /** 任务状态下拉（五态）：进度与完成日期的联动由服务端裁决（不传 = 状态列只读）。 */
+  onSetStatus?: (taskId: string, status: TaskStatus) => void;
+  /** 实际完成日期（填 = 完成、清 = 退回进行中）；不传 = 只读。 */
+  onSetActualEnd?: (taskId: string, iso: string) => void;
+  /** 人员候选（GET /api/v1/users 目录）：项目经理列 / 任务负责人列 / 抽屉共用。 */
+  members: readonly Member[];
   visibleColumns?: VisibleColumns;
   scrollRef?: RefObject<HTMLDivElement | null>;
   collapsed: Record<string, boolean>;
   onToggleStage: (stage: string) => void;
   onToggleAllStages: () => void;
-  /** 没有数据也要出分组头的阶段（原型阶段没有任务的项目：只出阶段骨架，展开后没有任务行）。 */
+  /** 没有数据也要出分组头的阶段（还没有任务的项目：只出阶段骨架，展开后没有任务行）。 */
   skeletonStages?: readonly string[];
   /** 「添加任务」：从任务模板预设里挑节点加进项目（不传 = 阶段标签点不开右侧卡片）。 */
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
@@ -223,11 +230,6 @@ type TaskBoardProps = {
   focusMode?: boolean;
 };
 
-function shortenFileName(name: string): string {
-  const chars = Array.from(name);
-  return chars.length <= 4 ? name : chars.slice(0, 4).join("") + "…";
-}
-
 function Chevron({ collapsed }: { collapsed: boolean }) {
   return (
     <svg
@@ -243,26 +245,24 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
-  /** 「是否按时交付」列的逾期标注（Push 67：逾期不再标在实际完成日期列）。 */
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
+  /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
-  const status = taskStatus(task);
+  const status = task.status;
   const dotClass = STATUS_DOT_CLASS[status];
-  /** 负责人展示（多位按「、」连接，Push 136）。 */
-  const fullOwners = ownersLabel(task.owners, task.ownersEn);
-  /** 人员下拉的选中项：按姓名回查目录 id（目录外的名字取不到 id、不进勾选态）。 */
-  const ownerIds = task.owners.map((name) => memberByName(name)?.id ?? "").filter((id) => id !== "");
-  /** 人员目录 id → 成员（目录里查不到的 id 直接丢掉）。 */
-  const membersFromIds = (ids: readonly string[]): Member[] =>
-    ids.map((id) => MEMBER_DIRECTORY.find((item) => item.id === id)).filter((item): item is Member => item !== undefined);
-  const startIso = isoFromCnDate(task.startDate);
-  const dueIso = isoFromCnDate(task.dueDate);
-  const doneIso = isoFromCnDate(task.doneDate);
+  /** 负责人展示（多位按「、」连接，Push 136；2026-09-24 定案「只按名字」—— 拼音口径下线）。 */
+  const fullOwners = ownersLabel(task.owners);
+  const startIso = task.startDate;
+  const dueIso = task.dueDate;
+  const doneIso = task.doneDate;
+  const startText = cnDateFromIso(startIso);
+  const dueText = cnDateFromIso(dueIso);
+  const doneText = cnDateFromIso(doneIso);
   /** 行内改任一日期时，把两个显示日期与联动天数一起写回（含首尾）。 */
   const patchRange = (nextStartIso: string, nextDueIso: string) => {
     onPatch?.({
-      startDate: nextStartIso === "" ? "" : cnDateFromIso(nextStartIso),
-      dueDate: nextDueIso === "" ? "" : cnDateFromIso(nextDueIso),
+      startDate: nextStartIso,
+      dueDate: nextDueIso,
       days: nextStartIso !== "" && nextDueIso !== "" ? daysBetweenInclusive(nextStartIso, nextDueIso) : 0,
     });
   };
@@ -294,7 +294,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       ) : (
         <InlineMemberMultiCell
           values={managerIds}
-          options={PROJECT_MANAGERS}
+          options={members}
           ariaLabel="修改项目经理"
           display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
@@ -316,34 +316,34 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <span className="text-xs text-zinc-300">待分配</span>
         ) : (
           <span className="truncate text-xs text-zinc-600" title={fullOwners}>
-            {task.owners.join("、")}
+            {ownersLabel(task.owners)}
           </span>
         )
       ) : (
         <InlineMemberMultiCell
-          values={ownerIds}
-          options={MEMBER_DIRECTORY}
+          values={task.ownerIds}
+          options={members}
           ariaLabel="修改任务负责人"
           display={
             task.owners.length === 0 ? (
               <span className="text-zinc-300">待分配</span>
             ) : (
               <span className="text-zinc-600" title={fullOwners}>
-                {task.owners.join("、")}
+                {ownersLabel(task.owners)}
               </span>
             )
           }
           onPick={(member) => {
-            const next = ownerIds.includes(member.id)
-              ? ownerIds.filter((id) => id !== member.id)
-              : [...ownerIds, member.id];
+            const next = task.ownerIds.includes(member.id)
+              ? task.ownerIds.filter((id) => id !== member.id)
+              : [...task.ownerIds, member.id];
             // 全部取消 = 「待分配」（合法中间状态，A18）；数组顺序 = 勾选顺序
-            onPatch({ ...ownersFromMembers(membersFromIds(next)) });
+            onPatch({ ownerIds: next });
           }}
         />
       ),
     status:
-      onPatch === undefined ? (
+      onSetStatus === undefined ? (
         <span className={"inline-flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
           <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
           {status}
@@ -363,20 +363,16 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           }
           display={<span className="truncate">{status}</span>}
           onPick={(value) => {
-            const next = value as TaskStatus;
-            // 状态与四格进度条联动（Push 65）：选 已完成 / 提前完成 → 四格全亮；进行中 → 至少亮一格；待开始 → 清零；已延期 → 保持当前格数
-            // 手动改成非完成态（待开始 / 进行中 / 已延期）时，实际完成日期一并清空（Push 67 业务定案）
-            onPatch({
-              statusOverride: next,
-              progress: progressAfterStatus(next, task.progress),
-              doneDate: isCompleteStatus(next) ? task.doneDate : "",
-            });
+            // 五态写入（2026-09-24 定案）：进度与完成日期的联动由服务端同事务裁决，口径与原型逐条一致
+            onSetStatus(value as TaskStatus);
           }}
         />
       ),
     priority: (
       <span>
-        {onPatch === undefined ? (
+        {task.priority === null ? (
+          <span className="text-xs text-zinc-300">—</span>
+        ) : onPatch === undefined ? (
           <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
             {task.priority}
           </span>
@@ -402,31 +398,44 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
         ) : late === "逾期已交付" ? (
           <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
-        ) : task.onTime === "" ? (
+        ) : task.onTime === null ? (
           <span className="text-xs text-zinc-300">—</span>
         ) : (
-          <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">{task.onTime}</span>
+          <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">按时交付</span>
         )}
       </span>
     ),
     deliverable: (
-      <span className="min-w-0">
-        {task.deliverable === "" ? (
+      <span className="flex min-w-0 items-center gap-1">
+        {task.deliverableTypes.length === 0 ? (
           <span className="text-xs text-zinc-300">—</span>
         ) : (
-          <span className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600">{task.deliverable}</span>
+          <>
+            <span
+              className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600"
+              title={task.deliverableTypes.join("、")}
+            >
+              {task.deliverableTypes[0]}
+            </span>
+            {task.deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.deliverableTypes.length - 1}</span> : null}
+          </>
         )}
       </span>
     ),
     files: (
-      <span className="min-w-0">
-        {task.files.length === 0 ? (
+      <span className="flex min-w-0 items-center justify-center gap-1">
+        {task.files.total === 0 ? (
           <span className="text-xs text-zinc-300">—</span>
         ) : (
-          <span className="flex items-center gap-1">
-            <span className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600" title={task.files.join("、")}>{shortenFileName(task.files[0])}</span>
-            {task.files.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.files.length - 1}</span> : null}
-          </span>
+          <>
+            <span
+              className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600"
+              title={"共 " + String(task.files.total) + " 份（未定档 " + String(task.files.draft) + " / 已定档 " + String(task.files.final) + "）"}
+            >
+              {task.files.total} 份
+            </span>
+            {task.files.draft > 0 ? <span className="text-[10px] text-amber-600">未定档 {task.files.draft}</span> : null}
+          </>
         )}
       </span>
     ),
@@ -452,13 +461,13 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     ),
     start:
       onPatch === undefined ? (
-        <span className="text-xs tabular-nums text-zinc-600">{task.startDate}</span>
+        <span className="text-xs tabular-nums text-zinc-600">{startText}</span>
       ) : (
         <InlineDateCell
           valueIso={startIso}
           ariaLabel="修改开始日期"
           triggerClassName="tabular-nums text-zinc-600"
-          display={task.startDate === "" ? <span className="text-zinc-300">—</span> : task.startDate}
+          display={startText === "" ? <span className="text-zinc-300">—</span> : startText}
           onChange={(iso) => {
             patchRange(iso, dueIso);
           }}
@@ -472,13 +481,13 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     ),
     due:
       onPatch === undefined ? (
-        <span className="text-xs tabular-nums text-zinc-600">{task.dueDate}</span>
+        <span className="text-xs tabular-nums text-zinc-600">{dueText}</span>
       ) : (
         <InlineDateCell
           valueIso={dueIso}
           ariaLabel="修改预计完成日期"
           triggerClassName="tabular-nums text-zinc-600"
-          display={task.dueDate === "" ? <span className="text-zinc-300">—</span> : task.dueDate}
+          display={dueText === "" ? <span className="text-zinc-300">—</span> : dueText}
           onChange={(iso) => {
             patchRange(startIso, iso);
           }}
@@ -506,9 +515,9 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     ),
     doneDate: (
       <span className="text-xs tabular-nums">
-        {onPatch === undefined ? (
+        {onSetActualEnd === undefined ? (
           task.doneDate !== "" ? (
-            <span className="text-zinc-600">{task.doneDate}</span>
+            <span className="text-zinc-600">{doneText}</span>
           ) : (
             <span className="text-zinc-400">—</span>
           )
@@ -517,20 +526,10 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
             valueIso={doneIso}
             ariaLabel="修改实际完成日期"
             triggerClassName="tabular-nums"
-            display={
-              task.doneDate !== "" ? (
-                <span className="text-zinc-600">{task.doneDate}</span>
-              ) : (
-                <span className="text-zinc-400">—</span>
-              )
-            }
+            display={task.doneDate !== "" ? <span className="text-zinc-600">{doneText}</span> : <span className="text-zinc-400">—</span>}
             onChange={(iso) => {
-              // 填实际完成日期 = 完成（四格全亮、状态按工期派生）；清空 = 退回进行中（3 格），与状态 / 进度条同一套口径
-              onPatch({
-                doneDate: iso === "" ? "" : cnDateFromIso(iso),
-                progress: iso === "" ? (PROGRESS_STEPS - 1) / PROGRESS_STEPS : 1,
-                statusOverride: iso === "" ? "进行中" : undefined,
-              });
+              // 填实际完成日期 = 完成（四格全亮）；清空 = 退回进行中（进度 3 格）—— 状态联动交给服务端
+              onSetActualEnd(iso);
             }}
           />
         )}
@@ -542,7 +541,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         title={
           task.changes.length === 0
             ? undefined
-            : task.changes.map((change) => "变更 " + change.appliedAt + (change.reason === "" ? "" : "（" + change.reason + "）")).join("；")
+            : task.changes.map((change) => "变更 " + dateOnlyText(change.appliedAt) + (change.reason === "" ? "" : "（" + change.reason + "）")).join("；")
         }
       >
         {task.changes.length === 0 ? null : (
@@ -592,23 +591,23 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
   );
 }
 
-export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
-  const total = tasks.length;
-  const done = tasks.filter(isTaskDone).length;
+export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null }) {
+  const total = summary?.total ?? 0;
+  const done = summary?.done ?? 0;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  /** 没有任务的项目（原型阶段除印度外）：当前阶段给占位符，不写「全部完成」这种会误读的结论。 */
-  const currentStage =
-    total === 0
-      ? "—"
-      : (STAGE_ORDER.find((stage) => {
-          const items = tasks.filter((task) => task.stage === stage);
-          return items.length > 0 && items.some((task) => !isTaskDone(task));
-        }) ?? "全部完成");
+  /** 阶段 key → 展示名；null = 服务端判不出（最慢阶段：全部完成或没有任务；最新阶段：还没任务动工）。 */
+  const stageText = (stageKey: string | null): string => (stageKey === null ? "—" : stageNameOf(stageKey));
+  const slowest = summary?.slowestStage ?? null;
+  const latest = summary?.latestStage ?? null;
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-xl border border-zinc-200 bg-white px-5 py-3.5">
       <p className="text-xs text-zinc-500">
-        当前阶段<span className="ml-1.5 text-sm font-bold text-zinc-800">{currentStage}</span>
+        最慢阶段
+        <span className="ml-1.5 text-sm font-bold text-zinc-800">{total > 0 && slowest === null ? "全部完成" : stageText(slowest)}</span>
+      </p>
+      <p className="text-xs text-zinc-500">
+        最新阶段<span className="ml-1.5 text-sm font-bold text-zinc-800">{stageText(latest)}</span>
       </p>
       <div className="ml-auto flex items-center gap-2.5">
         <span className="text-xs text-zinc-500">整体进度</span>
@@ -616,7 +615,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
           <div className="h-full rounded-full bg-zinc-900" style={{ width: pct + "%" }} />
         </div>
         <span className="text-sm font-semibold tabular-nums text-zinc-900">{pct}%</span>
-        {/* 没有任务的项目（原型阶段除印度外）：不显示 0/0 完成这种没有意义的计数 */}
+        {/* 没有任务的项目：不显示 0/0 完成这种没有意义的计数 */}
         {total === 0 ? null : (
           <span className="text-xs text-zinc-400">
             已完成 {done}/{total}
@@ -627,7 +626,7 @@ export function ProjectSummary({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -644,7 +643,8 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
   /** 项目里已有的任务 id：添加任务时用来判断节点是不是已经加过。 */
-  const existingTaskIds = new Set(tasks.map((task) => task.id));
+  /** 项目里已添加的节点 id（含「同阶段同名」折算的预设节点，见 `addedPresetNodeIds`）：模板节点按它显示「已添加」并判重。 */
+  const existingTaskIds = addedPresetNodeIds(tasks);
   /**
    * 该阶段现有任务（Push 113）：给「点 ＋ 添加 → 选位置」当锚点 —— `tasks` 已经是展示顺序
    * （阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
@@ -807,7 +807,7 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       <div id="task-board-scroll" ref={scrollRef} className="overflow-x-auto rounded-b-xl">
         <div style={{ minWidth: minWidth }}>
           {groups.map((group) => {
-            const done = group.items.filter(isTaskDone).length;
+            const done = group.items.filter((item) => item.status === "已完成" || item.status === "提前完成").length;
             const pct = group.items.length === 0 ? 0 : Math.round((done / group.items.length) * 100);
             const isCollapsed = collapsed[group.stage] === true;
             return (
@@ -877,8 +877,11 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
                                 onDeleteTask(task.id);
                               }
                         }
-                        managers={managers ?? PROJECT_MANAGER}
+                        managers={managers ?? ""}
                         managerIds={managerIds ?? []}
+                        members={members}
+                        onSetStatus={onSetStatus === undefined ? undefined : (status) => onSetStatus(task.id, status)}
+                        onSetActualEnd={onSetActualEnd === undefined ? undefined : (iso) => onSetActualEnd(task.id, iso)}
                         onChangeManagers={onChangeManagers}
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                       />
@@ -905,11 +908,13 @@ export function TaskBoard({ tasks, onSetProgress, visibleColumns, scrollRef, col
       </div>
       <TaskDrawer
         task={drawerTask}
-        managers={managers ?? PROJECT_MANAGER}
+        managers={managers ?? ""}
         managerIds={managerIds ?? []}
+        members={members}
         onSubmit={onSubmitTaskEdit}
         onProgress={onSetProgress}
-        onPatch={onPatchTask}
+        onSetStatus={onSetStatus}
+        onSetActualEnd={onSetActualEnd}
         onClose={closeDrawer}
       />
     </>

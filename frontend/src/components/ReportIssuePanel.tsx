@@ -25,7 +25,7 @@ import type { MeResponse, Project } from "../types";
  * - 「日报记录」= **列表 / 表格**（一行一篇；业务口径「日报记录还是做成列表 不要卡片」，原卡片网格已撤），列口径与原来
  *   的卡片一致（时间 + 状态签 + 提交时间 / 填写者 / 今日施工人数 / 关联任务 / 当日完成工作 / 明日计划 / 现场发现问题 /
  *   解决方案或建议 / 现场工作附图），与「问题追踪」同一套表壳（白底 + 圆角 + 行悬停），窄屏横向滚动。
- * - 原型阶段数据存浏览器内存（与任务覆盖表同一层，换项目 / 刷新即重置）：演示数据只挂在示例项目印度 `inmu-0010`，
+ * - 原型阶段数据存浏览器内存（换项目 / 刷新即重置；任务域已接线，本模块随 M4 日报切片接线）：演示数据只挂在示例项目印度 `inmu-0010`，
  *   其余项目从空白开始；「日报填写」提交后**真的会**写进「日报记录」，含「现场发现问题」时按 A3-09 自动生成一条「未分组」问题。
  */
 
@@ -552,7 +552,7 @@ function ReportFillForm({
                     className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
                   />
                   <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                  <span className="shrink-0 text-[10px] text-zinc-400" title={ownersLabel(task.owners, task.ownersEn)}>{task.owners.length === 0 ? "待分配" : task.owners.join("、")}</span>
+                  <span className="shrink-0 text-[10px] text-zinc-400" title={ownersLabel(task.owners)}>{task.owners.length === 0 ? "待分配" : task.owners.join("、")}</span>
                 </label>
               );
             })
