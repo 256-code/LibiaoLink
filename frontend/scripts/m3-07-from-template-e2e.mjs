@@ -12,7 +12,7 @@
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
  *
  * 它做什么：用一条**临时会话**（跑完撤销）+ 一份**临时模板**（跑完软删）+ 四条**临时节点**（跑完物理删）+
- *   一个**临时项目**（跑完软删、读面零残留）在真机浏览器里跑一遍「添加任务」卡片的两条新口径：
+ *   一个**临时项目**（跑完硬删、读面零残留）在真机浏览器里跑一遍「添加任务」卡片的两条新口径：
  *   ① 「模板」标签点「整套添加」→ 走 POST /projects/{id}/tasks/from-template（整批同事务、带来源节点 id）；
  *   ② 「已添加」判重来自服务端 sourceNodeId（刷新后仍在、节点库标签同样认），不再只靠「同阶段同名」；
  *   ③ 节点库标签逐条加 → 同样带 sourceNodeId 落库（任务描述取节点现值）。
@@ -235,7 +235,7 @@ for (const item of leftovers) {
 check("清理：逐条软删任务", deleted === leftovers.length && leftovers.length === 4, String(deleted) + "/" + String(leftovers.length));
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
-check("清理：软删临时项目", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
+check("清理：硬删临时项目（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
 const allNodeIds = nodeIds.concat([node4Id]);
 let nodeGone = 0;
 for (const id of allNodeIds) {
@@ -247,7 +247,7 @@ const tplNow = await api("/api/v1/task-templates/" + templateId);
 const delTpl = await api("/api/v1/task-templates/" + templateId, "DELETE", { version: tplNow.json === null ? 0 : tplNow.json.version });
 check("清理：软删临时模板", delTpl.status === 200 || delTpl.status === 204, String(delTpl.status) + " " + delTpl.text.slice(0, 120));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
-const residue = (await db.query("select (select count(*)::int from tasks where project_id = $1 and deleted_at is null) as tasks, (select count(*)::int from projects where id = $1 and deleted_at is null) as projects, (select count(*)::int from task_nodes where id = any($2::uuid[])) as nodes, (select count(*)::int from task_templates where id = $3 and deleted_at is null) as templates, (select count(*)::int from sessions where token_hash = $4 and revoked_at is null) as sessions", [projectId, allNodeIds, templateId, sha256(token)])).rows[0];
+const residue = (await db.query("select (select count(*)::int from tasks where project_id = $1 and deleted_at is null) as tasks, (select count(*)::int from projects where id = $1) as projects, (select count(*)::int from task_nodes where id = any($2::uuid[])) as nodes, (select count(*)::int from task_templates where id = $3 and deleted_at is null) as templates, (select count(*)::int from sessions where token_hash = $4 and revoked_at is null) as sessions", [projectId, allNodeIds, templateId, sha256(token)])).rows[0];
 check("清理：任务 / 项目 / 节点 / 模板 / 会话零残留", Number(residue.tasks) === 0 && Number(residue.projects) === 0 && Number(residue.nodes) === 0 && Number(residue.templates) === 0 && Number(residue.sessions) === 0, JSON.stringify(residue));
 
 // ---------- 收尾 ----------

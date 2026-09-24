@@ -192,9 +192,10 @@ export const ProjectMemberCreateBodySchema = z
   .openapi("ProjectMemberCreateBody", { description: "添加成员：重复添加（同 project + user）幂等并覆盖角色；项目归档后拒绝（409 PROJECT_ARCHIVED）" });
 
 /**
- * 项目软删（A5）：If-Match 回传当前 version 防误删（DELETE 不带 body，避免代理丢载荷）。
- * 口径：列表 / 详情 / facets / 搜索 / 导出统一不可见；seqNo 不回收、code 唯一性保留（同编号再建仍 409 PROJECT_CODE_EXISTS）；
- * 非成员 / 不存在统一 404；仅项目经理 / 管理员，写审计（action=project.delete）。
+ * 项目硬删（Push 190 起；原 A5「软删」口径作废）：If-Match 回传当前 version 防误删（DELETE 不带 body，避免代理丢载荷）。
+ * 口径：物理删行 —— 项目聚合子表（任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件）连同清掉；
+ * code 随行释放（同编号可再建）、seqNo 不回收（跳号）；删除前快照 + 子表行数写审计（action=project.delete，metadata.hardDelete=true）；
+ * 非成员 / 不存在统一 404；仅项目经理 / 管理员。
  */
 export const ProjectDeleteHeadersSchema = z
   .object({
