@@ -1,6 +1,6 @@
 # database/seeds/ · 种子数据规格（M0-03）
 
-- 定位：**可重跑、幂等、与迁移分离**的种子数据规格与清单。种子 = 系统运行所需的最小业务字典与模板（**不含**项目 / 用户等业务数据，不含演示与压测数据）。
+- 定位：**可重跑、幂等、与迁移分离**的种子数据规格与清单。种子 = 系统运行所需的最小业务字典与模板（**不含**项目 / 用户等业务数据，不含演示与压测数据）——**例外**：#11「演示数据」是**可选种子**（`optional = true`）：默认不参与 `node scripts/seed.mjs` 的整跑，只在演示 / 联调环境显式播（见「执行约定」与清单 #11）。
 - 现状：规格与清单定于 M0-03（Push 73）；执行器与首个种子（#6a 角色）已随 h1 落地（Push 74：`scripts/seed.mjs` + `seeds/roles.mjs` / `seeds/index.mjs`），此后 #7 蓝图（h3 · Push 83）、#6b 权限矩阵（h6 · Push 95，`seeds/role-permissions.mjs`）、#5 地区 / 项目类型（h7 · Push 97，`seeds/dicts.mjs`）随各自卡片落地；h8（Push 99）无新增种子文件（`#6b` 补 `calendar.manage` 一键），其余种子随对应卡片追加。实现前不得手工往库里灌数据。
 - 归属：wmj（后端领域）；评审 lan、px。
 
@@ -16,7 +16,8 @@
 
 ## 执行约定（随实现落地）
 
-- 命令（已落地）：`DATABASE_URL=... node scripts/seed.mjs [--dry-run] [--only=<name>]`；`--dry-run` 打印变更摘要后全部回滚；执行器逐种子独立事务，advisory lock `20260919`（与迁移器 `20260918` 分开）。
+- 命令（已落地）：`DATABASE_URL=... node scripts/seed.mjs [--dry-run] [--only=<name>] [--with-optional]`；`--dry-run` 打印变更摘要后全部回滚；执行器逐种子独立事务，advisory lock `20260919`（与迁移器 `20260918` 分开）。
+- **可选种子**（`optional = true`，当前只有 #11 演示数据）：整跑时**默认跳过**并在日志里列出来（`seed: 跳过可选种子 demo-projects（演示数据；--only=<name> 或 --with-optional 显式执行）`）—— CI 只跑默认集，#11 需要演示数据时才播；`--only=demo-projects` 单独跑、`--with-optional` 连它一起跑。
 - 幂等：按业务键 upsert / 逐字段比对（示例见 `seeds/roles.mjs`）；重复执行结果一致、第二次零变更。
 - 不删除：默认不做 DELETE（业务后续调整过的字典项保留）；暂不提供 `--reset`（首个确实需要重置的种子落地时再引入，显式指定、留痕）。**例外**：#6b 权限矩阵**以文件为准** —— 移除键会 DELETE，因为权限是安全面、吊销必须能生效（修订语义见 `seeds/role-permissions.mjs` 顶部）。
 - 顺序：dicts → roles / role_permissions → 蓝图（依赖 docType 字典）→ task_nodes / task_templates → 消息模板 → 工作日历（表结构 + 管理入口已随 h8 落地：0014）→ 其余模板（当前注册表实序：dicts → roles → role-permissions → blueprint）。
@@ -37,12 +38,13 @@
 | 8 | 任务节点库 / 任务模板 | `task_nodes` / `task_templates` / `task_template_nodes` | (stage_key, node key) | A1-16 / A1-17；对照 `frontend/src/data/templatePresets.ts`（Push 60） | 待业务确认 |
 | 9 | 消息模板（R01~R07 文案） | 消息模板表（M5 建表） | (template code) | `docs/rules/R01-R07-内置规则文案.md` | 文案定稿；表结构随 M5 |
 | 10 | 工作日历（节假日 / 调休） | `calendar_days` / `calendar_settings`（0014 已落） | (日期, day_type) | D5-01；业务提供 | 表结构 + 管理入口已落地（h8 · Push 99）：`GET / PUT / DELETE /api/v1/calendar/*`（仅 `calendar.manage` 可写）+ 真机回放 30 项断言；**年度节假日 / 调休数据待业务回执**（回执后由管理端录入，或按新种子落地） |
+| 11 | 演示数据：项目空间 + 地图地区分布（**可选种子**） | `dict_items`（type = region）+ `projects` | 地区 `(type, code)`；项目 `code` | Push 188 地图改版（业务 2026-09-24「你现在多写一点数据到数据库 这些国家的订单都可以写 写一点数据到数据库 到项目空间」） | 已落地（Push 189，`seeds/demo-projects.mjs`：地区 41 项 + 演示项目 100 个；`optional = true` → **默认不执行**；项目经理按用户名解析、缺账号退兜底并在摘要报 `managerFallback`；与 `migrations/` 无关、不动结构） |
 
 > 待确认（#6a / #6b）：数据范围枚举按 v0.2 §4.1 六角色实际使用的五值先行（`all` / `managed_projects` / `involved_projects` / `own_stakeholders` / `granted`）；C3-02 措辞差（「本部门」未被任何角色使用、「自定义项目集」≈ `granted`）已登记《技术设计v0.3》§7.3 #16 —— h6 矩阵按五值落地、未新增角色；措辞收敛（补角色或改功能书表述）仍待业务 / px 确认。
 
 ## 验收口径（随实现）
 
-- 空库迁移后连续执行种子两次：第二次零变更、无重复行（幂等）—— #6a 角色（Push 74）、#7 蓝图（Push 83）、#6b 权限矩阵（h6 · Push 95）、#5 地区 / 项目类型字典（h7 · Push 97：首次 inserted 2 / 11、复跑 0 变更）、#6b 补 `calendar.manage`（h8 · Push 99：inserted 1、复跑 0 变更，六角色 74 条 / 27 键）、#6b 补 `report.view` / `report.fill` / `issue.view` / `issue.manage`（M6-01 ~ M6-03 · Push 155：admin 27 → 31 键、矩阵 74 → 78 条；幂等与全量口径由静态门禁 `check:permission-matrix` 复核）已按此验证；
+- 空库迁移后连续执行种子两次：第二次零变更、无重复行（幂等）—— #6a 角色（Push 74）、#7 蓝图（Push 83）、#6b 权限矩阵（h6 · Push 95）、#5 地区 / 项目类型字典（h7 · Push 97：首次 inserted 2 / 11、复跑 0 变更）、#6b 补 `calendar.manage`（h8 · Push 99：inserted 1、复跑 0 变更，六角色 74 条 / 27 键）、#6b 补 `report.view` / `report.fill` / `issue.view` / `issue.manage`（M6-01 ~ M6-03 · Push 155：admin 27 → 31 键、矩阵 74 → 78 条；幂等与全量口径由静态门禁 `check:permission-matrix` 复核）已按此验证；**#11 演示数据（可选种子 · Push 189）**独立验：先建临时空库 → 34 个迁移 → 整跑默认集（日志明确「跳过可选种子 demo-projects」，库内 `projects` 仍 0 行）→ `--only=demo-projects` 首次 `regionsInserted 41 / projectsInserted 100`（4 行里 5 个经理用户名不在库里 → `managerFallback 5`，按兜底账号落库）→ 复跑 `regionsUnchanged 41 / projectsUnchanged 100`（零变更）→ `--with-optional` 整跑 7 个种子全 0 变更；**空库无账号时按约定报错并整体回滚**（`库里没有任何账号…`；回滚后 projects 0 / region 8 —— 验的是「不静默、不留半截」）；沙箱库 `--dry-run` 对账 `projectsInserted 0 / regionsInserted 0`（种子与库内那批演示数据逐条一致）；
 - 引用一致性：`node_requirements.doc_type` 与任务 `deliverable_types` 的取值全部命中成果文件字典（检查脚本随 M1 落地）；
 - 蓝图校验：种子蓝图通过 v0.2 §3.4 全部校验，能生成 stages / nodes / requirements 全量；
 - 业务确认项（#5 / #8 及 #3 的 SLA 时限）在回执前按占位值断言，回执后更新断言。
