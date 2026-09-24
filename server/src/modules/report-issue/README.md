@@ -58,4 +58,4 @@ report-issue/
 - `server/test/report-issue.test.ts`：**27 例**（日报 18 + 问题 9）—— 日报：创建 / 提交当天 / 草稿 / 重复 409 `REPORT_ALREADY_EXISTS` / 补填推导 / 未来日期 400 / 任务归属 400 / 问题生成与自动分派 / 原因类不分派 / A3-09 幂等 / A3-08 回写与幂等 / 草稿 → 提交 / 已提交不可退回 / 编辑后缺归类 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 列表筛选；问题：状态流转事件 / 回退清关闭字段 / 分派与时限 / 空更新 400 / 乐观锁 409 / 归档 409 / 404 / 详情留痕正序 / 列表同源。另 `server/test/task-remove.test.ts` 12 例覆盖删除引用守卫（`report_ref` / `issue_ref`）。
 - `server/test/report-summary.test.ts`（**Push 162 · 14 例**）：当日汇总 7（只算已提交 / 人数合计与问题计数（空白串不算）/ 提交时刻升序 + 同刻作者兜底 / 契约形态 taskTitles / 缺省日期 = 今天 / 只取当日 / 未来日期 400 且不读库）+ 应填未填 7（草稿未提交仍计未填 / 逐行状态与 reportId / missingUserIds 顺序同名册 / 非工作日整列为空 / 名册为空 / 名册外提交不扩大应填范围 / 未来日期 400）—— 日历 / 名册 / 仓储全用替身，不连库。全量：**Push 162 后 546 例 / 36 文件**。
 - 随 `npm test` 常跑；`check:boundaries` 覆盖跨模块 import（本模块只进口对端 `index.ts`；新增 calendar / project 两条出口依赖）。
-- 真机回放（真 PG + 真 api）随 M3-06 压测 / 联调卡；M6 回放脚本已补 A7-01 / A7-05 断言（`server/scripts/m6-replay.mjs` 证据五 S0 ~ S6），由 CI `database` job 真机执行。
+- 真机回放（真 PG + 真 api）随 M3-06 压测 / 联调卡；M6 回放脚本已补 A7-01 / A7-05 断言（`server/scripts/m6-replay.mjs` 证据五 S0 ~ S6），由 CI `database` job 真机执行 —— **本片已执行（CI run `35946672352`）S0 ~ S6 全 PASS**。
