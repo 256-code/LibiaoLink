@@ -506,7 +506,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 项目总览四格（当前阶段 / 逾期 / 已完成 / 总数） */
+        /** 项目总览四格（最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数） */
         get: {
             parameters: {
                 query?: never;

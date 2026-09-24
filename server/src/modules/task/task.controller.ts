@@ -45,7 +45,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 export class TaskController {
   constructor(private readonly tasks: TaskService) {}
 
-  /** 项目总览四格：当前阶段 / 逾期 / 已完成 / 总数（汇总卡与阶段标签用）。 */
+  /** 项目总览四格：最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数（汇总卡；2026-09-24 起原 currentStage 下线）。 */
   @Get(":id/summary")
   summary(@Param("id", uuidParam) id: string): Promise<z.infer<typeof ProjectSummarySchema>> {
     return this.tasks.summary(id);
