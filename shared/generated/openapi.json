@@ -1475,6 +1475,159 @@
         ],
         "description": "日报列表（项目内成员可见）"
       },
+      "DailyReportMissing": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "isWorkday": {
+            "type": "boolean",
+            "description": "当日是否工作日（日历例外优先，D5-03 同口径）"
+          },
+          "dayKind": {
+            "$ref": "#/components/schemas/CalendarDayKind"
+          },
+          "dayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "日历例外名称（如「国庆节」）；无例外为 null"
+          },
+          "memberCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "项目名册人数"
+          },
+          "submittedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "当日已提交（submitted / supplement）人数"
+          },
+          "draftCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "仅有草稿（未提交）的人数"
+          },
+          "missingCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "应填未填人数（非工作日为 0）"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DailyReportRosterEntry"
+            },
+            "description": "项目名册全员（按名册顺序）"
+          },
+          "missingUserIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "应填未填人 id（非工作日为空数组；顺序同名册）"
+          }
+        },
+        "required": [
+          "date",
+          "isWorkday",
+          "dayKind",
+          "dayName",
+          "memberCount",
+          "submittedCount",
+          "draftCount",
+          "missingCount",
+          "members",
+          "missingUserIds"
+        ],
+        "description": "当日应填未填清单（A7-05：项目成员 × 工作日历 × 当日未提交）"
+      },
+      "DailyReportRosterEntry": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "登录名 / 工号"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "显示名"
+          },
+          "roleInProject": {
+            "$ref": "#/components/schemas/ProjectMemberRole"
+          },
+          "reportId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "当日日报 id；未填报为 null"
+              }
+            ]
+          },
+          "state": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DailyReportState"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "当日日报状态；null = 未填报（draft 草稿未提交，仍计「应填未填」）"
+              }
+            ]
+          },
+          "submittedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "提交时间（草稿 / 未填报为 null）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "userId",
+          "username",
+          "displayName",
+          "roleInProject",
+          "reportId",
+          "state",
+          "submittedAt"
+        ],
+        "description": "名册成员当日填报状态（A7-05 应填未填的一行）"
+      },
       "DailyReportState": {
         "type": "string",
         "enum": [
@@ -1483,6 +1636,72 @@
           "supplement"
         ],
         "description": "日报状态（A3-02）：draft 草稿 / submitted 已提交 / supplement 补填（对过去日期首次提交）"
+      },
+      "DailyReportSummary": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "isWorkday": {
+            "type": "boolean"
+          },
+          "dayKind": {
+            "$ref": "#/components/schemas/CalendarDayKind"
+          },
+          "dayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entryCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "已提交（submitted / supplement）条目数"
+          },
+          "draftCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "草稿条目数（不计入汇总正文）"
+          },
+          "headcountTotal": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "今日施工人数合计（未填按 0 计）"
+          },
+          "issueCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "「现场发现问题」非空的条目数"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DailyReport"
+            },
+            "description": "已提交条目（提交时间升序，同刻按作者 id 兜底）"
+          }
+        },
+        "required": [
+          "date",
+          "isWorkday",
+          "dayKind",
+          "dayName",
+          "entryCount",
+          "draftCount",
+          "headcountTotal",
+          "issueCount",
+          "entries"
+        ],
+        "description": "当日日报汇总（A7-01）"
       },
       "DailyReportUpdateBody": {
         "type": "object",
@@ -12300,6 +12519,140 @@
           },
           "409": {
             "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/reports/summary": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "当日日报汇总（A7-01）：已提交条目聚合 + 工作日信息；未来日期 400（A02 每日 19:00 群推送的数据面）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）；未来日期 400"
+                }
+              ]
+            },
+            "required": false,
+            "description": "业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）；未来日期 400",
+            "name": "date",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当日汇总（项目内成员可见）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyReportSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/reports/missing": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "当日应填未填清单（A7-05）：项目名册 × 工作日历 × 当日未提交（草稿不计已填）；非工作日整列为空；未来日期 400",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                {
+                  "description": "业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）；未来日期 400"
+                }
+              ]
+            },
+            "required": false,
+            "description": "业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）；未来日期 400",
+            "name": "date",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当日应填未填清单（项目内成员可见）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyReportMissing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {

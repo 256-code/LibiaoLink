@@ -57,9 +57,12 @@ import {
 } from "./modules/stakeholders.ts";
 import {
   DailyReportCreateBodySchema,
+  DailyReportDayQuerySchema,
   DailyReportListQuerySchema,
   DailyReportListResponseSchema,
+  DailyReportMissingResponseSchema,
   DailyReportSchema,
+  DailyReportSummaryResponseSchema,
   DailyReportUpdateBodySchema,
 } from "./modules/reports.ts";
 import {
@@ -1296,6 +1299,32 @@ export function buildOpenApiDocument() {
     request: { params: idParams, query: DailyReportListQuerySchema },
     responses: {
       200: { description: "日报列表（项目内成员可见）", ...json(DailyReportListResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/reports/summary",
+    tags: ["reports"],
+    summary: "当日日报汇总（A7-01）：已提交条目聚合 + 工作日信息；未来日期 400（A02 每日 19:00 群推送的数据面）",
+    request: { params: idParams, query: DailyReportDayQuerySchema },
+    responses: {
+      200: { description: "当日汇总（项目内成员可见）", ...json(DailyReportSummaryResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/reports/missing",
+    tags: ["reports"],
+    summary: "当日应填未填清单（A7-05）：项目名册 × 工作日历 × 当日未提交（草稿不计已填）；非工作日整列为空；未来日期 400",
+    request: { params: idParams, query: DailyReportDayQuerySchema },
+    responses: {
+      200: { description: "当日应填未填清单（项目内成员可见）", ...json(DailyReportMissingResponseSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
     },

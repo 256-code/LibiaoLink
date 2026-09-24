@@ -5117,6 +5117,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/reports/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当日日报汇总（A7-01）：已提交条目聚合 + 工作日信息；未来日期 400（A02 每日 19:00 群推送的数据面） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）；未来日期 400 */
+                    date?: components["schemas"]["DateOnly"] & unknown;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 当日汇总（项目内成员可见） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReportSummary"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/reports/missing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当日应填未填清单（A7-05）：项目名册 × 工作日历 × 当日未提交（草稿不计已填）；非工作日整列为空；未来日期 400 */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 业务日期 YYYY-MM-DD；缺省 = 今天（Asia/Shanghai）；未来日期 400 */
+                    date?: components["schemas"]["DateOnly"] & unknown;
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 当日应填未填清单（项目内成员可见） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReportMissing"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/reports/{reportId}": {
         parameters: {
             query?: never;
@@ -5765,11 +5885,61 @@ export interface components {
             limit: number;
             total: number;
         };
+        /** @description 当日应填未填清单（A7-05：项目成员 × 工作日历 × 当日未提交） */
+        DailyReportMissing: {
+            date: components["schemas"]["DateOnly"] & unknown;
+            /** @description 当日是否工作日（日历例外优先，D5-03 同口径） */
+            isWorkday: boolean;
+            dayKind: components["schemas"]["CalendarDayKind"];
+            /** @description 日历例外名称（如「国庆节」）；无例外为 null */
+            dayName: string | null;
+            /** @description 项目名册人数 */
+            memberCount: number;
+            /** @description 当日已提交（submitted / supplement）人数 */
+            submittedCount: number;
+            /** @description 仅有草稿（未提交）的人数 */
+            draftCount: number;
+            /** @description 应填未填人数（非工作日为 0） */
+            missingCount: number;
+            /** @description 项目名册全员（按名册顺序） */
+            members: components["schemas"]["DailyReportRosterEntry"][];
+            /** @description 应填未填人 id（非工作日为空数组；顺序同名册） */
+            missingUserIds: components["schemas"]["Uuid"][];
+        };
+        /** @description 名册成员当日填报状态（A7-05 应填未填的一行） */
+        DailyReportRosterEntry: {
+            userId: components["schemas"]["Uuid"];
+            /** @description 登录名 / 工号 */
+            username: string | null;
+            /** @description 显示名 */
+            displayName: string | null;
+            roleInProject: components["schemas"]["ProjectMemberRole"];
+            reportId: components["schemas"]["Uuid"] & (string | null);
+            state: components["schemas"]["DailyReportState"] & (string | null);
+            submittedAt: components["schemas"]["DateTime"] & (string | null);
+        };
         /**
          * @description 日报状态（A3-02）：draft 草稿 / submitted 已提交 / supplement 补填（对过去日期首次提交）
          * @enum {string}
          */
         DailyReportState: "draft" | "submitted" | "supplement";
+        /** @description 当日日报汇总（A7-01） */
+        DailyReportSummary: {
+            date: components["schemas"]["DateOnly"] & unknown;
+            isWorkday: boolean;
+            dayKind: components["schemas"]["CalendarDayKind"];
+            dayName: string | null;
+            /** @description 已提交（submitted / supplement）条目数 */
+            entryCount: number;
+            /** @description 草稿条目数（不计入汇总正文） */
+            draftCount: number;
+            /** @description 今日施工人数合计（未填按 0 计） */
+            headcountTotal: number;
+            /** @description 「现场发现问题」非空的条目数 */
+            issueCount: number;
+            /** @description 已提交条目（提交时间升序，同刻按作者 id 兜底） */
+            entries: components["schemas"]["DailyReport"][];
+        };
         /** @description 编辑日报（乐观锁 version；date 不可改） */
         DailyReportUpdateBody: {
             version: components["schemas"]["Version"];

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * M6 真机回放（S6·report-issue · 日报 / 问题：A3-01 ~ A3-13 + A2-01 引用守卫）：
+ * M6 真机回放（S6·report-issue · 日报 / 问题：A3-01 ~ A3-13 + A2-01 引用守卫 + M6-01 收口 A7-01 / A7-05）：
  *   证据一（A3-01 ~ A3-04 · 日报填报）：新报一天（今天 = submitted，过去日期 = 补填 supplement）、
  *           一人一项目一天一条（重复 409 REPORT_ALREADY_EXISTS）、未来日期 400、草稿 draft 创建 + 提交、
  *           关联任务（taskIds / taskTitles 同下标；非本项目任务 400）。
@@ -11,7 +11,10 @@
  *   证据四（A3-10 / A3-13 · 问题四态与留痕）：unassigned → open → in_progress → done（写 closed_at / closed_by）→ 回退
  *           in_progress（自动清空关闭对）；每次实际变化各写一条 issue_events（state_change / solution / assignment）；
  *           空更新 400、乐观锁 409、归档项目 409、跨项目 404。
- *   证据五（A2-01 删除引用守卫）：任务被日报 / 问题引用 → DELETE 409 TASK_HAS_REFERENCES
+ *   证据五（M6-01 收口 · A7-01 当日汇总 / A7-05 应填未填）：当日汇总只算已提交条目（submitted / supplement）
+ *           （entryCount / headcountTotal / issueCount + 工作日信息）；应填未填 = 名册 × 工作日历 × 当日未提交
+ *           （草稿未提交仍计未填）；非工作日整列为空（不催报）；缺省日期 = 今天；未来日期 400。
+ *   证据六（A2-01 删除引用守卫）：任务被日报 / 问题引用 → DELETE 409 TASK_HAS_REFERENCES
  *           （details[].code = report_ref / issue_ref，带条数）；无引用任务可删；重复删除 404。
  *
  * 前置：真 PG（DATABASE_URL，迁移器角色 —— 断言与收尾要跨表读删）+ 真 api（BASE_URL）。本脚本只在本地沙箱 / 联调库跑：
@@ -240,7 +243,58 @@ try {
   const missingIssue = await call("GET", API + "/issues/" + randomUUID());
   check("G3", "记录级 404：不存在 / 跨项目 id 的日报与问题详情", "404 / 404", missingReport.status + " / " + missingIssue.status, missingReport.status === 404 && missingIssue.status === 404);
 
-  // ---------- 证据五：归档写保护（ADR-027） ----------
+  // ---------- 证据五：M6-01 收口 —— 当日汇总（A7-01）与应填未填（A7-05） ----------
+  // 名册是 A7-05 的应填范围：先落 1 名成员（项目经理；M2-05 幂等 upsert），再验「名册 × 当日状态」
+  const rosterAdd = await call("POST", API + "/members", { userId: adminId, roleInProject: "project_manager" });
+  check("S0", "A7-05 前置：回放成员落名册（M2-05 幂等 upsert）+ 身份随行下发", "200 / userId=adminId / roleInProject=project_manager", rosterAdd.status + " " + short({ userId: rosterAdd.body?.userId, role: rosterAdd.body?.roleInProject }, 140), rosterAdd.status === 200 && rosterAdd.body?.userId === adminId && rosterAdd.body?.roleInProject === "project_manager");
+  const summaryToday = await call("GET", API + "/reports/summary?date=" + today);
+  const summaryTodayOk = summaryToday.status === 200 && summaryToday.body?.date === today && summaryToday.body?.entryCount === 1 && summaryToday.body?.draftCount === 0 && summaryToday.body?.headcountTotal === 12 && summaryToday.body?.issueCount === 1 && summaryToday.body?.entries?.[0]?.authorId === adminId && summaryToday.body?.entries?.[0]?.date === today && summaryToday.body?.entries?.[0]?.taskTitles?.[0] === "M6RPL-装配工装（日报回写）";
+  check("S1", "A7-01 当日汇总：已提交条目聚合（entryCount=1 / 人数合计=12 / 问题数=1）", "200 entryCount=1 headcountTotal=12 issueCount=1", summaryToday.status + " " + short({ date: summaryToday.body?.date, entryCount: summaryToday.body?.entryCount, headcountTotal: summaryToday.body?.headcountTotal, issueCount: summaryToday.body?.issueCount }, 200), summaryTodayOk);
+
+  const summaryDefault = await call("GET", API + "/reports/summary");
+  check("S2", "A7-01 / A7-05 缺省日期 = 今天（Asia/Shanghai）", "200 date=" + today, summaryDefault.status + " " + String(summaryDefault.body?.date ?? "-") + " / isWorkday=" + String(summaryDefault.body?.isWorkday), summaryDefault.status === 200 && summaryDefault.body?.date === today && summaryDefault.body?.entryCount === 1 && typeof summaryDefault.body?.dayKind === "string");
+
+  const summaryFuture = await call("GET", API + "/reports/summary?date=" + tomorrow);
+  const missingFuture = await call("GET", API + "/reports/missing?date=" + tomorrow);
+  check("S3", "未来日期 400 VALIDATION_FAILED（汇总 / 应填未填同口径，A3-04）", "400 x 2", summaryFuture.status + " / " + missingFuture.status, summaryFuture.status === 400 && summaryFuture.body?.code === "VALIDATION_FAILED" && missingFuture.status === 400 && missingFuture.body?.code === "VALIDATION_FAILED");
+
+  const missingToday = await call("GET", API + "/reports/missing?date=" + today);
+  const missingTodayOk = missingToday.status === 200 && missingToday.body?.memberCount >= 1 && missingToday.body?.members?.length === missingToday.body?.memberCount && missingToday.body?.members?.filter((member) => member.userId === adminId && member.reportId === reportId && member.state === "submitted" && member.roleInProject === "project_manager").length === 1 && missingToday.body?.submittedCount === 1 && (missingToday.body?.missingUserIds ?? []).indexOf(adminId) === -1 && missingToday.body?.missingCount === (missingToday.body?.isWorkday === true ? missingToday.body.memberCount - 1 : 0) && (missingToday.body?.missingUserIds ?? []).length === missingToday.body?.missingCount;
+  check("S4", "A7-05 应填未填：名册 × 当日状态（已提交 → 不在漏填名单）", "200 memberCount≥1 submittedCount=1 / 漏填 = 名册 − 1", missingToday.status + " " + short({ memberCount: missingToday.body?.memberCount, submittedCount: missingToday.body?.submittedCount, missingCount: missingToday.body?.missingCount, missingUserIds: missingToday.body?.missingUserIds }, 200), missingTodayOk);
+
+  // 冒烟判定：近 16 天内挑一个「无日报的工作日」（用日历接口自证，不硬编码星期）
+  let blankWorkday = null;
+  for (let offset = -3; offset >= -16 && blankWorkday === null; offset -= 1) {
+    const probeDay = shanghaiDate(offset);
+    const dayView = await call("GET", "/api/v1/calendar/day?date=" + probeDay);
+    if (dayView.status === 200 && dayView.body?.isWorkday === true) blankWorkday = probeDay;
+  }
+  if (blankWorkday === null) {
+    check("S5", "A7-05 应填未填：工作日无日报 → 名册全员进漏填名单", "近 16 天内无工作日（跳过）", "跳过", true, "日历例外连成长假时不适用");
+  } else {
+    const missingBlank = await call("GET", API + "/reports/missing?date=" + blankWorkday);
+    const ids = missingBlank.body?.missingUserIds ?? [];
+    const blankOk = missingBlank.status === 200 && missingBlank.body?.isWorkday === true && missingBlank.body?.memberCount >= 1 && missingBlank.body?.submittedCount === 0 && missingBlank.body?.draftCount === 0 && ids.length === missingBlank.body?.memberCount && missingBlank.body?.missingCount === missingBlank.body?.memberCount && ids.indexOf(adminId) >= 0 && missingBlank.body?.members?.every((member) => member.state === null && member.reportId === null && member.submittedAt === null);
+    check("S5", "A7-05 应填未填：工作日无日报（" + blankWorkday + "）→ 名册全员进漏填名单", "200 submittedCount=0 / missingCount=memberCount / missingUserIds 全量", missingBlank.status + " " + short({ date: missingBlank.body?.date, memberCount: missingBlank.body?.memberCount, missingCount: missingBlank.body?.missingCount, missingUserIds: ids }, 200), blankOk);
+  }
+
+  // 冒烟判定：近 21 天内挑一个「非工作日」——整列必须为空（不催报）
+  let restDay = null;
+  for (let offset = -3; offset >= -21 && restDay === null; offset -= 1) {
+    const probeDay = shanghaiDate(offset);
+    const dayView = await call("GET", "/api/v1/calendar/day?date=" + probeDay);
+    if (dayView.status === 200 && dayView.body?.isWorkday === false) restDay = probeDay;
+  }
+  if (restDay === null) {
+    check("S6", "A7-05 非工作日整列为空（不催报）", "近 21 天内无非工作日（跳过）", "跳过", true, "日历例外全为工作日时不适用");
+  } else {
+    const missingRest = await call("GET", API + "/reports/missing?date=" + restDay);
+    const restOk = missingRest.status === 200 && missingRest.body?.isWorkday === false && missingRest.body?.missingCount === 0 && (missingRest.body?.missingUserIds ?? []).length === 0 && missingRest.body?.members?.length === missingRest.body?.memberCount && missingRest.body?.members?.every((member) => member.state === null);
+    check("S6", "A7-05 非工作日整列为空（" + restDay + " / " + String(missingRest.body?.dayKind ?? "-") + " / " + String(missingRest.body?.dayName ?? "无例外名") + "）", "200 missingCount=0 missingUserIds=[]", missingRest.status + " " + short({ isWorkday: missingRest.body?.isWorkday, dayKind: missingRest.body?.dayKind, dayName: missingRest.body?.dayName, missingCount: missingRest.body?.missingCount, members: missingRest.body?.members?.length ?? null }, 200), restOk);
+  }
+
+
+  // ---------- 证据六：归档写保护（ADR-027） ----------
   await db.query("update projects set status = $2 where id = $1", [cleanup.projectId, "archived"]);
   const archivedReport = await call("POST", API + "/reports", { date: beforeYesterday, doneWork: "归档后填报" });
   const archivedIssue = await call("PATCH", API + "/issues/" + issueId, { version: assignIssue.body?.version, state: "done" });
@@ -286,9 +340,9 @@ try {
 const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: serverRoot }).toString().trim();
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: serverRoot }).toString().trim() !== "";
 const lines = [];
-lines.push("# M6 回放证据（S6·report-issue：日报 / 问题）");
+lines.push("# M6 回放证据（S6·report-issue：日报 / 问题 + M6-01 收口 A7-01 / A7-05）");
 lines.push("");
-lines.push("> 卡片：M6-01 ~ M6-03「日报填报 / 提交 / 补填 + 回写任务进展 + 问题自动生成 + 问题闭环与留痕」（主责 wmj，评审 lan）｜口径来源：系统功能书 A3-01 ~ A3-13、A2-01（删除引用守卫）；技术设计v0.3-实施与验收.md §3.7。");
+lines.push("> 卡片：M6-01 ~ M6-03「日报填报 / 提交 / 补填 + 回写任务进展 + 问题自动生成 + 问题闭环与留痕」+ M6-01 收口「当日汇总（A7-01）/ 应填未填清单（A7-05）」（主责 wmj，评审 lan）｜口径来源：系统功能书 A3-01 ~ A3-13、A7-01、A7-05、A2-01（删除引用守卫）；技术设计v0.3-实施与验收.md §3.7。");
 lines.push("");
 lines.push("| 项 | 值 |");
 lines.push("|---|---|");
@@ -297,7 +351,7 @@ lines.push("| 目标 | " + BASE_URL + " |");
 lines.push("| 数据库 | " + DATABASE_URL.replace(/:[^:@/]+@/, ":***") + " |");
 lines.push("| 代码版本 | " + commit + (dirty ? "（回放时工作区含本卡未提交改动）" : "") + " |");
 lines.push("| 脚本 | server/scripts/m6-replay.mjs |");
-lines.push("| 回放项目 | M6RPL-（含 2 个任务 / 3 条日报 / 1 条问题，跑完硬删） |");
+lines.push("| 回放项目 | M6RPL-（含 2 个任务 / 3 条日报 / 1 条问题 / 1 名成员，跑完硬删） |");
 lines.push("");
 lines.push("## 断言明细");
 lines.push("");
@@ -305,18 +359,19 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：日报填报（A3-01 ~ A3-04）+ 提交副作用幂等（A3-08 / A3-09）+ 归类分派（A3-12）+ 四态与留痕（A3-10 / A3-13）+ 引用守卫（A2-01）+ 归档写保护。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：日报填报（A3-01 ~ A3-04）+ 提交副作用幂等（A3-08 / A3-09）+ 归类分派（A3-12）+ 四态与留痕（A3-10 / A3-13）+ 引用守卫（A2-01）+ 当日汇总与应填未填（A7-01 / A7-05）+ 归档写保护。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
-lines.push("## 验收对照（M6-01 ~ M6-03）");
+lines.push("## 验收对照（M6-01 ~ M6-03 + M6-01 收口）");
 lines.push("");
 lines.push("- A3-01 ~ A3-04（日报）= R1 ~ R7：新报（submitted）/ 重复填报 409 REPORT_ALREADY_EXISTS / 未来日期 400 / 补填（supplement）/ 草稿创建 + 提交 / 列表日期倒序 / 详情回读。");
 lines.push("- A3-08（回写任务进展）= T1 / T2：tasks.note 追加「【日报 <日期>】<当日完成工作>」+ task_events(note_change)；重编辑已提交日报不重复追加（同任务同日期一次）。");
 lines.push("- A3-09（问题自动生成）= I1 / I2：source_report_id 唯一兜底幂等；原文 / 归类 / 提出人 / 提出日期 / 单任务挂接。");
 lines.push("- A3-12（归类分派）= I1：部门名归类（机械部 / 采购部 / 规划部 / 项目部）落 owner_department；原因类不自动落部门（null = 待分派）。");
 lines.push("- A3-10 / A3-13（四态与留痕）= E1 ~ E8：允许回退且每次实际变化写一条 issue_events（created / state_change / solution / assignment）；关闭写 closed_at / closed_by、回退自动清空；空更新 400、乐观锁 409。");
-lines.push("- A2-01（删除引用守卫）= G1 / G2：被日报 / 问题引用的任务 409（details[].code = report_ref / issue_ref）；无引用任务可删、重复删除 404。");
+lines.push("- A7-01（当日汇总）= S1 / S2：只算已提交条目（草稿不计入正文与人数）+ 人数合计 / 问题计数 + 工作日信息；缺省日期 = 今天。");
+lines.push("- A7-05（应填未填）= S4 ~ S6：名册即应填范围；已提交（submitted / supplement）不进名单、草稿未提交仍计未填；非工作日整列为空（不催报）；未来日期 400。");
 lines.push("- 归档写保护（ADR-027）= G4：归档项目上日报填报 / 问题处理 / 任务删除均 409 PROJECT_ARCHIVED。");
-lines.push("- 单测回归（不连库）：server/test/report-issue.test.ts 27 例随 npm test 常跑（日报 18 + 问题 9）；删除引用守卫 server/test/task-remove.test.ts 12 例。");
+lines.push("- 单测回归（不连库）：server/test/report-issue.test.ts 27 例（日报 18 + 问题 9）+ server/test/report-summary.test.ts 14 例（当日汇总 7 + 应填未填 7）+ 删除引用守卫 server/test/task-remove.test.ts 12 例，随 npm test 常跑。");
 lines.push("- 复跑：cd server && M6_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node scripts/m6-replay.mjs --out ../docs/m6-回放证据(日报与问题).md");
 lines.push("");
 lines.push("");

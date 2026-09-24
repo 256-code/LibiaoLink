@@ -1,14 +1,17 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   DailyReportCreateBodySchema,
+  DailyReportDayQuerySchema,
   DailyReportListQuerySchema,
+  DailyReportListResponseSchema,
+  DailyReportMissingResponseSchema,
   DailyReportSchema,
+  DailyReportSummaryResponseSchema,
   DailyReportUpdateBodySchema,
   IssueDetailSchema,
   IssueListQuerySchema,
   IssueListResponseSchema,
   IssueUpdateBodySchema,
-  DailyReportListResponseSchema,
   UuidSchema,
   z,
 } from "@libiaolink/contracts";
@@ -17,11 +20,15 @@ import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
 import { IssueService } from "./issue.service.js";
 import { ReportService } from "./report.service.js";
+import { ReportSummaryService } from "./report-summary.service.js";
 
 type DailyReport = z.infer<typeof DailyReportSchema>;
+type DailyReportCreateBody = z.infer<typeof DailyReportCreateBodySchema>;
+type DailyReportDayQuery = z.infer<typeof DailyReportDayQuerySchema>;
 type DailyReportListQuery = z.infer<typeof DailyReportListQuerySchema>;
 type DailyReportListResponse = z.infer<typeof DailyReportListResponseSchema>;
-type DailyReportCreateBody = z.infer<typeof DailyReportCreateBodySchema>;
+type DailyReportMissing = z.infer<typeof DailyReportMissingResponseSchema>;
+type DailyReportSummary = z.infer<typeof DailyReportSummaryResponseSchema>;
 type DailyReportUpdateBody = z.infer<typeof DailyReportUpdateBodySchema>;
 type IssueListQuery = z.infer<typeof IssueListQuerySchema>;
 type IssueListResponse = z.infer<typeof IssueListResponseSchema>;
@@ -39,7 +46,10 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class ReportController {
-  constructor(private readonly reports: ReportService) {}
+  constructor(
+    private readonly reports: ReportService,
+    private readonly summaries: ReportSummaryService,
+  ) {}
 
   /** 日报列表（A7-02 子集）：日期区间 / 状态 / 提交人 + 分页，日期倒序。 */
   @Get(":id/reports")
@@ -49,6 +59,26 @@ export class ReportController {
     @Query(new ZodValidationPipe(DailyReportListQuerySchema)) query: DailyReportListQuery,
   ): Promise<DailyReportListResponse> {
     return this.reports.list(id, query);
+  }
+
+  /** 当日汇总（A7-01）：已提交条目聚合 + 工作日信息；未来日期 400（A02 每日 19:00 群推送的正文数据面）。 */
+  @Get(":id/reports/summary")
+  @RequirePermission("report.view")
+  summary(
+    @Param("id", uuidParam) id: string,
+    @Query(new ZodValidationPipe(DailyReportDayQuerySchema)) query: DailyReportDayQuery,
+  ): Promise<DailyReportSummary> {
+    return this.summaries.summary(id, query);
+  }
+
+  /** 应填未填清单（A7-05）：项目名册 × 工作日历 × 当日未提交（草稿未提交仍计未填）；非工作日整列为空。 */
+  @Get(":id/reports/missing")
+  @RequirePermission("report.view")
+  missing(
+    @Param("id", uuidParam) id: string,
+    @Query(new ZodValidationPipe(DailyReportDayQuerySchema)) query: DailyReportDayQuery,
+  ): Promise<DailyReportMissing> {
+    return this.summaries.missing(id, query);
   }
 
   /** 新报一天（草稿 / 提交）：重复 409 REPORT_ALREADY_EXISTS；提交触发 A3-08 回写与 A3-09 问题生成。 */

@@ -60,6 +60,30 @@ function issueSnapshot(row: IssueRow): Record<string, unknown> {
 /** 问题描述上限（issues.title CHECK 1~500）：日报原文超长时截短落库，原文仍在日报行。 */
 const ISSUE_TITLE_MAX = 500;
 
+/** 行 → 契约（taskTitles 与 taskIds 同下标；缺项由 assertTasksInProject 提前拦截，正常不会出现空串）。 */
+export function toDailyReportView(row: DailyReportRow, titles: Map<string, string>): DailyReport {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    authorId: row.authorId,
+    authorName: row.authorName,
+    date: row.reportDate,
+    state: row.state as DailyReport["state"],
+    headcount: row.headcount,
+    doneWork: row.doneWork,
+    plan: row.plan,
+    foundIssue: row.foundIssue,
+    issueCategory: row.issueCategory as DailyReport["issueCategory"],
+    suggestion: row.suggestion,
+    taskIds: row.taskIds,
+    taskTitles: row.taskIds.map((taskId) => titles.get(taskId) ?? ""),
+    submittedAt: row.submittedAt === null ? null : row.submittedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    version: row.version,
+  };
+}
+
 /**
  * 日报用例（M6-01 / M6-02 · A3-01 ~ A3-04 / A3-08 / A3-09）。
  * 1) 一人一项目一天一条：重复填报 409 REPORT_ALREADY_EXISTS（服务层先判、唯一键兜底）；
@@ -83,7 +107,7 @@ export class ReportService {
     const { rows, total } = await this.reports.list(projectId, filter, query.page, query.limit);
     const titles = await this.reports.taskTitles(projectId, rows.flatMap((row) => row.taskIds));
     return {
-      items: rows.map((row) => this.toDailyReport(row, titles)),
+      items: rows.map((row) => toDailyReportView(row, titles)),
       page: query.page,
       limit: query.limit,
       total,
@@ -94,7 +118,7 @@ export class ReportService {
   async detail(projectId: string, reportId: string): Promise<DailyReport> {
     const row = await this.requireReport(projectId, reportId, this.database.db);
     const titles = await this.reports.taskTitles(projectId, row.taskIds);
-    return this.toDailyReport(row, titles);
+    return toDailyReportView(row, titles);
   }
 
   /** POST /api/v1/projects/{id}/reports：新报一天（草稿 / 提交）；提交即触发 A3-08 / A3-09。 */
@@ -286,30 +310,6 @@ export class ReportService {
         missing.map((taskId) => ({ code: "unknown_task", message: "任务：" + taskId, path: "taskIds" })),
       );
     }
-  }
-
-  /** 行 → 契约（taskTitles 与 taskIds 同下标；缺项由 assertTasksInProject 提前拦截，正常不会出现空串）。 */
-  private toDailyReport(row: DailyReportRow, titles: Map<string, string>): DailyReport {
-    return {
-      id: row.id,
-      projectId: row.projectId,
-      authorId: row.authorId,
-      authorName: row.authorName,
-      date: row.reportDate,
-      state: row.state as DailyReport["state"],
-      headcount: row.headcount,
-      doneWork: row.doneWork,
-      plan: row.plan,
-      foundIssue: row.foundIssue,
-      issueCategory: row.issueCategory as DailyReport["issueCategory"],
-      suggestion: row.suggestion,
-      taskIds: row.taskIds,
-      taskTitles: row.taskIds.map((taskId) => titles.get(taskId) ?? ""),
-      submittedAt: row.submittedAt === null ? null : row.submittedAt.toISOString(),
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-      version: row.version,
-    };
   }
 
   /** 日报写入口：归档项目一律 409 PROJECT_ARCHIVED（ADR-027）。 */
