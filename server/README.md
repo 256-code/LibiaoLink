@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13））
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M4-05g 压测（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13））
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -35,6 +35,7 @@ server/
   scripts/m4-preview-replay.mjs  # M4-05c 预览转换队列真机回放（真 PG + 真对象存储 + 真 api + 真 worker + 真转换沙箱；断言全过退出码 0）
   scripts/m4-preview-cleanup-replay.mjs # M4-05e 预览产物清理真机回放（同口径：共享缓存 / 归属转移 / 无引用清对象）
   scripts/m4-download-replay.mjs # M4-05f 下载切片真机回放（同口径：附件投递 / download 审计 / 版本路由 / 权限双态）
+  scripts/m4-05-stress.mjs       # M4-05g 压测真机回放（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存；真 PG + 真对象存储 + 真 api + 真 worker ×N + 真转换沙箱；断言全过退出码 0）
   scripts/m3-06-stress.mjs    # M3-06 压测真机回放（1 万行任务数据集 + 索引调优评估；真 PG + 真 api；断言全过退出码 0）
   scripts/m3-07-replay.mjs    # M3-07 刀 1 真机回放（五态可写 + 汇总卡「最慢 / 最新阶段」+ 紧急重要度三档；真 PG + 真 api；断言全过退出码 0）
   scripts/m6-replay.mjs         # M6 日报 / 问题真机回放（A3-01 ~ A3-13 + A2-01 引用守卫；同上口径）
@@ -453,6 +454,7 @@ server/
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/preview-queue.test.ts` **24 例** + `test/file-service.test.ts` **68 例**（含定档预生成投递）；`check:boundaries`（152 文件 / 610 依赖 / 0 违规）；`check:db-schema`（**Push 168：33 表 / 341 列 / 107 索引·唯一 / 108 CHECK**）。
 - 真机回放：`scripts/m4-preview-replay.mjs`（真 PG + 真对象存储 + 真 api + 真 worker + 真转换沙箱；断言全过退出码 0）—— 定档预生成投递（三元组去重键）/ 真实转换与产物形态（`%PDF-` + 内嵌 Noto CJK：中文不乱码的字体层证据）/ 三元组幂等（同内容第二个文件不重转、登记版本不变）/ 超大源文件降级 failed + dead / 判不出通道（.zip）不投递。
 - 切片提示 / 风险：① **预览产物对象清理未接**（彻底删除 / 回收站到期目前只清 `projects/` 前缀，`previews/` 产物对象待 M4-05 收口时按 `content_hash` 反查引用后清理 —— `preview_artifacts` 行随 `files` 级联删除，对象不会自己消失）；② **未压测**（并发 2~4 / 200MB 长跑 / 转换成功率 ≥95% 属 M4-05 压测与 PoC-1 真实样本集）；③ 转换器镜像**未推内网 registry**（M8 生产部署形态固化，与 `deploy/minio/` 同口径）；④ `structured` 通道一期 501（xlsx 走 pdf）。
+- **修订（PR-14）**：① 产物清理已随 PR-12 落地；② **已压测**（两档实跑：沙箱 2C2G / ADR-013 2C4G，成功率 / 200MB 续传 / 并发背压 / 长跑内存见下「M4-05g 压测」）；③④ 不变。
 
 ## M4-05d 读 API（S7·file 预览读面 · 三态 + 短时签名 + 仅 ready 写审计）
 
@@ -465,7 +467,7 @@ server/
 - 权限与 404：读 = **项目可见即可**（同文件详情 / 版本链；不可见 / 不存在统一 404，防 IDOR）；`versionId` 不属于该文件 / 不存在 → 404（A4-06：任意历史版本可预览，缺省 = 当前版本）。
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/preview-read.test.ts` **11 例**（ready 签名与只写一条审计 / not_ready 同事务登记与三元组幂等补投 / failed 缓存态不重投 / 两类终态降级 / 版本路由与 404 / 不可见 404 不签发不审计）；`check:boundaries`（**153 文件 / 625 依赖 / 0 违规**）；`check:db-schema`（33 表 / 341 列 / 107 索引·唯一 / 108 CHECK，本片无迁移故不变）。
 - 真机回放：`scripts/m4-preview-read-replay.mjs`（真 PG + 真对象存储 + 真 api + 真 worker + 真转换沙箱；**18/18 通过**，退出码 0）—— 读取侧懒生成闭环（not_ready → 补投 → worker 转成 → ready）/ 签名地址可直接取回产物（`%PDF-` + 内嵌 Noto CJK）/ 签名窗口 ≈ `PREVIEW_URL_TTL_SECONDS` / 仅 ready 写一条审计（metadata 对齐）/ 版本路由（缺省 = 当前版本、`versionId` = 历史版本，不串版本）/ 404 与匿名 401 / failed 缓存态回原因不重投 / 判不出通道不落表不投递；证据见 `docs/m4-05d-回放证据(预览读API).md`。
-- 剩余：**下载切片已随 PR-13 落地**（见下「M4-05f 下载切片」）；**产物清理已随 PR-12 落地**（见下「M4-05e 产物清理」）；M4-05 剩余 = 压测（并发 2~4 / 200MB 长跑 / 成功率 ≥95%）。
+- 剩余：**下载切片已随 PR-13 落地**（见下「M4-05f 下载切片」）；**产物清理已随 PR-12 落地**（见下「M4-05e 产物清理」）；**压测已随 PR-14 落地**（见下「M4-05g 压测」）—— M4-05 剩余 = 无。
 ## M4-05e 产物清理（S7·file 预览收口 · 按 content_hash 反查引用）
 
 - 落点：`file.service.ts#purgeRecycled`（管理员彻底删除 / worker 回收站到期共用）+ `file.repository.ts#findVersionByContentHash` + `preview.repository.ts#listReadyByVersionIds` / `reassignOwner`；**零迁移、零契约改动**（库侧表结构随 `0027`，本片只补写入侧清理）。
@@ -488,7 +490,17 @@ server/
 - 审计（A4-10 / C7）：`action = download` + `object_type = file` + metadata `versionId`；**先签名后审计**（地址没签发成功就不算一次「下载」），一次下载**一条**，不写 preview 行。
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/file-download.test.ts` **9 例**（成功签名与四字段 + 一条 download 审计 / TTL 与 attachment 语义 / 历史版本按该版本签名 / 先签名后审计 / 四类 404 与 403 不签名不审计 / 不可见优先 404）。
 - 真机回放：`scripts/m4-download-replay.mjs`（真 PG + 真对象存储 + 真 api；**14/14 通过**，退出码 0；**两态各跑一次**：默认态 14/14 · 判权限态 14/14）—— 四字段与独立窗口 / **附件投递（GET 签名地址字节逐字节一致 + Content-Disposition 原名 URL 编码）** / download 审计一条一次 / v1·v2 版本路由不串版本 / 跨文件版本 404 / 文件不存在 404 / 禁匿名 401 / 权限形态（默认态全员可下载 · 判权限态非成员 404 且不写审计）；证据见 `docs/m4-05f-回放证据(下载切片).md` 与 `docs/m4-05f-回放证据(下载切片·判权限态).md`。
-- 未覆盖 / 后续：**403（可见但缺 `file.download`）真机不可达**（成员 / 项目经理隐含该键，一期矩阵构造不出「可见但无权」）—— 单测覆盖该分支，二期角色矩阵落地后可复验；签名地址过期后的拒绝由对象存储侧保证（未做等待过期的慢断言）；压测仍属 M4-05 出口标准。
+- 未覆盖 / 后续：**403（可见但缺 `file.download`）真机不可达**（成员 / 项目经理隐含该键，一期矩阵构造不出「可见但无权」）—— 单测覆盖该分支，二期角色矩阵落地后可复验；签名地址过期后的拒绝由对象存储侧保证（未做等待过期的慢断言）；压测已随 **PR-14** 落地（见下「M4-05g 压测」）。
+
+## M4-05g 压测（S7·file 预览管道出口验证 · PoC-1：xlsx / docx / pdf 成功率 ≥95% + 200MB 级续传 + 长跑内存）
+
+- 脚本：`scripts/m4-05-stress.mjs`（真 PG + 真对象存储 + 真 api + 真 worker ×N + 真转换沙箱；**零依赖合成样本** = 手写 ZIP / CRC32 造 docx / xlsx、手写 PNG / PDF（docx / xlsx / pdf / png × S/M/L = 48 份）；样本走真上传管道 init → 分片直传 → complete → finalize → 轮询预览终态；`--samples <dir>` 可换真实业务样本集（层 = R）；跑完自清 —— 会话撤销 + 项目硬删 + 表 / 桶零残留）。
+- 断言组（**29 项全过**）：**X0~X5** 沙箱限额与 `deploy/preview/.env` 声明值逐项比对 + `docker inspect` 内存 / CPU / pids / OOM / 重启 + cgroup v2 `memory.peak` 可读（容器真实峰值）｜**A0~A3** 样本集 + 串行基线时延 + **成功率 ≥95%（PoC-1 硬项，两档均 48/48 = 100%）** + 中文不乱码（产物内嵌 `FontFile2` + Noto）｜**B1~B4** 并发全终结 + `inflight ≤ maxConcurrency` 且打满 + 三元组幂等（同内容 8 份并发 → 1 行 1 对象）+ 沙箱边界直连 `/convert` 越界 503 `SERVICE_BUSY`｜**C1~C5** 200MB 断点续传（只传 8/25 片 → 报缺 17 → 只补缺片）+ complete 哈希与体积 + 秒传 `duplicateHint` + 超 `PREVIEW_CONVERT_MAX_SOURCE_MB` **确定性降级**（failed + outbox dead + 可下载）+ 读回逐字节一致（流式 sha256）｜**D1~D2** 读面 200 并发（100 preview + 100 download-url）全 200 且 p95 ≤ 1s + 审计一次一条不放大｜**E1~E3** 长跑 20 分钟全 ready（118/118）+ 无 OOM / 无重启 + 转换器 cgroup 峰值 ≤ 限额 90% + api / worker 宿主 RSS 尾段斜率 ≤ 1 MiB/min｜**F1~F4** 产物行 = 唯一三元组数 + `preview.job` 排空且无 stuck（其余 topic 一期无消费者，只登记）+ 表 / 桶零残留。
+- 两档实跑（**并发档位 = worker 实例数** —— `PreviewService` 单实例串行消费；A 档 = `deploy/preview` 现值 **2C2G / 并发 2**，B 档 = **ADR-013 生产起点 2C4G / 并发 4** 同机对照）：成功率均 **100%**（48/48）；串行基线 p95 19.9 s / 21.0 s；并发排空（36 份 burst）78.1 s（`maxInflight=2`）/ 87.5 s（`maxInflight=4`）—— **并发翻倍未带来吞吐提升**（瓶颈在 2 vCPU 的转换算力、非队列深度；生产扩容口径交 M8 复标）；200MB 上传 1.08 s（≈186 MiB/s；api RSS 增量 8 KiB / 60 KiB —— 分片直传不经 api 缓冲）；读面 p95 preview 361 / 381 ms、download 317 / 338 ms；容器 cgroup 峰值 **1063.7 MiB / 2048 MiB** 与 **1227.8 MiB / 4096 MiB**（均 ≤ 限额 90%，无 OOM、重启 0）；长跑 118/118 全 ready。
+- 证据：`docs/m4-05-压测证据(PoC-1·沙箱档).md` 与 `docs/m4-05-压测证据(PoC-1·ADR013档).md`（**`docs/` 属 px 线 —— 本卡代记、请 px 复核**）。
+- 结论与风险：① 生产档位（2C4G / 并发 2~4）已实跑对照，**复标仍属 M8 容量验证**（ADR-013：容量数字需实测校准后再承诺）；② **200MB 只覆盖「上传续传 + 可下载」** —— 超上限按 D2-05 确定性降级、不计成功率分母（口径需 wmj / px 会签）；③ 成功率为合成样本，真实业务样本（版式保真 / Excel 分页 / 复杂字体回退）用 `--samples <dir>` 复跑；④ 沙箱边界 503 为直连探针（pipeline 路径打不满队列）；⑤ 不进 CI 业务断言（需 docker / 对象存储 / 转换沙箱；CI 仅 `node --check` 语法门禁覆盖脚本）。
+- 复跑：`cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m4-05-stress.mjs --label "<档位名>" --workers 4 --burst 8 --long-run-min 20 --out <报告.md>`（前置：MinIO + api + N 个 worker + 转换沙箱（`deploy/preview`）；退出码 0 = 断言全过，可当门禁）。
+
 ## M3-06 压测（1 万行任务数据集 + 索引调优评估）
 
 - 脚本：`scripts/m3-06-stress.mjs`（真 PG + 真 api；自建合成项目 `M3STRESS-` 与 8 位合成负责人，插 1 万行任务（其中 200 条软删，避开各组头部与关键字行）—— 跑完硬删任务 / 事件 / 阶段 / 成员 / 项目 / 合成用户与会话）。
@@ -560,7 +572,7 @@ server/
 - h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
 - j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、「干系人角色」列（口径未定）、前端台账页与项目「干系人」面板（u 系列 · px 线）。
 - S6·report-issue：**M6-01 日报填报 / 提交 / 补填（A3-01 ~ A3-04）、M6-02 回写任务进展 + 问题自动生成（A3-08 / A3-09 幂等）、M6-03 问题闭环与留痕（A3-10 ~ A3-13）—— 已落地（Push 155 · 迁移 0023 + 契约 reports / issues；同批补齐 A2-01 删除引用守卫）**；剩余：M6-04 干系人导入 / 导出（A5-05 随 M8-01、A5-09 随 M7-03）、M6-05 工作台与待办（C2-06）、问题统计与导出（A3-17 · M7）、`dueAt` 提醒 / 超期升级（A3-14 · M5 规则引擎）、C9 归类字典可维护（二期）、前端日报 / 看板接线（u 系列 · px 线）。
-- S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-05c 预览转换队列（outbox `preview.job` 领取器 + 转换沙箱客户端 + 三元组幂等 + 失败降级 + 定档预生成 + 真机回放 · 迁移 `0028`）—— 已落地（PR-10）**；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0020）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；**M4-05 预览编排 —— 进行中：数据层已落地（迁移 `0027` · `preview_artifacts` + `ck_audit_logs_action` 一次扩 `preview` / `download` 至十值），转换器 / 队列与读 API 随后续切片**；**M4-05c 预览转换队列 —— 已落地（PR-10 · 迁移 `0028`：outbox 领取器 + 转换沙箱客户端 + 失败降级）；**M4-05d 读 API（`GET /files/{id}/preview`：三态 + 短时签名（`PREVIEW_URL_TTL_SECONDS`）+ 仅 ready 写审计 + 版本 404 + 读取侧幂等补投 + 真机回放）—— 已落地（PR-11）**；**M4-05e 产物清理 —— 已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行；真机回放 16/16）**；**M4-05f 下载切片（`GET /files/{id}/versions/{versionId}/download-url`：attachment 签名（`S3_DOWNLOAD_URL_TTL_SECONDS`）+ `file.download` + download 审计 + 真机两态回放 14/14）—— 已落地（PR-13）**，M4-05 剩余 = 压测**。
+- S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-05c 预览转换队列（outbox `preview.job` 领取器 + 转换沙箱客户端 + 三元组幂等 + 失败降级 + 定档预生成 + 真机回放 · 迁移 `0028`）—— 已落地（PR-10）**；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0020）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；**M4-05 预览编排 —— 进行中：数据层已落地（迁移 `0027` · `preview_artifacts` + `ck_audit_logs_action` 一次扩 `preview` / `download` 至十值），转换器 / 队列与读 API 随后续切片**；**M4-05c 预览转换队列 —— 已落地（PR-10 · 迁移 `0028`：outbox 领取器 + 转换沙箱客户端 + 失败降级）；**M4-05d 读 API（`GET /files/{id}/preview`：三态 + 短时签名（`PREVIEW_URL_TTL_SECONDS`）+ 仅 ready 写审计 + 版本 404 + 读取侧幂等补投 + 真机回放）—— 已落地（PR-11）**；**M4-05e 产物清理 —— 已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行；真机回放 16/16）**；**M4-05f 下载切片（`GET /files/{id}/versions/{versionId}/download-url`：attachment 签名（`S3_DOWNLOAD_URL_TTL_SECONDS`）+ `file.download` + download 审计 + 真机两态回放 14/14）—— 已落地（PR-13）**，M4-05 剩余 = 无（**M4-05g 压测已随 PR-14 落地**：两档实跑 —— 成功率 / 200MB 续传 / 并发背压 / 长跑内存）。
 - S6·automation：**M5-01 规则引擎内核（规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器 + R02 ~ R07 金标 31 例）—— 已落地（Push 161）**；剩余：M5-02 调度与补发（lan）、M5-03 企微通道（lan）、M5-04 站内信 / SSE（lan）、M5-05 其余规则（A01 / A02 / A03 / A14 · wmj）、M5-06 规则管理接口与发送记录（lan）、M5-07 前端消息中心与规则管理页（px）。
-- lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 压测）/ preview / notify / outbox 调度 / search / dashboard。
+- lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 无（M4-05g 压测已随 PR-14 落地））/ preview / notify / outbox 调度 / search / dashboard。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。
