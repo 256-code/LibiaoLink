@@ -6981,7 +6981,7 @@ export interface components {
             titleEn?: string | null;
             taskNodeId?: components["schemas"]["Uuid"] & unknown;
             sourceNodeId?: components["schemas"]["Uuid"] & unknown;
-            /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理（projects.manager_ids）兜底；显式 [] = 「待分配」（不兜底项目经理，沿用 A18）；数组顺序 = 展示顺序 */
+            /** @description 任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置，数组顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
@@ -7002,7 +7002,7 @@ export interface components {
              * @default true
              */
             skipExisting: boolean;
-            /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」 */
+            /** @description 任务负责人：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义 */
             ownerIds?: components["schemas"]["Uuid"][];
             /** @description 起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾 */
             sortIndex?: number;

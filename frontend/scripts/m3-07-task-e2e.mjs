@@ -126,7 +126,7 @@ const projRes = await api("/api/v1/projects", "POST", { code: fixtureCode, name:
 check("夹具：建临时项目（201）", projRes.status === 201, String(projRes.status) + " " + projRes.text.slice(0, 140));
 const projectId = projRes.json === null ? "" : projRes.json.id;
 const taskA = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "presale", title: "回放任务·售前", ownerIds: [userRow.id], plannedStart: "2026-09-01", plannedEnd: "2026-09-10", priority: "高" });
-// 负责人缺省口径（服务端 task.service.ts:206）：不传 ownerIds = 取项目经理；要「待分配」得显式传 []。
+// 负责人缺省口径（2026-09-24 修订，回到 ADR-021）：不传 ownerIds = 「待分配」空数组（不再兜底项目经理）；本夹具仍显式传值以固定数据。
 const taskB = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: "回放任务·设计", ownerIds: [] });
 check("夹具：建两条任务（201 / 201）", taskA.status === 201 && taskB.status === 201, taskA.status + " / " + taskB.status);
 const summary0 = (await api("/api/v1/projects/" + projectId + "/summary")).json;
