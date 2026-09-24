@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { STAGE_KEYS } from "@libiaolink/contracts";
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -84,6 +84,8 @@ export interface TaskUpdatePatch {
   deliverableTypes?: string[];
   ownerIds?: string[];
   status?: string;
+  /** 显式覆盖（2026-09-24 · 迁移 0031）：overdue / early_done / null（清空）。 */
+  statusOverride?: string | null;
   progress?: string;
   sortIndex?: number;
   plannedStart?: string | null;
@@ -175,7 +177,7 @@ const FILE_STATUS_FOR_SUMMARY = ["draft", "final", "changed", "archived"];
 
 /**
  * task 数据访问（M3-01 / M3-02）：列表 / 详情 / 写入 / 事件留痕 / 项目触点（ADR-022）都在本层。
- * 展示态筛选按派生定义下推 SQL（overdue / early_done 非存储态），与读时派生同一口径。
+ * 展示态筛选按「覆盖 + 派生」定义下推 SQL（overdue / early_done 非存储态，可由覆盖生效或读时派生命中），与读时派生同一口径。
  * 项目触点单点在本层（tasks 属项目聚合视图）；ProjectToucher 统一收口随 h6 / 后续卡（避免模块循环依赖）。
  */
 @Injectable()
@@ -469,7 +471,7 @@ export class TaskRepository {
     await client.update(projects).set({ updatedAt: at }).where(eq(projects.id, projectId));
   }
 
-  /** 项目总览四格（GET /projects/{id}/summary）：当前阶段在 projects.stage_key，三个计数按任务派生。 */
+  /** 项目总览汇总（GET /projects/{id}/summary）：三个计数 + 最慢 / 最新阶段（阶段判定在 service，按 STAGE_KEYS 序）。 */
   async summaryCounts(
     projectId: string,
     today: string,
@@ -538,23 +540,29 @@ function groupCondition(stageKey: string | null): SQL {
   return stageKey === null ? (isNull(tasks.stageKey) as SQL) : (eq(tasks.stageKey, stageKey) as SQL);
 }
 
-/** 展示态筛选下推（与 task.rules 的读时派生同口径；overdue / early_done 由存储态 + 日期判定）。 */
+/**
+ * 展示态筛选下推（与 task.rules 的 deriveDisplayStatus 严格同形 —— 改一处必须改两处）：
+ * 覆盖生效优先（early_done 仅在已完成时生效、overdue 仅在未完成时生效）→ 完成态按实际 / 预计完成日期分「已完成 / 提前完成」→
+ * 未完成且已过预计完成日期 = 「已延期」→ 其余按基础态；overdue / early_done 可由「覆盖生效」或「读时派生」两种来源命中。
+ */
+function displayStatusExpression(today: string): SQL {
+  const early = "early_done";
+  const done = "done";
+  const overdue = "overdue";
+  return sql`case
+    when ${tasks.statusOverride} = ${early} and ${tasks.status} = ${done} then ${early}
+    when ${tasks.statusOverride} = ${overdue} and ${tasks.status} <> ${done} then ${overdue}
+    when ${tasks.status} = ${done} then (case
+      when ${tasks.actualEnd} is not null and ${tasks.plannedEnd} is not null and ${tasks.actualEnd} < ${tasks.plannedEnd} then ${early}
+      else ${done}
+    end)
+    when ${tasks.plannedEnd} is not null and ${tasks.plannedEnd} < ${today}::date then ${overdue}
+    else ${tasks.status}
+  end`;
+}
+
 function displayStatusCondition(status: string, today: string): SQL {
-  switch (status) {
-    case "pending":
-      return and(eq(tasks.status, "pending"), or(isNull(tasks.plannedEnd), gte(tasks.plannedEnd, today))) as SQL;
-    case "active":
-      return and(eq(tasks.status, "active"), or(isNull(tasks.plannedEnd), gte(tasks.plannedEnd, today))) as SQL;
-    case "done":
-      return and(
-        eq(tasks.status, "done"),
-        or(isNull(tasks.actualEnd), isNull(tasks.plannedEnd), gte(tasks.actualEnd, tasks.plannedEnd)),
-      ) as SQL;
-    case "early_done":
-      return and(eq(tasks.status, "done"), lt(tasks.actualEnd, tasks.plannedEnd)) as SQL;
-    default:
-      return and(ne(tasks.status, "done"), lt(tasks.plannedEnd, today)) as SQL;
-  }
+  return sql`${displayStatusExpression(today)} = ${status}`;
 }
 
 /** 排序：显式 sort 走白名单列；缺省 = 阶段序 + 组内位次 + id（A8 / A19 / A20 · Push 124，与看板列内顺序同口径）。 */

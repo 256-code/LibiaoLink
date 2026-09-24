@@ -55,10 +55,11 @@ export const DocTypeSchema = z.enum(DOC_TYPES).openapi("DocType", {
   description: "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）",
 });
 
-export const PRIORITY_VALUES = ["重要且紧急", "紧急但不重要", "重要不紧急", "不紧急不重要"] as const;
+export const PRIORITY_VALUES = ["高", "中", "低"] as const;
 
 export const PrioritySchema = z.enum(PRIORITY_VALUES).openapi("Priority", {
-  description: "紧急重要度四象限字典",
+  description:
+    "紧急重要度三档字典（高 / 中 / 低）；2026-09-24 定案「与页面口径一致」—— 四象限口径作废，存量值由迁移 0031 折算（有损：中 = 重要不紧急 / 紧急但不重要）",
 });
 
 export const ProjectStatusSchema = z.enum(["active", "paused", "done", "archived"]).openapi("ProjectStatus", {
@@ -85,7 +86,7 @@ export const TaskDisplayStatusSchema = z
   .enum(["pending", "active", "done", "overdue", "early_done"])
   .openapi("TaskDisplayStatus", {
     description:
-      "任务展示五态（服务端读时派生，A12 / A14 · Push 70）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；派生优先 —— 未完成且已过预计完成日期一律「已延期」，不因状态写入改写；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）",
+      "任务展示五态（服务端读时派生 + 显式覆盖，A12 / A14 · Push 70；2026-09-24 起五态可写）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；有显式覆盖（tasks.status_override，仅 overdue / early_done 两值）时优先取覆盖值，否则派生 —— 未完成且已过预计完成日期一律「已延期」；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）",
   });
 
 export const FileStatusSchema = z

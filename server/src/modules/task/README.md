@@ -1,9 +1,9 @@
-# task 模块（h4 · S6·task：任务主表 / 五态派生 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整）
+# task 模块（h4 · S6·task：任务主表 / 五态派生 + 显式覆盖 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
-| 职责 | 任务主数据（列表 / 详情）、进度与状态写入联动、展示五态与按时交付派生、项目总览四格、阶段任务统计出口、完成门禁（M3-03 · A4-20 / ADR-024）、批量操作（M3-04 · A1-08）、软删与引用守卫（M3-05 · A25）、锁定字段例外调整（M3-05 续卡 · A1-17 / C9-07） |
+| 职责 | 任务主数据（列表 / 详情）、进度与状态写入联动（五态可写 · M3-07 刀 1）、展示五态与按时交付派生、汇总卡（最慢 / 最新阶段 + 三计数）、阶段任务统计出口、完成门禁（M3-03 · A4-20 / ADR-024）、批量操作（M3-04 · A1-08）、软删与引用守卫（M3-05 · A25）、锁定字段例外调整（M3-05 续卡 · A1-17 / C9-07） |
 | 主责 | wmj（团队分工.md §2） |
 | 对外接口 | TaskService（summary / list / detail / create / update / updateProgress / canComplete / complete / batch / remove / adjustLockedFields）、TaskStatsService（countStageTasks / stageTaskCounts）、规则纯函数与查询解析（task.rules / task.query）；节点实例的读写仍在 project 模块 flow.service（依赖方向 project → node → task，本模块不反向依赖） |
 
@@ -11,17 +11,17 @@
 
 - 契约：`shared/src/modules/tasks.ts`（列表 / 详情 / 创建 / 编辑 / 进度五组 schema + `TaskListItem` 随行摘要）；错误码新增 `TASK_ALREADY_EXISTS`（409：节点已有未删任务）。**Push 146（lan 线代记，请 wmj 复核）**：`Task.changeRef` → `Task.changeLinks: TaskChangeLink[]`（`{ id, reason(截 40 字), appliedAt }`，A1-07「追加＋去重」可多条），`TaskListItem` / `TaskDetail` 的单条 `changeSummary` 下线（改由 `changeLinks` 承载）；落库 `tasks.change_refs uuid[]`（迁移 0020），本模块只读、不写该列。
 - 规则口径（纯函数 `task.rules.ts`，来源：系统功能书 A1-06、A12 / A13 / A14（Push 70 定案）、ADR-028 时区）：
-  - 展示五态**读时派生、不写回存储**（存储只有基础三态 `pending / active / done`）：`overdue` = 未完成且已过预计完成日期（派生优先，人工写状态不改写它）；`early_done` = 完成且实际完成日期早于预计完成日期；
-  - `applyStatusWrite`（A12）：done → 满格 + 缺省补当天完成日期（已有日期保留）；active → 至少 1 格（0 → 0.25、满格 → 0.75）并清完成日期；pending → 清进度与完成日期；
-  - `applyProgressWrite`（A13）：0 → 待开始；0.25 / 0.5 / 0.75 → 进行中并清完成日期（**清除完成日期的唯一方式**）；1 → 已完成 + 完成日期（缺省当天，可显式传入）；
+  - 展示五态**读时派生 + 显式覆盖（2026-09-24 · M3-07 刀 1）**：存储只有基础三态 `pending / active / done` + `status_override`（仅 `overdue` / `early_done` 两值）；**有覆盖且边界满足时优先取覆盖**（overdue 仅未完成生效、early_done 仅已完成生效），否则回落派生 —— `overdue` = 未完成且已过预计完成日期；`early_done` = 完成且实际完成日期早于预计完成日期；展示态本身仍不写回；
+  - `applyStatusWrite`（A12 · 2026-09-24 五态）：done → 满格 + 缺省补当天完成日期（已有日期保留）+ 清覆盖；active → 至少 1 格（0 → 0.25、满格 → 0.75）并清完成日期 + 清覆盖；pending → 清进度与完成日期 + 清覆盖；**overdue（已延期）→ 保持当前格数与完成日期、只落覆盖**；**early_done（提前完成）→ 四格全亮 + 完成日期缺省当天 + 落覆盖**；
+  - `applyProgressWrite`（A13）：0 → 待开始；0.25 / 0.5 / 0.75 → 进行中并清完成日期（**清除完成日期的唯一方式**）；1 → 已完成 + 完成日期（缺省当天，可显式传入）；三种结果一律**清空显式覆盖**（回到派生，与原型点进度条同结果）；
   - `deriveOnTime`（A14）：完成且实际 ≤ 预计 → true，完成但晚于预计（或未填完成日期且预计已过）→ false；未完成已过期 → false；派生不出回落存储值；
   - 日界：`shanghaiToday` 按 UTC+8 固定偏移算出后以参数进 SQL（ADR-028），不在 SQL 里拼时区表达式。
 - 接口（挂 `api/v1/projects`；读登录即可，写入口径见下）：
-  - `GET /{id}/summary` 项目总览四格（当前阶段 / 逾期 / 已完成 / 总数）；
+  - `GET /{id}/summary` 汇总卡（**M3-07 刀 1 起**：`slowestStage` 最慢 = 九阶段序第一个存在未完成任务的阶段 / `latestStage` 最新 = 已动工任务（基础态 active / done）里阶段序最靠后者的所属阶段，均 `nullable`；`overdue` / `done` / `total` 三计数照旧）—— 原 `currentStage`（= `projects.stage_key`）下线；
   - `GET /{id}/tasks` 分页列表：阶段 / 负责人 / 展示态（可多值，条件下推 SQL）/ 关键字 `q` 筛选 + 排序白名单（plannedStart / plannedEnd / actualEnd / progress / title / createdAt；默认序 = 阶段序 + 组内位次 `sort_index` + id（A15 / A19 / A20 · Push 124：未分组落最后，与看板列内顺序同口径））；非法参数 400；
   - `GET /{id}/tasks/{taskId}` 详情：抽屉全字段 + 文件清单 + 负责人名与变更摘要（`fileSummaries` 聚合，免 N+1）；
   - `POST /{id}/tasks` 创建：① 从任务节点生成（节点须属本项目，`stageKey` 与节点阶段不一致 400；同节点已有未删任务 409 `TASK_ALREADY_EXISTS`）；② 手工创建（**仅管理员**，系统功能书 A1-13，非管理员 403）；`stageKey` 缺省 / 显式 null = 「未分组」、`ownerIds` 缺省 = 项目全部项目经理（A23 · Push 136；**显式 `[]` = 「待分配」**）、`sortIndex` = 插入位次（A15 / A18 / A20 · Push 124）；
-  - `PATCH /{id}/tasks/{taskId}` 编辑：乐观锁 `version`（不一致 409 `VERSION_CONFLICT`）+ 基础三态写入联动（A12）+ `ownerIds` 显式置空（不传 = 不改；传数组 = 整体替换、顺序 = 展示顺序）+ 组内重排（`sortIndex`，越界 = 组尾）+ 字段级留痕（A18 / A19 / A20 · Push 124）；任务描述 / 成果文件锁定不在本接口；
+  - `PATCH /{id}/tasks/{taskId}` 编辑：乐观锁 `version`（不一致 409 `VERSION_CONFLICT`）+ **五态写入联动（A12 · M3-07 刀 1）**+ `ownerIds` 显式置空（不传 = 不改；传数组 = 整体替换、顺序 = 展示顺序）+ 组内重排（`sortIndex`，越界 = 组尾）+ 字段级留痕（A18 / A19 / A20 · Push 124）；任务描述 / 成果文件锁定不在本接口；
   - `PATCH /{id}/tasks/{taskId}/progress` 进度写入：响应与列表行同形（`TaskListItem`），联动状态与完成日期；`note` 写 note_change 事件留痕；
   - `PATCH /{id}/tasks/batch` 批量操作（M3-04 · Push 150 / A1-08）：`ids`（1~100、重复去重）+ `changes` 白名单（ownerIds / status / plannedStart / plannedEnd / estimatedDays / headcount / priority / note；null = 清空、缺键 = 不改；不含描述 / 成果文件（A1-17）与 sortIndex）；逐条独立事务 + 部分失败清单 `failures[]`（复用单条写入内核 `applyUpdate`）；空 changes 400、归档项目 409；审计 = 批次一条（`project` 域，metadata 记 batchId / 计数 / 失败清单）+ 逐条字段级一条（`metadata.entry = batch` + 同批 `batchId`）；
   - `DELETE /{id}/tasks/{taskId}` 删除（M3-05 · A25 · Push 152）：软删 —— 列表 / 看板 / 甘特图 / 详情 / 完成门禁一律不可见 + 写留痕；重复删除与已删任务上的任何写操作统一 404（不新增错误码）；组内位次同事务压缩、来源节点约束随软删释放（口径见下节）。
@@ -79,6 +79,16 @@
 - 门禁联动：`deliverableTypes` 修正后即刻成为**无节点任务**的完成门禁依据（有节点任务仍以节点 `node_requirements` 为准，ADR-024）。
 - 单测：`test/task-locked-fields.test.ts` 8 例（管理员改 title + deliverableTypes → 落库 / 版本 +1 / 审计含原因 / outbox / touch / 不写 task_events / 非管理员 403 且无留痕 / 空调整 400 / 乐观锁 409 / 归档 409 / 不存在与跨项目与已软删 404 / 去重与非法值过滤 + 门禁联动 / titleEn 清空）。
 
+## 五态写入与汇总卡（M3-07 刀 1 · Push 179 · 2026-09-24 业务定案）
+
+> 业务口径：「状态下拉都要有 要5态 但是他们的逻辑要和之前的一样」/「（`currentStage` 保持 = 项目当前阶段）有了最快最慢这个就不需要了」；按授权替 wmj 线落地，跨线请 wmj 复核。
+
+- **写面**：契约新增 `TaskStatusWrite`（`pending` / `active` / `done` / `overdue` / `early_done`），替换 `TaskUpdateBody.status` 与 `TaskBatchChanges.status` 的实现类型；服务端 `applyStatusWrite` 五态分支（overdue = 保持格数与完成日期、只落 `status_override`；early_done = 四格全亮 + 完成日期缺省当天 + 覆盖），`applyProgressWrite` 与 `done / active / pending` 一律清覆盖。
+- **读面**：`deriveDisplayStatus` 先判覆盖（边界：overdue 仅未完成、early_done 仅已完成）再走原派生；`displayStatusExpression`（SQL CASE）与规则函数**严格同形** —— `filter[status]` 下推与读时派生必须同批修改，改一处即改两处（`task.query.ts` 的解析注释同步）。
+- **汇总卡**：`summary()` 由 `taskCountsByStage` 聚合（`stage_key is null` 的「未分组」不参与阶段判定、只进三计数）；`slowestStage` = `STAGE_KEYS.find(存在未完成)`、`latestStage` = 反序 `find(已动工)`；`currentStage` 字段从契约删除（`projects.stage_key` 本身仍供阶段推进，不再出现在汇总卡）。
+- **留痕**：`buildEvents` 的 `status_change` 负载补 `statusOverride`（只记本次变化的键）—— 基础态不变、只切覆盖时同样有事件；`taskAuditSnapshot` 同样带该字段。
+- **迁移**：`database/migrations/0031_task_status_override_and_priority_three_levels.sql`（`tasks.status_override` + CHECK + 存量 `priority` 折算三档，无其他 DDL）。
+- **验证**：`test/task-rules.test.ts` / `test/task-service.test.ts` 新增五态与两阶段用例；真机回放 `server/scripts/m3-07-replay.mjs` 24 项断言全过（证据 `docs/m3-07-回放证据(五态与汇总卡).md`：覆盖写入与清空、覆盖来源筛选命中、两阶段与两个 null 边界、四象限值 400、事件负载、批量五态、零残留）。
 ## 落库口径（w2 · A15 / A18 / A19 / A20 · Push 124）
 
 > 口径来源：`前端功能需求.md` 附录 A15 / A18 / A19 / A20（Push 119 / 120 定案）与 `字段对照清单.md` §七；落库机制二选一定为 **① `tasks.sort_index` 位次列**（不新增批量排序接口）。
@@ -92,6 +102,7 @@
 ## 边界与后续（差异登记）
 
 - 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；
+- M3-07 刀 1 后半（前端接线）不在本模块：前端 `taskApi.ts` 接线与服务端零改动；刀 2（门禁三入口 / 批量 failures 消费）、刀 3（添加任务模板化 + 快筛）待后续切片。
 - 不在本卡（Push 152 后更新）：列表快捷筛选参数、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；**M3-05 软删已落 Push 152**：`DELETE …/tasks/{taskId}` + 统一 404 + 位次压缩；**锁定字段例外调整已落 Push 153**：仅管理员可执行（非管理员 403）/ 原因必填并留痕（审计 + outbox）/ 空调整 400 / 阶段性里程一期无列；模板实例化与快筛随 M3-05 其余切片、1 万行压测随 M3-06）；
 - A1-17 差异登记（Push 153）：系统功能书锁定字段含「阶段性里程」，一期 `tasks` 表无该列（A1-17 映射修订），本期只开放任务描述 / 英文描述 / 输出成果文件三项；里程碑列落地后再开；
 - 列表默认序已有 `ix_tasks_project_stage_order (project_id, stage_key, sort_index)` 复合索引（0015 · Push 124）；1 万行压测与索引调优仍随压测卡 M3-06；

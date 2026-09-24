@@ -37,6 +37,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     titleEn: null,
     ownerIds: [MANAGER],
     status: "pending",
+    statusOverride: null,
     progress: "0",
     sortIndex: 0,
     plannedStart: null,
@@ -71,6 +72,8 @@ class FakeTaskRepository {
   events: TaskEventInput[] = [];
   touched: string[] = [];
   counts = { overdue: 0, done: 0, total: 0 };
+  /** 按阶段计数（summary 两阶段字段的输入；口径同 GET /projects/{id}/stages）。 */
+  perStage: { stageKey: string | null; status: string; value: number }[] = [];
 
   async summaryCounts(): Promise<{ overdue: number; done: number; total: number }> {
     return this.counts;
@@ -137,6 +140,7 @@ class FakeTaskRepository {
       ...current,
       ownerIds: patch.ownerIds !== undefined ? patch.ownerIds : current.ownerIds,
       status: patch.status ?? current.status,
+      statusOverride: patch.statusOverride !== undefined ? patch.statusOverride : current.statusOverride,
       progress: patch.progress ?? current.progress,
       sortIndex: patch.sortIndex !== undefined ? patch.sortIndex : current.sortIndex,
       plannedStart: patch.plannedStart !== undefined ? patch.plannedStart : current.plannedStart,
@@ -184,8 +188,8 @@ class FakeTaskRepository {
       if (row.sortIndex >= from && (to === null || row.sortIndex <= to)) row.sortIndex += delta;
     }
   }
-  async taskCountsByStage(): Promise<never[]> {
-    return [];
+  async taskCountsByStage(): Promise<{ stageKey: string | null; status: string; value: number }[]> {
+    return this.perStage;
   }
 }
 
@@ -353,6 +357,33 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
     const stillOverdue = await service.update(PROJECT, TASK, { status: "pending", version: 3 }, ACTOR);
     expect(stillOverdue.displayStatus).toBe("overdue");
   });
+  it("status=overdue（已延期）→ 保持当前格数与完成日期、只落覆盖；展示态 = 已延期", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ status: "active", progress: "0.5", plannedEnd: "2026-12-31" });
+    const updated = await makeService(repo).update(PROJECT, TASK, { status: "overdue", version: 3 }, ACTOR);
+    expect(updated.status).toBe("active");
+    expect(updated.progress).toBe(0.5);
+    expect(updated.actualEnd).toBeNull();
+    expect(updated.displayStatus).toBe("overdue");
+    expect(repo.events.map((event) => event.eventType)).toEqual(["status_change"]);
+  });
+
+  it("status=early_done（提前完成）→ 四格全亮 + 缺省当天完成日期 + 覆盖；展示态 = 提前完成", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ status: "active", progress: "0.5" });
+    const updated = await makeService(repo).update(PROJECT, TASK, { status: "early_done", version: 3 }, ACTOR);
+    expect(updated.status).toBe("done");
+    expect(updated.progress).toBe(1);
+    expect(updated.actualEnd).toBe(shanghaiToday(new Date()));
+    expect(updated.displayStatus).toBe("early_done");
+  });
+
+  it("写基础三态清覆盖：已延期覆盖 → pending 后展示态回派生", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ status: "active", progress: "0.5", statusOverride: "overdue", plannedEnd: "2026-12-31" });
+    const updated = await makeService(repo).update(PROJECT, TASK, { status: "pending", version: 3 }, ACTOR);
+    expect(updated.displayStatus).toBe("pending");
+  });
 
   it("乐观锁冲突（stale version）→ 409 VERSION_CONFLICT", async () => {
     const repo = new FakeTaskRepository();
@@ -395,6 +426,14 @@ describe("TaskService.updateProgress（A13 清除完成日期的唯一方式）"
     expect(updated.status).toBe("done");
     expect(updated.actualEnd).toBe("2026-09-15");
     expect(updated.displayStatus).toBe("early_done");
+  });
+
+  it("点进度条清显式覆盖（与原型一致：进度写入即回派生）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ status: "active", progress: "0.5", statusOverride: "overdue", plannedEnd: "2026-12-31" });
+    const updated = await makeService(repo).updateProgress(PROJECT, TASK, { progress: 0.75, version: 3 }, ACTOR);
+    expect(updated.displayStatus).toBe("active");
+    expect(repo.events.map((event) => event.eventType)).toContain("status_change");
   });
 });
 
@@ -465,13 +504,45 @@ describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 124）", (
   });
 });
 
-describe("TaskService.summary（项目总览四格）", () => {
-  it("当前阶段取项目字段，逾期 / 已完成 / 总数取任务计数", async () => {
+describe("TaskService.summary（汇总卡：最慢 / 最新阶段 + 三计数）", () => {
+  it("最慢 = 九阶段序第一个存在未完成任务的阶段；最新 = 已动工任务里阶段序最靠后的阶段", async () => {
     const repo = new FakeTaskRepository();
     repo.counts = { overdue: 2, done: 5, total: 9 };
-    const service = makeService(repo);
-    const summary = await service.summary(PROJECT);
-    expect(summary).toEqual({ projectId: PROJECT, currentStage: "presale", overdue: 2, done: 5, total: 9 });
+    repo.perStage = [
+      { stageKey: "presale", status: "done", value: 1 },
+      { stageKey: "design", status: "active", value: 1 },
+      { stageKey: "purchase", status: "pending", value: 1 },
+      { stageKey: "install", status: "done", value: 2 },
+      { stageKey: null, status: "pending", value: 1 },
+    ];
+    const summary = await makeService(repo).summary(PROJECT);
+    expect(summary).toEqual({
+      projectId: PROJECT,
+      slowestStage: "design",
+      latestStage: "install",
+      overdue: 2,
+      done: 5,
+      total: 9,
+    });
+  });
+
+  it("全部完成 → 最慢为 null（未分组不参与判定）；尚无任务动工 → 最新为 null", async () => {
+    const repo = new FakeTaskRepository();
+    repo.perStage = [
+      { stageKey: "presale", status: "done", value: 2 },
+      { stageKey: null, status: "pending", value: 1 },
+    ];
+    const allDone = await makeService(repo).summary(PROJECT);
+    expect(allDone.slowestStage).toBeNull();
+    expect(allDone.latestStage).toBe("presale");
+
+    repo.perStage = [
+      { stageKey: "assembly", status: "pending", value: 3 },
+      { stageKey: "install", status: "pending", value: 1 },
+    ];
+    const notStarted = await makeService(repo).summary(PROJECT);
+    expect(notStarted.slowestStage).toBe("assembly");
+    expect(notStarted.latestStage).toBeNull();
   });
 });
 

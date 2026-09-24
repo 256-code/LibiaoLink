@@ -27,16 +27,25 @@ export const ProjectSchema = z
   })
   .openapi("Project", { description: "项目（v0.2 §2.3 projects）" });
 
-/** 项目总览四格：当前阶段 / 逾期 / 已完成 / 总数。 */
+/**
+ * 项目总览汇总卡：最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数。
+ * 2026-09-24 定案：原 `currentStage`（= projects.stage_key 项目当前阶段）随本刀下线 —— 汇总卡改用两个任务派生字段；
+ * 「未分组」任务（stage_key 为空）不参与阶段判定，只进三个计数。
+ */
 export const ProjectSummarySchema = z
   .object({
     projectId: UuidSchema,
-    currentStage: StageKeySchema,
+    slowestStage: StageKeySchema.nullable().openapi({
+      description: "最慢阶段：按九阶段顺序**第一个「存在未完成任务」的阶段**；全部完成或项目无任务 = null（前端显示「—」/「全部完成」按 done / total 判断）",
+    }),
+    latestStage: StageKeySchema.nullable().openapi({
+      description: "最新阶段（最快）：**已动工任务**（基础态 active / done，即进度 ≥ 1 格）中**阶段序最靠后**的那一个阶段；尚无任务动工 = null",
+    }),
     overdue: z.number().int().min(0),
     done: z.number().int().min(0),
     total: z.number().int().min(0),
   })
-  .openapi("ProjectSummary", { description: "项目总览统计（任务派生，口径见 v0.2 §2.4）" });
+  .openapi("ProjectSummary", { description: "项目总览汇总卡统计（任务派生；口径见 v0.2 §2.4 与前端功能需求 §3.4）" });
 
 /**
  * 列表查询：多维筛选 + 分页 + 排序；多值筛选用英文逗号分隔（与 v0.2 §8.2 filter[...] 口径一致）。

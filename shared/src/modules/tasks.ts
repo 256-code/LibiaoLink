@@ -246,6 +246,20 @@ export const TaskCreateBodySchema = z
   })
   .openapi("TaskCreateBody", { description: "创建任务（进度默认 0、状态默认 pending；从模板生成时与整套添加同口径）" });
 
+/**
+ * 任务状态写入值（五态可选 · 2026-09-24 定案「状态下拉五态、联动与原型一致」）。
+ * - pending / active / done = 基础三态：服务端同事务联动进度与完成日期（A12）；
+ * - overdue（已延期）/ early_done（提前完成）= **显式覆盖**：落 tasks.status_override，展示态优先取覆盖值 ——
+ *   已延期 = 保持当前格数与完成日期（不动进度）；提前完成 = 四格全亮 + 完成日期缺省按当天（同已完成）。
+ * 覆盖清除：写进度（PATCH …/progress）、写基础三态、完成门禁通过 —— 任一发生即清空，回到读时派生（A14）。
+ * 覆盖生效边界（与原型一致）：overdue 仅在未完成时生效、early_done 仅在已完成时生效，其余回落派生。
+ */
+export const TaskStatusWriteSchema = z
+  .enum(["pending", "active", "done", "overdue", "early_done"])
+  .openapi("TaskStatusWrite", {
+    description: "任务状态写入：基础三态 pending / active / done + 显式覆盖 overdue（已延期）/ early_done（提前完成）",
+  });
+
 /** 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。 */
 export const TaskUpdateBodySchema = z
   .object({
@@ -256,9 +270,9 @@ export const TaskUpdateBodySchema = z
       description:
         "组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序",
     }),
-    status: TaskBaseStatusSchema.optional().openapi({
+    status: TaskStatusWriteSchema.optional().openapi({
       description:
-        "任务状态（基础三态，A12）：pending / active / done —— 服务端同事务回填进度与完成日期：done → progress=1 且 actualEnd 缺省按当天；active → progress 至少 1 格（0 → 0.25；满格 → 0.75）并清 actualEnd；pending → progress=0 并清 actualEnd。「已延期 / 提前完成」是派生展示态、不可写（提交返回 400）；已过 plannedEnd 且未完成时展示态保持「已延期」，不因本字段改写",
+        "任务状态（五态可选 · 2026-09-24 定案）：pending / active / done 服务端同事务回填进度与完成日期（done → progress=1 且 actualEnd 缺省按当天；active → progress 至少 1 格（0 → 0.25；满格 → 0.75）并清 actualEnd；pending → progress=0 并清 actualEnd）；overdue / early_done 为显式覆盖（见 TaskStatusWrite）",
     }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
@@ -327,9 +341,9 @@ export const TaskBatchFailureSchema = z
 export const TaskBatchChangesSchema = z
   .object({
     ownerIds: z.array(UuidSchema).optional().openapi({ description: "批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序）" }),
-    status: TaskBaseStatusSchema.optional().openapi({
+    status: TaskStatusWriteSchema.optional().openapi({
       description:
-        "批量改状态（基础三态）：done = 批量完成（逐条走同一完成门禁，缺件项进 failures 的 gate_not_passed）；服务端同事务联动进度与完成日期（口径同单条编辑）",
+        "批量改状态（五态可选，口径同单条编辑）：done = 批量完成（逐条走同一完成门禁，缺件项进 failures 的 gate_not_passed）；overdue / early_done = 显式覆盖",
     }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional().openapi({ description: "批量改期（开始 / 预计完成）；提醒重算随 C2 规则引擎（i8 / i9）" }),

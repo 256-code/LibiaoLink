@@ -52,6 +52,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     titleEn: null,
     ownerIds: [],
     status: "pending",
+    statusOverride: null,
     progress: "0",
     sortIndex: 0,
     plannedStart: null,

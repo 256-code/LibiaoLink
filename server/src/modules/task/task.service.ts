@@ -3,6 +3,7 @@ import { Injectable } from "@nestjs/common";
 import {
   DOC_TYPES,
   PRIORITY_VALUES,
+  STAGE_KEYS,
   ProjectSummarySchema,
   TaskBatchBodySchema,
   TaskBatchFailureSchema,
@@ -111,14 +112,34 @@ export class TaskService {
     private readonly audit: AuditService,
   ) {}
 
-  /** GET /projects/{id}/summary：项目总览四格（当前阶段 / 逾期 / 已完成 / 总数）。 */
+  /**
+   * GET /projects/{id}/summary：汇总卡（最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数）。
+   * 2026-09-24 定案：`currentStage`（= projects.stage_key）下线，改两个任务派生阶段字段 ——
+   * 最慢 = 按九阶段顺序第一个「存在未完成任务」的阶段；最新 = 已动工任务（基础态 active / done，即进度 ≥ 1 格）里阶段序最靠后者；
+   * 「未分组」任务（stage_key 为空）不是阶段，只进三个计数。
+   */
   async summary(projectId: string): Promise<ProjectSummary> {
-    const project = await this.loadProjectOrFail(projectId);
+    await this.loadProjectOrFail(projectId);
     const today = shanghaiToday(new Date());
     const counts = await this.repository.summaryCounts(projectId, today);
+    const perStage = await this.repository.taskCountsByStage(this.database.db, projectId);
+    const unfinished = new Set<string>();
+    const started = new Set<string>();
+    for (const row of perStage) {
+      if (row.stageKey === null) continue;
+      if (row.status === "done") {
+        started.add(row.stageKey);
+      } else {
+        unfinished.add(row.stageKey);
+        if (row.status === "active") started.add(row.stageKey);
+      }
+    }
+    const slowestStage = STAGE_KEYS.find((key) => unfinished.has(key)) ?? null;
+    const latestStage = [...STAGE_KEYS].reverse().find((key) => started.has(key)) ?? null;
     return {
-      projectId: project.id,
-      currentStage: project.stageKey as ProjectSummary["currentStage"],
+      projectId,
+      slowestStage,
+      latestStage,
       overdue: counts.overdue,
       done: counts.done,
       total: counts.total,
@@ -536,7 +557,12 @@ export class TaskService {
     }
     const sortIndex =
       request.sortIndex === undefined ? before.sortIndex : await this.moveWithinGroup(tx, projectId, before, request.sortIndex);
-    const current = { status: before.status, progress: Number(before.progress), actualEnd: before.actualEnd };
+    const current = {
+      status: before.status,
+      progress: Number(before.progress),
+      actualEnd: before.actualEnd,
+      statusOverride: before.statusOverride,
+    };
     const linked = request.status === undefined ? null : applyStatusWrite(current, request.status, today);
     if (linked !== null && linked.status === "done" && before.status !== "done") {
       await this.assertCompletionGate(tx, before, at, actorId);
@@ -544,6 +570,7 @@ export class TaskService {
     const patch: TaskUpdatePatch = {
       ownerIds: request.ownerIds !== undefined ? request.ownerIds : before.ownerIds,
       status: linked === null ? before.status : linked.status,
+      statusOverride: linked === null ? before.statusOverride : linked.statusOverride,
       progress: String(linked === null ? current.progress : linked.progress),
       sortIndex,
       plannedStart: request.plannedStart !== undefined ? request.plannedStart : before.plannedStart,
@@ -613,6 +640,7 @@ export class TaskService {
       }
       const patch: TaskUpdatePatch = {
         status: linked.status,
+        statusOverride: linked.statusOverride,
         progress: String(linked.progress),
         actualEnd: linked.actualEnd,
         note: body.note !== undefined ? body.note : before.note,
@@ -696,12 +724,18 @@ export class TaskService {
         }
         const warnings = await this.assertCompletionGate(tx, before, at, actorId);
         const linked = applyStatusWrite(
-          { status: before.status, progress: Number(before.progress), actualEnd: body.actualEnd ?? before.actualEnd },
+          {
+            status: before.status,
+            progress: Number(before.progress),
+            actualEnd: body.actualEnd ?? before.actualEnd,
+            statusOverride: before.statusOverride,
+          },
           "done",
           today,
         );
         const patch: TaskUpdatePatch = {
           status: linked.status,
+          statusOverride: linked.statusOverride,
           progress: String(linked.progress),
           actualEnd: linked.actualEnd,
           note: body.note !== undefined ? body.note : before.note,
@@ -957,6 +991,7 @@ function lockedFieldsSnapshot(row: { title: string; titleEn: string | null; deli
 function taskAuditSnapshot(row: {
   ownerIds: string[];
   status: string;
+  statusOverride: string | null;
   progress: string | number;
   sortIndex: number;
   plannedStart: string | null;
@@ -970,6 +1005,7 @@ function taskAuditSnapshot(row: {
   return {
     ownerIds: row.ownerIds,
     status: row.status,
+    statusOverride: row.statusOverride,
     progress: Number(row.progress),
     sortIndex: row.sortIndex,
     plannedStart: row.plannedStart,
@@ -986,6 +1022,7 @@ function taskAuditSnapshot(row: {
 function toTaskView(row: TaskRow, today: string, changeLinks: Task["changeLinks"]): Task {
   const input = {
     status: row.status,
+    statusOverride: row.statusOverride,
     plannedEnd: row.plannedEnd,
     actualEnd: row.actualEnd,
     storedOnTime: row.onTime,
@@ -1028,15 +1065,28 @@ function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today:
   };
 }
 
-/** 字段级留痕（A1-10）：状态 / 进度 / 日期 / 备注四类；before / after 为 JSON（键 = 字段名）。 */
+/**
+ * 字段级留痕（A1-10）：状态 / 进度 / 日期 / 备注四类；before / after 为 JSON（键 = 字段名，只记本次变化的字段）。
+ * 2026-09-24 起「状态」含显式覆盖（status_override）：只改覆盖（如进行中 → 已延期）同样记 status_change，避免没有留痕。
+ */
 function buildEvents(before: TaskRow, after: TaskUpdatePatch): TaskEventInput[] {
   const events: TaskEventInput[] = [];
+  const statusBefore: Record<string, string | null> = {};
+  const statusAfter: Record<string, string | null> = {};
   if (after.status !== undefined && after.status !== before.status) {
+    statusBefore.status = before.status;
+    statusAfter.status = after.status;
+  }
+  if (after.statusOverride !== undefined && (after.statusOverride ?? null) !== (before.statusOverride ?? null)) {
+    statusBefore.statusOverride = before.statusOverride ?? null;
+    statusAfter.statusOverride = after.statusOverride;
+  }
+  if (Object.keys(statusAfter).length > 0) {
     events.push({
       taskId: before.id,
       eventType: "status_change",
-      beforeValue: JSON.stringify({ status: before.status }),
-      afterValue: JSON.stringify({ status: after.status }),
+      beforeValue: JSON.stringify(statusBefore),
+      afterValue: JSON.stringify(statusAfter),
     });
   }
   if (after.progress !== undefined && Number(after.progress) !== Number(before.progress)) {

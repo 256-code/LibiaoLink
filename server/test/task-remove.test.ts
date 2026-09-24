@@ -69,6 +69,7 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     titleEn: null,
     ownerIds: [],
     status: "pending",
+    statusOverride: null,
     progress: "0",
     sortIndex: 0,
     plannedStart: null,
@@ -208,6 +209,7 @@ class FakeTaskRepository {
     const next: TaskRow = {
       ...current,
       status: patch.status ?? current.status,
+      statusOverride: patch.statusOverride !== undefined ? patch.statusOverride : current.statusOverride,
       progress: patch.progress ?? current.progress,
       updatedAt: at,
       version: current.version + 1,
