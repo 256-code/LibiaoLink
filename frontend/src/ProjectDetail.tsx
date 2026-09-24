@@ -434,7 +434,8 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   /**
    * 「＋ 添加 / 整套添加」（项目总览的添加卡片与看板「添加 → 阶段任务」，Push 113）：按阶段建任务，
    * 位置浮层的锚点换算成组内位次；一次多条按传入顺序依次落位（第 k 条的位次 = 锚点位次 + k，整体不颠倒）。
-   * 节点库 / 模板实例化未落地（M3-05 余）前不带 taskNodeId —— 预设节点不是节点库 UUID（判重见 `addedPresetNodeIds`）。
+   * 仍不带 taskNodeId（契约里这个字段现解析为**项目流程节点**，见 server/src/modules/task/task.service.ts）——
+ * 节点库只有「同阶段同名」折算的判重（见 `addedNodeKeysOf`），来源关联的落点待 wmj 定案。
    */
   const handleAddNodes = (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => {
     const stageKey = stageKeyOfName(stage);

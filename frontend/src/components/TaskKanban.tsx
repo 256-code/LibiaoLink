@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent a
 import type { Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { addedPresetNodeIds, cnDateFromIso, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { addedNodeKeysOf, cnDateFromIso, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -500,7 +500,7 @@ type AddOverlay = {
 function KanbanColumn({
   group,
   mode,
-  existingTaskIds,
+  addedNodeKeys,
   overlay,
   setOverlay,
   onOpenTask,
@@ -515,7 +515,8 @@ function KanbanColumn({
 }: {
   group: KanbanGroup;
   mode: KanbanMode;
-  existingTaskIds: ReadonlySet<string>;
+  /** 项目里已添加的节点判重键（`data/tasks.ts` 的 addedNodeKey）：添加卡片按「同阶段同名」判重。 */
+  addedNodeKeys: ReadonlySet<string>;
   /** 整块看板共用的浮层状态（Push 118）：只有 `key` 是本列时，浮层才归本列渲染。 */
   overlay: AddOverlay | null;
   /** 改浮层状态（Push 118）：点本列的「添加」= 本列接管，上一列的浮层自然被顶掉。 */
@@ -743,7 +744,7 @@ function KanbanColumn({
       {templateStage === null ? null : (
         <StageAddCard
           stage={templateStage}
-          existingTaskIds={existingTaskIds}
+          addedNodeKeys={addedNodeKeys}
           placement={{ tasks: stageTasksOf(templateStage) }}
           onAddNodes={(stage, nodes, placement) => { onAddStageTask(context, stage, nodes, placement); }}
           onClose={() => {
@@ -793,8 +794,8 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
   const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
   const groups = groupTasks(tasks, mode);
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
-  /** 项目里已添加的节点 id（含「同阶段同名」折算的预设节点，见 `addedPresetNodeIds`）：模板节点按它显示「已添加」并判重。 */
-  const existingTaskIds = addedPresetNodeIds(tasks);
+  /** 项目里已添加的节点判重键（见 `addedNodeKeysOf`）：添加卡片的节点 / 模板条目按它显示「已添加」并跳过重复。 */
+  const addedNodeKeys = addedNodeKeysOf(tasks);
   /**
    * 该阶段现有任务（Push 111）：给「添加 → 阶段任务」的插入位置当锚点。
    * `tasks` 已经是展示顺序（阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
@@ -1103,7 +1104,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
               key={group.key}
               group={group}
               mode={mode}
-              existingTaskIds={existingTaskIds}
+              addedNodeKeys={addedNodeKeys}
               overlay={addOverlay}
               setOverlay={setAddOverlay}
               onOpenTask={openTask}

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
-import { addedPresetNodeIds, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
@@ -642,9 +642,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
-  /** 项目里已有的任务 id：添加任务时用来判断节点是不是已经加过。 */
-  /** 项目里已添加的节点 id（含「同阶段同名」折算的预设节点，见 `addedPresetNodeIds`）：模板节点按它显示「已添加」并判重。 */
-  const existingTaskIds = addedPresetNodeIds(tasks);
+  /** 项目里已添加的节点判重键（见 `addedNodeKeysOf`）：添加卡片的节点 / 模板条目按它显示「已添加」并跳过重复。 */
+  const addedNodeKeys = addedNodeKeysOf(tasks);
   /**
    * 该阶段现有任务（Push 113）：给「点 ＋ 添加 → 选位置」当锚点 —— `tasks` 已经是展示顺序
    * （阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
@@ -897,7 +896,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       {cardStage !== null && (onAddNode !== undefined || onAddNodes !== undefined) ? (
         <StageAddCard
           stage={cardStage}
-          existingTaskIds={existingTaskIds}
+          addedNodeKeys={addedNodeKeys}
           onAddNode={onAddNode}
           placement={onAddNodes === undefined ? undefined : { tasks: stageTasksOf(cardStage) }}
           onAddNodes={onAddNodes}

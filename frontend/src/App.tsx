@@ -384,6 +384,8 @@ export default function App() {
    */
   const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
   const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
+  /** 节点库维护（任务模板页左列的新增 / 删除节点）= blueprint.manage（Push 181；服务端逐请求仍是最终裁决）。 */
+  const canManageNodes = hasPermission(permissions, "blueprint.manage");
 
   if (state.kind === "loading") {
     return (
@@ -521,7 +523,7 @@ export default function App() {
   if (route.kind === "placeholder") {
     return (
       <>
-        <PlaceholderPage me={state.me} page={route.page} section={route.section} />
+        <PlaceholderPage me={state.me} page={route.page} section={route.section} canManageNodes={canManageNodes} />
         {bottomBars}
       </>
     );

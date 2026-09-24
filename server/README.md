@@ -26,6 +26,7 @@ server/
     modules/report-issue/  # 日报与问题（S6·report-issue · M6-01 ~ M6-03 + M6-01 收口）：日报五端点（list/create / detail/edit / summary / missing）+ 问题三端点 + A3-08 回写 + A3-09 幂等 + 问题四态与留痕 + A7-01 / A7-05 当日读（见 src/modules/report-issue/README.md）
     modules/stakeholder/  # 干系人台账（S8·stakeholder · j6）：台账 CRUD + 项目关联与反查 + 字段级脱敏（导入随 M8-01、导出随 M7-03；见 src/modules/stakeholder/README.md）
     modules/automation/   # 自动化规则引擎（S6·automation · M5-01）：规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器（见 src/modules/automation/README.md）
+    modules/template/   # 任务节点库（A1-16 / A1-17 · M3-05 余第一段 · Push 181）：节点列表 / 新增 / 编辑 / 删除 + blueprint.manage 写门禁 + 审计留痕（见 src/modules/template/README.md）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
@@ -183,6 +184,14 @@ server/
 - 完成门禁（v0.2 §3.6）：`POST /api/v1/nodes/{id}/complete`（**成员平权**，服务端事务内强校验；缺 `required_doc` → 422 `NODE_REQUIRED_DOC_MISSING` + `missing[]` 明细；重复完成 409 `NODE_ALREADY_DONE`；响应按契约 `NodeCompleteResponse`（{ node }））、`GET /api/v1/nodes/{id}/can-complete`（预检，只是 UI 置灰依据）。门禁拒绝写 outbox 留痕（`node.gate_rejected` / `stage.gate_rejected`，audit_logs 随 h7）。
 - 写保护与留痕：归档项目（`status=archived`）的流程写操作一律 409 `PROJECT_ARCHIVED`；节点 / 阶段事件同事务写 outbox（`node.added`（还原带 `restored: true`）/ `node.completed` / `node.deleted` / `stage.advanced` / `stage.rolled_back`）。
 - 权限与过渡口径（登记待收口）：① 记录级 404 语义（非成员不可见）与权限矩阵随 h6 策略服务 —— 当前流程读接口登录即可读、完成门禁无成员校验；② `GateService` 仍直接读 `files` 表（file 模块未落地）：文件计入口径 = `deleted_at is null` 且 `status ∈ (final, changed)` 且 `current_version_id is not null`，i1 落地后改为对端 index 出口；**任务侧计数已随 h4 收口** —— 阶段门禁与阶段完成度的任务计数经 task 模块 `TaskStatsService`（node → task）；③ 蓝图写权限按角色码 `admin` 判定，待 h6 矩阵换成功能权限 `admin.blueprint.manage`。
+## 任务节点库接口（M3-05 余第一段 · A1-16 / A1-17 · Push 181）
+
+- 契约 `shared/src/modules/templates.ts`（OpenAPI tags=templates）；实现 `src/modules/template/`（controller / service / repository + `index.ts` 出口 + README）；`TemplateController` 挂 `api/v1/task-nodes`（整组 `SessionGuard + CsrfGuard`）：`GET /api/v1/task-nodes?stage=`（读 = 登录即可；缺省全部阶段）、`POST`（新增，201）、`PATCH /{id}`（改名 / 英文名，`version` 乐观锁必传）、`DELETE /{id}`（物理删行）。
+- 写门禁：三个写端点一律服务层 `blueprint.manage` 复核（ADR-019 / ADR-020：仅系统管理员；非管理员 403 `FORBIDDEN`），每次变更同事务写审计（`action=create/update/delete`、`objectType="task_node"`；编辑写字段级 `changes`、删除把删除前快照写进 `changes`）—— **不写 outbox**（与字典维护同口径）。
+- 判重与排序：同阶段同名唯一（`uq_task_nodes_stage_title`，跨阶段可同名）→ 应用层 409 `NODE_ALREADY_EXISTS`；缺省 `seq` = 该阶段末位 + 10；读序 = 九阶段顺序 → `seq` → `id`。
+- 边界：不碰 `tasks` / `project_nodes` —— `tasks.node_id` 指向流程节点（`project_nodes`），节点库只回答「任务从哪来」；节点删除不影响已生成的项目任务（任务侧无外键）。模板（TaskTemplate）读写随第二段（契约已定：`GET/POST/PATCH/DELETE /task-templates`）。
+- 测试：`test/template-nodes.test.ts`（17 例：列表 / 新增 / 编辑（乐观锁 + 同名）/ 删除 / 权限 / 审计）。
+
 ## 任务接口（h4 · S6·task：M3-01 列表 / 详情 + M3-02 进度与状态 + M3-03 完成门禁 + M3-04 批量操作 + M3-05 软删 + 锁定字段例外调整 + 项目总览四格）
 
 - 契约 `shared/src/modules/tasks.ts`（OpenAPI tags=tasks）；实现 `src/modules/task/`（controller / service / repository / rules / query / stats + `index.ts` 出口）；`TaskController` 挂 `api/v1/projects`：`GET /projects/{id}/summary`（项目总览四格：当前阶段 / 逾期 / 已完成 / 总数）、`GET/POST /projects/{id}/tasks`、`GET/PATCH /projects/{id}/tasks/{taskId}`、`PATCH /projects/{id}/tasks/{taskId}/progress`、`GET /projects/{id}/tasks/{taskId}/can-complete`、`POST /projects/{id}/tasks/{taskId}/complete`（M3-03 · Push 143）、`PATCH /projects/{id}/tasks/batch`（M3-04 · Push 150；注册在 `/{taskId}` 之前，否则 batch 会被当作任务 id）、`DELETE /projects/{id}/tasks/{taskId}`（M3-05 · Push 152 · A25 软删）、`PATCH /projects/{id}/tasks/{taskId}/locked-fields`（M3-05 续卡 · Push 153 · A1-17 / C9-07 锁定字段例外调整，仅系统管理员）；整组 `SessionGuard + CsrfGuard`。
