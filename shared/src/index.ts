@@ -17,4 +17,5 @@ export * from "./modules/stakeholders.ts";
 export * from "./modules/reports.ts";
 export * from "./modules/issues.ts";
 export * from "./modules/automation.ts";
+export * from "./modules/outbox.ts";
 export { buildOpenApiDocument } from "./openapi.ts";
