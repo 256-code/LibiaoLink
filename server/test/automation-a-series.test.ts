@@ -1,0 +1,375 @@
+import { describe, expect, it } from "vitest";
+import { calendarWindow } from "../src/modules/calendar/index.js";
+import {
+  BUILTIN_RULES,
+  SUBJECT_TEMPLATE_VARIABLES,
+  dedupeKey,
+  findMergedSpec,
+  findTemplate,
+  replayRules,
+  resolveScheduleFire,
+  subjectKindOf,
+  type ReplaySubject,
+} from "../src/modules/automation/index.js";
+
+/** 金标基准日：2026-09-24（周四）；A03 用 2026-09-21（周一）/ 2026-09-23（周三）两窗口各一日。 */
+const BUSINESS_DAY = "2026-09-24";
+const NO_EXCEPTIONS = calendarWindow("2026-09-01", "2026-12-31", []);
+const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
+  { date: "2026-10-01", dayType: "holiday", name: "国庆节", note: null },
+]);
+
+function replay(businessDate: string, subjects: ReplaySubject[], extra: Record<string, unknown> = {}) {
+  return replayRules({ businessDate, subjects, calendar: CALENDAR, shiftEnabled: false, ...extra });
+}
+
+/** A01 日报名册槽位：人员 × 项目 × 日期（数据面 = GET …/reports/missing，Push 162）。 */
+function reportSlot(input: {
+  userId: string;
+  name: string;
+  project: string;
+  slotId?: string;
+  date?: string;
+  workday?: boolean;
+  submitted?: boolean;
+  recipientMissing?: boolean;
+}): ReplaySubject {
+  return {
+    kind: "report_slot",
+    id: input.slotId ?? input.project + "|" + input.userId,
+    fields: {
+      "report.date": input.date ?? BUSINESS_DAY,
+      "report.is_workday": input.workday ?? true,
+      "report.submitted": input.submitted ?? false,
+      "report.user_id": input.userId,
+      "project.name": input.project,
+    },
+    recipients:
+      input.recipientMissing === true
+        ? {}
+        : { "report.member": { id: input.userId, name: input.name } },
+  };
+}
+
+/** A02 项目日报：项目 × 日期（数据面 = GET …/reports/summary，Push 162）。 */
+function projectDay(input: {
+  project?: string;
+  projectId?: string;
+  date?: string;
+  entries?: number;
+  headcount?: number;
+  issues?: number;
+  text?: string;
+  groupMissing?: boolean;
+}): ReplaySubject {
+  return {
+    kind: "project_day",
+    id: input.projectId ?? "p-1",
+    fields: {
+      "report.date": input.date ?? BUSINESS_DAY,
+      "report.entry_count": input.entries ?? 3,
+      "report.headcount_total": input.headcount ?? 12,
+      "report.issue_count": input.issues ?? 1,
+      "report.summary_text": input.text ?? "张三：安装摄像头 3 台；李四：现场勘查完毕。",
+      "project.name": input.project ?? "临港数据中心",
+    },
+    recipients: {
+      "project.group": input.groupMissing === true ? null : { id: "g-1", name: null },
+    },
+  };
+}
+
+/** A03 问题：时限 due_at 为业务日基准（T+1 = due+1、T+3 = due+3，ADR-026）。 */
+function issueSubject(input: {
+  id?: string;
+  title?: string;
+  state?: string;
+  due: string;
+  ownerMissing?: boolean;
+  managerMissing?: boolean;
+}): ReplaySubject {
+  return {
+    kind: "issue",
+    id: input.id ?? "issue-1",
+    fields: {
+      "issue.title": input.title ?? "配电柜到货延迟",
+      "issue.state": input.state ?? "in_progress",
+      "issue.owner_name": input.ownerMissing === true ? null : "张三",
+      "issue.due_at": input.due,
+    },
+    recipients: {
+      "issue.owner": input.ownerMissing === true ? null : { id: "u-1", name: "张三" },
+      "project.manager": input.managerMissing === true ? null : { id: "u-9", name: "李四" },
+    },
+  };
+}
+
+/** A14 自定义待办：一次提醒基准日 = remind_date（重复规则展开随待办落库卡）。 */
+function todoSubject(input: {
+  id?: string;
+  title?: string;
+  content?: string;
+  status?: string;
+  remindDate: string;
+  recipientMissing?: boolean;
+}): ReplaySubject {
+  return {
+    kind: "todo",
+    id: input.id ?? "todo-1",
+    fields: {
+      "todo.title": input.title ?? "复核无人机交付清单",
+      "todo.content": input.content ?? "与供应商核对机号与电池序列号。",
+      "todo.status": input.status ?? "pending",
+      "todo.remind_date": input.remindDate,
+    },
+    recipients: {
+      "rule.members": input.recipientMissing === true ? null : { id: "u-1", name: "张三" },
+    },
+  };
+}
+describe("A01 日报应填未填提醒（工作日 19:30 · 个人提醒双渠道 · 按人合并）", () => {
+  it("工作日未提交 → 站内信 + 企微各一条，文案逐字、收件人 = 本人、幂等键落收件人粒度", () => {
+    const report = replay(BUSINESS_DAY, [
+      reportSlot({ userId: "u-1", name: "张三", project: "临港数据中心", slotId: "s-1" }),
+    ]);
+    expect(report.messages).toHaveLength(2);
+    const a01 = report.messages.filter((message) => message.ruleCode === "A01");
+    expect(a01.map((message) => message.channel)).toEqual(["inbox", "wecom_app"]);
+    for (const message of a01) {
+      expect(message.title).toBe("请及时填写今日日报");
+      expect(message.body).toBe("你今天还有日报未提交：临港数据中心请尽快填写，辛苦啦！");
+      expect(message.recipientId).toBe("u-1");
+      expect(message.recipientName).toBe("张三");
+      expect(message.windowKey).toBe(BUSINESS_DAY);
+    }
+    expect(a01[0]?.dedupeKey).toBe(dedupeKey("A01", "u-1", BUSINESS_DAY));
+    expect(a01[0]?.mergedFrom).toEqual(["s-1"]);
+  });
+
+  it("非工作日不催（is_workday = false）", () => {
+    const report = replay(BUSINESS_DAY, [
+      reportSlot({ userId: "u-1", name: "张三", project: "临港数据中心", workday: false }),
+    ]);
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((detail) => detail.ruleCode === "A01")?.skipped).toBe("not_matched");
+  });
+
+  it("已提交不进名单（submitted = true）—— 未提交与草稿（false）才催", () => {
+    const report = replay(BUSINESS_DAY, [
+      reportSlot({ userId: "u-1", name: "张三", project: "临港数据中心", submitted: true }),
+    ]);
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((detail) => detail.ruleCode === "A01")?.skipped).toBe("not_matched");
+  });
+
+  it("同一人多项目合并为一条（清单顺序随入参；幂等键 = 人员粒度）", () => {
+    const report = replay(BUSINESS_DAY, [
+      reportSlot({ userId: "u-1", name: "张三", project: "临港数据中心", slotId: "s-1" }),
+      reportSlot({ userId: "u-1", name: "张三", project: "虹桥枢纽改造", slotId: "s-2" }),
+      reportSlot({ userId: "u-2", name: "王五", project: "临港数据中心", slotId: "s-3" }),
+    ]);
+    const a01 = report.messages.filter((message) => message.ruleCode === "A01");
+    expect(a01).toHaveLength(4);
+    const zhang = a01.filter((message) => message.recipientId === "u-1");
+    expect(zhang).toHaveLength(2);
+    expect(zhang[0]?.body).toBe("你今天还有日报未提交：临港数据中心、虹桥枢纽改造请尽快填写，辛苦啦！");
+    expect(zhang[0]?.mergedFrom).toEqual(["s-1", "s-2"]);
+    expect(zhang[0]?.dedupeKey).toBe(dedupeKey("A01", "u-1", BUSINESS_DAY));
+    const wang = a01.filter((message) => message.recipientId === "u-2");
+    expect(wang[0]?.body).toBe("你今天还有日报未提交：临港数据中心请尽快填写，辛苦啦！");
+  });
+
+  it("跨天补跑幂等：同人同窗口已发送 → duplicate 跳过", () => {
+    const report = replay(
+      BUSINESS_DAY,
+      [reportSlot({ userId: "u-1", name: "张三", project: "临港数据中心" })],
+      { sentKeys: [dedupeKey("A01", "u-1", BUSINESS_DAY)] },
+    );
+    expect(report.messages.filter((message) => message.ruleCode === "A01")).toHaveLength(0);
+    expect(report.details.filter((detail) => detail.ruleCode === "A01").every((detail) => detail.skipped === "duplicate")).toBe(true);
+  });
+
+  it("非当日槽位不触发（窗口对齐）", () => {
+    const report = replay(BUSINESS_DAY, [
+      reportSlot({ userId: "u-1", name: "张三", project: "临港数据中心", date: "2026-09-25" }),
+    ]);
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((detail) => detail.ruleCode === "A01")?.skipped).toBe("window_mismatch");
+  });
+});
+describe("A02 日报每日汇总群播报（19:00 · 项目群）", () => {
+  it("当日有提交 → 一条群播报，标题与正文取汇总数据面逐字", () => {
+    const report = replay(BUSINESS_DAY, [projectDay({})]);
+    expect(report.messages).toHaveLength(1);
+    const message = report.messages[0];
+    expect(message?.ruleCode).toBe("A02");
+    expect(message?.channel).toBe("wecom_group");
+    expect(message?.recipient).toBe("project.group");
+    expect(message?.recipientId).toBe("g-1");
+    expect(message?.title).toBe("日报汇总 | 临港数据中心（2026-09-24）");
+    expect(message?.body).toBe("今日 3 人已提交（应填 12 人），发现问题 1 条。张三：安装摄像头 3 台；李四：现场勘查完毕。");
+    expect(message?.dedupeKey).toBe(dedupeKey("A02", "p-1", BUSINESS_DAY));
+  });
+
+  it("当日无提交（entry_count = 0）→ 不在群里刷空汇总", () => {
+    const report = replay(BUSINESS_DAY, [projectDay({ entries: 0, headcount: 0, issues: 0, text: "" })]);
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((detail) => detail.ruleCode === "A02")?.skipped).toBe("not_matched");
+  });
+
+  it("项目未绑定群 → recipient_missing（不产出、不误发）", () => {
+    const report = replay(BUSINESS_DAY, [projectDay({ groupMissing: true })]);
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((detail) => detail.ruleCode === "A02")?.skipped).toBe("recipient_missing");
+  });
+});
+
+describe("A03 问题 SLA（T+1 提醒责任人 · T+3 升级项目经理 · 09:00）", () => {
+  const T1_DAY = "2026-09-21";
+  const T3_DAY = "2026-09-23";
+
+  it("T+1（due+1）→ 站内信 + 企微各一条提醒责任人，文案逐字", () => {
+    const report = replay(T1_DAY, [issueSubject({ due: "2026-09-20" })]);
+    const a03 = report.messages.filter((message) => message.ruleCode === "A03");
+    expect(a03).toHaveLength(2);
+    expect(a03.map((message) => message.channel)).toEqual(["inbox", "wecom_app"]);
+    for (const message of a03) {
+      expect(message.ruleName).toBe("问题超期提醒（T+1 责任人）");
+      expect(message.title).toBe("问题处理超时提醒");
+      expect(message.body).toBe("张三，你的问题「配电柜到货延迟」已超过处理时限 1 天，请尽快处理并更新进展！");
+      expect(message.recipientId).toBe("u-1");
+      expect(message.windowKey).toBe(T1_DAY);
+    }
+    expect(a03[0]?.dedupeKey).toBe(dedupeKey("A03", "issue-1", T1_DAY));
+    expect(report.details.some((detail) => detail.ruleName.includes("T+3") && detail.skipped === "window_mismatch")).toBe(true);
+  });
+
+  it("T+3（due+3）→ 只升级项目经理（责任人当日不重复轰炸）", () => {
+    const report = replay(T3_DAY, [issueSubject({ due: "2026-09-20" })]);
+    const a03 = report.messages.filter((message) => message.ruleCode === "A03");
+    expect(a03).toHaveLength(2);
+    for (const message of a03) {
+      expect(message.ruleName).toBe("问题超期升级（T+3 项目经理）");
+      expect(message.title).toBe("问题超期升级");
+      expect(message.body).toBe("李四，问题「配电柜到货延迟」超期 3 天仍未闭环，已升级给你，请关注并推动处理！");
+      expect(message.recipientId).toBe("u-9");
+      expect(message.windowKey).toBe(T3_DAY);
+    }
+    expect(a03[0]?.dedupeKey).toBe(dedupeKey("A03", "issue-1", T3_DAY));
+    expect(report.details.some((detail) => detail.ruleName.includes("T+1") && detail.skipped === "window_mismatch")).toBe(true);
+  });
+
+  it("完成即止：已闭环的问题 T+1 / T+3 两个窗口都不发", () => {
+    const t1 = replay(T1_DAY, [issueSubject({ due: "2026-09-20", state: "done" })]);
+    expect(t1.messages).toHaveLength(0);
+    expect(t1.details.find((detail) => detail.ruleName.includes("T+1"))?.skipped).toBe("not_matched");
+    const t3 = replay(T3_DAY, [issueSubject({ due: "2026-09-20", state: "done" })]);
+    expect(t3.messages).toHaveLength(0);
+    expect(t3.details.find((detail) => detail.ruleName.includes("T+3"))?.skipped).toBe("not_matched");
+  });
+
+  it("责任人未分派 → T+1 无收件人（recipient_missing），T+3 仍升级项目经理", () => {
+    const t1 = replay(T1_DAY, [issueSubject({ due: "2026-09-20", ownerMissing: true })]);
+    expect(t1.messages).toHaveLength(0);
+    expect(t1.details.find((detail) => detail.ruleName.includes("T+1"))?.skipped).toBe("recipient_missing");
+    const t3 = replay(T3_DAY, [issueSubject({ due: "2026-09-20", ownerMissing: true })]);
+    expect(t3.messages.filter((message) => message.ruleCode === "A03")).toHaveLength(2);
+    expect(t3.messages[0]?.recipientId).toBe("u-9");
+  });
+
+  it("幂等：同问题同窗口已发送 → duplicate（重跑不重复提醒）", () => {
+    const report = replay(T1_DAY, [issueSubject({ due: "2026-09-20" })], {
+      sentKeys: [dedupeKey("A03", "issue-1", T1_DAY)],
+    });
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.filter((detail) => detail.ruleName.includes("T+1")).every((detail) => detail.skipped === "duplicate")).toBe(true);
+  });
+});
+describe("A14 自定义待办提醒（提醒日 09:00 · 站内信 + 企微）", () => {
+  it("提醒日命中 → 双渠道逐字（标题含待办标题、正文含内容）", () => {
+    const report = replay(BUSINESS_DAY, [todoSubject({ remindDate: BUSINESS_DAY })]);
+    expect(report.messages).toHaveLength(2);
+    for (const message of report.messages) {
+      expect(message.ruleCode).toBe("A14");
+      expect(message.title).toBe("待办提醒：复核无人机交付清单");
+      expect(message.body).toBe("张三，你的待办「复核无人机交付清单」已到提醒时间。与供应商核对机号与电池序列号。");
+      expect(message.recipientId).toBe("u-1");
+    }
+    expect(report.messages[0]?.dedupeKey).toBe(dedupeKey("A14", "todo-1", BUSINESS_DAY));
+  });
+
+  it("待办内容为空 → 正文止于句号（无悬空冒号、无未替换变量）", () => {
+    const report = replay(BUSINESS_DAY, [todoSubject({ remindDate: BUSINESS_DAY, content: "" })]);
+    expect(report.messages[0]?.body).toBe("张三，你的待办「复核无人机交付清单」已到提醒时间。");
+  });
+
+  it("非提醒日 / 已完成待办 → 不提醒", () => {
+    const future = replay(BUSINESS_DAY, [todoSubject({ remindDate: "2026-09-25" })]);
+    expect(future.messages).toHaveLength(0);
+    expect(future.details.find((detail) => detail.ruleCode === "A14")?.skipped).toBe("window_mismatch");
+    const done = replay(BUSINESS_DAY, [todoSubject({ remindDate: BUSINESS_DAY, status: "done" })]);
+    expect(done.messages).toHaveLength(0);
+    expect(done.details.find((detail) => detail.ruleCode === "A14")?.skipped).toBe("not_matched");
+  });
+
+  it("幂等：同待办同提醒日已发送 → duplicate", () => {
+    const report = replay(BUSINESS_DAY, [todoSubject({ remindDate: BUSINESS_DAY })], {
+      sentKeys: [dedupeKey("A14", "todo-1", BUSINESS_DAY)],
+    });
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.filter((detail) => detail.ruleCode === "A14").every((detail) => detail.skipped === "duplicate")).toBe(true);
+  });
+});
+
+describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文案一致性）", () => {
+  it("T_PLUS_3 窗口：基准日后 3 天 09:00（A03 升级）", () => {
+    const fire = resolveScheduleFire({
+      window: "T_PLUS_3",
+      businessDate: "2026-09-23",
+      baseDate: "2026-09-20",
+      time: "09:00",
+      shiftEnabled: false,
+      shiftDirection: "forward",
+      calendar: NO_EXCEPTIONS,
+    });
+    expect(fire?.fireDate).toBe("2026-09-23");
+    expect(fire?.windowKey).toBe("2026-09-23");
+    expect(fire?.fireAt).toBe("2026-09-23T01:00:00.000Z");
+  });
+
+  it("主体类型不匹配 → subject_mismatch（A 系列主体不被 R 系列规则误命中，反之亦然）", () => {
+    const report = replay("2026-09-22", [issueSubject({ due: "2026-09-20" })]);
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((detail) => detail.ruleCode === "R02")?.skipped).toBe("subject_mismatch");
+    expect(report.details.find((detail) => detail.ruleCode === "A01")?.skipped).toBe("subject_mismatch");
+    expect(report.details.find((detail) => detail.ruleCode === "A03")?.skipped).toBe("window_mismatch");
+  });
+
+  it("内置规则集：A 系列四条（A03 两窗口）与主体类型登记齐备", () => {
+    const codes = BUILTIN_RULES.map((rule) => rule.code);
+    for (const code of ["A01", "A02", "A03", "A14"]) expect(codes).toContain(code);
+    expect(BUILTIN_RULES.filter((rule) => rule.code === "A03").map((rule) => rule.trigger.window)).toEqual(["T_PLUS_1", "T_PLUS_3"]);
+    expect(subjectKindOf("A01")).toBe("report_slot");
+    expect(subjectKindOf("A02")).toBe("project_day");
+    expect(subjectKindOf("A03")).toBe("issue");
+    expect(subjectKindOf("A14")).toBe("todo");
+    expect(subjectKindOf("R03")).toBe("task");
+  });
+
+  it("模板一致性：所有动作模板存在，且模板变量都能由主体字段 / 合并清单提供", () => {
+    for (const rule of BUILTIN_RULES) {
+      const kindVariables = Object.keys(SUBJECT_TEMPLATE_VARIABLES[subjectKindOf(rule.code)]);
+      for (const action of rule.actions) {
+        const template = findTemplate(action.template);
+        expect(template, rule.code + " / " + action.template).not.toBeNull();
+        const spec = findMergedSpec(rule.code, action.channel ?? "inbox");
+        const names = new Set([...kindVariables, ...(spec === null ? [] : [spec.listVariable])]);
+        for (const text of [template?.title ?? "", template?.body ?? ""]) {
+          for (const match of text.matchAll(/\{([^}]+)\}/g)) {
+            expect(names.has(match[1] ?? ""), rule.code + " 未登记变量 " + match[1]).toBe(true);
+          }
+        }
+      }
+    }
+  });
+});
