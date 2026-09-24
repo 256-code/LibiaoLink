@@ -393,3 +393,572 @@ body {
 .project-card:hover {
   box-shadow: 0 12px 28px var(--card-glow, rgba(15, 23, 42, 0.18));
 }
+
+
+/* 入口页右侧平面地图（Push 188）：逐国底图 + 鼠标触碰动画 */
+.hub-map {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hub-map__country {
+  fill: #e7e9ee;
+  stroke: transparent;
+  stroke-width: 0.8;
+  animation: ll-hub-country-in 520ms ease-out both;
+  transition: fill 220ms ease, stroke 220ms ease, filter 220ms ease;
+}
+
+/* 触碰某个国家：该国提亮 + 描白边 + 浮起（投影）；鼠标离开回原位。
+   整图不跟着缩放 —— 缩放会把被触碰的那国顶跑，hover 会闪。 */
+.hub-map__country:hover,
+.hub-map__country[data-linked="true"] {
+  fill: #c7ceda;
+  stroke: #ffffff;
+  filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.16));
+}
+
+/* 触碰时在面板左上角报出国名（中英对照）；不吃鼠标事件，免得跟国家的 hover 抢指针 */
+.hub-map-badge {
+  position: absolute;
+  top: 1.25rem;
+  left: 1.25rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  max-width: calc(100% - 2.5rem);
+  padding: 0.35rem 0.75rem;
+  border: 1px solid rgb(228 228 231 / 0.9);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.92);
+  box-shadow: 0 12px 30px -18px rgb(15 23 42 / 0.45);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+
+.hub-map-badge[data-active="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hub-map-badge__zh {
+  color: #18181b;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.hub-map-badge__en {
+  color: #71717a;
+  font-size: 0.75rem;
+}
+
+/* 南海断续线（十段，中国标准地图口径）：又细又长的面，按线描出来；不参与悬停 */
+.hub-map__dashline {
+  fill: none;
+  stroke: #97a1b0;
+  stroke-width: 1.1;
+  pointer-events: none;
+}
+
+/* 微国符号层：110m 精度画不出的主权小国（新加坡、巴林、马耳他……）——
+   跟国家同色系的灰点 + 白镶边（不是参考图那种装饰蓝点）；触碰时变深 + 浮起，跟国家一个动效口径 */
+.hub-map__micro-layer {
+  animation: ll-hub-country-in 520ms ease-out both;
+}
+
+/* 命中层：透明，只负责给小圆点留出好碰的容错区 */
+.hub-map__micro-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+
+/* 视觉层：不吃鼠标事件（命中一律算在命中层头上），这样 hover 时命中区不会跟着变、不会抖 */
+.hub-map__micro-dot {
+  fill: #b6becc;
+  stroke: #ffffff;
+  stroke-width: 1.1;
+  pointer-events: none;
+  transition: fill 220ms ease, filter 220ms ease;
+}
+
+.hub-map__micro:hover .hub-map__micro-dot,
+.hub-map__micro[data-linked="true"] .hub-map__micro-dot {
+  fill: #7c8698;
+  filter: drop-shadow(0 6px 10px rgba(15, 23, 42, 0.18));
+}
+
+/* 南海诸岛符号层：三沙市那些岛礁在世界尺度下不足 1px，按中国标准地图的习惯点出来（比微国符号更小的点）。
+   命中层一样是透明的、视觉层不吃鼠标事件；触碰时那片点变深 —— 报的国名是「中国」，与台湾同口径 */
+.hub-map__nanhai-layer {
+  animation: ll-hub-country-in 520ms ease-out both;
+}
+
+.hub-map__nanhai-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.hub-map__nanhai-island {
+  fill: #b6becc;
+  pointer-events: none;
+  transition: fill 220ms ease;
+}
+
+.hub-map__nanhai:hover .hub-map__nanhai-island,
+.hub-map__nanhai[data-linked="true"] .hub-map__nanhai-island {
+  fill: #7c8698;
+}
+
+@keyframes ll-hub-country-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-map__nanhai-layer {
+    animation: none;
+  }
+
+  .hub-map__nanhai-island {
+    transition: none;
+  }
+
+  .hub-map__micro-layer {
+    animation: none;
+  }
+
+  .hub-map__micro-dot {
+    transition: none;
+  }
+
+  .hub-map__country {
+    animation: none;
+    transition: none;
+  }
+
+  .hub-map-badge {
+    transition: none;
+  }
+}
+
+/* 项目立柱层（Push 188 追订：地图与项目地区联动；六追订按业务选定的「方案 E」改成「触碰才出柱」）。
+   **静止态一根柱都不露面**（原来那套是「有项目的国家都站一根」—— 数据铺满后 42 根同时站着，欧洲挤成一堆，
+   业务口径「这个柱子重叠太严重了」）：柱身收起（opacity 0 + scaleY(0.04)），鼠标触碰该国 / 该柱时才从锚点（柱底）
+   往上长出来。收起时整根柱不吃鼠标事件（命中矩形 pointer-events: none，柱身 / 柱顶本来就不吃），
+   免得挡住下面那些国家的触碰。触碰立柱 = 触碰该国（两侧一起亮，靠 data-linked）；reduced-motion 下不动。 */
+.hub-map__pillar[data-shown="false"] .hub-map__pillar-hit {
+  pointer-events: none;
+}
+
+.hub-map__pillar-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.hub-map__pillar-body {
+  transform-box: view-box;
+  transform: scaleY(0.04);
+  opacity: 0;
+  transition: transform 620ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease;
+}
+
+.hub-map__pillar[data-shown="true"] .hub-map__pillar-body {
+  transform: scaleY(1);
+  opacity: 1;
+}
+
+.hub-map__pillar-seg {
+  fill: #c3cbd8;
+  stroke: #ffffff;
+  stroke-width: 0.5;
+  pointer-events: none;
+  transition: fill 200ms ease, filter 200ms ease;
+}
+
+/* 立柱分段色（Push 188 七追订「为什么有些柱子是图二的状态」：原来四档全是灰蓝深浅，已归档那段 #dfe4ec
+   几乎白，看着像「柱子没渲染完」）→ 四色各表一个状态：进行中蓝 / 已暂停橙 / 已完成绿 / 已归档灰，
+   跟「项目梳理」清单里的状态文案对得上，柱身任何一段都不会浅到看不见。 */
+.hub-map__pillar-seg[data-status="active"] { fill: #1a73e8; }
+.hub-map__pillar-seg[data-status="paused"] { fill: #f29900; }
+.hub-map__pillar-seg[data-status="done"] { fill: #1e8e3e; }
+.hub-map__pillar-seg[data-status="archived"] { fill: #9aa0a6; }
+
+.hub-map__pillar-top {
+  fill: #b6c0d0;
+  stroke: #ffffff;
+  stroke-width: 0.5;
+  pointer-events: none;
+  transition: fill 200ms ease, filter 200ms ease;
+}
+
+/* 柱顶椭圆跟着最上面那一段的状态上色（柱顶 = 柱子最上面的「盖子」，原来固定灰，跟柱身对不上） */
+.hub-map__pillar[data-top-status="active"] .hub-map__pillar-top { fill: #1a73e8; }
+.hub-map__pillar[data-top-status="paused"] .hub-map__pillar-top { fill: #f29900; }
+.hub-map__pillar[data-top-status="done"] .hub-map__pillar-top { fill: #1e8e3e; }
+.hub-map__pillar[data-top-status="archived"] .hub-map__pillar-top { fill: #9aa0a6; }
+
+.hub-map__pillar-count {
+  fill: #55627a;
+  font-size: 9px;
+  font-weight: 600;
+  text-anchor: middle;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+/* 柱顶的项目数只在柱子露面时出现（跟柱身一起收放） */
+.hub-map__pillar[data-shown="true"] .hub-map__pillar-count {
+  opacity: 1;
+}
+
+/* 触碰立柱 / 触碰有项目的国家：柱身与柱顶一起压深 */
+.hub-map__pillar:hover .hub-map__pillar-seg,
+.hub-map__pillar[data-linked="true"] .hub-map__pillar-seg {
+  filter: brightness(0.9);
+}
+
+.hub-map__pillar:hover .hub-map__pillar-top,
+.hub-map__pillar[data-linked="true"] .hub-map__pillar-top {
+  filter: brightness(0.88);
+}
+
+/* 国名徽标上的项目数（只有有项目的国家才出现） */
+.hub-map-badge__count {
+  color: #3f3f46;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* 九追订：钉子落下时徽标上加一枚「已钉住」小签、边框转主题蓝（说明「鼠标走开也不会收回」）；
+   没钉住时给一句「点一下钉住」把动作说破（手型光标那份提示在下面的国家 / 微国上） */
+.hub-map-badge__pin {
+  color: #1a73e8;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.hub-map-badge__hint {
+  color: #a1a1aa;
+  font-size: 0.625rem;
+}
+
+.hub-map-badge[data-pinned="true"] {
+  border-color: rgb(26 115 232 / 0.45);
+}
+
+/* 项目梳理浮层：触碰有项目的国家 / 立柱时在右上角列出该国的项目（类型色点 + 项目名 + 状态） */
+.hub-map-projects {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 15rem;
+  max-width: calc(100% - 2.5rem);
+  max-height: calc(100% - 7rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgb(228 228 231 / 0.9);
+  border-radius: 0.9rem;
+  background: rgb(255 255 255 / 0.94);
+  box-shadow: 0 18px 40px -24px rgb(15 23 42 / 0.45);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+
+.hub-map-projects[data-active="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 九追订（业务改口「不要改成4s了 改成点击国家区域即可」）：点一下国家区域把立柱与清单钉住 ——
+   钉住之后清单要能被鼠标碰（滑动 / 点「展开全部」/ 点「×」）；没钉住时仍不吃鼠标事件，不抢底图的触碰 */
+.hub-map-projects[data-pinned="true"] {
+  pointer-events: auto;
+}
+
+/* 表头：国名 + 共 N 个项目；钉住后右边再挂「展开全部 / ×」两个小按钮（宽度不够就换行） */
+.hub-map-projects__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.4rem;
+}
+
+.hub-map-projects__zh {
+  color: #18181b;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.hub-map-projects__total {
+  margin-left: auto;
+  color: #71717a;
+  font-size: 0.6875rem;
+}
+
+/* 九追订「右侧的列表可以滑动或者展开」：钉住后清单可滑（默认最多露出 6 条左右，再多就在这一块里滚），
+   点「展开全部」把这一块的上限放开（面板自己的 max-height 仍然兜底，超了继续滚）。 */
+.hub-map-projects__list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-height: 0;
+  max-height: 7rem;
+  overflow-y: auto;
+  margin: 0.4rem 0 0;
+  padding: 0 0.25rem 0 0;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(203 213 225) transparent;
+  overscroll-behavior: contain;
+}
+
+.hub-map-projects__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.hub-map-projects__list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(203 213 225);
+}
+
+.hub-map-projects[data-expanded="true"] .hub-map-projects__list {
+  max-height: none;
+}
+
+.hub-map-projects__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #3f3f46;
+  font-size: 0.75rem;
+}
+
+.hub-map-projects__dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+}
+
+.hub-map-projects__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-map-projects__status {
+  flex: none;
+  color: #71717a;
+  font-size: 0.6875rem;
+}
+
+/* 钉住态的两个小按钮（「展开全部」/「收起」/「×」）：幽灵态、小号，鼠标压深成主题蓝 */
+.hub-map-projects__tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.hub-map-projects__expand,
+.hub-map-projects__close {
+  flex: none;
+  border: 1px solid rgb(228 228 231);
+  background: #ffffff;
+  color: #52525b;
+  font: inherit;
+  font-size: 0.625rem;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.hub-map-projects__expand {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+}
+
+.hub-map-projects__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.hub-map-projects__expand:hover,
+.hub-map-projects__close:hover {
+  border-color: #1a73e8;
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.hub-map-projects__expand:focus-visible,
+.hub-map-projects__close:focus-visible {
+  outline: 2px solid #1a73e8;
+  outline-offset: 1px;
+}
+
+.hub-map-projects__more {
+  margin-top: 0.35rem;
+  color: #a1a1aa;
+  font-size: 0.6875rem;
+}
+
+/* 图例与脚注：状态色块 + 总量 + 对不上国家的地区（左下角） */
+.hub-map-legend {
+  position: absolute;
+  left: 1.25rem;
+  bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  max-width: calc(100% - 2.5rem);
+  color: #71717a;
+  font-size: 0.6875rem;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+.hub-map-legend[data-active="true"] {
+  opacity: 1;
+}
+
+.hub-map-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* 图例分两组：项目数（档位随数据算）/ 立柱分段（四种状态）—— 每组前面带一个字头 */
+.hub-map-legend__group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.hub-map-legend__gloss {
+  color: #a1a1aa;
+}
+
+/* 分档提示（七追订）：把「档位是算出来的」写在图例里 —— 共几档跟着数据走 */
+.hub-map-legend__hint {
+  color: #a1a1aa;
+}
+
+.hub-map-legend__swatch {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 0.15rem;
+  background: #c3cbd8;
+}
+
+.hub-map-legend__swatch[data-status="active"] { background: #1a73e8; }
+.hub-map-legend__swatch[data-status="paused"] { background: #f29900; }
+.hub-map-legend__swatch[data-status="done"] { background: #1e8e3e; }
+.hub-map-legend__swatch[data-status="archived"] { background: #9aa0a6; }
+
+.hub-map-legend__swatch[data-tier="1"] { background: #c8dcfc; }
+.hub-map-legend__swatch[data-tier="2"] { background: #a3c6fa; }
+.hub-map-legend__swatch[data-tier="3"] { background: #7facf7; }
+.hub-map-legend__swatch[data-tier="4"] { background: #5290f4; }
+.hub-map-legend__swatch[data-tier="5"] { background: #2f6fe0; }
+
+.hub-map-legend__total {
+  color: #52525b;
+}
+
+.hub-map-legend__unmatched {
+  color: #b45309;
+}
+
+.hub-map-legend__note {
+  color: #a1a1aa;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-map__pillar-body,
+  .hub-map__pillar-count {
+    transition: none;
+  }
+
+  .hub-map__pillar-seg,
+  .hub-map__pillar-top {
+    transition: none;
+  }
+
+  .hub-map-projects,
+  .hub-map-legend {
+    transition: none;
+  }
+
+  .hub-map-projects__expand,
+  .hub-map-projects__close {
+    transition: none;
+  }
+}
+
+/* 有项目的国家（Push 188 五追订「有项目的国家 轮廓显示并且整体国土区域颜色也是蓝色 图二的这种蓝」；
+   六追订「这个柱子重叠太严重了 还有没有别的方式来展示」按业务选定的「方案 E」改成按项目数上底色；
+   七追订「这个颜色深浅不能按照固定的数据来 到时候所有地区大于3个不就是同一个颜色了吗」→ 从写死的三档改成
+   档位随数据走）：整块国土按项目数上蓝色底 + 统一的深蓝轮廓（#1a73e8）；色阶备了 5 档由浅到深，**哪一档对应
+   几个项目由 HubMap 的 buildTierBounds 按当前数据算**（同档同色，档数随数据拉开，不会「大于 N 个全一个色」）；
+   鼠标触碰 / 立柱联动时一律压到最深的触碰色（#1a73e8）换白轮廓 —— 跟无项目国家的 hover 是同一套语言
+   （无项目的国家 data-tier="0"，仍是浅灰底、无色轮廓）。 */
+.hub-map__country:not([data-tier="0"]) {
+  fill: #c8dcfc;
+  stroke: #1a73e8;
+  stroke-width: 0.9;
+}
+.hub-map__country[data-tier="2"] { fill: #a3c6fa; }
+.hub-map__country[data-tier="3"] { fill: #7facf7; }
+.hub-map__country[data-tier="4"] { fill: #5290f4; }
+.hub-map__country[data-tier="5"] { fill: #2f6fe0; }
+.hub-map__country:not([data-tier="0"]):hover,
+.hub-map__country:not([data-tier="0"])[data-linked="true"] {
+  fill: #1a73e8;
+  stroke: #ffffff;
+}
+
+/* 九追订：有项目的国家 / 微国「点一下就钉住」是新的主交互 —— 给它手型光标把动作说出来（没项目的不给） */
+.hub-map__country:not([data-tier="0"]),
+.hub-map__micro:not([data-tier="0"]) {
+  cursor: pointer;
+}
+
+/* 微国同理（新加坡这点位只有 2.4 个单位，浅蓝底靠深蓝镶边才认得出）：有项目的按档上蓝，没项目的仍是灰点 */
+.hub-map__micro:not([data-tier="0"]) .hub-map__micro-dot {
+  fill: #c8dcfc;
+  stroke: #1a73e8;
+  stroke-width: 0.7;
+}
+.hub-map__micro[data-tier="2"] .hub-map__micro-dot { fill: #a3c6fa; }
+.hub-map__micro[data-tier="3"] .hub-map__micro-dot { fill: #7facf7; }
+.hub-map__micro[data-tier="4"] .hub-map__micro-dot { fill: #5290f4; }
+.hub-map__micro[data-tier="5"] .hub-map__micro-dot { fill: #2f6fe0; }
+.hub-map__micro:not([data-tier="0"]):hover .hub-map__micro-dot,
+.hub-map__micro:not([data-tier="0"])[data-linked="true"] .hub-map__micro-dot {
+  fill: #1a73e8;
+  stroke: #ffffff;
+}

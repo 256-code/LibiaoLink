@@ -53,6 +53,8 @@ export function Card({
   onEdit,
   onDelete,
 }: CardProps) {
+  /** 序号文案：不足两位补零（7 → "07"）；**三位数之后不再有位置问题** —— 数字锚在圆点右内侧（right-6，不再用 left-6），
+   *  卡片是 overflow:hidden，用 left-6 摆时三位数的末位会越过卡片右缘被裁掉（Push 188 十追订「这个编号bug」）。 */
   const seqNoText = String(seqNo).padStart(2, "0");
   const style = { "--card-glow": glowOf(accentColor) } as CSSProperties;
   return (
@@ -67,7 +69,7 @@ export function Card({
         {typeLabel}
       </span>
       <div className="w-20 h-20 rounded-full absolute -right-5 -top-7 bg-zinc-100">
-        <p className="absolute bottom-5 left-6 text-2xl font-medium text-zinc-500" title={"项目序号 " + seqNoText}>{seqNoText}</p>
+        <p className="absolute bottom-5 right-6 whitespace-nowrap text-2xl font-medium text-zinc-500" title={"项目序号 " + seqNoText}>{seqNoText}</p>
       </div>
       <div className="flex w-full items-center gap-3">
         {icon ?? <span style={{ backgroundColor: accentColor }} className="car-icon block h-9 w-12 shrink-0" />}
