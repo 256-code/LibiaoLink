@@ -507,7 +507,7 @@ server/
 ## M6 回放（S6·report-issue：日报 / 问题）
 
 - 脚本：`scripts/m6-replay.mjs`（真 PG + 真 api；铸管理员会话 / 跑完撤销、空库自动补合成管理员，建 `M6RPL-` 回放项目与 2 个任务 / 跑完硬删日报 / 问题 / 事件 / 任务 / 审计 / outbox / 项目 / 合成账号）。
-- 断言（M6-01 收口 · Push 162 追加 S0 ~ S6）：先落 1 名项目成员（M2-05 幂等 upsert），再验 A7-01 当日汇总（entryCount / headcountTotal / issueCount / entries 作者与关联任务标题 + 缺省日期 = 今天 + 未来日期 400）与 A7-05 应填未填（已提交不进名单；**近 16 天内挑一个工作日（日历接口自证）→ 名册全员进漏填名单且逐行 state / reportId / submittedAt 为空；近 21 天内挑一个非工作日 → missingCount = 0 且 missingUserIds = []**）。
+- 断言（M6-01 收口 · Push 162 追加 S0 ~ S6）：先落 1 名项目成员（M2-05 幂等 upsert），再验 A7-01 当日汇总（entryCount / headcountTotal / issueCount / entries 作者与关联任务标题 + 缺省日期 = 今天 + 未来日期 400）与 A7-05 应填未填（已提交不进名单；**近 16 天内挑一个工作日（日历接口自证）→ 名册全员进漏填名单且逐行 state / reportId / submittedAt 为空；近 21 天内挑一个非工作日 → missingCount = 0 且 missingUserIds = []**）。**执行结果（本片 · CI run `35946672352` · job `107466046295`）：S0 ~ S6 全 PASS** —— 当日汇总 `entryCount=1 / headcountTotal=12 / issueCount=1`；工作日 `2026-09-21` 全员进名单、非工作日 `2026-09-20`（`weekend`）整列为空。
 - 断言：A3-01 ~ A3-04（新报 / 重复 409 REPORT_ALREADY_EXISTS / 未来日期 400 / 补填 supplement / 草稿 + 提交）、A3-08 / A3-09（回写 `tasks.note` 标记 `【日报 <日期>】` + `task_events(note_change)`；问题 `source_report_id` 唯一兜底 —— 重编辑已提交日报触发重放验证幂等）、A3-12（部门名归类落 `owner_department`）、A3-10 / A3-13（四态 + 回退 + 关闭对清空 + 每次实际变化一条 `issue_events` + 空更新 400 + 乐观锁 409）、A2-01（被日报 / 问题引用的任务 409 `TASK_HAS_REFERENCES`，`details[].code = report_ref` / `issue_ref`）、归档写保护 409。
 - 复跑：`cd server && M6_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m6-replay.mjs [--out <报告.md>] [--json <证据.json>]`；退出码 0 = 断言全过（可当门禁），`--actor <userId>` 指定管理员、`--keep` 保留回放数据。
 - 落点说明：`docs/` 属 px 线；证据文件由 wmj 随本卡代记（回放脚本与断言同 PR），请 px 复核。
