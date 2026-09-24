@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from "@nestjs/common";
 import {
   FileDetailSchema,
+  FileDownloadUrlResponseSchema,
   FileFinalizeBodySchema,
   FilePurgeBodySchema,
   FilePreviewQuerySchema,
@@ -25,6 +26,7 @@ import {
 } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { FileDownloadService } from "./file-download.service.js";
 import { FileService } from "./file.service.js";
 import { PreviewReadService } from "./preview-read.service.js";
 
@@ -48,6 +50,7 @@ type FilePurgeBody = z.infer<typeof FilePurgeBodySchema>;
 type FilePurgeResponse = z.infer<typeof FilePurgeResponseSchema>;
 type FilePreviewQuery = z.infer<typeof FilePreviewQuerySchema>;
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
+type FileDownloadUrlResponse = z.infer<typeof FileDownloadUrlResponseSchema>;
 
 const uuidParam = new ZodValidationPipe(UuidSchema);
 
@@ -56,7 +59,8 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
  *
  * 权限在服务层判定（`file.upload` 需项目上下文：成员平权；读取会话状态 = 项目可见即可），
  * 因此这里只用会话 + CSRF 守卫；记录级可见性（非成员 404）在 FileService 装载文件时按项目判定。
- * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览读 API（M4-05）三态 + 短时签名 + 仅 ready 写审计。
+ * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览读 API（M4-05）三态 + 短时签名 + 仅 ready 写审计；
+ * 下载读 API（M4-05f）短时签名（attachment）+ `file.download` 权限 + download 审计。
  */
 @Controller("api/v1/files")
 @UseGuards(SessionGuard, CsrfGuard)
@@ -64,6 +68,7 @@ export class FileController {
   constructor(
     private readonly files: FileService,
     private readonly previews: PreviewReadService,
+    private readonly downloads: FileDownloadService,
   ) {}
 
   /** 发起上传（分片直传；返回文件、会话与秒传提示）。 */
@@ -143,6 +148,19 @@ export class FileController {
     @CurrentActorId() actorId: string,
   ): Promise<FilePreviewResponse> {
     return this.previews.getPreview(id, query.versionId ?? null, actorId);
+  }
+
+  /**
+   * 版本短时签名下载（M4-05f 下载切片，A4-06 / A4-10）：签名地址为 attachment（原名回写 Content-Disposition）；
+   * 写一条 `action = download` 审计；权限 = 项目可见（404）+ `file.download`（403）；`versionId` 须属于该文件（否则 404）。
+   */
+  @Get(":id/versions/:versionId/download-url")
+  downloadUrl(
+    @Param("id", uuidParam) id: string,
+    @Param("versionId", uuidParam) versionId: string,
+    @CurrentActorId() actorId: string,
+  ): Promise<FileDownloadUrlResponse> {
+    return this.downloads.getDownloadUrl(id, versionId, actorId);
   }
 
   /** 定档锁版（draft → final；乐观锁 version 不匹配 409）。契约响应码 = 200。 */

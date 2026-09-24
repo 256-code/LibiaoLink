@@ -1,11 +1,11 @@
-# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览（数据层 + 转换队列 + 读 API + 产物清理收口）已落地）
+# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览（数据层 + 转换队列 + 读 API + 产物清理收口）+ 下载切片 已落地）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 平台模块（platform） |
-| 职责 | 文件、版本、定档、变更（申请即通过）、预览编排（含产物对象清理收口）、回收站 |
+| 职责 | 文件、版本、定档、变更（申请即通过）、预览编排（含产物对象清理收口）、下载（短时签名）、回收站 |
 | 主责 | lan（团队分工.md §2 后端平台） |
-| 预留对外接口 | FileService、PreviewService、PreviewReadService、ChangeService |
+| 预留对外接口 | FileService、PreviewService、PreviewReadService、FileDownloadService、ChangeService |
 | 依据 | 系统功能书 A4-01~A4-18 / D2；技术设计v0.2 §5.1-5.3；契约 shared/src/modules/files.ts；ADR-006（对象键形态）/ ADR-022（不触发 projects.updated_at） |
 
 ## 文件
@@ -27,6 +27,7 @@ preview.converter.ts # 转换沙箱客户端（M4-05c）：POST /convert 字节�
 preview.repository.ts # 数据访问：preview_artifacts（三元组读 / 首次登记 / ready 成对写 / failed 成对写 / M4-05 收口：listReadyByVersionIds 待清理候选 + reassignOwner 归属转移）
 preview.service.ts   # 队列消费（M4-05c）：领 outbox → 读源字节 → 调转换器 → 产物回对象存储 → 更新 preview_artifacts → done / 重试 / dead
 preview-read.service.ts # 读 API（M4-05d · PR-11）：GET /files/{id}/preview 三态 / 短时签名 / 仅 ready 写审计 / 版本 404 / 读取侧幂等补投与两类终态降级
+file-download.service.ts # 下载切片（M4-05f · PR-13）：GET /files/{id}/versions/{versionId}/download-url —— attachment 签名（传 fileName）/ file.download 权限 / download 审计
 index.ts             # 唯一公开出口（跨模块只允许 import 本文件）
 ```
 
@@ -42,6 +43,7 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 | `GET /api/v1/files/{id}` | 文件详情（含当前版本；回收站文件也可读） | 200 | 项目可见即可 |
 | `GET /api/v1/files/{id}/versions` | 版本链（按 seq 升序；只读不删历史） | 200 | 项目可见即可 |
 | `GET /api/v1/files/{id}/preview` | 预览状态与短时签名地址（三态；`?versionId=` 指定历史版本；not_ready 幂等补投，failed 降级「请下载」） | 200 | 项目可见即可 |
+| `GET /api/v1/files/{id}/versions/{versionId}/download-url` | 版本短时签名**下载**地址（attachment：原名回写 Content-Disposition；写一条 download 审计） | 200 / 403 | 项目可见 + `file.download` |
 | `POST /api/v1/files/{id}/finalize` | 定档锁版（draft → final；至少 1 个版本；乐观锁） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/rollback` | 回溯生成新版本（复制目标版对象；定档后 = 变更流，M4-04 已落地） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/recycle` | 移入回收站（任意状态可删；保留 30 天可恢复） | 200 | `file.upload` |
@@ -71,7 +73,9 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 - **M4-05d 审计（D2-07）**：只对 **ready** 的读取写**一条** `object_type = file` + `action = preview` + metadata（`versionId` / `target` / `pipelineVersion`）；`not_ready` / `failed` / 404 一律不写（先签名后审计：地址没签发成功就不算一次「查看」）。
 - **M4-05d 两类终态降级**（不落表、不投递、不写审计）：① 文件尚无版本（未完成过上传）；② 判不出渲染通道（如 `.zip`）→ 直接 `failed` + 原因，**让前端轮询有终点**。
 - **M4-05e 产物清理（PR-12 · M4-05 收口 · 迁移 `0027` 口径 3）**：彻底删除 / 回收站到期（`purgeRecycled`）连带收口 `previews/{contentHash}/{pipelineVersion}/{target}` —— 按 `content_hash` 反查是否还有存活版本引用：**有** → 缓存行**归属转移**到存活版本（行与对象都保留，D2-06「同一内容只转换一次」不因删掉一份重复文件而失效）；**无** → 与版本对象**同序**在持锁事务内清对象（`preview_artifacts` 行随 `file_versions` 外键级联；失败即回滚，不留无行可重试的孤儿对象）。审计 metadata 记 `previewArtifactsPurged` / `previewArtifactsReassigned`。
-- **M4-05 剩余**：① 下载切片 `GET /files/{id}/versions/{versionId}/download-url`（契约已在 `shared/`，A4-10「离线下载受权限控制并记日志」）；② 压测（并发 2~4 / 200MB 长跑 / 转换成功率 ≥95% 属 M4-05 压测 / PoC-1 真实样本集）。
+- **M4-05f 下载切片（PR-13 · A4-06 / A4-10 · `file-download.service.ts`）**：`GET /files/{id}/versions/{versionId}/download-url` —— `versionId` **必填**（前端从详情 / 版本链拿明确版本；任意历史版本可下载，不属于该文件 / 不存在 404）；**签名传 `fileName`** → `Content-Disposition: attachment`（原名 URL 编码回写），窗口 = `S3_DOWNLOAD_URL_TTL_SECONDS`（与 `PREVIEW_URL_TTL_SECONDS` 两键独立）；响应 `url` / `fileName` / `sizeBytes`（该版本体积）/ `expiresAt`。
+- **M4-05f 权限与审计**：可见性（不可见 404，防 IDOR）→ `file.download`（缺权限 403；成员 / 项目经理隐含该键，故一期「可见 ⇒ 可下载」）→ 版本 → 签名 → **一条 `action = download` 审计**（`object_type = file`、metadata `versionId`；先签名后审计，一次下载一条，不写 preview 行）。
+- **M4-05 剩余**：压测（并发 2~4 / 200MB 长跑 / 转换成功率 ≥95% 属 M4-05 压测 / PoC-1 真实样本集）—— 下载切片已随 **PR-13** 落地（见上「M4-05f」两条）。
 
 ## 上游（直接复用，不重复造）
 
@@ -83,5 +87,5 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 ## 待落地（按卡片）
 
 - **M4-04**：写入面**已落地（PR-7）**、读面**已落地（PR-8）**（列表 / 详情，见上「M4-04 变更口径」「M4-04 变更读面」）；**剩余** = 变更统计（A4-17，无对外契约，口径由后续切片 / 仪表盘定）与通知（A4-18，随 M5；outbox `change.applied` 已埋点）。
-- **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；**读 API 已落地（PR-11：三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404 + 读取侧幂等补投 + 两类终态降级）**；**产物清理已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行）**；剩余 = 下载切片（`GET /files/{id}/versions/{versionId}/download-url` 契约已在 `shared/`，仍待实现）与压测（M4-05 出口标准）。
+- **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；**读 API 已落地（PR-11：三态 + 短时签名 + 仅 `ready` 写审计 + 版本 404 + 读取侧幂等补投 + 两类终态降级）**；**产物清理已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行）**；**下载切片已落地（PR-13：attachment 签名 + `file.download` + download 审计 + 真机两态回放 14/14）**；剩余 = 压测（M4-05 出口标准）。
 - 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。
