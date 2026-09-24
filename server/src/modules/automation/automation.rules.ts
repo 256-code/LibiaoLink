@@ -1,7 +1,8 @@
 /**
  * 自动化规则求值内核（纯函数：不连库、不取系统时间）：条件求值 / 模板渲染 / 触发窗口与幂等执行键。
  * 口径来源：技术设计v0.2 §6.1（规则模型）/ §6.2（幂等执行键 = ruleId + entityId + 触发窗口；时钟注入）、
- *   docs/rules/R01-R07-内置规则文案.md（逐字文案与金标）、ADR-028（Asia/Shanghai）、
+ *   docs/rules/R01-R07-内置规则文案.md（R 系列逐字文案与金标）、docs/rules/A01-A03-A14-扩展规则文案.md（A 系列）、
+ *   ADR-026（A03 T+1 提醒 / T+3 升级）、ADR-028（Asia/Shanghai）、
  *   契约 shared/src/modules/automation.ts（枚举与规则文档 schema）。
  */
 import type { AutomationCondition, AutomationRule, RuleConditionOperator, RuleScheduleWindow } from "@libiaolink/contracts";
@@ -17,6 +18,11 @@ import {
 /** 求值上下文字段值（点分字段名 → 值；缺省 undefined 视为空值）。 */
 export type RuleFieldValue = string | number | boolean | readonly string[] | readonly number[] | null;
 export type RuleContext = Readonly<Record<string, RuleFieldValue | undefined>>;
+
+/** 回放主体类型（规则作用对象；M5-05 余项：A 系列不再限于任务）：task 任务（R02 ~ R07）/ issue 问题（A03）/
+ * report_slot 日报名册槽位 = 人员 × 项目 × 日期（A01）/ project_day 项目日报 = 项目 × 日期（A02）/ todo 自定义待办（A14）。 */
+export const REPLAY_SUBJECT_KINDS = ["task", "issue", "report_slot", "project_day", "todo"] as const;
+export type ReplaySubjectKind = (typeof REPLAY_SUBJECT_KINDS)[number];
 
 /** 求值选项：业务日（Asia/Shanghai）—— eqOffsetDays 的基准日，禁止取系统时间（v0.2 §6.2 可测试）。 */
 export interface RuleEvaluationOptions {
@@ -158,7 +164,7 @@ export interface ScheduleFireInput {
   businessDate: string;
   /** 窗口基准字段值（task.planned_end / task.planned_start 一类；WEEKLY 忽略）。 */
   baseDate: string | null;
-  /** 业务时刻 HH:mm（R03 / R05 = 08:00，R04 = 10:00，R07 = 09:30）。 */
+  /** 业务时刻 HH:mm（R03 / R05 = 08:00，R04 = 10:00，R07 = 09:30，A02 = 19:00，A01 = 19:30，A03 / A14 = 09:00）。 */
   time: string;
   /** 节假日顺延（R03 / R05 可配置；R04 按关闭）。 */
   shiftEnabled: boolean;
@@ -193,7 +199,7 @@ export function isoWeekKey(date: string): string {
 }
 
 /**
- * 触发窗口求值：T_MINUS_1 / SAME_DAY / T_PLUS_1 走 calendar 的 T-N 求值（顺延按开关与方向），
+ * 触发窗口求值：T_MINUS_1 / SAME_DAY / T_PLUS_1 / T_PLUS_3 走 calendar 的 T±N 求值（顺延按开关与方向），
  * WEEKLY 取业务日所在周的周一；基准字段缺失返回 null（该实体本窗口不触发）。
  */
 export function resolveScheduleFire(input: ScheduleFireInput): ScheduleFire | null {
@@ -202,7 +208,8 @@ export function resolveScheduleFire(input: ScheduleFireInput): ScheduleFire | nu
     return { fireDate: monday, fireAt: atShanghaiTime(monday, input.time), windowKey: isoWeekKey(input.businessDate), shifted: false };
   }
   if (input.baseDate === null) return null;
-  const days = input.window === "T_MINUS_1" ? -1 : input.window === "T_PLUS_1" ? 1 : 0;
+  const days =
+    input.window === "T_MINUS_1" ? -1 : input.window === "T_PLUS_1" ? 1 : input.window === "T_PLUS_3" ? 3 : 0;
   const outcome = evaluateOffset({
     baseDate: input.baseDate,
     days,
