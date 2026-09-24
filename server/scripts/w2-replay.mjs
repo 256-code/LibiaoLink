@@ -3,7 +3,7 @@
  * w2 真机回放（任务落库口径 A15 / A18 / A19 / A20 · Push 124）：
  *   证据一（A15 · 阶段可空）：不传 / 显式 null 建「临时任务」→ stageKey=null（未分组）；默认读序里未分组落在九阶段之后；
  *           未分组任务不计入阶段完成度（GET /projects/{id}/stages 的 tasks 计数只算带阶段任务）。
- *   证据二（A18 / A23 · 负责人可空 + 可多位）：显式 ownerIds=[] 建任务 = 「待分配」（不兜底项目经理）；
+ *   证据二（A18 / A23 · 负责人可空 + 可多位）：缺省（不传）与显式 ownerIds=[] 建任务 = 「待分配」（原「兜底项目经理」按 2026-09-24 口径修订下线，回到 ADR-021）；
  *           编辑支持显式置空（ownerIds=[]，卡片拖进「待分配」列 = 清空负责人）；不传 ownerIds = 不改（不误清）。
  *   证据三（A19 / A20 · 顺序持久化）：插入位次 / 拖动重排写 tasks.sort_index（一组 = 同一项目 + 同一阶段，组内 0 起、密集）；
  *           刷新 / 重新拉列表顺序不变（落库不是内存态）；越界 = 组尾；旧 version 重放 409 且不部分生效；组之间互不影响。
@@ -144,7 +144,7 @@ try {
   const t1 = await createTask(projectId, { title: "临时任务·未分组甲" });
   const task1 = t1.body;
   check("A1", "临时任务不传 stageKey = 「未分组」，落组首位次 0", "201 + stageKey=null + sortIndex=0", t1.status + " " + short({ stageKey: task1?.stageKey, sortIndex: task1?.sortIndex }, 140), t1.status === 201 && task1?.stageKey === null && task1?.sortIndex === 0);
-  check("A2", "创建不传 ownerIds = 项目全部项目经理兜底（A23 · Push 136：数组，与 A18 的显式 [] 区分）", "ownerIds=[" + actorId + "]", JSON.stringify(task1?.ownerIds), Array.isArray(task1?.ownerIds) && task1.ownerIds.length === 1 && task1.ownerIds[0] === actorId);
+  check("A2", "创建不传 ownerIds = 「待分配」空数组（2026-09-24 口径修订，回到 ADR-021「不做项目经理兜底」；原「兜底项目经理」已下线）", "ownerIds=[]", JSON.stringify(task1?.ownerIds), Array.isArray(task1?.ownerIds) && task1.ownerIds.length === 0);
 
   const t2 = await createTask(projectId, { title: "临时任务·未分组乙", stageKey: null });
   const task2 = t2.body;
@@ -166,7 +166,7 @@ try {
   // ---------- A18 · 负责人可空（待分配） ----------
   const t4 = await createTask(projectId, { title: "临时任务·待分配丁", ownerIds: [] });
   const task4 = t4.body;
-  check("B1", "显式 ownerIds=[] = 「待分配」（不兜底项目经理）", "201 + ownerIds=[]", t4.status + " " + short({ ownerIds: task4?.ownerIds, sortIndex: task4?.sortIndex }, 140), t4.status === 201 && Array.isArray(task4?.ownerIds) && task4.ownerIds.length === 0);
+  check("B1", "显式 ownerIds=[] = 「待分配」（与缺省同义，2026-09-24 修订）", "201 + ownerIds=[]", t4.status + " " + short({ ownerIds: task4?.ownerIds, sortIndex: task4?.sortIndex }, 140), t4.status === 201 && Array.isArray(task4?.ownerIds) && task4.ownerIds.length === 0);
 
   const detail4a = await call("GET", "/api/v1/projects/" + projectId + "/tasks/" + task4.id);
   check("B2", "详情 ownerNames = []（待分配随行下发）", "200 + ownerNames=[]", detail4a.status + " " + short({ ownerIds: detail4a.body?.ownerIds, ownerNames: detail4a.body?.ownerNames, sortIndex: detail4a.body?.sortIndex }, 160), detail4a.status === 200 && Array.isArray(detail4a.body?.ownerNames) && detail4a.body.ownerNames.length === 0);

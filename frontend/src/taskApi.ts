@@ -144,17 +144,31 @@ function fileSummaryOf(summary: { total: number; draft: number; final: number } 
 
 /**
  * 契约任务 → UI 模型。previous = 列表里已有的那一行（缺省 undefined 表示新行）：
- * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary），故这两项从 previous 继承，
- * ownerIds 变化时由调用方随后重取列表对齐姓名。
+ * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary）：文件摘要从 previous 继承；
+ * 负责人姓名按「用户目录（resolveName，ProjectDetail 传 members）→ 旧行同 id 姓名 → —」三级兜底 ——
+ * 2026-09-24 修：原来直接沿用旧行姓名，改负责人后要刷新才变（勾上 / 取消即时可见）。
  */
-export function toUiTask(view: ApiTaskListItem | ApiTask, previous?: ProjectTask): ProjectTask {
+export function toUiTask(
+  view: ApiTaskListItem | ApiTask,
+  previous?: ProjectTask,
+  resolveName?: (id: string) => string | undefined,
+): ProjectTask {
   const startDate = view.plannedStart ?? "";
   const dueDate = view.plannedEnd ?? "";
   const derivedDays = startDate !== "" && dueDate !== "" ? daysBetweenInclusive(startDate, dueDate) : 0;
   const ownerNames = "ownerNames" in view ? view.ownerNames : undefined;
+  /** 写回响应不带姓名时：先查用户目录（调用方传 resolveName），查不到再按 id 对回旧行的姓名，最后才「—」。 */
+  const previousIds = previous?.ownerIds ?? [];
   const owners =
     ownerNames === undefined
-      ? (previous?.owners ?? view.ownerIds.map(() => "—"))
+      ? view.ownerIds.map((id) => {
+          const resolved = resolveName?.(id);
+          if (resolved !== undefined && resolved !== "") {
+            return resolved;
+          }
+          const at = previousIds.indexOf(id);
+          return at < 0 ? "—" : (previous?.owners[at] ?? "—");
+        })
       : ownerNames.map((name) => (name === null || name === "" ? "—" : name));
   return {
     id: view.id,

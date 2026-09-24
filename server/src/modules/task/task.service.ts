@@ -228,7 +228,8 @@ export class TaskService {
     } else {
       await this.assertAdmin(actorId, "手工创建非标准任务");
     }
-    const ownerIds = body.ownerIds !== undefined ? body.ownerIds : project.managerIds;
+    // 负责人缺省 = 「待分配」空数组（2026-09-24 业务口径：任务添加后负责人默认为空 —— 不再兜底项目经理；A23 的兜底口径据此修订）
+    const ownerIds = body.ownerIds !== undefined ? body.ownerIds : [];
     const at = new Date();
     const row = await this.database.db.transaction(async (tx) => {
       if (nodeId !== null) {
@@ -307,7 +308,7 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks/from-template（A1-16「批量生成节点任务」· M3-07 刀 3）：整批按模板内顺序生成 ——
-   * 阶段取模板阶段、任务描述 / 英文名取节点库现值（A1-17 锁定字段）、负责人缺省 = 项目全部项目经理（A23）。
+   * 阶段取模板阶段、任务描述 / 英文名取节点库现值（A1-17 锁定字段）、负责人缺省 = 「待分配」空数组（Push 184 修订：不再兜底项目经理，A23 的兜底口径下线）。
    * 判重（系统功能书 A1-16「同一项目已生成过的节点默认不重复生成」）：已存在的节点进 skipped；skipExisting=false 时 409。
    * 整批**同事务**（要么全落、要么不落）；位次按模板内顺序依次落位（sortIndex 起，缺省 = 组尾，同组顺延）。
    * 留痕：逐条审计（action=create，metadata 记 templateId / sourceNodeId）+ outbox task.created；不写 task_events（非字段级变更）。
@@ -332,7 +333,8 @@ export class TaskService {
     if (picked.length === 0) {
       return { created: [], skipped: [] };
     }
-    const ownerIds = body.ownerIds !== undefined ? body.ownerIds : project.managerIds;
+    // 同 create()：缺省 = 「待分配」（2026-09-24 业务口径）
+    const ownerIds = body.ownerIds !== undefined ? body.ownerIds : [];
     const stageKey = template.stageKey as string;
     const at = new Date();
     const today = shanghaiToday(at);

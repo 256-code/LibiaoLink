@@ -217,7 +217,7 @@ describe("TaskService.create · sourceNodeId（节点库来源 · A1-16）", () 
     expect(created.titleEn).toBe("Rack assembly");
     expect(created.stageKey).toBe("install");
     expect(created.sourceNodeId).toBe(NODE_A);
-    expect(created.ownerIds).toEqual([MANAGER]);
+    expect(created.ownerIds).toEqual([]);
     expect(repo.inserted[0]?.sourceNodeId).toBe(NODE_A);
     expect(repo.touched).toEqual([PROJECT]);
     expect(audit.entries[0]?.metadata).toMatchObject({ sourceNodeId: NODE_A, source: "task_node" });
@@ -277,7 +277,7 @@ describe("TaskService.create · sourceNodeId（节点库来源 · A1-16）", () 
 });
 
 describe("TaskService.createFromTemplate（模板实例化 · A11 / A1-16）", () => {
-  it("整批按模板内顺序创建：阶段取模板、描述取节点、负责人缺省项目经理、位次从 sortIndex 起、逐条 outbox 与审计", async () => {
+  it("整批按模板内顺序创建：阶段取模板、描述取节点、负责人缺省 = 「待分配」空数组、位次从 sortIndex 起、逐条 outbox 与审计", async () => {
     const repo = new FakeTaskRepository();
     repo.groupSize = 2;
     const { service, audit, database } = makeService(repo);
@@ -297,7 +297,7 @@ describe("TaskService.createFromTemplate（模板实例化 · A11 / A1-16）", (
     expect(repo.inserted.every((input) => String(input.titleEn ?? "") !== "undefined")).toBe(true);
     expect(repo.inserted[1]?.titleEn).toBeNull();
     expect(repo.inserted.map((input) => input.priority)).toEqual(["中", "中", "中"]);
-    expect(repo.inserted[0]?.ownerIds).toEqual([MANAGER]);
+    expect(repo.inserted[0]?.ownerIds).toEqual([]);
     expect(repo.shifted).toEqual([{ from: 1, to: null, delta: 3 }]);
     expect(database.outbox).toHaveLength(3);
     expect(audit.entries).toHaveLength(3);

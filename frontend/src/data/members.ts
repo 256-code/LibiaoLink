@@ -5,6 +5,12 @@
  */
 export type MemberRole = string;
 
+/** 按 id 取姓名（写回响应不带姓名时的兜底来源 = 同一份用户目录）；未知 id 返回 undefined。 */
+export function memberNameOf(members: readonly Member[], id: string): string | undefined {
+  const found = members.find((member) => member.id === id);
+  return found === undefined ? undefined : found.name;
+}
+
 export type Member = {
   id: string;
   name: string;

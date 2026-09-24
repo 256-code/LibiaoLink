@@ -813,24 +813,24 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
             const isCollapsed = collapsed[group.stage] === true;
             return (
               <section key={group.stage} className="border-b border-zinc-100 last:border-b-0">
-                <div
-                  data-stage-header={group.stage}
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={!isCollapsed}
-                  onClick={() => {
-                    onToggleStage(group.stage);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
+                {/* 阶段分组头（业务口径 2026-09-24）：整行不再是点击区域 —— 只有左侧「折叠箭头 + 阶段标签」这一小片可点，
+                    右边那一段空行点不动（原来整行是 role=button 的折叠开关，点在空白处也会折叠，容易被误触）。 */}
+                <div data-stage-header={group.stage} className="flex w-full items-center gap-2.5 bg-zinc-100 px-5 py-3">
+                  {/* 折叠开关只留这枚箭头（原先点整行也能折叠） */}
+                  <button
+                    type="button"
+                    aria-label={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    aria-expanded={!isCollapsed}
+                    title={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    onClick={(event) => {
+                      event.stopPropagation();
                       onToggleStage(group.stage);
-                    }
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-2.5 bg-zinc-100 px-5 py-3 text-left transition hover:bg-zinc-200/60"
-                >
-                  <Chevron collapsed={isCollapsed} />
-                  {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉；折叠 / 展开仍点整行或左侧箭头） */}
+                    }}
+                    className="rounded-md p-1 transition hover:bg-zinc-200/70"
+                  >
+                    <Chevron collapsed={isCollapsed} />
+                  </button>
+                  {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉） */}
                   <button
                     type="button"
                     data-stage-pill="true"
