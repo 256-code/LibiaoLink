@@ -81,6 +81,49 @@
  *   就绪态只由左半驱动（贴图区 = 点左半），右半点按显式撤销就绪态并让落点失焦。⑤c 组再补 1 项（idle 点右半仍 idle / 就绪后
  *   点右半 → 撤销 + 焦点不在卡内 + 文件框照常点得开），累计 64 项。
  *
+ * Push 205（业务口径 2026-09-28「这里应该先填发现的问题 才能填另外三个」+「明日计划也是必填项」）：
+ *   ① 「现场发现问题」= **前置开关** —— 为空时「问题归类 / 当前问题附图 / 解决方案或建议」三项**禁用**（灰底灰字点不开：
+ *      归类按钮 disabled、附图卡整卡灰底且两半点不开 / 文件框 disabled、建议框 disabled 且占位提示换「非空后可填」），
+ *      填了立即解禁、清空又回禁用；「现场工作附图」不受影响（对照组）；② 「明日计划」改**必填** —— 标签补红色必填星、
+ *      未填时「提交日报」置灰且提示还差「明日计划」（提交成功后表单复位也清明日计划）。③ 组断言拆分 + ② 组补必填星，
+ *      新增 ⑤d 组（前置开关 6 项：开局禁用 / 建议占位 / 对照组 / 填后解禁 / 解禁后粘贴就绪 / 清空回禁用），累计 72 项。
+ *
+ * Push 206（业务口径 2026-09-28「这个日报记录要大一点效果要如图二所示」+「图三还是文字提示改成图四的吧 然后用户填写后换行
+ *   填到表格后也要是换行的」）：
+ *   ① 「日报记录」整表放大 —— 表格字号 = 14px（text-sm）+ 行内边距 = 16px（py-4）+ 表头 = 14px（py-3.5）；
+ *   ② 「当日完成工作 / 明日计划」两列 white-space: pre-line —— 回放按**真键盘 Enter** 分行填写，提交后表格里按行换行显示；
+ *   ③ 「现场工作附图」列 = **大图瓦片**（128×96 · 只出图不带文件名、名字进 title —— 业务样 = 图 2）；
+ *   ④ 分点提示曾按图 4 复落（1: / 2: / 3: 三行灰字）并随「这个现场问题也要同上」扩到「现场发现问题」，随后按业务口径
+ *      「有了自动的扩展 那这个提示就不要了」**整体撤回** —— ② 组断言改为：全表单 0 处提示 + 空框聚焦预置 1: + 失焦还原空；
+ *   ⑤ 同批追加（业务口径「自动添加序号可以做到吗」+「这个现场问题也要同上」）：「当日完成工作 / 明日计划 / 现场发现问题」
+ *      三个多行框**自动序号** —— 聚焦空框预置 1: 、回车自动带下一行序号（2: / 3: …）、失焦 / 提交前统一重排
+ *      （剥旧号 / 去空行 / 重编）；「1: 」不算填（清空回前置开关禁用）；
+ *   ⑥ 同批再追加（业务口径「换行很多时要自动下扩」）：「日报填写」四个多行框改 GrowingTextarea 自动下扩 —— 高度随行数长
+ *      （下限 = 原 rows 行）、不出内滚动条。② 组 +4（提示下架对照 + 预置 + 失焦还原 + 自动下扩），③ 组 +1（回车自动补 2:），
+ *      ④ 组 +3（整表字号 / 边距 / pre-line / 明日计划换行保留），⑤c 组 +1（大图瓦片尺寸 + 名字隐去），
+ *      ⑤d 组 +1（现场发现问题同套自动序号：真键盘 Enter 补 2:），累计 82 项。
+ *
+ * Push 206 续（业务口径 2026-09-28「写点静态数据到日报的一系列记录里面去」）：日报 / 问题演示数据由「只挂示例项目 inmu-0010」
+ *   改为**所有项目共用一份**（`frontend/src/data/reports.ts`：reportsForProject / issuesForProject 不再按项目过滤）——
+ *   静态日报 6 篇扩到 **9 篇**（2026年9月14日 ~ 9月21日、覆盖 已提交 / 补填 / 草稿 三态），静态问题 5 条扩到 **7 条**
+ *   （Push 207 起三态：未解决 3 / 处理中 2 / 已完成 2）；演示附图由「只有名字」改为**内联 SVG 占位图**（离线可用）——
+ *   「日报记录」附图列的大图瓦片对静态数据同样成立。④ 组 +1（静态序列到位：10 行 + 最旧 9月14日）、
+ *   ⑤b 行数断言 1 → 10（静态 9 + 本批 1），累计 83 项。
+ *
+ * Push 207（业务口径 2026-09-28「责任这一栏不需要 删除吧」+「状态改成图二的三种」+「取消未分组 未分组就是未解决」+
+ *   「问题归类也要用不同颜色来展示」+「格式参考这种 然后处理时限不需要 所属任务也不需要」+「文字标题参考图五的来」+
+ *   「整体列表样式参考图6 项目总览页面」+「这些图标不需要」+「这个也要1 2 3 同上」）：问题侧整批改版回放 —— 新增 ⑦ 组；
+ *   ① 「问题追踪」表头 = 图五六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理）**纯文字**
+ *      （首版列头小图标 + 排序小漏斗随后按「这些图标不需要」下架）；表内无「责任 / 处理时限 / 所属任务 / 未分组」；
+ *      行样式 = 图六（px-5 py-2.5 / 1px zinc-100 细线 / 真鼠标悬停 rgba(250,250,250,0.8) / 表头 zinc-50 12px zinc-400）；
+ *   ② 状态三态色签 = 项目总览「任务状态」同款（未解决 bg-sky-100/text-sky-700 · 处理中 bg-amber-100/text-amber-800 · 已完成 bg-emerald-100/text-emerald-700）、归类彩色胶囊
+ *      （供应商原因 / 客户原因 / 客观原因 / 机械部 / 规划部 / 物流原因 六色实证）、问题附图 40×40 缩略图 + 空行「—」；
+ *   ③ 本批提交一篇带「现场发现问题 + 当前问题附图」的日报 → 自动生成的问题落表首（7 → 8 行、状态 = 未解决、
+ *      描述按行换行、归类彩色胶囊、附图 blob 缩略图 —— `Issue.photos` 新数据面贯通）；
+ *   ④ 问题看板 = 三列（未解决 / 处理中 / 已完成 · 四态 → 三态）、列头色签 = 图二、卡片撤三项、i-01 演示数据并进「未解决」；
+ *   ⑤ ⑤e 组 +4（「解决方案或建议」解禁后同套自动序号：空框聚焦预置 1: / 真键盘 Enter 续 2: / 失焦重排三行 / 清空还原）
+ *      —— 累计 105 项。
+ *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -112,14 +155,22 @@ const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
 const PROJECT_ID = process.env.REPLAY_PROJECT ?? "5a127946-526e-43be-8ff6-3b8d356ba70a";
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const Q = String.fromCharCode(34);
+/** 换行符（Push 206「用户填写后换行 填到表格后也要是换行的」回放口径：真键盘 Enter 插入、断言单元格里保留）。 */
+const LF = String.fromCharCode(10);
+/** 自动序号后的预期文本（Push 206 续 renumberLines 口径 = 逐行 1: / 2: / 3: 前缀 + LF 连接）。 */
+const NUMLINE = (text) => String(text).split(LF).map((line, index) => String(index + 1) + ": " + line).join(LF);
 const j = (value) => JSON.stringify(value);
 const STAGES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "生产阶段", "验收"];
 const PICK = ["硬件实施", "试运行"];
 const REPORT_HEADERS = ["时间time", "填写者", "关联阶段Related stages", "当日完成工作Work completed today", "明日计划Tomorrow's plan", "现场工作附图On-site photos"];
 const STATE_WORDS = ["已提交", "草稿", "补填"];
 const DROPPED_HEADERS = ["今日施工人数", "现场发现问题", "解决方案或建议"];
+/** Push 207：问题追踪六列表头（业务样 = 图五）+ 整表里不该再出现的四词。 */
+const ISSUE_HEADERS = ["日期", "问题描述", "问题归类", "解决方案或建议", "问题附图", "问题是否处理"];
+const ISSUE_DROPPED = ["责任", "处理时限", "所属任务", "未分组"];
 const NOT_A_STAGE = "布局定档";
-const DONE_TEXT = "回放·关联阶段·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+const DONE_TEXT = "回放·关联阶段·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ") + LF + "回放·完成工作第二行·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+const PLAN_TEXT_0 = "回放·首篇日报·明日计划·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ") + LF + "回放·计划第二行·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
 
 const db = new Client({ connectionString: DB });
 await db.connect();
@@ -272,8 +323,18 @@ async function pressKey(key, code, vk, modifiers = 0) {
 async function typeInto(selector, text) {
   await clickSelector(selector);
   await pressKey("a", "KeyA", 65, 2);
-  await page.send("Input.insertText", { text });
-  await sleep(500);
+  const parts = String(text).split(LF);
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i > 0) {
+      // Push 206：真键盘回车换行（textarea 里 Enter = 插入换行符；字符随 keyDown 下发）——「用户填写后换行」口径
+      await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: String.fromCharCode(13), unmodifiedText: String.fromCharCode(13) });
+      await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+      await sleep(160);
+    }
+    await page.send("Input.insertText", { text: parts[i] });
+    await sleep(160);
+  }
+  await sleep(420);
 }
 /** 1×1 红色 PNG（真实剪贴板写入用；手搓字节 + 手写 CRC32，避免引入依赖 / 依赖 Node 版本）。 */
 function pngBytes() {
@@ -324,6 +385,16 @@ function formExpr() {
     "var row=inputs[i].closest(" + j("label") + ");labels.push(row===null?" + j("") + ":row.textContent.trim());}" +
     "return {text:(f.textContent||" + j("") + "),hasBox:box!==null,count:inputs.length,labels:labels,checked:checked};})()";
 }
+
+// ---------- ⓪ 偏好预置（Push 207 醒目模式回放） ----------
+// 醒目模式按账号存服务端（users/me/preferences 的 focusMode）：上一轮中断可能残留 true，会把 ⑦ 组
+//「正常模式色签 / 行悬停」断言污染 —— 先把基线压回 false（进厂原值记下、收尾还原），页面随本次导航读到「关」。
+const prefsBefore = await api("/api/v1/users/me/preferences");
+const focusOriginal = prefsBefore.status === 200 && prefsBefore.json !== null ? prefsBefore.json.focusMode === true : false;
+const prefBaseline = await api("/api/v1/users/me/preferences", "PATCH", { focusMode: false });
+check("⓪ 偏好预置：focusMode 压回 false（进厂原值 " + String(focusOriginal) + " · 收尾还原）—— 醒目模式按账号存服务端，保证本轮从「关」开跑",
+  prefBaseline.status === 200 && prefBaseline.json !== null && prefBaseline.json.focusMode === false,
+  "status=" + String(prefBaseline.status) + " · focusMode=" + (prefBaseline.json === null ? "-" : String(prefBaseline.json.focusMode)));
 
 // ---------- ① 打开「日报及问题 → 日报填写」 ----------
 await openHash("?view=daily");
@@ -378,27 +449,75 @@ const holdProbe = await ev(
   "var f=document.querySelector(" + j('[data-fill-form] textarea[data-field="foundIssue"]') + ");" +
   "return {done:d===null?null:d.getAttribute(" + j("placeholder") + "),plan:p===null?null:p.getAttribute(" + j("placeholder") + "),found:f===null?null:f.getAttribute(" + j("placeholder") + ")};})()"
 );
-check("② 当日完成工作 / 明日计划 / 现场发现问题 三个多行框无占位提示文字（业务口径「算了 不要提示文字了」）",
+check("② 三个多行框**框内**无占位提示（placeholder 皆空 —— Push 202 撤占位；框上方静态分点提示随后也整体撤回，见下三条）",
   holdProbe !== null && holdProbe.done === null && holdProbe.plan === null && holdProbe.found === null,
   holdProbe === null ? "-" : JSON.stringify(holdProbe));
 check("② 表头双语：当日完成工作Work completed today / 明日计划Tomorrow's plan / 现场发现问题Problem（图 1 / 图 3 口径）",
   form0 !== null && form0.text.indexOf("当日完成工作Work completed today") >= 0 && form0.text.indexOf("明日计划Tomorrow's plan") >= 0 && form0.text.indexOf("现场发现问题Problem") >= 0,
   form0 === null ? "-" : "ok");
-const labelWeight = await ev(
+const planLabelProbe = await ev(
   "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");if(f===null){return null;}" +
-  "var ss=f.querySelectorAll(" + j("span") + ");for(var i=0;i<ss.length;i++){if(ss[i].textContent.trim()===" + j("明日计划Tomorrow's plan") + "){return getComputedStyle(ss[i]).fontWeight;}}return null;})()"
+  "var ss=f.querySelectorAll(" + j("span") + ");for(var i=0;i<ss.length;i++){if(ss[i].textContent.trim().indexOf(" + j("明日计划Tomorrow's plan") + ")===0){" +
+  "var kid=ss[i].querySelector(" + j("span") + ");" +
+  "return {weight:getComputedStyle(ss[i]).fontWeight,star:kid===null?" + j("") + ":kid.textContent.trim(),starClass:kid===null?" + j("") + ":String(kid.className)};}}return null;})()"
 );
 check("② 表单字段标题加粗（「明日计划Tomorrow's plan」标签 computed font-weight = 700 · 业务口径「标题都标标粗」）",
-  labelWeight === "700", String(labelWeight));
+  planLabelProbe !== null && planLabelProbe.weight === "700", planLabelProbe === null ? "-" : String(planLabelProbe.weight));
+check("② 「明日计划」标签带红色必填星 *（Push 205 业务口径「明日计划也是必填项」· text-rose-500）",
+  planLabelProbe !== null && planLabelProbe.star === "*" && String(planLabelProbe.starClass).indexOf("text-rose-500") >= 0,
+  planLabelProbe === null ? "-" : JSON.stringify({ star: planLabelProbe.star, cls: planLabelProbe.starClass }));
 
+const hintGoneProbe = await ev(
+  "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");if(f===null){return null;}" +
+  "return {count:f.querySelectorAll(" + j("[data-field-hint]") + ").length};})()"
+);
+check("② 框上方静态分点提示整体下架（Push 206 按图 4 复落的 1: / 2: / 3: 三行提示，随后按业务口径「有了自动的扩展 那这个提示就不要了」撤回 —— 全表单 [data-field-hint] = 0 处）",
+  hintGoneProbe !== null && hintGoneProbe.count === 0, hintGoneProbe === null ? "-" : "count=" + String(hintGoneProbe.count));
+const presetSel = "[data-fill-form] textarea[data-field=foundIssue]";
+await clickSelector(presetSel);
+await sleep(420);
+const presetProbe = await ev("(function(){var t=document.querySelector(" + j(presetSel) + ");return t===null?null:{value:t.value,focused:document.activeElement===t};})()");
+check("② 提示撤回后由自动序号兜底：空框聚焦预置「1: 」（「现场发现问题」也已并进同一套 · 业务口径「这个现场问题也要同上」）",
+  presetProbe !== null && presetProbe.focused === true && String(presetProbe.value) === "1: ",
+  presetProbe === null ? "-" : JSON.stringify(presetProbe));
+await clickSelector("[data-fill-form] [data-field=projectName]");
+await sleep(420);
+const presetResetProbe = await ev("(function(){var t=document.querySelector(" + j(presetSel) + ");return t===null?null:String(t.value);})()");
+check("② 空框只聚焦、没写内容 → 失焦还原为空（「1: 」不算有效内容 —— 也不把「现场发现问题」算成已填）",
+  presetResetProbe === "", JSON.stringify(presetResetProbe));
+// ② 续（Push 206 续 · 业务口径「换行很多时要自动下扩」）：多行框高度随行数长高且不出内滚动条
+const growSel = "[data-fill-form] textarea[data-field=plan]";
+const growBefore = await ev("(function(){var t=document.querySelector(" + j(growSel) + ");return t===null?null:Math.round(t.getBoundingClientRect().height);})()");
+await typeInto(growSel, "甲乙丙" + LF + "第二行" + LF + "第三行" + LF + "第四行" + LF + "第五行");
+const growProbe = await ev("(function(){var t=document.querySelector(" + j(growSel) + ");if(t===null){return null;}return {h:Math.round(t.getBoundingClientRect().height),sh:t.scrollHeight,ch:t.clientHeight};})()");
+check("② 「明日计划」多行框自动下扩（换行多时随内容长高 · 无内滚动条：scrollHeight = clientHeight · 业务口径「换行很多时要自动下扩」）",
+  growBefore !== null && growProbe !== null && Number(growProbe.h) > Number(growBefore) && Number(growProbe.sh) <= Number(growProbe.ch) + 1,
+  JSON.stringify({ before: growBefore, after: growProbe }));
+await clickSelector(growSel);
+await pressKey("a", "KeyA", 65, 2);
+await pressKey("Backspace", "Backspace", 8);
+await sleep(320);
 // ---------- ③ 真实鼠标勾选 + 填完成工作 + 提交 ----------
 await clickStageLabel(PICK[0]);
 await clickStageLabel(PICK[1]);
 const form1 = await ev(formExpr());
 check("③ 真实鼠标勾选「" + PICK[0] + "」「" + PICK[1] + "」→ 2 勾选", form1 !== null && form1.checked === 2, form1 === null ? "-" : "checked=" + String(form1.checked));
-await typeInto('[data-fill-form] textarea[data-field="doneWork"]', DONE_TEXT);
-const submitEnabled = await ev("(function(){var b=document.querySelector(" + j('[data-fill-form] button[data-action="submit"]') + ");return b===null?null:b.disabled===false;})()");
-check("③ 填「当日完成工作」后「提交日报」可点（必填齐）", submitEnabled === true, String(submitEnabled));
+await typeInto("[data-fill-form] textarea[data-field=\"doneWork\"]", DONE_TEXT);
+const autoNoProbe = await ev("(function(){var d=document.querySelector(" + j("[data-fill-form] textarea[data-field=doneWork]") + ");return d===null?null:{value:d.value};})()");
+check("③ 「当日完成工作」回车自动补下一行序号（真键盘 Enter → 换行 + 2: 前缀 · 业务口径「自动添加序号可以做到吗」）",
+  autoNoProbe !== null && String(autoNoProbe.value).indexOf(LF + "2: ") >= 0,
+  autoNoProbe === null ? "-" : JSON.stringify(autoNoProbe.value));
+const doneOnlyProbe = await ev(
+  "(function(){var b=document.querySelector(" + j("[data-fill-form] button[data-action=\"submit\"]") + ");" +
+  "var t=document.querySelector(" + j("[data-fill-hint]") + ");" +
+  "return {enabled:b===null?null:b.disabled===false,hint:t===null?" + j("") + ":String(t.textContent).trim()};})()"
+);
+check("③ 只填「当日完成工作」→「提交日报」仍置灰、提示还差「明日计划」（Push 205「明日计划也是必填项」）",
+  doneOnlyProbe !== null && doneOnlyProbe.enabled === false && String(doneOnlyProbe.hint).indexOf("明日计划") >= 0,
+  doneOnlyProbe === null ? "-" : JSON.stringify(doneOnlyProbe));
+await typeInto("[data-fill-form] textarea[data-field=\"plan\"]", PLAN_TEXT_0);
+const submitEnabled = await ev("(function(){var b=document.querySelector(" + j("[data-fill-form] button[data-action=\"submit\"]") + ");return b===null?null:b.disabled===false;})()");
+check("③ 再填「明日计划」后「提交日报」可点（必填齐：时间 + 当日完成工作 + 明日计划）", submitEnabled === true, String(submitEnabled));
 await clickSelector('[data-fill-form] button[data-action="submit"]');
 const switched = await waitFor("(function(){var b=document.querySelector(" + j('[data-subnav-item="日报记录"]') + ");return b!==null && b.getAttribute(" + j("aria-current") + ")===" + j("page") + ";})()");
 check("③ 提交后自动切到「日报记录」子视图", switched === true, String(switched));
@@ -418,27 +537,52 @@ check("④ 日报记录表头不含「今日施工人数 / 现场发现问题 / 
   Array.isArray(headers) && DROPPED_HEADERS.every((word) => headers.indexOf(word) < 0), Array.isArray(headers) ? "ok" : "-");
 const rowProbe = await ev(
   "(function(){var r=document.querySelector(" + j("[data-report-row]") + ");if(r===null){return null;}" +
-  "var tds=r.querySelectorAll(" + j("td") + ");return {id:r.getAttribute(" + j("data-report-row") + "),cells:tds.length," +
+  "var tds=r.querySelectorAll(" + j("td") + ");var t=r.closest(" + j("table") + ");var th=t===null?null:t.querySelector(" + j("thead th") + ");" +
+  "return {id:r.getAttribute(" + j("data-report-row") + "),cells:tds.length,font:t===null?" + j("") + ":getComputedStyle(t).fontSize," +
+  "tdPad:tds[0]===undefined?" + j("") + ":getComputedStyle(tds[0]).paddingTop,thPad:th===null?" + j("") + ":getComputedStyle(th).paddingTop," +
   "time:tds[0]===undefined?" + j("") + ":tds[0].textContent.trim()," +
+  "dateWeight:tds[0]===undefined?" + j("") + ":(function(){var p=tds[0].querySelector(" + j("[data-report-date]") + ");return p===null?" + j("") + ":getComputedStyle(p).fontWeight;})()," +
+  "dateClass:tds[0]===undefined?" + j("") + ":(function(){var p=tds[0].querySelector(" + j("[data-report-date]") + ");return p===null?" + j("") + ":String(p.className);})()," +
   "stage:tds[2]===undefined?" + j("") + ":tds[2].textContent.trim(),done:tds[3]===undefined?" + j("") + ":tds[3].textContent.trim()," +
+  "doneWhite:tds[3]===undefined?" + j("") + ":getComputedStyle(tds[3]).whiteSpace," +
+  "plan:tds[4]===undefined?" + j("") + ":tds[4].textContent.trim(),planWhite:tds[4]===undefined?" + j("") + ":getComputedStyle(tds[4]).whiteSpace," +
   "text:(r.textContent||" + j("") + ")};})()"
 );
 const issueProbes = await ev("document.querySelectorAll(" + j("[data-report-issue-link]") + ").length");
 check("④ 最新一行 = 6 个单元格（与收窄后的列头一一对齐）", rowProbe !== null && rowProbe.cells === 6, rowProbe === null ? "-" : String(rowProbe.cells));
 check("④ 列表已无问题记录探针 [data-report-issue-link]（该列随 Push 199 移除）", issueProbes === 0, String(issueProbes));
 check("④ 最新一行关联阶段列 = 「" + PICK[0] + "、" + PICK[1] + "」", rowProbe !== null && rowProbe.stage === PICK[0] + "、" + PICK[1], rowProbe === null ? "-" : String(rowProbe.stage));
-check("④ 最新一行「当日完成工作」= 回放文本", rowProbe !== null && rowProbe.done === DONE_TEXT, rowProbe === null ? "-" : String(rowProbe.done));
+check("④ 最新一行「当日完成工作」= 回放文本（自动序号 1: / 2: + 用户换行保留 · 真键盘 Enter 分行填写）", rowProbe !== null && rowProbe.done === NUMLINE(DONE_TEXT) && rowProbe.done.indexOf(LF) >= 0, rowProbe === null ? "-" : String(rowProbe.done));
+check("④ 整表放大（Push 206 业务口径「日报记录要大一点 效果如图二」）：表格字号 = 14px（text-sm）+ 行内边距 = 16px（py-4）+ 表头 = 14px（py-3.5）",
+  rowProbe !== null && rowProbe.font === "14px" && rowProbe.tdPad === "16px" && rowProbe.thPad === "14px",
+  rowProbe === null ? "-" : JSON.stringify({ font: rowProbe.font, tdPad: rowProbe.tdPad, thPad: rowProbe.thPad }));
+check("④ 「当日完成工作 / 明日计划」两列 white-space: pre-line（用户填写换行 → 填到表格后也按行换行显示）",
+  rowProbe !== null && rowProbe.doneWhite === "pre-line" && rowProbe.planWhite === "pre-line",
+  rowProbe === null ? "-" : JSON.stringify({ done: rowProbe.doneWhite, plan: rowProbe.planWhite }));
+check("④ 最新一行「明日计划」= 回放文本（自动序号 1: / 2: + 用户换行保留 —— 第二处 pre-line 实证）",
+  rowProbe !== null && rowProbe.plan === NUMLINE(PLAN_TEXT_0) && rowProbe.plan.indexOf(LF) >= 0, rowProbe === null ? "-" : String(rowProbe.plan));
 const CN_DATE = /^\d{4}年\d{1,2}月\d{1,2}日$/;
 check("④ 最新一行时间列 = 年月日（YYYY年M月D日 · 业务口径「时间格式也要年月日」）且不带「提交 HH:MM」小字",
   rowProbe !== null && CN_DATE.test(rowProbe.time) && rowProbe.text.indexOf("提交") < 0, rowProbe === null ? "-" : String(rowProbe.time));
+check("④ 最新一行时间列**去加粗**（Push 207 业务口径「问题追踪里面的时间不用加粗」· 业务样 = 日报记录时间列）：字重 = 400（原 font-semibold 600 下架）+ 字色对齐「问题追踪」日期列（text-zinc-700）",
+  rowProbe !== null && rowProbe.dateWeight === "400" && String(rowProbe.dateClass).indexOf("font-semibold") < 0 && String(rowProbe.dateClass).indexOf("text-zinc-700") >= 0,
+  rowProbe === null ? "-" : JSON.stringify({ w: rowProbe.dateWeight, cls: rowProbe.dateClass }));
 check("④ 最新一行不再有状态签（已提交 / 草稿 / 补填 三词都不在行内 · 业务口径「已提交状态也不要」）",
   rowProbe !== null && STATE_WORDS.every((word) => rowProbe.text.indexOf(word) < 0), rowProbe === null ? "-" : "ok");
+const seriesProbe = await ev(
+  "(function(){var rows=document.querySelectorAll(" + j("[data-report-row]") + ");if(rows.length===0){return null;}" +
+  "var tds=rows[rows.length-1].querySelectorAll(" + j("td") + ");" +
+  "return {n:rows.length,oldest:tds[0]===undefined?" + j("") + ":tds[0].textContent.trim()};})()"
+);
+check("④ 日报记录带一串静态演示数据（Push 206 续「写点静态数据到日报的一系列记录里面去」）：本批提交 1 篇 + 静态 9 篇 = 10 行、最旧 = 2026年9月14日",
+  seriesProbe !== null && seriesProbe.n === 10 && seriesProbe.oldest === "2026年9月14日",
+  seriesProbe === null ? "-" : JSON.stringify(seriesProbe));
 
 // ---------- ⑤ 回「日报填写」表单复位 ----------
 await clickSelector('[data-subnav-item="日报填写"]');
 const backReady = await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
 const form2 = await ev(formExpr());
-check("⑤ 回「日报填写」：表单复位（勾选 0 / 完成工作清空）", backReady === true && form2 !== null && form2.checked === 0 && form2.text.indexOf(DONE_TEXT) < 0, form2 === null ? "-" : "checked=" + String(form2.checked));
+check("⑤ 回「日报填写」：表单复位（勾选 0 / 完成工作与明日计划清空）", backReady === true && form2 !== null && form2.checked === 0 && form2.text.indexOf(DONE_TEXT) < 0 && form2.text.indexOf(PLAN_TEXT_0) < 0, form2 === null ? "-" : "checked=" + String(form2.checked));
 
 // ---------- ⑤b 暂存草稿（Push 202：保留表单内容 / 不写记录 / 不切子视图）+ 问题归类多选（业务口径「问题归类可以多选」） ----------
 const STAMP = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
@@ -480,15 +624,15 @@ const keptProbe = await ev(
   "var cat=document.querySelector(" + j('[data-field="issueCategory"]') + ");" +
   "return {plan:plan===null?" + j("") + ":plan.value,issue:issue===null?" + j("") + ":issue.value,checked:checked,cat:cat===null?" + j("") + ":cat.textContent.trim()};})()"
 );
-check("⑤b 暂存后表单内容保留（明日计划 / 现场发现问题 / 勾选 1 阶段 / 归类两项 · 业务口径「暂存就保留表单里面填的内容皆可」）",
-  keptProbe !== null && keptProbe.plan === PLAN_TEXT && keptProbe.issue === ISSUE_TEXT && keptProbe.checked === 1 && keptProbe.cat.indexOf("物流原因、供应商原因") >= 0,
+check("⑤b 暂存后表单内容保留（明日计划 / 现场发现问题都带自动序号 1: / 勾选 1 阶段 / 归类两项 · 业务口径「暂存就保留表单里面填的内容皆可」）",
+  keptProbe !== null && keptProbe.plan === NUMLINE(PLAN_TEXT) && keptProbe.issue === NUMLINE(ISSUE_TEXT) && keptProbe.checked === 1 && keptProbe.cat.indexOf("物流原因、供应商原因") >= 0,
   keptProbe === null ? "-" : JSON.stringify(keptProbe));
 const stillFill = await ev("(function(){var b=document.querySelector(" + j('[data-subnav-item="日报填写"]') + ");return b!==null && b.getAttribute(" + j("aria-current") + ")===" + j("page") + ";})()");
 check("⑤b 暂存后仍停在「日报填写」（不再自动切「日报记录」）", stillFill === true, String(stillFill));
 await clickSelector('[data-subnav-item="日报记录"]');
 await waitFor("document.querySelector(" + j("[data-report-row]") + ")!==null");
 const rowsAfterDraft = await ev("document.querySelectorAll(" + j("[data-report-row]") + ").length");
-check("⑤b 暂存不写「日报记录」（行数仍是提交产生的 1 行）", rowsAfterDraft === 1, String(rowsAfterDraft));
+check("⑤b 暂存不写「日报记录」（行数 = 静态演示 9 篇 + 本批提交 1 篇 = 10 行 · 暂存不增行 · Push 206 续）", rowsAfterDraft === 10, String(rowsAfterDraft));
 await clickSelector('[data-subnav-item="日报填写"]');
 await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
 
@@ -678,11 +822,105 @@ await waitFor("document.querySelector(" + j("[data-report-row]") + ")!==null");
 const rowThumb = await ev(
   "(function(){var rows=document.querySelectorAll(" + j("[data-report-row]") + ");if(rows.length===0){return null;}" +
   "var img=rows[0].querySelector(" + j("[data-attachment-thumb] img") + ");var chip=rows[0].querySelector(" + j("[data-attachment]") + ");" +
-  "return {rows:rows.length,src:img===null?" + j("") + ":String(img.getAttribute(" + j("src") + ")),name:chip===null?" + j("") + ":String(chip.getAttribute(" + j("data-attachment") + "))};})()"
+  "var box=img===null?null:img.getBoundingClientRect();" +
+  "return {rows:rows.length,src:img===null?" + j("") + ":String(img.getAttribute(" + j("src") + ")),name:chip===null?" + j("") + ":String(chip.getAttribute(" + j("data-attachment") + "))," +
+  "w:box===null?0:Math.round(box.width),h:box===null?0:Math.round(box.height)," +
+  "title:chip===null?" + j("") + ":String(chip.getAttribute(" + j("title") + ")),chipText:chip===null?" + j("") + ":chip.textContent.trim()};})()"
 );
 check("⑤c 日报记录：最新一行「现场工作附图」列出缩略图（记录列表也能预览 · blob 地址 · 名字 = 自定义后的「滑槽磕碰-现场-01.png」）",
   rowThumb !== null && String(rowThumb.src).indexOf("blob:") === 0 && String(rowThumb.name).indexOf("滑槽磕碰-现场-01.png") >= 0,
   rowThumb === null ? "-" : JSON.stringify(rowThumb));
+check("⑤c 日报记录附图 = 大图瓦片（Push 206 业务样 = 图 2）：128×96 + 只出图不带文件名（名字进 title）",
+  rowThumb !== null && Number(rowThumb.w) === 128 && Number(rowThumb.h) === 96 && rowThumb.chipText === "" && String(rowThumb.title).indexOf("滑槽磕碰-现场-01.png") >= 0,
+  rowThumb === null ? "-" : JSON.stringify({ w: rowThumb.w, h: rowThumb.h, chipText: rowThumb.chipText, title: rowThumb.title }));
+
+// ---------- ⑤d 「现场发现问题」前置开关（Push 205 · 业务口径「这里应该先填发现的问题 才能填另外三个」+「明日计划也是必填项」） ----------
+/** 前置开关探针：三个依赖项（问题归类 / 当前问题附图 / 解决方案或建议）+ 对照组「现场工作附图」的禁用态。 */
+function gateExpr() {
+  return "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");if(f===null){return null;}" +
+    "var cat=f.querySelector(" + j('[data-field="issueCategory"] button') + ");" +
+    "var zone=document.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");" +
+    "var zoneHalf=zone===null?null:zone.querySelector(" + j("[data-paste-half]") + ");" +
+    "var zoneFile=zone===null?null:zone.querySelector(" + j("input[type=file]") + ");" +
+    "var sug=f.querySelector(" + j('textarea[data-field="suggestion"]') + ");" +
+    "var photo=f.querySelector(" + j("[data-paste-zone=photos]") + ");" +
+    "var photoHalf=photo===null?null:photo.querySelector(" + j("[data-paste-half]") + ");" +
+    "var photoFile=photo===null?null:photo.querySelector(" + j("input[type=file]") + ");" +
+    "return {cat:cat===null?null:cat.disabled," +
+    "zone:zone===null?" + j("") + ":zone.getAttribute(" + j("data-paste-disabled") + ")," +
+    "zoneHalf:zoneHalf===null?null:zoneHalf.disabled,zoneFile:zoneFile===null?null:zoneFile.disabled," +
+    "sug:sug===null?null:sug.disabled," +
+    "sugPh:sug===null?" + j("") + ":String(sug.getAttribute(" + j("placeholder") + "))," +
+    "photo:photo===null?" + j("") + ":photo.getAttribute(" + j("data-paste-disabled") + ")," +
+    "photoHalf:photoHalf===null?null:photoHalf.disabled,photoFile:photoFile===null?null:photoFile.disabled};})()";
+}
+await clickSelector('[data-subnav-item="日报填写"]');
+const gateReady = await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
+const gateStart = await ev(gateExpr());
+check("⑤d 开局（未填「现场发现问题」）：「问题归类」禁用 + 「当前问题附图」整卡禁用（灰底 / 两半点不开 / 文件框禁用）",
+  gateReady === true && gateStart !== null && gateStart.cat === true && gateStart.zone === "true" && gateStart.zoneHalf === true && gateStart.zoneFile === true,
+  gateStart === null ? "-" : JSON.stringify(gateStart));
+check("⑤d 同批：「解决方案或建议」禁用且占位提示 = 「（「现场发现问题」非空后可填）」（与「问题归类」禁用提示同一套）",
+  gateStart !== null && gateStart.sug === true && String(gateStart.sugPh).indexOf("现场发现问题") >= 0 && String(gateStart.sugPh).indexOf("可填") >= 0,
+  gateStart === null ? "-" : JSON.stringify({ sug: gateStart.sug, ph: gateStart.sugPh }));
+check("⑤d 对照组：「现场工作附图」不受前置开关影响（卡未禁用 / 左半可点 / 文件框未禁用）",
+  gateStart !== null && gateStart.photo === "false" && gateStart.photoHalf === false && gateStart.photoFile === false,
+  gateStart === null ? "-" : JSON.stringify({ zone: gateStart.photo, half: gateStart.photoHalf, file: gateStart.photoFile }));
+const GATE_TEXT = "回放·前置开关·" + STAMP;
+await typeInto('[data-fill-form] textarea[data-field="foundIssue"]', GATE_TEXT);
+// Push 206 续（业务口径「这个现场问题也要同上」）：现场发现问题同套自动序号 —— 真键盘 Enter 补下一行序号
+await pressKey("Enter", "Enter", 13);
+await page.send("Input.insertText", { text: "第二条" });
+await sleep(360);
+const gateNumberProbe = await ev("(function(){var t=document.querySelector(" + j("[data-fill-form] textarea[data-field=foundIssue]") + ");return t===null?null:String(t.value);})()");
+check("⑤d 「现场发现问题」同套自动序号（真键盘 Enter → 换行 + 2: 前缀 · 业务口径「这个现场问题也要同上」）",
+  gateNumberProbe !== null && gateNumberProbe.indexOf(LF + "2: ") >= 0, JSON.stringify(gateNumberProbe));
+const gateOn = await ev(gateExpr());
+check("⑤d 填「现场发现问题」→ 三项立即解禁（归类可点 / 附图卡与文件框解禁 / 建议框解禁且占位回「如：建议由采购…」）",
+  gateOn !== null && gateOn.cat === false && gateOn.zone === "false" && gateOn.zoneHalf === false && gateOn.zoneFile === false &&
+  gateOn.sug === false && String(gateOn.sugPh).indexOf("如：建议由采购") >= 0,
+  gateOn === null ? "-" : JSON.stringify(gateOn));
+// ⑤e Push 207 追加（业务口径「这个也要1 2 3 同上」）：解禁后的「解决方案或建议」同套自动序号 —— 空框聚焦预置 1: 、
+//   真键盘 Enter 续号（2: / 3: …）、失焦 "renumberLines" 重排（与上三个多行框同一套口径）
+await clickSelector("[data-fill-form] textarea[data-field=suggestion]");
+await sleep(320);
+const sugPresetProbe = await ev("(function(){var t=document.querySelector(" + j("[data-fill-form] textarea[data-field=suggestion]") + ");return t===null?null:{value:String(t.value),focused:document.activeElement===t};})()");
+check("⑤e 「解决方案或建议」解禁后空框聚焦预置「1: 」（业务口径「这个也要1 2 3 同上」· 与前三个多行框同一套）",
+  sugPresetProbe !== null && sugPresetProbe.focused === true && String(sugPresetProbe.value) === "1: ",
+  sugPresetProbe === null ? "-" : JSON.stringify(sugPresetProbe.value));
+await page.send("Input.insertText", { text: "回放·解决方案第一行" });
+await pressKey("Enter", "Enter", 13);
+await page.send("Input.insertText", { text: "回放·解决方案第二行" });
+await page.send("Input.insertText", { text: LF + "回放·解决方案第三行" });
+await sleep(360);
+const sugNumberProbe = await ev("(function(){var t=document.querySelector(" + j("[data-fill-form] textarea[data-field=suggestion]") + ");return t===null?null:String(t.value);})()");
+check("⑤e 真键盘 Enter → 换行 + 2: 前缀（第三行故意不带号，交失焦重排归位）",
+  sugNumberProbe !== null && sugNumberProbe.indexOf(LF + "2: ") >= 0, JSON.stringify(sugNumberProbe));
+await clickSelector("[data-fill-form] textarea[data-field=doneWork]");
+await sleep(360);
+const sugBlurProbe = await ev("(function(){var t=document.querySelector(" + j("[data-fill-form] textarea[data-field=suggestion]") + ");return t===null?null:String(t.value);})()");
+check("⑤e 失焦重排 = 逐行 1: / 2: / 3: （renumberLines 兜底：第三行没号也补上）",
+  sugBlurProbe !== null && sugBlurProbe === NUMLINE("回放·解决方案第一行" + LF + "回放·解决方案第二行" + LF + "回放·解决方案第三行"),
+  JSON.stringify(sugBlurProbe));
+await clickSelector("[data-fill-form] textarea[data-field=suggestion]");
+await pressKey("a", "KeyA", 65, 2);
+await pressKey("Backspace", "Backspace", 8);
+await sleep(320);
+const sugClearedProbe = await ev("(function(){var t=document.querySelector(" + j("[data-fill-form] textarea[data-field=suggestion]") + ");return t===null?null:String(t.value);})()");
+check("⑤e 清空 → 还原为空（「1: 」只算预置不算内容 —— 与其它三框同口径）",
+  sugClearedProbe === "", JSON.stringify(sugClearedProbe));
+
+await clickSelector("[data-paste-zone=issuePhotos] [data-paste-half]");
+const gateArmed = await ev("(function(){var z=document.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");var h=z===null?null:z.querySelector(" + j("[data-paste-hint]") + ");return h===null?null:h.getAttribute(" + j("data-paste-hint") + ");})()");
+check("⑤d 解禁后「当前问题附图」粘贴就绪态照常（点左半 → armed，防禁用逻辑把正常粘贴锁死）", gateArmed === "armed", String(gateArmed));
+await clickSelector('[data-fill-form] textarea[data-field="foundIssue"]');
+await pressKey("a", "KeyA", 65, 2);
+await pressKey("Backspace", "Backspace", 8);
+await sleep(400);
+const gateOff = await ev(gateExpr());
+check("⑤d 清空「现场发现问题」→ 三项回禁用（联动实时：卡回灰底、归类与建议框再禁用）",
+  gateOff !== null && gateOff.cat === true && gateOff.zone === "true" && gateOff.zoneHalf === true && gateOff.sug === true,
+  gateOff === null ? "-" : JSON.stringify(gateOff));
 
 // ---------- ⑥ 吸顶（Push 200 起 · Push 201 两层叠放 + 修三处 bug：投影外溢 / 吞字 / 接缝；业务口径「这个也做吸顶效果吧 图二吸顶后有bug」「这里的字被吞掉了」「这个中间有条缝可以有办法解决一下吗」） ----------
 // ⑥ 前置：**未吸顶**时的静态几何 —— 横幅下沿不得压住下方内容（Push 201 补：负 mb 把区块标题吞掉 16px）
@@ -757,7 +995,302 @@ await ev("window.scrollTo(0, 0)");
 await sleep(250);
 await clickSelector('[data-maintabs-item="日报及问题"]');
 await waitFor("document.querySelectorAll(" + j("[data-subnav-item]") + ").length===4");
+// ---------- ⑦ 问题追踪 / 问题看板改版（Push 207 · 业务口径 2026-09-28「责任这一栏不需要 删除吧」+「状态改成图二的三种」+
+//   「取消未分组 未分组就是未解决」+「问题归类也要用不同颜色来展示」+「格式参考这种 然后处理时限不需要 所属任务也不需要」+
+//   「文字标题参考图五的来」+「整体列表样式参考图6 项目总览页面」+「这些图标不需要」） ----------
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-row]") + ")!==null");
+const issueTableProbe = await ev(
+  "(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");if(t===null){return null;}" +
+  "var ths=t.querySelectorAll(" + j("thead th") + ");var heads=[];var svgs=0;for(var i=0;i<ths.length;i++){heads.push(ths[i].textContent.trim());svgs+=ths[i].querySelectorAll(" + j("svg") + ").length;}" +
+  "var rows=t.querySelectorAll(" + j("[data-issue-row]") + ");var r2=rows[1]===undefined?null:rows[1];var tds=r2===null?null:r2.querySelectorAll(" + j("td") + ");var td0=tds===null||tds[0]===undefined?null:tds[0];" +
+  "var rb=r2===null?null:getComputedStyle(r2);var thead=t.querySelector(" + j("thead") + ");var lineW=" + j("") + ";var lineColor=" + j("") + ";" +
+  "if(rb!==null){if(rb.borderTopWidth!==" + j("0px") + "){lineW=rb.borderTopWidth;lineColor=rb.borderTopColor;}else if(rb.borderBottomWidth!==" + j("0px") + "){lineW=rb.borderBottomWidth;lineColor=rb.borderBottomColor;}}" +
+  "return {n:rows.length,heads:heads,svgs:svgs,text:(t.textContent||" + j("") + ")," +
+  "padTop:td0===null?" + j("") + ":getComputedStyle(td0).paddingTop,padLeft:td0===null?" + j("") + ":getComputedStyle(td0).paddingLeft," +
+  "dateWeight:tds===null||tds[0]===undefined?" + j("") + ":getComputedStyle(tds[0]).fontWeight," +
+  "lineW:lineW,lineColor:lineColor," +
+  "thBg:thead===null?" + j("") + ":getComputedStyle(thead).backgroundColor,thColor:ths.length===0?" + j("") + ":getComputedStyle(ths[0]).color," +
+  "thFont:ths.length===0?" + j("") + ":getComputedStyle(ths[0]).fontSize,tableFont:getComputedStyle(t.tagName===" + j("TABLE") + "?t:t.querySelector(" + j("table") + ")).fontSize};})()"
+);
+check("⑦ 问题追踪表头 = 图五六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理）",
+  issueTableProbe !== null && issueTableProbe.heads.length === 6 && ISSUE_HEADERS.every((name, index) => issueTableProbe.heads[index] === name),
+  issueTableProbe === null ? "-" : issueTableProbe.heads.join(" / "));
+check("⑦ 列头为纯文字、无小图标（同批业务口径「这些图标不需要」—— 首版复刻的 6 枚图标 + 排序小漏斗整体下架 · svg = 0）",
+  issueTableProbe !== null && issueTableProbe.svgs === 0, issueTableProbe === null ? "-" : "svg=" + String(issueTableProbe.svgs));
+check("⑦ 表内无「责任 / 处理时限 / 所属任务 / 未分组」四词（撤三列 + 「未分组」并入「未解决」）",
+  issueTableProbe !== null && ISSUE_DROPPED.every((word) => issueTableProbe.text.indexOf(word) < 0),
+  issueTableProbe === null ? "-" : "ok");
+check("⑦ 表头样式 = 图六（项目总览任务表）：底 zinc-50 / 字 12px zinc-400（Tailwind v4 屏下色值 = oklch，按容差核）",
+  issueTableProbe !== null && (issueTableProbe.thBg === "rgb(250, 250, 250)" || String(issueTableProbe.thBg).indexOf("oklch(0.985") >= 0) && (issueTableProbe.thColor === "rgb(161, 161, 170)" || String(issueTableProbe.thColor).indexOf("oklch(0.705") >= 0) && issueTableProbe.thFont === "12px",
+  issueTableProbe === null ? "-" : JSON.stringify({ bg: issueTableProbe.thBg, color: issueTableProbe.thColor, font: issueTableProbe.thFont }));
+check("⑦ 问题追踪日期列同样不加粗（Push 207 同批口径「问题追踪里面的时间不用加粗」在两张表统一 · 字重 = 400）",
+  issueTableProbe !== null && issueTableProbe.dateWeight === "400",
+  issueTableProbe === null ? "-" : String(issueTableProbe.dateWeight));
+check("⑦ 行样式 = 图六：px-5 py-2.5（左 20 / 上 10）+ 行间 1px zinc-100 细线 + 表体 14px（色值按 oklch 容差核）",
+  issueTableProbe !== null && issueTableProbe.padLeft === "20px" && issueTableProbe.padTop === "10px" && issueTableProbe.lineW === "1px" && (issueTableProbe.lineColor === "rgb(244, 244, 245)" || String(issueTableProbe.lineColor).indexOf("0.967") >= 0) && issueTableProbe.tableFont === "14px",
+  issueTableProbe === null ? "-" : JSON.stringify({ padLeft: issueTableProbe.padLeft, padTop: issueTableProbe.padTop, line: issueTableProbe.lineW, lineColor: issueTableProbe.lineColor, font: issueTableProbe.tableFont }));
+check("⑦ 问题追踪行数 = 静态演示 7 条（三态覆盖：未解决 3 / 处理中 2 / 已完成 2 —— 切主标签后本面板复位重取）",
+  issueTableProbe !== null && issueTableProbe.n === 7, issueTableProbe === null ? "-" : String(issueTableProbe.n));
+const issueHoverPoint = await ev(
+  "(function(){var rs=document.querySelectorAll(" + j("[data-issue-row]") + ");var r=rs[1];if(r===undefined){return null;}" +
+  "r.scrollIntoView({block:" + j("center") + "});var b=r.getBoundingClientRect();return {x:Math.round(b.left+180),y:Math.round(b.top+b.height/2)};})()"
+);
+if (issueHoverPoint !== null) {
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: issueHoverPoint.x, y: issueHoverPoint.y, button: "none" });
+  await sleep(500);
+}
+const issueHoverBg = await ev("(function(){var rs=document.querySelectorAll(" + j("[data-issue-row]") + ");return rs[1]===undefined?null:getComputedStyle(rs[1]).backgroundColor;})()");
+check("⑦ 行悬停 = hover:bg-zinc-50/80（真鼠标停在行上实测：行底色不再全透明、alpha = 0.8 · 图六同款；Tailwind v4 的色写法按计算值容差核）",
+  String(issueHoverBg) !== "rgba(0, 0, 0, 0)" && String(issueHoverBg).indexOf("0.8") >= 0, String(issueHoverBg));
+const issueTagProbe = await ev(
+  "(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");if(t===null){return null;}" +
+  "var tags=t.querySelectorAll(" + j("[data-issue-state]") + ");var states={};var order=[];var cls={};var fg={};for(var i=0;i<tags.length;i++){var s=tags[i].getAttribute(" + j("data-issue-state") + ");if(states[s]===undefined){states[s]=getComputedStyle(tags[i]).backgroundColor;fg[s]=getComputedStyle(tags[i]).color;cls[s]=String(tags[i].className);order.push(s);}}" +
+  "var ref=document.createElement(" + j("span") + ");ref.style.position=" + j("absolute") + ";ref.style.visibility=" + j("hidden") + ";document.body.appendChild(ref);var refs={};" +
+  "ref.className=" + j("bg-sky-100") + ";refs.skyBg=getComputedStyle(ref).backgroundColor;ref.className=" + j("text-sky-700") + ";refs.skyFg=getComputedStyle(ref).color;" +
+  "ref.className=" + j("bg-amber-100") + ";refs.amberBg=getComputedStyle(ref).backgroundColor;ref.className=" + j("text-amber-800") + ";refs.amberFg=getComputedStyle(ref).color;" +
+  "ref.className=" + j("bg-emerald-100") + ";refs.emeraldBg=getComputedStyle(ref).backgroundColor;ref.className=" + j("text-emerald-700") + ";refs.emeraldFg=getComputedStyle(ref).color;ref.remove();" +
+  "var cats=t.querySelectorAll(" + j("[data-issue-category]") + ");var cmap={};for(var k=0;k<cats.length;k++){var c=cats[k].getAttribute(" + j("data-issue-category") + ");if(cmap[c]===undefined){cmap[c]=getComputedStyle(cats[k]).backgroundColor;}}" +
+  "return {states:states,order:order,cls:cls,fg:fg,refs:refs,cats:cmap};})()"
+);
+check("⑦ 状态三态色签 = 项目总览「任务状态」同款（业务口径「这个问题的状态想要和项目总览里面的状态样式同款」）：未解决 = 待开始 蓝 / 处理中 = 进行中 琥珀 / 已完成 = emerald 绿 —— 同名 Tailwind 档（bg-*-100 + text-*-700/800）直接对齐 STATUS_CAPSULE_CLASS，计算色与参考元素逐一相等",
+  issueTagProbe !== null && issueTagProbe.order.length === 3 &&
+  issueTagProbe.cls["未解决"].indexOf("rounded-lg") >= 0 && issueTagProbe.cls["未解决"].indexOf("px-3") >= 0 && issueTagProbe.cls["未解决"].indexOf("py-1.5") >= 0 && issueTagProbe.cls["未解决"].indexOf("text-[11px]") >= 0 &&
+  issueTagProbe.cls["未解决"].indexOf("bg-sky-100") >= 0 && issueTagProbe.cls["未解决"].indexOf("text-sky-700") >= 0 &&
+  issueTagProbe.cls["处理中"].indexOf("bg-amber-100") >= 0 && issueTagProbe.cls["处理中"].indexOf("text-amber-800") >= 0 &&
+  issueTagProbe.cls["已完成"].indexOf("bg-emerald-100") >= 0 && issueTagProbe.cls["已完成"].indexOf("text-emerald-700") >= 0 &&
+  issueTagProbe.states["未解决"] === issueTagProbe.refs.skyBg && issueTagProbe.fg["未解决"] === issueTagProbe.refs.skyFg &&
+  issueTagProbe.states["处理中"] === issueTagProbe.refs.amberBg && issueTagProbe.fg["处理中"] === issueTagProbe.refs.amberFg &&
+  issueTagProbe.states["已完成"] === issueTagProbe.refs.emeraldBg && issueTagProbe.fg["已完成"] === issueTagProbe.refs.emeraldFg,
+  issueTagProbe === null ? "-" : JSON.stringify({ states: issueTagProbe.states, fg: issueTagProbe.fg }));
+check("⑦ 问题归类 = 彩色胶囊（业务样图三 / 图四）：供应商原因 黄 / 客户原因 红 / 客观原因 紫 / 机械部 蓝 / 规划部 绿（静态 7 条五色齐 · 物流原因在 ⑦b 新提交里核）",
+  issueTagProbe !== null && issueTagProbe.cats["供应商原因"] === "rgb(255, 234, 153)" && issueTagProbe.cats["客户原因"] === "rgb(255, 181, 179)" &&
+  issueTagProbe.cats["客观原因"] === "rgb(231, 180, 255)" && issueTagProbe.cats["机械部"] === "rgb(173, 203, 255)" &&
+  issueTagProbe.cats["规划部"] === "rgb(172, 226, 197)",
+  issueTagProbe === null ? "-" : JSON.stringify(issueTagProbe.cats));
+const issuePhotoProbe = await ev(
+  "(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");if(t===null){return null;}" +
+  "var imgs=t.querySelectorAll(" + j("[data-attachment-thumb] img") + ");var dash=0;var rows=t.querySelectorAll(" + j("[data-issue-row]") + ");" +
+  "for(var i=0;i<rows.length;i++){var cs=rows[i].querySelectorAll(" + j("td") + ");if(cs[4]!==undefined && cs[4].textContent.trim()===" + j("—") + "){dash+=1;}}" +
+  "var w=imgs.length===0?0:Math.round(imgs[0].getBoundingClientRect().width);var title=imgs.length===0?" + j("") + ":String(imgs[0].closest(" + j("[data-attachment]") + ").getAttribute(" + j("title") + "));" +
+  "return {imgs:imgs.length,dash:dash,w:w,title:title};})()"
+);
+check("⑦ 问题附图列 = 40×40 缩略图（静态演示 5 枚 · 只出图不带文件名、名字进 title）+ 空行 = 「—」",
+  issuePhotoProbe !== null && issuePhotoProbe.imgs === 5 && issuePhotoProbe.w === 40 && issuePhotoProbe.dash >= 1 && String(issuePhotoProbe.title).length > 0,
+  issuePhotoProbe === null ? "-" : JSON.stringify(issuePhotoProbe));
+// ⑦b 提交一篇带「现场发现问题 + 当前问题附图」的日报 → 自动生成的问题（未解决）落在问题追踪表首
+await clickSelector("[data-subnav-item=" + Q + "日报填写" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
+const FOUND_TEXT = "回放·问题三态·" + STAMP + LF + "回放·三态第二行";
+await typeInto("[data-fill-form] textarea[data-field=doneWork]", "回放·问题三态·当日完成工作");
+await typeInto("[data-fill-form] textarea[data-field=plan]", "回放·问题三态·明日计划");
+await typeInto("[data-fill-form] textarea[data-field=foundIssue]", FOUND_TEXT);
+await clickSelector("[data-paste-zone=issuePhotos] [data-paste-half]");
+if (String(clipWrite) !== "ok") {
+  await ev(
+    "(function(){var bin=atob(" + j(PNG_B64) + ");var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++){arr[i]=bin.charCodeAt(i);}" +
+    "var dt=new DataTransfer();dt.items.add(new File([new Blob([arr],{type:" + j("image/png") + "})]," + j("") + ",{type:" + j("image/png") + "}));" +
+    "var e=new ClipboardEvent(" + j("paste") + ",{clipboardData:dt,bubbles:true,cancelable:true});document.dispatchEvent(e);return true;})()"
+  );
+} else {
+  await page.send("Page.bringToFront");
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2, commands: ["paste"] });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2 });
+}
+await sleep(500);
+await clickSelector("[data-field=" + Q + "issueCategory" + Q + "] button");
+await waitFor("document.querySelector(" + j("[data-multi-popover]") + ")!==null");
+await clickSelector("[data-multi-option=" + Q + "供应商原因" + Q + "]");
+await clickSelector("[data-multi-option=" + Q + "物流原因" + Q + "]");
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-multi-popover]") + ")===null");
+await clickSelector("[data-fill-form] button[data-action=submit]");
+await waitFor("document.querySelector(" + j("[data-report-row]") + ")!==null");
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-row]") + ")!==null");
+const newIssueProbe = await ev(
+  "(function(){var rows=document.querySelectorAll(" + j("[data-issue-row]") + ");if(rows.length===0){return null;}var r=rows[0];var tds=r.querySelectorAll(" + j("td") + ");" +
+  "var tag=r.querySelector(" + j("[data-issue-state]") + ");var chips=r.querySelectorAll(" + j("[data-issue-category]") + ");var catNames=[];var catColors={};for(var k=0;k<chips.length;k++){var cn=chips[k].getAttribute(" + j("data-issue-category") + ");catNames.push(cn);catColors[cn]=getComputedStyle(chips[k]).backgroundColor;}" +
+  "var img=r.querySelector(" + j("[data-attachment-thumb] img") + ");" +
+  "var p=tds[1]===undefined?null:tds[1].querySelector(" + j("p") + ");" +
+  "return {rows:rows.length,title:p===null?" + j("") + ":p.textContent,white:p===null?" + j("") + ":getComputedStyle(p).whiteSpace," +
+  "state:tag===null?" + j("") + ":tag.getAttribute(" + j("data-issue-state") + ")," +
+  "cat:catNames.join(" + j("/") + "),catColors:catColors,src:img===null?" + j("") + ":String(img.getAttribute(" + j("src") + "))};})()"
+);
+check("⑦ 提交带「现场发现问题」的日报 → 自动生成问题落表首（7 → 8 行）· 状态 = 未解决（原「未分组」并入 · 新问题初始态）",
+  newIssueProbe !== null && newIssueProbe.rows === 8 && newIssueProbe.state === "未解决",
+  newIssueProbe === null ? "-" : JSON.stringify({ rows: newIssueProbe.rows, state: newIssueProbe.state }));
+check("⑦ 新问题描述 = 自动序号 1: / 2: + 用户换行保留（pre-line 实证）",
+  newIssueProbe !== null && newIssueProbe.title === NUMLINE(FOUND_TEXT) && newIssueProbe.white === "pre-line",
+  newIssueProbe === null ? "-" : String(newIssueProbe.title));
+check("⑦ 新问题归类 = 表单多选「供应商原因 + 物流原因」→ 两枚彩色胶囊入表（物流原因灰 rgb(220,223,228) 补齐六色）",
+  newIssueProbe !== null && newIssueProbe.cat === "供应商原因/物流原因" && newIssueProbe.catColors["物流原因"] === "rgb(220, 223, 228)",
+  newIssueProbe === null ? "-" : JSON.stringify(newIssueProbe.catColors));
+check("⑦ 新问题「问题附图」= 「当前问题附图」带入的 1 枚缩略图（blob 地址 · Issue.photos 数据面贯通）",
+  newIssueProbe !== null && String(newIssueProbe.src).indexOf("blob:") === 0, newIssueProbe === null ? "-" : String(newIssueProbe.src).slice(0, 40));
+// ⑦c 问题看板：三列 + 卡片撤三项 + i-01 演示数据并进「未解决」
+await clickSelector("[data-subnav-item=" + Q + "问题看板" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-column]") + ")!==null");
+const issueBoardProbe = await ev(
+  "(function(){var b=document.querySelector(" + j("[data-issue-board]") + ");if(b===null){return null;}" +
+  "var cols=b.querySelectorAll(" + j("[data-issue-column]") + ");var names=[];var colors=[];for(var i=0;i<cols.length;i++){names.push(cols[i].getAttribute(" + j("data-issue-column") + "));var tag=cols[i].querySelector(" + j("[data-issue-state]") + ");colors.push(tag===null?null:getComputedStyle(tag).backgroundColor);}" +
+  "var card=document.querySelector(" + j("[data-issue-card=i-01]") + ");var cardTag=card===null?null:card.querySelector(" + j("[data-issue-state]") + ");" +
+  "return {names:names,colors:colors,boardText:(b.textContent||" + j("") + "),i01:cardTag===null?" + j("") + ":cardTag.getAttribute(" + j("data-issue-state") + ")};})()"
+);
+check("⑦ 问题看板 = 三列（未解决 / 处理中 / 已完成 · 空列保留 —— 四态 → 三态）",
+  issueBoardProbe !== null && issueBoardProbe.names.length === 3 && issueBoardProbe.names.join("/") === "未解决/处理中/已完成",
+  issueBoardProbe === null ? "-" : issueBoardProbe.names.join(" / "));
+check("⑦ 看板列头色签 = 与追踪表同一套（项目总览同款：未解决 蓝 / 处理中 琥珀 / 已完成 emerald 绿 —— 3 枚列头色值与表内逐一相等）",
+  issueBoardProbe !== null && issueTagProbe !== null && issueBoardProbe.colors[0] === issueTagProbe.states["未解决"] && issueBoardProbe.colors[1] === issueTagProbe.states["处理中"] && issueBoardProbe.colors[2] === issueTagProbe.states["已完成"],
+  issueBoardProbe === null ? "-" : JSON.stringify(issueBoardProbe.colors));
+check("⑦ 看板卡片撤「责任 / 处理时限 / 所属任务」（业务口径「责任这一栏不需要 删除吧」+「处理时限不需要 所属任务也不需要」）",
+  issueBoardProbe !== null && ISSUE_DROPPED.every((word) => issueBoardProbe.boardText.indexOf(word) < 0), issueBoardProbe === null ? "-" : "ok");
+check("⑦ i-01 演示数据卡片状态 = 未解决（原「未分组」并入「未解决」）",
+  issueBoardProbe !== null && issueBoardProbe.i01 === "未解决", issueBoardProbe === null ? "-" : String(issueBoardProbe.i01));
+
+// ---------- ⑦d 醒目模式（Push 207 同批追加 · 业务口径「增加项目总览 同款醒目模式在问题追踪里面」+
+//   「醒目模式放在标签导航栏的最右侧」） ----------
+// 口径：开关 = 项目总览同款 FocusModeToggle，落在标签栏最右侧（日报及问题视图没有列显隐按钮）；区块标题行那份已撤；
+// 开关与项目总览**共用同一账号偏好**（users/me/preferences 的 focusMode）；
+// 开 = 问题表整行铺该问题状态的底色（6% / 悬停 12% · 状态列只留深色字），关 = 还原。
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-row]") + ")!==null");
+await waitFor("document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ")!==null");
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 8, y: 200, button: "none" });
+await sleep(300);
+const focusStartProbe = await ev(
+  "(function(){var bar=document.querySelector(" + j("[data-maintabs]") + ");var input=document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ");" +
+  "if(bar===null||input===null){return null;}" +
+  "var label=input.closest(" + j("label") + ");var b=bar.getBoundingClientRect();var r=label===null?null:label.getBoundingClientRect();" +
+  "var rows=document.querySelectorAll(" + j("[data-issue-row]") + ");var row=rows[1]===undefined?null:rows[1];" +
+  "return {checked:input.checked,barCenter:Math.round(b.left+b.width/2),labelCenter:r===null?-1:Math.round(r.left+r.width/2)," +
+  "gapRight:r===null?-1:Math.round(b.right-r.right),labelInside:r!==null&&r.top>=b.top-1&&r.bottom<=b.bottom+1," +
+  "oldSpot:document.querySelector(" + j("[data-issue-focus]") + ")!==null," +
+  "rowBg:row===null?" + j("") + ":getComputedStyle(row).backgroundColor};})()"
+);
+check("⑦ 醒目模式开关 = 标签栏最右侧（业务口径「醒目模式放在标签导航栏的最右侧」· 项目总览同款 FocusModeToggle · 区块标题行那份已撤 · 初始 = 关 · 行 = 正常模式透明底）",
+  focusStartProbe !== null && focusStartProbe.checked === false &&
+  focusStartProbe.labelCenter > focusStartProbe.barCenter &&
+  focusStartProbe.gapRight >= 0 && focusStartProbe.gapRight <= 48 &&
+  focusStartProbe.labelInside === true && focusStartProbe.oldSpot === false &&
+  focusStartProbe.rowBg === "rgba(0, 0, 0, 0)",
+  focusStartProbe === null ? "-" : JSON.stringify(focusStartProbe));
+await clickSelector("[data-maintabs] label");
+const focusTurnedOn = await waitFor(
+  "(function(){var i=document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ");" +
+  "var rs=document.querySelectorAll(" + j("[data-issue-row]") + ");if(i===null||rs[1]===undefined){return false;}" +
+  "return i.checked===true&&getComputedStyle(rs[1]).backgroundColor!==" + j("rgba(0, 0, 0, 0)") + ";})()"
+);
+check("⑦ 醒目模式开关点得上（乐观更新：checked=true + 行底色离开透明）", focusTurnedOn === true, String(focusTurnedOn));
+const focusOnProbe = await ev(
+  "(function(){var table=document.querySelector(" + j("[data-issue-table]") + ");var input=document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ");" +
+  "if(table===null||input===null){return null;}" +
+  "var ref=document.createElement(" + j("span") + ");ref.style.position=" + j("absolute") + ";ref.style.visibility=" + j("hidden") + ";document.body.appendChild(ref);var refs={};" +
+  "ref.className=" + j("bg-sky-500/[0.06]") + ";refs.rowSky=getComputedStyle(ref).backgroundColor;" +
+  "ref.className=" + j("bg-amber-500/[0.06]") + ";refs.rowAmber=getComputedStyle(ref).backgroundColor;" +
+  "ref.className=" + j("bg-emerald-500/[0.06]") + ";refs.rowEmerald=getComputedStyle(ref).backgroundColor;" +
+  "ref.className=" + j("text-sky-700") + ";refs.skyFg=getComputedStyle(ref).color;" +
+  "ref.className=" + j("text-amber-800") + ";refs.amberFg=getComputedStyle(ref).color;" +
+  "ref.className=" + j("text-emerald-700") + ";refs.emeraldFg=getComputedStyle(ref).color;ref.remove();" +
+  "var rows=table.querySelectorAll(" + j("[data-issue-row]") + ");var rowBg={};var tags={};" +
+  "for(var i=0;i<rows.length;i++){var st=rows[i].querySelector(" + j("[data-issue-state]") + ");if(st===null){continue;}" +
+  "var s=st.getAttribute(" + j("data-issue-state") + ");if(rowBg[s]!==undefined){continue;}" +
+  "rowBg[s]=getComputedStyle(rows[i]).backgroundColor;" +
+  "tags[s]={bg:getComputedStyle(st).backgroundColor,fg:getComputedStyle(st).color,weight:getComputedStyle(st).fontWeight,font:getComputedStyle(st).fontSize,cls:String(st.className)};}" +
+  "return {checked:input===null?null:input.checked,refs:refs,rowBg:rowBg,tags:tags};})()"
+);
+check("⑦ 醒目模式打开：问题表整行铺该问题状态的底色（未解决 sky / 处理中 amber / 已完成 emerald —— 6% 马卡龙，与参考类计算色逐一相等）",
+  focusOnProbe !== null && focusOnProbe.checked === true &&
+  focusOnProbe.rowBg["未解决"] === focusOnProbe.refs.rowSky &&
+  focusOnProbe.rowBg["处理中"] === focusOnProbe.refs.rowAmber &&
+  focusOnProbe.rowBg["已完成"] === focusOnProbe.refs.rowEmerald &&
+  String(focusOnProbe.rowBg["未解决"]).indexOf("/ 0.06") >= 0,
+  focusOnProbe === null ? "-" : JSON.stringify(focusOnProbe.rowBg));
+const focusHoverPoint = await ev(
+  "(function(){var rs=document.querySelectorAll(" + j("[data-issue-row]") + ");var r=rs[1];if(r===undefined){return null;}" +
+  "r.scrollIntoView({block:" + j("center") + "});var b=r.getBoundingClientRect();return {x:Math.round(b.left+180),y:Math.round(b.top+b.height/2)};})()"
+);
+if (focusHoverPoint !== null) {
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: focusHoverPoint.x, y: focusHoverPoint.y, button: "none" });
+  await sleep(500);
+}
+const focusHoverProbe = await ev(
+  "(function(){var r=document.querySelectorAll(" + j("[data-issue-row]") + ")[1];if(r===undefined){return null;}" +
+  "var ref=document.createElement(" + j("span") + ");ref.style.position=" + j("absolute") + ";ref.style.visibility=" + j("hidden") + ";document.body.appendChild(ref);" +
+  "ref.className=" + j("bg-sky-500/[0.12]") + ";var target=getComputedStyle(ref).backgroundColor;ref.remove();" +
+  "return {bg:getComputedStyle(r).backgroundColor,target:target};})()"
+);
+check("⑦ 醒目模式行悬停抬到 12%（真鼠标停在行上实测：与参考类 bg-sky-500/[0.12] 计算色相等 · 留住「这一行可点」的手感）",
+  focusHoverProbe !== null && focusHoverProbe.bg === focusHoverProbe.target && String(focusHoverProbe.bg).indexOf("/ 0.12") >= 0,
+  focusHoverProbe === null ? "-" : JSON.stringify(focusHoverProbe));
+check("⑦ 醒目模式状态列收口：撤色签胶囊、只留深色字（透明底 + 加粗 12px · 未解决 sky-700 / 处理中 amber-800 / 已完成 emerald-700 —— 同项目总览醒目模式口径）",
+  focusOnProbe !== null &&
+  focusOnProbe.tags["未解决"].bg === "rgba(0, 0, 0, 0)" && focusOnProbe.tags["未解决"].fg === focusOnProbe.refs.skyFg &&
+  focusOnProbe.tags["处理中"].bg === "rgba(0, 0, 0, 0)" && focusOnProbe.tags["处理中"].fg === focusOnProbe.refs.amberFg &&
+  focusOnProbe.tags["已完成"].bg === "rgba(0, 0, 0, 0)" && focusOnProbe.tags["已完成"].fg === focusOnProbe.refs.emeraldFg &&
+  focusOnProbe.tags["未解决"].weight === "600" && focusOnProbe.tags["未解决"].font === "12px" &&
+  String(focusOnProbe.tags["未解决"].cls).indexOf("rounded-lg") < 0,
+  focusOnProbe === null ? "-" : JSON.stringify(focusOnProbe.tags));
+const prefAfterOn = await api("/api/v1/users/me/preferences");
+check("⑦ 醒目模式点击即单键 PATCH 落库（GET 偏好 focusMode = true —— 与项目总览共用同一账号偏好）",
+  prefAfterOn.status === 200 && prefAfterOn.json !== null && prefAfterOn.json.focusMode === true,
+  "focusMode=" + (prefAfterOn.json === null ? "-" : String(prefAfterOn.json.focusMode)));
+await clickSelector("[data-maintabs-item=" + Q + "项目总览" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ")!==null");
+const overviewFocusProbe = await ev(
+  "(function(){var i=document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ");return i===null?null:{checked:i.checked};})()"
+);
+check("⑦ 切到「项目总览」：标签栏醒目模式开关同开（同一账号偏好 · 同一枚开关 —— 换视图不清）",
+  overviewFocusProbe !== null && overviewFocusProbe.checked === true,
+  overviewFocusProbe === null ? "-" : JSON.stringify(overviewFocusProbe));
+await clickSelector("[data-maintabs-item=" + Q + "日报及问题" + Q + "]");
+await waitFor("document.querySelectorAll(" + j("[data-subnav-item]") + ").length===4");
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-row]") + ")!==null");
+await waitFor("document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ")!==null");
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 8, y: 200, button: "none" });
+await sleep(300);
+const focusKeptProbe = await ev(
+  "(function(){var i=document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ");" +
+  "var r=document.querySelector(" + j("[data-issue-row]") + ");" +
+  "return {checked:i===null?null:i.checked,bg:r===null?" + j("") + ":getComputedStyle(r).backgroundColor};})()"
+);
+check("⑦ 回到「问题追踪」醒目模式仍开（跨主标签重挂后：开关 checked + 首行仍铺色）",
+  focusKeptProbe !== null && focusKeptProbe.checked === true && focusKeptProbe.bg !== "rgba(0, 0, 0, 0)",
+  focusKeptProbe === null ? "-" : JSON.stringify(focusKeptProbe));
+await clickSelector("[data-maintabs] label");
+const focusTurnedOff = await waitFor(
+  "(function(){var i=document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ");" +
+  "var rs=document.querySelectorAll(" + j("[data-issue-row]") + ");if(i===null||rs[1]===undefined){return false;}" +
+  "return i.checked===false&&getComputedStyle(rs[1]).backgroundColor===" + j("rgba(0, 0, 0, 0)") + ";})()"
+);
+const focusOffProbe = await ev(
+  "(function(){var table=document.querySelector(" + j("[data-issue-table]") + ");var i=document.querySelector(" + j("[data-maintabs] input[data-focus-mode-toggle]") + ");" +
+  "if(table===null){return null;}" +
+  "var st=table.querySelector(" + j("[data-issue-state]") + ");var r=document.querySelector(" + j("[data-issue-row]") + ");" +
+  "var ref=document.createElement(" + j("span") + ");ref.style.position=" + j("absolute") + ";ref.style.visibility=" + j("hidden") + ";document.body.appendChild(ref);" +
+  "ref.className=" + j("bg-sky-100") + ";var target=getComputedStyle(ref).backgroundColor;ref.remove();" +
+  "return {checked:i===null?null:i.checked,rowBg:r===null?" + j("") + ":getComputedStyle(r).backgroundColor," +
+  "tagBg:st===null?" + j("") + ":getComputedStyle(st).backgroundColor,target:target," +
+  "cls:st===null?" + j("") + ":String(st.className),font:st===null?" + j("") + ":getComputedStyle(st).fontSize,weight:st===null?" + j("") + ":getComputedStyle(st).fontWeight};})()"
+);
+check("⑦ 醒目模式关掉还原：开关回关 + 行还原透明底 + 状态列回「项目总览同款」色签胶囊（bg-sky-100 计算色相等 + rounded-lg + 11px/500）",
+  focusTurnedOff === true && focusOffProbe !== null && focusOffProbe.checked === false &&
+  focusOffProbe.rowBg === "rgba(0, 0, 0, 0)" &&
+  focusOffProbe.tagBg === focusOffProbe.target && String(focusOffProbe.cls).indexOf("rounded-lg") >= 0 &&
+  focusOffProbe.font === "11px" && focusOffProbe.weight === "500",
+  focusOffProbe === null ? "-" : JSON.stringify(focusOffProbe));
+const prefAfterOff = await api("/api/v1/users/me/preferences");
+check("⑦ 关闭同样落库（GET 偏好 focusMode = false）",
+  prefAfterOff.status === 200 && prefAfterOff.json !== null && prefAfterOff.json.focusMode === false,
+  "focusMode=" + (prefAfterOff.json === null ? "-" : String(prefAfterOff.json.focusMode)));
+
 // ---------- 清理 ----------
+// 偏好还原（放在撤销临时会话之前）：focusMode 回到进厂原值，不给下一轮留状态
+const prefRestoreRes = await api("/api/v1/users/me/preferences", "PATCH", { focusMode: focusOriginal });
+check("清理：账号偏好还原（focusMode 回到进厂原值 " + String(focusOriginal) + "）",
+  prefRestoreRes.status === 200 && prefRestoreRes.json !== null && prefRestoreRes.json.focusMode === focusOriginal,
+  "focusMode=" + (prefRestoreRes.json === null ? "-" : String(prefRestoreRes.json.focusMode)));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
 const residue = (await db.query(
   "select (select count(*)::int from sessions where token_hash = $1 and revoked_at is null) as sessions," +

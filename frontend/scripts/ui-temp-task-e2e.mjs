@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：临时任务「建完直接开详情抽屉 / 名字二次更改 / 常驻新建入口（任务表分组头 + 阶段卡片）」（业务口径 2026-09-28 · Push 196 / Push 197）
+ * LibiaoLink 前端 · 回放：临时任务「建完直接开详情抽屉 / 名字二次更改 / 常驻新建入口（任务表分组头；阶段卡片那份 Push 207 已撤）」（业务口径 2026-09-28 · Push 196 / Push 197 / Push 207）
  *
  * 业务口径：「临时任务 添加完 应直接跳转到详情页面人后确认时间等细节 并且临时任务的名字应可以二次更改；
  *            设计同步到项目总览的最下方 新增一个分组叫临时任务」（Push 196）；
@@ -15,8 +15,9 @@
  *   ④ 节点来源任务（sourceNodeId）的抽屉**没有**改名行；服务端同口径兜底 —— PATCH title / titleEn 均 400 VALIDATION_FAILED；
  *   ⑤ 改完名字项目总览垫底「临时任务」组同步新名字（组头带「已完成 0/1」计数）；
  *   ⑥ 任务表底部「临时任务」分组头常驻入口：点开表单直接新建（没有模板、自己填名称）→ 建完详情抽屉自动打开、落库 stageKey = null；
- *   ⑦ 阶段添加卡片（「XX：任务节点与模板」；总览点阶段标签与看板「添加 → 阶段任务」两条路径同一张卡）里**常驻**一行
- *      「临时任务（没有模板 · 自己填名称）」：点开表单直接新建 → 抽屉自动打开、卡片自动收起；
+ *   ⑦ 阶段添加卡片（「XX：任务节点与模板」；总览点阶段标签与看板「添加 → 阶段任务」两条路径同一张卡）里**不再有**
+ *      「临时任务」入口（Push 207 · 业务口径「临时任务不应该存在于阶段里面新建」—— Push 197 常驻入口下架）：
+ *      卡片内 [data-temp-task-entry] / [data-temp-task-form] 全空、也不出现「没有模板」字样；节点行照常（对照组）；
  *   ⑧ 阶段任务（stageKey 非空）即便没有来源节点也**锁定改名**（Push 197 收窄 · 业务口径「这个不是临时任务 不能修改」）：
  *      抽屉无改名行 + 服务端 PATCH title / titleEn 均 400；
  *   ⑨ 跑完零残留（软删任务 / 硬删项目 / 物理删节点 / 撤销会话）。
@@ -32,7 +33,7 @@
  *
  * 夹具：一条**临时会话**（跑完撤销）+ 一条**临时节点**（跑完物理删）+ 一个**临时项目**（跑完硬删）+
  *      一条挂在节点上的任务（验「节点来源不可改名」）+ 一条阶段任务（无来源节点，验「阶段任务同样锁定」）+
- *      看板列底 / 任务表分组头 / 阶段添加卡片（总览与看板两条路径）四条入口各现建一条临时任务，跑完零残留。
+ *      看板列底 / 任务表分组头**两条入口**各现建一条临时任务（阶段卡片那份入口 Push 207 已下架、改为反向断言），跑完零残留。
  */
 
 import { spawn } from "node:child_process";
@@ -410,28 +411,19 @@ check("⑥ 服务端：分组头入口建的临时任务已落库（stageKey = n
 await clickSelector("aside[role=dialog] [aria-label=" + Q + "关闭任务详情" + Q + "]");
 await waitFor("document.querySelector(" + j("aside[role=dialog]") + ")===null");
 
-// ---------- ⑦ 阶段添加卡片（任务节点与模板）里**常驻**一行「临时任务」：点开直接新建 → 抽屉自动开 + 卡片自动收起 ----------
+// ---------- ⑦ 阶段添加卡片（任务节点与模板）里**不再有**「临时任务」入口（Push 207 · 业务口径 2026-09-28
+//   「临时任务不应该存在于阶段里面新建」—— Push 197 复落的常驻入口整体下架；节点 / 模板两类来源照常） ----------
 await clickSelector(headerSelector(DESIGN) + " [data-stage-pill]");
 const designCardOpen2 = await waitFor("document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "]") + ")!==null", 8000);
-const tempEntryPresent = await ev("document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [data-temp-task-entry]") + ")!==null");
-check("⑦ 「设计开发：任务节点与模板」卡片里**常驻**「临时任务（没有模板 · 自己填名称）」入口", designCardOpen2 === true && tempEntryPresent === true, "card=" + String(designCardOpen2) + " entry=" + String(tempEntryPresent));
-await clickSelector("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [data-temp-task-entry]");
-const cardForm = "[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [data-temp-task-form]";
-const cardFormOpened = await waitFor("document.querySelector(" + j(cardForm) + ")!==null", 5000);
-check("⑦ 点常驻入口 → 就地出「新建临时任务」表单（不挑节点 / 模板，只填名称）", cardFormOpened === true, String(cardFormOpened));
-const cardTempName = "回放常驻入口·卡片·" + stamp;
-await typeInto(cardForm + " input[aria-label=" + Q + "临时任务名称（中文）" + Q + "]", cardTempName);
-await clickSelector(cardForm + " button[type=submit]");
-const cardDrawerOpened = await waitFor("(function(){var d=document.querySelector(" + j("aside[role=dialog]") + ");if(d===null){return false;}var h=d.querySelector(" + j("h2") + ");return h!==null && h.textContent.trim()===" + j(cardTempName) + ";})()", 15000);
-check("⑦ 建完 → 详情抽屉自动打开（标题 = 刚填的任务名）", cardDrawerOpened === true, String(cardDrawerOpened));
+const cardTempProbe = await ev("(function(){var c=document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "]") + ");if(c===null){return null;}var lis=c.querySelectorAll(" + j("ul li") + ");return {entry:c.querySelector(" + j("[data-temp-task-entry]") + ")!==null,form:c.querySelector(" + j("[data-temp-task-form]") + ")!==null,hasWords:(c.textContent||" + j("") + ").indexOf(" + j("没有模板") + ")>=0,rows:lis.length};})()");
+check("⑦ 「设计开发：任务节点与模板」卡片里**不再有**「临时任务」入口（业务口径「临时任务不应该存在于阶段里面新建」· Push 197 常驻入口下架）",
+  designCardOpen2 === true && cardTempProbe !== null && cardTempProbe.entry === false && cardTempProbe.form === false && cardTempProbe.hasWords === false,
+  cardTempProbe === null ? "-" : JSON.stringify({ entry: cardTempProbe.entry, form: cardTempProbe.form, words: cardTempProbe.hasWords }));
+check("⑦ 对照组：卡片本体照常（「任务节点」列表仍有节点行 —— 下架入口不误伤节点 / 模板两类来源）",
+  cardTempProbe !== null && Number(cardTempProbe.rows) > 0, cardTempProbe === null ? "-" : "rows=" + String(cardTempProbe.rows));
+await clickSelector("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [aria-label=" + Q + "关闭" + Q + "]");
 const designCardClosed2 = await waitFor("document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "]") + ")===null", 8000);
-check("⑦ 建完 → 阶段卡片自动收起（回到表格）", designCardClosed2 === true, String(designCardClosed2));
-const listAfterCardTemp = await api("/api/v1/projects/" + projectId + "/tasks?limit=200");
-const cardTempRow = listAfterCardTemp.json === null ? undefined : listAfterCardTemp.json.items.find((item) => item.title === cardTempName);
-const cardTempId = cardTempRow === undefined ? "" : cardTempRow.id;
-check("⑦ 服务端：卡片入口建的临时任务已落库（stageKey = null → 同样归垫底「临时任务」组）", cardTempRow !== undefined && cardTempRow.stageKey === null, cardTempRow === undefined ? "not found" : "id=" + cardTempId);
-await clickSelector("aside[role=dialog] [aria-label=" + Q + "关闭任务详情" + Q + "]");
-await waitFor("document.querySelector(" + j("aside[role=dialog]") + ")===null");
+check("⑦ 卡片右上 × 关卡片照常（入口撤了、卡片本体与关闭链路不变）", designCardClosed2 === true, String(designCardClosed2));
 
 // ---------- ⑦b 看板「添加 → 阶段任务」的同一张「任务节点与模板」卡片里也常驻这条入口（同组件、同收尾口径） ----------
 // 切到「任务进展」看板（顺带为 ⑧ 的卡片探针就位）：总览表格行没有 aria-label，卡片的「任务：…」才是回放探针
@@ -446,25 +438,13 @@ const pickerOpened = await waitFor("document.querySelector(" + j(stagePicker) + 
 check("⑦b 看板「添加 → 阶段任务」→ 先出「选择阶段」菜单（原有口径不变）", pickerOpened === true, String(pickerOpened));
 await clickTextIn(stagePicker, DESIGN);
 const kanbanCardOpen = await waitFor("document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "]") + ")!==null", 8000);
-const kanbanEntryPresent = await ev("document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [data-temp-task-entry]") + ")!==null");
-check("⑦b 看板这张「任务节点与模板」卡片里同样**常驻**「临时任务（没有模板 · 自己填名称）」入口", kanbanCardOpen === true && kanbanEntryPresent === true, "card=" + String(kanbanCardOpen) + " entry=" + String(kanbanEntryPresent));
-await clickSelector("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [data-temp-task-entry]");
-const kanbanForm = "[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [data-temp-task-form]";
-const kanbanFormOpened = await waitFor("document.querySelector(" + j(kanbanForm) + ")!==null", 5000);
-check("⑦b 点常驻入口 → 就地出「新建临时任务」表单（不挑节点 / 模板、只填名称）", kanbanFormOpened === true, String(kanbanFormOpened));
-const kanbanTempName = "回放常驻入口·看板卡片·" + stamp;
-await typeInto(kanbanForm + " input[aria-label=" + Q + "临时任务名称（中文）" + Q + "]", kanbanTempName);
-await clickSelector(kanbanForm + " button[type=submit]");
-const kanbanDrawerOpened = await waitFor("(function(){var d=document.querySelector(" + j("aside[role=dialog]") + ");if(d===null){return false;}var h=d.querySelector(" + j("h2") + ");return h!==null && h.textContent.trim()===" + j(kanbanTempName) + ";})()", 15000);
-check("⑦b 建完 → 详情抽屉自动打开（标题 = 刚填的任务名）", kanbanDrawerOpened === true, String(kanbanDrawerOpened));
+const kanbanTempProbe = await ev("(function(){var c=document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "]") + ");if(c===null){return null;}return {entry:c.querySelector(" + j("[data-temp-task-entry]") + ")!==null,form:c.querySelector(" + j("[data-temp-task-form]") + ")!==null};})()");
+check("⑦b 看板这条「阶段任务」路径打开的同一张卡片里同样**没有**「临时任务」入口（看板列底「添加 → 临时任务」不受影响）",
+  kanbanCardOpen === true && kanbanTempProbe !== null && kanbanTempProbe.entry === false && kanbanTempProbe.form === false,
+  kanbanTempProbe === null ? "-" : JSON.stringify(kanbanTempProbe));
+await clickSelector("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "] [aria-label=" + Q + "关闭" + Q + "]");
 const kanbanCardClosed = await waitFor("document.querySelector(" + j("[aria-label=" + Q + DESIGN + "：任务节点与模板" + Q + "]") + ")===null", 8000);
-check("⑦b 建完 → 卡片自动收起", kanbanCardClosed === true, String(kanbanCardClosed));
-const listAfterKanbanTemp = await api("/api/v1/projects/" + projectId + "/tasks?limit=200");
-const kanbanTempRow = listAfterKanbanTemp.json === null ? undefined : listAfterKanbanTemp.json.items.find((item) => item.title === kanbanTempName);
-const kanbanTempId = kanbanTempRow === undefined ? "" : kanbanTempRow.id;
-check("⑦b 服务端：看板卡片入口建的临时任务已落库（stageKey = null）", kanbanTempRow !== undefined && kanbanTempRow.stageKey === null, kanbanTempRow === undefined ? "not found" : "id=" + kanbanTempId);
-await clickSelector("aside[role=dialog] [aria-label=" + Q + "关闭任务详情" + Q + "]");
-await waitFor("document.querySelector(" + j("aside[role=dialog]") + ")===null");
+check("⑦b 关卡片照常（× 收起，随后 ⑧ 的抽屉探针就位）", kanbanCardClosed === true, String(kanbanCardClosed));
 
 // ---------- ⑧ 阶段任务（stageKey 非空）也锁定改名：抽屉无改名行 + 服务端 400 兜底（Push 197 收窄） ----------
 // 夹具那条阶段任务挂在「设计开发」组：就在这块看板上（上面已切过来），点它的卡片开抽屉
@@ -491,7 +471,7 @@ for (const item of leftovers) {
   const res = await api("/api/v1/projects/" + projectId + "/tasks/" + item.id, "DELETE", undefined, { "If-Match": String(item.version) });
   if (res.status === 200 || res.status === 204) deleted += 1;
 }
-check("清理：软删本轮全部任务（临时任务 4 条 + 节点来源任务 + 阶段任务共 6 条）", deleted === leftovers.length && leftovers.length === 6, String(deleted) + "/" + String(leftovers.length));
+check("清理：软删本轮全部任务（临时任务 2 条：看板列底 + 分组头；节点来源任务 + 阶段任务 —— 共 4 条 · 阶段卡片那份入口 Push 207 已撤）", deleted === leftovers.length && leftovers.length === 4, String(deleted) + "/" + String(leftovers.length));
 const projNow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projNow.json.version) });
 check("清理：硬删临时项目（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status));

@@ -16,8 +16,10 @@ type TempTaskCreateFormProps = {
 
 /**
  * 「临时任务」新建表单（Push 197 · 业务口径「没有模板 点击后直接新建即可填写任务名称」）：
- * 项目总览底部「临时任务」分组头（TaskBoard）与阶段添加卡片（StageAddCard）里的**常驻入口**共用 ——
+ * 项目总览底部「临时任务」分组头（TaskBoard）与看板列底「添加 → 临时任务」（TaskKanban）共用 ——
  * 临时任务没有节点 / 模板可挑，点入口后直接填名称（中文必填、英文可留空）；建完由上层直接打开它的详情抽屉补时间等细节。
+ * Push 207 收窄（业务口径「临时任务不应该存在于阶段里面新建」）：阶段添加卡片（StageAddCard）那份入口下架，
+ * 本表单不再从阶段面板打开。
  * 表单本体只到「输入 + 创建 / 取消」，外框由调用方给（看板列底 / 卡片列表 / 分组头浮层各随所在容器）。
  */
 export function TempTaskCreateForm({ onCreate, onCancel }: TempTaskCreateFormProps) {

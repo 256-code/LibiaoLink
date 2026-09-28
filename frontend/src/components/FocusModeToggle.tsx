@@ -23,8 +23,10 @@ const FOCUS_MODE_FILL =
 export function FocusModeToggle({ checked, onToggle }: FocusModeToggleProps) {
   return (
     <label className="flex shrink-0 cursor-pointer items-center gap-3">
+      {/* data-*：回放脚本定位用（项目总览 / 问题追踪两处各一枚，均带该属性） */}
       <input
         type="checkbox"
+        data-focus-mode-toggle=""
         className="peer sr-only"
         checked={checked}
         onChange={(event) => onToggle(event.target.checked)}
