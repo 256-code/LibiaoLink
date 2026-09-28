@@ -8,7 +8,7 @@
 | 回放时间 | 2026-09-28 13:45:20 +08:00（本地沙箱预跑） |
 | 环境 | 本地沙箱（Windows · Docker `postgres:18` · `127.0.0.1:55432` · `max_connections=100`） |
 | 数据库 | postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink（已迁移至 0038） |
-| 代码版本 | 工作区预跑（待推送）；CI 复跑段随 PR 回填 run 链接与结果 |
+| 代码版本 | `lan` 分支工作区（实现提交 `07e459a`）；CI 复跑见下节（run `36383649213` · 头 `cf7154f`） |
 | 脚本 | server/scripts/poc5-outbox-concurrency.mjs |
 | 运行时 | `server/dist` 真代码：50 个并发 worker（各自独立连接池 + 真 `OutboxDispatcher.drainOnce`，workerId=`poc5-w01`…`poc5-w50`）× 500 行 × 批量 10 · `OUTBOX_STALE_MS=60000` |
 | 口径 | 行来源 = 真 `appendOutbox` 写入；cleanup 自清理；VACUUM 需表 owner（迁移器角色） |
@@ -66,7 +66,20 @@ Limit  (cost=12.47..12.48 rows=1 width=14) (actual time=0.162..0.166 rows=10.00 
 
 ## CI 复跑（`database` job）
 
-待本片 PR CI 完成后回填（run 链接 + 关键结果逐行转写）；本机数字为本地沙箱预跑，不作为 CI 结论。
+- run：[36383649213](https://github.com/256-code/LibiaoLink/actions/runs/36383649213) · database job `108804391107`（头 `cf7154f`，2026-09-28 13:51 +08:00 起）；同 run 的 frontend / server / shared 三 job 全绿。
+- 结果：**PoC-5 13/13 PASS**（日志末行「PoC-5 全部断言通过」）。
+
+| 断言 | 本地沙箱（预跑） | CI（真机） |
+|---|---|---|
+| 首轮 50 并发（C3 / C4） | claimed=500 / 有产出 worker=50 / 用时 117ms / 0 重复 | claimed=500 / 有产出 worker=50 / 用时 261ms / 0 重复 / 轮次=1 |
+| C2 领取语句计划 | `LockRows cost=12.47..12.48` | `LockRows cost=12.49..12.50` |
+| C7 连接观测 | max_connections=100 / 当前库连接=51 / 吞吐≈4273.5 行/s | max_connections=100 / 当前库连接=53 / 吞吐≈1915.7 行/s |
+| C8 churn 后死元组 | live=500 / dead=6000 / heap=909312B / total=1662976B（churn 前 dead=0） | live=503 / dead=6053 / heap=2375680B / total=2768896B（churn 前 dead=53） |
+| C9 `VACUUM (ANALYZE)` 后 | dead=0 / heap=909312B / total=1671168B | dead=0 / heap=2195456B / total=2596864B |
+| C10 再插 500 行复用 | 增幅 0B / live=1000 / dead=0 | 增幅 49152B（≤ 1MiB 宽口径内）/ live=1000 / dead=0 |
+| CLEANUP（话题 `poc5.claim`） | 1000 条 | 1000 条 |
+
+其余断言（P0 / C0 / C1 / C5 / C6）CI 同判 PASS：workers=50 / rows=500 / batch=10 · 造数 pending=500 · `locked_by` 500/500 核对 0 不匹配 · 终态重跑 claimed=0 且 `pg_stat_database.deadlocks` 0→0。
 
 ## 复跑
 

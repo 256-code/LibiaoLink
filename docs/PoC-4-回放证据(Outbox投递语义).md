@@ -8,7 +8,7 @@
 | 回放时间 | 2026-09-28 13:42:25 +08:00（本地沙箱预跑） |
 | 环境 | 本地沙箱（Windows · Docker `postgres:18` · `127.0.0.1:55432`） |
 | 数据库 | postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink（已迁移至 0038） |
-| 代码版本 | 工作区预跑（待推送）；CI 复跑段随 PR 回填 run 链接与结果 |
+| 代码版本 | `lan` 分支工作区（实现提交 `07e459a`）；CI 复跑见下节（run `36383649213` · 头 `cf7154f`） |
 | 脚本 | server/scripts/poc4-outbox-replay.mjs |
 | 运行时 | `server/dist` 真代码：`OutboxStore.claim` / `OutboxDispatcher.drainOnce` / `OutboxAlertProbe.probeOnce` / `appendOutbox(IfAbsent)` |
 | 口径 | OUTBOX_STALE_MS=60000（env 下限）· 退避 1000ms 起 / 2000ms 封顶 · maxAttempts=3 · 告警阈值 backlog=1 / oldest=60s / deadRecent>=1 |
@@ -40,7 +40,19 @@
 
 ## CI 复跑（`database` job）
 
-待本片 PR CI 完成后回填（run 链接 + 关键结果逐行转写）；本机数字为本地沙箱预跑，不作为 CI 结论。
+- run：[36383649213](https://github.com/256-code/LibiaoLink/actions/runs/36383649213) · database job `108804391107`（头 `cf7154f`，2026-09-28 13:51 +08:00 起）；同 run 的 frontend / server / shared 三 job 全绿。
+- 结果：**PoC-4 12/12 PASS**（日志末行「PoC-4 全部断言通过」）。
+
+| 断言 | 本地沙箱（预跑） | CI（真机） |
+|---|---|---|
+| A1 投递落库（id 为自增序，不入断言） | id=4608 | id=28 |
+| A2 子进程真领取后被 SIGKILL | child pid=27812 · signal=SIGKILL · 行留 processing | child pid=3619 · signal=SIGKILL · claimed.id=28 · 行留 processing（`locked_by=poc4-crashed-worker`） |
+| B1 退避（第 1 次 ≈ base 1000ms） | 剩余退避=994ms | 剩余退避=997ms |
+| B3 3/3 转 dead 的即时告警（detail 口径） | id=4613 / attempts=3 / maxAttempts=3 | id=33 / attempts=3 / maxAttempts=3 |
+| C1 探针三码齐发（backlog / oldest_due / dead_letter） | oldest due 120001ms · backlog duePending=2 | oldest due 120000.829ms · backlog duePending=2 |
+| CLEANUP（前缀 `poc4.replay.`） | 6 条 | 6 条 |
+
+其余断言（P0 / A3~A6 / B2 / C2 / C3）CI 同判 PASS，口径与本地一致：窗口内重领 0 条 · done 后不重投 · 同 `dedupeKey` 幂等 · 宽阈值 0 告警 · 三态计数 `{"dead":1,"done":3,"pending":2}`。CI 与本地差异均为自增 id / 毫秒级计时抖动，不改变断言结论。
 
 ## 复跑
 
