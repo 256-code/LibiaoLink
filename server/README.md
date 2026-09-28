@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M4-05g 压测（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13）· **M6-01 收口 日报当日汇总与应填未填（A7-01 / A7-05）**）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M4-05g 压测（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13）· **M6-01 收口 日报当日汇总与应填未填（A7-01 / A7-05）** · **M2-06 视图与关注（A1-03 / A1-15）**）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -28,6 +28,8 @@ server/
     modules/automation/   # 自动化规则引擎（S6·automation · M5-01）：规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器（见 src/modules/automation/README.md）
     modules/template/   # 任务节点库 + 任务模板（A1-16 / A1-17 · M3-05 余第一段 / 第二段 · Push 181 / 182）：节点列表 / 新增 / 编辑 / 删除 + 模板列表 / 详情 / 新建 / 编辑 / 软删 + blueprint.manage 写门禁 + 审计留痕（见 src/modules/template/README.md）
     modules/workspace/    # 工作台聚合读面（S6·workspace · M6-05 第一刀 · Push 166）：我的任务三组（A6-01）+ 我的问题两栏（A6-03）—— 跨项目个人读面、只读（无新表 / 无迁移）（见 src/modules/workspace/README.md）
+    modules/view/      # 视图（个人 / 公共 · A1-03 · M2-06 首刀 · Push 168）：视图 CRUD（筛选 / 列配置 / 排序 / 分组，仅保存配置）+ 默认视图互斥 + 归属（个人视图他人 404 / 公共视图非创建者 403）（见 src/modules/view/README.md）
+    modules/follow/    # 关注订阅（A1-15 · M2-06 首刀 · Push 168）：关注 / 取关 / 批量 / 我的关注清单（幂等 · 逐条计数 · 归档不可新关注）（见 src/modules/follow/README.md）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
@@ -41,6 +43,7 @@ server/
   scripts/m3-06-stress.mjs    # M3-06 压测真机回放（1 万行任务数据集 + 索引调优评估；真 PG + 真 api；断言全过退出码 0）
   scripts/m3-07-replay.mjs    # M3-07 刀 1 真机回放（五态可写 + 汇总卡「最慢 / 最新阶段」+ 紧急重要度三档；真 PG + 真 api；断言全过退出码 0）
   scripts/m6-replay.mjs         # M6 日报 / 问题 + M6-01 收口 + M6-05 工作台 + M7-04 归档真机回放（A3-01 ~ A3-13 + A2-01 引用守卫 + A7-01 / A7-05 + A6-01 / A6-03 + 归档 A1 ~ A7；同上口径）
+  scripts/m2-06-replay.mjs      # M2-06 视图 / 关注真机回放（个人 / 公共视图 CRUD + 归属 + 默认互斥 + 关注幂等 / 批量 / 硬删清理；真 PG + 真 api；断言全过退出码 0）
   test/                          # vitest（health / auth 端到端 + 校验管道单测；auth 用进程内桩 IdP，不依赖 PG 与 Casdoor）
 ```
 
@@ -80,12 +83,12 @@ server/
 ## 模块结构约定
 
 - 四层：controller（HTTP）/ service（用例）/ repository（数据访问）/ events（同事务写 Outbox），对外只经 `index.ts`。
-- 15 个模块目录已占位（每个 README 标注类型 / 职责 / 主责 / 预留接口），代码随各自实现卡片落地；identity / project / blueprint / node / task / permission / admin / calendar / automation 已落地，其余仍为占位 README。
+- 19 个模块目录（每个 README 标注类型 / 职责 / 主责 / 预留接口）；identity / project / blueprint / node / task / permission / admin / calendar / automation / template / workspace / file / report-issue / stakeholder / view / follow 已落地，dashboard / notify / search 仍为占位 README。
 - DTO 一律用 `@libiaolink/contracts` 的 Zod schema（配 `ZodValidationPipe`），禁止另起一套类型。
 
 | 类型 | 模块 | 主责 |
 |---|---|---|
-| 领域（domain） | identity、project、blueprint、node、task、report-issue、stakeholder | wmj |
+| 领域（domain） | identity、project、blueprint、node、task、report-issue、stakeholder、view、follow | wmj |
 | 领域（domain · 横切） | permission（权限策略层 · h6）、calendar（工作日历 · h8） | wmj |
 | 平台（platform） | file、notify、search、dashboard | lan |
 | 平台（platform） | automation、admin（字典 / 审计 · h7 落地） | wmj |
@@ -322,6 +325,14 @@ server/
 - 实现（`src/modules/project/` 归档三件 · 单事务）：锁项目行（FOR UPDATE）→ 乐观锁 `version` → 置 `status=archived` + `archived_at` / `archived_by` → 写 `project_archives` 引用式清单 → 撤销进行中上传会话 → 审计 `action=archive`；不做解冻；归档检索按 `archived_at` 的 Asia/Shanghai 年（`filter[archivedYear]`），`search_docs` 投影随 M7-01（lan）。
 - 数据面：迁移 `0036_project_archive.sql`（`projects.archived_at` / `archived_by` 成对 CHECK + `project_archives` + `ck_audit_logs_action` 十一值）；硬删 15 步已含 `project_archives`。差异登记：清单导出随 M7-03（lan）、C4-04 归档包二期。
 
+## 视图与关注接口（M2-06 首刀 · A1-03 / A1-15 · Push 168）
+
+- 契约 `shared/src/modules/views.ts` / `shared/src/modules/follows.ts`（OpenAPI tags = views / follows）；实现 `src/modules/view/` 与 `src/modules/follow/`（controller / service / repository / module 装配 + `index.ts` 唯一出口）；两组路由挂 `SessionGuard`（读要登录），写接口叠加 `CsrfGuard`（`X-CSRF-Token`）；无功能权限键、不写审计（先例 `user_preferences` · Push 169）。
+- 视图（A1-03 · 仅保存配置、不复制数据）：`GET /api/v1/views`（缺省 = 我的个人视图 + 全部公共视图，`scope` 可过滤；排序 = 个人在前 → `updatedAt` 降序 → id 升序；随行 `ownerName`）、`POST /api/v1/views`（201）、`PATCH /api/v1/views/{id}`（局部更新，空更新 400）、`DELETE /api/v1/views/{id}`（物理删）。视图内容 = `filters`（最多 30 键）+ `columns`（最多 60 列）+ `sort` + `grouping` —— 列名 / 契约字段统一 `grouping` 避 PG 保留字 `group`（技术设计v0.3 §3.1 原字段名以本刀为准修订）。
+- 视图归属与默认视图：个人视图他人改 / 删 = 404（防 IDOR）；公共视图非创建者改 / 删 = 403（可见但无写权）；`isDefault` 置位时同事务清掉本人其它默认（库侧部分唯一索引 `uq_project_views_owner_default` 兜底）；删除默认视图不自动补位；差异登记：公共视图「共享给指定角色」未做 —— 一期公共视图 = 全员可见。
+- 关注（A1-15 · 关系单独存储，不作为任务 / 项目字段）：`GET /api/v1/follows`（我的关注清单，`objectType` / `objectId` / `projectId` 可过滤；随行 `projectId` / `projectCode` / `name`；不可见或已删目标不返回）、`POST /api/v1/follows`（新建 **201**、已关注幂等 **200**，响应 `created` 标记）、`DELETE /api/v1/follows/{objectType}/{objectId}`（按关系键物理删，不校验目标存在；未关注 = 404）、`POST /api/v1/follows/batch`（1 ~ 50 条，整体 200，`followed` / `unfollowed` / `unchanged` / `failures[]` 逐条计数；失败 code 仅 `not_found`）。
+- 关注目标口径：目标必须可见且未删除（不可见 / 不存在统一 404，防 IDOR）；**归档项目不可新关注**（404 —— ADR-027 冻结语义延伸），已有关注行保留；批量中取关不存在的行 = `unchanged`。通知投递（状态变更 / 延期 / 变更生效）随 M5（lan 线）、工作台动态流（A6-08）随二刀、前端接线随 M2-07（px 线）。
+
 ## 规则引擎（S6·automation · M5-01 内核 + M5-05 余项 · A 系列：规则模型 + 条件求值 + 回放器）
 
 - 契约 `shared/src/modules/automation.ts`（规则模型与枚举；规则管理端点随 M5-06 入 `openapi.ts`，故 paths / schemas 计数不变）与实现 `src/modules/automation/`（`automation.rules.ts` / `builtin-rules.ts` / `automation.replay.ts` + `index.ts` 出口 + README）；**纯函数：不连库、不取系统时间**（业务日由调用方注入；调度接线随 M5-02 · lan）。
@@ -557,6 +568,14 @@ server/
 - 断言（M7-04 首刀 · Push 167 追加 A1 ~ A7 · 归档）：SQL 造验收完成前置（acceptance done + 当前阶段指到 acceptance）→ 门禁 422（`ARCHIVE_GATE_NOT_PASSED` + details 含 task_not_done + `action=archive` / `result=failed` 留痕 + 项目不置位）→ `confirm=true` 越过 200（置 `status=archived` + 清单 snapshot 齐全 + ack 含 task_not_done）→ `GET /archive` 与写面同形 → `PATCH status=archived` 400（契约收紧反证）→ `filter[archivedYear]` 当年命中 / 错年不命中；证据八 G4 / W7 改为在「端点真实归档态」上复验（写保护 409 x 3 + 工作台整项目剔除）。**执行结果以本卡 CI `database` job 日志为准**（本机无 PG，不伪造）。
 - 复跑：`cd server && M6_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m6-replay.mjs [--out <报告.md>] [--json <证据.json>]`；退出码 0 = 断言全过（可当门禁），`--actor <userId>` 指定管理员、`--keep` 保留回放数据。
 - 落点说明：`docs/` 属 px 线；证据文件由 wmj 随本卡代记（回放脚本与断言同 PR），请 px 复核。
+## M2-06 回放（视图 / 关注 · A1-03 / A1-15 · Push 168）
+
+- 脚本：`scripts/m2-06-replay.mjs`（真 PG + 真 api；铸临时管理员会话 + 合成复核用户（无角色，用于 404 / 全员可见对照）；建 3 个回放项目（M2RPL- 主 / ARC 归档 / DEL 硬删）+ 视图 / 关注靶子；跑完硬删 projects 全链 + `project_views` + `follows` + 合成用户）。
+- 断言组：P1 ~ P6（前置：会话 / 字典 / 用户目录 / 项目就绪）、V1 ~ V11（视图 CRUD / 归属 404 与 403 / 默认互斥 / 物理删）、F1 ~ F11（关注幂等 / 清单 / 批量逐条计数 / 取关 / 可见性按 PERMISSION_ENFORCED 分派（判权限态 404 防 IDOR / 一期全员可见态 201 + 取关清理）/ 归档不可新关注 / 项目硬删后关注行清理 2 → 0）。
+- 复跑：`cd server && M2_06_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m2-06-replay.mjs [--base-url http://127.0.0.1:3001] [--keep]`；退出码 0 = 全过。
+- CI 接线：`.github/workflows/ci.yml` 的 `database` job（M6 回放之后追加一步）—— `.github/` 属 px 线，随本刀代记，请 px 复核（先例 Push 156 / 157）。
+- 说明：本机无 PG，真机证据以 CI `database` job 为准（不伪造）。
+
 ## CI 接线（g5 · px｜已落地）
 
 `.github/` 归 px 线；下方 job 片段已按 g5 落入 `.github/workflows/ci.yml` 的 `server` job（另补 `npm run build` 一步，保证部署产物可构建）：
@@ -611,4 +630,5 @@ server/
 - S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-05c 预览转换队列（outbox `preview.job` 领取器 + 转换沙箱客户端 + 三元组幂等 + 失败降级 + 定档预生成 + 真机回放 · 迁移 `0028`）—— 已落地（PR-10）**；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0020）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；**M4-05 预览编排 —— 进行中：数据层已落地（迁移 `0027` · `preview_artifacts` + `ck_audit_logs_action` 一次扩 `preview` / `download` 至十值），转换器 / 队列与读 API 随后续切片**；**M4-05c 预览转换队列 —— 已落地（PR-10 · 迁移 `0028`：outbox 领取器 + 转换沙箱客户端 + 失败降级）；**M4-05d 读 API（`GET /files/{id}/preview`：三态 + 短时签名（`PREVIEW_URL_TTL_SECONDS`）+ 仅 ready 写审计 + 版本 404 + 读取侧幂等补投 + 真机回放）—— 已落地（PR-11）**；**M4-05e 产物清理 —— 已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行；真机回放 16/16）**；**M4-05f 下载切片（`GET /files/{id}/versions/{versionId}/download-url`：attachment 签名（`S3_DOWNLOAD_URL_TTL_SECONDS`）+ `file.download` + download 审计 + 真机两态回放 14/14）—— 已落地（PR-13）**，M4-05 剩余 = 无（**M4-05g 压测已随 PR-14 落地**：两档实跑 —— 成功率 / 200MB 续传 / 并发背压 / 长跑内存）；**M4-06 二维 CAD 本地转换 PoC（条件性交付 · PoC-8）—— 暂缓（2026-09-28 留痕）**：前置 = 设计部门真实样本 ≥10 个 dwg/dxf（v0.1 §8.2 Q4），目前无法获取 → **有意识暂缓、非漏做**；现状 dwg/dxf 不在 `preview.targets.ts` 渲染通道表内（D2-03：不达标退化为下载）→ 上传可下载、预览走 D2-05 自然降级「仅下载」，**零副作用、不阻塞上线**；样本到位后另片开工（达标线：图层 / 线宽 / 中文字体 / 打印样式达标率 ≥95%、单页 ≤10 s；契约 `PreviewTarget` 不新增 —— CAD 产物 PDF → `pdf` 通道、SVG → `image` 通道）。
 - S6·automation：**M5-01 规则引擎内核（规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器 + R02 ~ R07 金标 31 例）—— 已落地（Push 161）**；**M5-05 余项 A 系列（A01 / A02 / A03 / A14 规则 + 文案 + 金标 22 例）—— 已落地（Push 163）**；剩余：M5-02 调度与补发（lan）、M5-03 企微通道（lan）、M5-04 站内信 / SSE（lan）、M5-06 规则管理接口与发送记录（lan）、M5-07 前端消息中心与规则管理页（px）。
 - lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 无（M4-05g 压测已随 PR-14 落地）、**M4-06 二维 CAD PoC 暂缓（2026-09-28 留痕：暂无真实样本；条件性交付不阻塞，dwg/dxf 走 D2-05 降级）**）/ preview / notify / outbox 调度 / search / dashboard。
+- M2-06：视图（个人 / 公共 · A1-03）与关注订阅（A1-15）—— 已落地（Push 168 · 迁移 `0037` + 契约 `views` / `follows` + 模块 `view` / `follow` + 真机回放 `scripts/m2-06-replay.mjs`）；剩余：公共视图角色级共享（A1-03 余项，口径待定）、关注通知投递（M5 · lan）、工作台关注动态流（A6-08 · 二刀）、前端接线（M2-07 · px）。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。
