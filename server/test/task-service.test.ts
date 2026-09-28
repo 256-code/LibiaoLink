@@ -19,6 +19,7 @@ import { TaskRepository } from "../src/modules/task/task.repository.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 import { TaskService } from "../src/modules/task/task.service.js";
+import type { TaskNodeRepository, TemplateService } from "../src/modules/template/index.js";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const TASK = "22222222-2222-4222-8222-222222222222";
@@ -33,6 +34,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     projectId: PROJECT,
     stageKey: "install",
     nodeId: NODE,
+    taskNodeId: null,
     title: "货架组装",
     titleEn: null,
     ownerIds: [MANAGER],
@@ -252,11 +254,13 @@ function makeService(
     gate as unknown as TaskGateRepository,
     roles as unknown as RoleService,
     new FakeAuditService() as unknown as AuditService,
+    {} as unknown as TaskNodeRepository,
+    {} as unknown as TemplateService,
   );
 }
 
 describe("TaskService.create（A10 / A1-13）", () => {
-  it("带节点创建：ownerIds 缺省 = 项目全部项目经理，状态 pending / 进度 0，写 outbox 与项目触点", async () => {
+  it("带节点创建：ownerIds 缺省 = 「待分配」空数组（2026-09-24 业务口径：不兜底项目经理），状态 pending / 进度 0，写 outbox 与项目触点", async () => {
     const repo = new FakeTaskRepository();
     const service = makeService(repo);
     const created = await service.create(
@@ -264,18 +268,26 @@ describe("TaskService.create（A10 / A1-13）", () => {
       { stageKey: "install", title: "货架组装", taskNodeId: NODE },
       ACTOR,
     );
-    expect(created.ownerIds).toEqual([MANAGER]);
+    expect(created.ownerIds).toEqual([]);
     expect(created.status).toBe("pending");
     expect(created.progress).toBe(0);
     expect(repo.touched).toEqual([PROJECT]);
   });
 
-  it("多位项目经理（A23 · Push 136）：ownerIds 缺省兜底 = 项目全部经理、顺序与 managerIds 一致", async () => {
+  it("ownerIds 口径（2026-09-24 修订）：缺省 = 「待分配」空数组；显式传多位经理 = 原样保留（顺序 = 传入顺序）", async () => {
     const repo = new FakeTaskRepository();
     repo.project = { id: PROJECT, managerIds: [MANAGER, MANAGER_2], stageKey: "presale", status: "active" };
     const service = makeService(repo);
-    const created = await service.create(PROJECT, { stageKey: "install", title: "货架组装", taskNodeId: NODE }, ACTOR);
-    expect(created.ownerIds).toEqual([MANAGER, MANAGER_2]);
+    const blank = await service.create(PROJECT, { stageKey: "install", title: "货架组装", taskNodeId: NODE }, ACTOR);
+    expect(blank.ownerIds).toEqual([]);
+    const repo2 = new FakeTaskRepository();
+    repo2.project = { id: PROJECT, managerIds: [MANAGER, MANAGER_2], stageKey: "presale", status: "active" };
+    const assigned = await makeService(repo2).create(
+      PROJECT,
+      { stageKey: "install", title: "货架组装", taskNodeId: NODE, ownerIds: [MANAGER_2, MANAGER] },
+      ACTOR,
+    );
+    expect(assigned.ownerIds).toEqual([MANAGER_2, MANAGER]);
   });
 
   it("节点判重 → 409 TASK_ALREADY_EXISTS", async () => {

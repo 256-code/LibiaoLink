@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
-import { addedPresetNodeIds, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
@@ -208,7 +208,7 @@ type TaskBoardProps = {
   /** 「添加任务」：从任务模板预设里挑节点加进项目（不传 = 阶段标签点不开右侧卡片）。 */
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一条 / 一批并指定插入位置（Push 113：点「＋ 添加」先弹位置浮层，选完才加进项目）。不传 = 点一条直接加到该阶段最后。 */
-  onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => void;
+  onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 项目经理展示文本（项目级字段：取项目卡片上的名单，多位按「、」连接；不传时回落常量占位）。 */
   managers?: string;
   /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
@@ -642,9 +642,10 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
-  /** 项目里已有的任务 id：添加任务时用来判断节点是不是已经加过。 */
-  /** 项目里已添加的节点 id（含「同阶段同名」折算的预设节点，见 `addedPresetNodeIds`）：模板节点按它显示「已添加」并判重。 */
-  const existingTaskIds = addedPresetNodeIds(tasks);
+  /** 项目里已添加的节点判重键（见 `addedNodeKeysOf`）：添加卡片的节点 / 模板条目按它显示「已添加」并跳过重复。 */
+  const addedNodeKeys = addedNodeKeysOf(tasks);
+  /** 来源节点 id 集合（见 `addedNodeIdsOf` · M3-07 刀 3）：精确判重，优先于上面的同阶段同名兜底。 */
+  const addedNodeIds = addedNodeIdsOf(tasks);
   /**
    * 该阶段现有任务（Push 113）：给「点 ＋ 添加 → 选位置」当锚点 —— `tasks` 已经是展示顺序
    * （阶段为主键、组内按看板顺序表），所以这里的先后 = 项目总览里这些任务的先后。
@@ -812,24 +813,24 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
             const isCollapsed = collapsed[group.stage] === true;
             return (
               <section key={group.stage} className="border-b border-zinc-100 last:border-b-0">
-                <div
-                  data-stage-header={group.stage}
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={!isCollapsed}
-                  onClick={() => {
-                    onToggleStage(group.stage);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
+                {/* 阶段分组头（业务口径 2026-09-24）：整行不再是点击区域 —— 只有左侧「折叠箭头 + 阶段标签」这一小片可点，
+                    右边那一段空行点不动（原来整行是 role=button 的折叠开关，点在空白处也会折叠，容易被误触）。 */}
+                <div data-stage-header={group.stage} className="flex w-full items-center gap-2.5 bg-zinc-100 px-5 py-3">
+                  {/* 折叠开关只留这枚箭头（原先点整行也能折叠） */}
+                  <button
+                    type="button"
+                    aria-label={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    aria-expanded={!isCollapsed}
+                    title={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    onClick={(event) => {
+                      event.stopPropagation();
                       onToggleStage(group.stage);
-                    }
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-2.5 bg-zinc-100 px-5 py-3 text-left transition hover:bg-zinc-200/60"
-                >
-                  <Chevron collapsed={isCollapsed} />
-                  {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉；折叠 / 展开仍点整行或左侧箭头） */}
+                    }}
+                    className="rounded-md p-1 transition hover:bg-zinc-200/70"
+                  >
+                    <Chevron collapsed={isCollapsed} />
+                  </button>
+                  {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉） */}
                   <button
                     type="button"
                     data-stage-pill="true"
@@ -897,7 +898,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       {cardStage !== null && (onAddNode !== undefined || onAddNodes !== undefined) ? (
         <StageAddCard
           stage={cardStage}
-          existingTaskIds={existingTaskIds}
+          addedNodeKeys={addedNodeKeys}
+          addedNodeIds={addedNodeIds}
           onAddNode={onAddNode}
           placement={onAddNodes === undefined ? undefined : { tasks: stageTasksOf(cardStage) }}
           onAddNodes={onAddNodes}

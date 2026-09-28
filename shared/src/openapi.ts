@@ -36,6 +36,10 @@ import {
   TaskBatchResponseSchema,
 } from "./modules/tasks.ts";
 import {
+  TaskNodeCreateBodySchema,
+  TaskNodeDeleteResponseSchema,
+  TaskNodeSchema,
+  TaskNodeUpdateBodySchema,
   TaskNodeListQuerySchema,
   TaskNodeListResponseSchema,
   TaskTemplateCreateBodySchema,
@@ -239,10 +243,10 @@ export function buildOpenApiDocument() {
     method: "delete",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
-    summary: "删除项目（软删；If-Match 回传当前 version 防误删）",
+    summary: "删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删）",
     request: { params: idParams, headers: ProjectDeleteHeadersSchema },
     responses: {
-      200: { description: "已软删项目（列表 / 详情 / facets / 搜索不再返回）", ...json(ProjectSchema) },
+      200: { description: "已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建）", ...json(ProjectSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
@@ -459,6 +463,48 @@ export function buildOpenApiDocument() {
     summary: "任务节点库（任务模板的节点来源；按阶段过滤）",
     request: { query: TaskNodeListQuerySchema },
     responses: { 200: { description: "节点库列表", ...json(TaskNodeListResponseSchema) } },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/task-nodes",
+    tags: ["templates"],
+    summary: "新增任务节点（管理端维护节点库；同阶段同名 409）",
+    request: { headers: idempotencyHeader, body: json(TaskNodeCreateBodySchema) },
+    responses: {
+      201: { description: "创建成功", ...json(TaskNodeSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/task-nodes/{id}",
+    tags: ["templates"],
+    summary: "编辑任务节点（改名 / 英文名；乐观锁 version 必传）",
+    request: { params: idParams, body: json(TaskNodeUpdateBodySchema) },
+    responses: {
+      200: { description: "编辑成功", ...json(TaskNodeSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/task-nodes/{id}",
+    tags: ["templates"],
+    summary: "删除任务节点（物理删行；删除前快照写审计；已生成的项目任务不变）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "已删除", ...json(TaskNodeDeleteResponseSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
   });
 
   registry.registerPath({

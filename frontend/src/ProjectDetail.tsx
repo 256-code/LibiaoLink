@@ -10,7 +10,7 @@ import type { TaskEditSubmit } from "./components/TaskDrawer";
 import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
-import type { Member } from "./data/members";
+import { memberNameOf, type Member } from "./data/members";
 import type { ProjectTask, TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { projectManagerText } from "./types";
@@ -32,6 +32,7 @@ import {
   type ApiTask,
   type ApiTaskListItem,
   type TaskCreateInput,
+  createTasksFromTemplate,
   type TaskUpdateInput,
 } from "./taskApi";
 
@@ -161,9 +162,14 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);
 
-  /** 单行替换（PATCH / 进度写入都回单行）：ownerNames 与文件摘要写入响应不带，从旧行继承。 */
+  /**
+   * 单行替换（PATCH / 进度写入都回单行）：文件摘要从旧行继承；
+   * 负责人姓名走用户目录（写回响应不带 ownerNames —— 不补的话改完负责人要刷新才显示）。
+   */
   const replaceRow = (view: ApiTaskListItem | ApiTask): void => {
-    setRawTasks((current) => current.map((row) => (row.id === view.id ? toUiTask(view, row) : row)));
+    setRawTasks((current) =>
+      current.map((row) => (row.id === view.id ? toUiTask(view, row, (id) => memberNameOf(members, id)) : row)),
+    );
   };
 
   /** 汇总卡重取（最慢 / 最新阶段、逾期与完成数都可能被一次写入改动）。 */
@@ -434,16 +440,40 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   /**
    * 「＋ 添加 / 整套添加」（项目总览的添加卡片与看板「添加 → 阶段任务」，Push 113）：按阶段建任务，
    * 位置浮层的锚点换算成组内位次；一次多条按传入顺序依次落位（第 k 条的位次 = 锚点位次 + k，整体不颠倒）。
-   * 节点库 / 模板实例化未落地（M3-05 余）前不带 taskNodeId —— 预设节点不是节点库 UUID（判重见 `addedPresetNodeIds`）。
+   * M3-07 刀 3 起都带**来源节点库节点**（`sourceNodeId`）：判重由服务端按（项目 × 节点）精确裁决；
+   * 来自某块模板的「整套添加」改走模板实例化接口（`POST …/tasks/from-template`，整批同事务 + skipped 清单）。
    */
-  const handleAddNodes = (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => {
+  const handleAddNodes = (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => {
     const stageKey = stageKeyOfName(stage);
     const base = sortIndexFor(placement);
     void (async () => {
+      if (templateId !== undefined && projectId !== null && nodes.length > 0) {
+        try {
+          const result = await createTasksFromTemplate(projectId, {
+            templateId,
+            nodeIds: nodes.map((node) => node.id),
+            skipExisting: true,
+            priority: "中",
+            ...(base === undefined ? {} : { sortIndex: base }),
+          });
+          if (result.skipped.length > 0) {
+            setToolError("有 " + String(result.skipped.length) + " 条节点在这个项目里已经加过，本次已跳过（没有重复创建）。");
+          }
+          if (result.created.length > 0) {
+            afterCreate();
+          } else {
+            reloadAll();
+          }
+          return;
+        } catch (error) {
+          reportWriteError(error);
+          return;
+        }
+      }
       let created = false;
       for (let index = 0; index < nodes.length; index += 1) {
         const node = nodes[index];
-        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, priority: "中" };
+        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, sourceNodeId: node.id, priority: "中" };
         if (base !== undefined) {
           body.sortIndex = base + index;
         }
@@ -461,14 +491,44 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   };
 
   /** 看板「添加 → 阶段任务」：节点自带阶段，并带上所在列的负责人 / 状态（与「临时任务」同一套列上下文）。 */
-  const handleKanbanAddNode = (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement) => {
+  const handleKanbanAddNode = (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => {
     const stageKey = stageKeyOfName(stage);
     const base = sortIndexFor(placement);
     void (async () => {
+      // 来自某块模板的「整套添加」（M3-07 刀 3）：走模板实例化接口一次落库，再按所在列补一次状态写入（创建体没有 status）
+      if (templateId !== undefined && projectId !== null && nodes.length > 0) {
+        try {
+          const result = await createTasksFromTemplate(projectId, {
+            templateId,
+            nodeIds: nodes.map((node) => node.id),
+            skipExisting: true,
+            ownerIds: context.ownerIds,
+            priority: "中",
+            ...(base === undefined ? {} : { sortIndex: base }),
+          });
+          if (context.status !== "待开始") {
+            for (const task of result.created) {
+              await updateTask(projectId, task.id, { status: statusWriteValue(context.status), version: task.version });
+            }
+          }
+          if (result.skipped.length > 0) {
+            setToolError("有 " + String(result.skipped.length) + " 条节点在这个项目里已经加过，本次已跳过（没有重复创建）。");
+          }
+          if (result.created.length > 0) {
+            afterCreate();
+          } else {
+            reloadAll();
+          }
+          return;
+        } catch (error) {
+          reportWriteError(error);
+          return;
+        }
+      }
       let created = false;
       for (let index = 0; index < nodes.length; index += 1) {
         const node = nodes[index];
-        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, ownerIds: context.ownerIds, priority: "中" };
+        const body: TaskCreateInput = { stageKey, title: node.title, titleEn: node.titleEn === "" ? null : node.titleEn, sourceNodeId: node.id, ownerIds: context.ownerIds, priority: "中" };
         if (base !== undefined) {
           body.sortIndex = base + index;
         }

@@ -23,6 +23,7 @@ import type {
   TaskUpdatePatch,
 } from "../src/modules/task/task.repository.js";
 import { TaskService } from "../src/modules/task/task.service.js";
+import type { TaskNodeRepository, TemplateService } from "../src/modules/template/index.js";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "99999999-9999-4999-8999-999999999999";
@@ -65,6 +66,7 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     projectId: PROJECT,
     stageKey: "install",
     nodeId: NODE,
+    taskNodeId: null,
     title: "任务 " + id.slice(0, 8),
     titleEn: null,
     ownerIds: [],
@@ -260,6 +262,8 @@ function makeService(repo: FakeTaskRepository): { service: TaskService; db: Fake
     new FakeTaskGateRepository() as unknown as TaskGateRepository,
     {} as unknown as RoleService,
     audit as unknown as AuditService,
+    {} as unknown as TaskNodeRepository,
+    {} as unknown as TemplateService,
   );
   return { service, db, audit };
 }

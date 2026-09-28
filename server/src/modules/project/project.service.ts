@@ -193,7 +193,11 @@ export class ProjectService {
     return toProjectView(view ?? { project: updated, managerNames: current.managerNames });
   }
 
-  /** 软删（M2-01 · A5）：If-Match version 防误删；seq_no 不回收、code 唯一性保留（同编号再建仍 409）。 */
+  /**
+   * 硬删（Push 190 · 业务口径「删除要硬删不要软删，同一编号删了要能再建」）：
+   * If-Match version 防误删；同事务清空项目聚合子表 + 删项目行；审计留删除前快照与子表行数；
+   * 编号随行释放（同编号可再建）、seq_no 不回收（跳号）；归档项目仍禁删（ADR-027）。
+   */
   async deleteProject(id: string, version: number, actorId: string): Promise<ProjectView> {
     const current = await this.projects.findViewById(id);
     if (current === null) {
@@ -202,26 +206,27 @@ export class ProjectService {
     if (current.project.status === "archived") {
       throw new AppError("PROJECT_ARCHIVED", "项目已归档，禁止删除");
     }
-    const at = new Date();
     const deleted = await this.database.db.transaction(async (tx) => {
-      const row = await this.projects.softDeleteWithVersion(id, version, actorId, at, tx);
-      if (row === null) {
+      const result = await this.projects.hardDeleteWithVersion(id, version, tx);
+      if (result === null) {
         const again = await this.projects.findViewById(id);
         if (again === null) {
           throw new AppError("NOT_FOUND", "项目不存在或不可见");
         }
         throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
       }
+      const snapshot = projectAuditSnapshot(result.project);
       await this.audit.record(tx, {
         actorId,
         action: "delete",
         objectType: "project",
         objectId: id,
         projectId: id,
-        summary: "删除项目（软删）：" + row.code + "（" + row.name + "）",
-        changes: [{ field: "deletedAt", from: null, to: row.deletedAt }],
+        summary: "删除项目（物理删）：" + result.project.code + "（" + result.project.name + "）",
+        changes: Object.keys(snapshot).map((field) => ({ field, from: snapshot[field], to: null })),
+        metadata: { hardDelete: true, children: result.children },
       });
-      return row;
+      return result.project;
     });
     return toProjectView({ project: deleted, managerNames: current.managerNames });
   }

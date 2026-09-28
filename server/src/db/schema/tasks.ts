@@ -11,12 +11,14 @@ import {
   smallint,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { projectNodes } from "./flow.js";
 import { DOC_TYPE_KEYS, STAGE_KEYS, sqlArrayLiteral, sqlValueList } from "./literals.js";
 import { users } from "./identity.js";
 import { projects } from "./projects.js";
+import { taskNodes } from "./templates.js";
 
 /** tasks（项目总览 15 列口径；status 为存储基础态，展示态派生，见 v0.2 §2.4）。 */
 export const tasks = pgTable(
@@ -27,6 +29,13 @@ export const tasks = pgTable(
     /** 可空（A15 · Push 124）：看板「＋ 添加 → 临时任务」先不带阶段，前端显示「未分组」。 */
     stageKey: text("stage_key"),
     nodeId: uuid("node_id").references(() => projectNodes.id),
+    /**
+     * 来源任务节点库节点（迁移 0034 · M3-07 刀 3 · A1-16）：与 node_id（**项目流程节点** / 蓝图实例）并行、互不替代 ——
+     * 节点库节点回答「任务从哪来」，流程节点是门禁与锁定字段的依据。手工创建 / 流程节点生成的任务为 null。
+     * 同一项目内同一节点只留一份（下方部分唯一索引，未删行参与）：重复 409 TASK_ALREADY_EXISTS，软删后回到「可添加」；
+     * 节点库物理删行时置空（on delete set null），已生成的项目任务保留。
+     */
+    taskNodeId: uuid("task_node_id").references(() => taskNodes.id, { onDelete: "set null" }),
     title: text("title").notNull(),
     titleEn: text("title_en"),
     /**
@@ -88,6 +97,10 @@ export const tasks = pgTable(
     index("ix_tasks_due").on(table.projectId, table.actualEnd, table.plannedEnd),
     /** 未删行专用（0022）：列表 / 看板顺序读（project_id, stage_key, sort_index）—— 读面恒带 deleted_at is null。 */
     index("ix_tasks_active_group").on(table.projectId, table.stageKey, table.sortIndex).where(sql`deleted_at is null`),
+    /** 任务侧「节点库来源」判重（0034）：同一项目内同一节点库节点只留一份（只约束未删行）。 */
+    uniqueIndex("uq_tasks_active_source_node")
+      .on(table.projectId, table.taskNodeId)
+      .where(sql`deleted_at is null and task_node_id is not null`),
     check(
       "ck_tasks_stage_key",
       sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,

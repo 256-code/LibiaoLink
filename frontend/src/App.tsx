@@ -245,7 +245,7 @@ export default function App() {
   };
 
   /**
-   * 删除项目（A5；Push 172 接上入口）：软删 + If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
+   * 删除项目（A5；Push 172 接上入口）：硬删（连同聚合子表物理删）+ If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
    * 点一下先出确认条（项目是数据级操作），确认后才调 DELETE —— 成功后 dataVersion +1 刷新列表 / 详情。
    */
   const handleConfirmDeleteProject = async (): Promise<void> => {
@@ -384,6 +384,11 @@ export default function App() {
    */
   const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
   const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
+  /**
+   * 任务模板页的维护权（左列节点库的新增 / 编辑 / 删除 + 右侧模板的新建 / 保存 / 删除 / 拖拽改内容）= blueprint.manage
+   * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
+   */
+  const canManageBlueprint = hasPermission(permissions, "blueprint.manage");
 
   if (state.kind === "loading") {
     return (
@@ -438,7 +443,7 @@ export default function App() {
           className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
         >
           <span>
-            删除项目 <span className="font-mono font-semibold">{pendingDelete.code}</span>（{pendingDelete.description}）？删除后列表与详情不再可见。
+            删除项目 <span className="font-mono font-semibold">{pendingDelete.code}</span>（{pendingDelete.description}）？删除后连同任务一起删除、编号可再用。
           </span>
           <button
             type="button"
@@ -521,7 +526,7 @@ export default function App() {
   if (route.kind === "placeholder") {
     return (
       <>
-        <PlaceholderPage me={state.me} page={route.page} section={route.section} />
+        <PlaceholderPage me={state.me} page={route.page} section={route.section} canManageBlueprint={canManageBlueprint} />
         {bottomBars}
       </>
     );

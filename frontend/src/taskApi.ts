@@ -19,6 +19,7 @@ export type ApiTask = {
   stageKey: string | null;
   sortIndex: number;
   nodeId: string | null;
+  sourceNodeId: string | null;
   title: string;
   titleEn: string | null;
   ownerIds: string[];
@@ -143,21 +144,36 @@ function fileSummaryOf(summary: { total: number; draft: number; final: number } 
 
 /**
  * 契约任务 → UI 模型。previous = 列表里已有的那一行（缺省 undefined 表示新行）：
- * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary），故这两项从 previous 继承，
- * ownerIds 变化时由调用方随后重取列表对齐姓名。
+ * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary）：文件摘要从 previous 继承；
+ * 负责人姓名按「用户目录（resolveName，ProjectDetail 传 members）→ 旧行同 id 姓名 → —」三级兜底 ——
+ * 2026-09-24 修：原来直接沿用旧行姓名，改负责人后要刷新才变（勾上 / 取消即时可见）。
  */
-export function toUiTask(view: ApiTaskListItem | ApiTask, previous?: ProjectTask): ProjectTask {
+export function toUiTask(
+  view: ApiTaskListItem | ApiTask,
+  previous?: ProjectTask,
+  resolveName?: (id: string) => string | undefined,
+): ProjectTask {
   const startDate = view.plannedStart ?? "";
   const dueDate = view.plannedEnd ?? "";
   const derivedDays = startDate !== "" && dueDate !== "" ? daysBetweenInclusive(startDate, dueDate) : 0;
   const ownerNames = "ownerNames" in view ? view.ownerNames : undefined;
+  /** 写回响应不带姓名时：先查用户目录（调用方传 resolveName），查不到再按 id 对回旧行的姓名，最后才「—」。 */
+  const previousIds = previous?.ownerIds ?? [];
   const owners =
     ownerNames === undefined
-      ? (previous?.owners ?? view.ownerIds.map(() => "—"))
+      ? view.ownerIds.map((id) => {
+          const resolved = resolveName?.(id);
+          if (resolved !== undefined && resolved !== "") {
+            return resolved;
+          }
+          const at = previousIds.indexOf(id);
+          return at < 0 ? "—" : (previous?.owners[at] ?? "—");
+        })
       : ownerNames.map((name) => (name === null || name === "" ? "—" : name));
   return {
     id: view.id,
     nodeId: view.nodeId,
+    sourceNodeId: view.sourceNodeId ?? null,
     stageKey: view.stageKey,
     stage: stageNameOf(view.stageKey),
     sortIndex: view.sortIndex,
@@ -208,7 +224,10 @@ export type TaskCreateInput = {
   sortIndex?: number;
   title: string;
   titleEn?: string | null;
+  /** 来源流程节点（project_nodes；成员可建，按项目判重）。 */
   taskNodeId?: string;
+  /** 来源任务节点库节点（task_nodes；M3-07 刀 3）—— 描述 / 英文名 / 阶段取节点现值，与 taskNodeId 二选一。 */
+  sourceNodeId?: string;
   ownerIds?: string[];
   plannedStart?: string | null;
   plannedEnd?: string | null;
@@ -219,7 +238,35 @@ export type TaskCreateInput = {
   note?: string | null;
 };
 
+/** 模板实例化入参（契约 TaskCreateFromTemplateBody · `POST …/tasks/from-template`）。 */
+export type TaskFromTemplateInput = {
+  templateId: string;
+  /** 只加模板内的部分节点（缺省 = 模板全部节点）；顺序仍按模板内顺序。 */
+  nodeIds?: string[];
+  /** 已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复整批 409。 */
+  skipExisting?: boolean;
+  ownerIds?: string[];
+  /** 起始插入位次（缺省 / 越界 = 组尾）。 */
+  sortIndex?: number;
+  priority?: string | null;
+};
+
+/** 模板实例化结果：created = 新建的任务（模板内顺序）；skipped = 已存在而跳过的节点 + 既有任务 id。 */
+export type TaskFromTemplateResult = {
+  created: ApiTask[];
+  skipped: Array<{ nodeId: string; taskId: string }>;
+};
+
 /** 编辑可写字段（契约 TaskUpdateBody 白名单；任务描述 / 成果文件 / 阶段不在此）。 */
+/** 「整套添加」（A1-16）：一次调用整批生成，服务端同事务 + 按节点判重（已存在的进 skipped）。 */
+export function createTasksFromTemplate(projectId: string, body: TaskFromTemplateInput): Promise<TaskFromTemplateResult> {
+  return apiSend<TaskFromTemplateResult>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks/from-template",
+    "POST",
+    body,
+  );
+}
+
 export type TaskUpdateInput = {
   ownerIds?: string[];
   sortIndex?: number;

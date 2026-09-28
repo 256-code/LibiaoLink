@@ -10,7 +10,7 @@
  * 用法：node scripts/m3-07-task-e2e.mjs
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
  *
- * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完软删、读面零残留）在真机浏览器里跑一遍前端任务域口径：
+ * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完硬删、读面零残留）在真机浏览器里跑一遍前端任务域口径：
  *   汇总卡两阶段（最慢 / 最新）随写入推进、紧急重要度三档、四格进度写入、状态下拉五态与覆盖边界（已完成写 overdue 不生效 /
  *   未完成写 overdue 生效）、添加卡片落库与「已添加」判重、409 版本冲突提示条 + 自动整表重取后重试可写、三块视图
  *   （项目总览 / 人员任务分配 / 任务进展 / 甘特图）与收尾清理。
@@ -126,7 +126,7 @@ const projRes = await api("/api/v1/projects", "POST", { code: fixtureCode, name:
 check("夹具：建临时项目（201）", projRes.status === 201, String(projRes.status) + " " + projRes.text.slice(0, 140));
 const projectId = projRes.json === null ? "" : projRes.json.id;
 const taskA = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "presale", title: "回放任务·售前", ownerIds: [userRow.id], plannedStart: "2026-09-01", plannedEnd: "2026-09-10", priority: "高" });
-// 负责人缺省口径（服务端 task.service.ts:206）：不传 ownerIds = 取项目经理；要「待分配」得显式传 []。
+// 负责人缺省口径（2026-09-24 修订，回到 ADR-021）：不传 ownerIds = 「待分配」空数组（不再兜底项目经理）；本夹具仍显式传值以固定数据。
 const taskB = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: "回放任务·设计", ownerIds: [] });
 check("夹具：建两条任务（201 / 201）", taskA.status === 201 && taskB.status === 201, taskA.status + " / " + taskB.status);
 const summary0 = (await api("/api/v1/projects/" + projectId + "/summary")).json;
@@ -302,7 +302,7 @@ const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
 check("清理：删临时项目（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
 const gone = await api("/api/v1/projects/" + projectId);
-check("清理：项目读面 404（软删不可见）", gone.status === 404, String(gone.status));
+check("清理：项目读面 404（物理删、行不存在）", gone.status === 404, String(gone.status));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
 console.log("已撤销临时会话：" + userRow.username);
 

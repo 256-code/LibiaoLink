@@ -3,8 +3,6 @@
  * 数据来源 = 服务端任务接口（frontend/src/taskApi.ts 负责契约 → 本模型的映射）；本文件不再含演示数据，
  * 也不做任何状态 / 逾期的本地派生 —— 展示态（displayStatus）、是否按时交付（onTime）、阶段汇总均由服务端裁决。
  */
-import { stageNodesOf } from "./templatePresets";
-
 export type TaskStatus = "已完成" | "提前完成" | "进行中" | "待开始" | "已延期";
 
 /** 紧急重要度三档（契约 Priority：高 / 中 / 低；2026-09-24 定案四象限口径作废）。 */
@@ -31,8 +29,10 @@ export type TaskFileSummary = {
  */
 export type ProjectTask = {
   id: string;
-  /** 来源任务节点（契约 nodeId）：从节点库 / 模板生成时用于同项目判重；手工创建的空任务为 null。 */
+  /** 来源流程节点（契约 nodeId）：蓝图实例上的节点；节点库来源的任务为 null。 */
   nodeId: string | null;
+  /** 来源任务节点库节点（契约 sourceNodeId · M3-07 刀 3）：「已添加」判重的精确依据；手工创建 / 流程节点任务为 null。 */
+  sourceNodeId: string | null;
   /** 所属阶段 key；null = 「未分组」（看板临时任务）。 */
   stageKey: string | null;
   /** 所属阶段中文名（展示与分组用；未分组 = 空串）。 */
@@ -119,23 +119,38 @@ export function ownersLabel(owners: readonly string[]): string {
 }
 
 /**
- * 项目里「已添加的模板节点 id」（添加卡片的「已添加」标记与整套添加的判重依据）。
- * 节点库（契约 GET /api/v1/task-nodes；M3-05 余「模板实例化与快筛」）尚未落地：预设节点不是节点库 UUID、
- * 服务端也拿不到 taskNodeId 判重 —— 先按「同阶段同名」把预设节点对到已建任务上（`nodeId` 命中的也一并算）。
+ * **兜底**判重键（阶段名 + 描述）：M3-07 刀 3 起主口径是 `addedNodeIdsOf`（任务侧落 `sourceNodeId`，精确）；
+ * 本键只兜两类行 —— 本刀之前建的任务（来源列为空）与手工创建的同名任务（节点库同阶段内名称唯一，`uq_task_nodes_stage_title`）。
  */
-export function addedPresetNodeIds(tasks: readonly ProjectTask[]): Set<string> {
+export function addedNodeKey(stage: string, title: string): string {
+  return stage + "\n" + title;
+}
+
+/**
+ * 项目里「已添加的节点」判重键集合（添加卡片的「已添加」标记与整套添加的判重依据）：
+ * Push 181 起节点池来自节点库接口（`GET /api/v1/task-nodes`），判重不能再按预设 id（预设 id 不是节点库 UUID）——
+ * 键只由「阶段 + 描述」构成，节点侧用 `addedNodeKey(stage, node.title)` 比对。
+ */
+/**
+ * 项目里「已添加的节点」来源 id 集合（M3-07 刀 3）：读任务行的 `sourceNodeId`（模板实例化 / 节点库添加都写它）——
+ * 与 `addedNodeKeysOf` 一起用：命中 id = 精确「已添加」，命中键 = 旧行 / 手工同名任务的兜底。
+ */
+export function addedNodeIdsOf(tasks: readonly ProjectTask[]): Set<string> {
   const ids = new Set<string>();
   for (const task of tasks) {
-    if (task.nodeId !== null) {
-      ids.add(task.nodeId);
-    }
-    for (const node of stageNodesOf(task.stage)) {
-      if (node.title === task.title) {
-        ids.add(node.id);
-      }
+    if (task.sourceNodeId !== null) {
+      ids.add(task.sourceNodeId);
     }
   }
   return ids;
+}
+
+export function addedNodeKeysOf(tasks: readonly ProjectTask[]): Set<string> {
+  const keys = new Set<string>();
+  for (const task of tasks) {
+    keys.add(addedNodeKey(task.stage, task.title));
+  }
+  return keys;
 }
 /** ISO（YYYY-MM-DD）→ 展示用「M月D日」；空值 / 非法值返回空串（界面显示「—」）。 */
 export function cnDateFromIso(value: string): string {

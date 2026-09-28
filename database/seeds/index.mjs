@@ -4,5 +4,9 @@ import * as dicts from "./dicts.mjs";
 import * as roles from "./roles.mjs";
 import * as rolePermissions from "./role-permissions.mjs";
 import * as blueprint from "./blueprint.mjs";
+import * as taskNodes from "./task-nodes.mjs";
+import * as taskTemplates from "./task-templates.mjs";
+import * as demoProjects from "./demo-projects.mjs";
 
-export const SEEDS = [dicts, roles, rolePermissions, blueprint];
+// 末尾的 demo-projects 是**可选种子**（optional = true）：默认不执行，--only=demo-projects / --with-optional 显式执行。
+export const SEEDS = [dicts, roles, rolePermissions, blueprint, taskNodes, taskTemplates, demoProjects];
