@@ -16,7 +16,7 @@ export type IssueState = (typeof ISSUE_STATES)[number];
 /** 一条日报（字段按 A3-01 在线日报表单）。 */
 export type DailyReport = {
   id: string;
-  /** 填报日期（源表口径「M月D日」，与任务日期列同一套写法） */
+  /** 填报日期（Push 202 起口径「YYYY年M月D日」，业务口径「时间格式也要年月日」） */
   date: string;
   /** 提交人 */
   author: string;
@@ -37,9 +37,18 @@ export type DailyReport = {
   suggestion: string;
   /** 关联阶段（多选；标记当日完成工作对应的项目阶段，Push 198 由「关联任务」改口径） */
   stages: readonly string[];
-  /** 现场工作附图（原型只存文件名，正式版走文件库） */
-  photos: readonly string[];
+  /** 现场工作附图（原型：粘贴 / 选文件时存名字 + 图片预览用的 blob 地址；正式版走文件库） */
+  photos: readonly ReportPhoto[];
 };
+
+/** 一份附图（Push 202 同批续「图片要可以预览」）：`name` = 文件名；`url` = 图片预览地址（粘贴 / 选择的图片才有，演示数据一律 null）。 */
+export type ReportPhoto = {
+  name: string;
+  url: string | null;
+};
+
+/** 演示数据帮手：只有名字、没有预览（虚构附图）。 */
+const photoNames = (...names: string[]): ReportPhoto[] => names.map((name) => ({ name, url: null }));
 
 /** 一条问题记录（由日报「现场发现问题」自动生成；同一条日报只生成一次，A3-09）。 */
 export type Issue = {
@@ -68,11 +77,11 @@ export type Issue = {
 /** 演示数据挂靠的项目（示例项目：印度 `inmu-0010`）。 */
 export const DEMO_REPORTS_PROJECT_ID = "inmu-0010";
 
-/** 演示日报（新 → 旧）：9月17日 ~ 9月21日，覆盖 已提交 / 补填 / 草稿 三种状态。 */
+/** 演示日报（新 → 旧）：2026年9月17日 ~ 2026年9月21日，覆盖 已提交 / 补填 / 草稿 三种状态。 */
 const DEMO_REPORTS: DailyReport[] = [
   {
     id: "r-0921a",
-    date: "9月21日",
+    date: "2026年9月21日",
     author: "卢青",
     submittedAt: "18:26",
     state: "已提交",
@@ -83,11 +92,11 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "供应商原因",
     suggestion: "建议由采购联系供应商走补件流程，同步确认运输加固方案",
     stages: ["硬件实施", "试运行"],
-    photos: ["滑槽磕碰-01.jpg", "滑槽磕碰-02.jpg"],
+    photos: photoNames("滑槽磕碰-01.jpg", "滑槽磕碰-02.jpg"),
   },
   {
     id: "r-0921b",
-    date: "9月21日",
+    date: "2026年9月21日",
     author: "方沐",
     submittedAt: "17:50",
     state: "草稿",
@@ -98,11 +107,11 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "",
     suggestion: "",
     stages: ["软件部署"],
-    photos: ["联调记录-01.jpg"],
+    photos: photoNames("联调记录-01.jpg"),
   },
   {
     id: "r-0920",
-    date: "9月20日",
+    date: "2026年9月20日",
     author: "夏珂",
     submittedAt: "20:15",
     state: "已提交",
@@ -113,11 +122,11 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "规划部",
     suggestion: "建议后端增加重试队列，并复核接口超时阈值",
     stages: ["硬件实施", "软件部署"],
-    photos: ["机柜理线-01.jpg", "联调日志-01.jpg"],
+    photos: photoNames("机柜理线-01.jpg", "联调日志-01.jpg"),
   },
   {
     id: "r-0919",
-    date: "9月19日",
+    date: "2026年9月19日",
     author: "程屿",
     submittedAt: "18:20",
     state: "补填",
@@ -128,11 +137,11 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "客观原因",
     suggestion: "建议项目部协调客户做局部找平，或改用可调底座",
     stages: ["硬件实施"],
-    photos: ["地面平整度-01.jpg"],
+    photos: photoNames("地面平整度-01.jpg"),
   },
   {
     id: "r-0918",
-    date: "9月18日",
+    date: "2026年9月18日",
     author: "苏珩",
     submittedAt: "19:05",
     state: "已提交",
@@ -143,11 +152,11 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "机械部",
     suggestion: "建议更换对射支架并加装遮光罩",
     stages: ["硬件实施"],
-    photos: ["工作站弹线-01.jpg"],
+    photos: photoNames("工作站弹线-01.jpg"),
   },
   {
     id: "r-0917",
-    date: "9月17日",
+    date: "2026年9月17日",
     author: "石昀",
     submittedAt: "18:42",
     state: "已提交",
@@ -158,7 +167,7 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "客户原因",
     suggestion: "建议客户加装稳压器，UPS 切换前先做空载测试",
     stages: ["硬件实施"],
-    photos: ["1号巷道导轨-01.jpg", "安全培训-01.jpg"],
+    photos: photoNames("1号巷道导轨-01.jpg", "安全培训-01.jpg"),
   },
 ];
 
@@ -172,8 +181,8 @@ const DEMO_ISSUES: Issue[] = [
     reporter: "卢青",
     owner: "",
     task: "到货入库",
-    raisedAt: "9月21日",
-    dueAt: "9月23日",
+    raisedAt: "2026年9月21日",
+    dueAt: "2026年9月23日",
     solution: "",
     reportId: "r-0921a",
   },
@@ -185,8 +194,8 @@ const DEMO_ISSUES: Issue[] = [
     reporter: "程屿",
     owner: "项目部 · 秦朗",
     task: "巷道导轨安装，铜丝镶嵌",
-    raisedAt: "9月19日",
-    dueAt: "9月22日",
+    raisedAt: "2026年9月19日",
+    dueAt: "2026年9月22日",
     solution: "",
     reportId: "r-0919",
   },
@@ -198,8 +207,8 @@ const DEMO_ISSUES: Issue[] = [
     reporter: "苏珩",
     owner: "机械部 · 程屿",
     task: "小批量实物测试",
-    raisedAt: "9月18日",
-    dueAt: "9月22日",
+    raisedAt: "2026年9月18日",
+    dueAt: "2026年9月22日",
     solution: "已更换对射支架并加装遮光罩，现场观察 24 小时未再复现",
     reportId: "r-0918",
   },
@@ -211,8 +220,8 @@ const DEMO_ISSUES: Issue[] = [
     reporter: "夏珂",
     owner: "规划部 · 方沐",
     task: "WES软件部署及与WMS联调;设备运行测试",
-    raisedAt: "9月20日",
-    dueAt: "9月22日",
+    raisedAt: "2026年9月20日",
+    dueAt: "2026年9月22日",
     solution: "后端已加重试队列、超时阈值调整到 30 秒；9月21日随机跑 30 分钟未复现",
     reportId: "r-0920",
   },
@@ -224,8 +233,8 @@ const DEMO_ISSUES: Issue[] = [
     reporter: "石昀",
     owner: "项目部 · 秦朗",
     task: "通电测试",
-    raisedAt: "9月17日",
-    dueAt: "9月19日",
+    raisedAt: "2026年9月17日",
+    dueAt: "2026年9月19日",
     solution: "客户已加装稳压器，9月19日复测通过，提出人确认关闭",
     reportId: "r-0917",
   },

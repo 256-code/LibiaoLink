@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DateRangePicker } from "./DateRangePicker";
-import { SelectMenu, type SelectOption } from "./SelectMenu";
+import { MultiSelectMenu } from "./SelectMenu";
 import type { ReactNode } from "react";
 import {
   ISSUE_STATES,
@@ -9,7 +9,7 @@ import {
   type DailyReport,
   type Issue,
   type IssueState,
-  type ReportState,
+  type ReportPhoto,
 } from "../data/reports";
 import { PROJECT_STAGES } from "../data/projects";
 import type { MeResponse, Project } from "../types";
@@ -44,6 +44,30 @@ import type { MeResponse, Project } from "../types";
  *   当日完成工作 / 明日计划 / 现场附图」）：「日报记录」列表收窄为 **6 列** —— 去掉「今日施工人数 / 现场发现问题 /
  *   解决方案或建议」三列（只改**列表展示**：表单字段 A3-01 与 A3-09 问题生成口径不变，问题记录仍照常生成）；
  *   「关联任务」按 Push 198 口径显示为「关联阶段」；时间列保留（一行一篇、按日期倒序，无时间列无法辨认）。
+ * - Push 202（业务口径 2026-09-28「填日报文字提示如图分点」+「问题归类可以多选」+「日报记录英文加上 如图所示」
+ *   +「时间格式也要年月日 具体提交时间不需要 已提交状态也不要」+「点击暂存草稿就暂存在日报填写页面吧 …
+ *   暂存就保留表单里面填的内容皆可」）：
+ *   ① 「日报填写」：「当日完成工作Work completed today」「明日计划Tomorrow's plan」「现场发现问题Problem」三个多行框
+ *      **补英文表头**；三行分点占位提示（`1:` / `2:` / `3:`）先落、随后业务看后撤回（「算了 不要提示文字了」）——
+ *      三个多行框最终**无占位提示文字**、行数回到原口径（下一个改动即此）；「当日完成工作」是 A3-04 必填（星号保留），
+ *      图 1 「明日计划」的必填星**未采纳** —— A3-04 必填口径不变；
+ *   ② 「问题归类」由单选改**多选**（`SelectMenu.tsx` 新增 `MultiSelectMenu`：弹层点选不关闭、选中项绿勾，
+ *      触发器顿号连接已选项）—— 原型存储口径 = 多值顿号连接（`issueCategories` → `issueCategory` 字符串 / `Issue.category`），
+ *      `issue_category` 单值 → 多值的契约修订挂 wmj 线（见 `字段对照清单.md` §二.3 增补）；
+ *   ③ 「日报记录」表头中英拼写（时间time / 填写者 / 关联阶段Related stages / 当日完成工作Work completed today /
+ *      明日计划Tomorrow's plan / 现场工作附图On-site photos）；时间列改**年月日**（如 `2026年9月16日`）、
+ *      撤「提交 HH:MM」小字与状态签（草稿 / 已提交 / 补填不再在列表出现；`state` 仍在数据模型里）；
+ *   ④ 「暂存草稿」不写「日报记录」、不切子视图、**不清表单** —— 只保留表单里已填内容 + 顶部提示
+ *      （业务口径「暂存就保留表单里面填的内容皆可」；原「左侧草稿卡片」方案已撤回）；
+ *   ⑤ 撤「现场发现问题」的琥珀色特殊底 / 琥珀字色（业务口径「这个也不用搞特殊 样式和别的保持一致」）——
+ *      标签走 FORM_LABEL、说明走灰色小字，与其它字段同一套；
+ *   ⑥ 表单字段标题统一**加粗**（业务口径「标题都标标粗」：`FORM_LABEL` 字重 medium → bold；字色口径不变）；
+ *   ⑦ **附图以「复制粘贴」为主入口**（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：
+ *      两个附图区（现场工作附图 / 当前问题附图）改 `AttachmentPicker` —— 形态按业务给的样（虚线卡 + 文件 / 云图标）
+ *      **左右分半（无说明文字）**：左半 = `ctrl v` 键帽（业务给样：搜索框键帽风 —— 点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
+ *      剪贴板图没有名字时按「剪贴板图片-N.png」命名）、右半 = 文件 / 云图标（点击选择文件，次入口，原生文件框仍在）；
+ *      左半里放一个不可见的粘贴落点输入框 —— 浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令，粘贴一律 preventDefault、不落文字；
+ *      附件胶囊可逐个移除。
  */
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
@@ -67,13 +91,6 @@ const ISSUE_TAG_CLASS: Record<IssueState, string> = {
   已完成: "bg-emerald-100 text-emerald-700",
 };
 
-/** 日报状态签（A3-02）：草稿 = 灰、已提交 = 绿、补填 = 蓝。 */
-const REPORT_TAG_CLASS: Record<ReportState, string> = {
-  草稿: "bg-zinc-200 text-zinc-600",
-  已提交: "bg-emerald-100 text-emerald-700",
-  补填: "bg-sky-100 text-sky-700",
-};
-
 /** 问题看板列壳：四列固定宽度、横向排布，空列保留。 */
 const ISSUE_COLUMN = "flex w-[300px] shrink-0 flex-col rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3";
 
@@ -91,9 +108,6 @@ const ISSUE_CATEGORIES: readonly string[] = [
   "其它",
 ];
 
-/** 下拉选项：与任务抽屉（任务状态 / 紧急重要度）、甘特内筛选同一套 SelectMenu 口径。 */
-const ISSUE_CATEGORY_OPTIONS: SelectOption[] = ISSUE_CATEGORIES.map((category) => ({ value: category, label: category }));
-
 /** 日报「关联阶段」可选项（Push 198）：九个施工阶段 —— 与项目总览分组 / 两块看板同一份口径（不含「项目总览」汇总视图）。 */
 const REPORT_STAGES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
@@ -101,16 +115,17 @@ const REPORT_STAGES: readonly string[] = PROJECT_STAGES.filter((stage) => stage 
 const FORM_INPUT =
   "w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400";
 
-/** 表单字段名（浅灰小字，与卡片字段名同一套层级）。 */
-const FORM_LABEL = "text-xs font-medium text-zinc-500";
+/** 表单字段名（浅灰小字；Push 202「标题都标标粗」—— 字重 medium → bold）。 */
+const FORM_LABEL = "text-xs font-bold text-zinc-500";
 
 /** 主按钮（提交日报）。 */
 const BTN_PRIMARY =
   "rounded-lg bg-zinc-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300";
 
-/** 次按钮（暂存草稿）。 */
+/** 次按钮（暂存草稿）—— Push 202：悬停反馈加明显（业务口径「鼠标放到暂存草稿的ui效果不太明显」）：描边 200 → 400、
+ *  背景压到站内次按钮同一档 `hover:bg-zinc-100`、字色转深；禁用态照旧灰字、悬停不再变面。 */
 const BTN_SECONDARY =
-  "rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300";
+  "rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:border-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 active:bg-zinc-200 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:border-zinc-200 disabled:hover:bg-white disabled:hover:text-zinc-300";
 
 /** 页内导航栏的四块子视图（业务口径：第一块日报填写、第二块日报记录、第三块问题追踪、第四块问题看板）。 */
 type SubTab = "日报填写" | "日报记录" | "问题追踪" | "问题看板";
@@ -184,7 +199,7 @@ const SUBNAV_KEY_CURRENT =
   "[box-shadow:inset_0_0.0625em_0_0_#ffffff,0_0.0625em_0_0_#f2f2f2,0_0.125em_0_0_#ededed,0_0.25em_0_0_#e2e2e2,0_0.3125em_0_0_#dedede,0_0.375em_0_0_#dcdcdc,0_0.425em_0_0_#cacaca,0_0.425em_0.5em_0_#cecece] " +
   "active:[box-shadow:inset_0_0.03em_0_0_#ffffff,0_0.03em_0_0_#f2f2f2,0_0.0625em_0_0_#ededed,0_0.125em_0_0_#e2e2e2,0_0.125em_0_0_#dedede,0_0.2em_0_0_#dcdcdc,0_0.225em_0_0_#cacaca,0_0.225em_0.375em_0_#cecece]";
 
-/** 日报填写的表单草稿（字段按 A3-01；改子视图不清空，提交 / 暂存后复位）。 */
+/** 日报填写的表单草稿（字段按 A3-01；改子视图不清空；Push 202 起「暂存草稿」= 保留内容不清空，只有提交后复位）。 */
 type ReportDraft = {
   /** 时间（填报日期，ISO） */
   dateIso: string;
@@ -193,27 +208,28 @@ type ReportDraft = {
   doneWork: string;
   plan: string;
   foundIssue: string;
-  issueCategory: string;
+  /** 问题归类（C9 字典十项；**可多选**，Push 202「问题归类可以多选」） */
+  issueCategories: string[];
   suggestion: string;
   /** 关联阶段（按阶段名多选；九阶段口径） */
   stages: string[];
-  /** 现场工作附图（原型只记文件名） */
-  photos: string[];
+  /** 现场工作附图（名单 + 图片预览地址；Push 202 同批续「图片要可以预览」） */
+  photos: ReportPhoto[];
   /** 当前问题附图（「现场发现问题」非空时才填） */
-  issuePhotos: string[];
+  issuePhotos: ReportPhoto[];
 };
 
 /** 新建日报 / 问题的原型 id 序号（同一会话内不重号）。 */
 let newReportSeq = 0;
 let newIssueSeq = 0;
 
-/** ISO 日期 → 源表口径「M月D日」（与任务日期列、演示日报同一套写法）。 */
+/** ISO 日期 → 「YYYY年M月D日」（Push 202 起带年：业务口径「时间格式也要年月日」；原「M月D日」写法下架）。 */
 function cnDateOf(iso: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (match === null) {
     return iso;
   }
-  return String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
+  return String(Number(match[1])) + "年" + String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
 }
 
 /** ISO 日期 + N 天（问题处理时限用）。 */
@@ -241,7 +257,7 @@ function clockText(): string {
 
 /** 空表单：日期默认今天，其余留空。 */
 function emptyDraft(): ReportDraft {
-  return { dateIso: todayIso(), headcount: "", doneWork: "", plan: "", foundIssue: "", issueCategory: "", suggestion: "", stages: [], photos: [], issuePhotos: [] };
+  return { dateIso: todayIso(), headcount: "", doneWork: "", plan: "", foundIssue: "", issueCategories: [], suggestion: "", stages: [], photos: [], issuePhotos: [] };
 }
 
 /** 字段行（浅灰字段名 + 深灰取值），与两块看板卡片同一套口径。 */
@@ -284,40 +300,295 @@ function EmptyCard({ text, hint }: { text: string; hint: string }) {
   );
 }
 
-/** 文件选择（原型：只记录文件名，正式版走站内文件库）。 */
-function FilePicker({ field, fileNames, onChange }: { field: string; fileNames: readonly string[]; onChange: (names: string[]) => void }) {
+/** 剪贴板图的「无名」判定：空名，或浏览器从位图生成的通用名（Chrome 粘图恒为 `image.png` 这类）。 */
+function isClipboardGenericName(name: string): boolean {
+  return name === "" || /^image\.(png|jpe?g|gif|webp)$/i.test(name);
+}
+
+/** 附图图标（右半「点击选择文件」= 业务给的样：文件 + 云；fill=currentColor 随字色）。 */
+function UploadIcon() {
   return (
-    <div>
-      <input
-        data-field={field}
-        type="file"
-        multiple
-        onChange={(event) => onChange(Array.from(event.target.files ?? []).map((file) => file.name))}
-        className="block w-full cursor-pointer rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-500 transition file:mr-2 file:cursor-pointer file:rounded-md file:border-0 file:bg-zinc-100 file:px-2.5 file:py-1 file:text-xs file:font-medium file:text-zinc-700 hover:file:bg-zinc-200"
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M10 1C9.73478 1 9.48043 1.10536 9.29289 1.29289L3.29289 7.29289C3.10536 7.48043 3 7.73478 3 8V20C3 21.6569 4.34315 23 6 23H7C7.55228 23 8 22.5523 8 22C8 21.4477 7.55228 21 7 21H6C5.44772 21 5 20.5523 5 20V9H10C10.5523 9 11 8.55228 11 8V3H18C18.5523 3 19 3.44772 19 4V9C19 9.55228 19.4477 10 20 10C20.5523 10 21 9.55228 21 9V4C21 2.34315 19.6569 1 18 1H10ZM9 7H6.41421L9 4.41421V7ZM14 15.5C14 14.1193 15.1193 13 16.5 13C17.8807 13 19 14.1193 19 15.5V16V17H20C21.1046 17 22 17.8954 22 19C22 20.1046 21.1046 21 20 21H13C11.8954 21 11 20.1046 11 19C11 17.8954 11.8954 17 13 17H14V16V15.5ZM16.5 11C14.142 11 12.2076 12.8136 12.0156 15.122C10.2825 15.5606 9 17.1305 9 19C9 21.2091 10.7909 23 13 23H20C22.2091 23 24 21.2091 24 19C24 17.1305 22.7175 15.5606 20.9844 15.122C20.7924 12.8136 18.858 11 16.5 11Z"
+        fill="currentColor"
       />
-      {fileNames.length === 0 ? null : (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {fileNames.map((name) => (
-            <span key={name} className="rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600">
-              {name}
-            </span>
-          ))}
-        </div>
-      )}
+    </svg>
+  );
+}
+/** 图片预览层（业务口径「图片要可以预览」）：点缩略图放大看；点任意处 / Esc 关。 */
+function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      data-photo-preview=""
+      role="dialog"
+      aria-label={"预览 " + name}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/60 p-6"
+    >
+      <figure className="flex max-h-full max-w-full flex-col items-center">
+        <img src={url} alt={name} className="max-h-[80vh] max-w-[90vw] rounded-xl bg-white p-1 shadow-2xl" />
+        <figcaption className="mt-2 text-center text-xs text-white/80">{name}</figcaption>
+      </figure>
     </div>
   );
 }
 
+/** 附图清单：图片出**缩略图**（点开预览层看大图）、非图片出文件名胶囊；表单里再带 × 可逐个移除。 */
+function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string }) {
+  const [preview, setPreview] = useState<ReportPhoto | null>(null);
+  /** 正在改名的第几份（null = 没有在改名）；业务口径「图片名称可以自定义」。 */
+  const [editingAt, setEditingAt] = useState<number | null>(null);
+  /** 编辑中的**主名**（后缀不参与编辑 —— 业务口径「自定义把图片png格式删了怎么办」：格式由系统保留）。 */
+  const [editingText, setEditingText] = useState("");
+  /** 编辑中保留的后缀（含点；没后缀 = 空串）。 */
+  const [editingExt, setEditingExt] = useState("");
+  /** 提交改名：空名 / 没变 = 原样（不写回）。 */
+  const commitRename = () => {
+    if (editingAt === null || onRename === undefined) {
+      setEditingAt(null);
+      return;
+    }
+    const base = editingText.trim();
+    const next = base === "" ? items[editingAt].name : base + editingExt;
+    if (next !== items[editingAt].name) {
+      onRename(editingAt, next);
+    }
+    setEditingAt(null);
+  };
+
+  /** 开始改名：主名进输入框、后缀原位保留（图片 png 格式不会被改掉）。 */
+  const startRename = (at: number) => {
+    const name = items[at].name;
+    const dot = name.lastIndexOf(".");
+    const hasExt = dot > 0 && dot < name.length - 1;
+    setEditingAt(at);
+    setEditingText(hasExt ? name.slice(0, dot) : name);
+    setEditingExt(hasExt ? name.slice(dot) : "");
+  };
+  if (items.length === 0) {
+    return null;
+  }
+  const previewUrl = preview === null ? null : preview.url;
+  return (
+    <div data-attachment-strip={strip} className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {items.map((item, index) => (
+        <span key={item.name + "#" + String(index)} data-attachment={item.name} className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600">
+          {item.url === null ? null : (
+            <button
+              type="button"
+              data-attachment-thumb=""
+              aria-label={"预览 " + item.name}
+              onClick={() => setPreview(item)}
+              className="shrink-0 rounded-md transition hover:opacity-80"
+            >
+              <img src={item.url} alt={item.name} className="h-8 w-8 rounded-md border border-zinc-200 object-cover" />
+            </button>
+          )}
+          {editingAt === index ? (
+            <input
+              data-attachment-input=""
+              value={editingText}
+              autoFocus
+              onChange={(event) => setEditingText(event.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  commitRename();
+                }
+                if (event.key === "Escape") {
+                  setEditingAt(null);
+                }
+              }}
+              className="w-20 rounded border border-zinc-300 bg-white px-1 py-0.5 text-[10px] text-zinc-700 outline-none focus:border-zinc-400"
+            />
+          ) : null}
+          {editingAt === index && editingExt !== "" ? (
+            <span className="text-[10px] text-zinc-400">{editingExt}</span>
+          ) : onRename === undefined ? (
+            <span>{item.name}</span>
+          ) : (
+            <button
+              type="button"
+              data-rename-attachment=""
+              aria-label={"重命名 " + item.name}
+              title="点名字可自定义"
+              onClick={() => startRename(index)}
+              className="max-w-[9rem] truncate text-left transition hover:text-zinc-900 hover:underline"
+            >
+              {item.name}
+            </button>
+          )}
+          {onRemove === undefined ? null : (
+            <button
+              type="button"
+              data-action="remove-attachment"
+              aria-label={"移除 " + item.name}
+              onClick={() => onRemove(index)}
+              className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      {preview === null || previewUrl === null ? null : <PhotoPreview url={previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
+    </div>
+  );
+}
+
+/** 附图选择（原型：名字 + 图片预览地址，正式版走站内文件库）。
+ *  Push 202 同批续：以**复制粘贴**为主入口（业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）——
+ *  点一下虚线框拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
+ *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `ctrl v` 键帽（主入口）、
+ *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 预览地址，胶囊出缩略图、点开可放大（「图片要可以预览」）；
+ *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。 */
+function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string }) {
+  /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
+  const [armed, setArmed] = useState(false);
+  /** 粘贴落点（左半里的不可见输入框：浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令）。 */
+  const sinkRef = useRef<HTMLInputElement | null>(null);
+  /** 粘贴图命名序号（截图多数没有名字 → 剪贴板图片-1.png / -2.png …）。 */
+  const pasteSeq = useRef(0);
+  /** 最新 props（document 级粘贴监听不随每次输入重挂）。 */
+  const latest = useRef({ items, onChange });
+  latest.current = { items, onChange };
+
+  /** 把一批新附件并进已有清单（粘贴与选文件共用；按现有顺序追加，同名不去重）。 */
+  const appendItems = (next: readonly ReportPhoto[]) => {
+    if (next.length === 0) {
+      return;
+    }
+    latest.current.onChange(latest.current.items.concat(next));
+  };
+
+  /** 一批文件 → 附件（图片给预览地址；`imagesOnly` = 粘贴路径只收图）。返回处理到的附件数。 */
+  const toItems = (files: readonly File[], imagesOnly: boolean): ReportPhoto[] => {
+    const picked = imagesOnly ? files.filter((file) => file.type.indexOf("image/") === 0) : files;
+    return picked.map((file) => {
+      const isImage = file.type.indexOf("image/") === 0;
+      if (isImage === false || isClipboardGenericName(file.name) === false) {
+        return { name: file.name, url: isImage ? URL.createObjectURL(file) : null };
+      }
+      pasteSeq.current += 1;
+      const slash = file.type.indexOf("/");
+      const ext = slash >= 0 ? file.type.slice(slash + 1) : "png";
+      return { name: "剪贴板图片-" + String(pasteSeq.current) + "." + ext, url: URL.createObjectURL(file) };
+    });
+  };
+
+  /** 一次粘贴：剪贴板里有图就留下（并 preventDefault，不让图片落成输入框内容）。 */
+  const onPasteImage = (event: { clipboardData: DataTransfer | null; preventDefault: () => void }) => {
+    const files = Array.from(event.clipboardData?.files ?? []);
+    const next = toItems(files, true);
+    if (next.length > 0) {
+      appendItems(next);
+      event.preventDefault();
+    }
+  };
+
+  /** document 级粘贴监听：兜底 —— 焦点在别处（如刚点过右半）时，仍投给「最近点过的贴图区」。 */
+  useEffect(() => {
+    if (!armed) {
+      return;
+    }
+    const onPaste = (event: ClipboardEvent) => {
+      onPasteImage(event);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [armed]);
+
+  return (
+    <div>
+      <div
+        data-paste-zone={field}
+        tabIndex={0}
+        role="group"
+        aria-label={ariaLabel}
+        onFocus={() => setArmed(true)}
+        className={
+          "overflow-hidden rounded-xl border border-dashed bg-white transition " +
+          (armed ? "border-zinc-400 ring-2 ring-zinc-900/5" : "border-zinc-300 hover:border-zinc-400")
+        }
+      >
+        <div className="grid grid-cols-2 divide-x divide-zinc-200 text-center">
+          <div className="relative">
+            <button
+              type="button"
+              data-paste-half=""
+              aria-label="复制粘贴（点一下再按 Ctrl+V 粘图）"
+              onClick={() => sinkRef.current?.focus()}
+              className={"flex w-full items-center justify-center px-2 py-3 transition " + (armed ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")}
+            >
+              <span className={"rounded-[3px] px-2 py-1 text-[11px] font-bold uppercase leading-none transition [background:linear-gradient(-225deg,#d5dbe4,#f8f8f8)] [box-shadow:inset_0_-2px_0_0_#cdcde6,inset_0_0_1px_1px_#fff,0_1px_2px_1px_rgba(30,35,90,0.4)] " + (armed ? "text-zinc-600" : "text-[#969faf]")}>
+                ctrl v
+              </span>
+            </button>
+            {/* 粘贴落点：不可见、不可点，只借它的可编辑焦点接浏览器的 Ctrl+V（粘贴被 preventDefault，不会落文字） */}
+            <input
+              ref={sinkRef}
+              data-paste-sink=""
+              data-paste-hint={armed ? "armed" : "idle"}
+              aria-hidden="true"
+              tabIndex={-1}
+              onFocus={() => setArmed(true)}
+              onBlur={() => setArmed(false)}
+              onChange={() => undefined}
+              className="pointer-events-none absolute left-1/2 top-1/2 h-px w-px -translate-x-1/2 -translate-y-1/2 opacity-0"
+            />
+          </div>
+          <label
+            data-file-half=""
+            aria-label="点击选择文件（可多选）"
+            className="flex cursor-pointer items-center justify-center px-2 py-3 text-zinc-400 transition hover:bg-zinc-50 hover:text-zinc-600"
+          >
+            <UploadIcon />
+            <input
+              data-field={field}
+              type="file"
+              multiple
+              onChange={(event) => {
+                appendItems(toItems(Array.from(event.target.files ?? []), false));
+                event.target.value = "";
+              }}
+              className="hidden"
+            />
+          </label>
+        </div>
+      </div>
+      <PhotoStrip
+        items={items}
+        strip={field}
+        onRemove={(at) => onChange(items.filter((_, index) => index !== at))}
+        onRename={(at, name) => onChange(items.map((item, index) => (index === at ? { ...item, name } : item)))}
+      />
+    </div>
+  );
+}
 /** 「日报记录」的列口径（业务口径「做成列表 不要卡片」，字段仍是 A3-01）；
  *  Push 199 收窄 = 时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图 六列 ——「今日施工人数 /
- *  现场发现问题 / 解决方案或建议」只从列表展示去掉（表单字段与 A3-09 问题生成口径不变）。 */
+ *  现场发现问题 / 解决方案或建议」只从列表展示去掉（表单字段与 A3-09 问题生成口径不变）；
+ *  Push 202 = 六列表头改**中英拼写**（时间time / 填写者 / 关联阶段Related stages / 当日完成工作Work completed today /
+ *  明日计划Tomorrow's plan / 现场工作附图On-site photos），时间列改**年月日**、撤状态签与「提交 HH:MM」小字。 */
 const REPORT_COLUMNS: readonly string[] = [
-  "时间",
+  "时间time",
   "填写者",
-  "关联阶段",
-  "当日完成工作",
-  "明日计划",
-  "现场工作附图",
+  "关联阶段Related stages",
+  "当日完成工作Work completed today",
+  "明日计划Tomorrow's plan",
+  "现场工作附图On-site photos",
 ];
 
 /** 一篇日报一行：**列表 / 表格**（业务口径「日报记录还是做成列表 不要卡片」），列内容与原来的卡片一致；
@@ -341,11 +612,9 @@ function ReportList({ reports }: { reports: readonly DailyReport[] }) {
             return (
               <tr key={report.id} data-report-row={report.id} className="align-top transition hover:bg-zinc-50/70">
                 <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5">
-                  <span className="flex items-center gap-1.5">
-                    <p className="font-semibold text-zinc-900">{report.date}</p>
-                    <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + REPORT_TAG_CLASS[report.state]}>{report.state}</span>
-                  </span>
-                  <p className="mt-0.5 text-[10px] text-zinc-400">提交 {report.submittedAt}</p>
+                  {/* Push 202：时间列只留年月日（业务口径「时间格式也要年月日 具体提交时间不需要 已提交状态也不要」）——
+                      状态签与「提交 HH:MM」小字一并下架（state 字段仍保留在数据模型里） */}
+                  <p className="font-semibold text-zinc-900">{report.date}</p>
                 </td>
                 <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5">
                   <span className="flex min-w-0 items-center gap-1.5">
@@ -357,17 +626,7 @@ function ReportList({ reports }: { reports: readonly DailyReport[] }) {
                 <td className="min-w-[210px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-800">{report.doneWork === "" ? "—" : report.doneWork}</td>
                 <td className="min-w-[180px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.plan === "" ? "—" : report.plan}</td>
                 <td className="min-w-[120px] border-b border-zinc-100 px-3 py-2.5">
-                  {report.photos.length === 0 ? (
-                    <span className="text-zinc-400">—</span>
-                  ) : (
-                    <span className="flex flex-wrap gap-1.5">
-                      {report.photos.map((photo) => (
-                        <span key={photo} className="rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600">
-                          {photo}
-                        </span>
-                      ))}
-                    </span>
-                  )}
+                  {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} />}
                 </td>
               </tr>
             );
@@ -482,7 +741,7 @@ function ReportFillForm({
   if (draft.doneWork.trim() === "") {
     missing.push("当日完成工作");
   }
-  if (draft.foundIssue.trim() !== "" && draft.issueCategory === "") {
+  if (draft.foundIssue.trim() !== "" && draft.issueCategories.length === 0) {
     missing.push("问题归类");
   }
   const issueFilled = draft.foundIssue.trim() !== "";
@@ -565,40 +824,41 @@ function ReportFillForm({
 
       <label className="block">
         <span className={FORM_LABEL}>
-          当日完成工作<span className="ml-1 text-rose-500">*</span>
+          当日完成工作Work completed today<span className="ml-1 text-rose-500">*</span>
         </span>
+        {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落（无 placeholder） */}
         <textarea
           data-field="doneWork"
           value={draft.doneWork}
           onChange={(event) => onChange({ doneWork: event.target.value })}
           rows={3}
-          placeholder="如：2 号巷道导轨安装完成 18 组，铜丝镶嵌抽检 6 处合格"
           className={FORM_INPUT + " mt-1 resize-y"}
         />
       </label>
 
       <label className="block">
-        <span className={FORM_LABEL}>明日计划</span>
+        {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落（图 1 的必填星同样未采纳 —— A3-04 口径不变） */}
+        <span className={FORM_LABEL}>明日计划Tomorrow's plan</span>
         <textarea
           data-field="plan"
           value={draft.plan}
           onChange={(event) => onChange({ plan: event.target.value })}
           rows={2}
-          placeholder="如：继续 2 号巷道导轨安装，复核格口开口尺寸"
           className={FORM_INPUT + " mt-1 resize-y"}
         />
       </label>
 
-      <div className="rounded-xl bg-amber-50/60 p-4">
+      {/* Push 202：撤掉「现场发现问题」的琥珀色特殊底与琥珀字色（业务口径「这个也不用搞特殊 样式和别的保持一致」）——
+          标签走 FORM_LABEL、说明走灰色小字，与其它字段同一套 */}
+      <div>
         <label className="block">
-          <span className="text-xs font-medium text-amber-700">现场发现问题</span>
-          <span className="ml-2 text-[11px] text-amber-700/80">填了这里，提交时会自动生成一条问题记录（未分组）</span>
+          <span className={FORM_LABEL}>现场发现问题Problem</span>
+          <span className="ml-2 text-[11px] text-zinc-400">填了这里，提交时会自动生成一条问题记录（未分组）</span>
           <textarea
             data-field="foundIssue"
             value={draft.foundIssue}
             onChange={(event) => onChange({ foundIssue: event.target.value })}
             rows={2}
-            placeholder="没有问题就留空"
             className={FORM_INPUT + " mt-1 resize-y"}
           />
         </label>
@@ -608,20 +868,20 @@ function ReportFillForm({
               问题归类{issueFilled ? <span className="ml-1 text-rose-500">*</span> : null}
             </span>
             <div data-field="issueCategory" className="mt-1">
-              <SelectMenu
-                value={draft.issueCategory}
-                options={ISSUE_CATEGORY_OPTIONS}
-                onChange={(next) => onChange({ issueCategory: next })}
-                placeholder={issueFilled ? "请选择问题归类" : "（「现场发现问题」非空时必填）"}
+              <MultiSelectMenu
+                values={draft.issueCategories}
+                options={ISSUE_CATEGORIES}
+                onChange={(next) => onChange({ issueCategories: next })}
+                placeholder={issueFilled ? "请选择问题归类（可多选）" : "（「现场发现问题」非空时必填）"}
                 disabled={issueFilled === false}
-                ariaLabel="选择问题归类"
+                ariaLabel="选择问题归类（可多选）"
               />
             </div>
           </label>
           <div>
             <span className={FORM_LABEL}>当前问题附图</span>
             <div className="mt-1">
-              <FilePicker field="issuePhotos" fileNames={draft.issuePhotos} onChange={(names) => onChange({ issuePhotos: names })} />
+              <AttachmentPicker field="issuePhotos" items={draft.issuePhotos} onChange={(items) => onChange({ issuePhotos: items })} ariaLabel="当前问题附图：点击后 Ctrl+V 粘贴图片" />
             </div>
           </div>
         </div>
@@ -642,7 +902,7 @@ function ReportFillForm({
       <div>
         <span className={FORM_LABEL}>现场工作附图</span>
         <div className="mt-1">
-          <FilePicker field="photos" fileNames={draft.photos} onChange={(names) => onChange({ photos: names })} />
+          <AttachmentPicker field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
         </div>
       </div>
 
@@ -668,15 +928,15 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
   /** 日报 / 问题（原型内存态：演示数据 + 本次填写新提交的条目）。 */
   const [reports, setReports] = useState<DailyReport[]>(() => reportsForProject(project.id));
   const [issues, setIssues] = useState<Issue[]>(() => issuesForProject(project.id));
-  /** 填写草稿（切子视图不丢；提交 / 暂存后复位）。 */
+  /** 填写草稿（切子视图不丢；「暂存草稿」保留内容，提交后复位）。 */
   const [draft, setDraft] = useState<ReportDraft>(() => emptyDraft());
   /** 提交后的提示（切子视图即清掉）。 */
   const [notice, setNotice] = useState<string>("");
 
   const author = me.user.displayName ?? me.user.name ?? "未署名用户";
 
-  /** 提交（已提交）或暂存（草稿）：两条路都写进「日报记录」；含「现场发现问题」时按 A3-09 自动生成一条问题。 */
-  const handleSubmit = (state: ReportState) => {
+  /** 提交（已提交）：写进「日报记录」；含「现场发现问题」时按 A3-09 自动生成一条问题；表单复位并切到「日报记录」。 */
+  const handleSubmit = () => {
     const dateCn = cnDateOf(draft.dateIso);
     const headcount = Number.parseInt(draft.headcount, 10);
     const report: DailyReport = {
@@ -684,12 +944,13 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
       date: dateCn,
       author,
       submittedAt: clockText(),
-      state,
+      state: "已提交",
       headcount: Number.isFinite(headcount) ? headcount : 0,
       doneWork: draft.doneWork.trim(),
       plan: draft.plan.trim(),
       foundIssue: draft.foundIssue.trim(),
-      issueCategory: draft.foundIssue.trim() === "" ? "" : draft.issueCategory,
+      // Push 202：问题归类可多选 —— 原型存储口径 = 多值顿号连接（单值列 `issue_category` 的多值修订挂 wmj 线）
+      issueCategory: draft.foundIssue.trim() === "" ? "" : draft.issueCategories.join("、"),
       suggestion: draft.suggestion.trim(),
       stages: draft.stages,
       photos: draft.photos,
@@ -697,7 +958,7 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
     setReports((previous) => [report, ...previous]);
 
     let issueState: IssueState | null = null;
-    if (state === "已提交" && report.foundIssue !== "") {
+    if (report.foundIssue !== "") {
       const issue: Issue = {
         id: "i-new-" + String(++newIssueSeq),
         title: report.foundIssue,
@@ -718,11 +979,15 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
 
     setDraft(emptyDraft());
     setNotice(
-      state === "草稿"
-        ? "已暂存 " + dateCn + " 的草稿：可在「日报记录」里继续查看。"
-        : "已提交 " + dateCn + " 的日报。" + (issueState === null ? "" : "「现场发现问题」已自动生成问题记录（" + issueState + "），见「问题追踪」/「问题看板」。"),
+      "已提交 " + dateCn + " 的日报。" + (issueState === null ? "" : "「现场发现问题」已自动生成问题记录（" + issueState + "），见「问题追踪」/「问题看板」。"),
     );
     setSubTab("日报记录");
+  };
+
+  /** 暂存草稿（Push 202 修订）：不写「日报记录」、不切子视图、**不清表单** —— 只保留表单里已填内容 + 顶部提示
+   *  （业务口径「点击暂存草稿就暂存在日报填写页面吧 … 暂存就保留表单里面填的内容皆可」；原「左侧草稿卡片」方案已撤回）。 */
+  const handleSaveDraft = () => {
+    setNotice("已暂存：内容保留在表单里，可继续修改；提交后才写进「日报记录」。");
   };
 
   const tabButton = (tab: SubTab) => {
@@ -781,8 +1046,8 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
             author={author}
             draft={draft}
             onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))}
-            onSubmit={() => handleSubmit("已提交")}
-            onSaveDraft={() => handleSubmit("草稿")}
+            onSubmit={handleSubmit}
+            onSaveDraft={handleSaveDraft}
           />
         </div>
       ) : subTab === "日报记录" ? (
