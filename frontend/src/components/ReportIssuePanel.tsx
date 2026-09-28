@@ -64,7 +64,7 @@ import type { MeResponse, Project } from "../types";
  *   ⑥ 表单字段标题统一**加粗**（业务口径「标题都标标粗」：`FORM_LABEL` 字重 medium → bold；字色口径不变）；
  *   ⑦ **附图以「复制粘贴」为主入口**（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：
  *      两个附图区（现场工作附图 / 当前问题附图）改 `AttachmentPicker` —— 形态按业务给的样（虚线卡 + 文件 / 云图标）
- *      **左右分半（无说明文字）**：左半 = `Ctrl + V` 键帽（业务给样：搜索框键帽风 —— 点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
+ *      **左右分半（无说明文字）**：左半 = `Ctrl + V` 纯文字（Push 204：键帽下架改文字，业务口径「做成文字吧」—— 去渐变底 / 内阴影 / 圆角键帽材质，字色随半区悬停 / 就绪态转深；垂直居中与右半图标中线齐平 —— 业务口径「位置要居中」；点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
  *      剪贴板图没有名字时按「剪贴板图片-N.png」命名）、右半 = 文件 / 云图标（点击选择文件，次入口，原生文件框仍在）；
  *      左半里放一个不可见的粘贴落点输入框 —— 浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令，粘贴一律 preventDefault、不落文字；
  *      附件胶囊可逐个移除。
@@ -450,8 +450,8 @@ function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly Repo
 
 /** 附图选择（原型：名字 + 图片预览地址，正式版走站内文件库）。
  *  Push 202 同批续：以**复制粘贴**为主入口（业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）——
- *  点一下虚线框拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
- *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `Ctrl + V` 键帽（主入口）、
+ *  点一下虚线框**左半**（`Ctrl + V` 半区）拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
+ *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `Ctrl + V` 纯文字（主入口；Push 204 起键帽材质下架 —— 业务口径「做成文字吧」；h-full 撑满 44px 行、垂直居中 —— 「位置要居中」）、
  *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 预览地址，胶囊出缩略图、点开可放大（「图片要可以预览」）；
  *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。 */
 function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string }) {
@@ -512,12 +512,13 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
 
   return (
     <div>
+      {/* Push 204 同批：卡片自身不再可聚焦 —— 原来 tabIndex=0 + onFocus 兜就绪态，点右半「选择文件」时浏览器的
+          焦点落点是这张卡片，左半被重新点亮、Ctrl+V 被一直劫持（业务口径「点击ctrl v 再点右侧图标就会卡ctrl v一直被点击的bug」）；
+          就绪态只由左半（点击 → 粘贴落点聚焦）驱动。 */}
       <div
         data-paste-zone={field}
-        tabIndex={0}
         role="group"
         aria-label={ariaLabel}
-        onFocus={() => setArmed(true)}
         className={
           "overflow-hidden rounded-xl border border-dashed bg-white transition " +
           (armed ? "border-zinc-400 ring-2 ring-zinc-900/5" : "border-zinc-300 hover:border-zinc-400")
@@ -530,9 +531,11 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
               data-paste-half=""
               aria-label="复制粘贴（点一下再按 Ctrl+V 粘图）"
               onClick={() => sinkRef.current?.focus()}
-              className={"flex w-full items-center justify-center px-2 py-3 transition " + (armed ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")}
+              className={"flex h-full w-full items-center justify-center px-2 py-3 transition " + (armed ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")}
             >
-              <span className={"rounded-[3px] px-2 py-1 text-[11px] font-bold leading-none transition [background:linear-gradient(-225deg,#d5dbe4,#f8f8f8)] [box-shadow:inset_0_-2px_0_0_#cdcde6,inset_0_0_1px_1px_#fff,0_1px_2px_1px_rgba(30,35,90,0.4)] " + (armed ? "text-zinc-600" : "text-[#969faf]")}>
+              {/* Push 204：键帽下架、改纯文字（业务口径「做成文字吧」）—— 去渐变底 / 内阴影 / 圆角材质；字色随半区悬停 / 就绪态转深（不再单独写字色）
+                  垂直居中（业务口径「位置要居中」）：h-full 撑满右半图标定高的 44px 行，文字中线与右半图标中线齐平 */}
+              <span className="text-xs font-medium leading-none">
                 Ctrl + V
               </span>
             </button>
@@ -552,6 +555,11 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
           <label
             data-file-half=""
             aria-label="点击选择文件（可多选）"
+            onClick={() => {
+              // 右半是文件入口：点它 = 放弃本区粘贴就绪态（修「点右半点亮左半、Ctrl+V 卡住」），并让粘贴落点失焦。
+              setArmed(false);
+              sinkRef.current?.blur();
+            }}
             className="flex cursor-pointer items-center justify-center px-2 py-3 text-zinc-400 transition hover:bg-zinc-50 hover:text-zinc-600"
           >
             <UploadIcon />
