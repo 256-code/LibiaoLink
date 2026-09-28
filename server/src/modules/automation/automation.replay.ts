@@ -129,6 +129,30 @@ export interface ReplayReport {
   details: ReplayDetail[];
 }
 
+/** 单业务日求值入参（回放器与运行时入口共用的内核口径；subjects 需已映射为通用主体）。 */
+export interface BusinessDateEvaluationInput {
+  businessDate: string;
+  rules: readonly AutomationRule[];
+  subjects: readonly ReplaySubject[];
+  calendar: CalendarWindow;
+  shiftEnabled: boolean;
+  shiftDirection: CalendarShiftDirection;
+  /** 触发时刻过滤（运行时窗口形态用：返回 false = 触发不在窗口内，不产出、不留痕；回放不传）。 */
+  fireAtWithin?: (fireAt: string) => boolean;
+}
+
+/** 合并后的候选消息（fireAt = 触发时刻 UTC ISO 串；事件型 = null）。 */
+export interface ReplayMergedEntry {
+  message: ReplayMessage;
+  fireAt: string | null;
+}
+
+/** 单业务日求值结果（未做「已发送」过滤；sent 幂等与排序由 finalizeMessages 收口）。 */
+export interface BusinessDateEvaluation {
+  details: ReplayDetail[];
+  merged: ReplayMergedEntry[];
+}
+
 /** 事件型规则在回放中的候选口径：任务已处完成态 = 完成事件已发生（真实事件由 outbox 承载，M5-02）。 */
 const COMPLETED_STATUSES = ["done", "early_done"];
 /** 任务快照 → 通用主体（字段与 R02 ~ R07 的条件 / 文案变量一一对应）。 */
@@ -223,16 +247,16 @@ export function cronTime(cron: string | null | undefined): string {
   return String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0");
 }
 /**
- * 回放主流程（确定性）：逐规则 × 逐主体 →（主体类型匹配 → 触发窗口 → 条件 → 动作 / 收件人）→ 应发送清单。
- * 去重：sentKeys（已发送 / 已入队）按幂等键判定、本次清单按投放面判定，命中即 duplicate 跳过；
- * 分组规则（groupBy）按收件人 + 窗口合并为一条清单（R07 任务清单 / A01 未填项目清单）。
+ * 单业务日求值内核（确定性）：逐规则 × 逐主体 →（主体类型匹配 → 触发窗口 → 条件 → 动作 / 收件人）→ 合并。
+ * 去重留痕：主体类型不匹配 / 窗口不匹配 / 未命中 / 收件人缺失 / 模板缺失逐条登记 details；
+ * 分组规则（groupBy）按收件人 + 窗口合并为一条清单（R07 任务清单 / A01 未填项目清单）；
+ * sent 幂等不在本函数内（由 finalizeMessages 收口，回放与运行时入口按各自场景调用）。
  */
-export function replayRules(input: ReplayInput): ReplayReport {
-  const rules = input.rules ?? BUILTIN_RULES;
-  const sent = new Set(input.sentKeys ?? []);
-  const subjects: ReplaySubject[] = [...(input.tasks ?? []).map(toTaskSubject), ...(input.subjects ?? [])];
+export function evaluateBusinessDate(input: BusinessDateEvaluationInput): BusinessDateEvaluation {
+  const rules = input.rules;
+  const subjects = input.subjects;
   const details: ReplayDetail[] = [];
-  const candidates: Array<{ message: ReplayMessage; groupBy: readonly string[] | null; listValue: string | null }> = [];
+  const candidates: Array<{ message: ReplayMessage; groupBy: readonly string[] | null; listValue: string | null; fireAt: string | null }> = [];
 
   for (const rule of rules) {
     if (!rule.enabled) {
@@ -246,6 +270,7 @@ export function replayRules(input: ReplayInput): ReplayReport {
         continue;
       }
       let windowKey: string | null = null;
+      let fireAt: string | null = null;
 
       if (rule.trigger.kind === "event") {
         const status = subject.kind === "task" ? subject.fields["task.display_status"] : undefined;
@@ -260,15 +285,17 @@ export function replayRules(input: ReplayInput): ReplayReport {
           businessDate: input.businessDate,
           baseDate: baseDateOf(subject, rule.trigger.baseField),
           time: cronTime(rule.trigger.cron),
-          shiftEnabled: input.shiftEnabled ?? false,
-          shiftDirection: input.shiftDirection ?? "forward",
+          shiftEnabled: input.shiftEnabled,
+          shiftDirection: input.shiftDirection,
           calendar: input.calendar,
         });
         if (fire === null || fire.fireDate !== input.businessDate) {
           details.push({ ruleCode: rule.code, ruleName: rule.name, entityId: subject.id, windowKey: fire === null ? null : fire.windowKey, matched: false, skipped: "window_mismatch", conditions: [] });
           continue;
         }
+        if (input.fireAtWithin !== undefined && !input.fireAtWithin(fire.fireAt)) continue;
         windowKey = fire.windowKey;
+        fireAt = fire.fireAt;
       }
 
       const evaluation = evaluateRule(rule, subject.fields, { businessDate: input.businessDate });
@@ -278,7 +305,7 @@ export function replayRules(input: ReplayInput): ReplayReport {
       }
 
       const produced: ReplayMessage[] = [];
-      const producedCandidates: Array<{ message: ReplayMessage; groupBy: readonly string[] | null; listValue: string | null }> = [];
+      const producedCandidates: Array<{ message: ReplayMessage; groupBy: readonly string[] | null; listValue: string | null; fireAt: string | null }> = [];
       let skip: ReplaySkipReason | null = null;
 
       for (const action of rule.actions) {
@@ -319,7 +346,7 @@ export function replayRules(input: ReplayInput): ReplayReport {
         const listValue = spec === null ? null : variableValue(subject, [spec.listField], recipientName);
         for (const message of actionMessages) {
           produced.push(message);
-          producedCandidates.push({ message, groupBy, listValue });
+          producedCandidates.push({ message, groupBy, listValue, fireAt });
         }
       }
 
@@ -332,17 +359,17 @@ export function replayRules(input: ReplayInput): ReplayReport {
     }
   }
 
-  const merged: ReplayMessage[] = [];
-  const groups = new Map<string, Array<{ message: ReplayMessage; listValue: string | null }>>();
+  const merged: ReplayMergedEntry[] = [];
+  const groups = new Map<string, Array<{ message: ReplayMessage; listValue: string | null; fireAt: string | null }>>();
   for (const item of candidates) {
     if (item.groupBy === null) {
-      merged.push(item.message);
+      merged.push({ message: item.message, fireAt: item.fireAt });
       continue;
     }
     const key = [item.message.ruleCode, item.message.channel, item.message.recipient, item.message.recipientId ?? "-", item.message.windowKey].join("|");
     const bucket = groups.get(key);
-    if (bucket === undefined) groups.set(key, [{ message: item.message, listValue: item.listValue }]);
-    else bucket.push({ message: item.message, listValue: item.listValue });
+    if (bucket === undefined) groups.set(key, [{ message: item.message, listValue: item.listValue, fireAt: item.fireAt }]);
+    else bucket.push({ message: item.message, listValue: item.listValue, fireAt: item.fireAt });
   }
   // 分组规则恒落到收件人粒度（哪怕本次只命中一条）：幂等键 = 规则 + 收件人 + 窗口，跨天 / 补跑不因条目数变化而漏判。
   for (const bucket of groups.values()) {
@@ -355,21 +382,33 @@ export function replayRules(input: ReplayInput): ReplayReport {
     const spec = findMergedSpec(first.ruleCode, first.channel);
     const template = spec === null ? null : findTemplate(spec.template);
     if (spec === null || template === null) {
-      merged.push({ ...first, entityId: recipientEntityId, dedupeKey: recipientKey, mergedFrom: sourceIds });
+      merged.push({ message: { ...first, entityId: recipientEntityId, dedupeKey: recipientKey, mergedFrom: sourceIds }, fireAt: firstItem.fireAt });
       continue;
     }
     const list = bucket.map((item) => item.listValue ?? "").join("、");
     const listVariables = { [spec.listVariable]: list };
     merged.push({
-      ...first,
-      entityId: recipientEntityId,
-      dedupeKey: recipientKey,
-      title: template.title === null ? null : renderTemplate(template.title, listVariables),
-      body: renderTemplate(template.body, listVariables),
-      mergedFrom: sourceIds,
+      message: {
+        ...first,
+        entityId: recipientEntityId,
+        dedupeKey: recipientKey,
+        title: template.title === null ? null : renderTemplate(template.title, listVariables),
+        body: renderTemplate(template.body, listVariables),
+        mergedFrom: sourceIds,
+      },
+      fireAt: firstItem.fireAt,
     });
   }
 
+  return { details, merged };
+}
+
+/**
+ * 应发送清单收口：sent 幂等（已发送 / 已入队）与投放面重复判定 → duplicate（同条 details 同步标记）；
+ * 确定性排序 = 规则码 → 实体 id（回放报告与运行时输出同序）。
+ */
+export function finalizeMessages(entries: readonly ReplayMergedEntry[], details: ReplayDetail[], sentKeys: readonly string[]): ReplayMessage[] {
+  const sent = new Set(sentKeys);
   const detailIndex = new Map<string, ReplayDetail>();
   for (const detail of details) detailIndex.set([detail.ruleCode, detail.entityId, detail.windowKey ?? "-"].join("|"), detail);
   const markDuplicate = (message: ReplayMessage): void => {
@@ -380,7 +419,8 @@ export function replayRules(input: ReplayInput): ReplayReport {
   };
   const messages: ReplayMessage[] = [];
   const producedIdentities = new Set<string>();
-  for (const message of merged) {
+  for (const entry of entries) {
+    const message = entry.message;
     if (sent.has(message.dedupeKey) || producedIdentities.has(messageIdentity(message))) {
       markDuplicate(message);
       continue;
@@ -389,12 +429,28 @@ export function replayRules(input: ReplayInput): ReplayReport {
     messages.push(message);
   }
   messages.sort((left, right) => (left.ruleCode + "|" + left.entityId).localeCompare(right.ruleCode + "|" + right.entityId));
+  return messages;
+}
 
+/**
+ * 回放主流程：业务日 + 数据集（任务 + 通用主体）+ 日历 → 应发送清单（确定性排序、幂等去重、分组合并）。
+ * M5-02 接线段（lan）的运行时求值入口见 automation.runtime.ts —— 与回放共用 evaluateBusinessDate / finalizeMessages，
+ * 同一规则集 + 同一主体 + 同一业务日下两处输出逐字段一致（自检用例见 test/automation-runtime.test.ts）。
+ */
+export function replayRules(input: ReplayInput): ReplayReport {
+  const evaluation = evaluateBusinessDate({
+    businessDate: input.businessDate,
+    rules: input.rules ?? BUILTIN_RULES,
+    subjects: [...(input.tasks ?? []).map(toTaskSubject), ...(input.subjects ?? [])],
+    calendar: input.calendar,
+    shiftEnabled: input.shiftEnabled ?? false,
+    shiftDirection: input.shiftDirection ?? "forward",
+  });
   return {
     businessDate: input.businessDate,
-    messages,
-    matched: details.filter((item) => item.matched).length,
-    skipped: details.filter((item) => item.skipped !== null).length,
-    details,
+    messages: finalizeMessages(evaluation.merged, evaluation.details, input.sentKeys ?? []),
+    matched: evaluation.details.filter((item) => item.matched).length,
+    skipped: evaluation.details.filter((item) => item.skipped !== null).length,
+    details: evaluation.details,
   };
 }
