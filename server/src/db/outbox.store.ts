@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import type { OutboxTopic } from "@libiaolink/contracts";
 import { eq, sql } from "drizzle-orm";
 import { DatabaseService } from "./database.service.js";
 import type { DbClient } from "./db-client.js";
@@ -7,7 +8,7 @@ import { outboxEvents } from "./schema/platform.js";
 /** 领取到的 Outbox 行（worker 消费用：只带消费需要的字段）。 */
 export interface OutboxClaimedRow {
   id: number;
-  topic: string;
+  topic: OutboxTopic;
   payload: Record<string, unknown>;
   dedupeKey: string;
   attempts: number;
@@ -17,7 +18,7 @@ export interface OutboxClaimedRow {
 
 export interface ClaimOutboxInput {
   /** 允许领取的主题（一期只有预览队列用；空数组 = 不领任何行）。 */
-  topics: readonly string[];
+  topics: readonly OutboxTopic[];
   limit: number;
   /** 超过该时长仍处 `processing` 的行视为崩溃遗留（migration 0028），可重新领取 —— 毫秒。 */
   staleAfterMs: number;
@@ -110,7 +111,8 @@ export class OutboxStore {
     `);
     return (result.rows as unknown as Array<Record<string, unknown>>).map((row) => ({
       id: Number(row.id),
-      topic: String(row.topic),
+      // 领取恒按注册表主题（OutboxTopic）过滤，库内行必在白名单内；此处窄化以衔接消费侧类型收口。
+      topic: String(row.topic) as OutboxTopic,
       payload: (row.payload ?? {}) as Record<string, unknown>,
       dedupeKey: String(row.dedupe_key),
       attempts: Number(row.attempts),

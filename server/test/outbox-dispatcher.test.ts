@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { OutboxTopic } from "@libiaolink/contracts";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
@@ -28,7 +29,11 @@ const ENV = {
   WORKER_ID: "test-worker",
 } as unknown as Env;
 
-function makeRow(topic: string, id: number, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
+/** 假主题一律取白名单真实值（S7-3 起 OutboxClaimedRow.topic 为 OutboxTopic）：消费语义与主题串无关。 */
+const TOPIC_A: OutboxTopic = "issue.updated";
+const TOPIC_B: OutboxTopic = "task.updated";
+
+function makeRow(topic: OutboxTopic, id: number, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
   return {
     id,
     topic,
@@ -43,7 +48,7 @@ function makeRow(topic: string, id: number, overrides: Partial<OutboxClaimedRow>
 
 /** outbox 领取 / 回写替身：claim 按主题取行并记账，三态回写各记一笔。 */
 class FakeOutboxStore {
-  readonly byTopic = new Map<string, OutboxClaimedRow[]>();
+  readonly byTopic = new Map<OutboxTopic, OutboxClaimedRow[]>();
   readonly claims: ClaimOutboxInput[] = [];
   readonly done: number[] = [];
   readonly retried: { id: number; input: OutboxRetryInput }[] = [];
@@ -83,8 +88,8 @@ interface Harness {
 }
 
 function makeDispatcher(options: {
-  registry?: ReadonlyMap<string, OutboxTopicHandler>;
-  policies?: ReadonlyMap<string, OutboxTopicPolicy>;
+  registry?: ReadonlyMap<OutboxTopic, OutboxTopicHandler>;
+  policies?: ReadonlyMap<OutboxTopic, OutboxTopicPolicy>;
   env?: Partial<Env>;
 } = {}): Harness {
   const store = new FakeOutboxStore();
@@ -113,24 +118,24 @@ function handlerOf(
 describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
   it("按注册主题逐主题领取：每主题独立成批（batchLimit / staleAfterMs / workerId 均落领取参数）", async () => {
     const h = makeDispatcher({
-      registry: new Map<string, OutboxTopicHandler>([
-        ["topic.a", handlerOf(async () => ({ outcome: "done" }))],
-        ["topic.b", handlerOf(async () => ({ outcome: "done" }))],
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [TOPIC_A, handlerOf(async () => ({ outcome: "done" }))],
+        [TOPIC_B, handlerOf(async () => ({ outcome: "done" }))],
       ]),
     });
-    h.store.byTopic.set("topic.a", [makeRow("topic.a", 1), makeRow("topic.a", 2), makeRow("topic.a", 3)]);
-    h.store.byTopic.set("topic.b", [makeRow("topic.b", 4)]);
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 1), makeRow(TOPIC_A, 2), makeRow(TOPIC_A, 3)]);
+    h.store.byTopic.set(TOPIC_B, [makeRow(TOPIC_B, 4)]);
 
     const stats = await h.dispatcher.drainOnce();
 
     expect(h.store.claims).toEqual([
-      { topics: ["topic.a"], limit: 2, staleAfterMs: 600000, workerId: "test-worker" },
-      { topics: ["topic.b"], limit: 2, staleAfterMs: 600000, workerId: "test-worker" },
+      { topics: [TOPIC_A], limit: 2, staleAfterMs: 600000, workerId: "test-worker" },
+      { topics: [TOPIC_B], limit: 2, staleAfterMs: 600000, workerId: "test-worker" },
     ]);
     expect(stats).toEqual({ claimed: 3, done: 3, retried: 0, dead: 0 });
-    // 每主题轮内只领 OUTBOX_BATCH_LIMIT 条：topic.a 领 2（余 1 条留给下一轮，不被清空），topic.b 领 1
+    // 每主题轮内只领 OUTBOX_BATCH_LIMIT 条：TOPIC_A 领 2（余 1 条留给下一轮，不被清空），TOPIC_B 领 1
     expect(h.store.done).toEqual([1, 2, 4]);
-    expect(h.store.byTopic.get("topic.a")!.map((row) => row.id)).toEqual([3]);
+    expect(h.store.byTopic.get(TOPIC_A)!.map((row) => row.id)).toEqual([3]);
   });
 
   it("注册表为空：不触库、零领取（只投递不消费的排障态）", async () => {
@@ -145,9 +150,9 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
   it("handler 抛异常 / 返回非法值：按可重试收敛，不打断同批其余行", async () => {
     const h = makeDispatcher({
       env: { OUTBOX_BATCH_LIMIT: 5 },
-      registry: new Map<string, OutboxTopicHandler>([
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
         [
-          "topic.a",
+          TOPIC_A,
           handlerOf(async (row) => {
             if (row.id === 1) {
               throw new Error("处理器炸了");
@@ -160,7 +165,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
         ],
       ]),
     });
-    h.store.byTopic.set("topic.a", [makeRow("topic.a", 1), makeRow("topic.a", 2), makeRow("topic.a", 3)]);
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 1), makeRow(TOPIC_A, 2), makeRow(TOPIC_A, 3)]);
 
     const stats = await h.dispatcher.drainOnce();
 
@@ -171,16 +176,16 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
   });
 
   it("retry 未到顶：按主题策略退避回 pending（attempts 累计；availableAt = now + base * 2^(n-1)）", async () => {
-    const policies = new Map<string, OutboxTopicPolicy>([
-      ["topic.a", { batchLimit: 2, maxAttempts: 5, backoffBaseMs: 1000, backoffMaxMs: 10000 }],
+    const policies = new Map<OutboxTopic, OutboxTopicPolicy>([
+      [TOPIC_A, { batchLimit: 2, maxAttempts: 5, backoffBaseMs: 1000, backoffMaxMs: 10000 }],
     ]);
     const h = makeDispatcher({
-      registry: new Map<string, OutboxTopicHandler>([
-        ["topic.a", handlerOf(async () => ({ outcome: "retry", error: "稍后再试" }))],
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [TOPIC_A, handlerOf(async () => ({ outcome: "retry", error: "稍后再试" }))],
       ]),
       policies,
     });
-    h.store.byTopic.set("topic.a", [makeRow("topic.a", 1, { attempts: 2 })]);
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 1, { attempts: 2 })]);
 
     const stats = await h.dispatcher.drainOnce();
 
@@ -194,9 +199,9 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
   it("retry 到顶：先 onDead 留痕再落 dead，并发单条死信告警（不等探针周期）", async () => {
     const deadHooks: { id: number; error: string }[] = [];
     const h = makeDispatcher({
-      registry: new Map<string, OutboxTopicHandler>([
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
         [
-          "topic.a",
+          TOPIC_A,
           handlerOf(
             async () => ({ outcome: "retry", error: "一直失败" }),
             async (row, error) => {
@@ -206,7 +211,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
         ],
       ]),
     });
-    h.store.byTopic.set("topic.a", [makeRow("topic.a", 7, { attempts: 2 })]);
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 7, { attempts: 2 })]);
 
     const stats = await h.dispatcher.drainOnce();
 
@@ -217,15 +222,15 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
     expect(h.alerts.emitted[0]).toMatchObject({
       code: "outbox.dead",
       level: "error",
-      detail: { topic: "topic.a", id: 7, attempts: 3, maxAttempts: 3 },
+      detail: { topic: TOPIC_A, id: 7, attempts: 3, maxAttempts: 3 },
     });
   });
 
   it("确定性 dead：一次即终态；onDead 抛错只记日志，不阻塞 markDead", async () => {
     const h = makeDispatcher({
-      registry: new Map<string, OutboxTopicHandler>([
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
         [
-          "topic.a",
+          TOPIC_A,
           handlerOf(
             async () => ({ outcome: "dead", error: "文件损坏" }),
             async () => {
@@ -235,7 +240,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
         ],
       ]),
     });
-    h.store.byTopic.set("topic.a", [makeRow("topic.a", 9)]);
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 9)]);
 
     const stats = await h.dispatcher.drainOnce();
 
@@ -245,11 +250,11 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
   });
 
   it("done 路径不触发死信告警；预览主题走 PREVIEW_CONVERT_* 策略（到顶次数与 M4-05c 同口径）", async () => {
-    const policies = new Map<string, OutboxTopicPolicy>([
+    const policies = new Map<OutboxTopic, OutboxTopicPolicy>([
       ["preview.job", previewTopicPolicy({ ...ENV, OUTBOX_DEFAULT_MAX_ATTEMPTS: 99 } as unknown as Env)],
     ]);
     const h = makeDispatcher({
-      registry: new Map<string, OutboxTopicHandler>([
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
         ["preview.job", handlerOf(async () => ({ outcome: "retry", error: "转换器忙" }))],
       ]),
       policies,
