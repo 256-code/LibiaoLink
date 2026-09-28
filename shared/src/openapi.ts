@@ -75,6 +75,7 @@ import {
   IssueListResponseSchema,
   IssueUpdateBodySchema,
 } from "./modules/issues.ts";
+import { WorkspaceResponseSchema } from "./modules/workspace.ts";
 import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
@@ -1457,6 +1458,18 @@ export function buildOpenApiDocument() {
       409: commonErrors[409],
     },
   });
+  // ---- 工作台（M6-05 第一刀 · A6-01 / A6-03：我的任务 / 我负责的问题 · wmj 线）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/workspace",
+    tags: ["workspace"],
+    summary: "工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的）",
+    responses: {
+      200: { description: "工作台聚合（按会话用户；记录级可见性过滤后）", ...json(WorkspaceResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1482,6 +1495,7 @@ export function buildOpenApiDocument() {
       { name: "stakeholders", description: "干系人台账与项目关联（A5-01~A5-04 / A5-07；隐私字段走字段级策略）" },
       { name: "reports", description: "日报（A3-01 / A3-02 / A3-08 / A3-09；M6-01 / M6-02）" },
       { name: "issues", description: "问题闭环（A3-09~A3-13；四态流转 / 分派 / 留痕，M6-02 / M6-03）" },
+      { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
     ],
   });
 }
