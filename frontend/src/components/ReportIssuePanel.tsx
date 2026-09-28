@@ -67,7 +67,7 @@ import type { MeResponse, Project } from "../types";
  *   ⑥ 表单字段标题统一**加粗**（业务口径「标题都标标粗」：`FORM_LABEL` 字重 medium → bold；字色口径不变）；
  *   ⑦ **附图以「复制粘贴」为主入口**（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：
  *      两个附图区（现场工作附图 / 当前问题附图）改 `AttachmentPicker` —— 形态按业务给的样（虚线卡 + 文件 / 云图标）
- *      **左右分半（无说明文字）**：左半 = `Ctrl + V` 纯文字（Push 204：键帽下架改文字，业务口径「做成文字吧」—— 去渐变底 / 内阴影 / 圆角键帽材质，字色随半区悬停 / 就绪态转深；垂直居中与右半图标中线齐平 —— 业务口径「位置要居中」；点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
+ *      **左右分半（无说明文字）**：左半 = **剪贴板图标**（Push 204 由键帽改纯文字、Push 212 续再按业务口径「ctrl v 的地方改成这个图标吧」换成 PasteIcon —— 无键帽材质、字色随半区悬停 / 就绪态转深；垂直居中与右半图标中线齐平 —— 业务口径「位置要居中」；点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
  *      剪贴板图没有名字时按「剪贴板图片-N.png」命名）、右半 = 文件 / 云图标（点击选择文件，次入口，原生文件框仍在）；
  *      左半里放一个不可见的粘贴落点输入框 —— 浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令，粘贴一律 preventDefault、不落文字；
  *      附件胶囊可逐个移除。
@@ -143,14 +143,24 @@ import type { MeResponse, Project } from "../types";
  * - Push 211（业务口径 2026-09-28「要加问题描述标题」）：问题看板**卡面首段补字段名「问题描述」** ——
  *   与其余三段（问题归类 / 解决方案或建议 / 问题附图）同款 11px 浅灰小字；首段不带上间距（Field 增 first 变体）；
  *   「问题追踪」表头 / 问题详情抽屉的「问题描述」口径照旧，三处一致。
+ *
+ * - Push 212（业务口径 2026-09-28「只保留关联阶段 且不需要隐藏」）：问题详情抽屉**撤「已隐藏 · N」折叠区** ——
+ *   中间区只留「关联阶段」一行、改常显（无折叠开关）；其余五枚次要字段整体下架（提出人在抽屉头部已有、
+ *   来源日报在页脚已有；提交时间 / 日报状态 / 问题编号不再展示）。
+ *   同批（业务口径「抽屉里面可以编辑内容」）：抽屉内**两块表能编辑的字段同样可编辑** —— 问题描述 / 问题归类 /
+ *   解决方案或建议 / 关联阶段 / 当日完成工作 / 明日计划 / 问题是否处理（同一套 InlineEdit 组件与落值口径）。
+ *   续（业务口径「图片也要可以增删」）：两张附图（问题附图 / 现场工作附图）接 AttachmentPicker —— 复制粘贴 / 选文件**增图**、
+ *   × **删图**（与「日报填写」同一套组件与钩子），落 value 走 patchIssue / patchReport 的 photos 字段。
  */
 
 /** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
- *  文字两列 + 关联阶段多选 —— 时间 / 填写者 / 现场工作附图不动（「编辑后时间不变」）。 */
-export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stages">>;
+ *  文字两列 + 关联阶段多选 —— 时间 / 填写者不动（「编辑后时间不变」）。
+ *  Push 212 续（业务口径「图片也要可以增删」）：追加**现场工作附图**（photos）—— 抽屉里与两列文字共用同一份 patchReport 内存态。 */
+export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stages" | "photos">>;
 
-/** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。 */
-export type IssuePatch = Partial<Pick<Issue, "title" | "category" | "solution" | "state">>;
+/** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。
+ *  Push 212 续：追加**问题附图**（photos）。 */
+export type IssuePatch = Partial<Pick<Issue, "title" | "category" | "solution" | "state" | "photos">>;
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
 const CARD_SHELL =
@@ -604,16 +614,30 @@ function isClipboardGenericName(name: string): boolean {
   return name === "" || /^image\.(png|jpe?g|gif|webp)$/i.test(name);
 }
 
-/** 附图图标（右半「点击选择文件」= 业务给的样：文件 + 云；fill=currentColor 随字色）。 */
-function UploadIcon() {
+/** 附图图标（右半「点击选择文件」= 业务给的样：文件 + 云；fill=currentColor 随字色；Push 212 续按业务口径「小一点 太大了」缩到 16px）。 */
+function UploadIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
       <path
         fillRule="evenodd"
         clipRule="evenodd"
         d="M10 1C9.73478 1 9.48043 1.10536 9.29289 1.29289L3.29289 7.29289C3.10536 7.48043 3 7.73478 3 8V20C3 21.6569 4.34315 23 6 23H7C7.55228 23 8 22.5523 8 22C8 21.4477 7.55228 21 7 21H6C5.44772 21 5 20.5523 5 20V9H10C10.5523 9 11 8.55228 11 8V3H18C18.5523 3 19 3.44772 19 4V9C19 9.55228 19.4477 10 20 10C20.5523 10 21 9.55228 21 9V4C21 2.34315 19.6569 1 18 1H10ZM9 7H6.41421L9 4.41421V7ZM14 15.5C14 14.1193 15.1193 13 16.5 13C17.8807 13 19 14.1193 19 15.5V16V17H20C21.1046 17 22 17.8954 22 19C22 20.1046 21.1046 21 20 21H13C11.8954 21 11 20.1046 11 19C11 17.8954 11.8954 17 13 17H14V16V15.5ZM16.5 11C14.142 11 12.2076 12.8136 12.0156 15.122C10.2825 15.5606 9 17.1305 9 19C9 21.2091 10.7909 23 13 23H20C22.2091 23 24 21.2091 24 19C24 17.1305 22.7175 15.5606 20.9844 15.122C20.7924 12.8136 18.858 11 16.5 11Z"
         fill="currentColor"
       />
+    </svg>
+  );
+}
+/** 粘贴入口图标（Push 212 续 · 业务口径「ctrl v 的地方改成这个图标吧」→「两个图标不协调」）：业务给的 1024 视框「剪贴板 + 文件」图。
+ *  原图直接缩到 16px 时字形只占视框 81%、线圈仅 ~41 单位（≈0.68px），与右半「文件 + 云」（24 视框 / 2 单位描边 ⇒ 16px 下 1.33px）又细又小 ≈ 不协调；
+ *  对齐口径：viewBox 收成 "40 40 944 944"（字形内容 828×890 居中，四周各留 40）并给 strokeWidth="38" ⇒
+ *  线圈 ≈ 79 单位 × 16/944 ≈ 1.34px ≈ 右半 1.33px，字形占宽 ≈ 866/944 ≈ 91.7% ≈ 右半 22/24；round 转角与站内图标同观感。
+ *  形状仍是原图三条 path（未改一笔），只改视框与描边。 */
+function PasteIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="40 40 944 944" fill="currentColor" stroke="currentColor" strokeWidth="38" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true" className={className}>
+      <path d="M922.21 787.33l0.31-0.45c0.32-0.5 0.62-1 0.9-1.51l0.06-0.12c0.3-0.56 0.57-1.14 0.81-1.72l0.18-0.46q0.27-0.66 0.48-1.35c0.06-0.17 0.11-0.35 0.16-0.53q0.24-0.81 0.42-1.65v-0.18c0.12-0.62 0.21-1.24 0.28-1.86v-0.52c0-0.48 0.06-1 0.07-1.46v-363.9a21.51 21.51 0 0 0-21.5-21.5H487.81a21.53 21.53 0 0 0-21.5 21.57L468 935.76a21.51 21.51 0 0 0 21.5 21.44h256.07c0.71 0 1.42 0 2.13-0.11 0.23 0 0.45-0.07 0.68-0.1 0.47-0.06 0.94-0.12 1.41-0.21 0.29-0.06 0.58-0.15 0.87-0.22s0.79-0.18 1.17-0.3 0.57-0.2 0.85-0.3 0.77-0.25 1.14-0.41 0.51-0.24 0.77-0.36 0.77-0.35 1.14-0.55 0.49-0.29 0.74-0.44 0.73-0.41 1.08-0.65 0.56-0.41 0.84-0.62 0.59-0.42 0.87-0.65a19.92 19.92 0 0 0 1.59-1.46l158.9-160.49a19 19 0 0 0 1.25-1.43l0.35-0.43c0.32-0.37 0.65-0.75 0.86-1.14zM509.38 433.12H883V753.7H745.58a21.5 21.5 0 0 0-21.5 21.5v139H510.91z m331 376.23l-73.34 74.07V796.7h85.85z" />
+      <path d="M138.92 751.28V201.57h86v10.75a38.14 38.14 0 0 0 11.1 26.8 37.62 37.62 0 0 0 26.8 11.1h246a37.9 37.9 0 0 0 37.89-37.9v-10.75h71.47v118.06h40.9V181.12a20.49 20.49 0 0 0-20.45-20.45h-91.91v-9.84a38.13 38.13 0 0 0-11.1-26.8 37.59 37.59 0 0 0-26.78-11.1h-58.17a68.64 68.64 0 0 0-129.69 0h-58.17A37.63 37.63 0 0 0 236 124a38.16 38.16 0 0 0-11.09 26.8v9.84H118.47A20.49 20.49 0 0 0 98 181.12V771.7a20.07 20.07 0 0 0 0.11 2c0 0.29 0.07 0.58 0.12 0.86l0.07 0.46c0 0.23 0.06 0.46 0.11 0.68 0.09 0.43 0.2 0.85 0.33 1.35v0.12c0 0.16 0.08 0.31 0.13 0.48 0.14 0.45 0.31 0.89 0.47 1.32v0.11c0 0.15 0.11 0.3 0.17 0.45 0.15 0.36 0.33 0.72 0.5 1.07l0.13 0.26c0.07 0.16 0.15 0.32 0.23 0.48s0.33 0.56 0.5 0.83l0.2 0.33a5.58 5.58 0 0 0 0.34 0.56c0.14 0.21 0.3 0.42 0.46 0.63l0.27 0.36c0.15 0.2 0.3 0.41 0.46 0.61l0.56 0.63 0.3 0.32c0.15 0.18 0.31 0.35 0.47 0.51a4.58 4.58 0 0 0 0.46 0.42l0.28 0.26c0.24 0.22 0.48 0.44 0.74 0.66l0.47 0.36 0.3 0.23 0.83 0.6 0.43 0.27 0.16 0.09c0.37 0.23 0.74 0.46 1.13 0.67a4.8 4.8 0 0 0 0.45 0.22c0.45 0.23 0.89 0.45 1.36 0.64l0.41 0.15c0.48 0.19 1 0.37 1.45 0.52 0.15 0 0.3 0.08 0.53 0.14 0.47 0.13 0.94 0.26 1.41 0.35 0.22 0 0.45 0.08 0.67 0.11l0.48 0.07c0.28 0.05 0.56 0.09 0.85 0.12 0.51 0.06 1.07 0.08 1.68 0.09H382.55v-40.81z m126.9-597.45h92.24v-18.38a27.76 27.76 0 1 1 55.52 0v18.35h92.25v55.5h-240z" />
+      <path d="M385.83 117.05a18.39 18.39 0 1 0 0 36.78h3v-0.24a18.38 18.38 0 0 0-3-36.51z" />
     </svg>
   );
 }
@@ -695,7 +719,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
           title={isLarge || isThumb ? item.name : undefined}
           className={
             isLarge || isThumb
-              ? "inline-flex shrink-0"
+              ? "relative inline-flex shrink-0"
               : "inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600"
           }
         >
@@ -748,7 +772,19 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
               {item.name}
             </button>
           )}
-          {onRemove === undefined ? null : (
+          {onRemove === undefined ? null : isLarge || isThumb ? (
+            // Push 212 续：md / lg 瓦片走**角标**移除（absolute 覆盖在图上，不占行宽 —— 保证大瓦片仍能并排折行）。
+            <button
+              type="button"
+              data-action="remove-attachment"
+              aria-label={"移除 " + item.name}
+              onClick={() => onRemove(index)}
+              title="移除这张图"
+              className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white text-[11px] leading-none text-zinc-500 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-800"
+            >
+              ×
+            </button>
+          ) : (
             <button
               type="button"
               data-action="remove-attachment"
@@ -769,12 +805,12 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
 /** 附图选择（原型：名字 + 图片预览地址，正式版走站内文件库）。
  *  Push 202 同批续：以**复制粘贴**为主入口（业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）——
  *  点一下虚线框**左半**（`Ctrl + V` 半区）拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
- *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `Ctrl + V` 纯文字（主入口；Push 204 起键帽材质下架 —— 业务口径「做成文字吧」；h-full 撑满 44px 行、垂直居中 —— 「位置要居中」）、
+ *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半**剪贴板图标**（主入口；Push 204 起键帽材质下架 —— 业务口径「做成文字吧」、Push 212 续文字换 PasteIcon —— 「ctrl v 的地方改成这个图标吧」；h-full 撑满 44px 行、垂直居中 —— 「位置要居中」）、
  *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 预览地址，胶囊出缩略图、点开可放大（「图片要可以预览」）；
  *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。
  *  Push 205：「当前问题附图」加**前置开关**（业务口径「先填发现的问题 才能填另外三个」）—— disabled 时整卡灰底 / 灰字、
  *  两半都点不开（左半按钮 disabled、粘贴落点不可聚焦、文件框 disabled、文档级粘贴监听不挂）。 */
-function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean }) {
+function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card" }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact" }) {
   /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
   const [armed, setArmed] = useState(false);
   /** 粘贴落点（左半里的不可见输入框：浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令）。 */
@@ -786,6 +822,8 @@ function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false 
   latest.current = { items, onChange };
   /** 就绪态 = 已点过左半 **且未禁用**（禁用态一律不亮、不接粘贴）。 */
   const armedNow = armed && disabled === false;
+  /** 紧凑形态（抽屉）：不套虚线卡 —— 只留两枚小图标入口（粘贴 / 选文件）。 */
+  const compact = variant === "compact";
 
   /** 把一批新附件并进已有清单（粘贴与选文件共用；按现有顺序追加，同名不去重）。 */
   const appendItems = (next: readonly ReportPhoto[]) => {
@@ -844,15 +882,17 @@ function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false 
         aria-label={ariaLabel}
         aria-disabled={disabled}
         className={
-          "overflow-hidden rounded-xl border border-dashed transition " +
-          (disabled
-            ? "border-zinc-200 bg-zinc-50"
-            : armedNow
-              ? "border-zinc-400 bg-white ring-2 ring-zinc-900/5"
-              : "border-zinc-300 bg-white hover:border-zinc-400")
+          compact
+            ? "relative flex items-center gap-1"
+            : "overflow-hidden rounded-xl border border-dashed transition " +
+              (disabled
+                ? "border-zinc-200 bg-zinc-50"
+                : armedNow
+                  ? "border-zinc-400 bg-white ring-2 ring-zinc-900/5"
+                  : "border-zinc-300 bg-white hover:border-zinc-400")
         }
       >
-        <div className="grid grid-cols-2 divide-x divide-zinc-200 text-center">
+        <div className={compact ? "flex items-center gap-1" : "grid grid-cols-2 divide-x divide-zinc-200 text-center"}>
           <div className="relative">
             <button
               type="button"
@@ -866,19 +906,25 @@ function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false 
                 sinkRef.current?.focus();
               }}
               className={
-                "flex h-full w-full items-center justify-center px-2 py-3 transition " +
-                (disabled
-                  ? "cursor-not-allowed text-zinc-300"
-                  : armedNow
-                    ? "bg-zinc-100 text-zinc-900"
-                    : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")
+                compact
+                  ? "flex h-7 w-7 items-center justify-center rounded-lg transition " +
+                    (disabled
+                      ? "cursor-not-allowed text-zinc-300"
+                      : armedNow
+                        ? "bg-zinc-100 text-zinc-900"
+                        : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600")
+                  : "flex h-full w-full items-center justify-center px-2 py-3 transition " +
+                    (disabled
+                      ? "cursor-not-allowed text-zinc-300"
+                      : armedNow
+                        ? "bg-zinc-100 text-zinc-900"
+                        : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")
               }
             >
               {/* Push 204：键帽下架、改纯文字（业务口径「做成文字吧」）—— 去渐变底 / 内阴影 / 圆角材质；字色随半区悬停 / 就绪态转深（不再单独写字色）
-                  垂直居中（业务口径「位置要居中」）：h-full 撑满右半图标定高的 44px 行，文字中线与右半图标中线齐平 */}
-              <span className="text-xs font-medium leading-none">
-                Ctrl + V
-              </span>
+                  垂直居中（业务口径「位置要居中」）：h-full 撑满右半图标定高的 44px 行。
+                  Push 212 续（业务口径「ctrl v 的地方改成这个图标吧」→「小一点 太大了」）：文字换**剪贴板图标**（PasteIcon —— 与右半「文件 + 云」同款 currentColor / 16px 口径）。 */}
+              <PasteIcon className={compact ? "h-4 w-4" : "h-5 w-5"} />
             </button>
             {/* 粘贴落点：不可见、不可点，只借它的可编辑焦点接浏览器的 Ctrl+V（粘贴被 preventDefault，不会落文字） */}
             <input
@@ -906,11 +952,14 @@ function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false 
               sinkRef.current?.blur();
             }}
             className={
-              "flex items-center justify-center px-2 py-3 transition " +
-              (disabled ? "cursor-not-allowed text-zinc-300" : "cursor-pointer text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")
+              compact
+                ? "flex h-7 w-7 items-center justify-center rounded-lg transition " +
+                  (disabled ? "cursor-not-allowed text-zinc-300" : "cursor-pointer text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600")
+                : "flex items-center justify-center px-2 py-3 transition " +
+                  (disabled ? "cursor-not-allowed text-zinc-300" : "cursor-pointer text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")
             }
           >
-            <UploadIcon />
+            <UploadIcon className={compact ? "h-4 w-4" : "h-5 w-5"} />
             <input
               data-field={field}
               type="file"
@@ -928,6 +977,7 @@ function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false 
       <PhotoStrip
         items={items}
         strip={field}
+        size={size}
         onRemove={(at) => onChange(items.filter((_, index) => index !== at))}
         onRename={(at, name) => onChange(items.map((item, index) => (index === at ? { ...item, name } : item)))}
       />
@@ -1811,12 +1861,23 @@ const CLOSE_ANIMATION_MS = 170;
 
 /** 问题详情抽屉（Push 209 · 业务口径 2026-09-28「点击要出现抽屉 是关于这个问题的日报内容」）：
  *  卡面只留摘要，点开抽屉看全量 —— 上半 = 问题本身（问题描述 / 问题归类 / 解决方案或建议 / 问题附图），下半 = 来源日报
- *  （当日完成工作 / 日期 / 填写者 / 明日计划 / 现场工作附图 / 问题是否处理 / 施工人数），中间夹一条「已隐藏 · N」折叠区放次要字段
- *  （业务样 = 图二：默认收起、点开才显示）。
- *  壳与交互动效复用「任务详情抽屉」那套（drawer-backdrop / drawer-panel 两枚全局类 + Esc / 点遮罩关闭 + 锁页面滚动）。 */
-function IssueDrawer({ issue, report, onClose }: { issue: Issue; report: DailyReport | null; onClose: () => void }) {
+ *  （当日完成工作 / 日期 / 填写者 / 明日计划 / 现场工作附图 / 问题是否处理 / 施工人数），
+ *  中间 = 「关联阶段」一行（Push 212 起常显 —— 业务口径「只保留关联阶段 且不需要隐藏」：原「已隐藏 · 6」折叠区整块撤除，
+ *  其余五枚次要字段下架；提出人在抽屉头部、来源日报在页脚本就有）。
+ *  壳与交互动效复用「任务详情抽屉」那套（drawer-backdrop / drawer-panel 两枚全局类 + Esc / 点遮罩关闭 + 锁页面滚动）。
+ *  Push 212 同批（业务口径「抽屉里面可以编辑内容」）：抽屉内**两块表能编辑的字段这里同样可编辑** —— 问题描述 / 问题归类 /
+ *  解决方案或建议（IssuePatch）+ 关联阶段 / 当日完成工作 / 明日计划（ReportPatch）+ 问题是否处理（IssuePatch）；文字列点
+ *  「保存」才落值、Esc / 点浮层外 = 取消（与两块表同一套 InlineEdit 口径）；日期 / 填写者 / 施工人数保持只读（「编辑后时间不变」）。
+ *  续（业务口径「图片也要可以增删」）：问题附图 / 现场工作附图接 AttachmentPicker（与「日报填写」同款：点左半 Ctrl+V 粘贴 /
+ *  右半选文件 = 增图，胶囊 / 瓦片上的 × = 删图），落值走 patchIssue({ photos }) / patchReport({ photos })。 */
+function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
+  issue: Issue;
+  report: DailyReport | null;
+  onPatchIssue: (id: string, patch: IssuePatch) => void;
+  onPatchReport: (id: string, patch: ReportPatch) => void;
+  onClose: () => void;
+}) {
   const [closing, setClosing] = useState(false);
-  const [hiddenOpen, setHiddenOpen] = useState(false);
   const closingRef = useRef(false);
 
   useEffect(() => lockBodyScroll(), [issue.id]);
@@ -1841,28 +1902,103 @@ function IssueDrawer({ issue, report, onClose }: { issue: Issue; report: DailyRe
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [requestClose]);
-  /** 上半：问题本身（业务样 = 图二前四行）。 */
+  /** 上半：问题本身（业务样 = 图二前四行；Push 212 同批：前三行接行内编辑 —— 与「问题追踪」表同一套组件与落值口径）。 */
   const rows: { key: string; label: string; value: ReactNode }[] = [
-    { key: "title", label: "问题描述", value: <p className="whitespace-pre-line break-words">{issue.title}</p> },
-    { key: "category", label: "问题归类", value: <CategoryTags value={issue.category} /> },
+    {
+      key: "title",
+      label: "问题描述",
+      value: (
+        <InlineTextCell
+          bare
+          value={issue.title}
+          ariaLabel={"修改问题描述（" + issue.raisedAt + "）"}
+          triggerClassName={CELL_EDIT_TEXT}
+          placeholder="修改问题描述，点「保存」生效"
+          display={<span data-issue-title="" className="block whitespace-pre-line break-words">{issue.title}</span>}
+          onSave={(text) => {
+            onPatchIssue(issue.id, { title: renumberLines(text) });
+          }}
+        />
+      ),
+    },
+    {
+      key: "category",
+      label: "问题归类",
+      value: (
+        <InlineMultiOptionCell
+          bare
+          values={issue.category === "" ? [] : issue.category.split("、").filter((part) => part !== "")}
+          options={ISSUE_CATEGORIES}
+          ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
+          renderLabel={categoryChip}
+          triggerClassName={CELL_EDIT_CHIP}
+          display={<CategoryTags value={issue.category} />}
+          onChange={(values) => {
+            onPatchIssue(issue.id, { category: values.join("、") });
+          }}
+        />
+      ),
+    },
     {
       key: "solution",
       label: "解决方案或建议",
-      value: <p className="whitespace-pre-line break-words">{issue.solution === "" ? "—" : issue.solution}</p>,
+      value: (
+        <InlineTextCell
+          bare
+          value={issue.solution}
+          ariaLabel={"修改解决方案或建议（" + issue.raisedAt + "）"}
+          triggerClassName={CELL_EDIT_TEXT}
+          placeholder="补充解决方案或建议，点「保存」生效"
+          display={<span data-issue-solution="" className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : issue.solution}</span>}
+          onSave={(text) => {
+            onPatchIssue(issue.id, { solution: renumberLines(text) });
+          }}
+        />
+      ),
     },
     {
       key: "issuePhotos",
       label: "问题附图",
-      value: issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="md" />,
+      // Push 212 续（业务口径「图片也要可以增删」）：与「日报填写 → 当前问题附图」同一套 AttachmentPicker —— 复制粘贴 / 选文件增图、
+      // × 删图（改名随组件口径）；图幅沿用抽屉原样 md。
+      value: (
+        <AttachmentPicker
+          variant="compact"
+          field="issuePhotos"
+          size="md"
+          items={issue.photos}
+          onChange={(items) => {
+            onPatchIssue(issue.id, { photos: items });
+          }}
+          ariaLabel="问题附图：点击后 Ctrl+V 粘贴图片，或点右半选择文件"
+        />
+      ),
     },
   ];
 
-  /** 下半：来源日报（问题是否处理 = 问题侧状态、施工人数 = 日报侧人数；业务样 = 图二后七行）。 */
+  /** 下半：来源日报（问题是否处理 = 问题侧状态、施工人数 = 日报侧人数；业务样 = 图二后七行）。
+   *  Push 212 同批：当日完成工作 / 明日计划 / 问题是否处理接行内编辑（与「日报记录」「问题追踪」同一套口径）。 */
   const reportRows: { key: string; label: string; value: ReactNode }[] =
     report === null
       ? [{ key: "report", label: "来源日报", value: <span className="text-zinc-400">未找到（原型内存态可能已复位）</span> }]
       : [
-          { key: "doneWork", label: "当日完成工作", value: <p className="whitespace-pre-line break-words">{report.doneWork === "" ? "—" : report.doneWork}</p> },
+          {
+            key: "doneWork",
+            label: "当日完成工作",
+            value: (
+              <InlineTextCell
+                bare
+                value={report.doneWork}
+                ariaLabel={"修改当日完成工作（" + report.date + "）"}
+                triggerClassName={CELL_EDIT_TEXT}
+                placeholder="填写当日完成的工作，点「保存」生效"
+                display={<span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : report.doneWork}</span>}
+                onSave={(text) => {
+                  onPatchReport(report.id, { doneWork: renumberLines(text) });
+                }}
+              />
+            ),
+          },
           { key: "date", label: "日期", value: report.date },
           {
             key: "author",
@@ -1874,28 +2010,90 @@ function IssueDrawer({ issue, report, onClose }: { issue: Issue; report: DailyRe
               </span>
             ),
           },
-          { key: "plan", label: "明日计划", value: <p className="whitespace-pre-line break-words">{report.plan === "" ? "—" : report.plan}</p> },
+          {
+            key: "plan",
+            label: "明日计划",
+            value: (
+              <InlineTextCell
+                bare
+                value={report.plan}
+                ariaLabel={"修改明日计划（" + report.date + "）"}
+                triggerClassName={CELL_EDIT_TEXT}
+                placeholder="填写明日计划，点「保存」生效"
+                display={<span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : report.plan}</span>}
+                onSave={(text) => {
+                  onPatchReport(report.id, { plan: renumberLines(text) });
+                }}
+              />
+            ),
+          },
           {
             key: "reportPhotos",
             label: "现场工作附图",
-            value: report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} size="lg" />,
+            // Push 212 续（业务口径「图片也要可以增删」）：与「日报填写 → 现场工作附图」同一套 AttachmentPicker；图幅沿用抽屉原样 lg。
+            value: (
+              <AttachmentPicker
+                variant="compact"
+                field="photos"
+                size="lg"
+                items={report.photos}
+                onChange={(items) => {
+                  onPatchReport(report.id, { photos: items });
+                }}
+                ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片，或点右半选择文件"
+              />
+            ),
           },
-          { key: "state", label: "问题是否处理", value: <IssueStateTag state={issue.state} /> },
+          {
+            key: "state",
+            label: "问题是否处理",
+            value: (
+              <InlineOptionCell
+                bare
+                value={issue.state}
+                options={ISSUE_STATE_OPTIONS}
+                ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
+                triggerClassName={CELL_EDIT_CHIP}
+                display={<IssueStateTag state={issue.state} />}
+                onPick={(value) => {
+                  onPatchIssue(issue.id, { state: value as IssueState });
+                }}
+              />
+            ),
+          },
           { key: "headcount", label: "施工人数", value: String(report.headcount) },
         ];
-  /** 折叠区：次要字段（业务样 = 图二「已隐藏 · 7」那行；默认收起、点开才显示）。 */
-  const hiddenRows: { key: string; label: string; value: ReactNode }[] = [
-    {
-      key: "stages",
-      label: "关联阶段",
-      value: report === null || report.stages.length === 0 ? <span className="text-zinc-400">—</span> : <StageTags names={report.stages} />,
-    },
-    { key: "reporter", label: "提出人", value: issue.reporter },
-    { key: "submittedAt", label: "提交时间", value: report === null ? "—" : report.submittedAt },
-    { key: "reportState", label: "日报状态", value: report === null ? "—" : report.state },
-    { key: "reportId", label: "来源日报", value: issue.reportId },
-    { key: "issueId", label: "问题编号", value: issue.id },
-  ];
+  /** 中间区：只留「关联阶段」一行、常显（Push 212 · 业务口径「只保留关联阶段 且不需要隐藏」——
+   *  原「已隐藏 · N」折叠区与其余五枚次要字段整块撤除）；同批接行内多选（与「日报记录」表同款九阶段清单）。 */
+  const stagesRow: { key: string; label: string; value: ReactNode } = {
+    key: "stages",
+    label: "关联阶段",
+    value:
+      report === null ? (
+        <span className="text-zinc-400">—</span>
+      ) : (
+        <InlineCell
+          ariaLabel={"修改关联阶段（" + report.date + "）"}
+          title="点击选择（可多选）"
+          width={220}
+          height={REPORT_STAGES.length * 30 + 12}
+          bare
+          triggerClassName={CELL_EDIT_TEXT}
+          display={<StageTags names={report.stages} />}
+          render={() => (
+            <MultiOptionList
+              values={report.stages}
+              options={REPORT_STAGES}
+              ariaLabel={"修改关联阶段（" + report.date + "）"}
+              onChange={(next) => {
+                onPatchReport(report.id, { stages: next });
+              }}
+              renderLabel={stageChip}
+            />
+          )}
+        />
+      ),
+  };
 
   const rowView = (row: { key: string; label: string; value: ReactNode }) => (
     <div key={row.key} data-issue-field={row.key} className="grid grid-cols-[96px_1fr] items-start gap-x-4 border-b border-zinc-50 py-3 last:border-b-0">
@@ -1943,23 +2141,7 @@ function IssueDrawer({ issue, report, onClose }: { issue: Issue; report: DailyRe
         </header>
         <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="问题详情字段">
           <dl>{rows.map(rowView)}</dl>
-          <div className="border-b border-zinc-50 py-3">
-            <button
-              type="button"
-              data-issue-hidden-toggle=""
-              aria-expanded={hiddenOpen}
-              onClick={() => {
-                setHiddenOpen((open) => !open);
-              }}
-              className="flex items-center gap-1.5 text-xs text-zinc-400 transition hover:text-zinc-600"
-            >
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              已隐藏 · {hiddenRows.length}
-            </button>
-            {hiddenOpen ? <dl className="mt-1">{hiddenRows.map(rowView)}</dl> : null}
-          </div>
+          <dl>{rowView(stagesRow)}</dl>
           <dl>{reportRows.map(rowView)}</dl>
         </ScrollArea>
 
@@ -2161,7 +2343,7 @@ export function ReportIssuePanel({ project, me, focusMode }: {
       )}
 
       {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
-      {openIssue === null ? null : <IssueDrawer issue={openIssue} report={openIssueReport} onClose={() => { setOpenIssueId(null); }} />}
+      {openIssue === null ? null : <IssueDrawer issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
     </div>
   );
 }

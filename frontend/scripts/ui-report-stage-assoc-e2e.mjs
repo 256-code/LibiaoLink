@@ -129,7 +129,7 @@
  *   问题看板整批改版回放 —— 新增 ⑨ 组；① 列壳 / 卡片材质 / 列内与列间滚动条 = 「任务进展」看板同款
  *   （280px 列宽、列高随视口封顶 52rem、列底无灰面板、ScrollArea 隐式滚动条；卡片 = 35px 圆角白壳 + 三层投影 + 6% 细纹）；
  *   ② 卡面 = 业务样「图一」四段（问题描述 / 问题归类 / 解决方案或建议 / 问题附图 · 状态签 / 提出人 / 日期词下架）；
- *   ③ 点卡片 = 「问题详情」抽屉（业务样图二：上半问题本身 + 中间「已隐藏 · 6」折叠区 + 下半来源日报 r-0921a 内容），
+ *   ③ 点卡片 = 「问题详情」抽屉（业务样图二：上半问题本身 + 中间「关联阶段」常显一行 + 下半来源日报 r-0921a 内容；Push 212 撤折叠区），
  *   壳 = 任务抽屉同一套全局动画类 + 打开锁滚动 + Esc / 点遮罩关闭。
  *
  * Push 210（业务口径 2026-09-28「卡片要可以拖动」）：问题看板卡片拖动回放 —— 新增 ⑩ 组；与「任务进展」看板
@@ -137,6 +137,23 @@
  *   含「未过阈值仍算点击」反向实证；⑩ 组跑完把 i-01 拖回「未解决」（与 ⑧ / ⑨ 组基线一致）。
  *
  * Push 211（业务口径 2026-09-28「要加问题描述标题」）：问题看板卡面首段补「问题描述」字段名 —— ⑨ 组追加 1 项（11px 浅灰小字 / 在描述正文上方 / 首段不带上间距）；其余断言与 ⑩ 组不动。
+ *
+ * Push 212（业务口径 2026-09-28「只保留关联阶段 且不需要隐藏」）：问题详情抽屉撤「已隐藏 · N」折叠区 —— ⑨ 组把原
+ *   「折叠区默认收起 / 点开折叠区」两断言替换为「撤折叠区（无开关 + 五枚次要字段下架 + 总数 12）」+「关联阶段常显一行
+ *   （硬件实施 / 试运行 两枚色签）」。
+ *   同批（业务口径「抽屉里面可以编辑内容」）+ 续（业务口径「图片也要可以增删」）：⑨ 组追加 9 项 —— 七个触发器在场 / 只读行
+ *   无触发器 / 两张附图 = 可增删贴图区（compact · 不套虚线框；点 × 删 1 枚 + 点粘贴小图标 Ctrl+V 粘 1 枚实证）/ 浮层里 Esc 只关浮层 / 焦点在触发器上按
+ *   Esc 也只关浮层（Push 212 续修：InlineEdit 浮层开着时拦冒泡，外层抽屉不跟着关）/ 抽屉里改「问题描述」保存落值 + 头部提出时间不变 /
+ *   看板卡与「问题追踪」表联动（同一份内存态 · 含附图联动）。
+ *   续（业务口径「ctrl v 的地方改成这个图标吧」）：贴图区左半「Ctrl + V」文字换成业务给的**剪贴板图标**（1024 视框 · 3 枚 path ·
+ *   fill=currentColor · 20px 与右半同档；表单仍用 card 形态）—— ⑤c 原「文案 = Ctrl + V」断言改写为「左半 = 图标（文字退场）」+
+ *   「左半图标为业务那枚（3 path / currentColor / 20×20）」两断言，纯文字材质与垂直居中两条照旧按**图标**口径核（条数不变）。
+ *   再续（业务口径「框太大了 不需要」）：**问题详情抽屉**里两张附图改用 AttachmentPicker 的 **compact 形态** —— 不套虚线大卡，
+ *   入口 = 两枚 28px 小图标（粘贴 / 选文件）；⑨ 组贴图区断言同步按「无边框（border-width=0）+ 半高 ≤ 32」核（「日报填写」表单仍是虚线卡）。
+ *   再续（业务口径「两个图标不协调」）：两枚入口图标**线重归一** —— 粘贴图标（业务手绘 1024 视框）原字形只占视框 81%、线圈仅 ~41 单位
+ *   （16px 下 ≈0.68px），只有右半「文件 + 云」的一半粗、且字形偏小；本批把视框收到 "40 40 944 944" 并给 strokeWidth="38"
+ *   （**三条 path 形状一笔未动**）：等效线圈 ≈ (40.92 + 38) / 944 ≈ 8.36% 盒宽 ≈ 右半 2 / 24 ≈ 8.33%，字形占宽 ≈ 91.7% ≈ 右半 22 / 24；
+ *   ⑨ 组 +1（两枚入口图标线重差 <1% · 同高 16px 档）。
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -676,30 +693,30 @@ const zonesProbe = await ev(
   "var photo=f.querySelector(" + j("[data-paste-zone=photos]") + ");var issue=f.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");" +
   "var fileInputs=f.querySelectorAll(" + j("input[type=file]") + ");" +
   "var ph=photo===null?null:photo.querySelector(" + j("[data-paste-half]") + ");var fh=photo===null?null:photo.querySelector(" + j("[data-file-half]") + ");" +
-  "var cap=ph===null?null:ph.querySelector(" + j("span") + ");" +
+  "var cap=ph===null?null:ph.querySelector(" + j("svg") + ");" +
   "var pr=ph===null?null:ph.getBoundingClientRect();var cr=cap===null?null:cap.getBoundingClientRect();var fr=fh===null?null:fh.getBoundingClientRect();" +
+  "var capBox=cr===null?" + j("") + ":(Math.round(cr.width)+" + j("x") + "+Math.round(cr.height));var fsvg=fh===null?null:fh.querySelector(" + j("svg") + ");var fr2=fsvg===null?null:fsvg.getBoundingClientRect();var fileBox=fr2===null?" + j("") + ":(Math.round(fr2.width)+" + j("x") + "+Math.round(fr2.height));" +
   "return {photo:photo!==null,issue:issue!==null,files:fileInputs.length," +
-  "pasteSvg:ph===null?0:ph.querySelectorAll(" + j("svg") + ").length,pasteText:ph===null?" + j("") + ":ph.textContent.trim(),pasteAria:ph===null?" + j("") + ":String(ph.getAttribute(" + j("aria-label") + "))," +
-  "capTransform:cap===null?" + j("") + ":getComputedStyle(cap).textTransform," +
-  "capBgImage:cap===null?" + j("") + ":getComputedStyle(cap).backgroundImage," +
-  "capShadow:cap===null?" + j("") + ":getComputedStyle(cap).boxShadow," +
-  "capRadius:cap===null?" + j("") + ":getComputedStyle(cap).borderRadius," +
-  "pasteHalfH:pr===null?0:Math.round(pr.height*100)/100,fileHalfH:fr===null?0:Math.round(fr.height*100)/100," +
+  "pasteSvg:ph===null?0:ph.querySelectorAll(" + j("svg") + ").length,pastePaths:cap===null?0:cap.querySelectorAll(" + j("path") + ").length,pasteFill:cap===null?" + j("") + ":String(cap.getAttribute(" + j("fill") + ")),pasteText:ph===null?" + j("") + ":ph.textContent.trim(),pasteAria:ph===null?" + j("") + ":String(ph.getAttribute(" + j("aria-label") + "))," +
+  "capBgImage:ph===null?" + j("") + ":getComputedStyle(ph).backgroundImage," +
+  "capShadow:ph===null?" + j("") + ":getComputedStyle(ph).boxShadow," +
+  "capRadius:ph===null?" + j("") + ":getComputedStyle(ph).borderRadius," +
+  "capBox:capBox,fileBox:fileBox,pasteHalfH:pr===null?0:Math.round(pr.height*100)/100,fileHalfH:fr===null?0:Math.round(fr.height*100)/100," +
   "capMidDelta:(pr===null||cr===null)?999:Math.round(((cr.top+cr.bottom)/2-(pr.top+pr.bottom)/2)*100)/100," +
   "fileSvg:fh===null?0:fh.querySelectorAll(" + j("svg") + ").length,fileText:fh===null?" + j("") + ":fh.textContent.trim(),fileAria:fh===null?" + j("") + ":String(fh.getAttribute(" + j("aria-label") + "))};})()"
 );
-check("⑤c 两个附图区（现场工作附图 / 当前问题附图）常驻 = 虚线卡左右分半：左半 `Ctrl + V` 文字（Ctrl+V 主入口 · Push 204 起纯文字）+ 右半文件 / 云图标（点击选择文件 · 原生文件框仍 2 个 · 两半无说明文字）",
+check("⑤c 两个附图区（现场工作附图 / 当前问题附图）常驻 = 虚线卡左右分半：左半**剪贴板图标**（Ctrl+V 主入口 · Push 212 续按业务口径「ctrl v 的地方改成这个图标吧」由文字换图）+ 右半文件 / 云图标（点击选择文件 · 原生文件框仍 2 个 · 两半无说明文字）",
   zonesProbe !== null && zonesProbe.photo === true && zonesProbe.issue === true && zonesProbe.files === 2 &&
-  zonesProbe.pasteText.replace(/\s+/g, " ").trim().toLowerCase() === "ctrl + v" && zonesProbe.pasteAria.indexOf("Ctrl+V") >= 0 &&
+  zonesProbe.pasteSvg === 1 && zonesProbe.pasteText === "" && zonesProbe.pasteAria.indexOf("Ctrl+V") >= 0 &&
   zonesProbe.fileSvg === 1 && zonesProbe.fileText === "" && zonesProbe.fileAria.indexOf("选择文件") >= 0,
   zonesProbe === null ? "-" : JSON.stringify(zonesProbe));
-check("⑤c 左半文案 = `Ctrl + V`（中间加「+」、大小写照文案、不走 uppercase 变换 —— 业务口径「这个中间加个加号吧」→「改成Ctrl + V」；Push 204 改纯文本后仍核）",
-  zonesProbe !== null && zonesProbe.pasteText.replace(/\s+/g, " ") === "Ctrl + V" && zonesProbe.capTransform === "none",
-  zonesProbe === null ? "-" : JSON.stringify({ text: zonesProbe.pasteText, transform: zonesProbe.capTransform }));
-check("⑤c 左半为**纯文字**（键帽下架：无渐变底 / 无键帽投影 / 无圆角 —— 业务口径「做成文字吧」）",
+check("⑤c 左半图标 = 业务给的那枚（1024 视框 · 3 枚 path · fill=currentColor 随字色 · 20×20 与右半同档；「Ctrl + V」文字退场）",
+  zonesProbe !== null && zonesProbe.capBox === "20x20" && zonesProbe.fileBox === "20x20" && zonesProbe.pastePaths === 3 && zonesProbe.pasteFill === "currentColor" && zonesProbe.pasteText === "",
+  zonesProbe === null ? "-" : JSON.stringify({ capBox: zonesProbe.capBox, fileBox: zonesProbe.fileBox, paths: zonesProbe.pastePaths, fill: zonesProbe.pasteFill, text: zonesProbe.pasteText }));
+check("⑤c 左半仍是裸入口（键帽材质不回来：无渐变底 / 无投影 / 无圆角 —— 「做成文字吧」的材质口径对图标同样成立）",
   zonesProbe !== null && zonesProbe.capBgImage === "none" && zonesProbe.capShadow === "none" && zonesProbe.capRadius === "0px",
   zonesProbe === null ? "-" : JSON.stringify({ bg: zonesProbe.capBgImage, shadow: zonesProbe.capShadow, radius: zonesProbe.capRadius }));
-check("⑤c 左半 `Ctrl + V` 垂直居中（业务口径「位置要居中」：h-full 撑满右半图标定高行 —— 文字中线 = 半区中线 ±1px、两半等高 ±1px）",
+check("⑤c 左半图标垂直居中（业务口径「位置要居中」：h-full 撑满右半图标定高行 —— 图标中线 = 半区中线 ±1px、两半等高 ±1px）",
   zonesProbe !== null && Math.abs(zonesProbe.capMidDelta) <= 1 && Math.abs(zonesProbe.pasteHalfH - zonesProbe.fileHalfH) <= 1 && zonesProbe.pasteHalfH > 40,
   zonesProbe === null ? "-" : JSON.stringify({ capMidDelta: zonesProbe.capMidDelta, pasteHalfH: zonesProbe.pasteHalfH, fileHalfH: zonesProbe.fileHalfH }));
 await clickSelector("[data-paste-zone=photos] [data-paste-half]");
@@ -1589,7 +1606,7 @@ check("⑧ 关联阶段「显示也要有颜色」（业务口径 2026-09-28）�
 // ---------- ⑨ 问题看板改版 + 问题详情抽屉（Push 209 · 业务口径 2026-09-28「问题看板是这样的 要这些内容 然后样式
 //   参考任务进展的」+「点击要出现抽屉 是关于这个问题的日报内容」） ----------
 // 口径：列壳 / 卡片材质 / 隐式滚动条 = 「任务进展」看板同款；卡面 = 业务样图一四段（问题描述 / 问题归类 /
-//   解决方案或建议 / 问题附图）；点卡片 = 问题详情抽屉（业务样图二：上半问题本身、中间「已隐藏 · N」折叠区、
+//   解决方案或建议 / 问题附图）；点卡片 = 问题详情抽屉（业务样图二：上半问题本身、中间「关联阶段」常显一行（Push 212 撤「已隐藏 · N」折叠区）、
 //   下半来源日报内容）。断言只认相对变化（⑧ 组编辑后的内存态现值，现读现比）。
 await clickSelector("[data-subnav-item=" + Q + "问题看板" + Q + "]");
 await waitFor("document.querySelector(" + j("[data-issue-board]") + ")!==null");
@@ -1645,10 +1662,10 @@ check("⑨ 卡面首段补「问题描述」标题（业务口径 2026-09-28「�
 
 // ⑨b 点卡片 = 问题详情抽屉（业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：壳 = 任务抽屉同一套全局动画类
 //   （drawer-backdrop 遮罩 + drawer-panel 460px 右滑入 · role=dialog / aria-modal）+ 打开锁页面滚动；上半 = 问题本身四行、
-//   中间 =「已隐藏 · 6」折叠区（默认收起）、下半 = 来源日报 r-0921a 的七行内容（现读内存态 —— 行内编辑后的现值）。
+//   中间 =「关联阶段」一行（Push 212 起常显、无折叠开关）、下半 = 来源日报 r-0921a 的七行内容（现读内存态 —— 行内编辑后的现值）。
 await clickSelector("[data-issue-card=i-01]");
 const drawerShown = await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")!==null");
-const DRAW_HIDDEN_KEYS = ["stages", "reporter", "submittedAt", "reportState", "reportId", "issueId"];
+const DRAW_DROPPED_KEYS = ["reporter", "submittedAt", "reportState", "reportId", "issueId"];
 const drawerProbe = await ev(
   "(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}" +
   "var fs=d.querySelectorAll(" + j("[data-issue-field]") + ");var map={};" +
@@ -1660,14 +1677,15 @@ const drawerProbe = await ev(
   "var chips=[];for(var c2=0;c2<chipEls.length;c2++){chips.push(chipEls[c2].getAttribute(" + j("data-issue-category") + ")+" + j("#") + "+getComputedStyle(chipEls[c2]).backgroundColor);}" +
   "var st=dd(" + j("state") + ")===null?null:dd(" + j("state") + ").querySelector(" + j("[data-issue-state]") + ");" +
   "var tog=d.querySelector(" + j("[data-issue-hidden-toggle]") + ");var bk=document.querySelector(" + j(".drawer-backdrop") + ");" +
-  "var hk=[" + DRAW_HIDDEN_KEYS.map(j).join(", ") + "];var present=[];" +
+  "var hk=[" + DRAW_DROPPED_KEYS.map(j).join(", ") + "];var present=[];" +
   "for(var k2=0;k2<hk.length;k2++){if(map[hk[k2]]!==undefined){present.push(hk[k2]);}}" +
+  "var stg=dd(" + j("stages") + ");var stgNames=[];if(stg!==null){var sc=stg.querySelectorAll(" + j("[data-report-stage]") + ");for(var s2=0;s2<sc.length;s2++){stgNames.push(sc[s2].getAttribute(" + j("data-report-stage") + "));}}" +
   "var r=d.getBoundingClientRect();return {fields:fs.length,title:txt(" + j("title") + "),chips:chips,sol:txt(" + j("solution") + ")," +
   "issueImgs:imgs(" + j("issuePhotos") + "),reportImgs:imgs(" + j("reportPhotos") + ")," +
   "done:txt(" + j("doneWork") + "),date:txt(" + j("date") + "),author:txt(" + j("author") + "),plan:txt(" + j("plan") + ")," +
   "state:st===null?" + j("") + ":st.textContent.trim(),hc:txt(" + j("headcount") + ")," +
-  "toggle:tog===null?" + j("") + ":tog.textContent.trim(),expanded:tog===null?" + j("") + ":tog.getAttribute(" + j("aria-expanded") + ")," +
-  "hiddenPresent:present,panelW:Math.round(r.width),panelRight:Math.round(window.innerWidth-r.right),modal:d.getAttribute(" + j("aria-modal") + ")," +
+  "toggleAbsent:tog===null,stages:stgNames," +
+  "droppedPresent:present,panelW:Math.round(r.width),panelRight:Math.round(window.innerWidth-r.right),modal:d.getAttribute(" + j("aria-modal") + ")," +
   "backdrop:bk!==null&&String(bk.className).indexOf(" + j("drawer-backdrop") + ")===0,lock:document.body.style.overflow," +
   "footer:d.querySelector(" + j("footer") + ").textContent.trim()};})()"
 );
@@ -1677,27 +1695,133 @@ check("⑨ 点卡片开抽屉 = 任务抽屉同一套壳（drawer-backdrop 遮�
 check("⑨ 抽屉上半 = 这个问题本身（与卡面同值 · 现读行内编辑后的内存态）：问题描述（pre-line）/ 问题归类（色签「供应商原因」同款底色）/ 解决方案或建议 / 问题附图 2 枚缩略图",
   drawerProbe !== null && cardProbe !== null && drawerProbe.title === cardProbe.title && drawerProbe.sol === cardProbe.sol && drawerProbe.chips.join("/") === "供应商原因#rgb(255, 234, 153)" && drawerProbe.issueImgs.join("/") === "40x40/40x40",
   drawerProbe === null ? "-" : JSON.stringify({ title: drawerProbe.title, chips: drawerProbe.chips, imgs: drawerProbe.issueImgs }));
-check("⑨ 折叠区默认收起（「已隐藏 · 6」一行）：aria-expanded=false + 6 枚次要字段（关联阶段 / 提出人 / 提交时间 / 日报状态 / 来源日报 / 问题编号）都不在 DOM（可见字段总数 = 11）",
-  drawerProbe !== null && drawerProbe.toggle === "已隐藏 · 6" && drawerProbe.expanded === "false" && drawerProbe.hiddenPresent.length === 0 && drawerProbe.fields === 11,
-  drawerProbe === null ? "-" : JSON.stringify({ toggle: drawerProbe.toggle, expanded: drawerProbe.expanded, n: drawerProbe.fields }));
+check("⑨ 抽屉撤「已隐藏 · N」折叠区（Push 212 业务口径「只保留关联阶段 且不需要隐藏」）：无折叠开关（[data-issue-hidden-toggle] 不存在）+ 五枚次要字段（提出人 / 提交时间 / 日报状态 / 来源日报 / 问题编号）整体下架（可见字段总数 = 12 = 问题本身 4 + 关联阶段 1 + 来源日报 7）",
+  drawerProbe !== null && drawerProbe.toggleAbsent === true && drawerProbe.droppedPresent.length === 0 && drawerProbe.fields === 12,
+  drawerProbe === null ? "-" : JSON.stringify({ toggleAbsent: drawerProbe.toggleAbsent, dropped: drawerProbe.droppedPresent, n: drawerProbe.fields }));
+check("⑨ 抽屉中间 = 「关联阶段」常显一行（无需点开）：两枚色签 硬件实施 / 试运行（与「日报记录」同款 StageTags · 常读内存态 report.stages）",
+  drawerProbe !== null && drawerProbe.stages.join("/") === "硬件实施/试运行",
+  drawerProbe === null ? "-" : JSON.stringify(drawerProbe.stages));
 check("⑨ 抽屉下半 = 这个问题的来源日报内容（业务口径「是关于这个问题的日报内容」· i-01.reportId=r-0921a 关联展示）：当日完成工作 = ⑧ 编辑后现值（NUMLINE · pre-line）/ 日期 2026年9月21日 / 填写者 卢青（姓名头）/ 明日计划 = ⑧ 编辑后现值 / 现场工作附图 2 枚大瓦片（128×96）/ 问题是否处理 = 未解决（项目总览同款色签）/ 施工人数 = 10",
   drawerProbe !== null && drawerProbe.done === NUMLINE(EDIT_DONE_TEXT) && drawerProbe.date === "2026年9月21日" && drawerProbe.author.indexOf("卢青") >= 0 && drawerProbe.plan === NUMLINE(EDIT_PLAN_TEXT) && drawerProbe.reportImgs.join("/") === "128x96/128x96" && drawerProbe.state === "未解决" && drawerProbe.hc === "10" && drawerProbe.footer.indexOf("r-0921a") >= 0,
   drawerProbe === null ? "-" : JSON.stringify({ done: drawerProbe.done, date: drawerProbe.date, author: drawerProbe.author, plan: drawerProbe.plan, imgs: drawerProbe.reportImgs, state: drawerProbe.state, hc: drawerProbe.hc }));
-await clickSelector("[data-issue-hidden-toggle]");
-await sleep(400);
-const hiddenOpenProbe = await ev(
+// ⑨c Push 212 同批（业务口径「抽屉里面可以编辑内容」）：抽屉内 = 两块表能编辑的字段同样可编辑。
+//   在场探针：七个触发器（描述 / 归类 / 方案 / 阶段 / 完成工作 / 明日计划 / 状态）+ 五枚只读行无触发器；
+//   实测：抽屉里改「问题描述」→ 点「保存」落值；浮层里 Esc = 只关浮层、不关抽屉。
+const drawerEditProbe = await ev(
   "(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}" +
-  "var fs=d.querySelectorAll(" + j("[data-issue-field]") + ");var map={};" +
-  "for(var i=0;i<fs.length;i++){map[fs[i].getAttribute(" + j("data-issue-field") + ")]=fs[i];}" +
-  "var hk=[" + DRAW_HIDDEN_KEYS.map(j).join(", ") + "];var present=[];" +
-  "for(var k2=0;k2<hk.length;k2++){if(map[hk[k2]]!==undefined){present.push(hk[k2]);}}" +
-  "var tog=d.querySelector(" + j("[data-issue-hidden-toggle]") + ");" +
-  "function txt(k){var el=map[k];return el===undefined?" + j("") + ":el.querySelector(" + j("dd") + ").textContent.trim();}" +
-  "return {n:fs.length,present:present,toggle:tog===null?" + j("") + ":tog.textContent.trim(),expanded:tog===null?" + j("") + ":tog.getAttribute(" + j("aria-expanded") + "),reportId:txt(" + j("reportId") + "),issueId:txt(" + j("issueId") + ")};})()"
+  "function trig(k){var f=d.querySelector(" + j("[data-issue-field=") + "+k+" + j("]") + ");if(f===null){return null;}return f.querySelector(" + j("button[aria-label]") + ");}" +
+  "function lab(k){var b=trig(k);return b===null?" + j("") + ":String(b.getAttribute(" + j("aria-label") + "));}" +
+  "function ro(k){var f=d.querySelector(" + j("[data-issue-field=") + "+k+" + j("]") + ");return f!==null&&f.querySelector(" + j("button[aria-label^='修改']") + ")===null;}" +
+  "return {title:lab(" + j("title") + "),category:lab(" + j("category") + "),solution:lab(" + j("solution") + "),stages:lab(" + j("stages") + "),done:lab(" + j("doneWork") + "),plan:lab(" + j("plan") + "),state:lab(" + j("state") + ")," +
+  "ro:{date:ro(" + j("date") + "),author:ro(" + j("author") + "),headcount:ro(" + j("headcount") + ")}};})()"
 );
-check("⑨ 点开折叠区：aria-expanded=true + 6 枚字段全出现（来源日报 = r-0921a · 问题编号 = i-01 · 字段总数 11 → 17）—— 「已隐藏 · 6」不是摆设",
-  hiddenOpenProbe !== null && hiddenOpenProbe.expanded === "true" && hiddenOpenProbe.present.join("/") === DRAW_HIDDEN_KEYS.join("/") && hiddenOpenProbe.reportId === "r-0921a" && hiddenOpenProbe.issueId === "i-01" && hiddenOpenProbe.n === 17,
-  hiddenOpenProbe === null ? "-" : JSON.stringify(hiddenOpenProbe));
+check("⑨ 抽屉内可编辑内容（Push 212 同批 · 业务口径「抽屉里面可以编辑内容」）：七个行内编辑触发器在场（问题描述 / 问题归类 / 解决方案或建议 / 关联阶段 / 当日完成工作 / 明日计划 / 问题是否处理 —— 与两块表同款 aria 名）",
+  drawerEditProbe !== null && drawerEditProbe.title.indexOf("修改问题描述") === 0 && drawerEditProbe.category.indexOf("修改问题归类") === 0 && drawerEditProbe.solution.indexOf("修改解决方案或建议") === 0 && drawerEditProbe.stages.indexOf("修改关联阶段") === 0 && drawerEditProbe.done.indexOf("修改当日完成工作") === 0 && drawerEditProbe.plan.indexOf("修改明日计划") === 0 && drawerEditProbe.state.indexOf("修改问题状态") === 0,
+  drawerEditProbe === null ? "-" : JSON.stringify(drawerEditProbe));
+check("⑨ 抽屉内只读字段不长编辑触发器（日期 / 填写者 / 施工人数 —— 「编辑后时间不变」同源口径；两张附图 Push 212 续起改为可增删，见下条贴图区断言）",
+  drawerEditProbe !== null && drawerEditProbe.ro.date === true && drawerEditProbe.ro.author === true && drawerEditProbe.ro.headcount === true,
+  drawerEditProbe === null ? "-" : JSON.stringify(drawerEditProbe.ro));
+// ⑨e Push 212 续（业务口径「图片也要可以增删」）：抽屉里两张附图 = 「日报填写 → AttachmentPicker」同一套可增删贴图区。
+const drawerPhotoProbe = await ev(
+  "(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}" +
+  "function zone(k){var f=d.querySelector(" + j("[data-issue-field=") + "+k+" + j("]") + ");if(f===null){return null;}" +
+  "var z=f.querySelector(" + j("[data-paste-zone]") + ");var half=f.querySelector(" + j("[data-paste-half]") + ");var file=f.querySelector(" + j("input[type=file]") + ");" +
+  "var xs=f.querySelectorAll(" + j("[data-action=remove-attachment]") + ");var its=f.querySelectorAll(" + j("[data-attachment]") + ");" +
+  "var cs=z===null?null:getComputedStyle(z);var hr=half===null?null:half.getBoundingClientRect();" +
+  "return {zone:z!==null,half:half!==null,file:file!==null,removes:xs.length,items:its.length,bw:cs===null?" + j("") + ":cs.borderTopWidth,halfH:hr===null?0:Math.round(hr.height)};}" +
+  "return {issue:zone(" + j("issuePhotos") + "),report:zone(" + j("reportPhotos") + ")};})()"
+);
+check("⑨ 抽屉里两张附图 = 可增删贴图区且**不套虚线大卡**（业务口径「框太大了 不需要」：入口 = 两枚 28px 小图标 —— 粘贴 / 选文件；每枚附件带 × 移除；基线各 2 枚）",
+  drawerPhotoProbe !== null && drawerPhotoProbe.issue !== null && drawerPhotoProbe.report !== null &&
+  drawerPhotoProbe.issue.zone === true && drawerPhotoProbe.issue.half === true && drawerPhotoProbe.issue.file === true &&
+  drawerPhotoProbe.issue.bw === "0px" && drawerPhotoProbe.issue.halfH <= 32 &&
+  drawerPhotoProbe.issue.removes === 2 && drawerPhotoProbe.issue.items === 2 &&
+  drawerPhotoProbe.report.zone === true && drawerPhotoProbe.report.half === true && drawerPhotoProbe.report.file === true &&
+  drawerPhotoProbe.report.bw === "0px" && drawerPhotoProbe.report.halfH <= 32 &&
+  drawerPhotoProbe.report.removes === 2 && drawerPhotoProbe.report.items === 2,
+  drawerPhotoProbe === null ? "-" : JSON.stringify(drawerPhotoProbe));
+// ⑨f Push 212 续（业务口径「两个图标不协调」）：两张贴图区入口 = 两枚**同档线重**图标。
+const iconParityProbe = await ev(
+  "(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}" +
+  "var z=d.querySelector(" + j("[data-paste-zone]") + ");if(z===null){return null;}" +
+  "var p=z.querySelector(" + j("svg") + ");var f=z.querySelector(" + j("[data-file-half] svg") + ");" +
+  "if(p===null||f===null){return null;}" +
+  "var pvw=p.viewBox.baseVal.width;var fvw=f.viewBox.baseVal.width;var sw=Number(p.getAttribute(" + j("stroke-width") + "));" +
+  "var pr=p.getBoundingClientRect();var fr=f.getBoundingClientRect();" +
+  "var inkP=(40.92+sw)/pvw;var inkF=2/fvw;" +
+  "return {pVb:String(p.getAttribute(" + j("viewBox") + ")),pSw:sw,pPaths:p.querySelectorAll(" + j("path") + ").length," +
+  "fVb:String(f.getAttribute(" + j("viewBox") + ")),fPaths:f.querySelectorAll(" + j("path") + ").length," +
+  "pW:Math.round(inkP*10000)/10000,fW:Math.round(inkF*10000)/10000," +
+  "gap:Math.round(Math.abs(inkP-inkF)/inkF*10000)/100,pH:Math.round(pr.height*100)/100,fH:Math.round(fr.height*100)/100};})()"
+);
+check("⑨ 抽屉两张贴图区入口两枚图标**线重归一**（业务口径「两个图标不协调」：粘贴图标视框 40 40 944 944 + 描边 38 ⇒ 等效线圈 8.36% 盒宽 ≈ 右半「文件 + 云」2/24 = 8.33%，差 <1%；两枚同高 16px；粘贴形状仍是业务那枚三条 path）",
+  iconParityProbe !== null && iconParityProbe.pVb === "40 40 944 944" && iconParityProbe.pSw === 38 && iconParityProbe.pPaths === 3 && iconParityProbe.fPaths === 1 &&
+  iconParityProbe.fVb === "0 0 24 24" &&
+  Math.abs(iconParityProbe.pW - iconParityProbe.fW) / iconParityProbe.fW < 0.05 &&
+  iconParityProbe.pH === 16 && iconParityProbe.fH === 16,
+  iconParityProbe === null ? "-" : JSON.stringify(iconParityProbe));
+await clickSelector("[data-issue-field=issuePhotos] [data-action=remove-attachment]");
+const drawerPhotoAfterRemove = await ev(
+  "(function(){var f=document.querySelector(" + j("[data-issue-field=issuePhotos]") + ");if(f===null){return null;}" +
+  "return {items:f.querySelectorAll(" + j("[data-attachment]") + ").length};})()"
+);
+check("⑨ 抽屉里删图（点问题附图第 1 枚上的 ×）：2 → 1（同一份 patchIssue 内存态）",
+  drawerPhotoAfterRemove !== null && drawerPhotoAfterRemove.items === 1,
+  drawerPhotoAfterRemove === null ? "-" : JSON.stringify(drawerPhotoAfterRemove));
+// 增图：与 ⑤c 同一条粘贴路径（真实剪贴板 + Ctrl+V；无头环境回落合成 ClipboardEvent）。
+await clickSelector("[data-issue-field=issuePhotos] [data-paste-half]");
+if (String(clipWrite) !== "ok") {
+  await ev("(function(){var bin=atob(" + j(PNG_B64) + ");var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++){arr[i]=bin.charCodeAt(i);}var dt=new DataTransfer();dt.items.add(new File([new Blob([arr],{type:" + j("image/png") + "})]," + j("") + ",{type:" + j("image/png") + "}));var e=new ClipboardEvent(" + j("paste") + ",{clipboardData:dt,bubbles:true,cancelable:true});document.dispatchEvent(e);return true;})()");
+} else {
+  await page.send("Page.bringToFront");
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2, commands: ["paste"] });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2 });
+}
+await sleep(450);
+const drawerPhotoAfterAdd = await ev(
+  "(function(){var f=document.querySelector(" + j("[data-issue-field=issuePhotos]") + ");if(f===null){return null;}" +
+  "var cs=f.querySelectorAll(" + j("[data-attachment]") + ");var names=[];for(var i=0;i<cs.length;i++){names.push(cs[i].getAttribute(" + j("data-attachment") + "));}" +
+  "return {items:cs.length,names:names};})()"
+);
+check("⑨ 抽屉里增图（点左半 Ctrl+V 粘一张）：1 → 2、新图按「剪贴板图片-1.png」命名（与「日报填写」同一套粘贴入口 / 命名）",
+  drawerPhotoAfterAdd !== null && drawerPhotoAfterAdd.items === 2 && drawerPhotoAfterAdd.names.indexOf("剪贴板图片-1.png") >= 0,
+  drawerPhotoAfterAdd === null ? "-" : JSON.stringify(drawerPhotoAfterAdd));
+const DRAWER_EDIT_TITLE = "回放·抽屉编辑·问题描述" + LF + "第二行";
+const drawerHeadBefore = await ev("(function(){var p=document.querySelector(" + j("[data-issue-drawer] header p") + ");return p===null?" + j("") + ":p.textContent.trim();})()");
+await clickSelector("[data-issue-field=title] button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+await typeInto("[data-inline-popover] textarea", "回放·不该落值的草稿");
+await pressKey("Escape", "Escape", 27);
+await sleep(300);
+const escLayerProbe = await ev(
+  "(function(){return {popover:document.querySelector(" + j("[data-inline-popover]") + ")!==null,drawer:document.querySelector(" + j("[data-issue-drawer]") + ")!==null};})()"
+);
+check("⑨ 抽屉浮层里按 Esc = 只关浮层（草稿不落值）、抽屉不跟着关（「Esc 先关内层」口径）",
+  escLayerProbe !== null && escLayerProbe.popover === false && escLayerProbe.drawer === true, JSON.stringify(escLayerProbe));
+/** Push 212 续：浮层开着 + 焦点在触发器上（鼠标点开的默认焦点位）按 Esc —— 只关浮层，抽屉不跟着关。 */
+await clickSelector("[data-issue-field=stages] button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")!==null");
+await pressKey("Escape", "Escape", 27);
+await sleep(300);
+const escTriggerProbe = await ev(
+  "(function(){return {popover:document.querySelector(" + j("[data-inline-popover]") + ")!==null,drawer:document.querySelector(" + j("[data-issue-drawer]") + ")!==null};})()"
+);
+check("⑨ 焦点在触发器上按 Esc 也先关浮层（点开「关联阶段」多选浮层后直接 Esc —— 抽屉不跟着关 · 同一「Esc 先关内层」口径）",
+  escTriggerProbe !== null && escTriggerProbe.popover === false && escTriggerProbe.drawer === true, JSON.stringify(escTriggerProbe));
+await clickSelector("[data-issue-field=title] button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+await typeInto("[data-inline-popover] textarea", DRAWER_EDIT_TITLE);
+await clickSelector("[data-inline-popover] [data-inline-save]");
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");const drawerEditAfter = await ev(
+  "(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}" +
+  "var f=d.querySelector(" + j("[data-issue-field=title]") + ");var dd=f===null?null:f.querySelector(" + j("dd") + ");" +
+  "var h=d.querySelector(" + j("header p") + ");" +
+  "return {title:dd===null?" + j("") + ":dd.textContent.trim(),head:h===null?" + j("") + ":h.textContent.trim()};})()"
+);
+check("⑨ 抽屉里改「问题描述」→ 点「保存」落值（自动序号 + pre-line · 与两块表同一套保存口径）+ 抽屉头部提出时间不变（" + drawerHeadBefore + "）",
+  drawerEditAfter !== null && drawerEditAfter.title === NUMLINE(DRAWER_EDIT_TITLE) && drawerEditAfter.head === drawerHeadBefore,
+  drawerEditAfter === null ? "-" : JSON.stringify({ t: drawerEditAfter.title, head: drawerEditAfter.head }));
+
 await pressKey("Escape", "Escape", 27);
 const drawerClosed = await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")===null");
 const afterCloseLock = await ev("document.body.style.overflow");
@@ -1710,6 +1834,23 @@ const backdropClosed = await waitFor("document.querySelector(" + j("[data-issue-
 const backdropLock = await ev("document.body.style.overflow");
 check("⑨ 卡片可重复打开；点遮罩（抽屉外空白）同样关闭 + 再解锁滚动（同一套关闭口径 · 关闭后又可复活）",
   backdropClosed === true && backdropLock === "", JSON.stringify({ closed: backdropClosed, lock: backdropLock }));
+
+// ⑨d Push 212 同批：抽屉里刚改的「问题描述」在看板卡与「问题追踪」表同步更新（patchIssue 同一份内存态 · 提出日期不变）。
+const cardTitleAfterDrawerEdit = await ev(
+  "(function(){var t=document.querySelector(" + j("[data-issue-card=i-01] [data-issue-card-title]") + ");return t===null?" + j("") + ":t.textContent.trim();})()"
+);
+check("⑨ 抽屉编辑联动：看板卡面「问题描述」= 抽屉里刚保存的新值（同一份内存态）",
+  cardTitleAfterDrawerEdit === NUMLINE(DRAWER_EDIT_TITLE), cardTitleAfterDrawerEdit);
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-row=i-01]") + ")!==null");
+const rowAfterDrawerEdit = await ev(
+  "(function(){var r=document.querySelector(" + j("[data-issue-row=i-01]") + ");if(r===null){return null;}" +
+  "var t=r.querySelector(" + j("[data-issue-title]") + ");var tds=r.querySelectorAll(" + j("td") + ");" +
+  "var ph=r.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;return {title:t===null?" + j("") + ":t.textContent.trim(),date:tds[0].textContent.trim(),photos:ph};})()"
+);
+check("⑨ 抽屉编辑联动：「问题追踪」表 i-01 行同步新值（问题描述 = 新值 + 问题附图同步 2 枚「抽屉里刚删 1 枚又粘 1 枚」后的现值；提出日期 2026年9月21日 不变 —— 「编辑后时间不变」）",
+  rowAfterDrawerEdit !== null && rowAfterDrawerEdit.title === NUMLINE(DRAWER_EDIT_TITLE) && rowAfterDrawerEdit.date === "2026年9月21日" && rowAfterDrawerEdit.photos === 2,
+  rowAfterDrawerEdit === null ? "-" : JSON.stringify(rowAfterDrawerEdit));
 
 // ---------- ⑩ 问题看板卡片拖动（Push 210 · 业务口径 2026-09-28「卡片要可以拖动」） ----------
 // 口径：与「任务进展」看板同一套指针拖动 —— 按住卡片位移超过 4px = 拖动（没超过 = 点一下开抽屉）；
