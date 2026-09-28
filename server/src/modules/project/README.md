@@ -5,7 +5,7 @@
 | 类型 | 领域模块（domain） |
 | 职责 | 项目主数据、首页分类字段（地区 / 项目类型 / 项目经理）、项目硬删（物理删聚合子表 · Push 190 起）；阶段推进 / 成员 / 视图随 M2-03 / M2-05 / M2-06 |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject）、ProjectMemberService（listMembers / addMember / removeMember）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
+| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject）、ProjectMemberService（listMembers / addMember / removeMember）、ArchiveService（archiveProject / getArchive）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、POST / GET /api/v1/projects/{id}/archive、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
 
 ## 已实现（h2 第一批）
 
@@ -13,8 +13,8 @@
 - M2-01 项目 CRUD：
   - 创建 `POST /api/v1/projects` → 201；`seq_no` 由数据库序列分配（请求不接受 `seqNo`）；`code` 唯一由约束兜底，23505 + `projects_code_key` → 409 `PROJECT_CODE_EXISTS`；缺省 `stageKey = presale`。
   - 更新 `PATCH /api/v1/projects/{id}`：乐观锁（正文回传 `version`，命中则 `version + 1` 并刷新 `updated_at`）；不匹配 409 `VERSION_CONFLICT`；期间被删 → 404。
-  - 硬删 `DELETE /api/v1/projects/{id}`（Push 190 起，原软删口径作废）：`If-Match` 头回传当前 `version`（缺失 / 非纯数字 400；不匹配 409）；事务内先数 9 张聚合子表行数（进审计 `metadata.children`），再按外键依赖序物理删 14 步（issue_events → task_events → file_versions → files → change_requests → issues → daily_reports → tasks → node_requirements → project_nodes → project_stages → project_members → project_stakeholders → projects），删除前快照写审计（`action=delete` + `metadata.hardDelete=true` + `changes` 每条 `to=null`）；返回**删除前快照**。**编号随行释放 → 同编号可再建**（撞库内其它项目仍 409）；`seq_no` 不回收。
-  - 归档写保护（ADR-027）：`status = archived` 的项目 PATCH / DELETE 一律 409 `PROJECT_ARCHIVED`（错误码本轮新增，映射表同步）。
+  - 硬删 `DELETE /api/v1/projects/{id}`（Push 190 起，原软删口径作废）：`If-Match` 头回传当前 `version`（缺失 / 非纯数字 400；不匹配 409）；事务内先数 9 张聚合子表行数（进审计 `metadata.children`），再按外键依赖序物理删 15 步（issue_events → task_events → file_versions → files → change_requests → issues → daily_reports → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders → projects），删除前快照写审计（`action=delete` + `metadata.hardDelete=true` + `changes` 每条 `to=null`）；返回**删除前快照**。**编号随行释放 → 同编号可再建**（撞库内其它项目仍 409）；`seq_no` 不回收。
+  - 归档（M7-04 · Push 167）：走专门端点 —— `POST /api/v1/projects/{id}/archive`（门禁 + 置位 + 引用式清单 + 撤销上传会话 + 审计）与 `GET /api/v1/projects/{id}/archive`（清单读面，未归档 404）；`PATCH` 的 `status` 收紧为 active / paused / done（**不再接受 archived**）；列表增 `filter[archivedYear]`（C4-07 检索）。写保护不变：`status = archived` 的项目 PATCH / DELETE 一律 409 `PROJECT_ARCHIVED`。
 - M2-04 首页列表 / facets：`GET /api/v1/projects` 与 `GET /api/v1/projects/facets` 共用 `buildProjectFilter`（v0.3 §3.3「禁止两套 SQL」）——多值 `filter[region|projectType|managerId|stageKey|status]`（英文逗号分隔；`managerId` 命中口径 = 项目挂的任意一位经理，A22 · Push 136）；facets 的项目经理维度 = 数组展开后按人头计数（一个项目挂多位经理时每位各计一次）、`q` 命中编号 / 名称 / 客户 / 序号、`filter[timeFrom] / filter[timeTo]` 闭区间（`updated_at`）；facets 五组固定返回（A6），`total` 与列表同口径。
 - 时间口径（ADR-028 · **Push 175 维度修订**）：区间按 Asia/Shanghai 日界（固定 `+08:00`，中国无夏令时）——下界含当日 00:00，上界取次日 00:00 不含；**区间维度 = `projects.created_at`（项目创建时间；原「最近活动 `updated_at`」口径作废）**；`timeFrom` 晚于 `timeTo` 或 `status` / `stageKey` / `managerId` 含非法值一律 400（不返回静默空列表）。
 - 排序（A9 · **Push 175 缺省修订**）：白名单 `updatedAt` / `createdAt` / `seqNo`，方向 `asc|desc`；**缺省 `createdAt:desc`（最近创建的在前；原 `updatedAt:desc` 作废）** —— 前端 TIME = 「维度 × 方向」（创建时间 / 更新时间 × 降序 / 升序）；仓储补 `asc(seq_no)` 稳定 tie-breaker，分页不跳行。
@@ -34,6 +34,7 @@
 - 归档写保护（ADR-027）同样覆盖名册：归档项目的 POST / DELETE 成员 → 409 `PROJECT_ARCHIVED`（名册读仍可用）。
 - 分类字段口径（A1-12 定档）：`region` / `projectType` 是首页分类侧边栏（facets 五组里的两组，A6）与统计的来源；创建请求缺省「**未分类**」（契约 `default("未分类")`，前端表单仍必填、空串 400）；更新可改。字典取值由 C9 字典维护（h7 已落地：`dict_types` / `dict_items` 表 + `GET /dicts` 下发；前端改读字典随 u12，服务端不封锁取值）。
 - 单测：`test/project-members.test.ts` —— 视图映射、列表顺序与项目不可见 404、添加 upsert + touch、重复添加改角色保留 joinedAt、目标用户 404、归档写保护（不落任何写入）、移除与「不是成员」404（7 例，不连库）。
+- 单测：`test/project-archive.test.ts`（M7-04 · Push 167）—— 契约收紧断言（PATCH 拒绝 archived / confirm 缺省 false）、硬前置 409、缺项 422（三类明细 + 失败留痕）、confirm 越过后置位 / 清单 / 撤销会话 / 审计、幂等 409 与版本冲突 409、权限 403、清单读面 404 / 成功、`filter[archivedYear]` 解析与非法 400（8 例，不连库）。
 
 ## 已实现（h3 · S6·blueprint/node：M2-02 建项目快照 + M2-03 阶段推进 / 回退 + 节点增删 · Push 83）
 
@@ -45,9 +46,18 @@
 - 权限（h6 落地）：读路由的记录级可见性与写路由的功能权限位统一走 `ProjectAccessGuard` —— 不可见 / 不存在 / 已软删一律 404（防 IDOR）；写路由缺位 403（`project.create` / `project.update` / `project.delete` / `member.manage`）；列表与 facets 取 `@ProjectScope()` 过滤。节点增删的 `assertProjectManager`（`admin` 角色 / `projects.manager_ids` 任一位 / 名册 `role_in_project=project_manager`）保留为服务内业务口径。归档项目一律 409 `PROJECT_ARCHIVED`。
 - 留痕与触点：节点 / 阶段事件同事务写 outbox（`node.added`（还原带 `restored: true`）/ `node.completed` / `node.deleted` / `stage.advanced` / `stage.rolled_back`）；节点增删后调用 `ProjectRepository.touch`（ADR-022 ② 触点）。
 - 单测：`test/project-crud.test.ts` 的 `makeService` 已注入 fake DB（`transaction` 直通）+ fake Flow（`importSnapshot`），创建用例覆盖快照调用；流程用例见 `test/blueprint-validation.test.ts` / `test/flow-gate.test.ts` 与本地实机演练记录。
+## 已实现（M7-04 归档 · ADR-027 · C4-02 / C4-03 · Push 167）
+
+- 端点（契约 `shared/src/modules/projects.ts`，OpenAPI tags = projects；`project.archive` 功能权限 + 记录级可见性）：`POST /api/v1/projects/{id}/archive`（200 返回清单视图）与 `GET /api/v1/projects/{id}/archive`（未归档 / 无清单 404）。
+- 门禁（ADR-027）：① 硬前置 = 验收阶段（`project_stages.stage_key = acceptance`）已完成（未完成 409 `ARCHIVE_NOT_READY`，不可确认越过）；② 缺项清单 = 未完成任务（task_not_done）→ 未定档文件（file_not_final）→ A4-20 必交成果缺件（doc_missing，逐节点跑 `GateService.evaluateNode`）；有缺项且未确认 → 422 `ARCHIVE_GATE_NOT_PASSED`（details 带明细 + 写 `action=archive` / `result=failed` 审计、项目不置位）；`confirm=true` 确认越过，缺项随清单留痕。
+- 归档事务（单事务）：锁项目行（`FOR UPDATE`）→ 乐观锁 `version` 判定 → 置 `status = archived` + `archived_at` / `archived_by` → 生成 `project_archives` 引用式清单（阶段 / 任务分布 / 文件含版本 / 变更 / 日报 / 问题统计）→ 撤销进行中的上传会话 → 审计 `action=archive`；不删数据、不改阶段、不做解冻（冻结口径）。
+- 检索与投影：列表 `filter[archivedYear]`（四位年份 1900-2100、多值逗号分隔；按 `archived_at` 的 Asia/Shanghai 年）—— 归档检索（C4-07）的服务端读面；`search_docs` 搜索投影随 M7-01（lan）。
+- 数据面：迁移 `0036_project_archive.sql`（`projects.archived_at` / `archived_by` 成对 CHECK + `project_archives` 表 + `ck_audit_logs_action` 十值 → 十一值）；`project_archives` 已并入硬删外键依赖序（本模块 README 上节 15 步）。
+- 差异登记：① 清单为引用式（只记 id 与摘要，ADR-027；不做全库快照表）；② 清单导出（归档目录 / 压缩包）随 M7-03（lan）、C4-04 二期；③ 归档解冻不做（恢复走 DBA / 迁移器脚本，非产品口径）；④ 归档状态不可再编辑（`PATCH` 拒绝 archived；`filter[status]=archived` 只用于读 / 检索）。
+
 ## 边界与后续
 
 - 已随 h6 落地：名册的**记录级过滤**（列表 / 详情 / facets 按成员裁剪、非成员 404）由权限策略层（ADR-011）承担 —— 本模块只保留名册数据面与维护接口（搜索出口的同一策略入口已就绪，实现随 M7）；`projects.manager_ids` 与名册的自动联动随 M2-02 建项目事务（h3）/ 管理界面（u 系列）。
 - 不做（收口后剩余）：`blueprintVersion` 入参仍忽略（建项目固定取「已发布蓝图」；指定版本 / 项目升级蓝图随 M6）；项目记录级权限的过滤已随 h6 落地（策略层 `ProjectAccessGuard` + `@ProjectScope()`）、视图 / 关注 / 偏好（M2-06）、写接口幂等键 `Idempotency-Key`（随 i5）；CRUD 与流程的审计留痕已随 h7 接线（项目创建 / 修改 / 归档、名册增删、节点增删与完成、阶段推进 / 回退，同事务写 `audit_logs`）。已随 h3 落地：建项目蓝图快照（M2-02）、阶段推进 / 回退（M2-03）、节点增删与完成门禁。
 - 权限现状（h6 后）：读接口登录 + 记录级可见；写接口按功能权限位判定（项目内成员平权项见 `modules/permission/README.md`）；前端按钮可见性由 `GET /api/v1/permissions/me` 驱动，只做体验、不作为安全边界（ADR-011）。
-- 待接：⓪ 成员批量维护（导入 / 变更）随 u 系列管理界面；① 项目总览四格 `GET /api/v1/projects/{id}/summary`（契约已入，依赖任务派生口径，随 M3 任务卡片）；② 搜索 / 导出复用本模块 filter 构造器（随 M5 检索卡片）；③ 归档动作 `status = archived` 的专门端点（`PATCH` 即可置位，前端确认流随 u 系列）。
+- 待接：⓪ 成员批量维护（导入 / 变更）随 u 系列管理界面；① 项目总览四格 `GET /api/v1/projects/{id}/summary`（契约已入，依赖任务派生口径，随 M3 任务卡片）；② 搜索 / 导出复用本模块 filter 构造器（随 M5 检索卡片）。归档动作已随 M7-04 落地（Push 167：`POST` / `GET /api/v1/projects/{id}/archive`，见上节；前端归档按钮 / 确认流 / 清单页随 px 接线）。

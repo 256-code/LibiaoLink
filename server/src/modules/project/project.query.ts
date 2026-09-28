@@ -18,6 +18,8 @@ export interface ProjectFilter {
   createdFrom: Date | null;
   /** 创建时间上界（不含）：filter[timeTo] 次日 00:00:00+08:00。 */
   createdToExclusive: Date | null;
+  /** 归档年份（C4-07 归档检索）：filter[archivedYear] 四位年份多值；按 archived_at 的 Asia/Shanghai 年判定。 */
+  archivedYears: number[] | null;
 }
 
 export type ProjectSortField = "updatedAt" | "createdAt" | "seqNo";
@@ -36,6 +38,7 @@ export interface ProjectListQueryInput {
   "filter[status]"?: string | undefined;
   "filter[timeFrom]"?: string | undefined;
   "filter[timeTo]"?: string | undefined;
+  "filter[archivedYear]"?: string | undefined;
   q?: string | undefined;
   page: number;
   limit: number;
@@ -70,6 +73,15 @@ export function buildProjectFilter(query: ProjectListQueryInput): ProjectFilter 
       }
     }
   }
+  const archivedYears = splitMulti(query["filter[archivedYear]"]);
+  if (archivedYears !== null) {
+    for (const year of archivedYears) {
+      const value = Number(year);
+      if (!/^[0-9]{4}$/.test(year) || value < 1900 || value > 2100) {
+        throw new AppError("VALIDATION_FAILED", "filter[archivedYear] 含非法年份（四位年份，1900-2100）：" + year);
+      }
+    }
+  }
   const createdFrom = query["filter[timeFrom]"] === undefined ? null : shanghaiDayStart(query["filter[timeFrom]"]);
   const toDayStart = query["filter[timeTo]"] === undefined ? null : shanghaiDayStart(query["filter[timeTo]"]);
   if (createdFrom !== null && toDayStart !== null && createdFrom.getTime() > toDayStart.getTime()) {
@@ -85,6 +97,7 @@ export function buildProjectFilter(query: ProjectListQueryInput): ProjectFilter 
     keyword: keyword === "" ? null : keyword,
     createdFrom,
     createdToExclusive: toDayStart === null ? null : new Date(toDayStart.getTime() + DAY_MS),
+    archivedYears: archivedYears === null ? null : archivedYears.map((year) => Number(year)),
   };
 }
 

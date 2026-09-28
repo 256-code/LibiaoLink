@@ -99,6 +99,7 @@ async function purgeProjects(ids) {
     "delete from node_requirements where node_id in (select id from project_nodes where project_id = any($1::uuid[]))",
     "delete from project_nodes where project_id = any($1::uuid[])",
     "delete from project_stages where project_id = any($1::uuid[])",
+    "delete from project_archives where project_id = any($1::uuid[])",
     "delete from project_members where project_id = any($1::uuid[])",
     "delete from project_stakeholders where project_id = any($1::uuid[])",
     "delete from projects where id = any($1::uuid[])",
@@ -174,13 +175,15 @@ try {
   const missing = await call("DELETE", "/api/v1/projects/00000000-0000-4000-8000-000000000000", undefined, { "If-Match": "0" });
   check("B2", "删除不存在的项目 → 404 NOT_FOUND", "404", missing.status + " " + truncate(missing.body, 120), missing.status === 404);
 
-  const archived = await call("PATCH", "/api/v1/projects/" + projectB.id, { status: "archived", version: projectB.version });
-  const versionAfterArchive = archived.body?.version ?? projectB.version;
-  const delArchived = await call("DELETE", "/api/v1/projects/" + projectB.id, undefined, { "If-Match": String(versionAfterArchive) });
-  check("B3", "归档项目禁删（ADR-027）", "PATCH 200 + DELETE 409 PROJECT_ARCHIVED", archived.status + " / " + delArchived.status + " " + truncate(delArchived.body, 120), archived.status === 200 && delArchived.status === 409 && delArchived.body?.code === "PROJECT_ARCHIVED");
+  // Push 167 契约收紧：PATCH 项目不再接受 status=archived（归档走 POST /projects/{id}/archive，见 m6-replay 证据七 A1 ~ A7）。
+  // 本处为「归档项目禁删」反证，直接 SQL 造归档态（请 px 复核）。
+  await db.query("update projects set status = $archived$, archived_at = now(), archived_by = $2 where id = $1", [projectB.id, admin.id]);
+  const archived = await call("GET", "/api/v1/projects/" + projectB.id);
+  const delArchived = await call("DELETE", "/api/v1/projects/" + projectB.id, undefined, { "If-Match": String(projectB.version) });
+  check("B3", "归档项目禁删（ADR-027；归档态 SQL 造态，PATCH 已不接 archived）", "GET 200 status=archived + DELETE 409 PROJECT_ARCHIVED", archived.status + " " + truncate(archived.body?.status, 60) + " / " + delArchived.status + " " + truncate(delArchived.body, 120), archived.status === 200 && archived.body?.status === "archived" && delArchived.status === 409 && delArchived.body?.code === "PROJECT_ARCHIVED");
 
-  await db.query("update projects set status = $$active$$ where id = $1", [projectB.id]);
-  const delB = await call("DELETE", "/api/v1/projects/" + projectB.id, undefined, { "If-Match": String(versionAfterArchive) });
+  await db.query("update projects set status = $active$, archived_at = null, archived_by = null where id = $1", [projectB.id]);
+  const delB = await call("DELETE", "/api/v1/projects/" + projectB.id, undefined, { "If-Match": String(projectB.version) });
   check("C1", "复位归档后删除 → 200（清理临时项目）", "200", delB.status + " " + truncate(delB.body, 120), delB.status === 200);
 
   const residue = (await db.query("select (select count(*)::int from projects where id = any($2::uuid[]) or code = $1::text) projects, (select count(*)::int from tasks where project_id = any($2::uuid[])) tasks, (select count(*)::int from project_nodes where project_id = any($2::uuid[])) nodes, (select count(*)::int from project_stages where project_id = any($2::uuid[])) stages, (select count(*)::int from project_members where project_id = any($2::uuid[])) members", [codeA, cleanup.projectIds])).rows[0];
