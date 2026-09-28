@@ -12,3 +12,5 @@ export * from "./admin.js";
 export * from "./calendar.js";
 export * from "./stakeholders.js";
 export * from "./reports.js";
+export * from "./views.js";
+export * from "./follows.js";

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROGRESS_STEPS, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, TEMP_TASK_STAGE, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
 
@@ -35,7 +35,7 @@ import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
  *   这批既有字段（与表格行内编辑同一套换算），松手写回服务端（进度走 /progress、日期走 PATCH）。
  *
  * 其余口径（详见 `前端功能需求.md` §6.14）：
- * - 分组 = 施工阶段（九个阶段按项目总览顺序，空阶段照样出骨架行；非九阶段的任务落「未分组」垫底）；
+ * - 分组 = 施工阶段（九个阶段按项目总览顺序，空阶段照样出骨架行；非九阶段的任务落「临时任务」垫底 · Push 196）；
  * - 任务条 = 开始日期 → 预计完成日期；条内青色 = 已完成进度（`task.progress`）、橙色 = 剩余工期；
  * - 单日任务（开始 = 预计完成）画菱形 —— 一期没有「是否里程碑」字段（系统功能书 A1-11 在二期），菱形按状态取色：已完成 = 绿色、未完成 = 灰色、已延期 = 红色；
  *   这里按单日派生，字段口径见 `前端功能需求.md` §3.8 A26；
@@ -51,8 +51,8 @@ import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
 /** 九个施工阶段（顺序 = 项目总览的分组顺序；「项目总览」是汇总视图，不作为阶段）。 */
 const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
-/** 阶段不在九阶段里的任务（看板「临时任务」建的空任务）→「未分组」垫底（与项目总览最后一组同口径）。 */
-const UNGROUPED = "未分组";
+/** 阶段不在九阶段里的任务（看板「添加 → 临时任务」建的空任务）→「临时任务」垫底（Push 196 起，原「未分组」；与项目总览最后一组同口径）。 */
+const UNGROUPED = TEMP_TASK_STAGE;
 
 /**
  * 左表列宽 / 行高：左表与时间轴靠这一组常量逐行对齐。**列宽固定、不随可见宽度变** ——
@@ -470,7 +470,7 @@ function buildModel(
     }
   }
 
-  // 分组 = 阶段（九个阶段按项目总览顺序 + 有内容才出现的「未分组」，与项目总览最后一组同口径）。
+  // 分组 = 阶段（九个阶段按项目总览顺序 + 有内容才出现的「临时任务」，与项目总览最后一组同口径）。
   const byStage = new Map<string, GanttBar[]>();
   for (const bar of bars) {
     const stage = STAGE_ORDER.includes(bar.task.stage) ? bar.task.stage : UNGROUPED;

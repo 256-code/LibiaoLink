@@ -140,6 +140,8 @@ class FakeTaskRepository {
     if (current === null || current.version !== expectedVersion) return null;
     const next: TaskRow = {
       ...current,
+      title: patch.title !== undefined ? patch.title : current.title,
+      titleEn: patch.titleEn !== undefined ? patch.titleEn : current.titleEn,
       ownerIds: patch.ownerIds !== undefined ? patch.ownerIds : current.ownerIds,
       status: patch.status ?? current.status,
       statusOverride: patch.statusOverride !== undefined ? patch.statusOverride : current.statusOverride,
@@ -246,6 +248,7 @@ function makeService(
   repo: FakeTaskRepository,
   roles: FakeRoleService = new FakeRoleService(),
   gate: FakeTaskGateRepository = new FakeTaskGateRepository(),
+  audit: FakeAuditService = new FakeAuditService(),
 ): TaskService {
   const database = new FakeDatabase();
   return new TaskService(
@@ -253,7 +256,7 @@ function makeService(
     repo as unknown as TaskRepository,
     gate as unknown as TaskGateRepository,
     roles as unknown as RoleService,
-    new FakeAuditService() as unknown as AuditService,
+    audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,
   );
@@ -414,6 +417,61 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
       code: "NOT_FOUND",
       httpStatus: 404,
     });
+  });
+
+  it("临时任务（未归入阶段、无来源节点）改任务描述：title / titleEn 落库 + 版本 +1 + 审计含 title、不写 task_events（Push 196）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ stageKey: null, nodeId: null, taskNodeId: null, title: "临时任务", titleEn: null });
+    const audit = new FakeAuditService();
+    const service = makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit);
+    const updated = await service.update(PROJECT, TASK, { title: "临时任务（改名）", titleEn: "Ad hoc task", version: 3 }, ACTOR);
+    expect(updated.title).toBe("临时任务（改名）");
+    expect(updated.titleEn).toBe("Ad hoc task");
+    expect(repo.task?.version).toBe(4);
+    // 任务描述不属于 task_events 四值闭集（status / progress / date / note）：改名只进审计
+    expect(repo.events).toEqual([]);
+    const entry = audit.entries.at(-1) as { changes: Array<{ field: string; to: unknown }> };
+    expect(entry.changes.some((change) => change.field === "title" && change.to === "临时任务（改名）")).toBe(true);
+    expect(entry.changes.some((change) => change.field === "titleEn" && change.to === "Ad hoc task")).toBe(true);
+  });
+
+  it("临时任务清空英文名（titleEn=null）→ 落库为 null", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ stageKey: null, nodeId: null, taskNodeId: null, title: "临时任务", titleEn: "Ad hoc task" });
+    const updated = await makeService(repo).update(PROJECT, TASK, { titleEn: null, version: 3 }, ACTOR);
+    expect(updated.titleEn).toBeNull();
+    expect(updated.title).toBe("临时任务");
+  });
+
+  it("节点 / 模板生成的任务改任务描述 → 400 VALIDATION_FAILED，不落库（A1-17 锁定）", async () => {
+    const repo = new FakeTaskRepository();
+    const service = makeService(repo);
+    await expect(service.update(PROJECT, TASK, { title: "改个名", version: 3 }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    expect(repo.task?.title).toBe("货架组装");
+    expect(repo.task?.version).toBe(3);
+  });
+
+  it("节点库来源（taskNodeId 非空）的任务同样锁定：titleEn 改不动 → 400", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ nodeId: null, taskNodeId: "55555555-5555-4555-8555-555555555555" });
+    await expect(makeService(repo).update(PROJECT, TASK, { titleEn: "Renamed", version: 3 }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+  });
+
+  it("阶段任务（stageKey 非空）即便没有来源节点也锁定：改名 → 400（Push 197 收窄）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ stageKey: "assembly", nodeId: null, taskNodeId: null });
+    await expect(makeService(repo).update(PROJECT, TASK, { title: "改个名", version: 3 }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    expect(repo.task?.title).toBe("货架组装");
+    expect(repo.task?.version).toBe(3);
   });
 });
 

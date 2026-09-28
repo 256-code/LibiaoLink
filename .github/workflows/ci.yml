@@ -64,6 +64,13 @@ jobs:
         run: npm run typecheck
       - name: Contract drift check
         run: npm run check
+      # 契约回放（Zod 层，无 DB / 无 HTTP）：写入端/白名单漂移、上传 intent 矩阵、预览三态矩阵。
+      - name: Contract replays (net-free)
+        run: |
+          set -euo pipefail
+          node scripts/upload-intent-replay.mjs
+          node scripts/preview-status-replay.mjs
+          node scripts/outbox-contract-replay.mjs
 
   server:
     name: server
@@ -218,3 +225,10 @@ jobs:
           M6_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
           M6_BASE_URL: http://127.0.0.1:3011
         run: node scripts/m6-replay.mjs
+      # M2-06（视图 + 关注 · wmj 线，Push 168）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: M2-06 replay (views + follows)
+        working-directory: server
+        env:
+          M2_06_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M2_06_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m2-06-replay.mjs

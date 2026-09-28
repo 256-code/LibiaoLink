@@ -5,6 +5,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
 import { files, fileVersions } from "../../db/schema/files.js";
+import { follows } from "../../db/schema/follows.js";
 import { nodeRequirements, projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
 import { projectArchives, projectMembers, projects, projectStages } from "../../db/schema/projects.js";
@@ -237,7 +238,8 @@ export class ProjectRepository {
    * 同事务按外键依赖序清空项目聚合子表 → 删 projects 行；编号随行一起释放。
    * 子表顺序（全部 NO ACTION 外键，顺序错会撞 FK）：
    *   issue_events → task_events → file_versions → files → change_requests → issues → daily_reports
-   *   → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders。
+   *   → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders
+   *   → follows（M2-06 · 0037：多态 object_id 无外键，项目与其任务两族按关系键一并清掉）。
    * version 守卫落在最后一行 delete：不匹配返回 null（调用方抛 409，整事务回滚，子表一行不动）。
    */
   async hardDeleteWithVersion(
@@ -252,6 +254,9 @@ export class ProjectRepository {
     const nodeIds = client.select({ id: projectNodes.id }).from(projectNodes).where(eq(projectNodes.projectId, id));
     await client.delete(issueEvents).where(inArray(issueEvents.issueId, issueIds));
     await client.delete(taskEvents).where(inArray(taskEvents.taskId, taskIds));
+    // 关注行清理（M2-06 · 0037 · A1-15）：项目关注 + 该项目下任务关注
+    await client.delete(follows).where(and(eq(follows.objectType, "project"), eq(follows.objectId, id)));
+    await client.delete(follows).where(and(eq(follows.objectType, "task"), inArray(follows.objectId, taskIds)));
     await client.delete(fileVersions).where(inArray(fileVersions.fileId, fileIds));
     await client.delete(files).where(eq(files.projectId, id));
     await client.delete(changeRequests).where(eq(changeRequests.projectId, id));

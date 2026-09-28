@@ -33,9 +33,9 @@ export type ProjectTask = {
   nodeId: string | null;
   /** 来源任务节点库节点（契约 sourceNodeId · M3-07 刀 3）：「已添加」判重的精确依据；手工创建 / 流程节点任务为 null。 */
   sourceNodeId: string | null;
-  /** 所属阶段 key；null = 「未分组」（看板临时任务）。 */
+  /** 所属阶段 key；null = 看板临时任务（展示层垫底归「临时任务」分组）。 */
   stageKey: string | null;
-  /** 所属阶段中文名（展示与分组用；未分组 = 空串）。 */
+  /** 所属阶段中文名（展示与分组用；无阶段任务 = 空串，展示层归「临时任务」分组）。 */
   stage: string;
   /** 组内位次（契约 sortIndex）：一组 = 同一项目 + 同一阶段，0 起、密集。 */
   sortIndex: number;
@@ -71,6 +71,12 @@ export type ProjectTask = {
   /** 乐观锁版本（写入必须回传当前值）。 */
   version: number;
 };
+
+/**
+ * 没有阶段的任务（看板「添加 → 临时任务」手工创建）的展示名（Push 196）：
+ * 项目总览 / 甘特图固定垫底的分组头、看板卡片「所属阶段」与抽屉阶段签共用同一文案。
+ */
+export const TEMP_TASK_STAGE = "临时任务";
 
 /** 四格进度条的格数。 */
 export const PROGRESS_STEPS = 4;

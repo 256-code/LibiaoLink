@@ -21,7 +21,7 @@ export interface ClaimOutboxInput {
   limit: number;
   /** 超过该时长仍处 `processing` 的行视为崩溃遗留（migration 0028），可重新领取 —— 毫秒。 */
   staleAfterMs: number;
-  /** 领取者标识（migration 0037 的 `locked_by`）：WORKER_ID 或 host:pid —— 排障 / PoC-5 并发报告用。 */
+  /** 领取者标识（migration 0038 的 `locked_by`）：WORKER_ID 或 host:pid —— 排障 / PoC-5 并发报告用。 */
   workerId: string;
 }
 

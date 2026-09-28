@@ -1,4 +1,4 @@
--- LibiaoLink · 0037 outbox 运行时支撑：locked_by（领取者标识）+ updated_at（状态迁移时刻）（S7·outbox · S7-1 · lan）
+-- LibiaoLink · 0038 outbox 运行时支撑：locked_by（领取者标识）+ updated_at（状态迁移时刻）（S7·outbox · S7-1 · lan；原编号 0037 —— 并入 main 时与 M2-06 先入的 0037_views_follows 重号，随 Push 175 顺延为 0038）
 -- 口径来源：技术设计v0.2-架构与数据模型.md §1.3（Outbox 至少一次投递 + dedupe_key 幂等）、ADR-005（领取 / 重试 / 死信告警 /
 --   积压与最老消息年龄观测）、卡片 i5（S7·outbox：去重键 / SKIP LOCKED）；S7-1 切片只补运行时列，不动领取语义。
 -- 口径：

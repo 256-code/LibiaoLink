@@ -79,6 +79,24 @@ import {
 } from "./modules/issues.ts";
 import { WorkspaceResponseSchema } from "./modules/workspace.ts";
 import {
+  SavedViewSchema,
+  ViewCreateBodySchema,
+  ViewDeleteResponseSchema,
+  ViewListQuerySchema,
+  ViewListResponseSchema,
+  ViewUpdateBodySchema,
+} from "./modules/views.ts";
+import {
+  FollowBatchBodySchema,
+  FollowBatchResponseSchema,
+  FollowCreateBodySchema,
+  FollowCreateResponseSchema,
+  FollowDeleteResponseSchema,
+  FollowListQuerySchema,
+  FollowListResponseSchema,
+  FollowObjectTypeSchema,
+} from "./modules/follows.ts";
+import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
   BlueprintSaveBodySchema,
@@ -1500,6 +1518,116 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 视图与关注（M2-06 · A1-03 / A1-15：保存视图 / 关注订阅 · wmj 线）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/views",
+    tags: ["views"],
+    summary: "视图清单（A1-03 · M2-06）：我的个人视图 + 全部公共视图；scope 过滤；排序个人在前 → 更新时间降序 → id 升序",
+    request: { query: ViewListQuerySchema },
+    responses: {
+      200: { description: "可见视图清单（无分页：量级小）", ...json(ViewListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/views",
+    tags: ["views"],
+    summary: "新建视图（A1-03 首刀）：仅保存配置（筛选 + 列 + 排序 + 分组）、不复制数据；isDefault 置位时自动清掉本人其它默认",
+    request: { body: json(ViewCreateBodySchema) },
+    responses: {
+      201: { description: "新建的视图", ...json(SavedViewSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/views/{id}",
+    tags: ["views"],
+    summary: "更新视图（局部更新：只传变更键，空更新 400）：个人视图他人 404；公共视图非创建者 403；无乐观锁（单写者）",
+    request: { params: idParams, body: json(ViewUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的视图", ...json(SavedViewSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/views/{id}",
+    tags: ["views"],
+    summary: "删除视图（物理删）：个人视图他人 404；公共视图非创建者 403",
+    request: { params: idParams },
+    responses: {
+      200: { description: "删除结果", ...json(ViewDeleteResponseSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/follows",
+    tags: ["follows"],
+    summary: "我的关注清单（A1-15 · M2-06）：按对象类型 / 对象 / 项目过滤；不可见或已删对象不返回；时间降序 → id 升序",
+    request: { query: FollowListQuerySchema },
+    responses: {
+      200: { description: "我的关注清单", ...json(FollowListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/follows",
+    tags: ["follows"],
+    summary: "关注（A1-15）：目标须可见且未删除（归档项目不可新关注）；重复关注幂等（created=false → 200）",
+    request: { body: json(FollowCreateBodySchema) },
+    responses: {
+      200: { description: "已关注（幂等回读）", ...json(FollowCreateResponseSchema) },
+      201: { description: "新建的关注关系", ...json(FollowCreateResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/follows/batch",
+    tags: ["follows"],
+    summary: "批量关注 / 取关（A1-15，1 ~ 50 条）：单事务逐条独立；失败仅关注动作的 not_found（取关不存在的行 = unchanged）",
+    request: { body: json(FollowBatchBodySchema) },
+    responses: {
+      200: { description: "批量结果（失败明细内联）", ...json(FollowBatchResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/follows/{objectType}/{objectId}",
+    tags: ["follows"],
+    summary: "取关（按关系键删除，不校验目标是否可见 / 存在）；未关注 = 404",
+    request: { params: z.object({ objectType: FollowObjectTypeSchema, objectId: UuidSchema }) },
+    responses: {
+      200: { description: "取关结果", ...json(FollowDeleteResponseSchema) },
+      401: commonErrors[401],
+      404: commonErrors[404],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1526,6 +1654,8 @@ export function buildOpenApiDocument() {
       { name: "reports", description: "日报（A3-01 / A3-02 / A3-08 / A3-09；M6-01 / M6-02）" },
       { name: "issues", description: "问题闭环（A3-09~A3-13；四态流转 / 分派 / 留痕，M6-02 / M6-03）" },
       { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
+      { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
+      { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },
     ],
   });
 }

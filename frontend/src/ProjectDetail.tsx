@@ -11,7 +11,7 @@ import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
-import type { ProjectTask, TaskStatus } from "./data/tasks";
+import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
@@ -38,6 +38,11 @@ import {
 
 /** 阶段名（不含「项目总览」汇总视图）。 */
 const STAGE_NAMES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+/**
+ * 「项目总览」任务表的全部固定分组（Push 196）：九个施工阶段 + 垫底的「临时任务」（无阶段任务的分组，原「未分组」）——
+ * 骨架常显、一键收起 / 全部展开都按这一份。
+ */
+const BOARD_STAGES: readonly string[] = [...STAGE_NAMES, TEMP_TASK_STAGE];
 
 /** 两份项目经理名单是否一致（顺序敏感：名单顺序就是展示顺序，Push 136）。 */
 function sameIds(left: readonly string[], right: readonly string[]): boolean {
@@ -46,7 +51,7 @@ function sameIds(left: readonly string[], right: readonly string[]): boolean {
 
 /**
  * 阶段序号（Push 111）：展示顺序以**阶段为主键**，顺序就是项目总览的分组顺序（售前规划 → … → 验收）。
- * 不在九阶段里的（看板「临时任务」建的空任务）= 未分组，垫底 —— 与项目总览里「未分组」固定最后一组的口径一致。
+ * 不在九阶段里的（看板「添加 → 临时任务」建的空任务）= 「临时任务」，垫底 —— 与项目总览里「临时任务」固定最后一组的口径一致（Push 196 改名）。
  */
 function stageRankOf(stage: string): number {
   const at = STAGE_NAMES.indexOf(stage);
@@ -151,7 +156,7 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   }, [projectId, dataVersion]);
 
   /**
-   * 展示顺序（Push 111 / A19）：**阶段为主键**（九阶段按项目总览顺序、「未分组」垫底）、**组内按服务端位次 sortIndex** ——
+   * 展示顺序（Push 111 / A19）：**阶段为主键**（九阶段按项目总览顺序、「临时任务」垫底）、**组内按服务端位次 sortIndex** ——
    * 与服务端默认读序（阶段序 → sort_index → id）同一口径；三块视图共用这一份顺序。
    */
   const tasks = useMemo(
@@ -266,6 +271,13 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
       return;
     }
     const body: TaskUpdateInput = { version: row.version };
+    if (patch.title !== undefined) {
+      body.title = patch.title;
+    }
+    // 任务描述（英文）：空串 = 清空（契约 nullable），与日期空串口径一致
+    if (patch.titleEn !== undefined) {
+      body.titleEn = patch.titleEn === "" ? null : patch.titleEn;
+    }
     if (patch.ownerIds !== undefined) {
       body.ownerIds = patch.ownerIds;
     }
@@ -315,6 +327,14 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
       priority: values.priority,
       note: values.note,
     });
+  };
+
+  /**
+   * 任务描述改名（Push 196：临时任务）：抽屉里失焦即存 —— 中文名必填、英文名可清空；
+   * 节点 / 模板生成的任务服务端 400 兜底（抽屉内也不会给改）。
+   */
+  const handleRenameTask = (taskId: string, title: string, titleEn: string) => {
+    handlePatchTask(taskId, { title, titleEn });
   };
 
   /** 表格行内改「项目经理」：项目级字段（多位，Push 136），回写项目卡片。 */
@@ -400,19 +420,19 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
    * 建一条任务（临时任务 / 模板节点）：POST 只回契约 Task（不带负责人姓名与文件摘要）、且服务端要重排组内位次 ——
    * 所以成功一律整表重取；预设节点自带的列状态（看板「进展」列上下文）在创建后补一次状态写入（创建体没有 status 字段）。
    */
-  const createOne = async (body: TaskCreateInput, status: TaskStatus): Promise<boolean> => {
+  const createOne = async (body: TaskCreateInput, status: TaskStatus): Promise<ApiTask | null> => {
     if (projectId === null) {
-      return false;
+      return null;
     }
     try {
       const created = await createTask(projectId, body);
       if (status !== "待开始") {
         await updateTask(projectId, created.id, { status: statusWriteValue(status), version: created.version });
       }
-      return true;
+      return created;
     } catch (error) {
       reportWriteError(error);
-      return false;
+      return null;
     }
   };
 
@@ -424,17 +444,20 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
     }
   };
 
-  /** 看板「添加 → 临时任务」（Push 86）：标题由用户自己填，挂到该列（负责人 / 状态按列给，阶段留空 = 未分组）。 */
-  const handleQuickAdd = (context: KanbanAddContext, values: { title: string; titleEn: string }) => {
-    void (async () => {
-      const created = await createOne(
-        { stageKey: null, title: values.title, titleEn: values.titleEn === "" ? null : values.titleEn, ownerIds: context.ownerIds, priority: "中" },
-        context.status,
-      );
-      if (created) {
-        afterCreate();
-      }
-    })();
+  /**
+   * 看板「添加 → 临时任务」（Push 86）：标题由用户自己填，挂到该列（负责人 / 状态按列给，阶段留空 = 垫底「临时任务」组）。
+   * 返回新任务 id（Push 196）—— 看板拿到后直接打开它的详情抽屉（确认时间等细节）；失败 = null。
+   */
+  const handleQuickAdd = async (context: KanbanAddContext, values: { title: string; titleEn: string }): Promise<string | null> => {
+    const created = await createOne(
+      { stageKey: null, title: values.title, titleEn: values.titleEn === "" ? null : values.titleEn, ownerIds: context.ownerIds, priority: "中" },
+      context.status,
+    );
+    if (created === null) {
+      return null;
+    }
+    afterCreate();
+    return created.id;
   };
 
   /**
@@ -477,7 +500,7 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
         if (base !== undefined) {
           body.sortIndex = base + index;
         }
-        created = (await createOne(body, "待开始")) || created;
+        created = (await createOne(body, "待开始")) !== null || created;
       }
       if (created) {
         afterCreate();
@@ -532,7 +555,7 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
         if (base !== undefined) {
           body.sortIndex = base + index;
         }
-        created = (await createOne(body, context.status)) || created;
+        created = (await createOne(body, context.status)) !== null || created;
       }
       if (created) {
         afterCreate();
@@ -569,7 +592,7 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
    * 阶段骨架常显（Push 61 调整）：没有任务的阶段也保留分组头（只有阶段名、组内没有任务行），
    * 所以点「添加任务」加出任务后，其余阶段的分组头不会消失。
    */
-  const visibleStageNames = STAGE_NAMES;
+  const visibleStageNames = BOARD_STAGES;
   const allCollapsed = visibleStageNames.length > 0 && visibleStageNames.every((stage) => collapsedStages[stage] === true);
   const toggleAllStages = () => {
     if (allCollapsed) {
@@ -692,7 +715,7 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={STAGE_NAMES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -710,6 +733,7 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
               onAddTask={handleQuickAdd}
               onAddStageTask={handleKanbanAddNode}
               onSubmitTaskEdit={handleSubmitTaskEdit}
+              onRenameTask={handleRenameTask}
               onPatchTask={handlePatchTask}
               onSetStatus={handleSetStatus}
               onSetActualEnd={handleSetActualEnd}

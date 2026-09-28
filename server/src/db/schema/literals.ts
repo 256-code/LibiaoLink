@@ -111,6 +111,12 @@ export const DOC_TYPE_KEYS = [
 /** 公司分类（stakeholders.company_type，A5-02 / C9）：立镖机器人 / 供应商 / 总包单位 / 客户。 */
 export const STAKEHOLDER_COMPANY_TYPE_KEYS = ["libiao", "supplier", "general_contractor", "customer"] as const;
 
+/** 视图范围（project_views.scope，M2-06 · A1-03）：与契约 VIEW_SCOPES 同序同值（parity 测试守护）。 */
+export const VIEW_SCOPE_KEYS = ['personal', 'public'] as const;
+
+/** 关注对象类型（follows.object_type，M2-06 · A1-15）：与契约 FOLLOW_OBJECT_TYPES 同序同值。 */
+export const FOLLOW_OBJECT_TYPE_KEYS = ['project', 'task'] as const;
+
 /** 数组字面量（CHECK 用：`<@ array[… ]::text[]`）；sqlValueList 只服务 `in (…)`。 */
 export function sqlArrayLiteral(values: readonly string[]): string {
   const quote = String.fromCharCode(39);
