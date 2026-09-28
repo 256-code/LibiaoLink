@@ -1,4 +1,5 @@
 import { z } from "../zod.ts";
+import { NotifyChannelSchema } from "./automation.ts";
 import { DateTimeSchema, PageQuerySchema, UuidSchema } from "../common/conventions.ts";
 
 /**
@@ -56,6 +57,8 @@ function nonBlankText(max: number, label: string) {
  * 生产端责任：按收件人口径逐位展开（一个收件人一条事件，recipientId 必填）、同事务 appendOutbox、
  *   dedupeKey 用「规则码:实体 id:窗口」（含状态版本再生窗口，见 outbox 契约）；
  * 消费端责任：载荷非法 → outbox dead（确定性失败，一次即弃，先例 preview.job）、标题 / 正文 trim 后落库。
+ * 渠道（channel）：缺省 inbox = 站内信；M5-03 落地前投递层只支持 inbox —— 非 inbox 值按确定性失败收口（dead + 告警），
+ *   不得静默当站内信投递（接线层护栏；M5-03 落地后由投递层分流）。
  * 合并键（mergeKey）：缺省按 `templateCode` → `type:refType:refId` 逐级回退（见投递层口径）；
  *   需要「同人同时段合并成一条」的系列消息（A01 多项目提醒等）应显式给 mergeKey。
  */
@@ -63,6 +66,9 @@ export const NotifyMessagePayloadSchema = z
   .object({
     recipientId: UuidSchema.openapi({ description: "收件人（用户 id；生产端已按收件人口径展开到人）" }),
     type: NotificationTypeSchema,
+    channel: NotifyChannelSchema.optional().openapi({
+      description: "投递渠道（复用 automation 的 NOTIFY_CHANNELS，与引擎 ReplayMessage.channel 同源；缺省 inbox = 站内信）。M5-03 落地前非 inbox 值由投递层按确定性失败收口（dead + 告警）",
+    }),
     title: nonBlankText(NOTIFICATION_TITLE_MAX_LENGTH, "标题").openapi({ description: "标题（前后空白剔除后 1 ~ 200 字）" }),
     body: nonBlankText(NOTIFICATION_BODY_MAX_LENGTH, "正文").openapi({ description: "正文（前后空白剔除后 1 ~ 4000 字）" }),
     refType: z
@@ -94,7 +100,7 @@ export const NotifyMessagePayloadSchema = z
     }
   })
   .openapi("NotifyMessagePayload", {
-    description: "站内信投递事件载荷（outbox 主题 notify.message）：收件人 + 类型 + 标题 / 正文 + 关联对象 + 合并键",
+    description: "站内信投递事件载荷（outbox 主题 notify.message）：收件人 + 渠道 + 类型 + 标题 / 正文 + 关联对象 + 合并键",
   });
 export type NotifyMessagePayload = z.infer<typeof NotifyMessagePayloadSchema>;
 
