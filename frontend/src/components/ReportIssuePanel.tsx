@@ -20,7 +20,9 @@ import type { MeResponse, Project } from "../types";
  *   Tailwind 任意值等价还原样张的 styled-components 口径（浅灰面 + 0.5em 圆角 + em 口径的实心堆叠投影（键帽侧壁）+ 末层柔和落影，
  *   按下 translate 0.225em 并把堆叠压扁），尺寸按「大小不用太大」收紧为 13px 字号，**不引入 styled-components 依赖**。
  *   每项 = 16px 图标 + 单行 13px 文字；**Push 199**：「问题看板」项图标按业务给样（SVG Repo 16×16 面性圆环感叹号，
- *   `fill="currentColor"` 随字色）换下原两块竖列描边图标，其余三项照旧描边。
+ *   `fill="currentColor"`）换下原两块竖列描边图标；**Push 200**：「问题追踪」项图标同样按业务给样改为「文件 + 警示圈」
+ *   首版实心样（业务看后反馈「不好看」→ 改浅版：文件描边 + 同一套「圆环 + 感叹号」小警示章），导航栏整排加**吸顶**
+ *   （`sticky top-16` = 顶栏 64px 正下方，站灰底 + 毛玻璃），日报填写 / 日报记录两项照旧描边。
  * - 数据口径承 `系统功能书.md` A3：日报字段 A3-01 / 草稿与补填 A3-02 / 提交校验 A3-04 / 自动生成问题 A3-09 / 问题四态 A3-10；处理时限 SLA 见 ADR-026。
  * - 内容列宽：视图整体**全宽**（日报记录 / 问题追踪 / 问题看板 照旧铺满）；只有「日报填写」收成**居中窄栏**
  *   （max-w-3xl = 768px），业务口径「我只要日报填写页面居中然后尺寸舒适一点、像一个表单，其它的不变还是全屏」。
@@ -112,8 +114,10 @@ type SubTab = "日报填写" | "日报记录" | "问题追踪" | "问题看板";
 
 const SUB_TABS: readonly SubTab[] = ["日报填写", "日报记录", "问题追踪", "问题看板"];
 
-/** 导航项图标（描边口径，1.8px 线宽；按钮内统一 16px 图标 + 单行文字）；**问题看板 = 业务给的面性 SVG**
- *  （Push 199：16×16 圆环 + 感叹号，`fill="currentColor"` 随字色，不再是描边竖列）。 */
+/** 导航项图标（按钮内统一 16px 图标 + 单行文字）；「日报填写」「日报记录」描边 1.8px；两个「问题*」项各有一枚徽章：
+ *  「问题追踪」= Push 200 业务给的「文件 + 警示圈」—— 首版照样做实心（业务看后反馈「不好看」），改为**浅版**：
+ *   文件走描边、警示章用同一套「圆环 + 感叹号」（与「问题看板」徽章语言一致，1.8px 同线宽）；
+ *  「问题看板」= Push 199 业务给的 16×16「圆环 + 感叹号」面性样（`fill="currentColor"`）。 */
 const SUB_TAB_ICON: Record<SubTab, ReactNode> = {
   日报填写: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4">
@@ -130,8 +134,11 @@ const SUB_TAB_ICON: Record<SubTab, ReactNode> = {
   ),
   问题追踪: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4">
-      <rect x="4" y="5" width="16" height="14" rx="2" />
-      <path d="M4 10h16M10 10v9" />
+      <path d="M13.5 3H6.75A1.75 1.75 0 0 0 5 4.75v14.5c0 .966.784 1.75 1.75 1.75h6.2" />
+      <path d="M13.5 3v4.75c0 .414.336.75.75.75H19v2.6" />
+      <path d="M17.2 12.9a4.3 4.3 0 1 0 0 8.6 4.3 4.3 0 0 0 0-8.6z" />
+      <path d="M17.2 15.2v2.4" />
+      <path d="M17.2 19.9h.01" />
     </svg>
   ),
   问题看板: (
@@ -738,8 +745,10 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
     // 整块视图**全宽**（不封顶、不居中）—— 日报记录 / 问题追踪 / 问题看板 照旧铺满；
     // 只有「日报填写」那一块在下面单独收成居中窄栏。
     <div className="w-full space-y-5">
-      {/* 页内导航栏（业务样张：四个键帽按钮，紧贴主标签栏下方一排，尺寸收紧） */}
-      <nav data-subnav="true" className="flex flex-wrap items-center gap-2">
+      {/* 页内导航栏（业务样张：四个键帽按钮，紧贴主标签栏下方一排，尺寸收紧）；
+          Push 200 吸顶（业务口径「做吸顶效果」）：滚动时停在顶栏（h-16 = 64px）正下方 —— 站灰底 + 毛玻璃兜住滚动内容；
+          -mx-6 / -my-2 + 同值内衬抵消：横幅铺满行宽、键帽位置与原来一致。 */}
+      <nav data-subnav="true" className="sticky top-16 z-20 -mx-6 -my-2 flex flex-wrap items-center gap-2 bg-[#f5f6f8]/95 px-6 py-2 backdrop-blur">
         {SUB_TABS.map((tab) => tabButton(tab))}
       </nav>
 
