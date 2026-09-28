@@ -699,10 +699,11 @@ export class TaskService {
       throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
     }
     if (request.title !== undefined || request.titleEn !== undefined) {
-      // Push 196：任务描述（title / titleEn）只对**无来源节点**的任务开放（看板「添加 → 临时任务」手工创建）——
-      // 节点 / 模板生成的任务仍按 A1-17 锁定：常规编辑不可达，修正走管理员「例外调整」（PATCH …/locked-fields）。
-      if (before.nodeId !== null || before.taskNodeId !== null) {
-        throw new AppError("VALIDATION_FAILED", "该任务的描述由流程节点 / 模板生成并锁定（A1-17），不能在常规编辑里修改");
+      // Push 196：任务描述（title / titleEn）只对**临时任务**开放（看板「添加 → 临时任务」手工创建、未归入阶段）；
+      // Push 197 收窄（业务口径「这个不是临时任务 不能修改」）：归入阶段的任务即便没有来源节点也锁定 ——
+      // 阶段任务与节点 / 模板生成的任务仍按 A1-17 走常规编辑不可达，修正走管理员「例外调整」（PATCH …/locked-fields）。
+      if (before.stageKey !== null || before.nodeId !== null || before.taskNodeId !== null) {
+        throw new AppError("VALIDATION_FAILED", "只有未归入阶段的「临时任务」可改任务描述（阶段任务 / 节点 / 模板生成的任务按 A1-17 锁定），修正请走管理员「例外调整」");
       }
     }
     if (batchId !== null && request.status === "done" && before.status === "done") {

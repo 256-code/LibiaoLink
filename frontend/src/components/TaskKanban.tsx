@@ -757,6 +757,8 @@ function KanbanColumn({
           addedNodeIds={addedNodeIds}
           placement={{ tasks: stageTasksOf(templateStage) }}
           onAddNodes={(stage, nodes, placement, templateId) => { onAddStageTask(context, stage, nodes, placement, templateId); }}
+          // 常驻「临时任务」入口（Push 197）：与列底「添加 → 临时任务」同一条链路 —— 建完由 addTaskAndOpen 直接开详情抽屉
+          onCreateTempTask={(values) => onAddTask(context, values)}
           onClose={() => {
             // 只关「本列这张模板卡片」（Push 118）：卡片自己关得比点别处晚时，不误伤刚打开的那个浮层
             setOverlay((prev) => (prev !== null && prev.kind === "template" && prev.key === group.key ? null : prev));

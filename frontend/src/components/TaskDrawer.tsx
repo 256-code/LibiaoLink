@@ -123,7 +123,7 @@ type TaskDrawerProps = {
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => void;
   /**
-   * 任务描述改名（Push 196）：只对**无来源节点**的临时任务开放（节点 / 模板生成的任务按 A1-17 锁定，抽屉内只读）；
+   * 任务描述改名（Push 196 / Push 197 收窄）：只对**未归入阶段的「临时任务」**开放（阶段任务与节点 / 模板生成的任务按 A1-17 锁定，抽屉内只读）；
    * 失焦即存；不传 = 该行不渲染。
    */
   onRename?: (taskId: string, title: string, titleEn: string) => void;
@@ -146,8 +146,8 @@ type TaskDrawerProps = {
  * 任务状态与实际完成日期自 Push 101 起也能在抽屉里直接改（口径与任务表行内 / 看板卡片完全一致，§6.9：
  * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
  * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、文件（走文件库）、变更关联；
- * 任务描述（中文 / 英文）自 Push 196 起对**无来源节点**的临时任务开放（失焦即存，中文名必填），
- * 节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
+ * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
+ * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
 export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
@@ -255,8 +255,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   }
 
   const editable = onSubmit !== undefined;
-  /** 任务描述改名（Push 196）：只有**无来源节点**的临时任务能改（节点 / 模板生成的任务按 A1-17 锁定；服务端同口径 400 兜底）。 */
-  const titleEditable = onRename !== undefined && task.nodeId === null && task.sourceNodeId === null;
+  /** 任务描述改名（Push 196 / Push 197 收窄）：只有**未归入阶段**的「临时任务」能改 —— 归入阶段的任务即便没有来源节点也锁定（A1-17；服务端同口径 400 兜底）。 */
+  const titleEditable = onRename !== undefined && task.stage === "" && task.nodeId === null && task.sourceNodeId === null;
   const canEditStatus = onSetStatus !== undefined;
   const canEditActualEnd = onSetActualEnd !== undefined;
   /** 逾期提示与服务端展示态同一口径（已延期 = 未完成且过了预计完成日期）。 */
@@ -330,7 +330,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   };
 
   const rows: Array<{ label: string; value: ReactNode }> = [
-    // 任务描述（Push 196）：只有无来源节点的临时任务出这一行；节点 / 模板生成的任务保持锁定（不渲染可编辑控件）
+    // 任务描述（Push 196 / Push 197 收窄）：只有未归入阶段的「临时任务」出这一行；阶段任务与节点 / 模板生成的任务保持锁定（不渲染可编辑控件）
     ...(titleEditable
       ? [
           {
