@@ -190,6 +190,47 @@ export function SelectMenu({ value, options, onChange, placeholder = "请选择"
   );
 }
 
+type MultiOptionListProps = {
+  values: readonly string[];
+  options: readonly string[];
+  ariaLabel: string;
+  onChange: (values: string[]) => void;
+  /** 选项文案渲染（Push 208 追加 · 业务口径「要有颜色 两处」）：不给 = 纯文字；给 = 出小色签。 */
+  renderLabel?: (option: string) => ReactNode;
+};
+
+/** 多选项列表（Push 202 多选下拉 / Push 208 行内多选单元格共用）：点选中项打绿勾、再点取消，**点选不收浮层**（可连着点）；
+ *  Push 208 追加：可选 renderLabel —— 选项按各自的色表出小色签（问题归类 / 关联阶段两处）。 */
+export function MultiOptionList({ values, options, ariaLabel, onChange, renderLabel }: MultiOptionListProps) {
+  return (
+    <div role="listbox" aria-multiselectable="true" aria-label={ariaLabel} className="p-1">
+      {options.map((option) => {
+        const selected = values.includes(option);
+        return (
+          <button
+            key={option}
+            type="button"
+            role="option"
+            data-multi-option={option}
+            aria-selected={selected}
+            onClick={() => {
+              onChange(selected ? values.filter((value) => value !== option) : [...values, option]);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-100"
+          >
+            {renderLabel === undefined ? option : renderLabel(option)}
+            {selected ? (
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600">
+                <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 type MultiSelectMenuProps = {
   values: readonly string[];
   options: readonly string[];
@@ -247,31 +288,7 @@ export function MultiSelectMenu({ values, options, onChange, placeholder = "请�
               className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
               style={{ top: position.top, left: position.left, width: position.width }}
             >
-              <div role="listbox" aria-multiselectable="true" aria-label={ariaLabel} className="p-1">
-                {options.map((option) => {
-                  const selected = values.includes(option);
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      role="option"
-                      data-multi-option={option}
-                      aria-selected={selected}
-                      onClick={() => {
-                        onChange(selected ? values.filter((value) => value !== option) : [...values, option]);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-100"
-                    >
-                      {option}
-                      {selected ? (
-                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600">
-                          <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
+              <MultiOptionList values={values} options={options} ariaLabel={ariaLabel} onChange={onChange} />
             </div>,
             document.body,
           )

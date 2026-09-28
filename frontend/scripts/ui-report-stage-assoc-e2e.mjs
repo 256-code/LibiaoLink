@@ -167,6 +167,8 @@ const STATE_WORDS = ["已提交", "草稿", "补填"];
 const DROPPED_HEADERS = ["今日施工人数", "现场发现问题", "解决方案或建议"];
 /** Push 207：问题追踪六列表头（业务样 = 图五）+ 整表里不该再出现的四词。 */
 const ISSUE_HEADERS = ["日期", "问题描述", "问题归类", "解决方案或建议", "问题附图", "问题是否处理"];
+/** 问题归类字典（C9 十项 · 与前端 ISSUE_CATEGORIES 同一份口径）：⑧ 组行内多选按它现选现比。 */
+const CATEGORY_NAMES = ["机械部", "采购部", "规划部", "项目部", "物流原因", "供应商原因", "客户原因", "客观原因", "生产原因", "其它"];
 const ISSUE_DROPPED = ["责任", "处理时限", "所属任务", "未分组"];
 const NOT_A_STAGE = "布局定档";
 const DONE_TEXT = "回放·关联阶段·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ") + LF + "回放·完成工作第二行·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
@@ -543,7 +545,7 @@ const rowProbe = await ev(
   "time:tds[0]===undefined?" + j("") + ":tds[0].textContent.trim()," +
   "dateWeight:tds[0]===undefined?" + j("") + ":(function(){var p=tds[0].querySelector(" + j("[data-report-date]") + ");return p===null?" + j("") + ":getComputedStyle(p).fontWeight;})()," +
   "dateClass:tds[0]===undefined?" + j("") + ":(function(){var p=tds[0].querySelector(" + j("[data-report-date]") + ");return p===null?" + j("") + ":String(p.className);})()," +
-  "stage:tds[2]===undefined?" + j("") + ":tds[2].textContent.trim(),done:tds[3]===undefined?" + j("") + ":tds[3].textContent.trim()," +
+  "stage:(function(){var td=tds[2];if(td===undefined){return " + j("") + ";}var cs=td.querySelectorAll(" + j("[data-report-stage]") + ");if(cs.length===0){return td.textContent.trim();}var a=[];for(var i=0;i<cs.length;i++){a.push(cs[i].getAttribute(" + j("data-report-stage") + "));}return a.join(" + j("、") + ");})(),done:tds[3]===undefined?" + j("") + ":tds[3].textContent.trim()," +
   "doneWhite:tds[3]===undefined?" + j("") + ":getComputedStyle(tds[3]).whiteSpace," +
   "plan:tds[4]===undefined?" + j("") + ":tds[4].textContent.trim(),planWhite:tds[4]===undefined?" + j("") + ":getComputedStyle(tds[4]).whiteSpace," +
   "text:(r.textContent||" + j("") + ")};})()"
@@ -1112,7 +1114,7 @@ const newIssueProbe = await ev(
   "(function(){var rows=document.querySelectorAll(" + j("[data-issue-row]") + ");if(rows.length===0){return null;}var r=rows[0];var tds=r.querySelectorAll(" + j("td") + ");" +
   "var tag=r.querySelector(" + j("[data-issue-state]") + ");var chips=r.querySelectorAll(" + j("[data-issue-category]") + ");var catNames=[];var catColors={};for(var k=0;k<chips.length;k++){var cn=chips[k].getAttribute(" + j("data-issue-category") + ");catNames.push(cn);catColors[cn]=getComputedStyle(chips[k]).backgroundColor;}" +
   "var img=r.querySelector(" + j("[data-attachment-thumb] img") + ");" +
-  "var p=tds[1]===undefined?null:tds[1].querySelector(" + j("p") + ");" +
+  "var p=tds[1]===undefined?null:tds[1].querySelector(" + j("[data-issue-title]") + ");" +
   "return {rows:rows.length,title:p===null?" + j("") + ":p.textContent,white:p===null?" + j("") + ":getComputedStyle(p).whiteSpace," +
   "state:tag===null?" + j("") + ":tag.getAttribute(" + j("data-issue-state") + ")," +
   "cat:catNames.join(" + j("/") + "),catColors:catColors,src:img===null?" + j("") + ":String(img.getAttribute(" + j("src") + "))};})()"
@@ -1285,6 +1287,274 @@ check("⑦ 关闭同样落库（GET 偏好 focusMode = false）",
   prefAfterOff.status === 200 && prefAfterOff.json !== null && prefAfterOff.json.focusMode === false,
   "focusMode=" + (prefAfterOff.json === null ? "-" : String(prefAfterOff.json.focusMode)));
 
+// ---------- ⑧ 行内编辑（Push 208 · 业务口径「问题追溯里面也要可以这样编辑 文字 以及问题归类都要可以修改 文字修改需要点击保存
+//   编辑后时间不变 日报记录同理」） ----------
+// 口径：问题描述 / 解决方案或建议 / 当日完成工作 / 明日计划 = 文字列（浮层 = 多行框 + 取消 / 保存，**点「保存」才落值**，落值即收浮层）；
+//   问题归类 = 多选浮层（绿勾 · 点选不收浮层 · 再点取消）；问题是否处理 = 三态下拉（项目总览状态列同款）；
+//   日报记录的关联阶段（Push 208 追加口径「这个也要可以编辑筛选选择」）= 与表单同款的九阶段勾选清单；
+//   日期 / 提出日期列**不可编辑**（单元格里没有可点目标），patch 也从不写 date / raisedAt ——「编辑后时间不变」。
+/** 行内下拉（三态）里按文案点一枚选项。 */
+async function clickInlineOption(text) {
+  const point = await ev(
+    "(function(){var os=document.querySelectorAll(" + j("[data-inline-popover] [role=option]") + ");" +
+    "for(var i=0;i<os.length;i++){if(os[i].textContent.trim()===" + j(text) + "){" +
+    "os[i].scrollIntoView({block:" + j("center") + "});var r=os[i].getBoundingClientRect();" +
+    "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}}return null;})()"
+  );
+  if (point === null || point === undefined) throw new Error("点不到行内下拉选项：" + text);
+  await clickAt(point);
+}
+/** 行内多选浮层（问题归类）里按文案点一枚选项（点选不收浮层 · 再点 = 取消勾选）。 */
+async function clickInlineMulti(text) {
+  const point = await ev(
+    "(function(){var os=document.querySelectorAll(" + j("[data-inline-popover] [data-multi-option]") + ");" +
+    "for(var i=0;i<os.length;i++){if(os[i].getAttribute(" + j("data-multi-option") + ")===" + j(text) + "){" +
+    "os[i].scrollIntoView({block:" + j("center") + "});var r=os[i].getBoundingClientRect();" +
+    "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}}return null;})()"
+  );
+  if (point === null || point === undefined) throw new Error("点不到归类选项：" + text);
+  await clickAt(point);
+}
+/** 问题追踪首行的日期 / 描述 / 归类 / 解决方案 / 状态探针。 */
+function issueRow1Expr() {
+  return "(function(){var r=document.querySelector(" + j("[data-issue-row]") + ");if(r===null){return null;}" +
+    "var tds=r.querySelectorAll(" + j("td") + ");var title=tds[1].querySelector(" + j("[data-issue-title]") + ");" +
+    "var tag=r.querySelector(" + j("[data-issue-state]") + ");var cs=tds[2].querySelectorAll(" + j("[data-issue-category]") + ");var cats=[];" +
+    "for(var i=0;i<cs.length;i++){cats.push(cs[i].getAttribute(" + j("data-issue-category") + "));}" +
+    "return {date:tds[0].textContent.trim(),title:title===null?" + j("") + ":title.textContent," +
+    "titleWhite:title===null?" + j("") + ":getComputedStyle(title).whiteSpace,sol:tds[3].textContent.trim(),cats:cats," +
+    "state:tag===null?" + j("") + ":tag.getAttribute(" + j("data-issue-state") + ")};})()";
+}
+/** 日报记录首行探针。 */
+function reportRow1Expr() {
+  return "(function(){var r=document.querySelector(" + j("[data-report-row]") + ");if(r===null){return null;}" +
+    "var tds=r.querySelectorAll(" + j("td") + ");var date=tds[0].querySelector(" + j("[data-report-date]") + ");" +
+    "var done=tds[3].querySelector(" + j("[data-report-done]") + ");var plan=tds[4].querySelector(" + j("[data-report-plan]") + ");" +
+    "return {dateCell:tds[0].textContent.trim(),date:date===null?" + j("") + ":date.textContent," +
+    "dateBtns:tds[0].querySelectorAll(" + j("button") + ").length," +
+    "stages:(function(){var td=tds[2];var cs=td.querySelectorAll(" + j("[data-report-stage]") + ");if(cs.length===0){return td.textContent.trim();}var a=[];for(var i=0;i<cs.length;i++){a.push(cs[i].getAttribute(" + j("data-report-stage") + "));}return a.join(" + j("、") + ");})()," +
+    "done:done===null?" + j("") + ":done.textContent,doneWhite:done===null?" + j("") + ":getComputedStyle(done).whiteSpace," +
+    "plan:plan===null?" + j("") + ":plan.textContent};})()";
+}
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-row]") + ")!==null");
+const editProbe = await ev(
+  "(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");if(t===null){return null;}" +
+  "var rows=t.querySelectorAll(" + j("[data-issue-row]") + ");var r=rows[0];if(r===undefined){return null;}var tds=r.querySelectorAll(" + j("td") + ");" +
+  "function lab(td){var b=td.querySelector(" + j("button") + ");return b===null?" + j("") + ":String(b.getAttribute(" + j("aria-label") + "));}" +
+  "return {n:rows.length,dateBtns:tds[0].querySelectorAll(" + j("button") + ").length,dateText:tds[0].textContent.trim()," +
+  "title:lab(tds[1]),cat:lab(tds[2]),sol:lab(tds[3]),state:lab(tds[5])};})()"
+);
+check("⑧ 问题追踪「问题描述 / 问题归类 / 解决方案或建议 / 问题是否处理」四列都挂上行内编辑触发器（无障碍名 = 字段名（提出日期）· 业务样 = 项目总览行内编辑那套）",
+  editProbe !== null && editProbe.title.indexOf("修改问题描述") === 0 && editProbe.cat.indexOf("修改问题归类") === 0 && editProbe.sol.indexOf("修改解决方案或建议") === 0 && editProbe.state.indexOf("修改问题状态") === 0,
+  editProbe === null ? "-" : JSON.stringify(editProbe));
+check("⑧ 日期列不可编辑（单元格内 0 个可点目标 · 业务口径「编辑后时间不变」的第一层）",
+  editProbe !== null && editProbe.dateBtns === 0, editProbe === null ? "-" : "dateBtns=" + String(editProbe.dateBtns));
+const ISSUE_DATE_0 = editProbe === null ? "" : editProbe.dateText;
+/** 进组基线（⑧ 组跑在 ⑦d 之后：主标签重挂过一次，「日报及问题」已复位回静态演示数据 —— 不假定首行是哪一条，
+ *  一律现读现比、断言只认「相对变化」；换演示数据也不会假红）。 */
+const ISSUE_ROW_0 = await ev(issueRow1Expr());
+const ISSUE_CATS_0 = ISSUE_ROW_0 === null ? [] : ISSUE_ROW_0.cats;
+const ISSUE_TITLE_0 = ISSUE_ROW_0 === null ? "" : ISSUE_ROW_0.title;
+const ISSUE_SOL_0 = ISSUE_ROW_0 === null ? "" : ISSUE_ROW_0.sol;
+const CAT_ADD_POOL = [].concat(CATEGORY_NAMES).filter((name) => ISSUE_CATS_0.indexOf(name) < 0);
+const CAT_ADD = CAT_ADD_POOL.length === 0 ? "其它" : CAT_ADD_POOL[0];
+const EDIT_TITLE_TEXT = "回放·行内编辑·问题描述" + LF + "第二行";
+await clickSelector("[data-issue-table] tbody tr:first-child td:nth-child(2) button[aria-label]");
+const titleEditor = await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+const titleEditorProbe = await ev(
+  "(function(){var p=document.querySelector(" + j("[data-inline-popover]") + ");if(p===null){return null;}var ta=p.querySelector(" + j("textarea") + ");" +
+  "return {label:ta===null?" + j("") + ":String(ta.getAttribute(" + j("aria-label") + ")),value:ta===null?" + j("") + ":ta.value," +
+  "save:p.querySelector(" + j("[data-inline-save]") + ")!==null,cancel:p.querySelector(" + j("[data-inline-cancel]") + ")!==null};})()"
+);
+check("⑧ 点「问题描述」→ 文字编辑器浮层（多行框 + 取消 / 保存 · 框的无障碍名 = 「修改问题描述（提出日期）」· 预填当前文字）",
+  titleEditor === true && titleEditorProbe !== null && titleEditorProbe.save === true && titleEditorProbe.cancel === true &&
+  titleEditorProbe.label.indexOf("修改问题描述") === 0 && String(titleEditorProbe.value) === ISSUE_TITLE_0,
+  titleEditorProbe === null ? "-" : JSON.stringify({ label: titleEditorProbe.label, save: titleEditorProbe.save, cancel: titleEditorProbe.cancel }));
+await typeInto("[data-inline-popover] textarea", EDIT_TITLE_TEXT);
+await clickSelector("[data-inline-popover] [data-inline-save]");
+const titleSaved = await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const afterTitle = await ev(issueRow1Expr());
+check("⑧ 「文字修改需要点击保存」：点「保存」才落值 —— 问题描述 = 新文字（自动序号 1: / 2: 重排 + 换行保留 · pre-line），保存后浮层自动收起",
+  titleSaved === true && afterTitle !== null && afterTitle.title === NUMLINE(EDIT_TITLE_TEXT) && afterTitle.titleWhite === "pre-line",
+  afterTitle === null ? "-" : JSON.stringify({ t: afterTitle.title, white: afterTitle.titleWhite }));
+check("⑧ 「编辑后时间不变」：改完问题描述，日期列原样（" + ISSUE_DATE_0 + "）",
+  afterTitle !== null && afterTitle.date === ISSUE_DATE_0, afterTitle === null ? "-" : String(afterTitle.date));
+await clickSelector("[data-issue-table] tbody tr:first-child td:nth-child(4) button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+await typeInto("[data-inline-popover] textarea", "回放·不该落值的方案文字");
+await clickSelector("[data-inline-popover] [data-inline-cancel]");
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const afterCancel = await ev(issueRow1Expr());
+check("⑧ 「取消」不落值（反向实证）：解决方案或建议仍是进组原值 · 日期列也没动",
+  afterCancel !== null && afterCancel.sol === ISSUE_SOL_0 && afterCancel.date === ISSUE_DATE_0,
+  afterCancel === null ? "-" : JSON.stringify({ sol: afterCancel.sol, date: afterCancel.date }));
+const EDIT_SOL_TEXT = "回放·行内编辑·解决方案" + LF + "第二行";
+await clickSelector("[data-issue-table] tbody tr:first-child td:nth-child(4) button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+await typeInto("[data-inline-popover] textarea", EDIT_SOL_TEXT);
+await clickSelector("[data-inline-popover] [data-inline-save]");
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const afterSol = await ev(issueRow1Expr());
+check("⑧ 「解决方案或建议」同款文字编辑：保存后 = 新文字（自动序号 + 换行保留）",
+  afterSol !== null && afterSol.sol === NUMLINE(EDIT_SOL_TEXT), afterSol === null ? "-" : String(afterSol.sol));
+await clickSelector("[data-issue-table] tbody tr:first-child td:nth-child(3) button[aria-label]");
+const catOpen = await waitFor("document.querySelector(" + j("[data-inline-popover] [data-multi-option]") + ")!==null");
+const catOpenProbe = await ev(
+  "(function(){var p=document.querySelector(" + j("[data-inline-popover]") + ");if(p===null){return null;}var os=p.querySelectorAll(" + j("[data-multi-option]") + ");var sel=[];var chips={};" +
+  "for(var i=0;i<os.length;i++){var name=os[i].getAttribute(" + j("data-multi-option") + ");" +
+  "var chip=os[i].querySelector(" + j("span") + ");chips[name]=chip===null?" + j("") + ":getComputedStyle(chip).backgroundColor;" +
+  "if(os[i].getAttribute(" + j("aria-selected") + ")===" + j("true") + "){sel.push(name);}}" +
+  "return {n:os.length,sel:sel,chips:chips};})()"
+);
+check("⑧ 点「问题归类」→ 多选浮层（十项字典全列 · 当前已勾 = 该行现有归类 —— 与「日报填写」表单侧同一套绿勾口径）",
+  catOpen === true && catOpenProbe !== null && catOpenProbe.n === 10 && catOpenProbe.sel.join("/") === ISSUE_CATS_0.join("/"),
+  catOpenProbe === null ? "-" : JSON.stringify(catOpenProbe));
+await clickInlineMulti(CAT_ADD);
+await sleep(400);
+const catAdded = await ev(issueRow1Expr());
+const catStillOpen = await ev("document.querySelector(" + j("[data-inline-popover]") + ")!==null");
+check("⑧ 归类点选即落值（新增「" + CAT_ADD + "」→ 表内立刻多一枚彩色胶囊）且**浮层不收**（多选可以接着点）",
+  catAdded !== null && catAdded.cats.join("/") === ISSUE_CATS_0.concat([CAT_ADD]).join("/") && catStillOpen === true,
+  catAdded === null ? "-" : catAdded.cats.join("/"));
+await clickInlineMulti(CAT_ADD);
+await sleep(400);
+const catDropped = await ev(issueRow1Expr());
+check("⑧ 再点同一枚 = 取消勾选（加 / 减两条链路都实测 · 回到进组组合）",
+  catDropped !== null && catDropped.cats.join("/") === ISSUE_CATS_0.join("/"),
+  catDropped === null ? "-" : catDropped.cats.join("/"));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const catColors = await ev(
+  "(function(){var r=document.querySelector(" + j("[data-issue-row]") + ");if(r===null){return null;}var tds=r.querySelectorAll(" + j("td") + ");" +
+  "var cs=tds[2].querySelectorAll(" + j("[data-issue-category]") + ");var out={};var transparent=0;" +
+  "for(var i=0;i<cs.length;i++){var bg=getComputedStyle(cs[i]).backgroundColor;if(bg===" + j("rgba(0, 0, 0, 0)") + "){transparent+=1;}" +
+  "out[cs[i].getAttribute(" + j("data-issue-category") + ")]=bg;}" +
+  "return {colors:out,count:cs.length,transparent:transparent,date:tds[0].textContent.trim()};})()"
+);
+check("⑧ Esc 收起后归类仍是彩色胶囊（逐枚都带色表底色 · 数量 = 进组原值 " + String(ISSUE_CATS_0.length) + " 枚）+ 日期列原样",
+  catColors !== null && catColors.count === ISSUE_CATS_0.length && catColors.transparent === 0 && catColors.date === ISSUE_DATE_0,
+  catColors === null ? "-" : JSON.stringify({ n: catColors.count, colors: catColors.colors }));
+await clickSelector("[data-issue-table] tbody tr:first-child td:nth-child(6) button[aria-label]");
+const stateOpen = await waitFor("document.querySelector(" + j("[data-inline-popover] [role=option]") + ")!==null");
+const stateOpenProbe = await ev(
+  "(function(){var p=document.querySelector(" + j("[data-inline-popover]") + ");if(p===null){return null;}var os=p.querySelectorAll(" + j("[role=option]") + ");var names=[];" +
+  "for(var i=0;i<os.length;i++){names.push(os[i].textContent.trim());}return {n:os.length,names:names};})()"
+);
+check("⑧ 点「问题是否处理」→ 三态下拉（未解决 / 处理中 / 已完成 · 业务样 = 项目总览状态列那枚）",
+  stateOpen === true && stateOpenProbe !== null && stateOpenProbe.n === 3 && stateOpenProbe.names.join("/") === "未解决/处理中/已完成",
+  stateOpenProbe === null ? "-" : JSON.stringify(stateOpenProbe));
+await clickInlineOption("处理中");
+await sleep(500);
+const stateAfter = await ev(issueRow1Expr());
+const stateClosed = await ev("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+check("⑧ 选「处理中」：状态落值（色签壳仍 = 项目总览同款胶囊）+ 浮层收起 + 日期列原样",
+  stateAfter !== null && stateAfter.state === "处理中" && stateClosed === true && stateAfter.date === ISSUE_DATE_0,
+  stateAfter === null ? "-" : JSON.stringify({ state: stateAfter.state, date: stateAfter.date }));
+await clickSelector("[data-issue-table] tbody tr:first-child td:nth-child(6) button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] [role=option]") + ")!==null");
+await clickInlineOption("未解决");
+await sleep(500);
+const stateBack = await ev(issueRow1Expr());
+check("⑧ 状态可来回改（再选回「未解决」· 复盘后数据回到原态）",
+  stateBack !== null && stateBack.state === "未解决", stateBack === null ? "-" : String(stateBack.state));
+await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-report-row]") + ")!==null");
+const reportEditProbe = await ev(
+  "(function(){var r=document.querySelector(" + j("[data-report-row]") + ");if(r===null){return null;}var tds=r.querySelectorAll(" + j("td") + ");" +
+  "function lab(td){var b=td.querySelector(" + j("button") + ");return b===null?" + j("") + ":String(b.getAttribute(" + j("aria-label") + "));}" +
+  "return {cells:tds.length,dateBtns:tds[0].querySelectorAll(" + j("button") + ").length,stage:lab(tds[2])," +
+  "done:lab(tds[3]),plan:lab(tds[4])};})()"
+);
+check("⑧ 日报记录同理：「当日完成工作 / 明日计划」文字编辑 + 「关联阶段」勾选编辑（无障碍名都带时间）· 时间列没有编辑触发器",
+  reportEditProbe !== null && reportEditProbe.cells === 6 && reportEditProbe.done.indexOf("修改当日完成工作") === 0 && reportEditProbe.plan.indexOf("修改明日计划") === 0 &&
+  reportEditProbe.stage.indexOf("修改关联阶段") === 0 && reportEditProbe.dateBtns === 0,
+  reportEditProbe === null ? "-" : JSON.stringify(reportEditProbe));
+const reportBefore = await ev(reportRow1Expr());
+const REPORT_DATE_0 = reportBefore === null ? "" : reportBefore.date;
+const EDIT_DONE_TEXT = "回放·行内编辑·当日完成工作" + LF + "第二行";
+await clickSelector("[data-report-row] td:nth-child(4) button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+await typeInto("[data-inline-popover] textarea", EDIT_DONE_TEXT);
+await clickSelector("[data-inline-popover] [data-inline-save]");
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const reportAfterDone = await ev(reportRow1Expr());
+check("⑧ 日报记录「当日完成工作」保存后 = 新文字（自动序号 + 换行保留 · pre-line）",
+  reportAfterDone !== null && reportAfterDone.done === NUMLINE(EDIT_DONE_TEXT) && reportAfterDone.doneWhite === "pre-line",
+  reportAfterDone === null ? "-" : JSON.stringify({ d: reportAfterDone.done, white: reportAfterDone.doneWhite }));
+check("⑧ 日报记录「编辑后时间不变」：时间列原样（" + REPORT_DATE_0 + "）",
+  reportAfterDone !== null && reportAfterDone.date === REPORT_DATE_0 && reportAfterDone.dateCell.indexOf(REPORT_DATE_0) >= 0,
+  reportAfterDone === null ? "-" : String(reportAfterDone.date));
+await clickSelector("[data-report-row] td:nth-child(5) button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+await typeInto("[data-inline-popover] textarea", "回放·不该落值的明日计划");
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const reportAfterEsc = await ev(reportRow1Expr());
+check("⑧ 日报记录「明日计划」按 Esc = 取消（原值不动 —— 「文字修改需要点击保存」的反向实证）",
+  reportAfterEsc !== null && reportBefore !== null && reportAfterEsc.plan === reportBefore.plan,
+  reportAfterEsc === null ? "-" : String(reportAfterEsc.plan));
+const EDIT_PLAN_TEXT = "回放·行内编辑·明日计划" + LF + "第二行";
+await clickSelector("[data-report-row] td:nth-child(5) button[aria-label]");
+await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ")!==null");
+await typeInto("[data-inline-popover] textarea", EDIT_PLAN_TEXT);
+await clickSelector("[data-inline-popover] [data-inline-save]");
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const reportAfterPlan = await ev(reportRow1Expr());
+check("⑧ 日报记录「明日计划」保存后 = 新文字（自动序号 + 换行保留）+ 时间列仍原样",
+  reportAfterPlan !== null && reportAfterPlan.plan === NUMLINE(EDIT_PLAN_TEXT) && reportAfterPlan.date === REPORT_DATE_0,
+  reportAfterPlan === null ? "-" : JSON.stringify({ p: reportAfterPlan.plan, date: reportAfterPlan.date }));
+
+// ⑧e 关联阶段（Push 208 追加 · 业务口径 2026-09-28「这个也要可以编辑筛选选择」）：浮层 = 与「日报填写」同款九阶段勾选清单
+const STAGE_BASE_NAMES = reportAfterPlan.stages === "—" ? [] : reportAfterPlan.stages.split("、");
+const STAGE_ADD_POOL = STAGES.filter((name) => STAGE_BASE_NAMES.indexOf(name) < 0);
+const STAGE_ADD = STAGE_ADD_POOL.length === 0 ? STAGES[0] : STAGE_ADD_POOL[0];
+await clickSelector("[data-report-row] td:nth-child(3) button[aria-label]");
+const stageOpen = await waitFor("document.querySelector(" + j("[data-inline-popover] [data-multi-option]") + ")!==null");
+const stageOpenProbe = await ev(
+  "(function(){var p=document.querySelector(" + j("[data-inline-popover]") + ");if(p===null){return null;}" +
+  "var os=p.querySelectorAll(" + j("[data-multi-option]") + ");var names=[];var sel=[];var chips={};" +
+  "for(var i=0;i<os.length;i++){var name=os[i].getAttribute(" + j("data-multi-option") + ");names.push(name);" +
+  "var chip=os[i].querySelector(" + j("span") + ");chips[name]=chip===null?" + j("") + ":getComputedStyle(chip).backgroundColor;" +
+  "if(os[i].getAttribute(" + j("aria-selected") + ")===" + j("true") + "){sel.push(name);}}" +
+  "return {n:os.length,names:names,sel:sel,chips:chips};})()"
+);
+check("⑧ 点「关联阶段」→ 九阶段勾选浮层（与「日报填写」表单侧同一份清单 · 当前勾选 = 该行现有阶段 · 业务口径「这个也要可以编辑筛选选择」）",
+  stageOpen === true && stageOpenProbe !== null && stageOpenProbe.n === 9 &&
+  stageOpenProbe.names.join("/") === STAGES.join("/") && stageOpenProbe.sel.join("/") === STAGE_BASE_NAMES.join("/"),
+  stageOpenProbe === null ? "-" : JSON.stringify(stageOpenProbe));
+await clickInlineMulti(STAGE_ADD);
+await sleep(400);
+const stageAdded = await ev(reportRow1Expr());
+const stageStillOpen = await ev("document.querySelector(" + j("[data-inline-popover]") + ")!==null");
+check("⑧ 阶段点行即落值（新增「" + STAGE_ADD + "」→ 单元格立刻多一枚）+ 浮层不收（可连着勾）",
+  stageAdded !== null && stageAdded.stages === (STAGE_BASE_NAMES.length === 0 ? STAGE_ADD : STAGE_BASE_NAMES.join("、") + "、" + STAGE_ADD) && stageStillOpen === true,
+  stageAdded === null ? "-" : String(stageAdded.stages));
+await clickInlineMulti(STAGE_ADD);
+await sleep(400);
+const stageDropped = await ev(reportRow1Expr());
+check("⑧ 再点同一行 = 取消勾选（加 / 减两条链路都实测 · 回到进组组合）",
+  stageDropped !== null && stageDropped.stages === reportAfterPlan.stages, stageDropped === null ? "-" : String(stageDropped.stages));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")===null");
+const stageClosed = await ev(reportRow1Expr());
+check("⑧ Esc 收起后关联阶段原样 + 时间列仍原样（「编辑后时间不变」在日报记录三列一致）",
+  stageClosed !== null && stageClosed.stages === reportAfterPlan.stages && stageClosed.date === REPORT_DATE_0,
+  stageClosed === null ? "-" : JSON.stringify({ s: stageClosed.stages, date: stageClosed.date }));
+// ⑧f 关联阶段「显示态」色签（Push 208 追加 · 业务口径 2026-09-28「显示也要有颜色」）：单元格里逐枚色签，
+// 颜色与浮层共用同一张九阶段色表、无一透明回落；空态 = 「—」灰字。
+const STAGE_RGB = {售前规划:"173, 203, 255",设计开发:"173, 228, 255",加工采购:"220, 223, 228",组装发货:"255, 181, 179",硬件实施:"172, 226, 197",软件部署:"255, 206, 163",试运行:"255, 234, 153",生产阶段:"231, 180, 255",验收:"255, 179, 220"};
+const stageTagProbe = await ev(
+  "(function(){var r=document.querySelector(" + j("[data-report-row]") + ");if(r===null){return null;}var tds=r.querySelectorAll(" + j("td") + ");" +
+  "var cs=tds[2].querySelectorAll(" + j("[data-report-stage]") + ");var names=[];var colors=[];var transparent=0;" +
+  "for(var i=0;i<cs.length;i++){names.push(cs[i].getAttribute(" + j("data-report-stage") + "));var bg=getComputedStyle(cs[i]).backgroundColor;colors.push(bg);if(bg===" + j("rgba(0, 0, 0, 0)") + "){transparent++;}}" +
+  "return {n:cs.length,names:names,colors:colors,transparent:transparent};})()"
+);
+check("⑧ 关联阶段「显示也要有颜色」（业务口径 2026-09-28）：单元格逐枚色签、颜色与九阶段色表一一对应（售前规划 #adcbff … 验收 #ffb3dc · 零透明回落）",
+  stageTagProbe !== null && stageTagProbe.n === STAGE_BASE_NAMES.length && stageTagProbe.transparent === 0 &&
+  stageTagProbe.names.join("/") === STAGE_BASE_NAMES.join("/") &&
+  stageTagProbe.colors.every((c, i) => c === "rgb(" + (STAGE_RGB[stageTagProbe.names[i]] ?? "") + ")"),
+  stageTagProbe === null ? "-" : JSON.stringify(stageTagProbe));
 // ---------- 清理 ----------
 // 偏好还原（放在撤销临时会话之前）：focusMode 回到进厂原值，不给下一轮留状态
 const prefRestoreRes = await api("/api/v1/users/me/preferences", "PATCH", { focusMode: focusOriginal });

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DateRangePicker } from "./DateRangePicker";
-import { MultiSelectMenu } from "./SelectMenu";
+import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
+import { InlineCell, InlineMultiOptionCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import {
   ISSUE_STATES,
@@ -117,7 +118,27 @@ import type { MeResponse, Project } from "../types";
  *      底色 —— 未解决 = 天蓝 sky / 处理中 = 琥珀 amber / 已完成 = emerald，同样压到 **6% 不透明度**、
  *      行悬停抬到 **12%**（与项目总览任务表同一套马卡龙口径），状态列同时收口 = 撤色签底、只留深色字（加粗、透明底）；
  *      关掉 = 行还原（白底 + 行悬停灰）、状态列回「项目总览同款」色签胶囊。
+ * - Push 208（业务口径 2026-09-28「问题追溯里面也要可以这样编辑 文字 以及问题归类都要可以修改 文字修改需要点击保存
+ *   编辑后时间不变 日报记录同理」）：两块表接**行内编辑**（复用项目总览那套 InlineEdit，业务样 = 项目总览状态列的行内下拉）——
+ *   ① 「问题追踪」：**问题描述 / 解决方案或建议**（文字列）= InlineTextCell 多行框 —— **点「保存」才落值**（Esc / 点浮层外 =
+ *      取消，原值不动）；**问题归类** = InlineMultiOptionCell（与「问题归类」表单侧同款多选：绿勾选中项、点选不收浮层、
+ *      再点取消，落值仍按「、」连接）；**问题是否处理** = InlineOptionCell 三态下拉（色签同项目总览，醒目模式下只留深色字）；
+ *   ② 「日报记录」：「当日完成工作 / 明日计划」两列同款文字编辑（业务口径「日报记录同理」）；
+ *   ⑤ 「日报记录」的**关联阶段**同批追加行内编辑（业务口径 2026-09-28「这个也要可以编辑筛选选择」）——
+ *      浮层 = 与「日报填写」表单侧完全同款的九阶段勾选清单（勾选不收浮层 · 值仍是同一份 REPORT_STAGES 口径）；
+ *   ⑥ 关联阶段「显示态」也出彩色色签（同日追加 · 业务口径 2026-09-28「显示也要有颜色」）：StageTags 逐枚出签、
+ *      与浮层共用同一张九阶段色表，空值 = 「—」灰字（问题归类显示态色签见 ④，两处同款）。
+ *   ③ 「编辑后时间不变」：日期 / 提出日期列**不参与编辑**（单元格里没有可点目标），patch 也从不写 date / raisedAt /
+ *      submittedAt —— 改完文字时间列原样；文字列保存前统一过一遍自动序号（renumberLines，与「日报填写」提交口径一致）；
+ *   ④ 编辑落原型内存态（setReports / setIssues）：刷新 / 换项目即复位；字段级 PATCH 接口的契约挂 wmj 线。
  */
+
+/** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
+ *  文字两列 + 关联阶段多选 —— 时间 / 填写者 / 现场工作附图不动（「编辑后时间不变」）。 */
+export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stages">>;
+
+/** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。 */
+export type IssuePatch = Partial<Pick<Issue, "title" | "category" | "solution" | "state">>;
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
 const CARD_SHELL =
@@ -196,6 +217,47 @@ function CategoryTags({ value }: { value: string }) {
   );
 }
 
+/** 关联阶段色签（Push 208 追加 · 业务口径「要有颜色 两处」· 业务样 = 九阶段各一档浅色）：
+ *  售前规划 #adcbff / 设计开发 #ade4ff / 加工采购 #dcdfe4 / 组装发货 #ffb5b3 / 硬件实施 #ace2c5 /
+ *  软件部署 #ffcea3 / 试运行 #ffea99 / 生产阶段 #e7b4ff / 验收 #ffb3dc —— 与「问题归类」共用同一张调色盘。 */
+const STAGE_TAG_CLASS: Record<string, string> = {
+  售前规划: "bg-[#adcbff]",
+  设计开发: "bg-[#ade4ff]",
+  加工采购: "bg-[#dcdfe4]",
+  组装发货: "bg-[#ffb5b3]",
+  硬件实施: "bg-[#ace2c5]",
+  软件部署: "bg-[#ffcea3]",
+  试运行: "bg-[#ffea99]",
+  生产阶段: "bg-[#e7b4ff]",
+  验收: "bg-[#ffb3dc]",
+};
+
+/** 关联阶段色签组（Push 208 追加 · 业务口径 2026-09-28「显示也要有颜色」）：多选值逐枚出签，与浮层
+ *  小签同一张色表；空值 = 「—」灰字（与列内其它空态一致）。 */
+function StageTags({ names }: { names: readonly string[] }) {
+  if (names.length === 0) return <span className="text-zinc-300">—</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {names.map((item, index) => (
+        <span key={item + "#" + String(index)} data-report-stage={item}
+          className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + (STAGE_TAG_CLASS[item] ?? "bg-zinc-100")}>
+          {item}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** 浮层里的小色签（Push 208 追加）：问题归类 / 关联阶段两个多选浮层的选项都按各自的色表出签。 */
+function tagChip(name: string, tagClass: string) {
+  return <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + tagClass}>{name}</span>;
+}
+
+/** 问题归类的小色签（浮层用；与表内 CategoryTags 同一张色表）。 */
+const categoryChip = (name: string) => tagChip(name, ISSUE_CATEGORY_CLASS[name] ?? "bg-zinc-100");
+
+/** 关联阶段的小色签（浮层用）。 */
+const stageChip = (name: string) => tagChip(name, STAGE_TAG_CLASS[name] ?? "bg-zinc-100");
 /** 问题状态色签（一处出签：追踪表「问题是否处理」列 + 看板卡片 / 列头共用）。Push 207 追加：壳体与「项目总览」
  *  任务状态胶囊同款（rounded-lg + px-3 py-1.5 + text-[11px] font-medium —— 项目总览侧是可点下拉、悬停深一档；
  *  静态签不挂悬停加深，其余逐项对齐）。`focus` = 醒目模式（仅追踪表传 true）：整行已铺状态底色，色签收口成
@@ -216,6 +278,11 @@ function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: bo
   );
 }
 
+/** 问题状态行内下拉的可选项（Push 208）：与「项目总览」任务状态同款 —— 弹层里每项 = 该状态的色签胶囊。 */
+const ISSUE_STATE_OPTIONS: SelectOption[] = ISSUE_STATES.map((state) => ({
+  value: state,
+  label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{state}</span>,
+}));
 /** 问题追踪列头（Push 207 · 业务样 = 图五）：六列**纯文字列名**（同批业务口径 2026-09-28「这些图标不需要」——
  *  首版列头曾带日历 / A 字 / 分栏 / 图片 / 对勾圈小图标与排序小漏斗，随后按上面口径整体下架）。 */
 const ISSUE_TABLE_COLUMNS: readonly { key: string; label: string }[] = [
@@ -253,6 +320,14 @@ const FORM_INPUT =
 
 /** 表单字段名（浅灰小字；Push 202「标题都标标粗」—— 字重 medium → bold）。 */
 const FORM_LABEL = "text-xs font-bold text-zinc-500";
+
+/** 行内编辑触发器 · 文字列（Push 208）：静息 = 文字原样（无白底无描边），悬停给一层淡色可点提示；
+ *  -mx-1.5 -my-0.5 与 px-1.5 py-0.5 相抵 —— 文字位置 / 行高与静态展示逐像素对齐，不给表格加高度。 */
+const CELL_EDIT_TEXT = "w-full -mx-1.5 -my-0.5 justify-start rounded-lg px-1.5 py-0.5 text-left hover:bg-zinc-900/[0.04]";
+
+/** 行内编辑触发器 · 色签列（Push 208）：问题归类 / 问题状态用 —— 触发器贴着内容（不满宽），四周留 2px 可点外沿。 */
+const CELL_EDIT_CHIP = "-m-0.5 rounded-lg p-0.5 hover:bg-zinc-900/[0.04]";
+
 
 /** 行首序号（自动序号用：1: / 2. / 3、/ 4：都算 —— 重排时先剥掉，再统一按 1: / 2: / 3: 编）。 */
 const LINE_NUMBER_HEAD = /^[ 　]*[0-9]+[ 　]*[:：.、．][ 　]*/;
@@ -804,7 +879,7 @@ const REPORT_COLUMNS: readonly string[] = [
  *  Push 206（业务口径「这个日报记录要大一点效果要如图二所示」+「用户填写后换行 填到表格后也要是换行的」）：
  *  整表放大（字号 xs → sm、单元格内边距 py-2.5 → py-4、表头 py-3.5、表格 min-w 900 → 1080）+「当日完成工作 / 明日计划」
  *  两列 whitespace-pre-line 按行换行 + 「现场工作附图」列 PhotoStrip 大图瓦片（size 档位 lg）。 */
-function ReportList({ reports }: { reports: readonly DailyReport[] }) {
+function ReportList({ reports, onPatch }: { reports: readonly DailyReport[]; onPatch: (id: string, patch: ReportPatch) => void }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
@@ -834,9 +909,70 @@ function ReportList({ reports }: { reports: readonly DailyReport[] }) {
                     <span className="truncate text-zinc-700">{report.author}</span>
                   </span>
                 </td>
-                <td className="min-w-[150px] border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">{report.stages.length === 0 ? "—" : report.stages.join("、")}</td>
-                <td className="min-w-[240px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-800">{report.doneWork === "" ? "—" : report.doneWork}</td>
-                <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">{report.plan === "" ? "—" : report.plan}</td>
+                <td className="min-w-[150px] border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
+                  {/* Push 208 追加（业务口径「这个也要可以编辑筛选选择」+ 同日追加「显示也要有颜色」）：关联阶段行内可改 ——
+                      浮层 = 与表单同款九阶段勾选清单；显示态 = StageTags 色签组（逐枚出签、与浮层共用一张色表） */}
+                  <InlineCell
+                    ariaLabel={"修改关联阶段（" + report.date + "）"}
+                    title="点击选择（可多选）"
+                    width={220}
+                    height={REPORT_STAGES.length * 30 + 12}
+                    bare
+                    triggerClassName={CELL_EDIT_TEXT}
+                    display={<StageTags names={report.stages} />}
+                    render={() => (
+                      <MultiOptionList
+                        values={report.stages}
+                        options={REPORT_STAGES}
+                        ariaLabel={"修改关联阶段（" + report.date + "）"}
+                        onChange={(next) => {
+                          onPatch(report.id, { stages: next });
+                        }}
+                        renderLabel={stageChip}
+                      />
+                    )}
+                  />
+                </td>
+                <td className="min-w-[240px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-800">
+                  {/* Push 208「日报记录同理」：当日完成工作行内可改（文字修改需要点击保存 · 时间列不动） */}
+                  <InlineTextCell
+                    bare
+                    value={report.doneWork}
+                    ariaLabel={"修改当日完成工作（" + report.date + "）"}
+                    triggerClassName={CELL_EDIT_TEXT}
+                    placeholder="填写当日完成的工作，点「保存」生效"
+                    display={
+                      report.doneWork === "" ? (
+                        <span className="text-zinc-300">—</span>
+                      ) : (
+                        <span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork}</span>
+                      )
+                    }
+                    onSave={(text) => {
+                      onPatch(report.id, { doneWork: renumberLines(text) });
+                    }}
+                  />
+                </td>
+                <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
+                  {/* Push 208：明日计划行内可改（同款文字编辑：点「保存」才落值） */}
+                  <InlineTextCell
+                    bare
+                    value={report.plan}
+                    ariaLabel={"修改明日计划（" + report.date + "）"}
+                    triggerClassName={CELL_EDIT_TEXT}
+                    placeholder="填写明日计划，点「保存」生效"
+                    display={
+                      report.plan === "" ? (
+                        <span className="text-zinc-300">—</span>
+                      ) : (
+                        <span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan}</span>
+                      )
+                    }
+                    onSave={(text) => {
+                      onPatch(report.id, { plan: renumberLines(text) });
+                    }}
+                  />
+                </td>
                 <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
                   {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} size="lg" />}
                 </td>
@@ -886,7 +1022,7 @@ function IssueCard({ issue }: { issue: Issue }) {
  *  divide-zinc-100 细分割线 / hover:bg-zinc-50/80。
  *  Push 207 同批追加「增加项目总览 同款醒目模式在问题追踪里面」：`focus` = 醒目模式开 —— 整行铺该问题状态的
  *  底色（ISSUE_ROW_CLASS · 6% / 悬停 12%，与项目总览任务表同一套口径），状态列只留深色字；关 = 原样。 */
-function IssueTable({ issues, focus }: { issues: readonly Issue[]; focus: boolean }) {
+function IssueTable({ issues, focus, onPatch }: { issues: readonly Issue[]; focus: boolean; onPatch: (id: string, patch: IssuePatch) => void }) {
   return (
     <div data-issue-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
@@ -904,20 +1040,65 @@ function IssueTable({ issues, focus }: { issues: readonly Issue[]; focus: boolea
             <tr key={issue.id} data-issue-row={issue.id} className={"transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
               <td className="whitespace-nowrap px-5 py-2.5 text-zinc-700">{issue.raisedAt}</td>
               <td className="min-w-[320px] px-5 py-2.5">
-                <p className="whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</p>
+                {/* Push 208：问题描述行内可改 —— 文字修改需要点击保存，日期列（提出日期）不动 */}
+                <InlineTextCell
+                  bare
+                  value={issue.title}
+                  ariaLabel={"修改问题描述（" + issue.raisedAt + "）"}
+                  triggerClassName={CELL_EDIT_TEXT}
+                  placeholder="修改问题描述，点「保存」生效"
+                  display={<span data-issue-title="" className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>}
+                  onSave={(text) => {
+                    onPatch(issue.id, { title: renumberLines(text) });
+                  }}
+                />
                 <p className="mt-1 text-[11px] leading-4 text-zinc-400">提出人：{issue.reporter}</p>
               </td>
               <td className="whitespace-nowrap px-5 py-2.5">
-                <CategoryTags value={issue.category} />
+                {/* Push 208：问题归类行内可改 —— 浮层 = 表单侧同款多选（绿勾 · 点选不收浮层），落值按「、」连接 */}
+                <InlineMultiOptionCell
+                  bare
+                  values={issue.category === "" ? [] : issue.category.split("、").filter((part) => part !== "")}
+                  options={ISSUE_CATEGORIES}
+                  ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
+                  renderLabel={categoryChip}
+                  triggerClassName={CELL_EDIT_CHIP}
+                  display={<CategoryTags value={issue.category} />}
+                  onChange={(values) => {
+                    onPatch(issue.id, { category: values.join("、") });
+                  }}
+                />
               </td>
               <td className="min-w-[280px] px-5 py-2.5">
-                <p className="whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : issue.solution}</p>
+                {/* Push 208：解决方案或建议行内可改（文字列同款：点「保存」才落值） */}
+                <InlineTextCell
+                  bare
+                  value={issue.solution}
+                  ariaLabel={"修改解决方案或建议（" + issue.raisedAt + "）"}
+                  triggerClassName={CELL_EDIT_TEXT}
+                  placeholder="补充解决方案或建议，点「保存」生效"
+                  display={<span data-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : issue.solution}</span>}
+                  onSave={(text) => {
+                    onPatch(issue.id, { solution: renumberLines(text) });
+                  }}
+                />
               </td>
               <td className="min-w-[130px] px-5 py-2.5">
                 {issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="md" />}
               </td>
               <td className="whitespace-nowrap px-5 py-2.5">
-                <IssueStateTag state={issue.state} focus={focus} />
+                {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚），色签壳直接复用 IssueStateTag */}
+                <InlineOptionCell
+                  bare
+                  value={issue.state}
+                  options={ISSUE_STATE_OPTIONS}
+                  ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
+                  triggerClassName={CELL_EDIT_CHIP}
+                  display={<IssueStateTag state={issue.state} focus={focus} />}
+                  onPick={(value) => {
+                    onPatch(issue.id, { state: value as IssueState });
+                  }}
+                />
               </td>
             </tr>
           ))}
@@ -943,6 +1124,39 @@ function GrowingTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} ref={ref} />;
 }
 
+/** 关联阶段勾选清单（Push 198 表单侧口径 · 只服务「日报填写」表单 —— 「日报记录」的行内编辑浮层走
+ *  九阶段复选行 —— 点一行勾 / 取消勾（**点选不收浮层**，可连着勾几个），值 = 勾选顺序的数组。
+ *  dataField = 表单侧的 data-field 钩子（回放探针用）；行内浮层不传（浮层自带 data-inline-popover 钩子）。 */
+function StageChecklist({
+  values,
+  onChange,
+  dataField,
+  boxClass,
+}: {
+  values: readonly string[];
+  onChange: (next: string[]) => void;
+  dataField?: string;
+  boxClass: string;
+}) {
+  return (
+    <div data-field={dataField} className={boxClass}>
+      {REPORT_STAGES.map((stage) => {
+        const checked = values.includes(stage);
+        return (
+          <label key={stage} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={() => onChange(checked ? values.filter((name) => name !== stage) : [...values, stage])}
+              className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
+            />
+            <span className="min-w-0 flex-1 truncate">{stage}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
 /** 「日报填写」表单（字段按 A3-01；校验口径 A3-04 + Push 205：日期 + 当日完成工作 + 明日计划必填；
  *  「现场发现问题」= 前置开关 —— 非空时问题归类必填，且「问题归类 / 当前问题附图 / 解决方案或建议」三项才可填；
  *  Push 206 续：「当日完成工作 / 明日计划」自动序号 —— 聚焦预置 1: 、回车补下一行序号、失焦 / 提交前重排；
@@ -1053,24 +1267,13 @@ function ReportFillForm({
       <div>
         <span className={FORM_LABEL}>关联阶段</span>
         <span className="ml-2 text-[11px] text-zinc-400">可多选；标记「当日完成工作」对应的项目阶段</span>
-        <div data-field="stages" className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5">
-          {REPORT_STAGES.map((stage) => {
-            const checked = draft.stages.includes(stage);
-            return (
-              <label key={stage} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() =>
-                    onChange({ stages: checked ? draft.stages.filter((name) => name !== stage) : [...draft.stages, stage] })
-                  }
-                  className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
-                />
-                <span className="min-w-0 flex-1 truncate">{stage}</span>
-              </label>
-            );
-          })}
-        </div>
+        {/* Push 208：清单本体抽成 StageChecklist —— 「日报记录」的行内编辑浮层复用同一份（两处口径永远一致） */}
+        <StageChecklist
+          values={draft.stages}
+          onChange={(next) => onChange({ stages: next })}
+          dataField="stages"
+          boxClass="mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5"
+        />
       </div>
 
       <label className="block">
@@ -1263,6 +1466,17 @@ export function ReportIssuePanel({ project, me, focusMode }: {
   /** 提交后的提示（切子视图即清掉）。 */
   const [notice, setNotice] = useState<string>("");
 
+  /** 行内编辑落值（Push 208 · 业务口径「问题追溯里面也要可以这样编辑 … 日报记录同理」）：只改被编辑的那个字段 ——
+   *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）。 */
+  const patchReport = (id: string, patch: ReportPatch) => {
+    setReports((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  /** 问题行内编辑落值（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 提出日期不动。 */
+  const patchIssue = (id: string, patch: IssuePatch) => {
+    setIssues((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
   const author = me.user.displayName ?? me.user.name ?? "未署名用户";
 
   /** 提交（已提交）：写进「日报记录」；含「现场发现问题」时按 A3-09 自动生成一条问题；表单复位并切到「日报记录」。 */
@@ -1392,7 +1606,7 @@ export function ReportIssuePanel({ project, me, focusMode }: {
           {reports.length === 0 ? (
             <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
           ) : (
-            <ReportList reports={reports} />
+            <ReportList reports={reports} onPatch={patchReport} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
@@ -1402,7 +1616,7 @@ export function ReportIssuePanel({ project, me, focusMode }: {
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <IssueTable issues={issues} focus={focus} />
+            <IssueTable issues={issues} focus={focus} onPatch={patchIssue} />
           )}
         </section>
       ) : (
