@@ -9,7 +9,7 @@
  *
  * 用法：node scripts/m3-05-task-templates-e2e.mjs
  *
- * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时节点**（跑完删）+ 一份**临时模板**（跑完软删）+ 一个**临时项目**（跑完软删）在真机浏览器里跑一遍：
+ * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时节点**（跑完删）+ 一份**临时模板**（跑完软删）+ 一个**临时项目**（跑完硬删）在真机浏览器里跑一遍：
  *   ① 模板页右侧面板 = 模板接口（面板数 / 名称 / 节点顺序与 GET /api/v1/task-templates?stage= 一致）；
  *   ② 「＋ 新建模板」→ POST 落库（默认名「未命名模板」、插到最前、焦点在名字上）；
  *   ③ 左列拖一个节点进新面板 → 面板内出现（本地草稿）；「保存」→ PATCH（nodeIds 全量替换 + version 0 → 1）；
@@ -17,7 +17,7 @@
  *   ⑤ 面板红胶囊删除 → 底部确认条 → DELETE 软删（deleted_at 置位、读面 404、审计 action=delete）；
  *   ⑥ 乐观锁：拿旧 version 再 PATCH → 409 VERSION_CONFLICT；
  *   ⑦ 「项目总览 → 添加任务」卡片的「模板」标签 = 同一份模板接口（名称 / 节点数与接口一致）→ 点一条 → 任务落库；
- *   ⑧ 清理：临时节点删掉、临时任务与项目软删、临时模板读面零残留。
+ *   ⑧ 清理：临时节点删掉、临时任务软删、临时项目硬删、临时模板读面零残留。
  * 说明：写权限（blueprint.manage）的 403 由服务端单测 + 权限矩阵种子覆盖 —— 本机 api 以一期口径启动
  *   （PERMISSION_ENFORCED=false ⇒ 画像等效管理员），真机上跑不出 403 分支。
  * 证据：docs/m3-05-回放证据(模板落库·前端).md
@@ -383,17 +383,21 @@ try {
         const res = await api("/api/v1/projects/" + projectId + "/tasks/" + item.id, "DELETE", undefined, { "If-Match": String(item.version) });
         if (res.status === 200 || res.status === 204) deletedTasks += 1;
       }
+      if (createdTaskId !== "") {
+        const taskSoftRow = await db.query("select deleted_at is not null as soft from tasks where id = $1", [createdTaskId]);
+        check("清理：临时任务软删（tasks.deleted_at 置位；项目硬删前先验）", taskSoftRow.rows.length === 1 && taskSoftRow.rows[0].soft === true, JSON.stringify(taskSoftRow.rows[0]));
+      }
       const projectRow = await api("/api/v1/projects/" + projectId);
       const delProject = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projectRow.json === null ? 0 : projectRow.json.version) });
-      check("清理：临时任务逐条软删 + 临时项目软删", (delProject.status === 200 || delProject.status === 204) && deletedTasks >= 1, String(deletedTasks) + " 条任务 / 项目 " + String(delProject.status));
+      check("清理：临时任务逐条软删 + 临时项目硬删", (delProject.status === 200 || delProject.status === 204) && deletedTasks >= 1, String(deletedTasks) + " 条任务 / 项目 " + String(delProject.status));
     }
     if (createdTaskId !== "") {
-      const taskSoftRow = await db.query("select deleted_at is not null as soft from tasks where id = $1", [createdTaskId]);
-      check("清理：临时任务软删（tasks.deleted_at 置位）", taskSoftRow.rows.length === 1 && taskSoftRow.rows[0].soft === true, JSON.stringify(taskSoftRow.rows[0]));
+      const taskGoneRow = await db.query("select count(*)::int as n from tasks where id = $1", [createdTaskId]);
+      check("清理：任务随项目硬删一并物理删（行不存在）", Number(taskGoneRow.rows[0].n) === 0, JSON.stringify(taskGoneRow.rows[0]));
     }
     if (projectId !== "") {
-      const projectSoftRow = await db.query("select deleted_at is not null as soft from projects where id = $1", [projectId]);
-      check("清理：临时项目软删（projects.deleted_at 置位）", projectSoftRow.rows.length === 1 && projectSoftRow.rows[0].soft === true, JSON.stringify(projectSoftRow.rows[0]));
+      const projectGoneRow = await db.query("select count(*)::int as n from projects where id = $1", [projectId]);
+      check("清理：临时项目硬删（projects 行不存在）", Number(projectGoneRow.rows[0].n) === 0, JSON.stringify(projectGoneRow.rows[0]));
     }
   } catch (error) {
     console.log("清理异常：" + String(error && error.message ? error.message : error));

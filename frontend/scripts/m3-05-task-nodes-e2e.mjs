@@ -9,7 +9,7 @@
  *
  * 用法：node scripts/m3-05-task-nodes-e2e.mjs
  *
- * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时节点**（跑完删掉）+ 一个**临时项目**（跑完软删）在真机浏览器里跑一遍：
+ * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时节点**（跑完删掉）+ 一个**临时项目**（跑完硬删）在真机浏览器里跑一遍：
  *   ① 任务模板页左列 = 节点库接口（计数 / 卡片与 GET /api/v1/task-nodes 一致）；
  *   ② 列头「＋ 添加节点」→ 落库（DB 有行、seq = 该阶段末位 + 10）；
  *   ③ 同阶段同名 → 就地提示（409 NODE_ALREADY_EXISTS，不重复落库）；
@@ -313,7 +313,9 @@ try {
       }
       const projectRow = await api("/api/v1/projects/" + projectId);
       const delProject = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projectRow.json === null ? 0 : projectRow.json.version) });
-      check("清理：临时任务逐条软删 + 临时项目软删", (delProject.status === 200 || delProject.status === 204) && deletedTasks >= 1, String(deletedTasks) + " 条任务 / 项目 " + String(delProject.status));
+      check("清理：临时任务逐条软删 + 临时项目硬删", (delProject.status === 200 || delProject.status === 204) && deletedTasks >= 1, String(deletedTasks) + " 条任务 / 项目 " + String(delProject.status));
+      const projectGoneRow = await db.query("select count(*)::int as n from projects where id = $1", [projectId]);
+      check("清理：临时项目物理删（projects 行不存在）", Number(projectGoneRow.rows[0].n) === 0, JSON.stringify(projectGoneRow.rows[0]));
     }
   } catch (error) {
     console.log("清理异常：" + String(error && error.message ? error.message : error));

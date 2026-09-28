@@ -3,8 +3,14 @@ import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, or, sql, ty
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
+import { changeRequests } from "../../db/schema/change.js";
+import { files, fileVersions } from "../../db/schema/files.js";
+import { nodeRequirements, projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
-import { projects } from "../../db/schema/projects.js";
+import { projectMembers, projects, projectStages } from "../../db/schema/projects.js";
+import { dailyReports, issueEvents, issues } from "../../db/schema/reports.js";
+import { projectStakeholders } from "../../db/schema/stakeholders.js";
+import { taskEvents, tasks } from "../../db/schema/tasks.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
 import type { ProjectFilter, ProjectSort } from "./project.query.js";
 
@@ -48,6 +54,25 @@ export interface ProjectFacetsResult {
   status: Record<string, number>;
 }
 
+/** 项目硬删结果：删除前快照（行）+ 连带清掉的子表行数（审计 metadata 留痕，A5 / C7-02）。 */
+export interface ProjectHardDeleteResult {
+  project: ProjectRow;
+  children: ProjectChildrenCounts;
+}
+
+/** 项目聚合子表行数（项目硬删时连同清掉；键名 = 子表语义名，进审计 metadata）。 */
+export interface ProjectChildrenCounts {
+  tasks: number;
+  nodes: number;
+  stages: number;
+  members: number;
+  stakeholders: number;
+  reports: number;
+  issues: number;
+  changeRequests: number;
+  files: number;
+}
+
 /**
  * 项目经理姓名数组（A2 / A22 · Push 136）：与 manager_ids 同下标一一对应；
  * 展开数组按 ordinality left join users（缺失 / 停用用户该位为 null），顺序 = manager_ids 顺序。
@@ -64,7 +89,7 @@ const SORT_COLUMNS = {
   seqNo: projects.seqNo,
 } as const;
 
-/** project 数据访问（M2-01 / M2-04）：软删过滤（A5）与 updated_at 触点（ADR-022）都收敛在本层。 */
+/** project 数据访问（M2-01 / M2-04）：删除（Push 190 起 = 物理删聚合）、历史软删行过滤（deleted_at 兼容列）与 updated_at 触点（ADR-022）都收敛在本层。 */
 @Injectable()
 export class ProjectRepository {
   constructor(private readonly database: DatabaseService) {}
@@ -207,19 +232,67 @@ export class ProjectRepository {
       .where(and(eq(projects.id, id), isNull(projects.deletedAt)));
   }
 
-  async softDeleteWithVersion(
+  /**
+   * 硬删（Push 190 · 业务口径「删除要硬删不要软删，同一编号删了要能再建」）：
+   * 同事务按外键依赖序清空项目聚合子表 → 删 projects 行；编号随行一起释放。
+   * 子表顺序（全部 NO ACTION 外键，顺序错会撞 FK）：
+   *   issue_events → task_events → file_versions → files → change_requests → issues → daily_reports
+   *   → tasks → node_requirements → project_nodes → project_stages → project_members → project_stakeholders。
+   * version 守卫落在最后一行 delete：不匹配返回 null（调用方抛 409，整事务回滚，子表一行不动）。
+   */
+  async hardDeleteWithVersion(
     id: string,
     expectedVersion: number,
-    deletedBy: string,
-    at: Date,
     client: DbClient = this.database.db,
-  ): Promise<ProjectRow | null> {
+  ): Promise<ProjectHardDeleteResult | null> {
+    const children = await this.countChildren(id, client);
+    const issueIds = client.select({ id: issues.id }).from(issues).where(eq(issues.projectId, id));
+    const taskIds = client.select({ id: tasks.id }).from(tasks).where(eq(tasks.projectId, id));
+    const fileIds = client.select({ id: files.id }).from(files).where(eq(files.projectId, id));
+    const nodeIds = client.select({ id: projectNodes.id }).from(projectNodes).where(eq(projectNodes.projectId, id));
+    await client.delete(issueEvents).where(inArray(issueEvents.issueId, issueIds));
+    await client.delete(taskEvents).where(inArray(taskEvents.taskId, taskIds));
+    await client.delete(fileVersions).where(inArray(fileVersions.fileId, fileIds));
+    await client.delete(files).where(eq(files.projectId, id));
+    await client.delete(changeRequests).where(eq(changeRequests.projectId, id));
+    await client.delete(issues).where(eq(issues.projectId, id));
+    await client.delete(dailyReports).where(eq(dailyReports.projectId, id));
+    await client.delete(tasks).where(eq(tasks.projectId, id));
+    await client.delete(nodeRequirements).where(inArray(nodeRequirements.nodeId, nodeIds));
+    await client.delete(projectNodes).where(eq(projectNodes.projectId, id));
+    await client.delete(projectStages).where(eq(projectStages.projectId, id));
+    await client.delete(projectMembers).where(eq(projectMembers.projectId, id));
+    await client.delete(projectStakeholders).where(eq(projectStakeholders.projectId, id));
     const rows = await client
-      .update(projects)
-      .set({ deletedAt: at, deletedBy, version: sql`${projects.version} + 1` })
+      .delete(projects)
       .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNull(projects.deletedAt)))
       .returning();
-    return rows[0] ?? null;
+    const project = rows[0];
+    if (project === undefined) {
+      return null;
+    }
+    return { project, children };
+  }
+
+  /** 聚合子表行数（一次查询出 9 个计数；项目行不存在时全 0）。 */
+  private async countChildren(id: string, client: DbClient): Promise<ProjectChildrenCounts> {
+    const empty: ProjectChildrenCounts = { tasks: 0, nodes: 0, stages: 0, members: 0, stakeholders: 0, reports: 0, issues: 0, changeRequests: 0, files: 0 };
+    const rows = await client
+      .select({
+        tasks: sql<number>`(select count(*)::int from ${tasks} where ${tasks.projectId} = ${id})`,
+        nodes: sql<number>`(select count(*)::int from ${projectNodes} where ${projectNodes.projectId} = ${id})`,
+        stages: sql<number>`(select count(*)::int from ${projectStages} where ${projectStages.projectId} = ${id})`,
+        members: sql<number>`(select count(*)::int from ${projectMembers} where ${projectMembers.projectId} = ${id})`,
+        stakeholders: sql<number>`(select count(*)::int from ${projectStakeholders} where ${projectStakeholders.projectId} = ${id})`,
+        reports: sql<number>`(select count(*)::int from ${dailyReports} where ${dailyReports.projectId} = ${id})`,
+        issues: sql<number>`(select count(*)::int from ${issues} where ${issues.projectId} = ${id})`,
+        changeRequests: sql<number>`(select count(*)::int from ${changeRequests} where ${changeRequests.projectId} = ${id})`,
+        files: sql<number>`(select count(*)::int from ${files} where ${files.projectId} = ${id})`,
+      })
+      .from(projects)
+      .where(eq(projects.id, id))
+      .limit(1);
+    return rows[0] ?? empty;
   }
 
   /**

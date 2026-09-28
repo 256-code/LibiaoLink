@@ -18,7 +18,7 @@
  * 用法：node scripts/ui-stage-header-e2e.mjs
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
  *
- * 夹具：一条**临时会话**（跑完撤销）+ 一条**临时节点**（跑完物理删）+ 一个**临时项目**（跑完软删）+ 一条**临时任务**
+ * 夹具：一条**临时会话**（跑完撤销）+ 一条**临时节点**（跑完物理删）+ 一个**临时项目**（跑完硬删）+ 一条**临时任务**
  *      （挂在该节点上，落在「设计开发」阶段分组里），跑完零残留。
  */
 
@@ -239,11 +239,11 @@ for (const item of leftovers) {
 check("清理：软删临时任务", deleted === leftovers.length && leftovers.length === 1, String(deleted) + "/" + String(leftovers.length));
 const projNow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projNow.json.version) });
-check("清理：软删临时项目", delProj.status === 200 || delProj.status === 204, String(delProj.status));
+check("清理：硬删临时项目（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status));
 const delNode = await api("/api/v1/task-nodes/" + nodeId, "DELETE");
 check("清理：临时节点物理删", delNode.status === 200 || delNode.status === 204, String(delNode.status));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
-const residue = (await db.query("select (select count(*)::int from tasks where project_id = $1 and deleted_at is null) as tasks, (select count(*)::int from projects where id = $1 and deleted_at is null) as projects, (select count(*)::int from task_nodes where id = $2) as nodes, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions", [projectId, nodeId, sha256(token)])).rows[0];
+const residue = (await db.query("select (select count(*)::int from tasks where project_id = $1 and deleted_at is null) as tasks, (select count(*)::int from projects where id = $1) as projects, (select count(*)::int from task_nodes where id = $2) as nodes, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions", [projectId, nodeId, sha256(token)])).rows[0];
 check("清理：任务 / 项目 / 节点 / 会话零残留", Number(residue.tasks) === 0 && Number(residue.projects) === 0 && Number(residue.nodes) === 0 && Number(residue.sessions) === 0, JSON.stringify(residue));
 
 // ---------- 收尾 ----------

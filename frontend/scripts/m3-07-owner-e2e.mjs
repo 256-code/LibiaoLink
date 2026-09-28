@@ -11,7 +11,7 @@
  * 用法：node scripts/m3-07-owner-e2e.mjs
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
  *
- * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完软删）+ 一条**临时节点**（跑完物理删）在真机浏览器里跑：
+ * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完硬删）+ 一条**临时节点**（跑完物理删）在真机浏览器里跑：
  *   ① 缺省口径（2026-09-24 修订，回到 ADR-021）：添加任务的请求不带 ownerIds —— 服务端落库 ownerIds=[]（「待分配」），
  *      不再兜底项目经理。夹具特意把项目经理设成回放用户本人：兜底若还在，这条任务的负责人就会变成他；
  *   ② 即时可见（Push 184 修的 bug）：行内「修改任务负责人」勾一位 / 再勾一位 / 取消一位 —— **不刷新页面**，
@@ -271,11 +271,11 @@ for (const item of leftovers) {
 check("清理：软删临时任务", deleted === leftovers.length && leftovers.length === 1, String(deleted) + "/" + String(leftovers.length));
 const projNow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projNow.json.version) });
-check("清理：软删临时项目", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
+check("清理：硬删临时项目（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
 const delNode = await api("/api/v1/task-nodes/" + nodeId, "DELETE");
 check("清理：临时节点物理删", delNode.status === 200 || delNode.status === 204, String(delNode.status));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
-const residue = (await db.query("select (select count(*)::int from tasks where project_id = $1 and deleted_at is null) as tasks, (select count(*)::int from projects where id = $1 and deleted_at is null) as projects, (select count(*)::int from task_nodes where id = $2) as nodes, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions", [projectId, nodeId, sha256(token)])).rows[0];
+const residue = (await db.query("select (select count(*)::int from tasks where project_id = $1 and deleted_at is null) as tasks, (select count(*)::int from projects where id = $1) as projects, (select count(*)::int from task_nodes where id = $2) as nodes, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions", [projectId, nodeId, sha256(token)])).rows[0];
 check("清理：任务 / 项目 / 节点 / 会话零残留", Number(residue.tasks) === 0 && Number(residue.projects) === 0 && Number(residue.nodes) === 0 && Number(residue.sessions) === 0, JSON.stringify(residue));
 
 // ---------- 收尾 ----------

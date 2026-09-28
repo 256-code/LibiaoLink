@@ -243,10 +243,10 @@ export function buildOpenApiDocument() {
     method: "delete",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
-    summary: "删除项目（软删；If-Match 回传当前 version 防误删）",
+    summary: "删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删）",
     request: { params: idParams, headers: ProjectDeleteHeadersSchema },
     responses: {
-      200: { description: "已软删项目（列表 / 详情 / facets / 搜索不再返回）", ...json(ProjectSchema) },
+      200: { description: "已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建）", ...json(ProjectSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
