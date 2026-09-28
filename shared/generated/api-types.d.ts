@@ -5693,6 +5693,51 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 工作台聚合（按会话用户；记录级可见性过滤后） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7384,6 +7429,69 @@ export interface components {
         Uuid: string;
         /** @description 乐观锁版本：读取时返回，更新时必须原样回传，冲突返回 409 */
         Version: number;
+        /** @description 工作台问题项（跨项目） */
+        WorkspaceIssueItem: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            projectCode: string;
+            projectName: string;
+            taskId: components["schemas"]["Uuid"] & (string | null);
+            title: string;
+            category: components["schemas"]["IssueCategory"] & unknown;
+            state: components["schemas"]["IssueState"];
+            reporterId: components["schemas"]["Uuid"];
+            reporterName: string | null;
+            ownerDepartment: string | null;
+            ownerId: components["schemas"]["Uuid"] & (string | null);
+            ownerName: string | null;
+            dueAt: components["schemas"]["DateTime"] & (string | null);
+            raisedAt: components["schemas"]["DateOnly"] & unknown;
+            updatedAt: components["schemas"]["DateTime"];
+            version: components["schemas"]["Version"];
+        };
+        /** @description 我的问题两栏（A6-03）；同一问题两边都命中时两个清单都出现；未关闭在前、已完成后置 */
+        WorkspaceIssues: {
+            /** @description 我处理的（ownerId = 会话用户） */
+            handling: components["schemas"]["WorkspaceIssueItem"][];
+            /** @description 我提出的（reporterId = 会话用户） */
+            raised: components["schemas"]["WorkspaceIssueItem"][];
+        };
+        /** @description 工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏 */
+        WorkspaceResponse: {
+            today: components["schemas"]["DateOnly"] & unknown;
+            myTasks: components["schemas"]["WorkspaceTasks"];
+            myIssues: components["schemas"]["WorkspaceIssues"];
+        };
+        /** @description 工作台任务项（跨项目；按预计完成日期落入三组之一） */
+        WorkspaceTaskItem: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            /** @description 项目编号（跨项目列表直接展示） */
+            projectCode: string;
+            projectName: string;
+            stageKey: components["schemas"]["StageKey"] & (string | null);
+            title: string;
+            titleEn: string | null;
+            displayStatus: components["schemas"]["TaskDisplayStatus"] & unknown;
+            progress: components["schemas"]["TaskProgress"];
+            plannedStart: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
+            actualEnd: components["schemas"]["DateOnly"] & (string | null);
+            /** @description 任务负责人（多值；本组内必含会话用户） */
+            ownerIds: components["schemas"]["Uuid"][];
+            /** @description 负责人姓名（与 ownerIds 同下标；缺失为 null） */
+            ownerNames: (string | null)[];
+            priority: components["schemas"]["Priority"];
+        };
+        /** @description 我的任务三组（A6-01；组内按 plannedEnd 升序、id 升序） */
+        WorkspaceTasks: {
+            /** @description 今日待办：plannedEnd = 今天且未完成 */
+            today: components["schemas"]["WorkspaceTaskItem"][];
+            /** @description 即将到期：今天 < plannedEnd ≤ 今天 + 7 天且未完成 */
+            upcoming: components["schemas"]["WorkspaceTaskItem"][];
+            /** @description 已逾期：plannedEnd < 今天且未完成 */
+            overdue: components["schemas"]["WorkspaceTaskItem"][];
+        };
     };
     responses: never;
     parameters: never;

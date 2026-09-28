@@ -27,6 +27,7 @@ server/
     modules/stakeholder/  # 干系人台账（S8·stakeholder · j6）：台账 CRUD + 项目关联与反查 + 字段级脱敏（导入随 M8-01、导出随 M7-03；见 src/modules/stakeholder/README.md）
     modules/automation/   # 自动化规则引擎（S6·automation · M5-01）：规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器（见 src/modules/automation/README.md）
     modules/template/   # 任务节点库 + 任务模板（A1-16 / A1-17 · M3-05 余第一段 / 第二段 · Push 181 / 182）：节点列表 / 新增 / 编辑 / 删除 + 模板列表 / 详情 / 新建 / 编辑 / 软删 + blueprint.manage 写门禁 + 审计留痕（见 src/modules/template/README.md）
+    modules/workspace/    # 工作台聚合读面（S6·workspace · M6-05 第一刀 · Push 166）：我的任务三组（A6-01）+ 我的问题两栏（A6-03）—— 跨项目个人读面、只读（无新表 / 无迁移）（见 src/modules/workspace/README.md）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
@@ -39,7 +40,7 @@ server/
   scripts/m4-05-stress.mjs       # M4-05g 压测真机回放（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存；真 PG + 真对象存储 + 真 api + 真 worker ×N + 真转换沙箱；断言全过退出码 0）
   scripts/m3-06-stress.mjs    # M3-06 压测真机回放（1 万行任务数据集 + 索引调优评估；真 PG + 真 api；断言全过退出码 0）
   scripts/m3-07-replay.mjs    # M3-07 刀 1 真机回放（五态可写 + 汇总卡「最慢 / 最新阶段」+ 紧急重要度三档；真 PG + 真 api；断言全过退出码 0）
-  scripts/m6-replay.mjs         # M6 日报 / 问题真机回放（A3-01 ~ A3-13 + A2-01 引用守卫；同上口径）
+  scripts/m6-replay.mjs         # M6 日报 / 问题 + M6-01 收口 + M6-05 工作台真机回放（A3-01 ~ A3-13 + A2-01 引用守卫 + A7-01 / A7-05 + A6-01 / A6-03；同上口径）
   test/                          # vitest（health / auth 端到端 + 校验管道单测；auth 用进程内桩 IdP，不依赖 PG 与 Casdoor）
 ```
 
@@ -307,6 +308,13 @@ server/
 - 差异登记：① 归类十项为**契约固定枚举**（C9 字典可维护随后）；② `due_at` 一期仅落库（T+1 提醒 / T+3 升级随规则引擎 M5）；③ 一期不做日报版本历史（「补填保留原始提交记录」以状态 + 提交时间表达）；④ A3-12 自动分派一期只覆盖「部门名」归类（原因类 → 归「未分组」兜底；「提示项目部」随 M5 通知）。
 - **引用守卫补齐（A2-01 · 同一 PR）**：任务删除的引用判定在 `change_refs` 之外新增日报（`daily_reports.task_ids`，GIN）与问题（`issues.task_id`）两类 —— `details[].code = report_ref` / `issue_ref`（带条数），任一非空即 409 `TASK_HAS_REFERENCES`，且**不软删 / 不压缩位次 / 不写留痕**。
 
+## 工作台接口（S6·workspace · M6-05 第一刀 · Push 166：我的任务三组 / 我的问题两栏）
+
+- 契约 `shared/src/modules/workspace.ts`（OpenAPI tags = workspace；`GET /api/v1/workspace` —— **无项目路径参数的个人读面**：仅 `SessionGuard`，不做功能权限位，数据按记录级可见性过滤（`PermissionService.projectScope`，ADR-011））；实现 `src/modules/workspace/`（controller / service / repository / rules + `index.ts` 出口 + README）—— **只读、无新表、无迁移**。
+- 我的任务（A6-01 第一刀）：负责人含我（A23 多值任一位命中）+ 未完成（`status != done`，软删不计）；基准日 = Asia/Shanghai 今天（ADR-028）—— 已逾期（< 今天）/ 今日待办（= 今天）/ 即将到期（今天 + 7 天内，建议值）；未排期与 7 天外不进；**归档（ADR-027 冻结）与软删项目一律不进**；组内按 `plannedEnd` → id 升序。
+- 我的问题（A6-03 第一刀）：我处理（`ownerId`）∪ 我提出的（`reporterId`）两栏，同一问题双命中两栏都出现；未关闭在前（处理时限升序 → raisedAt → id，已完成后置）；问题项带 `version`（工作台内快速流转 / 关闭确认的乐观锁）。
+- 差异登记：①「我参与的任务」口径未定（本刀只做我负责）；② 7 天窗口为建议值（随前端联调复评）；③ A6-04 最新提醒 / A6-07 稍后提醒随消息中心（M5-07 · lan）、A6-02 待我审批一期不启用（C8）、A6-06 快捷入口为前端入口位。详见 `src/modules/workspace/README.md`。
+
 ## 规则引擎（S6·automation · M5-01 内核 + M5-05 余项 · A 系列：规则模型 + 条件求值 + 回放器）
 
 - 契约 `shared/src/modules/automation.ts`（规则模型与枚举；规则管理端点随 M5-06 入 `openapi.ts`，故 paths / schemas 计数不变）与实现 `src/modules/automation/`（`automation.rules.ts` / `builtin-rules.ts` / `automation.replay.ts` + `index.ts` 出口 + README）；**纯函数：不连库、不取系统时间**（业务日由调用方注入；调度接线随 M5-02 · lan）。
@@ -533,11 +541,12 @@ server/
 - 断言（24 项）：① 基础态联动与汇总卡（完成 / 进行中 → `slowestStage=design` / `latestStage=acceptance` / `done=1` / `total=4`，未分组任务不参与阶段判定）；② 五态覆盖（`overdue` 保持格数与完成日期只落覆盖、`early_done` 四格全亮 + 当天完成日期、写进度 / 写基础三态清覆盖；`filter[status]=overdue` / `early_done` 命中覆盖来源、`pending` 不再重复命中）；③ 优先级三档（`高` 200 / `重要且紧急` 400 `VALIDATION_FAILED`）；④ 留痕（只改覆盖也写 `status_change`，事件负载含 `statusOverride`）；⑤ 批量五态（`changes.status = overdue`）；⑥ 汇总卡两个 null 边界（全部完成 → `slowestStage=null`；尚无动工 → `latestStage=null`）；⑦ 临时数据 / 会话零残留。
 - 复跑：`cd server && node scripts/m3-07-replay.mjs --out ../docs/m3-07-回放证据(五态与汇总卡).md [--base-url http://127.0.0.1:3001] [--json <证据.json>] [--keep]`；退出码 0 = 断言全过（可当门禁）。前置：api 跑新构建（`npm run build` 后 `PORT=3001 node --env-file-if-exists=.env dist/entry/api.js`）、迁移 `0031` 已执行（`cd database && DATABASE_URL=postgres://libiaolink_migrator@127.0.0.1:5433/libiaolink npm run migrate`）。
 - 证据：`docs/m3-07-回放证据(五态与汇总卡).md`（+ 同名 `.json`）。落点说明：`docs/` 属 px 线；本卡脚本与证据由 px 随本卡代记，请 wmj 复核。
-## M6 回放（S6·report-issue：日报 / 问题）
+## M6 回放（S6·report-issue 日报 / 问题 + M6-01 收口 + M6-05 工作台）
 
-- 脚本：`scripts/m6-replay.mjs`（真 PG + 真 api；铸管理员会话 / 跑完撤销、空库自动补合成管理员，建 `M6RPL-` 回放项目与 2 个任务 / 跑完硬删日报 / 问题 / 事件 / 任务 / 审计 / outbox / 项目 / 合成账号）。
+- 脚本：`scripts/m6-replay.mjs`（真 PG + 真 api；铸管理员会话 / 跑完撤销、空库自动补合成管理员，建 `M6RPL-` 回放项目与 3 个任务（含工作台靶子）/ 跑完硬删日报 / 问题 / 事件 / 任务 / 审计 / outbox / 项目 / 合成账号）。
 - 断言（M6-01 收口 · Push 162 追加 S0 ~ S6）：先落 1 名项目成员（M2-05 幂等 upsert），再验 A7-01 当日汇总（entryCount / headcountTotal / issueCount / entries 作者与关联任务标题 + 缺省日期 = 今天 + 未来日期 400）与 A7-05 应填未填（已提交不进名单；**近 16 天内挑一个工作日（日历接口自证）→ 名册全员进漏填名单且逐行 state / reportId / submittedAt 为空；近 21 天内挑一个非工作日 → missingCount = 0 且 missingUserIds = []**）。**执行结果（本片 · CI run `35946672352` · job `107466046295`）：S0 ~ S6 全 PASS** —— 当日汇总 `entryCount=1 / headcountTotal=12 / issueCount=1`；工作日 `2026-09-21` 全员进名单、非工作日 `2026-09-20`（`weekend`）整列为空。
 - 断言：A3-01 ~ A3-04（新报 / 重复 409 REPORT_ALREADY_EXISTS / 未来日期 400 / 补填 supplement / 草稿 + 提交）、A3-08 / A3-09（回写 `tasks.note` 标记 `【日报 <日期>】` + `task_events(note_change)`；问题 `source_report_id` 唯一兜底 —— 重编辑已提交日报触发重放验证幂等）、A3-12（部门名归类落 `owner_department`）、A3-10 / A3-13（四态 + 回退 + 关闭对清空 + 每次实际变化一条 `issue_events` + 空更新 400 + 乐观锁 409）、A2-01（被日报 / 问题引用的任务 409 `TASK_HAS_REFERENCES`，`details[].code = report_ref` / `issue_ref`）、归档写保护 409。
+- 断言（M6-05 第一刀 · Push 166 追加 W0 ~ W7）：工作台靶子任务贯穿三组 —— 负责人含我 + 未完成 + plannedEnd 在「今天起 7 天」窗口（昨天 → overdue / 今天 → today / 明天 → upcoming，displayStatus 读时派生）；显式 `ownerIds=[]`（待分配）三组均不进；我的问题两栏（handling / raised）双命中两边都出现；归档后整项目剔除（任务 / 问题零残留）。**执行结果以本卡 CI `database` job 日志为准**（本机无 PG，不伪造）。
 - 复跑：`cd server && M6_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m6-replay.mjs [--out <报告.md>] [--json <证据.json>]`；退出码 0 = 断言全过（可当门禁），`--actor <userId>` 指定管理员、`--keep` 保留回放数据。
 - 落点说明：`docs/` 属 px 线；证据文件由 wmj 随本卡代记（回放脚本与断言同 PR），请 px 复核。
 ## CI 接线（g5 · px｜已落地）
@@ -590,7 +599,7 @@ server/
 - h7：字典 C9 与审计留痕 C7（`dict_types` / `dict_items` / `audit_logs` + 字典读写出口 + 审计写入 / 越权留痕 / 检索 + 种子 #5 + 真机回放）—— 已落地（Push 97）；剩余：前端改读字典（u12 · px 线）、审计页面与导出（u12）、告警推送（M5 通知）、蓝图字段级留痕（随蓝图维护卡片）、按月清理（运维）。
 - h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
 - j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、「干系人角色」列（口径未定）、前端台账页与项目「干系人」面板（u 系列 · px 线）。
-- S6·report-issue：**M6-01 日报填报 / 提交 / 补填（A3-01 ~ A3-04）、M6-02 回写任务进展 + 问题自动生成（A3-08 / A3-09 幂等）、M6-03 问题闭环与留痕（A3-10 ~ A3-13）—— 已落地（Push 155 · 迁移 0023 + 契约 reports / issues；同批补齐 A2-01 删除引用守卫）**；**M6-01 收口（A7-01 当日汇总 + A7-05 应填未填两条读接口）—— 已落地（Push 162）**；剩余：M6-04 干系人导入 / 导出（A5-05 随 M8-01、A5-09 随 M7-03）、M6-05 工作台与待办（C2-06）、问题统计与导出（A3-17 · M7）、`dueAt` 提醒 / 超期升级（A3-14 · M5 规则引擎）、C9 归类字典可维护（二期）、前端日报 / 看板接线（u 系列 · px 线）。
+- S6·report-issue：**M6-01 日报填报 / 提交 / 补填（A3-01 ~ A3-04）、M6-02 回写任务进展 + 问题自动生成（A3-08 / A3-09 幂等）、M6-03 问题闭环与留痕（A3-10 ~ A3-13）—— 已落地（Push 155 · 迁移 0023 + 契约 reports / issues；同批补齐 A2-01 删除引用守卫）**；**M6-01 收口（A7-01 当日汇总 + A7-05 应填未填两条读接口）—— 已落地（Push 162）**；**M6-05 工作台第一刀（我的任务三组 A6-01 + 我负责的问题 A6-03 · `GET /api/v1/workspace`）—— 已落地（Push 166）**；剩余：M6-04 干系人导入 / 导出（A5-05 随 M8-01、A5-09 随 M7-03）、C2-06 自定义待办 /「我参与的任务」口径（A6-01 余项，随前端联调复评）/ A6-04 与 A6-07（随 M5-07 · lan）、问题统计与导出（A3-17 · M7）、`dueAt` 提醒 / 超期升级（A3-14 · M5 规则引擎）、C9 归类字典可维护（二期）、前端日报 / 看板接线（u 系列 · px 线）。
 - S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-05c 预览转换队列（outbox `preview.job` 领取器 + 转换沙箱客户端 + 三元组幂等 + 失败降级 + 定档预生成 + 真机回放 · 迁移 `0028`）—— 已落地（PR-10）**；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0020）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；**M4-05 预览编排 —— 进行中：数据层已落地（迁移 `0027` · `preview_artifacts` + `ck_audit_logs_action` 一次扩 `preview` / `download` 至十值），转换器 / 队列与读 API 随后续切片**；**M4-05c 预览转换队列 —— 已落地（PR-10 · 迁移 `0028`：outbox 领取器 + 转换沙箱客户端 + 失败降级）；**M4-05d 读 API（`GET /files/{id}/preview`：三态 + 短时签名（`PREVIEW_URL_TTL_SECONDS`）+ 仅 ready 写审计 + 版本 404 + 读取侧幂等补投 + 真机回放）—— 已落地（PR-11）**；**M4-05e 产物清理 —— 已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行；真机回放 16/16）**；**M4-05f 下载切片（`GET /files/{id}/versions/{versionId}/download-url`：attachment 签名（`S3_DOWNLOAD_URL_TTL_SECONDS`）+ `file.download` + download 审计 + 真机两态回放 14/14）—— 已落地（PR-13）**，M4-05 剩余 = 无（**M4-05g 压测已随 PR-14 落地**：两档实跑 —— 成功率 / 200MB 续传 / 并发背压 / 长跑内存）。
 - S6·automation：**M5-01 规则引擎内核（规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器 + R02 ~ R07 金标 31 例）—— 已落地（Push 161）**；**M5-05 余项 A 系列（A01 / A02 / A03 / A14 规则 + 文案 + 金标 22 例）—— 已落地（Push 163）**；剩余：M5-02 调度与补发（lan）、M5-03 企微通道（lan）、M5-04 站内信 / SSE（lan）、M5-06 规则管理接口与发送记录（lan）、M5-07 前端消息中心与规则管理页（px）。
 - lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 无（M4-05g 压测已随 PR-14 落地））/ preview / notify / outbox 调度 / search / dashboard。
