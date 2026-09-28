@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · **S7·outbox 运行时（S7-1：重试退避 / 死信告警 / 积压探针 / done 行保留期 · 迁移 `0038`；S7-2：PoC-4 / PoC-5 真机回放与 50 并发报告）** · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M4-05g 压测（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13）· **M6-01 收口 日报当日汇总与应填未填（A7-01 / A7-05）** · **M2-06 视图与关注（A1-03 / A1-15）**）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · **S7·outbox 运行时（S7-1：重试退避 / 死信告警 / 积压探针 / done 行保留期 · 迁移 `0038`；S7-2：PoC-4 / PoC-5 真机回放与 50 并发报告；S7-3：cron 调度 / 补发 / 幂等执行键 / 状态回退再生窗口 · 迁移 `0039`）** · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M4-05g 压测（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13）· **M6-01 收口 日报当日汇总与应填未填（A7-01 / A7-05）** · **M2-06 视图与关注（A1-03 / A1-15）**）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -30,7 +30,7 @@ server/
     modules/workspace/    # 工作台聚合读面（S6·workspace · M6-05 第一刀 · Push 166）：我的任务三组（A6-01）+ 我的问题两栏（A6-03）—— 跨项目个人读面、只读（无新表 / 无迁移）（见 src/modules/workspace/README.md）
     modules/view/      # 视图（个人 / 公共 · A1-03 · M2-06 首刀 · Push 168）：视图 CRUD（筛选 / 列配置 / 排序 / 分组，仅保存配置）+ 默认视图互斥 + 归属（个人视图他人 404 / 公共视图非创建者 403）（见 src/modules/view/README.md）
     modules/follow/    # 关注订阅（A1-15 · M2-06 首刀 · Push 168）：关注 / 取关 / 批量 / 我的关注清单（幂等 · 逐条计数 · 归档不可新关注）（见 src/modules/follow/README.md）
-    outbox/               # Outbox worker 运行时（S7·outbox · S7-1 · Push 174）：dispatcher（按主题独立成批领取 + 消费 + 重试退避 + dead）/ 主题策略 / 死信与积压告警探针 / done 行保留期清理（见 src/outbox/index.ts）
+    outbox/               # Outbox worker 运行时（S7·outbox · S7-1 / S7-3 · Push 174 / 177）：dispatcher（按主题独立成批领取 + 消费 + 重试退避 + dead）/ 主题策略 / 死信与积压告警探针 / done 行保留期清理 / scheduler（cron 领取 + last_run_at 补发 + 单活锁 · schedule 纯函数求值）（见 src/outbox/index.ts）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
   scripts/check-permission-matrix.mjs  # 权限矩阵自检（种子 #6b ↔ 契约枚举 ↔ 角色集，不连库）
@@ -59,7 +59,7 @@ server/
 | `npm run test` | vitest run |
 | `npm run check:boundaries` | 依赖方向规则（违规退出码 1） |
 | `npm run check:permission-matrix` | 权限矩阵自检：种子 #6b ↔ 契约 `PermissionKey` 枚举 ↔ 角色集（admin 必须全量；不连库，退出码 1） |
-| `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build；当前 40 表 / 391 列 / 127 索引·唯一 / 125 CHECK —— Push 175（0038 · 并入 M2-06 的 0037）后复算，真机由 CI database job 复核） |
+| `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build；当前 42 表 / 414 列 / 132 索引·唯一 / 131 CHECK —— Push 177（0039 调度面 · jobs / job_runs）后复算，本地沙箱 + CI database job 复核） |
 | `npm run storage:init` | 对象存储初始化（建桶 / 版本控制 / CORS / 分片清理；`-- --check` 只读校验） |
 | `npm run storage:it` | 对象存储真机回放（需真实对象存储 + 先 `npm run build`） |
 | `node dist/entry/worker.js --health-check` | worker 一次性健康检查 |
@@ -78,7 +78,7 @@ server/
 ## 进程边界
 
 - api：HTTP、业务事务、Outbox 写入、SSE；无状态、不跑 CPU 密集任务。
-- worker：Outbox 投递 / 调度 / 规则 / 转换编排 / 导出；已接入 Outbox 运行时（S7-1：领取消费 / 重试退避 / 死信与积压告警 / done 行保留期清理）+ 上传会话与回收站清理 + 预览转换器自检；心跳 60s，`--health-check` 供探针使用。
+- worker：Outbox 投递 / 调度 / 规则 / 转换编排 / 导出；已接入 Outbox 运行时（S7-1：领取消费 / 重试退避 / 死信与积压告警 / done 行保留期清理；S7-3：调度 tick —— cron 领取 + last_run_at 补发 + 单活锁，注册表为空 = 只存不跑）+ 上传会话与回收站清理 + 预览转换器自检；心跳 60s，`--health-check` 供探针使用。
 - converter（沙箱）：一期由 file / preview（lan 线）落地，不在本骨架内。
 
 ## 模块结构约定
@@ -387,6 +387,8 @@ server/
 - A 系列规则测试（`test/automation-a-series.test.ts` **22 例** · M5-05 余项 · Push 163）：**A01**（工作日未提交双渠道逐字 + 收件人粒度幂等键 / 非工作日不催 / 已提交不命中 / 同一人多项目合并为清单 / 非当日 `window_mismatch` / 补跑 `duplicate`）、**A02**（标题与正文逐字取汇总数据面 / 无提交不播报 / 未绑定群 `recipient_missing`）、**A03**（T+1 提醒责任人、T+3 升级项目经理，两窗口互斥 / 已完成两窗口都不发 / 责任人未分派 T+1 不发而 T+3 仍升级 / 补跑 `duplicate`）、**A14**（提醒日双渠道逐字 / 内容为空正文止于句号 / 非提醒日与已完成不提醒 / 补跑 `duplicate`）、**引擎扩项**（`T_PLUS_3` 窗口 / 主体类型不匹配 `subject_mismatch` / 规则集含 A 系列四条与主体类型登记 / 模板一致性：动作模板存在且变量都能由主体字段或合并清单提供）；**Push 163 后全量 576 例（37 文件）**。
 - Outbox 运行时测试（`test/outbox-*.test.ts` · S7·outbox · S7-1 · Push 174）：**分派 7 例**（按主题独立成批 / 空注册表不触库 / handler 异常与非法返回兜底 / 退避未到顶 / 到顶转 dead + 告警 + onDead 留痕 / 确定性 dead / preview 策略到顶）＋ **策略 4 例**（缺省与预览主题口径 / 退避封顶）＋ **告警 7 例**（积压 / 最老年龄 / 近期死信阈值边界 + 探针接线）＋ **保留期 3 例**（分批到不足一批 / 单轮 50 批封顶 / 空转即止）；
 
+- S7-3 调度测试（`test/schedule-rules.test.ts` + `test/scheduler.test.ts` · Push 177 · 新增 **22 例**）：调度规则（cron 五段解析 `*` / 列表 / 区间 / 步进（含单值 `N/n`）与非法即抛；`nextFireAfter` 上海业务日推进 / 周 7→0 / 日与周 OR 语义 / 扫描上限 null；`enumerateFireTimes` 封顶 2000 截断；`planCatchup` 超跨度收窄 + skipped 区间）；调度器（空注册表不触库；单活锁拿不到跳过；窗口 = `last_run_at` / `run_at - 1ms` 补发执行；产出与 `last_run_at` / `run_at` 推进同事务 + `job_runs.executed` 留痕；超跨度 `skipped` 留痕；失败累计到顶 `failed`；无生产者 `releaseClaim` 只存不跑）—— **本片后全量 702 例 / 50 文件**。
+
 ## PoC-9 回放（h5 · S6·PoC-9）
 
 - 脚本：`scripts/poc9-replay.mjs`（连真 PG + 真 api；自铸管理员会话 / 跑完撤销、建 `POC9-xxx` 回放项目 / 跑完软删、节点上补定档成果文件 / 跑完硬删）。
@@ -547,7 +549,7 @@ server/
 - 结论与风险：① 生产档位（2C4G / 并发 2~4）已实跑对照，**复标仍属 M8 容量验证**（ADR-013：容量数字需实测校准后再承诺）；② **200MB 只覆盖「上传续传 + 可下载」** —— 超上限按 D2-05 确定性降级、不计成功率分母（口径需 wmj / px 会签）；③ 成功率为合成样本，真实业务样本（版式保真 / Excel 分页 / 复杂字体回退）用 `--samples <dir>` 复跑；④ 沙箱边界 503 为直连探针（pipeline 路径打不满队列）；⑤ 不进 CI 业务断言（需 docker / 对象存储 / 转换沙箱；CI 仅 `node --check` 语法门禁覆盖脚本）。
 - 复跑：`cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m4-05-stress.mjs --label "<档位名>" --workers 4 --burst 8 --long-run-min 20 --out <报告.md>`（前置：MinIO + api + N 个 worker + 转换沙箱（`deploy/preview`）；退出码 0 = 断言全过，可当门禁）。**B 档复跑**：先改 `deploy/preview/.env`（`PREVIEW_CONVERTER_MEM_LIMIT=4g` / `PREVIEW_CONVERT_MAX_CONCURRENCY=4`）并 `docker compose -f deploy/preview/docker-compose.yml up -d` 重建，再以 `--label "ADR-013 档 2C4G / 并发 4"` 同跑（完整两档命令见证据文件「复跑」段）。
 
-## S7·outbox 运行时（S7·outbox · S7-1：领取 / 重试退避 / 死信告警 / 积压探针 / done 行保留期 · S7-2：投递语义回放 / 50 并发领取报告）
+## S7·outbox 运行时（S7·outbox · S7-1：领取 / 重试退避 / 死信告警 / 积压探针 / done 行保留期 · S7-2：投递语义回放 / 50 并发领取报告 · S7-3：cron 调度 / 补发 / 幂等执行键 / 状态回退再生窗口）
 
 - 迁移：`database/migrations/0038_outbox_runtime.sql`（只追加 2 列）—— `outbox_events.locked_by`（领取者标识 = `WORKER_ID` 或 `host:pid`：多 worker 排障与 PoC-5 报告用，回写三态时保留最后一次领取者）+ `updated_at`（状态迁移时刻：`markDone` / `markRetry` / `markDead` 显式回写、不用触发器 —— 死信告警按它判「最近新增」）。
 - 落点：`src/outbox/`（8 文件：`handler` 消费结果契约 / `policy` 主题策略 / `dispatcher` 分派 / `alert` 阈值与出口 / `probe` 探针 / `retention` 保留期 / `outbox.module` 装配 / `index`）+ `src/db/outbox.store.ts`（`stats` 健康快照 + `purgeDone` 分批清理；`claim` 增写 `locked_by` / `updated_at`）+ `src/entry/worker.ts`（三个常驻循环：分派 / 告警探针 / 保留期清理）。
@@ -556,7 +558,11 @@ server/
 - 告警（ADR-005 观测面）：探针每 `OUTBOX_ALERT_INTERVAL_MS`（默认 5 分钟）读快照 —— 待领取积压 > `OUTBOX_ALERT_BACKLOG_MAX`（默认 1000，warn）/ 最老待领取年龄 > `OUTBOX_ALERT_OLDEST_MS`（默认 15 分钟，error）/ 窗口（`OUTBOX_ALERT_DEAD_WINDOW_MS`，默认 1 小时）内新增死信 ≥ `OUTBOX_ALERT_DEAD_RECENT_MAX`（默认 1，error）；出口 = `OUTBOX_ALERT_SINK` 令牌（当前结构化日志，M5-03/04 可替换为企微 / 站内信）。
 - done 行保留期（ADR-005 约 90 天）：按 `created_at` 分批删（每批 `OUTBOX_RETENTION_BATCH` 条、单轮封顶 50 批）；**dead 行不动** —— 死信是告警与排障证据，人工处置。
 - S7-2 真机回放（i6 / i7 · Push 176）：`scripts/poc4-outbox-replay.mjs` —— 杀 worker 不丢（子进程真领取后被 SIGKILL → 行留 `processing` → 超窗 `OUTBOX_STALE_MS` 重领且恰好消费一次）· 重复领取不重发（`done` 不再领取 / 同 `dedupeKey` 复投不重开 / 去重键只落 1 行）· 重试与死信告警（退避回 `pending` → 到顶 `dead` + `onDead` 留痕 + `outbox.dead` 即时告警；探针 `backlog` / `oldest_due` / `dead_letter` 三码齐发 + 宽阈值 0 告警对照）；`scripts/poc5-outbox-concurrency.mjs` —— 50 并发领取（50 个独立连接池 worker × 500 行 × 批量 10：逐行归属去重无重复无遗漏、`locked_by` 逐一核对、`deadlocks` 增量 0、终态不重发）+ 表膨胀与 vacuum 观察（churn → 死元组 → `VACUUM (ANALYZE)` → 空间复用；附真领取语句 `LockRows` 计划与连接观测）。
-- 已登记的对齐项（PR 说明 / 请 wmj 复核）：契约 `OUTBOX_TOPICS` 白名单与生产端实际写入存在漂移（`file.version.created` / `project.created` / `node.*` / `stage.*` / `issue.created` 等 10 个已投递主题不在白名单）—— 本片**不动契约**、不收紧 `appendOutbox` 的 topic 类型（收紧会编译失败），待 wmj 定扩表口径后随 S7-3 / S7-4 收紧。
+- S7-3 调度（i11 / M5-02 · Push 177）：迁移 `database/migrations/0039_jobs_schedule.sql`（`jobs` 定时 / 一次性任务定义与状态 + `job_runs` 运行留痕 —— executed / skipped / failed）；落点 = `src/outbox/schedule.ts`（纯函数：cron 五段解析 / `nextFireAfter`（上海业务日推进，扫描上限 731 天）/ `enumerateFireTimes`（封顶 2000 + truncated）/ `planCatchup`（超跨度收窄到 now-7d + skipped 区间））+ `src/outbox/scheduler.ts`（`JobScheduler.tickOnce` —— 领取 → 生产 → 同事务推进）+ `src/db/jobs.store.ts`（`tryAdvisoryLock` / `claimDue` / `releaseClaim` / `finishRun` / `recordSkipped` / `markFailure`）+ `src/entry/worker.ts`（每分钟 tick = 契约 `OUTBOX_SCHEDULER.tickMs`，draining 闸门 + 启动即跑 + shutdown 清理）+ `outbox.module.ts`（JobsStore / `JOBS_REGISTRY` 注册表（当前为空）/ JobScheduler 装配与导出）。
+- 调度不变式：**单活**（每轮先 `pg_try_advisory_lock(OUTBOX_SCHEDULER.lockName)`，拿不到即跳过 —— 多实例部署只跑一个；会话级锁随进程崩溃自动释放）；**领取**（`for update skip locked` + `locked_at` 超 `OUTBOX_STALE_MS` 视为崩溃遗留可重领）；**补发**（窗口 =（`last_run_at`，now]，从未执行 = `run_at - 1ms` 起；超出 `OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS`（默认 7 天）只记 `job_runs.skipped` 留痕、不补发轰炸）；**原子**（生产者产出（`appendOutboxIfAbsent`）与 `last_run_at` 推进 / `run_at` 前进同事务 —— 崩溃回滚重领重放由**幂等执行键**（`dedupe_key` 唯一约束）兜底不重发）；**失败收敛**（attempts 累计到 `OUTBOX_SCHEDULER_MAX_ATTEMPTS`（默认 5）置 `failed`，人工复位后继续；每次失败 `job_runs.failed` 留痕）；**无生产者 kind = 只存不跑**（注册表为空不触库 / 不占锁；单个 unbound kind 释放领取标记、窗口不推进）。
+- S7-3 真机回放（Push 177 · 26 断言全过）：`scripts/s7-3-scheduler-replay.mjs` —— S1 单活锁三态（先得 / 后 null / 释放可再取）；S2 cron 补发与推进（3 触发全命中、产出与推进同事务、第二轮 tick 0 领取）；S3 超跨度裁剪（窗口收窄到 now-7d：执行 7 次 + `skipped` 留痕超出区间）；S4 杀 worker 不丢（子进程真领取后被 SIGKILL → 崩溃窗口内 0 重领 → 超窗重领恰好一次 → 同窗人工重放**不重发**：产出仍 3 行、`job_runs` 如实记两次 executed）；S5 状态版本窗口（v7 同键去重、回退后 v9 再生新键）+ 日期窗口（同日同键、次日新键）；S6 失败累计到顶（attempts 1/2 → failed，第三轮不再领取）；S7 双实例并发 tick（单活锁 + SKIP LOCKED：恰好一个执行、产出无重复）。已入 CI `database` job（`.github/` 属 px 线 —— 代记，请 px 复核，先例 Push 156 / 157 / 168 / 176）。
+- 主题类型收口（S7-3 · Push 177）：`appendOutbox` / `OUTBOX_REGISTRY` / 策略表 / `OutboxDispatcher` / 领取行 / `GateRejectedSignal`（task / flow）的 `topic` 全量收紧为契约 `OutboxTopic`（闭集）—— 以 wmj 定案（PR #181：`OUTBOX_TOPICS` 13 → 24 项 + 契约回放 17 项入 CI）为唯一写入清单，编译期拦截白名单外主题写入；领取侧因「只领注册主题」天然闭集，单点窄化（`src/db/outbox.store.ts` 注释说明）。
+- 已登记的对齐项（PR 说明 / 请 wmj 复核）：迁移 `0039` 属**高风险变更（DDL）**（CONTRIBUTING §15）—— 「只加不改」新表两张（`jobs` / `job_runs`），无既有表 / 列 / 索引 / CHECK 变化，回滚语句写在迁移头注。
 
 ## M3-06 压测（1 万行任务数据集 + 索引调优评估）
 
@@ -626,7 +632,7 @@ server/
         run: npm run check:boundaries
 ```
 
-数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。（Push 157 起：迁移 → 漂移检查之后追加「种子 → 后台起 api → M3-06 压测 + M6 回放」三步真机执行，证据逐行落 CI 日志；本机沙箱无 PostgreSQL 时以 CI 证据为准。）
+数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。（Push 157 起：迁移 → 漂移检查之后追加「种子 → 后台起 api → M3-06 压测 + M6 回放」三步真机执行；Push 168 / 176 / 177 再追加 M2-06 回放、S7-2 PoC-4 · PoC-5、S7-3 调度回放 —— 证据逐行落 CI 日志；`.github/` 属 px 线，代记，请 px 复核。本机沙箱无 PostgreSQL 时以 CI 证据为准。）
 
 ## 后续卡片衔接
 
@@ -641,8 +647,8 @@ server/
 - j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、「干系人角色」列（口径未定）、前端台账页与项目「干系人」面板（u 系列 · px 线）。
 - S6·report-issue：**M6-01 日报填报 / 提交 / 补填（A3-01 ~ A3-04）、M6-02 回写任务进展 + 问题自动生成（A3-08 / A3-09 幂等）、M6-03 问题闭环与留痕（A3-10 ~ A3-13）—— 已落地（Push 155 · 迁移 0023 + 契约 reports / issues；同批补齐 A2-01 删除引用守卫）**；**M6-01 收口（A7-01 当日汇总 + A7-05 应填未填两条读接口）—— 已落地（Push 162）**；**M6-05 工作台第一刀（我的任务三组 A6-01 + 我负责的问题 A6-03 · `GET /api/v1/workspace`）—— 已落地（Push 166）**；**M7-04 归档（C4-02 / C4-03：门禁 + 引用式清单 + 只读 + `filter[archivedYear]` 检索 · 迁移 0036）—— 已落地（Push 167）**；剩余：M6-04 干系人导入 / 导出（A5-05 随 M8-01、A5-09 随 M7-03）、C2-06 自定义待办 /「我参与的任务」口径（A6-01 余项，随前端联调复评）/ A6-04 与 A6-07（随 M5-07 · lan）、问题统计与导出（A3-17 · M7）、`dueAt` 提醒 / 超期升级（A3-14 · M5 规则引擎）、C9 归类字典可维护（二期）、前端日报 / 看板接线（u 系列 · px 线）。
 - S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-05c 预览转换队列（outbox `preview.job` 领取器 + 转换沙箱客户端 + 三元组幂等 + 失败降级 + 定档预生成 + 真机回放 · 迁移 `0028`）—— 已落地（PR-10）**；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0020）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；**M4-05 预览编排 —— 进行中：数据层已落地（迁移 `0027` · `preview_artifacts` + `ck_audit_logs_action` 一次扩 `preview` / `download` 至十值），转换器 / 队列与读 API 随后续切片**；**M4-05c 预览转换队列 —— 已落地（PR-10 · 迁移 `0028`：outbox 领取器 + 转换沙箱客户端 + 失败降级）；**M4-05d 读 API（`GET /files/{id}/preview`：三态 + 短时签名（`PREVIEW_URL_TTL_SECONDS`）+ 仅 ready 写审计 + 版本 404 + 读取侧幂等补投 + 真机回放）—— 已落地（PR-11）**；**M4-05e 产物清理 —— 已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行；真机回放 16/16）**；**M4-05f 下载切片（`GET /files/{id}/versions/{versionId}/download-url`：attachment 签名（`S3_DOWNLOAD_URL_TTL_SECONDS`）+ `file.download` + download 审计 + 真机两态回放 14/14）—— 已落地（PR-13）**，M4-05 剩余 = 无（**M4-05g 压测已随 PR-14 落地**：两档实跑 —— 成功率 / 200MB 续传 / 并发背压 / 长跑内存）；**M4-06 二维 CAD 本地转换 PoC（条件性交付 · PoC-8）—— 暂缓（2026-09-28 留痕）**：前置 = 设计部门真实样本 ≥10 个 dwg/dxf（v0.1 §8.2 Q4），目前无法获取 → **有意识暂缓、非漏做**；现状 dwg/dxf 不在 `preview.targets.ts` 渲染通道表内（D2-03：不达标退化为下载）→ 上传可下载、预览走 D2-05 自然降级「仅下载」，**零副作用、不阻塞上线**；样本到位后另片开工（达标线：图层 / 线宽 / 中文字体 / 打印样式达标率 ≥95%、单页 ≤10 s；契约 `PreviewTarget` 不新增 —— CAD 产物 PDF → `pdf` 通道、SVG → `image` 通道）。
-- S7·outbox：**S7-1 运行时（dispatcher：按主题独立成批领取 + 消费分类 + 重试退避 + dead 告警；告警探针：积压 / 最老年龄 / 近期死信；done 行保留期清理 · 迁移 `0038`）—— 已落地（Push 174/175 · 合并提交 `968f036`）**；**S7-2 证据（i6 / i7）—— 已落地（Push 176：`poc4-outbox-replay.mjs` 投递语义回放 + `poc5-outbox-concurrency.mjs` 50 并发领取与真空观察，两步已入 CI `database` job）**；剩余：S7-3 调度器与补发（i11）；契约白名单已随 PR #181 扩表 24 项（S7-3 起以 24 项为准）。
-- S6·automation：**M5-01 规则引擎内核（规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器 + R02 ~ R07 金标 31 例）—— 已落地（Push 161）**；**M5-05 余项 A 系列（A01 / A02 / A03 / A14 规则 + 文案 + 金标 22 例）—— 已落地（Push 163）**；剩余：M5-02 调度与补发（lan）、M5-03 企微通道（lan）、M5-04 站内信 / SSE（lan）、M5-06 规则管理接口与发送记录（lan）、M5-07 前端消息中心与规则管理页（px）。
-- lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 无（M4-05g 压测已随 PR-14 落地）、**M4-06 二维 CAD PoC 暂缓（2026-09-28 留痕：暂无真实样本；条件性交付不阻塞，dwg/dxf 走 D2-05 降级）**）/ preview / notify / outbox（S7-1 运行时 + S7-2 证据已落地：分派 / 重试 / 死信告警 / 保留期；投递语义回放与 50 并发领取报告；调度器 = S7-3）/ search / dashboard。
+- S7·outbox：**S7-1 运行时（dispatcher：按主题独立成批领取 + 消费分类 + 重试退避 + dead 告警；告警探针：积压 / 最老年龄 / 近期死信；done 行保留期清理 · 迁移 `0038`）—— 已落地（Push 174/175 · 合并提交 `968f036`）**；**S7-2 证据（i6 / i7）—— 已落地（Push 176：`poc4-outbox-replay.mjs` 投递语义回放 + `poc5-outbox-concurrency.mjs` 50 并发领取与真空观察，两步已入 CI `database` job）**；**S7-3 调度（i11 / M5-02）—— 已落地（Push 177：`jobs` / `job_runs`（迁移 `0039`）+ cron 补发 + 单活锁 + 幂等执行键 / 状态回退再生窗口（回放 26 断言入 CI）；主题类型按 24 项白名单编译期收口）**；剩余：S7-4 预留（生产者注册表接线 —— 规则调度 / 通知生产随 i12 / i13 / j1 加项即可）。
+- S6·automation：**M5-01 规则引擎内核（规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器 + R02 ~ R07 金标 31 例）—— 已落地（Push 161）**；**M5-05 余项 A 系列（A01 / A02 / A03 / A14 规则 + 文案 + 金标 22 例）—— 已落地（Push 163）**；**M5-02 调度内核（jobs / job_runs + cron 补发 + 单活 + 幂等执行键）—— 已落地（S7-3 · Push 177；规则生产端接注册表随 M5-06）**；剩余：M5-03 企微通道（lan）、M5-04 站内信 / SSE（lan）、M5-06 规则管理接口与发送记录（lan）、M5-07 前端消息中心与规则管理页（px）。
+- lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 无（M4-05g 压测已随 PR-14 落地）、**M4-06 二维 CAD PoC 暂缓（2026-09-28 留痕：暂无真实样本；条件性交付不阻塞，dwg/dxf 走 D2-05 降级）**）/ preview / notify / outbox（S7-1 运行时 + S7-2 证据 + S7-3 调度已落地：分派 / 重试 / 死信告警 / 保留期；投递语义回放与 50 并发领取报告；cron 调度 / 补发 / 幂等执行键 / 再生窗口（26 断言入 CI）；生产者注册表待 i12 / i13 / j1 接线）/ search / dashboard。
 - M2-06：视图（个人 / 公共 · A1-03）与关注订阅（A1-15）—— 已落地（Push 168 · 迁移 `0037` + 契约 `views` / `follows` + 模块 `view` / `follow` + 真机回放 `scripts/m2-06-replay.mjs`）；剩余：公共视图角色级共享（A1-03 余项，口径待定）、关注通知投递（M5 · lan）、工作台关注动态流（A6-08 · 二刀）、前端接线（M2-07 · px）。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。

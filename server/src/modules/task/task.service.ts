@@ -28,6 +28,7 @@ import {
   z,
   type ErrorDetail,
 } from "@libiaolink/contracts";
+import type { OutboxTopic } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
@@ -95,7 +96,7 @@ const CHANGE_SUMMARY_MAX = 40;
 class GateRejectedSignal extends Error {
   constructor(
     readonly appError: AppError,
-    readonly outbox: { topic: string; dedupeKey: string; payload: Record<string, unknown> },
+    readonly outbox: { topic: OutboxTopic; dedupeKey: string; payload: Record<string, unknown> },
   ) {
     super("gate_rejected");
   }

@@ -96,6 +96,13 @@ export const EnvSchema = z
     OUTBOX_RETENTION_INTERVAL_MS: z.coerce.number().int().min(60000).max(86400000).default(21600000),
     /** 领取者标识（进 outbox_events.locked_by）：缺省 host:pid。 */
     WORKER_ID: z.string().max(128).default(""),
+    // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
+    /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
+    OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
+    /** 调度任务失败最大尝试次数（含首次）：到顶置 jobs.status = failed（人工复位后继续）。 */
+    OUTBOX_SCHEDULER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
+    /** 补发跨度上限（天）：重启 / 停机错过的窗口超此跨度只记 skipped 留痕（契约 OUTBOX_SCHEDULER.catchupMaxDays 建议值落 env）。 */
+    OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS: z.coerce.number().int().min(1).max(90).default(7),
   })
   .superRefine((value, context) => {
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，

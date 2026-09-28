@@ -1,4 +1,5 @@
 import type { Env } from "../config/env.js";
+import type { OutboxTopic } from "@libiaolink/contracts";
 import { PREVIEW_JOB_TOPIC } from "../modules/file/index.js";
 
 /**
@@ -38,8 +39,8 @@ export function previewTopicPolicy(env: Env): OutboxTopicPolicy {
 }
 
 /** 已注册主题 → 策略；未登记主题由 dispatcher 回退缺省策略（正常不会发生：领取只按注册表主题）。 */
-export function resolveOutboxPolicies(env: Env): ReadonlyMap<string, OutboxTopicPolicy> {
-  return new Map<string, OutboxTopicPolicy>([[PREVIEW_JOB_TOPIC, previewTopicPolicy(env)]]);
+export function resolveOutboxPolicies(env: Env): ReadonlyMap<OutboxTopic, OutboxTopicPolicy> {
+  return new Map<OutboxTopic, OutboxTopicPolicy>([[PREVIEW_JOB_TOPIC, previewTopicPolicy(env)]]);
 }
 
 /** 第 attempts 次失败（含本次，1 起）后的退避时长。 */
