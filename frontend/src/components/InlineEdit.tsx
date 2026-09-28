@@ -50,8 +50,13 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
           setOpen((previous) => !previous);
         }}
         onKeyDown={(event) => {
-          // Esc 直接关掉浮层（行本身只认 Enter / 空格，不需要拦 Esc）
+          // Esc 直接关掉浮层（行本身只认 Enter / 空格，不需要拦 Esc）；Push 212 续：浮层开着时拦住冒泡 ——
+          // 抽屉 / 弹层里的外层 Esc（如「问题详情」抽屉）不该被同一按连带关掉（「Esc 先关内层」口径）；
+          // 浮层没开时不拦，Esc 照旧往外走（如焦点还在触发器上时按 Esc 关外层）。
           if (event.key === "Escape") {
+            if (open) {
+              event.stopPropagation();
+            }
             setOpen(false);
             return;
           }
