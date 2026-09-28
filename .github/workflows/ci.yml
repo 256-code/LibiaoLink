@@ -249,3 +249,9 @@ jobs:
         env:
           S7_3_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
         run: node scripts/s7-3-scheduler-replay.mjs
+      # S7-4（通知投递：站内信收件箱 / 合并 / 免打扰 / 每日上限 · j1 / M5-04 首刀 · lan 线，Push 178）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: S7-4 notify replay (inbox + merge + quiet hours + daily limit)
+        working-directory: server
+        env:
+          S7_4_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/s7-4-notify-replay.mjs

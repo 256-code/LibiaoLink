@@ -40,11 +40,13 @@ describe("outbox 主题策略（S7-1）", () => {
     expect(PREVIEW_BACKOFF_MAX_MS).toBe(30 * 60_000);
   });
 
-  it("resolveOutboxPolicies：注册主题清单只含 preview.job（未登记主题由 dispatcher 回退缺省）", () => {
+  it("resolveOutboxPolicies：注册主题清单 = preview.job + notify.message（S7-4；未登记主题由 dispatcher 回退缺省）", () => {
     const policies = resolveOutboxPolicies(ENV);
 
-    expect([...policies.keys()]).toEqual(["preview.job"]);
+    expect([...policies.keys()]).toEqual(["preview.job", "notify.message"]);
     expect(policies.get("preview.job")).toEqual(previewTopicPolicy(ENV));
+    // notify.message（站内信投递 · S7-4）：本地写库、无外部依赖抖动 —— 沿用通用重试口径（OUTBOX_DEFAULT_*）。
+    expect(policies.get("notify.message")).toEqual(defaultTopicPolicy(ENV));
   });
 
   it("退避单调递增且封顶：attempts 很大也不超过 backoffMaxMs", () => {

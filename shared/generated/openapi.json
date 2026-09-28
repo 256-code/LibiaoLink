@@ -83,6 +83,10 @@
     {
       "name": "follows",
       "description": "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作"
+    },
+    {
+      "name": "notifications",
+      "description": "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好"
     }
   ],
   "components": {
@@ -3469,6 +3473,268 @@
           "deleted"
         ],
         "description": "节点状态（project_nodes.status）；done 必须过门禁"
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "通知 id（库内自增；收件箱以 id 降序）"
+          },
+          "type": {
+            "$ref": "#/components/schemas/NotificationType"
+          },
+          "title": {
+            "type": "string",
+            "description": "标题（已剔除前后空白）"
+          },
+          "body": {
+            "type": "string",
+            "description": "正文（已剔除前后空白；首条消息的正文，被合并行正文留档在库内）"
+          },
+          "status": {
+            "$ref": "#/components/schemas/NotificationStatus"
+          },
+          "refType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "关联对象类型（可空）"
+          },
+          "refId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "关联对象 id（可空；与 refType 成对）"
+              }
+            ]
+          },
+          "templateCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "模板码（可空）"
+          },
+          "mergedCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "合并条数：同期同合并键的消息条数（未合并 = 1）"
+          },
+          "deliveredAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "投递时刻（进入收件箱的时刻）"
+              }
+            ]
+          },
+          "createdAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "消息创建时刻（收到投递事件的时刻）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title",
+          "body",
+          "status",
+          "refType",
+          "refId",
+          "templateCode",
+          "mergedCount",
+          "deliveredAt",
+          "createdAt"
+        ],
+        "description": "收件箱条目（已投递；合并子行不进收件箱、只在库内留档）"
+      },
+      "NotificationListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "当前筛选下的总条数"
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "未读总数（不受 status 过滤影响；角标口径）"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "limit",
+          "total",
+          "unreadCount"
+        ],
+        "description": "收件箱清单（含未读角标计数）"
+      },
+      "NotificationMarkAllReadResponse": {
+        "type": "object",
+        "properties": {
+          "updated": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "本次实际置为已读的条数"
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "置位后的未读数（恒为 0；回读口径）"
+          }
+        },
+        "required": [
+          "updated",
+          "unreadCount"
+        ],
+        "description": "全部标记已读结果"
+      },
+      "NotificationMarkBody": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/NotificationStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "description": "标记收件箱状态（幂等；已处理可退回已读）"
+      },
+      "NotificationStatus": {
+        "type": "string",
+        "enum": [
+          "unread",
+          "read",
+          "handled"
+        ],
+        "description": "收件箱状态：unread 未读 / read 已读 / handled 已处理（标记接口幂等；允许回退到更早状态）"
+      },
+      "NotificationType": {
+        "type": "string",
+        "enum": [
+          "reminder",
+          "approval",
+          "broadcast",
+          "system"
+        ],
+        "description": "通知类型（C5-02 分类）：reminder 提醒（任务 / 日报 / 问题等业务提醒）/ approval 审批（待办审批与门禁）/ broadcast 播报（喜报 / 阶段达成 / 摘要群发同步留档）/ system 系统（账号 / 权限 / 运维通知）"
+      },
+      "NotifyPrefs": {
+        "type": "object",
+        "properties": {
+          "quietHours": {
+            "$ref": "#/components/schemas/NotifyQuietHours"
+          },
+          "quietFrom": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "description": "免打扰开始（生效值，HH:MM，Asia/Shanghai）；null = 免打扰关闭"
+          },
+          "quietTo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "description": "免打扰结束（生效值，HH:MM，Asia/Shanghai）；跨零点允许（from > to）；null = 免打扰关闭"
+          },
+          "dailyLimit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "每人每日投递上限（0 = 不限）；超限消息排到次日窗口起点"
+          },
+          "mergeWindowMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400000,
+            "description": "合并窗口（毫秒；0 = 不合并）：同人同合并键、窗口内未读主行合并为一条"
+          },
+          "updatedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "偏好最近保存时刻；null = 从未保存（全走缺省）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "quietHours",
+          "quietFrom",
+          "quietTo",
+          "dailyLimit",
+          "mergeWindowMs",
+          "updatedAt"
+        ],
+        "description": "通知偏好（免打扰时段 / 每日上限 / 合并窗口；读面为生效值）"
+      },
+      "NotifyPrefsUpdateBody": {
+        "type": "object",
+        "properties": {
+          "quietHours": {
+            "$ref": "#/components/schemas/NotifyQuietHours"
+          },
+          "dailyLimit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "mergeWindowMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400000
+          }
+        },
+        "description": "通知偏好更新（局部更新：只传变更键；quietHours 三态 default / off / HH:MM-HH:MM；空更新 400）"
+      },
+      "NotifyQuietHours": {
+        "type": "string",
+        "pattern": "^(default|off|([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9])$",
+        "description": "免打扰配置（三态）：default 继承缺省（env NOTIFY_QUIET_HOURS，缺省 22:00-08:00）/ off 关闭 / HH:MM-HH:MM 自定义（Asia/Shanghai，跨零点允许）"
       },
       "PermissionKey": {
         "type": "string",
@@ -15359,6 +15625,321 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "收件箱清单（C5-01 / C5-02）：状态 / 类型 / 关联对象 + 投递时刻区间 + 分页；只返回已投递主行（合并子行仅在库内留档）；随行未读角标计数",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/NotificationStatus"
+                },
+                {
+                  "description": "状态过滤（缺省 = 全部三态）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "状态过滤（缺省 = 全部三态）",
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/NotificationType"
+                },
+                {
+                  "description": "类型过滤（C5-02 分类；缺省 = 全部）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "类型过滤（C5-02 分类；缺省 = 全部）",
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "description": "关联对象类型过滤（如 task / issue；缺省 = 全部）"
+            },
+            "required": false,
+            "description": "关联对象类型过滤（如 task / issue；缺省 = 全部）",
+            "name": "refType",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateTime"
+                },
+                {
+                  "description": "投递时刻下界（含；缺省 = 不限）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "投递时刻下界（含；缺省 = 不限）",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DateTime"
+                },
+                {
+                  "description": "投递时刻上界（含；缺省 = 不限）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "投递时刻上界（含；缺省 = 不限）",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "收件箱清单（含未读计数）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/{id}": {
+      "patch": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationMarkBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "标记后的通知",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notification"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/mark-all-read": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "全部标记已读（C5-01）：本人未读主行一次性置为已读；幂等（无未读时 updated=0）",
+        "responses": {
+          "200": {
+            "description": "置位结果（updated / unreadCount=0）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationMarkAllReadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/prefs": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "通知偏好（C2-09）：免打扰时段 / 每日上限 / 合并窗口 —— 读面为生效值（个人配置缺省时回退 env 缺省）",
+        "responses": {
+          "200": {
+            "description": "生效中的通知偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifyPrefs"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "更新通知偏好（局部更新：只传变更键；免打扰两键成对，双 null = 关闭；空更新 400；null = 恢复缺省）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotifyPrefsUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的生效偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifyPrefs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
             "content": {
               "application/json": {
                 "schema": {
