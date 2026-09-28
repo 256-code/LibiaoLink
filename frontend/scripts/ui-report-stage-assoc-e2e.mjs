@@ -154,6 +154,15 @@
  *   （16px 下 ≈0.68px），只有右半「文件 + 云」的一半粗、且字形偏小；本批把视框收到 "40 40 944 944" 并给 strokeWidth="38"
  *   （**三条 path 形状一笔未动**）：等效线圈 ≈ (40.92 + 38) / 944 ≈ 8.36% 盒宽 ≈ 右半 2 / 24 ≈ 8.33%，字形占宽 ≈ 91.7% ≈ 右半 22 / 24；
  *   ⑨ 组 +1（两枚入口图标线重差 <1% · 同高 16px 档）。
+ *
+ * Push 213（业务口径 2026-09-28「日报记录 和 问题追随都要有删除按钮 和之前的删除同款 请你看看有没有合适的位置 这两个任意
+ *   删除谁都是关联的 都会导致双方都删除 因为他们本质是同一个日报」+「问题追踪的没做好 鼠标触碰表格会动」）：两块表**行尾各加
+ *   一列动作列**（任务表同款 RowDeleteButton · 固定 48px 槽位）—— 新增 ⑪ 组 11 项：两块表各 1 条静止态（24px 幽灵态 / opacity=0 /
+ *   槽 48 / 行 = group / aria 名带「删除日报 / 删除问题」）+ 1 条行悬停浮现 + 1 条悬停展开 48px 红胶囊（屏下 oklch 容差核）+
+ *   **4 条列宽不漂移护栏**（悬停前 / 行悬停 / 胶囊展开三拍，表头逐格宽 + 表宽数组完全一致 —— 「鼠标触碰表格会动」的回归护栏）+
+ *   3 条成对删除语义（删 i-07 ⇒ i-07 与来源 r-0915 双消、删 r-0921a ⇒ r-0921a 与派生 i-01 双消、删 r-0921b ⇒ 只掉自己）；
+ *   ④ / ⑦ 表头断言改写成「六列内容 + 行尾一列动作列」（第 7 列可视空、无障碍名 =「操作」的隐藏单元格）。
+ *   附带：「表格内直接增删附图」曾试做，按业务口径「太丑了 取消修改」整体撤回（未保留任何代码 / 断言）。
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -573,16 +582,22 @@ const switched = await waitFor("(function(){var b=document.querySelector(" + j('
 check("③ 提交后自动切到「日报记录」子视图", switched === true, String(switched));
 
 // ---------- ④ 日报记录：列头（Push 199 收窄后六列）/ 最新一行 ----------
-const headers = await ev(
+const headerProbe = await ev(
   "(function(){var ts=document.querySelectorAll(" + j("table") + ");for(var i=0;i<ts.length;i++){" +
-  "var hs=ts[i].querySelectorAll(" + j("thead th") + ");var out=[];for(var k=0;k<hs.length;k++){out.push(hs[k].textContent.trim());}" +
-  "if(out.indexOf(" + j("关联阶段Related stages") + ")>=0||out.indexOf(" + j("关联任务") + ")>=0){return out;}}return null;})()"
+  "var hs=ts[i].querySelectorAll(" + j("thead th") + ");var out=[];var a11y=[];for(var k=0;k<hs.length;k++){" +
+  "var cl=hs[k].cloneNode(true);var so=cl.querySelectorAll(" + j(".sr-only") + ");for(var m=0;m<so.length;m++){so[m].parentNode.removeChild(so[m]);}" +
+  "out.push((cl.textContent||" + j("") + ").trim());" +
+  "var s2=hs[k].querySelectorAll(" + j(".sr-only") + ");a11y.push(s2.length===0?" + j("") + ":s2[0].textContent.trim());}" +
+  "if(out.indexOf(" + j("关联阶段Related stages") + ")>=0||out.indexOf(" + j("关联任务") + ")>=0){return {out:out,a11y:a11y};}}return null;})()"
 );
+const headers = headerProbe === null ? null : headerProbe.out;
+const headerA11y = headerProbe === null ? null : headerProbe.a11y;
 check("④ 日报记录表头含「关联阶段Related stages」", Array.isArray(headers) && headers.indexOf("关联阶段Related stages") >= 0, Array.isArray(headers) ? headers.join(" / ") : String(headers));
 check("④ 日报记录表头不再有「关联任务」", Array.isArray(headers) && headers.indexOf("关联任务") < 0, Array.isArray(headers) ? "ok" : "-");
-check("④ 日报记录表头 = 恰好六列且中英拼写（时间time / 填写者 / 关联阶段Related stages / 当日完成工作Work completed today / 明日计划Tomorrow's plan / 现场工作附图On-site photos · Push 202）",
-  Array.isArray(headers) && headers.length === 6 && REPORT_HEADERS.every((name, index) => headers[index] === name),
-  Array.isArray(headers) ? headers.join(" / ") : String(headers));
+check("④ 日报记录表头 = 六列内容列 + 行尾一列动作列（空列头 · Push 213 删除列）且内容列中英拼写（时间time / 填写者 / 关联阶段Related stages / 当日完成工作Work completed today / 明日计划Tomorrow's plan / 现场工作附图On-site photos · Push 202）",
+  Array.isArray(headers) && headers.length === 7 && REPORT_HEADERS.every((name, index) => headers[index] === name) && headers[6] === "" &&
+  Array.isArray(headerA11y) && headerA11y[6] === "操作",
+  Array.isArray(headers) ? headers.join(" / ") + " ｜ a11y[6]=" + String(headerA11y === null ? "-" : headerA11y[6]) : String(headers));
 check("④ 日报记录表头不含「今日施工人数 / 现场发现问题 / 解决方案或建议」（Push 199 只保留内容列）",
   Array.isArray(headers) && DROPPED_HEADERS.every((word) => headers.indexOf(word) < 0), Array.isArray(headers) ? "ok" : "-");
 const rowProbe = await ev(
@@ -599,7 +614,7 @@ const rowProbe = await ev(
   "text:(r.textContent||" + j("") + ")};})()"
 );
 const issueProbes = await ev("document.querySelectorAll(" + j("[data-report-issue-link]") + ").length");
-check("④ 最新一行 = 6 个单元格（与收窄后的列头一一对齐）", rowProbe !== null && rowProbe.cells === 6, rowProbe === null ? "-" : String(rowProbe.cells));
+check("④ 最新一行 = 7 个单元格（六列内容 + 行尾删除动作列 · 与列头一一对齐）", rowProbe !== null && rowProbe.cells === 7, rowProbe === null ? "-" : String(rowProbe.cells));
 check("④ 列表已无问题记录探针 [data-report-issue-link]（该列随 Push 199 移除）", issueProbes === 0, String(issueProbes));
 check("④ 最新一行关联阶段列 = 「" + PICK[0] + "、" + PICK[1] + "」", rowProbe !== null && rowProbe.stage === PICK[0] + "、" + PICK[1], rowProbe === null ? "-" : String(rowProbe.stage));
 check("④ 最新一行「当日完成工作」= 回放文本（自动序号 1: / 2: + 用户换行保留 · 真键盘 Enter 分行填写）", rowProbe !== null && rowProbe.done === NUMLINE(DONE_TEXT) && rowProbe.done.indexOf(LF) >= 0, rowProbe === null ? "-" : String(rowProbe.done));
@@ -1052,20 +1067,25 @@ await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
 await waitFor("document.querySelector(" + j("[data-issue-row]") + ")!==null");
 const issueTableProbe = await ev(
   "(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");if(t===null){return null;}" +
-  "var ths=t.querySelectorAll(" + j("thead th") + ");var heads=[];var svgs=0;for(var i=0;i<ths.length;i++){heads.push(ths[i].textContent.trim());svgs+=ths[i].querySelectorAll(" + j("svg") + ").length;}" +
+  "var ths=t.querySelectorAll(" + j("thead th") + ");var heads=[];var headA11y=[];var svgs=0;for(var i=0;i<ths.length;i++){" +
+  "var cl=ths[i].cloneNode(true);var so=cl.querySelectorAll(" + j(".sr-only") + ");for(var m=0;m<so.length;m++){so[m].parentNode.removeChild(so[m]);}" +
+  "heads.push((cl.textContent||" + j("") + ").trim());" +
+  "var s2=ths[i].querySelectorAll(" + j(".sr-only") + ");headA11y.push(s2.length===0?" + j("") + ":s2[0].textContent.trim());" +
+  "svgs+=ths[i].querySelectorAll(" + j("svg") + ").length;}" +
   "var rows=t.querySelectorAll(" + j("[data-issue-row]") + ");var r2=rows[1]===undefined?null:rows[1];var tds=r2===null?null:r2.querySelectorAll(" + j("td") + ");var td0=tds===null||tds[0]===undefined?null:tds[0];" +
   "var rb=r2===null?null:getComputedStyle(r2);var thead=t.querySelector(" + j("thead") + ");var lineW=" + j("") + ";var lineColor=" + j("") + ";" +
   "if(rb!==null){if(rb.borderTopWidth!==" + j("0px") + "){lineW=rb.borderTopWidth;lineColor=rb.borderTopColor;}else if(rb.borderBottomWidth!==" + j("0px") + "){lineW=rb.borderBottomWidth;lineColor=rb.borderBottomColor;}}" +
-  "return {n:rows.length,heads:heads,svgs:svgs,text:(t.textContent||" + j("") + ")," +
+  "return {n:rows.length,heads:heads,headA11y:headA11y,svgs:svgs,text:(t.textContent||" + j("") + ")," +
   "padTop:td0===null?" + j("") + ":getComputedStyle(td0).paddingTop,padLeft:td0===null?" + j("") + ":getComputedStyle(td0).paddingLeft," +
   "dateWeight:tds===null||tds[0]===undefined?" + j("") + ":getComputedStyle(tds[0]).fontWeight," +
   "lineW:lineW,lineColor:lineColor," +
   "thBg:thead===null?" + j("") + ":getComputedStyle(thead).backgroundColor,thColor:ths.length===0?" + j("") + ":getComputedStyle(ths[0]).color," +
   "thFont:ths.length===0?" + j("") + ":getComputedStyle(ths[0]).fontSize,tableFont:getComputedStyle(t.tagName===" + j("TABLE") + "?t:t.querySelector(" + j("table") + ")).fontSize};})()"
 );
-check("⑦ 问题追踪表头 = 图五六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理）",
-  issueTableProbe !== null && issueTableProbe.heads.length === 6 && ISSUE_HEADERS.every((name, index) => issueTableProbe.heads[index] === name),
-  issueTableProbe === null ? "-" : issueTableProbe.heads.join(" / "));
+check("⑦ 问题追踪表头 = 图五六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理）+ 行尾一列动作列（可视列头为空、无障碍名 =「操作」的隐藏单元格 · Push 213）",
+  issueTableProbe !== null && issueTableProbe.heads.length === 7 && ISSUE_HEADERS.every((name, index) => issueTableProbe.heads[index] === name) && issueTableProbe.heads[6] === "" &&
+  Array.isArray(issueTableProbe.headA11y) && issueTableProbe.headA11y[6] === "操作",
+  issueTableProbe === null ? "-" : issueTableProbe.heads.join(" / ") + " ｜ a11y[6]=" + String(issueTableProbe.headA11y === null ? "-" : issueTableProbe.headA11y[6]));
 check("⑦ 列头为纯文字、无小图标（同批业务口径「这些图标不需要」—— 首版复刻的 6 枚图标 + 排序小漏斗整体下架 · svg = 0）",
   issueTableProbe !== null && issueTableProbe.svgs === 0, issueTableProbe === null ? "-" : "svg=" + String(issueTableProbe.svgs));
 check("⑦ 表内无「责任 / 处理时限 / 所属任务 / 未分组」四词（撤三列 + 「未分组」并入「未解决」）",
@@ -1515,7 +1535,7 @@ const reportEditProbe = await ev(
   "done:lab(tds[3]),plan:lab(tds[4])};})()"
 );
 check("⑧ 日报记录同理：「当日完成工作 / 明日计划」文字编辑 + 「关联阶段」勾选编辑（无障碍名都带时间）· 时间列没有编辑触发器",
-  reportEditProbe !== null && reportEditProbe.cells === 6 && reportEditProbe.done.indexOf("修改当日完成工作") === 0 && reportEditProbe.plan.indexOf("修改明日计划") === 0 &&
+  reportEditProbe !== null && reportEditProbe.cells === 7 && reportEditProbe.done.indexOf("修改当日完成工作") === 0 && reportEditProbe.plan.indexOf("修改明日计划") === 0 &&
   reportEditProbe.stage.indexOf("修改关联阶段") === 0 && reportEditProbe.dateBtns === 0,
   reportEditProbe === null ? "-" : JSON.stringify(reportEditProbe));
 const reportBefore = await ev(reportRow1Expr());
@@ -1965,6 +1985,175 @@ const lane5Of = await issueLaneOf();
 check("⑩ 拖回「未解决」（还原）：i-01 回「未解决」列、三列计数回到进组基线（与 ⑧ / ⑨ 组的 i-01 状态一致）",
   lane5Of === "未解决" && lane5["未解决"] === lane0["未解决"] && lane5["处理中"] === lane0["处理中"] && lane5["已完成"] === lane0["已完成"],
   JSON.stringify({ i01: lane5Of, lanes: lane5 }));
+
+// ---------- ⑪ 两块表的行尾删除（Push 213） ----------
+// 业务口径 2026-09-28：「日报记录 和 问题追随都要有删除按钮 和之前的删除同款 请你看看有没有合适的位置
+//   这两个任意删除谁都是关联的 都会导致双方都删除 因为他们本质是同一个日报」——
+//   ① 两表行尾各一枚**任务表同款** RowDeleteButton（静止 24px 幽灵态、行悬停才浮现、悬停按钮展开 48px 红胶囊「删除」）；
+//   ② 槽位是**预留**的 48px（任务表同款：「展开只吃预留的槽位，不挤动左侧列」）—— 原地长大，列宽 / 表宽一格不动；
+//      业务反馈「问题追踪的没做好 鼠标触碰表格会动」→ 本组给出直接回归护栏（悬停前 / 行悬停 / 胶囊展开三拍取列宽，逐格一致）；
+//   ③ 日报 ↔ 问题按「同一篇日报」整组删：删日报 = 连它派生的全部问题；删问题 = 连它来源的那篇日报；
+//   ④ 无派生问题的日报 / 无来源日报的问题：只删自己；⑤ 本组跑在最后（不再需要 i-01 / i-07 等演示行）。
+const hasRow = async (selector) => await ev("document.querySelector(" + j(selector) + ")!==null");
+const rowCount = async (selector) => await ev("document.querySelectorAll(" + j(selector) + ").length");
+const openSubview = async (name, selector) => {
+  await clickSelector("[data-subnav-item=" + Q + name + Q + "]");
+  await waitFor("document.querySelector(" + j(selector) + ")!==null");
+};
+/** 列宽三拍对照用：表头逐格宽 + 表格总宽（表宽 / 列宽变了 = 「表格会动」）。 */
+const colWidths = async (tableSelector) => await ev(
+  "(function(){var t=document.querySelector(" + j(tableSelector) + ");if(t===null){return null;}" +
+  "var tb=t.tagName===" + j("TABLE") + "?t:t.querySelector(" + j("table") + ");" +
+  "var hs=tb.querySelectorAll(" + j("thead th") + ");var a=[];for(var i=0;i<hs.length;i++){a.push(Math.round(hs[i].getBoundingClientRect().width));}" +
+  "return {w:Math.round(tb.getBoundingClientRect().width),cols:a};})()"
+);
+const lanesAtStart = await (async () => {
+  await openSubview("问题看板", "[data-issue-column]");
+  return await issueLaneCounts();
+})();
+await openSubview("问题追踪", "[data-issue-row]");
+const issuesStart = await rowCount("[data-issue-row]");
+await openSubview("日报记录", "[data-report-row]");
+const reportsStart = await rowCount("[data-report-row]");
+const reportColsIdle = await colWidths("[data-report-table]");
+const reportDeleteIdle = await ev(
+  "(function(){var r=document.querySelector(" + j("[data-report-row=r-0921a]") + ");if(r===null){return null;}" +
+  "var b=r.querySelector(" + j("[data-report-delete-cell] button") + ");if(b===null){return null;}" +
+  "var cell=r.querySelector(" + j("[data-report-delete-cell]") + ");var slot=r.querySelector(" + j("[data-report-delete-slot]") + ");" +
+  "var cs=getComputedStyle(b);var box=b.getBoundingClientRect();" +
+  "return {cells:r.querySelectorAll(" + j("td") + ").length,label:String(b.getAttribute(" + j("aria-label") + "))," +
+  "w:Math.round(box.width),h:Math.round(box.height),op:cs.opacity,radius:cs.borderRadius,radiusPx:parseFloat(cs.borderRadius)," +
+  "rowGroup:String(r.className).indexOf(" + j("group") + ")>=0,cellW:cell===null?0:Math.round(cell.getBoundingClientRect().width)," +
+  "slotW:slot===null?0:Math.round(slot.getBoundingClientRect().width)};})()"
+);
+check("⑪ 「日报记录」行尾 = 任务表同款删除按钮（业务口径「和之前的删除同款」）：48px 槽位预留（w-12）· 静止 24×24 幽灵态 · 未悬停 opacity=0 · 圆形按钮 · 行 = group 悬停作用域 · aria 名带「删除日报」",
+  reportDeleteIdle !== null && reportDeleteIdle.cells === 7 && reportDeleteIdle.w === 24 && reportDeleteIdle.h === 24 &&
+  reportDeleteIdle.op === "0" && reportDeleteIdle.radiusPx >= 9999 && reportDeleteIdle.rowGroup === true &&
+  reportDeleteIdle.cellW === 80 && reportDeleteIdle.slotW === 48 && reportDeleteIdle.label.indexOf("删除日报") === 0,
+  reportDeleteIdle === null ? "-" : JSON.stringify(reportDeleteIdle));
+const reportRowPt = await rectOf("[data-report-row=r-0921a]");
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: reportRowPt.x, y: reportRowPt.y, button: "none" });
+await sleep(450);
+const reportGhostShown = await ev(
+  "(function(){var b=document.querySelector(" + j("[data-report-row=r-0921a] [data-report-delete-cell] button") + ");" +
+  "return b===null?null:{op:getComputedStyle(b).opacity,w:Math.round(b.getBoundingClientRect().width)};})()"
+);
+const reportColsRowHover = await colWidths("[data-report-table]");
+check("⑪ 鼠标扫过这一行 → 幽灵态浮现（opacity 0 → 1 · 仍是 24px 圆），与任务表「行悬停才浮现」同一套节奏",
+  reportGhostShown !== null && reportGhostShown.op === "1" && reportGhostShown.w === 24,
+  reportGhostShown === null ? "-" : JSON.stringify(reportGhostShown));
+check("⑪ 幽灵态浮现不吃列宽：日报表格列宽 / 表宽与悬停前逐格一致（业务反馈「鼠标触碰表格会动」的回归护栏 · 第 1 拍）",
+  reportColsIdle !== null && reportColsRowHover !== null && JSON.stringify(reportColsRowHover) === JSON.stringify(reportColsIdle),
+  JSON.stringify({ idle: reportColsIdle, rowHover: reportColsRowHover }));
+const deleteBtnPt = await rectOf("[data-report-row=r-0921a] [data-report-delete-cell] button");
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: deleteBtnPt.x, y: deleteBtnPt.y, button: "none" });
+await sleep(500);
+const reportPill = await ev(
+  "(function(){var b=document.querySelector(" + j("[data-report-row=r-0921a] [data-report-delete-cell] button") + ");if(b===null){return null;}" +
+  "var cs=getComputedStyle(b);var box=b.getBoundingClientRect();var span=b.querySelector(" + j("span") + ");" +
+  "var cv=document.createElement(" + j("canvas") + ");cv.width=1;cv.height=1;var cx=cv.getContext(" + j("2d") + ");" +
+  "cx.fillStyle=cs.backgroundColor;cx.fillRect(0,0,1,1);var px=cx.getImageData(0,0,1,1).data;" +
+  "return {w:Math.round(box.width),bg:cs.backgroundColor," +
+  "bgRgb:" + j("rgb(") + "+px[0]+" + j(", ") + "+px[1]+" + j(", ") + "+px[2]+" + j(")") + ",color:cs.color,text:span===null?" + j("") + ":span.textContent.trim()};})()"
+);
+const reportColsPill = await colWidths("[data-report-table]");
+check("⑪ 鼠标悬停按钮 → 展开成 48px 红胶囊（宽 24 → 48 · 底色 = red-500（Tailwind v4 屏下 = oklch(0.637 0.237 25.331) · 与任务表行内删除同一枚原子类）· 白字「删除」），与任务表行内删除逐项同款",
+  reportPill !== null && reportPill.w === 48 && String(reportPill.bg).indexOf("oklch(0.637") >= 0 && String(reportPill.bg).indexOf("25.33") >= 0 &&
+  reportPill.color === "rgb(255, 255, 255)" && reportPill.text === "删除",
+  reportPill === null ? "-" : JSON.stringify(reportPill));
+check("⑪ 展开的胶囊只在预留的 48px 槽内长大：日报表格列宽 / 表宽与悬停前仍逐格一致（回归护栏 · 第 2 拍）",
+  reportColsIdle !== null && reportColsPill !== null && JSON.stringify(reportColsPill) === JSON.stringify(reportColsIdle),
+  JSON.stringify({ idle: reportColsIdle, pill: reportColsPill }));
+await openSubview("问题追踪", "[data-issue-row]");
+const issueColsIdle = await colWidths("[data-issue-table]");
+const issueDeleteIdle = await ev(
+  "(function(){var r=document.querySelector(" + j("[data-issue-row=i-07]") + ");if(r===null){return null;}" +
+  "var b=r.querySelector(" + j("[data-issue-delete-cell] button") + ");if(b===null){return null;}" +
+  "var cell=r.querySelector(" + j("[data-issue-delete-cell]") + ");var slot=r.querySelector(" + j("[data-issue-delete-slot]") + ");" +
+  "var cs=getComputedStyle(b);var box=b.getBoundingClientRect();" +
+  "return {cells:r.querySelectorAll(" + j("td") + ").length,label:String(b.getAttribute(" + j("aria-label") + "))," +
+  "w:Math.round(box.width),op:cs.opacity,rowGroup:String(r.className).indexOf(" + j("group") + ")>=0," +
+  "cellW:cell===null?0:Math.round(cell.getBoundingClientRect().width),slotW:slot===null?0:Math.round(slot.getBoundingClientRect().width)};})()"
+);
+check("⑪ 「问题追踪」行尾同款删除按钮（aria 名带「删除问题」· 静止 24×24 幽灵态 · 行 = group · 行仍 7 个单元格 · 48px 槽位预留）",
+  issueDeleteIdle !== null && issueDeleteIdle.cells === 7 && issueDeleteIdle.w === 24 && issueDeleteIdle.op === "0" &&
+  issueDeleteIdle.rowGroup === true && issueDeleteIdle.cellW === 88 && issueDeleteIdle.slotW === 48 && issueDeleteIdle.label.indexOf("删除问题") === 0,
+  issueDeleteIdle === null ? "-" : JSON.stringify(issueDeleteIdle));
+const issueRowPt = await rectOf("[data-issue-row=i-07]");
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: issueRowPt.x, y: issueRowPt.y, button: "none" });
+await sleep(450);
+const issueGhostShown = await ev(
+  "(function(){var b=document.querySelector(" + j("[data-issue-row=i-07] [data-issue-delete-cell] button") + ");" +
+  "return b===null?null:{op:getComputedStyle(b).opacity,w:Math.round(b.getBoundingClientRect().width)};})()"
+);
+const issueColsRowHover = await colWidths("[data-issue-table]");
+check("⑪ 问题追踪行悬停：幽灵态浮现（24px）且**表格一格不动**（业务反馈「问题追踪的没做好 鼠标触碰表格会动」的直接回归护栏 · 第 1 拍）",
+  issueGhostShown !== null && issueGhostShown.op === "1" && issueGhostShown.w === 24 &&
+  issueColsIdle !== null && issueColsRowHover !== null && JSON.stringify(issueColsRowHover) === JSON.stringify(issueColsIdle),
+  JSON.stringify({ ghost: issueGhostShown, idle: issueColsIdle, rowHover: issueColsRowHover }));
+const issueBtnPt = await rectOf("[data-issue-row=i-07] [data-issue-delete-cell] button");
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: issueBtnPt.x, y: issueBtnPt.y, button: "none" });
+await sleep(500);
+const issuePill = await ev(
+  "(function(){var b=document.querySelector(" + j("[data-issue-row=i-07] [data-issue-delete-cell] button") + ");if(b===null){return null;}" +
+  "var cs=getComputedStyle(b);var box=b.getBoundingClientRect();var span=b.querySelector(" + j("span") + ");" +
+  "return {w:Math.round(box.width),bg:cs.backgroundColor,text:span===null?" + j("") + ":span.textContent.trim()};})()"
+);
+const issueColsPill = await colWidths("[data-issue-table]");
+check("⑪ 问题追踪行尾悬停 → 同款 48px 红胶囊「删除」，展开仍只在槽内：列宽 / 表宽与悬停前逐格一致（回归护栏 · 第 2 拍）",
+  issuePill !== null && issuePill.w === 48 && issuePill.text === "删除" && String(issuePill.bg).indexOf("oklch(0.637") >= 0 &&
+  issueColsIdle !== null && issueColsPill !== null && JSON.stringify(issueColsPill) === JSON.stringify(issueColsIdle),
+  JSON.stringify({ pill: issuePill, idle: issueColsIdle, pillCols: issueColsPill }));
+// ①② 删「问题追踪」里的一条：i-07 与它的来源日报 r-0915 一起消失（同一篇日报整组）。
+await clickSelector("[data-issue-row=i-07] [data-issue-delete-cell] button");
+await waitFor("document.querySelector(" + j("[data-issue-row=i-07]") + ")===null");
+const issuesAfterIssueDelete = await rowCount("[data-issue-row]");
+const pairAfterIssueDelete = {
+  issueGone: (await hasRow("[data-issue-row=i-07]")) === false,
+  controlIssue: await hasRow("[data-issue-row=i-04]")
+};
+await openSubview("日报记录", "[data-report-row]");
+const reportsAfterIssueDelete = await rowCount("[data-report-row]");
+pairAfterIssueDelete.reportGone = (await hasRow("[data-report-row=r-0915]")) === false;
+pairAfterIssueDelete.controlReport = await hasRow("[data-report-row=r-0920]");
+check("⑪ 删「问题追踪」里的一条 = 连它来源的那篇日报一起删（业务口径「这两个任意删除谁 … 都会导致双方都删除」）：i-07 与来源日报 r-0915 双双消失（问题行 " + String(issuesStart) + " → " + String(issuesAfterIssueDelete) + "、日报行 " + String(reportsStart) + " → " + String(reportsAfterIssueDelete) + "），对照行（i-04 / r-0920）不动",
+  issuesAfterIssueDelete === issuesStart - 1 && reportsAfterIssueDelete === reportsStart - 1 &&
+  pairAfterIssueDelete.issueGone === true && pairAfterIssueDelete.reportGone === true && pairAfterIssueDelete.controlReport === true && pairAfterIssueDelete.controlIssue === true,
+  JSON.stringify({ counts: { issues: issuesAfterIssueDelete, reports: reportsAfterIssueDelete }, ...pairAfterIssueDelete }));
+// ③ 删「日报记录」里有派生问题的一篇：日报与它派生的问题一起消失。
+await clickSelector("[data-report-row=r-0921a] [data-report-delete-cell] button");
+await waitFor("document.querySelector(" + j("[data-report-row=r-0921a]") + ")===null");
+const reportsAfterReportDelete = await rowCount("[data-report-row]");
+const reportGoneAfterReportDelete = (await hasRow("[data-report-row=r-0921a]")) === false;
+await openSubview("问题追踪", "[data-issue-row]");
+const issuesAfterReportDelete = await rowCount("[data-issue-row]");
+const issueGoneAfterReportDelete = (await hasRow("[data-issue-row=i-01]")) === false;
+check("⑪ 删「日报记录」里有派生问题的一篇 = 连它派生的问题一起删：r-0921a 与其派生问题 i-01 双双消失（日报行 " + String(reportsAfterIssueDelete) + " → " + String(reportsAfterReportDelete) + "、问题行 " + String(issuesAfterIssueDelete) + " → " + String(issuesAfterReportDelete) + "）",
+  reportsAfterReportDelete === reportsAfterIssueDelete - 1 && issuesAfterReportDelete === issuesAfterIssueDelete - 1 &&
+  reportGoneAfterReportDelete === true && issueGoneAfterReportDelete === true,
+  JSON.stringify({ reports: reportsAfterReportDelete, issues: issuesAfterReportDelete, reportGone: reportGoneAfterReportDelete, issueGone: issueGoneAfterReportDelete }));
+// ④ 删没有派生问题的日报：只掉它自己（不给问题表误伤）。
+await openSubview("日报记录", "[data-report-row]");
+await clickSelector("[data-report-row=r-0921b] [data-report-delete-cell] button");
+await waitFor("document.querySelector(" + j("[data-report-row=r-0921b]") + ")===null");
+const reportsAfterBareDelete = await rowCount("[data-report-row]");
+await openSubview("问题追踪", "[data-issue-row]");
+const issuesAfterBareDelete = await rowCount("[data-issue-row]");
+check("⑪ 删没有派生问题的日报（r-0921b）＝ 只掉这一行：日报再 -1、问题行数不变（反向对照 · 不误伤问题表）",
+  reportsAfterBareDelete === reportsAfterReportDelete - 1 && issuesAfterBareDelete === issuesAfterReportDelete,
+  JSON.stringify({ reports: reportsAfterBareDelete, issues: issuesAfterBareDelete }));
+await openSubview("问题看板", "[data-issue-column]");
+const lanesAfterDelete = await issueLaneCounts();
+const cardsGone = {
+  i01: (await hasRow("[data-issue-card=i-01]")) === false,
+  i07: (await hasRow("[data-issue-card=i-07]")) === false
+};
+check("⑪ 同一份内存态联动：「问题看板」上 i-01 / i-07 两张卡一起消失，三列计数各按其状态 -1（未解决 " + String(lanesAtStart["未解决"]) + " → " + String(lanesAfterDelete["未解决"]) + "、" + "已完成 " + String(lanesAtStart["已完成"]) + " → " + String(lanesAfterDelete["已完成"]) + "、处理中不变）",
+  cardsGone.i01 === true && cardsGone.i07 === true &&
+  lanesAfterDelete["未解决"] === lanesAtStart["未解决"] - 1 &&
+  lanesAfterDelete["已完成"] === lanesAtStart["已完成"] - 1 &&
+  lanesAfterDelete["处理中"] === lanesAtStart["处理中"],
+  JSON.stringify({ lanes: lanesAfterDelete, ...cardsGone }));
 
 // ---------- 清理 ----------
 // 偏好还原（放在撤销临时会话之前）：focusMode 回到进厂原值，不给下一轮留状态
