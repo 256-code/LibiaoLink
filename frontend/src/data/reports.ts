@@ -25,7 +25,7 @@ export type DailyReport = {
   state: ReportState;
   /** 今日施工人数 */
   headcount: number;
-  /** 当日完成工作（关联任务后自动追加到任务「项目进展描述」并留痕，A3-08） */
+  /** 当日完成工作（A3-04 必填；Push 198：「关联任务」改「关联阶段」，原按任务回写「项目进展描述」的副作用随关联单位变更停用） */
   doneWork: string;
   /** 明日计划 */
   plan: string;
@@ -35,8 +35,8 @@ export type DailyReport = {
   issueCategory: string;
   /** 解决方案或建议 */
   suggestion: string;
-  /** 关联任务（多选，用于回写任务进展） */
-  tasks: readonly string[];
+  /** 关联阶段（多选；标记当日完成工作对应的项目阶段，Push 198 由「关联任务」改口径） */
+  stages: readonly string[];
   /** 现场工作附图（原型只存文件名，正式版走文件库） */
   photos: readonly string[];
 };
@@ -82,7 +82,7 @@ const DEMO_REPORTS: DailyReport[] = [
     foundIssue: "格口滑槽入场运输磕碰，2 件滑槽面板需补件（现场无备件）",
     issueCategory: "供应商原因",
     suggestion: "建议由采购联系供应商走补件流程，同步确认运输加固方案",
-    tasks: ["工作站安装及定位弹线", "小批量实物测试"],
+    stages: ["硬件实施", "试运行"],
     photos: ["滑槽磕碰-01.jpg", "滑槽磕碰-02.jpg"],
   },
   {
@@ -97,7 +97,7 @@ const DEMO_REPORTS: DailyReport[] = [
     foundIssue: "",
     issueCategory: "",
     suggestion: "",
-    tasks: ["WES软件部署及与WMS联调;设备运行测试"],
+    stages: ["软件部署"],
     photos: ["联调记录-01.jpg"],
   },
   {
@@ -112,7 +112,7 @@ const DEMO_REPORTS: DailyReport[] = [
     foundIssue: "WES 与 WMS 接口偶发超时（约 3 分钟一次），联调中断",
     issueCategory: "规划部",
     suggestion: "建议后端增加重试队列，并复核接口超时阈值",
-    tasks: ["强弱电布线、接线，服务器机柜安装及理线", "WES软件部署及与WMS联调;设备运行测试"],
+    stages: ["硬件实施", "软件部署"],
     photos: ["机柜理线-01.jpg", "联调日志-01.jpg"],
   },
   {
@@ -127,7 +127,7 @@ const DEMO_REPORTS: DailyReport[] = [
     foundIssue: "现场地面平整度不足，导轨底座需加垫片（局部高低差约 8mm）",
     issueCategory: "客观原因",
     suggestion: "建议项目部协调客户做局部找平，或改用可调底座",
-    tasks: ["巷道导轨安装，铜丝镶嵌", "安全围栏安装及调试"],
+    stages: ["硬件实施"],
     photos: ["地面平整度-01.jpg"],
   },
   {
@@ -142,7 +142,7 @@ const DEMO_REPORTS: DailyReport[] = [
     foundIssue: "3 号供包台光电对射误触发，偶尔丢包",
     issueCategory: "机械部",
     suggestion: "建议更换对射支架并加装遮光罩",
-    tasks: ["巷道导轨安装，铜丝镶嵌", "工作站安装及定位弹线"],
+    stages: ["硬件实施"],
     photos: ["工作站弹线-01.jpg"],
   },
   {
@@ -157,7 +157,7 @@ const DEMO_REPORTS: DailyReport[] = [
     foundIssue: "客户现场电压波动导致 UPS 频繁切换（约每小时 2 次）",
     issueCategory: "客户原因",
     suggestion: "建议客户加装稳压器，UPS 切换前先做空载测试",
-    tasks: ["巷道导轨安装，铜丝镶嵌", "施工安全培训"],
+    stages: ["硬件实施"],
     photos: ["1号巷道导轨-01.jpg", "安全培训-01.jpg"],
   },
 ];
