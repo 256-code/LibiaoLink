@@ -56,6 +56,8 @@ function projectRow(overrides: Partial<ProjectRow> & { id: string }): ProjectRow
     updatedAt: AT,
     deletedAt: null,
     deletedBy: null,
+    archivedAt: null,
+    archivedBy: null,
     ...overrides,
   };
 }
@@ -261,6 +263,8 @@ describe("toProjectView", () => {
     expect(view.customer).toBeNull();
     expect(view.createdAt).toBe("2026-09-20T06:00:00.000Z");
     expect(Object.keys(view).sort()).toEqual([
+      "archivedAt",
+      "archivedBy",
       "code",
       "createdAt",
       "customer",
