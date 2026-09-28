@@ -75,6 +75,14 @@
     {
       "name": "workspace",
       "description": "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）"
+    },
+    {
+      "name": "views",
+      "description": "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）"
+    },
+    {
+      "name": "follows",
+      "description": "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作"
     }
   ],
   "components": {
@@ -2643,6 +2651,237 @@
           "total"
         ]
       },
+      "FollowBatchBody": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "objectType": {
+                  "$ref": "#/components/schemas/FollowObjectType"
+                },
+                "objectId": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "follow": {
+                  "type": "boolean",
+                  "description": "true 关注 / false 取消"
+                }
+              },
+              "required": [
+                "objectType",
+                "objectId",
+                "follow"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "批量条目（1 ~ 50；逐条独立处理）"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "批量关注 / 取关（A1-15；部分失败不影响其它条目）"
+      },
+      "FollowBatchFailureCode": {
+        "type": "string",
+        "enum": [
+          "not_found"
+        ],
+        "description": "批量失败原因：not_found 目标不存在 / 不可见 / 已删除（仅关注动作产生；取关不存在的行 = unchanged）"
+      },
+      "FollowBatchResponse": {
+        "type": "object",
+        "properties": {
+          "followed": {
+            "type": "integer",
+            "description": "新关注数"
+          },
+          "unfollowed": {
+            "type": "integer",
+            "description": "取消关注数"
+          },
+          "unchanged": {
+            "type": "integer",
+            "description": "无需变更数（重复关注 / 取关不存在的行）"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "description": "条目在请求里的下标（0 起）"
+                },
+                "objectType": {
+                  "$ref": "#/components/schemas/FollowObjectType"
+                },
+                "objectId": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "code": {
+                  "$ref": "#/components/schemas/FollowBatchFailureCode"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "index",
+                "objectType",
+                "objectId",
+                "code",
+                "message"
+              ]
+            },
+            "description": "失败项（顺序 = 请求顺序）"
+          }
+        },
+        "required": [
+          "followed",
+          "unfollowed",
+          "unchanged",
+          "failures"
+        ],
+        "description": "批量结果（整体 200；失败清单给逐条原因）"
+      },
+      "FollowCreateBody": {
+        "type": "object",
+        "properties": {
+          "objectType": {
+            "$ref": "#/components/schemas/FollowObjectType"
+          },
+          "objectId": {
+            "$ref": "#/components/schemas/Uuid"
+          }
+        },
+        "required": [
+          "objectType",
+          "objectId"
+        ],
+        "description": "关注（目标必须可见且未删除；重复关注幂等）"
+      },
+      "FollowCreateResponse": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/FollowItem"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "true = 本次新建（201）；false = 已关注（幂等，200）"
+          }
+        },
+        "required": [
+          "item",
+          "created"
+        ],
+        "description": "关注结果（幂等）"
+      },
+      "FollowDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "objectType": {
+            "$ref": "#/components/schemas/FollowObjectType"
+          },
+          "objectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "removed": {
+            "type": "boolean",
+            "description": "恒为 true（未关注 = 404，不返回本响应）"
+          }
+        },
+        "required": [
+          "objectType",
+          "objectId",
+          "removed"
+        ],
+        "description": "取关结果"
+      },
+      "FollowItem": {
+        "type": "object",
+        "properties": {
+          "objectType": {
+            "$ref": "#/components/schemas/FollowObjectType"
+          },
+          "objectId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "关注对象 id（project.id / task.id）"
+              }
+            ]
+          },
+          "projectId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "所属项目 id（关注项目 = 自身；关注任务 = 任务所属项目）"
+              }
+            ]
+          },
+          "projectCode": {
+            "type": "string",
+            "description": "项目编号（随行展示）"
+          },
+          "name": {
+            "type": "string",
+            "description": "关注对象名称（项目名 / 任务标题；随行展示）"
+          },
+          "createdAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "关注时间"
+              }
+            ]
+          }
+        },
+        "required": [
+          "objectType",
+          "objectId",
+          "projectId",
+          "projectCode",
+          "name",
+          "createdAt"
+        ],
+        "description": "关注关系（我的关注清单行；随行名称用于列表展示）"
+      },
+      "FollowListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowItem"
+            },
+            "description": "我的关注清单（createdAt 降序 → id 升序；不可见 / 已删对象不返回）"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "关注清单（当前会话用户）"
+      },
+      "FollowObjectType": {
+        "type": "string",
+        "enum": [
+          "project",
+          "task"
+        ],
+        "description": "关注对象类型：project 项目 / task 任务"
+      },
       "IdempotencyKey": {
         "type": "string",
         "minLength": 8,
@@ -4635,6 +4874,72 @@
           "timeTo"
         ],
         "description": "常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters）"
+      },
+      "SavedView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "ownerId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "创建者（改 / 删的唯一责任人）"
+              }
+            ]
+          },
+          "ownerName": {
+            "type": "string",
+            "description": "创建者姓名（公共视图列表随行展示）"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ViewScope"
+          },
+          "name": {
+            "type": "string",
+            "description": "视图名称（btrim 后 1 ~ 50 字）"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/ViewFilters"
+          },
+          "columns": {
+            "$ref": "#/components/schemas/ViewColumns"
+          },
+          "sort": {
+            "$ref": "#/components/schemas/ViewSort"
+          },
+          "grouping": {
+            "$ref": "#/components/schemas/ViewGrouping"
+          },
+          "isDefault": {
+            "type": "boolean",
+            "description": "是否创建者的默认视图（每人至多一条；置位时自动清掉该人其它默认）"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "id",
+          "ownerId",
+          "ownerName",
+          "scope",
+          "name",
+          "filters",
+          "columns",
+          "sort",
+          "grouping",
+          "isDefault",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "保存的视图（内容 = 筛选 + 列配置 + 排序 + 分组；仅保存配置、不复制数据）"
       },
       "Sha256": {
         "type": "string",
@@ -7092,6 +7397,199 @@
         "type": "integer",
         "minimum": 0,
         "description": "乐观锁版本：读取时返回，更新时必须原样回传，冲突返回 409"
+      },
+      "ViewColumns": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "maxItems": 60,
+        "description": "列配置（列键数组；顺序 = 展示顺序；列键白名单由前端列定义维护）"
+      },
+      "ViewCreateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "description": "视图名称（前后空白剔除后 1 ~ 50 字）"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ViewScope"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/ViewFilters"
+          },
+          "columns": {
+            "$ref": "#/components/schemas/ViewColumns"
+          },
+          "sort": {
+            "$ref": "#/components/schemas/ViewSort"
+          },
+          "grouping": {
+            "$ref": "#/components/schemas/ViewGrouping"
+          },
+          "isDefault": {
+            "type": "boolean",
+            "default": false,
+            "description": "建为我的默认视图（置位时自动清掉该人其它默认）"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "新建视图（A1-03：筛选 + 列配置 + 排序 + 分组）"
+      },
+      "ViewDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "恒为 true（视图是配置文件，物理删、不留痕）"
+          }
+        },
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "description": "视图删除结果（物理删）"
+      },
+      "ViewFilters": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/ViewFilterValue"
+        },
+        "description": "筛选条件（扁平键值，最多 30 键；键 = 任务表 URL 参数名，如 stageKey / ownerId / displayStatus / keyword）"
+      },
+      "ViewFilterValue": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 120
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "maxItems": 50
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "筛选值：字符串 / 数字 / 布尔 / 字符串数组（多值）/ null（显式清空）"
+      },
+      "ViewGrouping": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "分组键（如 stage / owner / status / project）"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "description": "分组方式"
+      },
+      "ViewListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedView"
+            },
+            "description": "可见视图清单（排序：个人在前 → updatedAt 降序 → id 升序）"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "视图清单（无分页：个人 + 公共视图量级小）"
+      },
+      "ViewScope": {
+        "type": "string",
+        "enum": [
+          "personal",
+          "public"
+        ],
+        "description": "视图范围：personal 个人视图（仅本人可见 / 可改）/ public 公共视图（全员可见，创建者可改；角色级共享未做，差异登记）"
+      },
+      "ViewSort": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "排序键（白名单由目标列表维护）"
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "description": "升序 / 降序"
+          }
+        },
+        "required": [
+          "key",
+          "order"
+        ],
+        "description": "排序方式（键 + 方向）"
+      },
+      "ViewUpdateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ViewScope"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/ViewFilters"
+          },
+          "columns": {
+            "$ref": "#/components/schemas/ViewColumns"
+          },
+          "sort": {
+            "$ref": "#/components/schemas/ViewSort"
+          },
+          "grouping": {
+            "$ref": "#/components/schemas/ViewGrouping"
+          },
+          "isDefault": {
+            "type": "boolean"
+          }
+        },
+        "description": "更新视图（局部更新：只传变更键；空更新 400 VALIDATION_FAILED）"
       },
       "WorkspaceIssueItem": {
         "type": "object",
@@ -14358,6 +14856,509 @@
           },
           "401": {
             "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/views": {
+      "get": {
+        "tags": [
+          "views"
+        ],
+        "summary": "视图清单（A1-03 · M2-06）：我的个人视图 + 全部公共视图；scope 过滤；排序个人在前 → 更新时间降序 → id 升序",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ViewScope"
+                },
+                {
+                  "description": "范围过滤：personal = 我的个人视图；public = 公共视图；缺省 = 我的个人视图 + 全部公共视图"
+                }
+              ]
+            },
+            "required": false,
+            "description": "范围过滤：personal = 我的个人视图；public = 公共视图；缺省 = 我的个人视图 + 全部公共视图",
+            "name": "scope",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "可见视图清单（无分页：量级小）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "views"
+        ],
+        "summary": "新建视图（A1-03 首刀）：仅保存配置（筛选 + 列 + 排序 + 分组）、不复制数据；isDefault 置位时自动清掉本人其它默认",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "新建的视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/views/{id}": {
+      "patch": {
+        "tags": [
+          "views"
+        ],
+        "summary": "更新视图（局部更新：只传变更键，空更新 400）：个人视图他人 404；公共视图非创建者 403；无乐观锁（单写者）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "views"
+        ],
+        "summary": "删除视图（物理删）：个人视图他人 404；公共视图非创建者 403",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewDeleteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/follows": {
+      "get": {
+        "tags": [
+          "follows"
+        ],
+        "summary": "我的关注清单（A1-15 · M2-06）：按对象类型 / 对象 / 项目过滤；不可见或已删对象不返回；时间降序 → id 升序",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/FollowObjectType"
+            },
+            "required": false,
+            "description": "关注对象类型：project 项目 / task 任务",
+            "name": "objectType",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "description": "按对象过滤（配合 objectType；用于任务详情判断是否已关注）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "按对象过滤（配合 objectType；用于任务详情判断是否已关注）",
+            "name": "objectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "description": "按项目过滤（含该项目下的任务关注）"
+                }
+              ]
+            },
+            "required": false,
+            "description": "按项目过滤（含该项目下的任务关注）",
+            "name": "projectId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "我的关注清单",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "follows"
+        ],
+        "summary": "关注（A1-15）：目标须可见且未删除（归档项目不可新关注）；重复关注幂等（created=false → 200）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已关注（幂等回读）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowCreateResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "新建的关注关系",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/follows/batch": {
+      "post": {
+        "tags": [
+          "follows"
+        ],
+        "summary": "批量关注 / 取关（A1-15，1 ~ 50 条）：单事务逐条独立；失败仅关注动作的 not_found（取关不存在的行 = unchanged）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowBatchBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "批量结果（失败明细内联）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/follows/{objectType}/{objectId}": {
+      "delete": {
+        "tags": [
+          "follows"
+        ],
+        "summary": "取关（按关系键删除，不校验目标是否可见 / 存在）；未关注 = 404",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/FollowObjectType"
+            },
+            "required": true,
+            "description": "关注对象类型：project 项目 / task 任务",
+            "name": "objectType",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "objectId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "取关结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowDeleteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {

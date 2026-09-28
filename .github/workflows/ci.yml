@@ -218,3 +218,10 @@ jobs:
           M6_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
           M6_BASE_URL: http://127.0.0.1:3011
         run: node scripts/m6-replay.mjs
+      # M2-06（视图 + 关注 · wmj 线，Push 168）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: M2-06 replay (views + follows)
+        working-directory: server
+        env:
+          M2_06_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M2_06_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m2-06-replay.mjs

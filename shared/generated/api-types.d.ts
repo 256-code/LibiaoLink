@@ -5862,6 +5862,472 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 视图清单（A1-03 · M2-06）：我的个人视图 + 全部公共视图；scope 过滤；排序个人在前 → 更新时间降序 → id 升序 */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 范围过滤：personal = 我的个人视图；public = 公共视图；缺省 = 我的个人视图 + 全部公共视图 */
+                    scope?: components["schemas"]["ViewScope"] & unknown;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 可见视图清单（无分页：量级小） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ViewListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 新建视图（A1-03 首刀）：仅保存配置（筛选 + 列 + 排序 + 分组）、不复制数据；isDefault 置位时自动清掉本人其它默认 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ViewCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 新建的视图 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedView"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/views/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除视图（物理删）：个人视图他人 404；公共视图非创建者 403 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ViewDeleteResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** 更新视图（局部更新：只传变更键，空更新 400）：个人视图他人 404；公共视图非创建者 403；无乐观锁（单写者） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ViewUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的视图 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedView"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/follows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的关注清单（A1-15 · M2-06）：按对象类型 / 对象 / 项目过滤；不可见或已删对象不返回；时间降序 → id 升序 */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 关注对象类型：project 项目 / task 任务 */
+                    objectType?: components["schemas"]["FollowObjectType"];
+                    /** @description 按对象过滤（配合 objectType；用于任务详情判断是否已关注） */
+                    objectId?: components["schemas"]["Uuid"] & unknown;
+                    /** @description 按项目过滤（含该项目下的任务关注） */
+                    projectId?: components["schemas"]["Uuid"] & unknown;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 我的关注清单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FollowListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 关注（A1-15）：目标须可见且未删除（归档项目不可新关注）；重复关注幂等（created=false → 200） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FollowCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 已关注（幂等回读） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FollowCreateResponse"];
+                    };
+                };
+                /** @description 新建的关注关系 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FollowCreateResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/follows/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量关注 / 取关（A1-15，1 ~ 50 条）：单事务逐条独立；失败仅关注动作的 not_found（取关不存在的行 = unchanged） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FollowBatchBody"];
+                };
+            };
+            responses: {
+                /** @description 批量结果（失败明细内联） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FollowBatchResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/follows/{objectType}/{objectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 取关（按关系键删除，不校验目标是否可见 / 存在）；未关注 = 404 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 关注对象类型：project 项目 / task 任务 */
+                    objectType: components["schemas"]["FollowObjectType"];
+                    /** @description UUID（主键与关联 ID） */
+                    objectId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 取关结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FollowDeleteResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6526,6 +6992,78 @@ export interface components {
             items: components["schemas"]["FileVersion"][];
             total: number;
         };
+        /** @description 批量关注 / 取关（A1-15；部分失败不影响其它条目） */
+        FollowBatchBody: {
+            /** @description 批量条目（1 ~ 50；逐条独立处理） */
+            items: {
+                objectType: components["schemas"]["FollowObjectType"];
+                objectId: components["schemas"]["Uuid"];
+                /** @description true 关注 / false 取消 */
+                follow: boolean;
+            }[];
+        };
+        /**
+         * @description 批量失败原因：not_found 目标不存在 / 不可见 / 已删除（仅关注动作产生；取关不存在的行 = unchanged）
+         * @enum {string}
+         */
+        FollowBatchFailureCode: "not_found";
+        /** @description 批量结果（整体 200；失败清单给逐条原因） */
+        FollowBatchResponse: {
+            /** @description 新关注数 */
+            followed: number;
+            /** @description 取消关注数 */
+            unfollowed: number;
+            /** @description 无需变更数（重复关注 / 取关不存在的行） */
+            unchanged: number;
+            /** @description 失败项（顺序 = 请求顺序） */
+            failures: {
+                /** @description 条目在请求里的下标（0 起） */
+                index: number;
+                objectType: components["schemas"]["FollowObjectType"];
+                objectId: components["schemas"]["Uuid"];
+                code: components["schemas"]["FollowBatchFailureCode"];
+                message: string;
+            }[];
+        };
+        /** @description 关注（目标必须可见且未删除；重复关注幂等） */
+        FollowCreateBody: {
+            objectType: components["schemas"]["FollowObjectType"];
+            objectId: components["schemas"]["Uuid"];
+        };
+        /** @description 关注结果（幂等） */
+        FollowCreateResponse: {
+            item: components["schemas"]["FollowItem"];
+            /** @description true = 本次新建（201）；false = 已关注（幂等，200） */
+            created: boolean;
+        };
+        /** @description 取关结果 */
+        FollowDeleteResponse: {
+            objectType: components["schemas"]["FollowObjectType"];
+            objectId: components["schemas"]["Uuid"];
+            /** @description 恒为 true（未关注 = 404，不返回本响应） */
+            removed: boolean;
+        };
+        /** @description 关注关系（我的关注清单行；随行名称用于列表展示） */
+        FollowItem: {
+            objectType: components["schemas"]["FollowObjectType"];
+            objectId: components["schemas"]["Uuid"] & unknown;
+            projectId: components["schemas"]["Uuid"] & unknown;
+            /** @description 项目编号（随行展示） */
+            projectCode: string;
+            /** @description 关注对象名称（项目名 / 任务标题；随行展示） */
+            name: string;
+            createdAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 关注清单（当前会话用户） */
+        FollowListResponse: {
+            /** @description 我的关注清单（createdAt 降序 → id 升序；不可见 / 已删对象不返回） */
+            items: components["schemas"]["FollowItem"][];
+        };
+        /**
+         * @description 关注对象类型：project 项目 / task 任务
+         * @enum {string}
+         */
+        FollowObjectType: "project" | "task";
         /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
         IdempotencyKey: string;
         /** @description 一条问题记录（由日报自动生成或手工创建） */
@@ -7006,6 +7544,24 @@ export interface components {
             managerIds: string[];
             timeFrom: components["schemas"]["DateOnly"] & (string | null);
             timeTo: components["schemas"]["DateOnly"] & (string | null);
+        };
+        /** @description 保存的视图（内容 = 筛选 + 列配置 + 排序 + 分组；仅保存配置、不复制数据） */
+        SavedView: {
+            id: components["schemas"]["Uuid"];
+            ownerId: components["schemas"]["Uuid"] & unknown;
+            /** @description 创建者姓名（公共视图列表随行展示） */
+            ownerName: string;
+            scope: components["schemas"]["ViewScope"];
+            /** @description 视图名称（btrim 后 1 ~ 50 字） */
+            name: string;
+            filters: components["schemas"]["ViewFilters"];
+            columns: components["schemas"]["ViewColumns"];
+            sort: components["schemas"]["ViewSort"];
+            grouping: components["schemas"]["ViewGrouping"];
+            /** @description 是否创建者的默认视图（每人至多一条；置位时自动清掉该人其它默认） */
+            isDefault: boolean;
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
         };
         /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
@@ -7658,6 +8214,70 @@ export interface components {
         Uuid: string;
         /** @description 乐观锁版本：读取时返回，更新时必须原样回传，冲突返回 409 */
         Version: number;
+        /** @description 列配置（列键数组；顺序 = 展示顺序；列键白名单由前端列定义维护） */
+        ViewColumns: string[];
+        /** @description 新建视图（A1-03：筛选 + 列配置 + 排序 + 分组） */
+        ViewCreateBody: {
+            /** @description 视图名称（前后空白剔除后 1 ~ 50 字） */
+            name: string;
+            scope?: components["schemas"]["ViewScope"];
+            filters?: components["schemas"]["ViewFilters"];
+            columns?: components["schemas"]["ViewColumns"];
+            sort?: components["schemas"]["ViewSort"];
+            grouping?: components["schemas"]["ViewGrouping"];
+            /**
+             * @description 建为我的默认视图（置位时自动清掉该人其它默认）
+             * @default false
+             */
+            isDefault: boolean;
+        };
+        /** @description 视图删除结果（物理删） */
+        ViewDeleteResponse: {
+            id: components["schemas"]["Uuid"];
+            /** @description 恒为 true（视图是配置文件，物理删、不留痕） */
+            deleted: boolean;
+        };
+        /** @description 筛选条件（扁平键值，最多 30 键；键 = 任务表 URL 参数名，如 stageKey / ownerId / displayStatus / keyword） */
+        ViewFilters: {
+            [key: string]: components["schemas"]["ViewFilterValue"];
+        };
+        /** @description 筛选值：字符串 / 数字 / 布尔 / 字符串数组（多值）/ null（显式清空） */
+        ViewFilterValue: string | number | boolean | string[] | null;
+        /** @description 分组方式 */
+        ViewGrouping: {
+            /** @description 分组键（如 stage / owner / status / project） */
+            key: string;
+        } | null;
+        /** @description 视图清单（无分页：个人 + 公共视图量级小） */
+        ViewListResponse: {
+            /** @description 可见视图清单（排序：个人在前 → updatedAt 降序 → id 升序） */
+            items: components["schemas"]["SavedView"][];
+        };
+        /**
+         * @description 视图范围：personal 个人视图（仅本人可见 / 可改）/ public 公共视图（全员可见，创建者可改；角色级共享未做，差异登记）
+         * @enum {string}
+         */
+        ViewScope: "personal" | "public";
+        /** @description 排序方式（键 + 方向） */
+        ViewSort: {
+            /** @description 排序键（白名单由目标列表维护） */
+            key: string;
+            /**
+             * @description 升序 / 降序
+             * @enum {string}
+             */
+            order: "asc" | "desc";
+        } | null;
+        /** @description 更新视图（局部更新：只传变更键；空更新 400 VALIDATION_FAILED） */
+        ViewUpdateBody: {
+            name?: string;
+            scope?: components["schemas"]["ViewScope"];
+            filters?: components["schemas"]["ViewFilters"];
+            columns?: components["schemas"]["ViewColumns"];
+            sort?: components["schemas"]["ViewSort"];
+            grouping?: components["schemas"]["ViewGrouping"];
+            isDefault?: boolean;
+        };
         /** @description 工作台问题项（跨项目） */
         WorkspaceIssueItem: {
             id: components["schemas"]["Uuid"];
