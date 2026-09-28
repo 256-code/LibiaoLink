@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { InlineCell, InlineMultiOptionCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
@@ -13,6 +13,8 @@ import {
   type ReportPhoto,
 } from "../data/reports";
 import { PROJECT_STAGES } from "../data/projects";
+import { lockBodyScroll } from "../scrollLock";
+import { ScrollArea } from "./ScrollArea";
 import type { MeResponse, Project } from "../types";
 
 /**
@@ -294,8 +296,10 @@ const ISSUE_TABLE_COLUMNS: readonly { key: string; label: string }[] = [
   { key: "state", label: "问题是否处理" },
 ];
 
-/** 问题看板列壳：三列固定宽度、横向排布，空列保留。 */
-const ISSUE_COLUMN = "flex w-[300px] shrink-0 flex-col rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3";
+/** 问题看板列壳（Push 209 改版 · 业务口径「样式参考任务进展的」）：与「任务进展」看板**同一套列壳** —— 原灰底面板
+ *  （白底 + 圆角 + 描边）整体下架，列 = 纯列容器（280px 宽、铺满视口、上限 52rem、下限 22rem）；列内 / 列间滚动条
+ *  都走 ScrollArea 的隐式口径（原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块）。 */
+const ISSUE_COLUMN = "flex h-[calc(100vh-12.75rem)] max-h-[52rem] min-h-[22rem] w-[280px] shrink-0 flex-col";
 
 /** 问题归类（C9 字典「问题归类」取值，口径见技术设计 v0.2 §6）。 */
 const ISSUE_CATEGORIES: readonly string[] = [
@@ -484,12 +488,13 @@ function emptyDraft(): ReportDraft {
   return { dateIso: todayIso(), headcount: "", doneWork: "", plan: "", foundIssue: "", issueCategories: [], suggestion: "", stages: [], photos: [], issuePhotos: [] };
 }
 
-/** 字段行（浅灰字段名 + 深灰取值），与两块看板卡片同一套口径。 */
+/** 卡片字段行（Push 209 改版 · 业务口径 2026-09-28「问题看板是这样的 要这些内容 然后样式参考任务进展的」）：
+ *  字段名独占一行浅灰小字、取值在下一行 —— 与「任务进展」看板卡片的 Field 同一套口径（业务样 = 图一）。 */
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="mt-2 flex min-w-0 items-baseline gap-2 text-xs">
-      <span className="shrink-0 text-zinc-400">{label}</span>
-      <span className="min-w-0 flex-1">{children}</span>
+    <div className="mt-3">
+      <p className="text-[11px] text-zinc-500">{label}</p>
+      <div className="mt-1 min-w-0">{children}</div>
     </div>
   );
 }
@@ -985,29 +990,44 @@ function ReportList({ reports, onPatch }: { reports: readonly DailyReport[]; onP
   );
 }
 
-/** 一条问题记录（问题看板的一张卡）：Push 207 起撤「责任 / 处理时限 / 所属任务」三项（业务口径「责任这一栏不需要」+
- *  「处理时限不需要 所属任务也不需要」），只留状态签 + 提出人 / 标题 / 问题归类色签 / 提出日期 / 解决方案（有才显示）。 */
-function IssueCard({ issue }: { issue: Issue }) {
+/** 一条问题记录（问题看板的一张卡 · Push 209 改版 —— 业务口径 2026-09-28「问题看板是这样的 要这些内容 然后样式
+ *  参考任务进展的」）：卡面与业务样「图一」对齐 —— 只出**问题内容**四段：问题描述（多行 pre-line）/ 问题归类（彩色
+ *  色签）/ 解决方案或建议（多行 pre-line，有才显示）/ 问题附图（40×40 缩略图，有才显示）；字段名 = 独占一行的浅灰小字。
+ *  样式 = 与「任务进展」看板卡片同一套材质（CARD_SHELL 白壳 + 发丝边 + 三层投影 + 细纹），点一下开「问题详情」抽屉。
+ *  同批下架（图一没有）：状态签 / 提出人 / 提出日期 —— 状态看列头、其余进抽屉（Push 207 的「责任 / 处理时限 / 所属任务」
+ *  不再展示口径照旧不变）。 */
+function IssueCard({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
   return (
-    <div data-issue-card={issue.id} className={CARD_SHELL}>
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={"问题：" + issue.title}
+      title="点一下看问题详情（含来源日报内容）"
+      data-issue-card={issue.id}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      className={CARD_SHELL + " cursor-pointer"}
+    >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
-        <div className="flex items-center gap-2">
-          <IssueStateTag state={issue.state} />
-          <span className="ml-auto text-[10px] text-zinc-400">{issue.reporter} 提出</span>
-        </div>
-        <p className="mt-1.5 whitespace-pre-line break-words text-sm font-bold leading-5 text-zinc-900">{issue.title}</p>
+        <p data-issue-card-title="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{issue.title}</p>
         <Field label="问题归类">
           <CategoryTags value={issue.category} />
         </Field>
-        <Field label="提出日期">
-          <span className="text-sm text-zinc-800">{issue.raisedAt}</span>
-        </Field>
         {issue.solution === "" ? null : (
-          <div className="mt-3 rounded-lg bg-emerald-50/70 px-2.5 py-2">
-            <p className="text-[11px] font-medium text-emerald-700">解决方案 / 回复</p>
-            <p className="mt-0.5 text-xs leading-5 text-zinc-700">{issue.solution}</p>
-          </div>
+          <Field label="解决方案或建议">
+            <p data-issue-card-solution="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{issue.solution}</p>
+          </Field>
+        )}
+        {issue.photos.length === 0 ? null : (
+          <Field label="问题附图">
+            <PhotoStrip items={issue.photos} size="md" />
+          </Field>
         )}
       </div>
     </div>
@@ -1448,6 +1468,171 @@ function ReportFillForm({
 }
 
 /** 「日报及问题」视图：页内四个键帽按钮（日报填写 / 日报记录 / 问题追踪 / 问题看板）+ 对应内容。 */
+/** 抽屉关闭动画时长（同「任务详情抽屉」：先播 170ms 退场动画再真正卸载）。 */
+const CLOSE_ANIMATION_MS = 170;
+
+/** 问题详情抽屉（Push 209 · 业务口径 2026-09-28「点击要出现抽屉 是关于这个问题的日报内容」）：
+ *  卡面只留摘要，点开抽屉看全量 —— 上半 = 问题本身（问题描述 / 问题归类 / 解决方案或建议 / 问题附图），下半 = 来源日报
+ *  （当日完成工作 / 日期 / 填写者 / 明日计划 / 现场工作附图 / 问题是否处理 / 施工人数），中间夹一条「已隐藏 · N」折叠区放次要字段
+ *  （业务样 = 图二：默认收起、点开才显示）。
+ *  壳与交互动效复用「任务详情抽屉」那套（drawer-backdrop / drawer-panel 两枚全局类 + Esc / 点遮罩关闭 + 锁页面滚动）。 */
+function IssueDrawer({ issue, report, onClose }: { issue: Issue; report: DailyReport | null; onClose: () => void }) {
+  const [closing, setClosing] = useState(false);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const closingRef = useRef(false);
+
+  useEffect(() => lockBodyScroll(), [issue.id]);
+
+  const requestClose = useCallback(() => {
+    if (closingRef.current) {
+      return;
+    }
+    closingRef.current = true;
+    setClosing(true);
+    window.setTimeout(onClose, CLOSE_ANIMATION_MS);
+  }, [onClose]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        requestClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [requestClose]);
+  /** 上半：问题本身（业务样 = 图二前四行）。 */
+  const rows: { key: string; label: string; value: ReactNode }[] = [
+    { key: "title", label: "问题描述", value: <p className="whitespace-pre-line break-words">{issue.title}</p> },
+    { key: "category", label: "问题归类", value: <CategoryTags value={issue.category} /> },
+    {
+      key: "solution",
+      label: "解决方案或建议",
+      value: <p className="whitespace-pre-line break-words">{issue.solution === "" ? "—" : issue.solution}</p>,
+    },
+    {
+      key: "issuePhotos",
+      label: "问题附图",
+      value: issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="md" />,
+    },
+  ];
+
+  /** 下半：来源日报（问题是否处理 = 问题侧状态、施工人数 = 日报侧人数；业务样 = 图二后七行）。 */
+  const reportRows: { key: string; label: string; value: ReactNode }[] =
+    report === null
+      ? [{ key: "report", label: "来源日报", value: <span className="text-zinc-400">未找到（原型内存态可能已复位）</span> }]
+      : [
+          { key: "doneWork", label: "当日完成工作", value: <p className="whitespace-pre-line break-words">{report.doneWork === "" ? "—" : report.doneWork}</p> },
+          { key: "date", label: "日期", value: report.date },
+          {
+            key: "author",
+            label: "填写者",
+            value: (
+              <span className="flex items-center gap-1.5">
+                <InitialAvatar name={report.author} />
+                <span>{report.author}</span>
+              </span>
+            ),
+          },
+          { key: "plan", label: "明日计划", value: <p className="whitespace-pre-line break-words">{report.plan === "" ? "—" : report.plan}</p> },
+          {
+            key: "reportPhotos",
+            label: "现场工作附图",
+            value: report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} size="lg" />,
+          },
+          { key: "state", label: "问题是否处理", value: <IssueStateTag state={issue.state} /> },
+          { key: "headcount", label: "施工人数", value: String(report.headcount) },
+        ];
+  /** 折叠区：次要字段（业务样 = 图二「已隐藏 · 7」那行；默认收起、点开才显示）。 */
+  const hiddenRows: { key: string; label: string; value: ReactNode }[] = [
+    {
+      key: "stages",
+      label: "关联阶段",
+      value: report === null || report.stages.length === 0 ? <span className="text-zinc-400">—</span> : <StageTags names={report.stages} />,
+    },
+    { key: "reporter", label: "提出人", value: issue.reporter },
+    { key: "submittedAt", label: "提交时间", value: report === null ? "—" : report.submittedAt },
+    { key: "reportState", label: "日报状态", value: report === null ? "—" : report.state },
+    { key: "reportId", label: "来源日报", value: issue.reportId },
+    { key: "issueId", label: "问题编号", value: issue.id },
+  ];
+
+  const rowView = (row: { key: string; label: string; value: ReactNode }) => (
+    <div key={row.key} data-issue-field={row.key} className="grid grid-cols-[96px_1fr] items-start gap-x-4 border-b border-zinc-50 py-3 last:border-b-0">
+      <dt className="pt-px text-xs leading-5 text-zinc-400">{row.label}</dt>
+      <dd className="min-w-0 text-sm leading-5 text-zinc-800">{row.value}</dd>
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 z-50">
+      <div
+        className={"drawer-backdrop absolute inset-0 bg-zinc-900/25" + (closing ? " is-closing" : "")}
+        onClick={requestClose}
+        aria-hidden="true"
+      />
+      <aside
+        data-issue-drawer=""
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="issue-drawer-title"
+        className={
+          "drawer-panel absolute right-0 top-0 flex h-full w-[460px] max-w-[94vw] flex-col bg-white shadow-[-24px_0_60px_rgba(15,23,42,0.18)]" +
+          (closing ? " is-closing" : "")
+        }
+      >        <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">问题详情</span>
+              <IssueStateTag state={issue.state} />
+            </div>
+            <button
+              type="button"
+              onClick={requestClose}
+              aria-label="关闭问题详情"
+              className="-mr-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+          <h2 id="issue-drawer-title" className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
+            {issue.title}
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">{issue.raisedAt} · {issue.reporter} 提出</p>
+        </header>
+        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="问题详情字段">
+          <dl>{rows.map(rowView)}</dl>
+          <div className="border-b border-zinc-50 py-3">
+            <button
+              type="button"
+              data-issue-hidden-toggle=""
+              aria-expanded={hiddenOpen}
+              onClick={() => {
+                setHiddenOpen((open) => !open);
+              }}
+              className="flex items-center gap-1.5 text-xs text-zinc-400 transition hover:text-zinc-600"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
+                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              已隐藏 · {hiddenRows.length}
+            </button>
+            {hiddenOpen ? <dl className="mt-1">{hiddenRows.map(rowView)}</dl> : null}
+          </div>
+          <dl>{reportRows.map(rowView)}</dl>
+        </ScrollArea>
+
+        <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
+          <p className="text-[11px] text-zinc-400">来源日报：{issue.reportId}；点空白处或按 Esc 关闭</p>
+        </footer>
+      </aside>
+    </div>
+  );
+}
+
 export function ReportIssuePanel({ project, me, focusMode }: {
   project: Project;
   me: MeResponse;
@@ -1465,6 +1650,9 @@ export function ReportIssuePanel({ project, me, focusMode }: {
   const [draft, setDraft] = useState<ReportDraft>(() => emptyDraft());
   /** 提交后的提示（切子视图即清掉）。 */
   const [notice, setNotice] = useState<string>("");
+  /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
+   *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
+  const [openIssueId, setOpenIssueId] = useState<string | null>(null);
 
   /** 行内编辑落值（Push 208 · 业务口径「问题追溯里面也要可以这样编辑 … 日报记录同理」）：只改被编辑的那个字段 ——
    *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）。 */
@@ -1476,6 +1664,10 @@ export function ReportIssuePanel({ project, me, focusMode }: {
   const patchIssue = (id: string, patch: IssuePatch) => {
     setIssues((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
+
+  /** 抽屉要展示的问题 / 它的来源日报（现找现用）。 */
+  const openIssue = openIssueId === null ? null : issues.find((item) => item.id === openIssueId) ?? null;
+  const openIssueReport = openIssue === null ? null : reports.find((item) => item.id === openIssue.reportId) ?? null;
 
   const author = me.user.displayName ?? me.user.name ?? "未署名用户";
 
@@ -1625,31 +1817,44 @@ export function ReportIssuePanel({ project, me, focusMode }: {
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <div data-issue-board="" className="flex gap-3 overflow-x-auto pb-2">
-              {ISSUE_STATES.map((state) => {
-                const items = issues.filter((issue) => issue.state === state);
-                return (
-                  <section key={state} data-issue-column={state} className={ISSUE_COLUMN}>
-                    <div className="flex items-center gap-2">
-                      <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{state}</span>
-                      <span className="ml-auto text-xs text-zinc-400">{items.length} 项</span>
-                    </div>
-                    <div className="mt-3 space-y-3">
-                      {items.length === 0 ? (
-                        <p className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-zinc-300 px-3 text-center text-xs text-zinc-400">
-                          暂无问题
-                        </p>
-                      ) : (
-                        items.map((issue) => <IssueCard key={issue.id} issue={issue} />)
-                      )}
-                    </div>
-                  </section>
-                );
-              })}
+            <div data-issue-board="">
+              <ScrollArea axis="horizontal" ariaLabel="问题看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
+                {ISSUE_STATES.map((state) => {
+                  const items = issues.filter((issue) => issue.state === state);
+                  return (
+                    <section key={state} data-issue-column={state} className={ISSUE_COLUMN}>
+                      <header className="mb-3 flex items-center gap-2 px-1">
+                        <IssueStateTag state={state} />
+                        <span className="shrink-0 text-xs text-zinc-400">{items.length}项</span>
+                      </header>
+                      <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"问题卡片：" + state}>
+                        {items.length === 0 ? (
+                          <p className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-zinc-300 px-3 text-center text-xs text-zinc-400">
+                            暂无问题
+                          </p>
+                        ) : (
+                          items.map((issue) => (
+                            <IssueCard
+                              key={issue.id}
+                              issue={issue}
+                              onOpen={() => {
+                                setOpenIssueId(issue.id);
+                              }}
+                            />
+                          ))
+                        )}
+                      </ScrollArea>
+                    </section>
+                  );
+                })}
+              </ScrollArea>
             </div>
           )}
         </section>
       )}
+
+      {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
+      {openIssue === null ? null : <IssueDrawer issue={openIssue} report={openIssueReport} onClose={() => { setOpenIssueId(null); }} />}
     </div>
   );
 }
