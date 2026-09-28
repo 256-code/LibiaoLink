@@ -10,7 +10,12 @@ import { DateTimeSchema } from "../common/conventions.ts";
  *   ADR-009（消息通道）、ADR-028（时区固定 Asia/Shanghai）；
  *   实现现状：`server/src/db/outbox.ts`（同事务投递 + 唤醒 dead）、`server/src/db/outbox.store.ts`
  *   （领取 / done / retry / dead）、迁移 `0028_outbox_claim`（`locked_at` + `processing` 部分索引）、
- *   `server/src/entry/worker.ts`（单实例消费轮）。
+ *   `server/src/outbox/`（S7-1 运行时分派 / 重试退避 / 死信与积压告警 / done 保留期）、
+ *   `server/src/entry/worker.ts`（常驻三轮：分派 / 告警探针 / 保留期清理）。
+ *
+ *   白名单口径（Push 169 定案）：`OUTBOX_TOPICS` = **已写入主题闭集 ∪ 已定案预留主题**（当前预留 `notify.message` · S7-4 通知投递）。
+ *   新增主题须同时改写入端与本表；`scripts/outbox-contract-replay.mjs` 扫 `server/src` 的主题字面量与主题常量，
+ *   断言「写入 ⊆ 本表」且「本表无死条目」（未被写入者必须在预留清单）。
  *
  * 边界（本切片不落端点）：本文件只固定**消费侧口径**；规则管理端点（M5-06）与消息中心查询端点（M5-07）
  *   入 `openapi.ts` 时以本文件枚举与 schema 为准 —— **paths / operations / schemas 计数不变**，生成物零漂移。
@@ -38,15 +43,26 @@ export const OUTBOX_TOPICS = [
   "task.locked_fields_adjusted",
   "task.draft_doc_reminded",
   "task.gate_rejected",
+  "node.added",
   "node.completed",
+  "node.deleted",
+  "node.gate_rejected",
+  "stage.advanced",
+  "stage.gate_rejected",
+  "stage.rolled_back",
+  "project.created",
+  "file.version.created",
+  "file.finalized",
+  "preview.job",
   "change.applied",
   "report.submitted",
+  "issue.created",
   "issue.updated",
-  "preview.job",
+  "notify.message",
 ] as const;
 export const OutboxTopicSchema = z.enum(OUTBOX_TOPICS).openapi("OutboxTopic", {
   description:
-    "事件主题：task.created 任务创建 / task.updated 任务更新 / task.progress_changed 进度变化 / task.completed 任务完成 / task.deleted 任务软删 / task.locked_fields_adjusted 锁定字段例外调整 / task.draft_doc_reminded 缺件提醒 / task.gate_rejected 完成门禁拒绝 / node.completed 节点完成 / change.applied 变更生效 / report.submitted 日报提交 / issue.updated 问题更新 / preview.job 预览转换任务；规则可订阅的主题见 automation 的 RuleEventTopic（本表的子集）",
+    "事件主题：task.created 任务创建 / task.updated 任务更新 / task.progress_changed 进度变化 / task.completed 任务完成 / task.deleted 任务软删 / task.locked_fields_adjusted 锁定字段例外调整 / task.draft_doc_reminded 缺件提醒 / task.gate_rejected 完成门禁拒绝 / node.added 节点新增 / node.completed 节点完成 / node.deleted 节点删除 / node.gate_rejected 节点完成门禁拒绝 / stage.advanced 阶段推进 / stage.gate_rejected 阶段门禁拒绝 / stage.rolled_back 阶段回退 / project.created 项目创建 / file.version.created 文件新版本 / file.finalized 文件定档 / preview.job 预览转换任务 / change.applied 变更生效 / report.submitted 日报提交 / issue.created 问题生成 / issue.updated 问题更新 / notify.message 通知投递（预留 · S7-4：站内信 / 企微 / 邮件；合并 / 免打扰 / 限速在投递层）；规则可订阅的主题见 automation 的 RuleEventTopic（本表的子集）",
 });
 export type OutboxTopic = z.infer<typeof OutboxTopicSchema>;
 
@@ -117,8 +133,9 @@ export const OUTBOX_SCHEDULER = {
 //   2. 到顶 / 确定性失败：写 dead + last_error 留痕，并按 ADR-005 纳入死信告警（Outbox 积压量 + 最老消息年龄）；
 //   3. 唤醒：同 dedupe_key 的新事件把 dead 行唤醒回 pending（读取侧补投场景；见 server/src/db/outbox.ts）；
 //   4. 保留：done 行按保留期清理并观察表膨胀（ADR-005）。
-//   数值现状（预览队列）：PREVIEW_CONVERT_MAX_ATTEMPTS 次、PREVIEW_CONVERT_BACKOFF_MS 指数退避、
-//   崩溃遗留重领阈值 OUTBOX_STALE_MS（须 ≥ 单条消费最长时长）。
+//   数值现状：通用主题缺省 OUTBOX_DEFAULT_MAX_ATTEMPTS / OUTBOX_DEFAULT_BACKOFF_BASE_MS / OUTBOX_DEFAULT_BACKOFF_MAX_MS
+//   （5 / 15s / 30min）；预览队列沿用 PREVIEW_CONVERT_MAX_ATTEMPTS / PREVIEW_CONVERT_BACKOFF_MS（3 / 15s）且封顶 30 分钟；
+//   崩溃遗留重领阈值 OUTBOX_STALE_MS（须 ≥ 单条消费最长时长）。语义入契约、数值按主题落 env —— 契约不落数值常量。
 
 /** done 行保留期（天）—— ADR-005「成功行按保留期（约 90 天）清理，观察表膨胀」。 */
 export const OUTBOX_DONE_RETENTION_DAYS = 90;
