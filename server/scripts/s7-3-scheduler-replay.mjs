@@ -14,6 +14,8 @@
  *   证据六（失败重试到顶）：调度任务失败 attempts 累计；到 OUTBOX_SCHEDULER_MAX_ATTEMPTS 置 jobs.status=failed
  *        （重试死信，人工复位后继续），之后不再领取。
  *   证据七（双实例并发）：两实例并发 tick 同一批到期任务 —— 只有一个执行（单活锁 + SKIP LOCKED），产出无重复。
+ *   证据八（每轮窗口上限 · 水位不越过）：OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK=3 —— 触顶轮 last_run_at 停在
+ *        本轮最后处理的窗口（不越过未处理窗口）且 run_at=now 下轮顺延；跨轮追平后 last_run_at=now、run_at=下一触发。
  *
  * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && S7_3_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
@@ -44,6 +46,7 @@ const PRODUCED_TOPIC = "notify.message";
 const STALE_MS = 60_000;
 const MAX_ATTEMPTS = 2;
 const CATCHUP_MAX_DAYS = 7;
+const MAX_WINDOWS_PER_TICK = 3;
 const CRASH_WORKER = "s73-crashed-worker";
 const MAIN_WORKER = "s73-main";
 const DAY_MS = 86_400_000;
@@ -151,6 +154,7 @@ function buildEnv(overrides = {}) {
     OUTBOX_SCHEDULER_BATCH_LIMIT: "10",
     OUTBOX_SCHEDULER_MAX_ATTEMPTS: String(MAX_ATTEMPTS),
     OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS: String(CATCHUP_MAX_DAYS),
+    OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: "50",
     ...overrides,
   });
 }
@@ -221,6 +225,7 @@ async function runMain() {
     kill: KIND_PREFIX + "kill",
     failure: KIND_PREFIX + "failure",
     single: KIND_PREFIX + "single",
+    capped: KIND_PREFIX + "capped",
   };
   const runs = [];
   const makeHandler = (kind, behavior) => ({
@@ -251,9 +256,19 @@ async function runMain() {
     [kinds.kill, makeHandler(kinds.kill, "ok")],
     [kinds.failure, makeHandler(kinds.failure, "fail")],
     [kinds.single, makeHandler(kinds.single, "ok")],
+    [kinds.capped, makeHandler(kinds.capped, "ok")],
   ]);
   const scheduler = new runtime.JobScheduler(db, store, handlers, clock, config);
   const schedulerB = new runtime.JobScheduler(dbB, storeB, handlers, clock, config);
+  const schedulerCap = new runtime.JobScheduler(
+    db,
+    store,
+    handlers,
+    clock,
+    new runtime.AppConfig(
+      buildEnv({ WORKER_ID: MAIN_WORKER + "-cap", OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: String(MAX_WINDOWS_PER_TICK) }),
+    ),
+  );
 
   const insertJob = async (kind, options) => {
     const result = await db.pool.query(
@@ -292,6 +307,7 @@ async function runMain() {
     clockNow: clockNow.toISOString(),
     staleMs: STALE_MS,
     catchupMaxDays: CATCHUP_MAX_DAYS,
+    maxWindowsPerTick: MAX_WINDOWS_PER_TICK,
     maxAttempts: MAX_ATTEMPTS,
     lockName: OUTBOX_SCHEDULER.lockName,
   };
@@ -544,6 +560,74 @@ async function runMain() {
     );
     const singleOutbox = await outboxCount(DEDUPE_PREFIX + "." + kinds.single + ":" + tag + ":%");
     check("S7b", "并发净度：产出恰好 3 行（无重复投递）", "3 行", singleOutbox + " 行", singleOutbox === 3);
+
+    // ------------------------- 证据八：每轮窗口上限与「水位不越过未处理窗口」
+    const jobCapped = await insertJob(kinds.capped, { runAt: dayOf(-6), lastRunAt: dayOf(-6) });
+    const statsCap1 = await schedulerCap.tickOnce();
+    const capRuns = runs.filter((item) => item.kind === kinds.capped);
+    const capExpected1 = [dayOf(-4), dayOf(-3), dayOf(-2)].map((date) => date.toISOString());
+    check(
+      "S8a",
+      "每轮窗口上限（MAX_WINDOWS_PER_TICK=" + MAX_WINDOWS_PER_TICK + "）：首轮只处理前 " + MAX_WINDOWS_PER_TICK + " 个窗口（day-4 ~ day-2；day-5 触发在 7 天跨度裁剪线之前，按 S3 口径 skipped）",
+      "executed=1 / produced=3 / fires=" + capExpected1.join(" / "),
+      "stats=" + short(statsCap1) + " / fires=" + (capRuns[0]?.fires.join(" / ") ?? "（未执行）"),
+      statsCap1.executed === 1 &&
+        capRuns.length === 1 &&
+        capRuns[0].fires.join(",") === capExpected1.join(",") &&
+        statsCap1.produced === 3,
+    );
+    const capRow1 = await jobRow(jobCapped);
+    const capRunRows1 = await jobRuns(jobCapped);
+    check(
+      "S8b",
+      "水位不越过未处理窗口：last_run_at=本轮最后处理的窗口（day-2）/ run_at=now（下轮顺延）/ note 含「触顶」",
+      "last_run_at=" + dayOf(-2).toISOString() + " / run_at=" + clockNow.toISOString() + " / note 含「窗口触顶」",
+      fmtJob(capRow1) + " / run_at=" + new Date(capRow1.run_at).toISOString() + " / note=" + String(capRunRows1[0]?.note ?? ""),
+      new Date(capRow1.last_run_at).getTime() === dayOf(-2).getTime() &&
+        new Date(capRow1.run_at).getTime() === clockNow.getTime() &&
+        capRow1.locked_at === null &&
+        String(capRunRows1[0]?.note ?? "").includes("窗口触顶"),
+    );
+    await db.pool.query("update jobs set run_at = now() where id = $1", [jobCapped]);
+    const statsCap2 = await schedulerCap.tickOnce();
+    const capRuns2 = runs.filter((item) => item.kind === kinds.capped);
+    const capExpected2 = [dayOf(-1), dayOf(0), dayOf(1)].map((date) => date.toISOString());
+    check(
+      "S8c",
+      "下一轮顺延：第 2 轮再处理 3 个窗口（day-1 ~ day+1），仍触顶",
+      "executed=1 / produced=3 / fires=" + capExpected2.join(" / "),
+      "stats=" + short(statsCap2) + " / fires=" + (capRuns2[1]?.fires.join(" / ") ?? "（未执行）"),
+      statsCap2.executed === 1 &&
+        capRuns2.length === 2 &&
+        capRuns2[1].fires.join(",") === capExpected2.join(",") &&
+        statsCap2.produced === 3,
+    );
+    await db.pool.query("update jobs set run_at = now() where id = $1", [jobCapped]);
+    const statsCap3 = await schedulerCap.tickOnce();
+    const capRuns3 = runs.filter((item) => item.kind === kinds.capped);
+    const capRow3 = await jobRow(jobCapped);
+    const capExpected3 = [dayOf(2)].map((date) => date.toISOString());
+    check(
+      "S8d",
+      "追平收口：第 3 轮处理余下 1 个窗口（day+2）→ last_run_at=now / run_at=下一触发（day+3）",
+      "executed=1 / produced=1 / last_run_at=" + clockNow.toISOString() + " / run_at=" + dayOf(3).toISOString(),
+      "stats=" + short(statsCap3) + " / fires=" + (capRuns3[2]?.fires.join(" / ") ?? "（未执行）") + " / " + fmtJob(capRow3) + " / run_at=" + new Date(capRow3.run_at).toISOString(),
+      statsCap3.executed === 1 &&
+        statsCap3.produced === 1 &&
+        capRuns3.length === 3 &&
+        capRuns3[2].fires.join(",") === capExpected3.join(",") &&
+        new Date(capRow3.last_run_at).getTime() === clockNow.getTime() &&
+        new Date(capRow3.run_at).getTime() === dayOf(3).getTime(),
+    );
+    const statsCap4 = await schedulerCap.tickOnce();
+    const capOutbox = await outboxCount(DEDUPE_PREFIX + "." + kinds.capped + ":" + tag + ":%");
+    check(
+      "S8e",
+      "清空后不再领取且无重复：第 4 轮 0 条 / 三轮总产出 7 行（3+3+1，逐窗口一键）",
+      "claimed=0 / outbox=7",
+      "stats=" + short(statsCap4) + " / outbox=" + capOutbox + " 行",
+      statsCap4.claimed === 0 && statsCap4.executed === 0 && capOutbox === 7,
+    );
   } catch (error) {
     if (!assertionThrown) failures += 1;
     process.stderr.write("S7-3 回放失败：" + messageOf(error) + "\n");
@@ -583,7 +667,7 @@ async function runMain() {
   lines.push("| 代码版本 | " + commit + (dirty ? "（工作区含未提交改动）" : "") + " |");
   lines.push("| 脚本 | server/scripts/s7-3-scheduler-replay.mjs |");
   lines.push("| 时间锚点 | cron = " + cron + "（与 run_at 对齐）· run_at = " + runAt.toISOString() + " · 假想 now = " + clockNow.toISOString() + " |");
-  lines.push("| 环境口径 | OUTBOX_STALE_MS=" + STALE_MS + " · 补发跨度 " + CATCHUP_MAX_DAYS + " 天 · maxAttempts=" + MAX_ATTEMPTS + " · 单活锁 " + OUTBOX_SCHEDULER.lockName + " |");
+  lines.push("| 环境口径 | OUTBOX_STALE_MS=" + STALE_MS + " · 补发跨度 " + CATCHUP_MAX_DAYS + " 天 · maxAttempts=" + MAX_ATTEMPTS + " · 每轮窗口上限 " + MAX_WINDOWS_PER_TICK + "（证据八实例）· 单活锁 " + OUTBOX_SCHEDULER.lockName + " |");
   lines.push("| 领取者 | " + MAIN_WORKER + "（主）· " + CRASH_WORKER + "（被 SIGKILL 的子进程）· " + MAIN_WORKER + "-b（并发第二实例） |");
   lines.push("");
   lines.push("## 断言明细");
@@ -594,7 +678,7 @@ async function runMain() {
   lines.push("");
   lines.push(
     failures === 0
-      ? "- 全部断言通过：单活调度（S1）· cron 补发与推进（S2）· 超跨度 skipped（S3）· 杀 worker 不丢 / 崩溃重领 / 重放不重发（S4）· 状态回退再生与日期窗口（S5）· 失败重试到顶（S6）· 双实例并发（S7）。"
+      ? "- 全部断言通过：单活调度（S1）· cron 补发与推进（S2）· 超跨度 skipped（S3）· 杀 worker 不丢 / 崩溃重领 / 重放不重发（S4）· 状态回退再生与日期窗口（S5）· 失败重试到顶（S6）· 双实例并发（S7）· 每轮窗口上限与水位不越过（S8）。"
       : "- 有 " + failures + " 项失败，见上方 FAIL 行。",
   );
   lines.push("");

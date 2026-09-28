@@ -117,6 +117,12 @@ export const VIEW_SCOPE_KEYS = ['personal', 'public'] as const;
 /** 关注对象类型（follows.object_type，M2-06 · A1-15）：与契约 FOLLOW_OBJECT_TYPES 同序同值。 */
 export const FOLLOW_OBJECT_TYPE_KEYS = ['project', 'task'] as const;
 
+/** 通知类型（notifications.type，S7-4 · j1 / C5-02）：与契约 NOTIFICATION_TYPES 同序同值。 */
+export const NOTIFICATION_TYPE_KEYS = ["reminder", "approval", "broadcast", "system"] as const;
+
+/** 通知状态（notifications.status，S7-4 · C5-01）：与契约 NOTIFICATION_STATUSES 同序同值。 */
+export const NOTIFICATION_STATUS_KEYS = ["unread", "read", "handled"] as const;
+
 /** 数组字面量（CHECK 用：`<@ array[… ]::text[]`）；sqlValueList 只服务 `in (…)`。 */
 export function sqlArrayLiteral(values: readonly string[]): string {
   const quote = String.fromCharCode(39);

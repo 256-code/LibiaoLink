@@ -96,6 +96,24 @@ export const EnvSchema = z
     OUTBOX_RETENTION_INTERVAL_MS: z.coerce.number().int().min(60000).max(86400000).default(21600000),
     /** 领取者标识（进 outbox_events.locked_by）：缺省 host:pid。 */
     WORKER_ID: z.string().max(128).default(""),
+    // ---- 通知投递（S7-4 · j1 / M5-04 首刀：站内信投递 / 合并 / 免打扰 / 每人每日上限） ----
+    /** 站内信投递开关（worker）：`false` = `notify.message` 只投递不消费（排障 / 压测用，与 preview 同形的排障态）。 */
+    NOTIFY_DELIVERY_ENABLED: z.enum(["true", "false"]).default("true"),
+    /** 延迟投递 flush 周期（毫秒）：免打扰 / 每日上限排队的行按 `deliver_at` 到期重排（不走 outbox 重试语义）。 */
+    NOTIFY_FLUSH_INTERVAL_MS: z.coerce.number().int().min(1000).max(3600000).default(60000),
+    /** 单轮 flush 条数上限。 */
+    NOTIFY_FLUSH_BATCH: z.coerce.number().int().min(1).max(500).default(50),
+    /** 合并窗口（毫秒）：同人 + 同合并键、窗口内未读主行合并为一条；0 = 不合并（个人偏好可覆盖）。 */
+    NOTIFY_MERGE_WINDOW_MS: z.coerce.number().int().min(0).max(86400000).default(1800000),
+    /** 缺省免打扰时段（`HH:MM-HH:MM`，Asia/Shanghai，允许跨零点）；空串 = 免打扰关闭（个人偏好可覆盖）。 */
+    NOTIFY_QUIET_HOURS: z
+      .string()
+      .regex(/^$|^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$/)
+      .default("22:00-08:00"),
+    /** 缺省每人每日投递上限（0 = 不限）：超限消息排到次日投递窗口起点（个人偏好可覆盖）。 */
+    NOTIFY_DAILY_LIMIT: z.coerce.number().int().min(0).max(1000).default(200),
+    /** 次日投递窗口起点（分钟，Asia/Shanghai；480 = 08:00）：每日上限溢出 / 静默后补发的落点。 */
+    NOTIFY_DAILY_WINDOW_START_MINUTE: z.coerce.number().int().min(0).max(1439).default(480),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
@@ -103,6 +121,8 @@ export const EnvSchema = z
     OUTBOX_SCHEDULER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
     /** 补发跨度上限（天）：重启 / 停机错过的窗口超此跨度只记 skipped 留痕（契约 OUTBOX_SCHEDULER.catchupMaxDays 建议值落 env）。 */
     OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    /** 单轮 tick 最多处理的补发窗口数（水位护栏）：触顶时 last_run_at 停在最后处理的窗口、run_at=now 下一轮顺延（契约 OUTBOX_SCHEDULER.maxWindowsPerTick 建议值落 env）。 */
+    OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: z.coerce.number().int().min(1).max(1000).default(20),
   })
   .superRefine((value, context) => {
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
@@ -136,6 +156,16 @@ export const EnvSchema = z
         message: "OUTBOX_DEFAULT_BACKOFF_BASE_MS 必须 <= OUTBOX_DEFAULT_BACKOFF_MAX_MS",
         path: ["OUTBOX_DEFAULT_BACKOFF_MAX_MS"],
       });
+    }
+    if (value.NOTIFY_QUIET_HOURS !== "") {
+      const [quietFrom, quietTo] = value.NOTIFY_QUIET_HOURS.split("-");
+      if (quietFrom === quietTo) {
+        context.addIssue({
+          code: "custom",
+          message: "NOTIFY_QUIET_HOURS 的开始与结束不能相同（要关闭免打扰请设为空串）",
+          path: ["NOTIFY_QUIET_HOURS"],
+        });
+      }
     }
     if (value.NODE_ENV !== "production") {
       return;

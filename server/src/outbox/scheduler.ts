@@ -54,6 +54,8 @@ export interface SchedulerTickStats {
  * 不变式：
  * - 单活：每轮 tick 先 `pg_try_advisory_lock(OUTBOX_SCHEDULER.lockName)`；拿不到直接跳过（多实例部署只跑一个）。
  * - 补发：窗口 = (last_run_at, now]；超过 OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS 的区间只记 skipped 留痕（不补发轰炸）。
+ * - 水位不越过：单轮最多处理 OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK 个窗口（默认 20），触顶时 last_run_at 停在
+ *   本轮最后处理的窗口（resumeFrom）且 run_at = now —— 剩余窗口下一轮顺延，不整段跳过。
  * - 原子：产出（outbox 行）与 last_run_at 推进在同一事务；崩溃回滚后重领重放，由幂等执行键兜底不重发。
  * - 无生产者注册的 kind：只存不跑（排障态），窗口不推进、不占重领窗口（清 locked_at）。
  */
@@ -128,15 +130,17 @@ export class JobScheduler {
             windowFrom: job.lastRunAt ?? new Date(job.runAt.getTime() - 1),
             windowTo: now,
             fireTimes: job.runAt.getTime() <= now.getTime() ? [job.runAt] : [],
+            pendingMore: false,
+            resumeFrom: null as Date | null,
             skippedFrom: null as Date | null,
             skippedTo: null as Date | null,
-            truncated: false,
           }
         : planCatchup({
             cron: job.cron,
             after: job.lastRunAt ?? new Date(job.runAt.getTime() - 1),
             now,
             catchupMaxDays: this.config.env.OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS,
+            maxWindows: this.config.env.OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK,
           });
 
     const nextRunAt = job.cron === null ? null : nextFireAfter(job.cron, now);
@@ -155,16 +159,23 @@ export class JobScheduler {
             fireTimes: plan.fireTimes,
             tx,
           })) ?? {};
+        const resumeFrom = plan.pendingMore ? plan.resumeFrom : null;
         await this.store.finishRun(tx, {
           jobId: job.id,
           kind: job.kind,
-          lastRunAt: now,
-          nextRunAt,
+          lastRunAt: resumeFrom ?? now,
+          nextRunAt: resumeFrom === null ? nextRunAt : now,
           windowFrom: plan.windowFrom,
-          windowTo: plan.windowTo,
+          windowTo: resumeFrom ?? plan.windowTo,
           fireCount: plan.fireTimes.length,
           produced: result.produced ?? 0,
-          note: result.note ?? null,
+          note:
+            resumeFrom === null
+              ? result.note ?? null
+              : "窗口触顶（OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK=" +
+                this.config.env.OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK +
+                "），剩余窗口下一轮顺延" +
+                (result.note === undefined || result.note === null || result.note === "" ? "" : "；" + result.note),
         });
         if (plan.skippedFrom !== null && plan.skippedTo !== null) {
           await this.store.recordSkipped(tx, {
@@ -182,9 +193,12 @@ export class JobScheduler {
       });
       stats.executed += 1;
       stats.produced += outcome.produced ?? 0;
-      if (plan.truncated) {
+      if (plan.pendingMore) {
         this.logger.warn(
-          "调度任务窗口枚举触顶（只补发前 " + plan.fireTimes.length + " 个触发时刻）：kind=" + job.kind + "#" + job.id,
+          "调度任务窗口触顶（每轮上限 OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK=" +
+            this.config.env.OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK +
+            "，剩余窗口下一轮顺延）：kind=" + job.kind + "#" + job.id +
+            "，本轮窗口至 " + (plan.resumeFrom === null ? "（无）" : plan.resumeFrom.toISOString()),
         );
       }
       if (plan.skippedFrom !== null) {
