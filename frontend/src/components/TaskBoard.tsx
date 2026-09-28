@@ -754,7 +754,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   }, [measureStage, scrollRef]);
 
   /**
-   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下，
+   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在主标签栏（Push 201 起吸顶）之下，
    * 左右滚动（含底部滑块）时用 translateX 跟随 #task-board-scroll 的 scrollLeft，保证表头与各列始终对齐。
    */
   useEffect(() => {
@@ -797,8 +797,14 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       <div ref={boardWrapRef} className="relative">
       <div ref={boardCardRef} className="rounded-xl border border-zinc-200 bg-white">
       {/* 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下；
-          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。 */}
-      <div className="sticky top-16 z-20 overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
+          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。
+          Push 201：主标签栏也吸顶 —— 表头让位、叠在主标签栏下面（设计位 top = 顶栏 64 + 主标签栏 59 = 123px）。
+          Push 201 补（业务口径「这个中间有条缝可以有办法解决一下吗」）：吸顶条的下边框在带缩放的屏上（Windows 150% 等）
+          被按设备像素吸附成 0.67px —— 栏高 59 → 58.67、下沿实际落在 122.67，表头钉 123 就会露 0.33px 缝，
+          滚动时白行 / 蓝色徽章从缝里闪过去。改为 top 122px：表头向上多叠 1px、缝被盖死（1x 下多叠的 1px
+          正好藏进主标签栏下边框后，视觉不变）；z 20 → 19（低于主标签栏 z-20）：叠压时下边框仍画在表头上，
+          边界保持一条实线而不是整条被表头盖掉。 */}
+      <div data-board-head="true" className="sticky top-[122px] z-[19] overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
         <div
           ref={headerRowRef}
           className="grid items-center px-5 py-2.5 text-xs font-medium text-zinc-400"

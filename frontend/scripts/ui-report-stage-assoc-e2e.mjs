@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」+「日报记录列收窄」+「导航栏图标 / 吸顶」（业务口径 2026-09-28 · Push 198 / 199 / 200）
+ * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」+「日报记录列收窄」+「导航栏图标 / 吸顶」（业务口径 2026-09-28 · Push 198 / 199 / 200 / 201）
  *
  * 业务口径：「日报这里关联任务改成关联阶段」——「日报填写」表单的「关联任务」多选（原列项目现有任务 + 负责人）
  * 改为「关联阶段」多选：选项 = 九个施工阶段（与项目总览分组 / 两块看板同一份口径、固定顺序 售前规划 → 验收），
@@ -27,6 +27,26 @@
  *      1.8px + 小警示环，与「问题看板」徽章同一套语言）；② 页内导航栏整排**吸顶** —— 滚动时停在顶栏（h-16 = 64px）正下方
  *      （站灰底 + 毛玻璃）。断言：① 组 +2（问题追踪新图标就位 / 旧表格图标下架）并把「其余仍描边」收成 2 项；
  *      ⑥ 组 +1（缩小视口 → 滚动 → 粘在顶栏下方）。
+ *
+ * Push 201 追加（业务口径 2026-09-28「这个也做吸顶效果吧 图二吸顶后有bug」+「把问题看板的svg给问题追溯 /
+ *   问题看板的svg 改成这个（放大镜）」）：① **主标签栏吸顶** —— 项目详情页五视图标签整条横幅粘在顶栏（64px）正下方，
+ *   自身 59px（pt-3 12 + 标签 46 + 底边 1），页面里其它吸顶元素一律叠在它下面（top = 64 + 59 = 123px）：
+ *   项目总览任务表头（[data-board-head]）与「日报及问题」页内导航栏；② 页内导航栏**修投影外溢** —— 下内衬 8 → 16px
+ *   （键帽立体投影最深 ≈ 12px，原来糊到下方「日报记录」标题上、标题还被横幅下沿切一刀），z 20 → 10（不反压主标签栏）；
+ *   ③ 图标对调 —— 「问题追踪」改用原「问题看板」的「圆环 + 感叹号」徽章，「问题看板」改业务给样「放大镜」
+ *   （24 视框 · fillRule evenodd · fill=currentColor）。断言：① 组三条改写（放大镜就位 / 徽章让位 / 文件 + 警示圈下架）；
+ *   ⑥ 组重写为 4 项（主标签栏吸顶 / 页内条叠放 + 内衬兜住投影 / 项目总览任务表头叠放）。
+ *
+ * Push 201 补（业务口径 2026-09-28「这里的字被吞掉了」，问题看板截图）：页内导航栏上一版用负下边距抵消内衬，
+ *   而 Tailwind v4 的 space-y-5 走的是**元素自身 margin-bottom** —— 负 mb 把下面第一块内容拽进横幅里，
+ *   区块标题被横幅盖住 16px、只剩几像素的残影。改为 mb-1（4px = 20 space-y − 16 pb）：横幅下沿与下方内容留 4px，
+ *   键帽 / 横幅 / 内容三者位置同时回到设计值；⑥ 组补 2 项断言（日报填写 / 问题看板 各一条：未吸顶时下一个兄弟 top ≥ 横幅下沿 +2px）。
+ *
+ * Push 201 再补（业务口径 2026-09-28「这个中间有条缝可以有办法解决一下吗」，项目总览截图）：吸顶条下边框在带缩放的屏
+ *   （Windows 150% 等）被按设备像素吸附成 0.67px —— 栏高 59 → 58.67、下沿实际落在 122.67；下面两层吸顶元素钉 123
+ *   会露 0.33px 缝，滚动时白行 / 蓝色徽章从缝里闪过去。两张吸顶表（项目总览任务表头 / 日报及问题页内导航栏）
+ *   top 123 → **122px（向上多叠 1px）**，项目总览表头 z 20 → 19（低于主标签栏 z-20：叠压时下边框仍画在表头上）；
+ *   ⑥ 组两条叠放断言升级为「缝不变量」：叠层 top ≤ 主标签栏下沿 − 下边框宽（覆盖缩放屏下边框变细的情形）。
  *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -236,23 +256,26 @@ const tabIcons = await ev(
   "out.push({tab:bs[i].getAttribute(" + j("data-subnav-item") + "),viewBox:svg===null?null:svg.getAttribute(" + j("viewBox") + ")," +
   "stroke:svg===null?null:svg.getAttribute(" + j("stroke") + "),paths:svg===null?-1:svg.querySelectorAll(" + j("path") + ").length," +
   "rects:svg===null?-1:svg.querySelectorAll(" + j("rect") + ").length," +
+  "fill:p===null?" + j("") + ":(p.getAttribute(" + j("fill") + ")||" + j("") + ")," +
+  "fillRule:p===null?null:(p.getAttribute(" + j("fill-rule") + ")||p.getAttribute(" + j("fillRule") + "))," +
   "d:p===null?" + j("") + ":(p.getAttribute(" + j("d") + ")||" + j("") + ")});}return out;})()"
 );
 const boardIcon = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab === "问题看板")[0] : undefined;
-check("① 问题看板项图标 = 业务给的面性圆环感叹号（16×16 · path M7.493 0.015…）",
-  boardIcon !== undefined && boardIcon.viewBox === "0 0 16 16" && boardIcon.d.indexOf("M7.493 0.015") === 0,
-  boardIcon === undefined ? "-" : boardIcon.viewBox + " · " + boardIcon.d.slice(0, 12));
-check("① 问题看板项原两块竖列描边图标已换下",
-  boardIcon !== undefined && boardIcon.d.indexOf("M4.5 6A1.5") < 0 && boardIcon.stroke === null,
-  boardIcon === undefined ? "-" : "stroke=" + String(boardIcon.stroke));
+check("① 问题看板项图标 = 业务给样「放大镜」（24 视框 · path M9.5 17… · fill=currentColor · fillRule=evenodd · Push 201 换）",
+  boardIcon !== undefined && boardIcon.viewBox === "0 0 24 24" && boardIcon.d.indexOf("M9.5 17c1.71") === 0 &&
+  boardIcon.fill === "currentColor" && boardIcon.fillRule === "evenodd" && boardIcon.stroke === null,
+  boardIcon === undefined ? "-" : boardIcon.viewBox + " · " + boardIcon.d.slice(0, 12) + " · fill=" + String(boardIcon.fill) + " · rule=" + String(boardIcon.fillRule));
+check("① 问题看板项原「圆环 + 感叹号」徽章已让位（viewBox 不再 16×16 · d 不再 M7.493 开头）",
+  boardIcon !== undefined && boardIcon.viewBox !== "0 0 16 16" && boardIcon.d.indexOf("M7.493") < 0,
+  boardIcon === undefined ? "-" : boardIcon.viewBox + " · " + boardIcon.d.slice(0, 10));
 const trackIcon = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab === "问题追踪")[0] : undefined;
-check("① 问题追踪项图标 = 「文件 + 警示章」浅版（24 视框 · 页 + 折角 + 警示环 5 条 path · 描边 1.8px）",
-  trackIcon !== undefined && trackIcon.viewBox === "0 0 24 24" && trackIcon.paths === 5 && trackIcon.rects === 0 &&
-  trackIcon.d.indexOf("M13.5 3H6.75A1.75") === 0 && trackIcon.stroke === "currentColor",
-  trackIcon === undefined ? "-" : trackIcon.viewBox + " · paths=" + String(trackIcon.paths) + " · " + trackIcon.d.slice(0, 22));
-check("① 问题追踪项原表格图标已换下（无 rect / 无 M4 10h16 表格线）",
-  trackIcon !== undefined && trackIcon.rects === 0 && trackIcon.d.indexOf("M4 10h16") < 0,
-  trackIcon === undefined ? "-" : "rects=" + String(trackIcon.rects));
+check("① 问题追踪项图标 = 「圆环 + 感叹号」面性徽章（16×16 · path M7.493 0.015… · fill=currentColor · 原「问题看板」样让位）",
+  trackIcon !== undefined && trackIcon.viewBox === "0 0 16 16" && trackIcon.d.indexOf("M7.493 0.015") === 0 &&
+  trackIcon.fill === "currentColor" && trackIcon.stroke === null,
+  trackIcon === undefined ? "-" : trackIcon.viewBox + " · " + trackIcon.d.slice(0, 12) + " · fill=" + String(trackIcon.fill));
+check("① 问题追踪项原「文件 + 警示圈」浅版图标已下架（无 24 视框 · 无 M13.5 3H6.75 文件页 · 无 M17.2 12.9 警示环）",
+  trackIcon !== undefined && trackIcon.viewBox !== "0 0 24 24" && trackIcon.d.indexOf("M13.5 3H6.75") < 0 && trackIcon.d.indexOf("17.2 12.9") < 0,
+  trackIcon === undefined ? "-" : "viewBox=" + String(trackIcon.viewBox));
 const strokeTabs = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab !== "问题看板" && item.tab !== "问题追踪") : [];
 check("① 其余两项导航图标照旧描边（stroke = currentColor · 共 2 项）",
   strokeTabs.length === 2 && strokeTabs.every((item) => item.stroke === "currentColor"),
@@ -314,24 +337,79 @@ const backReady = await waitFor("document.querySelector(" + j("[data-fill-form]"
 const form2 = await ev(formExpr());
 check("⑤ 回「日报填写」：表单复位（勾选 0 / 完成工作清空）", backReady === true && form2 !== null && form2.checked === 0 && form2.text.indexOf(DONE_TEXT) < 0, form2 === null ? "-" : "checked=" + String(form2.checked));
 
-// ---------- ⑥ 吸顶：滚动后页内导航栏停在顶栏正下方（Push 200） ----------
+// ---------- ⑥ 吸顶（Push 200 起 · Push 201 两层叠放 + 修三处 bug：投影外溢 / 吞字 / 接缝；业务口径「这个也做吸顶效果吧 图二吸顶后有bug」「这里的字被吞掉了」「这个中间有条缝可以有办法解决一下吗」） ----------
+// ⑥ 前置：**未吸顶**时的静态几何 —— 横幅下沿不得压住下方内容（Push 201 补：负 mb 把区块标题吞掉 16px）
+const GAP_EXPR =
+  "(function(){var nav=document.querySelector(" + j("[data-subnav]") + ");if(nav===null){return null;}" +
+  "var sib=nav.nextElementSibling;if(sib===null){return null;}var n=nav.getBoundingClientRect();var s=sib.getBoundingClientRect();" +
+  "var head=sib.firstElementChild;var h=head===null?null:head.getBoundingClientRect();" +
+  "return {scrollY:Math.round(window.scrollY),navTop:Math.round(n.top),navBottom:Math.round(n.bottom),sibTop:Math.round(s.top)," +
+  "gap:Math.round(s.top-n.bottom),headTop:h===null?null:Math.round(h.top),stuck:Math.round(n.top)<=123};})()";
+await ev("window.scrollTo(0, 0)");
+await sleep(300);
+const gapDaily = await ev(GAP_EXPR);
+check("⑥ 页内导航栏不压住下方内容（未吸顶 · 日报填写：下一个兄弟 top ≥ 横幅下沿 +2px · 修「这里的字被吞掉了」）",
+  gapDaily !== null && gapDaily.stuck === false && gapDaily.gap >= 2,
+  gapDaily === null ? "-" : JSON.stringify(gapDaily));
+await clickSelector('[data-subnav-item="问题看板"]');
+await ev("window.scrollTo(0, 0)");
+await sleep(400);
+const gapBoard = await ev(GAP_EXPR);
+check("⑥ 页内导航栏不压住下方内容（未吸顶 · 问题看板：区块标题整行露在横幅下沿之外）",
+  gapBoard !== null && gapBoard.stuck === false && gapBoard.headTop !== null && gapBoard.headTop - gapBoard.navBottom >= 2,
+  gapBoard === null ? "-" : JSON.stringify(gapBoard));
+await clickSelector('[data-subnav-item="日报填写"]');
+await sleep(400);
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 520, deviceScaleFactor: 1, mobile: false });
 await sleep(400);
 await ev("window.scrollTo(0, 400)");
 await sleep(350);
 const stickProbe = await ev(
-  "(function(){var nav=document.querySelector(" + j("[data-subnav]") + ");var header=document.querySelector(" + j("header") + ");" +
-  "if(nav===null||header===null){return null;}var box=nav.getBoundingClientRect();" +
-  "return {scrollY:Math.round(window.scrollY),top:Math.round(box.top),position:getComputedStyle(nav).position," +
-  "headerBottom:Math.round(header.getBoundingClientRect().bottom),visible:box.bottom>64&&box.top<window.innerHeight};})()"
+  "(function(){var bar=document.querySelector(" + j("[data-maintabs]") + ");var nav=document.querySelector(" + j("[data-subnav]") + ");" +
+  "var header=document.querySelector(" + j("header") + ");if(bar===null||nav===null||header===null){return null;}" +
+  "var b=bar.getBoundingClientRect();var n=nav.getBoundingClientRect();" +
+  "var ks=nav.querySelectorAll(" + j("[data-subnav-item]") + ");var keyBottom=0;" +
+  "for(var i=0;i<ks.length;i++){var kb=ks[i].getBoundingClientRect().bottom;if(kb>keyBottom){keyBottom=kb;}}" +
+  "return {scrollY:Math.round(window.scrollY),headerBottom:Math.round(header.getBoundingClientRect().bottom)," +
+  "barTop:Math.round(b.top),barBottom:Math.round(b.bottom),barPosition:getComputedStyle(bar).position,barZ:getComputedStyle(bar).zIndex," +
+  "barBorder:parseFloat(getComputedStyle(bar).borderBottomWidth)," +
+  "navTop:Math.round(n.top),navBottom:Math.round(n.bottom),navPosition:getComputedStyle(nav).position,navZ:getComputedStyle(nav).zIndex," +
+  "shadowRoom:Math.round(n.bottom-keyBottom),visible:b.bottom>64&&b.top<window.innerHeight&&n.bottom>64&&n.top<window.innerHeight};})()"
 );
-check("⑥ 吸顶：滚动后页内导航栏停在顶栏正下方（top ≈ 顶栏底 · position: sticky · 仍可见）",
-  stickProbe !== null && stickProbe.scrollY >= 300 && stickProbe.position === "sticky" && Math.abs(stickProbe.top - stickProbe.headerBottom) <= 2 && stickProbe.visible === true,
+check("⑥ 主标签栏吸顶：滚动后停在顶栏正下方（top = 64 · position: sticky · z-20 · 横幅仍可见）",
+  stickProbe !== null && stickProbe.scrollY >= 300 && stickProbe.barPosition === "sticky" &&
+  Math.abs(stickProbe.barTop - 64) <= 2 && Math.abs(stickProbe.barTop - stickProbe.headerBottom) <= 2 &&
+  stickProbe.barZ === "20" && stickProbe.visible === true,
   stickProbe === null ? "-" : JSON.stringify(stickProbe));
+check("⑥ 页内导航栏叠在主标签栏下面（top = 122 多叠 1px · 缝不变量 navTop ≤ 栏下沿 − 下边框宽 · position: sticky · z 更低不反压）",
+  stickProbe !== null && stickProbe.navPosition === "sticky" && Math.abs(stickProbe.navTop - 122) <= 2 &&
+  stickProbe.navTop <= stickProbe.barBottom - stickProbe.barBorder + 0.05 && Number(stickProbe.navZ) < Number(stickProbe.barZ),
+  stickProbe === null ? "-" : "navTop=" + String(stickProbe.navTop) + " · barBottom=" + String(stickProbe.barBottom) + " − 下边框 " + String(stickProbe.barBorder) + " · z=" + String(stickProbe.navZ) + "/" + String(stickProbe.barZ));
+check("⑥ 键帽投影兜进横幅：导航栏下内衬 ≥ 投影（nav 底 - 键帽底 ≥ 12px · Push 201 修「图二吸顶后有bug」）",
+  stickProbe !== null && stickProbe.shadowRoom >= 12,
+  stickProbe === null ? "-" : "shadowRoom=" + String(stickProbe.shadowRoom) + "px");
+// ⑥b 项目总览：任务表头也叠在主标签栏下面（Push 201 重排 —— 原 top-16 会让主标签栏压住表头；
+//     Push 201 再补「缝」—— top 122 多叠 1px + z 19 低于主标签栏，缩放屏下边框吸附变细也不露缝）
+await clickSelector('[data-maintabs-item="项目总览"]');
+const boardReady = await waitFor("document.querySelector(" + j("[data-board-head]") + ")!==null");
+await ev("window.scrollTo(0, 600)");
+await sleep(350);
+const boardProbe = await ev(
+  "(function(){var bar=document.querySelector(" + j("[data-maintabs]") + ");var head=document.querySelector(" + j("[data-board-head]") + ");" +
+  "if(bar===null||head===null){return null;}var b=bar.getBoundingClientRect();var h=head.getBoundingClientRect();" +
+  "return {scrollY:Math.round(window.scrollY),barBottom:Math.round(b.bottom),barBorder:parseFloat(getComputedStyle(bar).borderBottomWidth)," +
+  "headTop:Math.round(h.top),headZ:getComputedStyle(head).zIndex,position:getComputedStyle(head).position};})()"
+);
+check("⑥ 项目总览：任务表头叠在主标签栏下面（表头 top = 122 多叠 1px · 缝不变量 headTop ≤ 栏下沿 − 下边框宽 · position: sticky · z 19）",
+  boardReady === true && boardProbe !== null && boardProbe.scrollY >= 300 && boardProbe.position === "sticky" &&
+  Math.abs(boardProbe.headTop - 122) <= 2 && boardProbe.headTop <= boardProbe.barBottom - boardProbe.barBorder + 0.05 &&
+  Number(boardProbe.headZ) < 20,
+  boardProbe === null ? "-" : JSON.stringify(boardProbe));
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
 await ev("window.scrollTo(0, 0)");
 await sleep(250);
-
+await clickSelector('[data-maintabs-item="日报及问题"]');
+await waitFor("document.querySelectorAll(" + j("[data-subnav-item]") + ").length===4");
 // ---------- 清理 ----------
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
 const residue = (await db.query(
