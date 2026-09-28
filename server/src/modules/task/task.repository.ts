@@ -80,7 +80,10 @@ export interface TaskInsertInput {
 }
 
 export interface TaskUpdatePatch {
-  /** 锁定字段（A1-17）：仅「例外调整」管理员路径写入（M3-05 · Push 153），普通编辑不传。 */
+  /**
+   * 任务描述 / 英文名：节点 / 模板生成的任务 = 锁定字段（A1-17，仅「例外调整」管理员路径写入 · M3-05 · Push 153）；
+   * 无来源节点的临时任务（看板「添加 → 临时任务」手工创建）自 Push 196 起可走普通编辑改。
+   */
   title?: string;
   titleEn?: string | null;
   deliverableTypes?: string[];

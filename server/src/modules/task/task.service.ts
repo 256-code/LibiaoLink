@@ -85,7 +85,7 @@ type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchem
  */
 type TaskWriteRequest = Pick<
   TaskUpdateBody,
-  "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "note" | "sortIndex"
+  "title" | "titleEn" | "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "note" | "sortIndex"
 > & { expectedVersion: number | null };
 
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
@@ -431,6 +431,8 @@ export class TaskService {
           taskId,
           {
             expectedVersion: body.version,
+            title: body.title,
+            titleEn: body.titleEn,
             sortIndex: body.sortIndex,
             ownerIds: body.ownerIds,
             status: body.status,
@@ -696,6 +698,13 @@ export class TaskService {
     if (request.expectedVersion !== null && before.version !== request.expectedVersion) {
       throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
     }
+    if (request.title !== undefined || request.titleEn !== undefined) {
+      // Push 196：任务描述（title / titleEn）只对**无来源节点**的任务开放（看板「添加 → 临时任务」手工创建）——
+      // 节点 / 模板生成的任务仍按 A1-17 锁定：常规编辑不可达，修正走管理员「例外调整」（PATCH …/locked-fields）。
+      if (before.nodeId !== null || before.taskNodeId !== null) {
+        throw new AppError("VALIDATION_FAILED", "该任务的描述由流程节点 / 模板生成并锁定（A1-17），不能在常规编辑里修改");
+      }
+    }
     if (batchId !== null && request.status === "done" && before.status === "done") {
       throw new AppError("TASK_ALREADY_DONE", "任务已完成，无需重复提交");
     }
@@ -712,6 +721,8 @@ export class TaskService {
       await this.assertCompletionGate(tx, before, at, actorId);
     }
     const patch: TaskUpdatePatch = {
+      title: request.title !== undefined ? request.title : before.title,
+      titleEn: request.titleEn !== undefined ? request.titleEn : before.titleEn,
       ownerIds: request.ownerIds !== undefined ? request.ownerIds : before.ownerIds,
       status: linked === null ? before.status : linked.status,
       statusOverride: linked === null ? before.statusOverride : linked.statusOverride,
@@ -1131,8 +1142,10 @@ function lockedFieldsSnapshot(row: { title: string; titleEn: string | null; deli
   return { title: row.title, titleEn: row.titleEn, deliverableTypes: normalizeDocTypes(row.deliverableTypes) };
 }
 
-/** 任务字段级留痕快照（C7-02：负责人（多位）/ 状态 / 进度 / 组内位次 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */
+/** 任务字段级留痕快照（C7-02：任务描述（Push 196 起临时任务可改）/ 负责人（多位）/ 状态 / 进度 / 组内位次 / 计划与实际日期 / 工期 / 人数 / 重要度 / 备注）。 */
 function taskAuditSnapshot(row: {
+  title: string;
+  titleEn: string | null;
   ownerIds: string[];
   status: string;
   statusOverride: string | null;
@@ -1147,6 +1160,8 @@ function taskAuditSnapshot(row: {
   note: string | null;
 }): Record<string, unknown> {
   return {
+    title: row.title,
+    titleEn: row.titleEn,
     ownerIds: row.ownerIds,
     status: row.status,
     statusOverride: row.statusOverride,

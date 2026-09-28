@@ -86,12 +86,12 @@ const STAGE_KEYS_BY_NAME: Record<string, string> = Object.fromEntries(
   Object.entries(STAGE_NAMES_BY_KEY).map(([key, name]) => [name, key]),
 );
 
-/** 阶段 key → 展示名；null / 未知 key → 空串（「未分组」，看板临时任务）。 */
+/** 阶段 key → 展示名；null / 未知 key → 空串（展示层垫底归「临时任务」分组，Push 196 起原「未分组」；看板临时任务）。 */
 export function stageNameOf(stageKey: string | null): string {
   return stageKey === null ? "" : STAGE_NAMES_BY_KEY[stageKey] ?? "";
 }
 
-/** 舞台展示名 → 阶段 key；不在九阶段内（「未分组」等）→ null。 */
+/** 舞台展示名 → 阶段 key；不在九阶段内（「临时任务」等分组名）→ null。 */
 export function stageKeyOfName(stageName: string): string | null {
   return STAGE_KEYS_BY_NAME[stageName] ?? null;
 }
@@ -268,6 +268,10 @@ export function createTasksFromTemplate(projectId: string, body: TaskFromTemplat
 }
 
 export type TaskUpdateInput = {
+  /** 任务描述（中文；Push 196）：仅**无来源节点**的临时任务可改（服务端对节点任务 400 拦截）。 */
+  title?: string;
+  /** 任务描述（英文；Push 196）：同 title；null = 清空。 */
+  titleEn?: string | null;
   ownerIds?: string[];
   sortIndex?: number;
   status?: string;
