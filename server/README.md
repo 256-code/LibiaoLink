@@ -1,4 +1,4 @@
-# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · **S7·outbox 运行时（S7-1：重试退避 / 死信告警 / 积压探针 / done 行保留期 · 迁移 `0038`；S7-2：PoC-4 / PoC-5 真机回放与 50 并发报告；S7-3：cron 调度 / 补发 / 幂等执行键 / 状态回退再生窗口 · 迁移 `0039`）** · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M4-05g 压测（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13）· **M6-01 收口 日报当日汇总与应填未填（A7-01 / A7-05）** · **M2-06 视图与关注（A1-03 / A1-15）**）
+# server/ · 后端工程（g4 骨架 · g6 会话后端化 · h1 identity/org · h2 project · h3 流程节点 · h4 task · h5 PoC-9 · h6 权限矩阵 · h7 字典与审计 · h8 工作日历 · w2 任务落库口径 · 存储接入 · M4-01 上传管道 · M4-02 版本与回收站 · M4-03 文件库查询与多态关联 · M4-05c 预览转换队列（outbox 领取器） · **S7·outbox 运行时（S7-1：重试退避 / 死信告警 / 积压探针 / done 行保留期 · 迁移 `0038`；S7-2：PoC-4 / PoC-5 真机回放与 50 并发报告；S7-3：cron 调度 / 补发 / 幂等执行键 / 状态回退再生窗口 · 迁移 `0039`；S7-4：站内信投递（notify.message 消费 / 合并 / 免打扰 / 每日上限）+ 收件箱读面与偏好 · 迁移 `0040`）** · j6 干系人台账（A5-01 ~ A5-04 / A5-07）· M3-04 任务批量操作（A1-08）· M3-05 任务软删（A25）· M4-05g 压测（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存）· M6-01 ~ M6-03 日报与问题（A3-01 ~ A3-04 / A3-08 ~ A3-13）· **M6-01 收口 日报当日汇总与应填未填（A7-01 / A7-05）** · **M2-06 视图与关注（A1-03 / A1-15）**）
 
 NestJS 12 模块化单体骨架：api / worker 双入口、统一错误与日志、健康检查、Drizzle schema 与服务边界规则；identity 模块已落地 `/auth/*` 会话链路（g6）。
 
@@ -29,6 +29,7 @@ server/
     modules/template/   # 任务节点库 + 任务模板（A1-16 / A1-17 · M3-05 余第一段 / 第二段 · Push 181 / 182）：节点列表 / 新增 / 编辑 / 删除 + 模板列表 / 详情 / 新建 / 编辑 / 软删 + blueprint.manage 写门禁 + 审计留痕（见 src/modules/template/README.md）
     modules/workspace/    # 工作台聚合读面（S6·workspace · M6-05 第一刀 · Push 166）：我的任务三组（A6-01）+ 我的问题两栏（A6-03）—— 跨项目个人读面、只读（无新表 / 无迁移）（见 src/modules/workspace/README.md）
     modules/view/      # 视图（个人 / 公共 · A1-03 · M2-06 首刀 · Push 168）：视图 CRUD（筛选 / 列配置 / 排序 / 分组，仅保存配置）+ 默认视图互斥 + 归属（个人视图他人 404 / 公共视图非创建者 403）（见 src/modules/view/README.md）
+    modules/notify/    # 站内信投递内核（S7·outbox · S7-4 · j1 / M5-04 首刀 · Push 178）：outbox `notify.message` 消费（幂等落行 / 同期合并 / 免打扰次日补发 / 每人每日上限）+ 收件箱读面（C5-01/02/03）+ 通知偏好（见 src/modules/notify/README.md）
     modules/follow/    # 关注订阅（A1-15 · M2-06 首刀 · Push 168）：关注 / 取关 / 批量 / 我的关注清单（幂等 · 逐条计数 · 归档不可新关注）（见 src/modules/follow/README.md）
     outbox/               # Outbox worker 运行时（S7·outbox · S7-1 / S7-3 · Push 174 / 177）：dispatcher（按主题独立成批领取 + 消费 + 重试退避 + dead）/ 主题策略 / 死信与积压告警探针 / done 行保留期清理 / scheduler（cron 领取 + last_run_at 补发 + 单活锁 · schedule 纯函数求值）（见 src/outbox/index.ts）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
@@ -44,6 +45,7 @@ server/
   scripts/m3-06-stress.mjs    # M3-06 压测真机回放（1 万行任务数据集 + 索引调优评估；真 PG + 真 api；断言全过退出码 0）
   scripts/m3-07-replay.mjs    # M3-07 刀 1 真机回放（五态可写 + 汇总卡「最慢 / 最新阶段」+ 紧急重要度三档；真 PG + 真 api；断言全过退出码 0）
   scripts/m6-replay.mjs         # M6 日报 / 问题 + M6-01 收口 + M6-05 工作台 + M7-04 归档真机回放（A3-01 ~ A3-13 + A2-01 引用守卫 + A7-01 / A7-05 + A6-01 / A6-03 + 归档 A1 ~ A7；同上口径）
+  scripts/s7-4-notify-replay.mjs  # S7-4 通知投递真机回放（真 PG；S0~S9 共 19 断言：投递 / 合并 / 幂等重放 / 非法载荷 dead / 免打扰次日补发 / 每日上限 / 收件箱读面与标记 / 偏好三态 / 自清理；断言全过退出码 0）
   scripts/m2-06-replay.mjs      # M2-06 视图 / 关注真机回放（个人 / 公共视图 CRUD + 归属 + 默认互斥 + 关注幂等 / 批量 / 硬删清理；真 PG + 真 api；断言全过退出码 0）
   test/                          # vitest（health / auth 端到端 + 校验管道单测；auth 用进程内桩 IdP，不依赖 PG 与 Casdoor）
 ```
@@ -59,7 +61,7 @@ server/
 | `npm run test` | vitest run |
 | `npm run check:boundaries` | 依赖方向规则（违规退出码 1） |
 | `npm run check:permission-matrix` | 权限矩阵自检：种子 #6b ↔ 契约 `PermissionKey` 枚举 ↔ 角色集（admin 必须全量；不连库，退出码 1） |
-| `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build；当前 42 表 / 414 列 / 132 索引·唯一 / 131 CHECK —— Push 177（0039 调度面 · jobs / job_runs）后复算，本地沙箱 + CI database job 复核） |
+| `npm run check:db-schema` | Drizzle schema ↔ 实际库（需先 build；当前 44 表 / 438 列 / 140 索引·唯一 / 142 CHECK —— Push 178（0040 通知投递面 · notifications / notify_prefs）后复算，本地沙箱 + CI database job 复核） |
 | `npm run storage:init` | 对象存储初始化（建桶 / 版本控制 / CORS / 分片清理；`-- --check` 只读校验） |
 | `npm run storage:it` | 对象存储真机回放（需真实对象存储 + 先 `npm run build`） |
 | `node dist/entry/worker.js --health-check` | worker 一次性健康检查 |
@@ -78,13 +80,13 @@ server/
 ## 进程边界
 
 - api：HTTP、业务事务、Outbox 写入、SSE；无状态、不跑 CPU 密集任务。
-- worker：Outbox 投递 / 调度 / 规则 / 转换编排 / 导出；已接入 Outbox 运行时（S7-1：领取消费 / 重试退避 / 死信与积压告警 / done 行保留期清理；S7-3：调度 tick —— cron 领取 + last_run_at 补发 + 单活锁，注册表为空 = 只存不跑）+ 上传会话与回收站清理 + 预览转换器自检；心跳 60s，`--health-check` 供探针使用。
+- worker：Outbox 投递 / 调度 / 规则 / 转换编排 / 导出；已接入 Outbox 运行时（S7-1：领取消费 / 重试退避 / 死信与积压告警 / done 行保留期清理；S7-3：调度 tick —— cron 领取 + last_run_at 补发 + 单活锁，注册表为空 = 只存不跑；S7-4：通知投递 —— notify.message 消费接线 + 按 deliver_at 到期 flush（免打扰 / 每日上限溢出次日补发））+ 上传会话与回收站清理 + 预览转换器自检；心跳 60s，`--health-check` 供探针使用。
 - converter（沙箱）：一期由 file / preview（lan 线）落地，不在本骨架内。
 
 ## 模块结构约定
 
 - 四层：controller（HTTP）/ service（用例）/ repository（数据访问）/ events（同事务写 Outbox），对外只经 `index.ts`。
-- 19 个模块目录（每个 README 标注类型 / 职责 / 主责 / 预留接口）；identity / project / blueprint / node / task / permission / admin / calendar / automation / template / workspace / file / report-issue / stakeholder / view / follow 已落地，dashboard / notify / search 仍为占位 README。
+- 19 个模块目录（每个 README 标注类型 / 职责 / 主责 / 预留接口）；identity / project / blueprint / node / task / permission / admin / calendar / automation / template / workspace / file / report-issue / stakeholder / view / follow / notify 已落地，dashboard / search 仍为占位 README。
 - DTO 一律用 `@libiaolink/contracts` 的 Zod schema（配 `ZodValidationPipe`），禁止另起一套类型。
 
 | 类型 | 模块 | 主责 |
@@ -334,6 +336,14 @@ server/
 - 关注（A1-15 · 关系单独存储，不作为任务 / 项目字段）：`GET /api/v1/follows`（我的关注清单，`objectType` / `objectId` / `projectId` 可过滤；随行 `projectId` / `projectCode` / `name`；不可见或已删目标不返回）、`POST /api/v1/follows`（新建 **201**、已关注幂等 **200**，响应 `created` 标记）、`DELETE /api/v1/follows/{objectType}/{objectId}`（按关系键物理删，不校验目标存在；未关注 = 404）、`POST /api/v1/follows/batch`（1 ~ 50 条，整体 200，`followed` / `unfollowed` / `unchanged` / `failures[]` 逐条计数；失败 code 仅 `not_found`）。
 - 关注目标口径：目标必须可见且未删除（不可见 / 不存在统一 404，防 IDOR）；**归档项目不可新关注**（404 —— ADR-027 冻结语义延伸），已有关注行保留；批量中取关不存在的行 = `unchanged`。通知投递（状态变更 / 延期 / 变更生效）随 M5（lan 线）、工作台动态流（A6-08）随二刀、前端接线随 M2-07（px 线）。
 
+## 站内信接口（S7·outbox · S7-4 · j1 / M5-04 首刀 · Push 178）
+
+- 落点：`src/modules/notify/`（constants / delivery 纯函数 / repository / service / controller / module / index；契约 `shared/src/modules/notifications.ts`）+ 迁移 `database/migrations/0040_notify_delivery.sql`（`notifications` + `notify_prefs`）；消费端注册进 `src/outbox/outbox.module.ts`（主题 `notify.message`，受 `NOTIFY_DELIVERY_ENABLED` 开关），worker 常驻 flush 循环按 `deliver_at` 到期补投。
+- 投递不变式：① **幂等** —— `source_dedupe_key` 唯一（= outbox 行 dedupeKey），消费重放不重复落行；② **合并**（C2-09 同期消息合并）—— 同收件人 + 同 `merge_key`（载荷显式 `mergeKey` 优先，缺省 `type:refType:refId`）、合并窗口内、未读未合并主行命中 → 新行 `merged_into_id` 指向主行留档（C5-03 全量留档），主行 `merged_count` 自增，收件箱只读主行；③ **免打扰**（env `NOTIFY_QUIET_HOURS` 缺省 `22:00-08:00`，偏好可三态覆盖）= 命中静默期 → `deliver_at` 排到次日时段结束点，flush 到期补发；④ **每人每日上限**（`NOTIFY_DAILY_LIMIT` 缺省 200，按 Asia/Shanghai 业务日统计已投递主行）→ 溢出排到次日 `NOTIFY_DAILY_WINDOW_START_MINUTE`（缺省 08:00）；⑤ 延迟投递**不走 outbox 重试**（重试 = 消费失败退避，延迟 = 投递窗口静默，两者不混用）。
+- 非法载荷 = 确定性失败（dead，一次即弃）；库侧 CHECK：type / status 枚举、title / body btrim 长度、refType / refId 成对、merged_count ≥ 1、merged_into_id ≠ id；部分索引 ix_inbox / ix_unread / ix_due / ix_merge / ix_daily。
+- 读写面（契约 5 条操作）：`GET /api/v1/notifications`（状态 / 类型 / 关联对象 + 投递时刻区间 + 分页；**只返回已投递主行**；随行 `unreadCount`）、`PATCH /api/v1/notifications/{id}`（unread / read / handled，幂等；他人 / 合并子行 / 未投递行统一 404 防 IDOR）、`POST /api/v1/notifications/mark-all-read`（幂等，返回 updated）、`GET|PATCH /api/v1/notifications/prefs`（缺省生效值 → 三态免打扰 / 每日上限 / 合并窗口；局部更新、空更新 400）。鉴权：读 = 会话，写 = 会话 + CSRF；无功能权限键、不写审计（个人资源，先例 `user_preferences` / 视图）。
+- S7-4 真机回放（Push 178 · 19 断言全过）：`scripts/s7-4-notify-replay.mjs` —— S0 基线自清理；S1 投递落库 + 合并键回退 + 收件箱立即可见；S2 同期合并（子行留档 / merged_count / 读面不增行）；S3 同 dedupeKey 重放不增行；S4 非法载荷 dead 且零落库；S5 免打扰（静默期不即时投、次日 flush 补发）；S6 每日上限（溢出排次日窗口起点、次日额度重置）；S7 读面（过滤 / 跨用户隔离 / 标记 / 全部已读）；S8 偏好缺省与局部更新；S9 自清理。已入 CI `database` job（`.github/` 属 px 线 —— 代记，请 px 复核，先例 Push 156 / 157 / 168 / 176 / 177）。
+- 差异登记（本刀未做，留后续切片）：企微通道（M5-03）、SSE 实时推送（M5-04 余项）、稍后提醒、通知生产端（i12 / i13 / j1 —— 规则调度与业务事件生产 `notify.message`）；偏好粒度 = 免打扰 / 每日上限 / 合并窗口三项（无类型级开关）。
 ## 规则引擎（S6·automation · M5-01 内核 + M5-05 余项 · A 系列：规则模型 + 条件求值 + 回放器）
 
 - 契约 `shared/src/modules/automation.ts`（规则模型与枚举；规则管理端点随 M5-06 入 `openapi.ts`，故 paths / schemas 计数不变）与实现 `src/modules/automation/`（`automation.rules.ts` / `builtin-rules.ts` / `automation.replay.ts` + `index.ts` 出口 + README）；**纯函数：不连库、不取系统时间**（业务日由调用方注入；调度接线随 M5-02 · lan）。
@@ -388,6 +398,7 @@ server/
 - Outbox 运行时测试（`test/outbox-*.test.ts` · S7·outbox · S7-1 · Push 174）：**分派 7 例**（按主题独立成批 / 空注册表不触库 / handler 异常与非法返回兜底 / 退避未到顶 / 到顶转 dead + 告警 + onDead 留痕 / 确定性 dead / preview 策略到顶）＋ **策略 4 例**（缺省与预览主题口径 / 退避封顶）＋ **告警 7 例**（积压 / 最老年龄 / 近期死信阈值边界 + 探针接线）＋ **保留期 3 例**（分批到不足一批 / 单轮 50 批封顶 / 空转即止）；
 
 - S7-3 调度测试（`test/schedule-rules.test.ts` + `test/scheduler.test.ts` · Push 177 · 新增 **22 例**）：调度规则（cron 五段解析 `*` / 列表 / 区间 / 步进（含单值 `N/n`）与非法即抛；`nextFireAfter` 上海业务日推进 / 周 7→0 / 日与周 OR 语义 / 扫描上限 null；`enumerateFireTimes` 封顶 2000 截断；`planCatchup` 超跨度收窄 + skipped 区间）；调度器（空注册表不触库；单活锁拿不到跳过；窗口 = `last_run_at` / `run_at - 1ms` 补发执行；产出与 `last_run_at` / `run_at` 推进同事务 + `job_runs.executed` 留痕；超跨度 `skipped` 留痕；失败累计到顶 `failed`；无生产者 `releaseClaim` 只存不跑）—— **本片后全量 702 例 / 50 文件**。
+- 通知投递测试（`test/notify-delivery.test.ts` **10 例** + `test/notify-service.test.ts` **15 例** · S7·outbox · S7-4 · Push 178 · 新增 **25 例**）：投递纯函数（HH:MM 解析与格式化 / 免打扰跨零点判定与次日结束点 / 上海日界 / 每日窗口起点 / 合并键回退 / 载荷解析与拒绝 / 投递计划四分支 = 即时 / 合并 / 静默排期 / 上限排期）；服务层（消费 → done / 非法载荷 dead / 落行幂等 / 合并命中与计数 / 免打扰排期 / 上限排期与次日重置 / flush 到期补投 / 收件箱清单与未读角标 / 标记与 404 / 全部已读 / 偏好缺省与三态回显 / 局部更新）；另 `test/schema-literals-parity.test.ts` +2 例（通知类型 / 状态 ↔ 库侧 CHECK 同值）、`test/outbox-policy.test.ts` 白名单清单更新（preview.job + notify.message）。—— **本片（S7-4）后全量 729 例 / 52 文件**。
 
 ## PoC-9 回放（h5 · S6·PoC-9）
 
@@ -549,7 +560,7 @@ server/
 - 结论与风险：① 生产档位（2C4G / 并发 2~4）已实跑对照，**复标仍属 M8 容量验证**（ADR-013：容量数字需实测校准后再承诺）；② **200MB 只覆盖「上传续传 + 可下载」** —— 超上限按 D2-05 确定性降级、不计成功率分母（口径需 wmj / px 会签）；③ 成功率为合成样本，真实业务样本（版式保真 / Excel 分页 / 复杂字体回退）用 `--samples <dir>` 复跑；④ 沙箱边界 503 为直连探针（pipeline 路径打不满队列）；⑤ 不进 CI 业务断言（需 docker / 对象存储 / 转换沙箱；CI 仅 `node --check` 语法门禁覆盖脚本）。
 - 复跑：`cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m4-05-stress.mjs --label "<档位名>" --workers 4 --burst 8 --long-run-min 20 --out <报告.md>`（前置：MinIO + api + N 个 worker + 转换沙箱（`deploy/preview`）；退出码 0 = 断言全过，可当门禁）。**B 档复跑**：先改 `deploy/preview/.env`（`PREVIEW_CONVERTER_MEM_LIMIT=4g` / `PREVIEW_CONVERT_MAX_CONCURRENCY=4`）并 `docker compose -f deploy/preview/docker-compose.yml up -d` 重建，再以 `--label "ADR-013 档 2C4G / 并发 4"` 同跑（完整两档命令见证据文件「复跑」段）。
 
-## S7·outbox 运行时（S7·outbox · S7-1：领取 / 重试退避 / 死信告警 / 积压探针 / done 行保留期 · S7-2：投递语义回放 / 50 并发领取报告 · S7-3：cron 调度 / 补发 / 幂等执行键 / 状态回退再生窗口）
+## S7·outbox 运行时（S7·outbox · S7-1：领取 / 重试退避 / 死信告警 / 积压探针 / done 行保留期 · S7-2：投递语义回放 / 50 并发领取报告 · S7-3：cron 调度 / 补发 / 幂等执行键 / 状态回退再生窗口 · S7-4：站内信投递（notify.message 消费 / 合并 / 免打扰 / 每日上限 / 收件箱读面））
 
 - 迁移：`database/migrations/0038_outbox_runtime.sql`（只追加 2 列）—— `outbox_events.locked_by`（领取者标识 = `WORKER_ID` 或 `host:pid`：多 worker 排障与 PoC-5 报告用，回写三态时保留最后一次领取者）+ `updated_at`（状态迁移时刻：`markDone` / `markRetry` / `markDead` 显式回写、不用触发器 —— 死信告警按它判「最近新增」）。
 - 落点：`src/outbox/`（8 文件：`handler` 消费结果契约 / `policy` 主题策略 / `dispatcher` 分派 / `alert` 阈值与出口 / `probe` 探针 / `retention` 保留期 / `outbox.module` 装配 / `index`）+ `src/db/outbox.store.ts`（`stats` 健康快照 + `purgeDone` 分批清理；`claim` 增写 `locked_by` / `updated_at`）+ `src/entry/worker.ts`（三个常驻循环：分派 / 告警探针 / 保留期清理）。
@@ -562,7 +573,9 @@ server/
 - 调度不变式：**单活**（每轮先 `pg_try_advisory_lock(OUTBOX_SCHEDULER.lockName)`，拿不到即跳过 —— 多实例部署只跑一个；会话级锁随进程崩溃自动释放）；**领取**（`for update skip locked` + `locked_at` 超 `OUTBOX_STALE_MS` 视为崩溃遗留可重领）；**补发**（窗口 =（`last_run_at`，now]，从未执行 = `run_at - 1ms` 起；超出 `OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS`（默认 7 天）只记 `job_runs.skipped` 留痕、不补发轰炸）；**原子**（生产者产出（`appendOutboxIfAbsent`）与 `last_run_at` 推进 / `run_at` 前进同事务 —— 崩溃回滚重领重放由**幂等执行键**（`dedupe_key` 唯一约束）兜底不重发）；**失败收敛**（attempts 累计到 `OUTBOX_SCHEDULER_MAX_ATTEMPTS`（默认 5）置 `failed`，人工复位后继续；每次失败 `job_runs.failed` 留痕）；**无生产者 kind = 只存不跑**（注册表为空不触库 / 不占锁；单个 unbound kind 释放领取标记、窗口不推进）。
 - S7-3 真机回放（Push 177 · 26 断言全过）：`scripts/s7-3-scheduler-replay.mjs` —— S1 单活锁三态（先得 / 后 null / 释放可再取）；S2 cron 补发与推进（3 触发全命中、产出与推进同事务、第二轮 tick 0 领取）；S3 超跨度裁剪（窗口收窄到 now-7d：执行 7 次 + `skipped` 留痕超出区间）；S4 杀 worker 不丢（子进程真领取后被 SIGKILL → 崩溃窗口内 0 重领 → 超窗重领恰好一次 → 同窗人工重放**不重发**：产出仍 3 行、`job_runs` 如实记两次 executed）；S5 状态版本窗口（v7 同键去重、回退后 v9 再生新键）+ 日期窗口（同日同键、次日新键）；S6 失败累计到顶（attempts 1/2 → failed，第三轮不再领取）；S7 双实例并发 tick（单活锁 + SKIP LOCKED：恰好一个执行、产出无重复）。已入 CI `database` job（`.github/` 属 px 线 —— 代记，请 px 复核，先例 Push 156 / 157 / 168 / 176）。
 - 主题类型收口（S7-3 · Push 177）：`appendOutbox` / `OUTBOX_REGISTRY` / 策略表 / `OutboxDispatcher` / 领取行 / `GateRejectedSignal`（task / flow）的 `topic` 全量收紧为契约 `OutboxTopic`（闭集）—— 以 wmj 定案（PR #181：`OUTBOX_TOPICS` 13 → 24 项 + 契约回放 17 项入 CI）为唯一写入清单，编译期拦截白名单外主题写入；领取侧因「只领注册主题」天然闭集，单点窄化（`src/db/outbox.store.ts` 注释说明）。
-- 已登记的对齐项（PR 说明 / 请 wmj 复核）：迁移 `0039` 属**高风险变更（DDL）**（CONTRIBUTING §15）—— 「只加不改」新表两张（`jobs` / `job_runs`），无既有表 / 列 / 索引 / CHECK 变化，回滚语句写在迁移头注。
+- S7-4 通知投递（j1 / M5-04 首刀 · Push 178）：迁移 `database/migrations/0040_notify_delivery.sql`（`notifications` 投递留档 + `notify_prefs` 偏好；**高风险 DDL，只加不改，请 wmj 评审**）；落点 = `src/modules/notify/`（详见 `src/modules/notify/README.md`）+ `outbox.module.ts` 注册 `notify.message` 消费者（受 `NOTIFY_DELIVERY_ENABLED` 开关）+ `entry/worker.ts` flush 循环（`NOTIFY_FLUSH_INTERVAL_MS` / `NOTIFY_FLUSH_BATCH`，draining 闸门 + shutdown 清理）；env 七项：`NOTIFY_DELIVERY_ENABLED` / `NOTIFY_FLUSH_INTERVAL_MS` / `NOTIFY_FLUSH_BATCH` / `NOTIFY_MERGE_WINDOW_MS`（缺省 30 分钟）/ `NOTIFY_QUIET_HOURS`（缺省 `22:00-08:00`，空串 = 关闭）/ `NOTIFY_DAILY_LIMIT`（缺省 200）/ `NOTIFY_DAILY_WINDOW_START_MINUTE`（缺省 08:00）。
+- S7-4 真机回放（Push 178 · 19 断言全过）：`scripts/s7-4-notify-replay.mjs`（S0~S9：投递 / 合并 / 幂等重放 / 非法载荷 dead / 免打扰次日补发 / 每日上限 / 收件箱读面与标记 / 偏好三态 / 自清理）。已入 CI `database` job（`.github/` 属 px 线 —— 代记，请 px 复核，先例 Push 156 / 157 / 168 / 176 / 177）。
+- 已登记的对齐项（PR 说明 / 请 wmj 复核）：迁移 `0039` 属**高风险变更（DDL）**（CONTRIBUTING §15）—— 「只加不改」新表两张（`jobs` / `job_runs`），无既有表 / 列 / 索引 / CHECK 变化，回滚语句写在迁移头注。**S7-4 追加**：迁移 `0040` 同属高风险 DDL（新表两张只加不改）+ `shared/src/modules/notifications.ts` / `shared/src/openapi.ts` 为新增契约（`shared/` 属 wmj 线，随 PR 代记）+ `shared/scripts/outbox-contract-replay.mjs` 主题常量登记（`NOTIFY_MESSAGE_TOPIC`）+ CI 接线（`.github/` 属 px 线代记）。
 
 ## M3-06 压测（1 万行任务数据集 + 索引调优评估）
 
@@ -632,7 +645,7 @@ server/
         run: npm run check:boundaries
 ```
 
-数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。（Push 157 起：迁移 → 漂移检查之后追加「种子 → 后台起 api → M3-06 压测 + M6 回放」三步真机执行；Push 168 / 176 / 177 再追加 M2-06 回放、S7-2 PoC-4 · PoC-5、S7-3 调度回放 —— 证据逐行落 CI 日志；`.github/` 属 px 线，代记，请 px 复核。本机沙箱无 PostgreSQL 时以 CI 证据为准。）
+数据库门禁 job（**已落地**，Push 48）：`.github/workflows/ci.yml` 的 `database` job 起 `postgres:18` service → 跑 `database` 迁移（0001~）→ `npm run check:db-schema`，一次覆盖「空库迁移」与「Drizzle 漂移」两条红线。（Push 157 起：迁移 → 漂移检查之后追加「种子 → 后台起 api → M3-06 压测 + M6 回放」三步真机执行；Push 168 / 176 / 177 / 178 再追加 M2-06 回放、S7-2 PoC-4 · PoC-5、S7-3 调度回放、S7-4 通知投递回放 —— 证据逐行落 CI 日志；`.github/` 属 px 线，代记，请 px 复核。本机沙箱无 PostgreSQL 时以 CI 证据为准。）
 
 ## 后续卡片衔接
 
@@ -647,8 +660,8 @@ server/
 - j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、「干系人角色」列（口径未定）、前端台账页与项目「干系人」面板（u 系列 · px 线）。
 - S6·report-issue：**M6-01 日报填报 / 提交 / 补填（A3-01 ~ A3-04）、M6-02 回写任务进展 + 问题自动生成（A3-08 / A3-09 幂等）、M6-03 问题闭环与留痕（A3-10 ~ A3-13）—— 已落地（Push 155 · 迁移 0023 + 契约 reports / issues；同批补齐 A2-01 删除引用守卫）**；**M6-01 收口（A7-01 当日汇总 + A7-05 应填未填两条读接口）—— 已落地（Push 162）**；**M6-05 工作台第一刀（我的任务三组 A6-01 + 我负责的问题 A6-03 · `GET /api/v1/workspace`）—— 已落地（Push 166）**；**M7-04 归档（C4-02 / C4-03：门禁 + 引用式清单 + 只读 + `filter[archivedYear]` 检索 · 迁移 0036）—— 已落地（Push 167）**；剩余：M6-04 干系人导入 / 导出（A5-05 随 M8-01、A5-09 随 M7-03）、C2-06 自定义待办 /「我参与的任务」口径（A6-01 余项，随前端联调复评）/ A6-04 与 A6-07（随 M5-07 · lan）、问题统计与导出（A3-17 · M7）、`dueAt` 提醒 / 超期升级（A3-14 · M5 规则引擎）、C9 归类字典可维护（二期）、前端日报 / 看板接线（u 系列 · px 线）。
 - S7·file：M4-01 上传管道（发起 / 分片直传与断点续传 / 完成落版本 / 取消 / 过期清理 + 真机回放）—— 已落地（Push 129 · PR-4）；**M4-05c 预览转换队列（outbox `preview.job` 领取器 + 转换沙箱客户端 + 三元组幂等 + 失败降级 + 定档预生成 + 真机回放 · 迁移 `0028`）—— 已落地（PR-10）**；**M4-02 版本 / 定档 / 回溯 / 回收站 + 到期清理任务（详情 / 版本链 / finalize / rollback / recycle / restore / purge + worker 到期清理 + 真机回放）—— 已落地（PR-5）**；上传入口 `fileId` 定案（Push 130 · wmj，#100）已按线放开：`version + fileId`（既有 draft 追加 / 替换）随 M4-02 落地，`change + fileId`（定档后变更）已随 M4-04 放开（目标须 final / changed）；**M4-03 文件库查询与多态关联（GET /projects/{id}/files 列表 + file_links 双向跳转 + 真机回放）—— 已落地（PR-6）**；**M4-04 变更（申请即通过 · 写入切片：intent=change 放开 + 定档后回溯 = 变更流 + R01 回写 tasks.change_refs（追加 + 去重、多条 · 迁移 0020）+ 真机回放）—— 已落地（PR-7）**（变更读面 / 统计 A4-17 与通知 A4-18 随后续切片）；**M4-05 预览编排 —— 进行中：数据层已落地（迁移 `0027` · `preview_artifacts` + `ck_audit_logs_action` 一次扩 `preview` / `download` 至十值），转换器 / 队列与读 API 随后续切片**；**M4-05c 预览转换队列 —— 已落地（PR-10 · 迁移 `0028`：outbox 领取器 + 转换沙箱客户端 + 失败降级）；**M4-05d 读 API（`GET /files/{id}/preview`：三态 + 短时签名（`PREVIEW_URL_TTL_SECONDS`）+ 仅 ready 写审计 + 版本 404 + 读取侧幂等补投 + 真机回放）—— 已落地（PR-11）**；**M4-05e 产物清理 —— 已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行；真机回放 16/16）**；**M4-05f 下载切片（`GET /files/{id}/versions/{versionId}/download-url`：attachment 签名（`S3_DOWNLOAD_URL_TTL_SECONDS`）+ `file.download` + download 审计 + 真机两态回放 14/14）—— 已落地（PR-13）**，M4-05 剩余 = 无（**M4-05g 压测已随 PR-14 落地**：两档实跑 —— 成功率 / 200MB 续传 / 并发背压 / 长跑内存）；**M4-06 二维 CAD 本地转换 PoC（条件性交付 · PoC-8）—— 暂缓（2026-09-28 留痕）**：前置 = 设计部门真实样本 ≥10 个 dwg/dxf（v0.1 §8.2 Q4），目前无法获取 → **有意识暂缓、非漏做**；现状 dwg/dxf 不在 `preview.targets.ts` 渲染通道表内（D2-03：不达标退化为下载）→ 上传可下载、预览走 D2-05 自然降级「仅下载」，**零副作用、不阻塞上线**；样本到位后另片开工（达标线：图层 / 线宽 / 中文字体 / 打印样式达标率 ≥95%、单页 ≤10 s；契约 `PreviewTarget` 不新增 —— CAD 产物 PDF → `pdf` 通道、SVG → `image` 通道）。
-- S7·outbox：**S7-1 运行时（dispatcher：按主题独立成批领取 + 消费分类 + 重试退避 + dead 告警；告警探针：积压 / 最老年龄 / 近期死信；done 行保留期清理 · 迁移 `0038`）—— 已落地（Push 174/175 · 合并提交 `968f036`）**；**S7-2 证据（i6 / i7）—— 已落地（Push 176：`poc4-outbox-replay.mjs` 投递语义回放 + `poc5-outbox-concurrency.mjs` 50 并发领取与真空观察，两步已入 CI `database` job）**；**S7-3 调度（i11 / M5-02）—— 已落地（Push 177：`jobs` / `job_runs`（迁移 `0039`）+ cron 补发 + 单活锁 + 幂等执行键 / 状态回退再生窗口（回放 26 断言入 CI）；主题类型按 24 项白名单编译期收口）**；剩余：S7-4 预留（生产者注册表接线 —— 规则调度 / 通知生产随 i12 / i13 / j1 加项即可）。
-- S6·automation：**M5-01 规则引擎内核（规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器 + R02 ~ R07 金标 31 例）—— 已落地（Push 161）**；**M5-05 余项 A 系列（A01 / A02 / A03 / A14 规则 + 文案 + 金标 22 例）—— 已落地（Push 163）**；**M5-02 调度内核（jobs / job_runs + cron 补发 + 单活 + 幂等执行键）—— 已落地（S7-3 · Push 177；规则生产端接注册表随 M5-06）**；剩余：M5-03 企微通道（lan）、M5-04 站内信 / SSE（lan）、M5-06 规则管理接口与发送记录（lan）、M5-07 前端消息中心与规则管理页（px）。
-- lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 无（M4-05g 压测已随 PR-14 落地）、**M4-06 二维 CAD PoC 暂缓（2026-09-28 留痕：暂无真实样本；条件性交付不阻塞，dwg/dxf 走 D2-05 降级）**）/ preview / notify / outbox（S7-1 运行时 + S7-2 证据 + S7-3 调度已落地：分派 / 重试 / 死信告警 / 保留期；投递语义回放与 50 并发领取报告；cron 调度 / 补发 / 幂等执行键 / 再生窗口（26 断言入 CI）；生产者注册表待 i12 / i13 / j1 接线）/ search / dashboard。
+- S7·outbox：**S7-1 运行时（dispatcher：按主题独立成批领取 + 消费分类 + 重试退避 + dead 告警；告警探针：积压 / 最老年龄 / 近期死信；done 行保留期清理 · 迁移 `0038`）—— 已落地（Push 174/175 · 合并提交 `968f036`）**；**S7-2 证据（i6 / i7）—— 已落地（Push 176：`poc4-outbox-replay.mjs` 投递语义回放 + `poc5-outbox-concurrency.mjs` 50 并发领取与真空观察，两步已入 CI `database` job）**；**S7-3 调度（i11 / M5-02）—— 已落地（Push 177：`jobs` / `job_runs`（迁移 `0039`）+ cron 补发 + 单活锁 + 幂等执行键 / 状态回退再生窗口（回放 26 断言入 CI）；主题类型按 24 项白名单编译期收口）**；**S7-4 通知投递（j1 / M5-04 首刀）—— 已落地（Push 178：`notifications` / `notify_prefs`（迁移 `0040`）+ `notify.message` 消费（幂等落行 / 同期合并 / 免打扰次日补发 / 每人每日上限）+ 收件箱读面与通知偏好（回放 19 断言入 CI））**；剩余：通知生产端接线（i12 / i13 / j1 加项）与企微通道（M5-03）/ SSE（M5-04 余项）。
+- S6·automation：**M5-01 规则引擎内核（规则模型 / 条件求值 / 触发窗口与幂等键 / 回放器 + R02 ~ R07 金标 31 例）—— 已落地（Push 161）**；**M5-05 余项 A 系列（A01 / A02 / A03 / A14 规则 + 文案 + 金标 22 例）—— 已落地（Push 163）**；**M5-02 调度内核（jobs / job_runs + cron 补发 + 单活 + 幂等执行键）—— 已落地（S7-3 · Push 177；规则生产端接注册表随 M5-06）**；剩余：M5-03 企微通道（lan）、**M5-04 站内信（首刀已落地 · S7-4 · Push 178 —— 投递内核与收件箱读面；SSE 与生产端接线随后续切片）**、M5-06 规则管理接口与发送记录（lan）、M5-07 前端消息中心与规则管理页（px）。
+- lan 线：file（进行中：M4-01 / M4-02 / M4-03 / M4-04 变更写入 + 读面、M4-05 数据层 + 转换队列 + 读 API + 产物清理 + 下载切片已落地；M4-04 变更统计待口径（随 M7-02）、M4-05 剩余 = 无（M4-05g 压测已随 PR-14 落地）、**M4-06 二维 CAD PoC 暂缓（2026-09-28 留痕：暂无真实样本；条件性交付不阻塞，dwg/dxf 走 D2-05 降级）**）/ preview / notify（S7-4 投递内核已落地：notify.message 消费 / 合并 / 免打扰 / 每日上限 / 收件箱读面与偏好 · 迁移 `0040` + 回放 19 断言入 CI；企微 M5-03 / SSE / 生产端接线随后续切片）/ outbox（S7-1 运行时 + S7-2 证据 + S7-3 调度 + S7-4 notify 消费注册已落地：分派 / 重试 / 死信告警 / 保留期；投递语义回放与 50 并发领取报告；cron 调度 / 补发 / 幂等执行键 / 再生窗口（26 断言入 CI）；通知投递内核（19 断言入 CI）；生产者注册表待 i12 / i13 / j1 接线）/ search / dashboard。
 - M2-06：视图（个人 / 公共 · A1-03）与关注订阅（A1-15）—— 已落地（Push 168 · 迁移 `0037` + 契约 `views` / `follows` + 模块 `view` / `follow` + 真机回放 `scripts/m2-06-replay.mjs`）；剩余：公共视图角色级共享（A1-03 余项，口径待定）、关注通知投递（M5 · lan）、工作台关注动态流（A6-08 · 二刀）、前端接线（M2-07 · px）。
 - 非目标（v0.2 §1.4）：Redis / MQ / K8s / 在线编辑 / 移动端 / 甘特图。

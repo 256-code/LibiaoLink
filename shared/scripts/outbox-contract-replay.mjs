@@ -28,7 +28,7 @@ const missing = RULE_EVENT_TOPICS.filter((topic) => !OUTBOX_TOPICS.includes(topi
 check("RULE_EVENT_TOPICS 是 OUTBOX_TOPICS 的子集", missing.length === 0, missing.length ? "缺：" + missing.join(", ") : RULE_EVENT_TOPICS.length + " 个主题全部在册");
 // 1b) 写入端 ↔ 白名单零漂移（静态旁证：扫 server/src 的主题字面量与主题常量；不连库）。
 const SERVER_SRC_URL = new URL("../../server/src/", import.meta.url);
-const TOPIC_CONSTANTS = { PREVIEW_JOB_TOPIC: "preview.job" };
+const TOPIC_CONSTANTS = { PREVIEW_JOB_TOPIC: "preview.job", NOTIFY_MESSAGE_TOPIC: "notify.message" };
 const RESERVED_TOPICS = ["notify.message"];
 function listTsFiles(dirUrl) {
   const files = [];

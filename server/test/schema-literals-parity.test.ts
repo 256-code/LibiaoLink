@@ -7,10 +7,20 @@
  * 不连库：纯常量比对。
  */
 import { describe, expect, it } from "vitest";
-import { AUDIT_ACTIONS, FOLLOW_OBJECT_TYPES, PREVIEW_STATUSES, PREVIEW_TARGETS, VIEW_SCOPES } from "@libiaolink/contracts";
+import {
+  AUDIT_ACTIONS,
+  FOLLOW_OBJECT_TYPES,
+  NOTIFICATION_STATUSES,
+  NOTIFICATION_TYPES,
+  PREVIEW_STATUSES,
+  PREVIEW_TARGETS,
+  VIEW_SCOPES,
+} from "@libiaolink/contracts";
 import {
   AUDIT_ACTION_KEYS,
   FOLLOW_OBJECT_TYPE_KEYS,
+  NOTIFICATION_STATUS_KEYS,
+  NOTIFICATION_TYPE_KEYS,
   PREVIEW_STATUS_KEYS,
   PREVIEW_TARGET_KEYS,
   VIEW_SCOPE_KEYS,
@@ -40,5 +50,13 @@ describe("库侧枚举字面量与契约一致（schema literals ↔ contracts�
 
   it("关注对象类型：FOLLOW_OBJECT_TYPE_KEYS = FOLLOW_OBJECT_TYPES（M2-06 · A1-15 · Push 168）", () => {
     expect([...FOLLOW_OBJECT_TYPE_KEYS]).toEqual([...FOLLOW_OBJECT_TYPES]);
+  });
+
+  it("通知类型：NOTIFICATION_TYPE_KEYS = NOTIFICATION_TYPES（S7-4 · C5-02）", () => {
+    expect([...NOTIFICATION_TYPE_KEYS]).toEqual([...NOTIFICATION_TYPES]);
+  });
+
+  it("通知状态：NOTIFICATION_STATUS_KEYS = NOTIFICATION_STATUSES（S7-4 · C5-01）", () => {
+    expect([...NOTIFICATION_STATUS_KEYS]).toEqual([...NOTIFICATION_STATUSES]);
   });
 });

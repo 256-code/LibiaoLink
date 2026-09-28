@@ -97,6 +97,15 @@ import {
   FollowObjectTypeSchema,
 } from "./modules/follows.ts";
 import {
+  NotificationListQuerySchema,
+  NotificationListResponseSchema,
+  NotificationMarkAllReadResponseSchema,
+  NotificationMarkBodySchema,
+  NotificationSchema,
+  NotifyPrefsSchema,
+  NotifyPrefsUpdateBodySchema,
+} from "./modules/notifications.ts";
+import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
   BlueprintSaveBodySchema,
@@ -180,6 +189,7 @@ const commonErrors = {
 } as const;
 
 const idParams = z.object({ id: UuidSchema });
+const notificationIdParams = z.object({ id: z.coerce.number().int().positive() });
 const stageParams = z.object({ id: UuidSchema, key: StageKeySchema });
 const blueprintQuery = BlueprintQuerySchema;
 const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
@@ -1628,6 +1638,69 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 消息中心（S7-4 · j1 / M5-04 首刀：站内信投递 / 合并免打扰 / 每日上限 · lan 线）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications",
+    tags: ["notifications"],
+    summary: "收件箱清单（C5-01 / C5-02）：状态 / 类型 / 关联对象 + 投递时刻区间 + 分页；只返回已投递主行（合并子行仅在库内留档）；随行未读角标计数",
+    request: { query: NotificationListQuerySchema },
+    responses: {
+      200: { description: "收件箱清单（含未读计数）", ...json(NotificationListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/notifications/{id}",
+    tags: ["notifications"],
+    summary: "标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR）",
+    request: { params: notificationIdParams, body: json(NotificationMarkBodySchema) },
+    responses: {
+      200: { description: "标记后的通知", ...json(NotificationSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/notifications/mark-all-read",
+    tags: ["notifications"],
+    summary: "全部标记已读（C5-01）：本人未读主行一次性置为已读；幂等（无未读时 updated=0）",
+    responses: {
+      200: { description: "置位结果（updated / unreadCount=0）", ...json(NotificationMarkAllReadResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications/prefs",
+    tags: ["notifications"],
+    summary: "通知偏好（C2-09）：免打扰时段 / 每日上限 / 合并窗口 —— 读面为生效值（个人配置缺省时回退 env 缺省）",
+    responses: {
+      200: { description: "生效中的通知偏好", ...json(NotifyPrefsSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/notifications/prefs",
+    tags: ["notifications"],
+    summary: "更新通知偏好（局部更新：只传变更键；免打扰两键成对，双 null = 关闭；空更新 400；null = 恢复缺省）",
+    request: { body: json(NotifyPrefsUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的生效偏好", ...json(NotifyPrefsSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1656,6 +1729,7 @@ export function buildOpenApiDocument() {
       { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
       { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
       { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },
+      { name: "notifications", description: "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好" },
     ],
   });
 }

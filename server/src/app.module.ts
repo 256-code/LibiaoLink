@@ -11,6 +11,7 @@ import { AdminModule, AuditService } from "./modules/admin/index.js";
 import { CalendarModule } from "./modules/calendar/index.js";
 import { FileModule } from "./modules/file/index.js";
 import { IdentityModule } from "./modules/identity/index.js";
+import { NotifyModule } from "./modules/notify/index.js";
 import { PermissionModule } from "./modules/permission/index.js";
 import { ProjectModule } from "./modules/project/index.js";
 import { ReportIssueModule } from "./modules/report-issue/index.js";
@@ -47,6 +48,7 @@ export class AppModule {
         AdminModule,
         CalendarModule,
         FileModule,
+        NotifyModule,
       ],
       providers: [
         { provide: APP_FILTER, useClass: ApiErrorFilter },

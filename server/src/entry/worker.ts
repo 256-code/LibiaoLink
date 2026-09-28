@@ -5,6 +5,7 @@ import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
 import { FileService, PreviewService } from "../modules/file/index.js";
+import { NotifyService } from "../modules/notify/index.js";
 import { JobScheduler, OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
@@ -26,6 +27,7 @@ async function bootstrap(): Promise<void> {
   const database = app.get(DatabaseService);
   const files = app.get(FileService);
   const previews = app.get(PreviewService);
+  const notify = app.get(NotifyService);
   const dispatcher = app.get(OutboxDispatcher);
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
@@ -45,7 +47,7 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费 · 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑））",
+    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
@@ -140,6 +142,31 @@ async function bootstrap(): Promise<void> {
   const schedulerTick = setInterval(() => void tickScheduler(), OUTBOX_SCHEDULER.tickMs);
   void tickScheduler();
 
+  // 通知延迟投递排空（S7-4 · C2-09）：免打扰静默 / 每日上限排队的行按 deliver_at 到期重排（合并 / 投递 / 再排期）。
+  // 与 outbox 重试分离（重试 = 消费失败退避；本循环 = 投递窗口静默），同用 draining 闸门避免上一轮叠加。
+  let flushing = false;
+  const flushNotify = async (): Promise<void> => {
+    if (flushing) {
+      return;
+    }
+    flushing = true;
+    try {
+      const stats = await notify.flushDue();
+      if (stats.scanned > 0) {
+        logger.log(
+          "通知延迟投递：扫描 " + stats.scanned + " / 投递 " + stats.delivered + " / 合并 " + stats.merged + " / 再排期 " +
+            stats.postponed,
+        );
+      }
+    } catch (error) {
+      logger.error("通知延迟投递排空失败：" + messageOf(error));
+    } finally {
+      flushing = false;
+    }
+  };
+  const notifyFlush = setInterval(() => void flushNotify(), env.NOTIFY_FLUSH_INTERVAL_MS);
+  void flushNotify();
+
   // 积压 / 最老待领取 / 近期死信告警（ADR-005）；死信单条即时告警不依赖本循环（dispatcher 直发）。
   const probeAlerts = async (): Promise<void> => {
     try {
@@ -168,6 +195,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(recycleSweep);
     clearInterval(outboxPoll);
     clearInterval(schedulerTick);
+    clearInterval(notifyFlush);
     clearInterval(alertProbe);
     clearInterval(retentionSweep);
     logger.log("worker 收到 " + signal + "，正在退出");

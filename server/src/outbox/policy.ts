@@ -1,6 +1,7 @@
 import type { Env } from "../config/env.js";
 import type { OutboxTopic } from "@libiaolink/contracts";
 import { PREVIEW_JOB_TOPIC } from "../modules/file/index.js";
+import { NOTIFY_MESSAGE_TOPIC } from "../modules/notify/index.js";
 
 /**
  * 主题级重试策略（S7-1）：重试与死信的**语义**由契约 fixed（shared/src/modules/outbox.ts），
@@ -40,7 +41,12 @@ export function previewTopicPolicy(env: Env): OutboxTopicPolicy {
 
 /** 已注册主题 → 策略；未登记主题由 dispatcher 回退缺省策略（正常不会发生：领取只按注册表主题）。 */
 export function resolveOutboxPolicies(env: Env): ReadonlyMap<OutboxTopic, OutboxTopicPolicy> {
-  return new Map<OutboxTopic, OutboxTopicPolicy>([[PREVIEW_JOB_TOPIC, previewTopicPolicy(env)]]);
+  return new Map<OutboxTopic, OutboxTopicPolicy>([
+    [PREVIEW_JOB_TOPIC, previewTopicPolicy(env)],
+    // notify.message（S7-4 站内信投递）：站内信 = 本地写库（无外部依赖抖动），沿用通用重试口径
+    // （OUTBOX_DEFAULT_*：5 次 / 15s 起 / 30min 封顶）；不丢由 source_dedupe_key 唯一 + 死信告警兜底。
+    [NOTIFY_MESSAGE_TOPIC, defaultTopicPolicy(env)],
+  ]);
 }
 
 /** 第 attempts 次失败（含本次，1 起）后的退避时长。 */
