@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」（业务口径 2026-09-28 · Push 198）
+ * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」+「日报记录列收窄」+「问题看板图标」（业务口径 2026-09-28 · Push 198 / 199）
  *
  * 业务口径：「日报这里关联任务改成关联阶段」——「日报填写」表单的「关联任务」多选（原列项目现有任务 + 负责人）
  * 改为「关联阶段」多选：选项 = 九个施工阶段（与项目总览分组 / 两块看板同一份口径、固定顺序 售前规划 → 验收），
  * 不再列具体任务；「日报记录」列头同步 = 「关联阶段」。
  * 本脚本用**真实鼠标 / 真实键盘**（CDP Input，不是合成 click()）在真机浏览器上验五组事：
  *   ① 项目详情「日报及问题 → 日报填写」：字段标题 = 「关联阶段」，说明不再提「关联任务 / 回写」；
+ *      页内导航栏「问题看板」项图标 = 业务给的面性圆环感叹号 SVG（16×16，其余三项照旧描边）；
  *   ② 多选项 = 恰好九枚（顺序 = 售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收），
  *      **不再列任务名**（对照组：真实项目任务「布局定档」不出现在表单里）；
  *   ③ 真实鼠标勾选「硬件实施」「试运行」→ 填「当日完成工作」→ 点「提交日报」：自动切到「日报记录」；
- *   ④ 「日报记录」表头 = 「关联阶段」（不再「关联任务」）；最新一行关联阶段列 = 「硬件实施、试运行」、状态 = 已提交；
+ *   ④ 「日报记录」表头 = 收窄后的**六列**（时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图；
+ *      不再含「关联任务 / 今日施工人数 / 现场发现问题 / 解决方案或建议」，行 = 6 个单元格）；
+ *      最新一行关联阶段列 = 「硬件实施、试运行」、状态 = 已提交；
  *   ⑤ 回「日报填写」表单已复位（勾选清零 / 完成工作清空）；跑完零残留（撤销临时会话；日报仍是内存态 —— 库内 daily_reports 不增行）。
+ *
+ * Push 199 追加（业务口径 2026-09-28「日报记录里面不需要体现这两个 以及施工人数」+「只保留 填写者 / 关联任务 /
+ *   当日完成工作 / 明日计划 / 现场附图」）：「日报记录」列表收窄为**六列** —— 时间 / 填写者 / 关联阶段 / 当日完成工作 /
+ *   明日计划 / 现场工作附图；「今日施工人数 / 现场发现问题 / 解决方案或建议」三列从列表展示去掉（只改列表展示：
+ *   表单字段与 A3-09 问题生成口径不变）。④ 组断言随之更新（列数 = 6 + 不含四词 + 行内下标前移 + 问题探针清零）；
+ *   同批：「问题看板」项图标换业务给 SVG（① 组新增 3 项断言 —— 新图标就位 / 旧竖列图标下架 / 其余三项仍描边）。
  *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -46,6 +55,8 @@ const Q = String.fromCharCode(34);
 const j = (value) => JSON.stringify(value);
 const STAGES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "生产阶段", "验收"];
 const PICK = ["硬件实施", "试运行"];
+const REPORT_HEADERS = ["时间", "填写者", "关联阶段", "当日完成工作", "明日计划", "现场工作附图"];
+const DROPPED_HEADERS = ["今日施工人数", "现场发现问题", "解决方案或建议"];
 const NOT_A_STAGE = "布局定档";
 const DONE_TEXT = "回放·关联阶段·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
 
@@ -213,6 +224,23 @@ function formExpr() {
 await openHash("?view=daily");
 const subnavReady = await waitFor("document.querySelectorAll(" + j("[data-subnav-item]") + ").length===4");
 check("① 项目详情「日报及问题」打开：页内四键帽导航（日报填写 / 日报记录 / 问题追踪 / 问题看板）", subnavReady === true, String(subnavReady));
+const tabIcons = await ev(
+  "(function(){var out=[];var bs=document.querySelectorAll(" + j("[data-subnav-item]") + ");" +
+  "for(var i=0;i<bs.length;i++){var svg=bs[i].querySelector(" + j("svg") + ");var p=svg===null?null:svg.querySelector(" + j("path") + ");" +
+  "out.push({tab:bs[i].getAttribute(" + j("data-subnav-item") + "),viewBox:svg===null?null:svg.getAttribute(" + j("viewBox") + ")," +
+  "stroke:svg===null?null:svg.getAttribute(" + j("stroke") + "),d:p===null?" + j("") + ":(p.getAttribute(" + j("d") + ")||" + j("") + ")});}return out;})()"
+);
+const boardIcon = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab === "问题看板")[0] : undefined;
+check("① 问题看板项图标 = 业务给的面性圆环感叹号（16×16 · path M7.493 0.015…）",
+  boardIcon !== undefined && boardIcon.viewBox === "0 0 16 16" && boardIcon.d.indexOf("M7.493 0.015") === 0,
+  boardIcon === undefined ? "-" : boardIcon.viewBox + " · " + boardIcon.d.slice(0, 12));
+check("① 问题看板项原两块竖列描边图标已换下",
+  boardIcon !== undefined && boardIcon.d.indexOf("M4.5 6A1.5") < 0 && boardIcon.stroke === null,
+  boardIcon === undefined ? "-" : "stroke=" + String(boardIcon.stroke));
+const strokeTabs = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab !== "问题看板") : [];
+check("① 其余三项导航图标照旧描边（stroke = currentColor · 共 3 项）",
+  strokeTabs.length === 3 && strokeTabs.every((item) => item.stroke === "currentColor"),
+  strokeTabs.map((item) => item.tab + ":" + String(item.stroke)).join(" / "));
 const formReady = await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
 const form0 = await ev(formExpr());
 check("① 「日报填写」表单就位（默认停在第一块）", formReady === true && form0 !== null, form0 === null ? "no form" : "ok");
@@ -239,7 +267,7 @@ await clickSelector('[data-fill-form] button[data-action="submit"]');
 const switched = await waitFor("(function(){var b=document.querySelector(" + j('[data-subnav-item="日报记录"]') + ");return b!==null && b.getAttribute(" + j("aria-current") + ")===" + j("page") + ";})()");
 check("③ 提交后自动切到「日报记录」子视图", switched === true, String(switched));
 
-// ---------- ④ 日报记录：列头 / 最新一行 ----------
+// ---------- ④ 日报记录：列头（Push 199 收窄后六列）/ 最新一行 ----------
 const headers = await ev(
   "(function(){var ts=document.querySelectorAll(" + j("table") + ");for(var i=0;i<ts.length;i++){" +
   "var hs=ts[i].querySelectorAll(" + j("thead th") + ");var out=[];for(var k=0;k<hs.length;k++){out.push(hs[k].textContent.trim());}" +
@@ -247,11 +275,19 @@ const headers = await ev(
 );
 check("④ 日报记录表头含「关联阶段」", Array.isArray(headers) && headers.indexOf("关联阶段") >= 0, Array.isArray(headers) ? headers.join(" / ") : String(headers));
 check("④ 日报记录表头不再有「关联任务」", Array.isArray(headers) && headers.indexOf("关联任务") < 0, Array.isArray(headers) ? "ok" : "-");
+check("④ 日报记录表头 = 恰好六列（时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图 · Push 199 收窄）",
+  Array.isArray(headers) && headers.length === 6 && REPORT_HEADERS.every((name, index) => headers[index] === name),
+  Array.isArray(headers) ? headers.join(" / ") : String(headers));
+check("④ 日报记录表头不含「今日施工人数 / 现场发现问题 / 解决方案或建议」（Push 199 只保留内容列）",
+  Array.isArray(headers) && DROPPED_HEADERS.every((word) => headers.indexOf(word) < 0), Array.isArray(headers) ? "ok" : "-");
 const rowProbe = await ev(
   "(function(){var r=document.querySelector(" + j("[data-report-row]") + ");if(r===null){return null;}" +
-  "var tds=r.querySelectorAll(" + j("td") + ");return {id:r.getAttribute(" + j("data-report-row") + ")," +
-  "stage:tds[3]===undefined?" + j("") + ":tds[3].textContent.trim(),done:tds[4]===undefined?" + j("") + ":tds[4].textContent.trim(),state:(r.textContent||" + j("") + ")};})()"
+  "var tds=r.querySelectorAll(" + j("td") + ");return {id:r.getAttribute(" + j("data-report-row") + "),cells:tds.length," +
+  "stage:tds[2]===undefined?" + j("") + ":tds[2].textContent.trim(),done:tds[3]===undefined?" + j("") + ":tds[3].textContent.trim(),state:(r.textContent||" + j("") + ")};})()"
 );
+const issueProbes = await ev("document.querySelectorAll(" + j("[data-report-issue-link]") + ").length");
+check("④ 最新一行 = 6 个单元格（与收窄后的列头一一对齐）", rowProbe !== null && rowProbe.cells === 6, rowProbe === null ? "-" : String(rowProbe.cells));
+check("④ 列表已无问题记录探针 [data-report-issue-link]（该列随 Push 199 移除）", issueProbes === 0, String(issueProbes));
 check("④ 最新一行关联阶段列 = 「" + PICK[0] + "、" + PICK[1] + "」", rowProbe !== null && rowProbe.stage === PICK[0] + "、" + PICK[1], rowProbe === null ? "-" : String(rowProbe.stage));
 check("④ 最新一行「当日完成工作」= 回放文本", rowProbe !== null && rowProbe.done === DONE_TEXT, rowProbe === null ? "-" : String(rowProbe.done));
 check("④ 最新一行状态 = 已提交", rowProbe !== null && rowProbe.state.indexOf("已提交") >= 0, rowProbe === null ? "-" : "ok");

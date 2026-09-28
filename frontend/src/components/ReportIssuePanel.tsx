@@ -19,18 +19,26 @@ import type { MeResponse, Project } from "../types";
  * - 顶部**页内导航栏**按业务给定样张（本批第 4 轮：四个**键帽按钮**（keycap），紧贴主标签栏下方一排）实现，替代原来的统计条；
  *   Tailwind 任意值等价还原样张的 styled-components 口径（浅灰面 + 0.5em 圆角 + em 口径的实心堆叠投影（键帽侧壁）+ 末层柔和落影，
  *   按下 translate 0.225em 并把堆叠压扁），尺寸按「大小不用太大」收紧为 13px 字号，**不引入 styled-components 依赖**。
+ *   每项 = 16px 图标 + 单行 13px 文字；**Push 199**：「问题看板」项图标按业务给样（SVG Repo 16×16 面性圆环感叹号，
+ *   `fill="currentColor"` 随字色）换下原两块竖列描边图标，其余三项照旧描边。
  * - 数据口径承 `系统功能书.md` A3：日报字段 A3-01 / 草稿与补填 A3-02 / 提交校验 A3-04 / 自动生成问题 A3-09 / 问题四态 A3-10；处理时限 SLA 见 ADR-026。
  * - 内容列宽：视图整体**全宽**（日报记录 / 问题追踪 / 问题看板 照旧铺满）；只有「日报填写」收成**居中窄栏**
  *   （max-w-3xl = 768px），业务口径「我只要日报填写页面居中然后尺寸舒适一点、像一个表单，其它的不变还是全屏」。
- * - 「日报记录」= **列表 / 表格**（一行一篇；业务口径「日报记录还是做成列表 不要卡片」，原卡片网格已撤），列口径与原来
- *   的卡片一致（时间 + 状态签 + 提交时间 / 填写者 / 今日施工人数 / 关联阶段 / 当日完成工作 / 明日计划 / 现场发现问题 /
- *   解决方案或建议 / 现场工作附图），与「问题追踪」同一套表壳（白底 + 圆角 + 行悬停），窄屏横向滚动。
+ * - 「日报记录」= **列表 / 表格**（一行一篇；业务口径「日报记录还是做成列表 不要卡片」，原卡片网格已撤），列口径 = 时间
+ *   （+ 状态签 + 提交时间）/ 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图（Push 199 收窄 —— 业务口径
+ *   2026-09-28「只保留 填写者 / 关联任务 / 当日完成工作 / 明日计划 / 现场附图」）——「今日施工人数 / 现场发现问题 /
+ *   解决方案或建议」三列**不在列表展示**（表单字段 A3-01 与 A3-09 自动生成问题的口径不变）；
+ *   与「问题追踪」同一套表壳（白底 + 圆角 + 行悬停），窄屏横向滚动。
  * - 原型阶段数据存浏览器内存（换项目 / 刷新即重置；任务域已接线，本模块随 M4 日报切片接线）：演示数据只挂在示例项目印度 `inmu-0010`，
  *   其余项目从空白开始；「日报填写」提交后**真的会**写进「日报记录」，含「现场发现问题」时按 A3-09 自动生成一条「未分组」问题。
  * - Push 198（业务口径 2026-09-28「日报这里关联任务改成关联阶段」）：「关联任务」改「**关联阶段**」——
  *   多选项 = 九个施工阶段（`PROJECT_STAGES` 去掉「项目总览」，与任务表 / 看板同一份口径），不再列具体任务 / 负责人；
  *   关联单位由「任务」改「阶段」后，契约层 `taskIds` → `stageKeys` 的修订挂 wmj 线（见 `前端功能需求.md` §3.8 A21），
  *   原 A3-08「按任务回写项目进展描述」的副作用随之停用（落点待口径定案）。
+ * - Push 199（业务口径 2026-09-28「日报记录里面不需要体现这两个 以及施工人数」+「只保留 填写者 / 关联任务 /
+ *   当日完成工作 / 明日计划 / 现场附图」）：「日报记录」列表收窄为 **6 列** —— 去掉「今日施工人数 / 现场发现问题 /
+ *   解决方案或建议」三列（只改**列表展示**：表单字段 A3-01 与 A3-09 问题生成口径不变，问题记录仍照常生成）；
+ *   「关联任务」按 Push 198 口径显示为「关联阶段」；时间列保留（一行一篇、按日期倒序，无时间列无法辨认）。
  */
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
@@ -104,7 +112,8 @@ type SubTab = "日报填写" | "日报记录" | "问题追踪" | "问题看板";
 
 const SUB_TABS: readonly SubTab[] = ["日报填写", "日报记录", "问题追踪", "问题看板"];
 
-/** 导航项图标（描边口径，1.8px 线宽；按钮内统一 16px 线性图标 + 单行文字）。 */
+/** 导航项图标（描边口径，1.8px 线宽；按钮内统一 16px 图标 + 单行文字）；**问题看板 = 业务给的面性 SVG**
+ *  （Push 199：16×16 圆环 + 感叹号，`fill="currentColor"` 随字色，不再是描边竖列）。 */
 const SUB_TAB_ICON: Record<SubTab, ReactNode> = {
   日报填写: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4">
@@ -126,9 +135,12 @@ const SUB_TAB_ICON: Record<SubTab, ReactNode> = {
     </svg>
   ),
   问题看板: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4">
-      <path d="M4.5 6A1.5 1.5 0 016 4.5h1.5A1.5 1.5 0 019 6v12a1.5 1.5 0 01-1.5 1.5H6A1.5 1.5 0 014.5 18V6z" />
-      <path d="M15 6a1.5 1.5 0 011.5-1.5H18A1.5 1.5 0 0119.5 6v12a1.5 1.5 0 01-1.5 1.5h-1.5A1.5 1.5 0 0115 18V6z" />
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M7.493 0.015C7.442 0.021 7.268 0.039 7.107 0.055C5.234 0.242 3.347 1.208 2.071 2.634C0.66 4.211 -0.057 6.168 0.009 8.253C0.124 11.854 2.599 14.903 6.11 15.771C8.169 16.28 10.433 15.917 12.227 14.791C14.017 13.666 15.27 11.933 15.771 9.887C15.943 9.186 15.983 8.829 15.983 8C15.983 7.171 15.943 6.814 15.771 6.113C14.979 2.878 12.315 0.498 9 0.064C8.716 0.027 7.683 -0.006 7.493 0.015M8.853 1.563C9.967 1.707 11.01 2.136 11.944 2.834C12.273 3.08 12.92 3.727 13.166 4.056C13.727 4.807 14.142 5.69 14.33 6.535C14.544 7.5 14.544 8.5 14.33 9.465C13.916 11.326 12.605 12.978 10.867 13.828C10.239 14.135 9.591 14.336 8.88 14.444C8.456 14.509 7.544 14.509 7.12 14.444C5.172 14.148 3.528 13.085 2.493 11.451C2.279 11.114 1.999 10.526 1.859 10.119C1.618 9.422 1.514 8.781 1.514 8C1.514 6.961 1.715 6.075 2.16 5.16C2.5 4.462 2.846 3.98 3.413 3.413C3.98 2.846 4.462 2.5 5.16 2.16C6.313 1.599 7.567 1.397 8.853 1.563M7.706 4.29C7.482 4.363 7.355 4.491 7.293 4.705C7.257 4.827 7.253 5.106 7.259 6.816C7.267 8.786 7.267 8.787 7.325 8.896C7.398 9.033 7.538 9.157 7.671 9.204C7.803 9.25 8.197 9.25 8.329 9.204C8.462 9.157 8.602 9.033 8.675 8.896C8.733 8.787 8.733 8.786 8.741 6.816C8.749 4.664 8.749 4.662 8.596 4.481C8.472 4.333 8.339 4.284 8.04 4.276C7.893 4.272 7.743 4.278 7.706 4.29M7.786 10.53C7.597 10.592 7.41 10.753 7.319 10.932C7.249 11.072 7.237 11.325 7.294 11.495C7.388 11.78 7.697 12 8 12C8.303 12 8.612 11.78 8.706 11.495C8.763 11.325 8.751 11.072 8.681 10.932C8.616 10.804 8.46 10.646 8.333 10.58C8.217 10.52 7.904 10.491 7.786 10.53Z"
+        fill="currentColor"
+        fillRule="evenodd"
+      />
     </svg>
   ),
 };
@@ -284,25 +296,25 @@ function FilePicker({ field, fileNames, onChange }: { field: string; fileNames: 
   );
 }
 
-/** 「日报记录」的列口径（业务口径「做成列表 不要卡片」，字段仍是 A3-01）。 */
+/** 「日报记录」的列口径（业务口径「做成列表 不要卡片」，字段仍是 A3-01）；
+ *  Push 199 收窄 = 时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图 六列 ——「今日施工人数 /
+ *  现场发现问题 / 解决方案或建议」只从列表展示去掉（表单字段与 A3-09 问题生成口径不变）。 */
 const REPORT_COLUMNS: readonly string[] = [
   "时间",
   "填写者",
-  "今日施工人数",
   "关联阶段",
   "当日完成工作",
   "明日计划",
-  "现场发现问题",
-  "解决方案或建议",
   "现场工作附图",
 ];
 
 /** 一篇日报一行：**列表 / 表格**（业务口径「日报记录还是做成列表 不要卡片」），列内容与原来的卡片一致；
- *  表格壳与「问题追踪」同一套（白底 + 圆角边框 + 行悬停），窄屏横向滚动。现场发现问题非空时带出问题记录当前态。 */
-function ReportList({ reports, issueByReport }: { reports: readonly DailyReport[]; issueByReport: Map<string, Issue> }) {
+ *  表格壳与「问题追踪」同一套（白底 + 圆角边框 + 行悬停），窄屏横向滚动。
+ *  （Push 199 收窄后不再带问题记录当前态 —— 问题态仍在「问题追踪 / 问题看板」可查。） */
+function ReportList({ reports }: { reports: readonly DailyReport[] }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
-      <table className="w-full min-w-[1380px] border-collapse text-left text-xs">
+      <table className="w-full min-w-[900px] border-collapse text-left text-xs">
         <thead className="bg-zinc-50 text-zinc-500">
           <tr>
             {REPORT_COLUMNS.map((title) => (
@@ -314,7 +326,6 @@ function ReportList({ reports, issueByReport }: { reports: readonly DailyReport[
         </thead>
         <tbody>
           {reports.map((report) => {
-            const issue = issueByReport.get(report.id);
             return (
               <tr key={report.id} data-report-row={report.id} className="align-top transition hover:bg-zinc-50/70">
                 <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5">
@@ -330,29 +341,9 @@ function ReportList({ reports, issueByReport }: { reports: readonly DailyReport[
                     <span className="truncate text-zinc-700">{report.author}</span>
                   </span>
                 </td>
-                <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5 text-zinc-700">{report.headcount} 人</td>
                 <td className="min-w-[150px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.stages.length === 0 ? "—" : report.stages.join("、")}</td>
                 <td className="min-w-[210px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-800">{report.doneWork === "" ? "—" : report.doneWork}</td>
                 <td className="min-w-[180px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.plan === "" ? "—" : report.plan}</td>
-                <td className="min-w-[250px] border-b border-zinc-100 px-3 py-2.5">
-                  {report.foundIssue === "" ? (
-                    <span className="text-zinc-400">—</span>
-                  ) : (
-                    <div className="rounded-lg bg-amber-50/80 px-2 py-1.5">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[10px] font-medium text-amber-700">现场发现问题</span>
-                        {report.issueCategory === "" ? null : (
-                          <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">{report.issueCategory}</span>
-                        )}
-                        <span data-report-issue-link={report.id} className="ml-auto text-[10px] text-zinc-500">
-                          {issue === undefined ? "已生成问题记录" : "已生成问题记录 · " + issue.state}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 leading-5 text-zinc-700">{report.foundIssue}</p>
-                    </div>
-                  )}
-                </td>
-                <td className="min-w-[180px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.suggestion === "" ? "—" : report.suggestion}</td>
                 <td className="min-w-[120px] border-b border-zinc-100 px-3 py-2.5">
                   {report.photos.length === 0 ? (
                     <span className="text-zinc-400">—</span>
@@ -671,7 +662,6 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
   const [notice, setNotice] = useState<string>("");
 
   const author = me.user.displayName ?? me.user.name ?? "未署名用户";
-  const issueByReport = new Map<string, Issue>(issues.map((issue) => [issue.reportId, issue]));
 
   /** 提交（已提交）或暂存（草稿）：两条路都写进「日报记录」；含「现场发现问题」时按 A3-09 自动生成一条问题。 */
   const handleSubmit = (state: ReportState) => {
@@ -777,7 +767,7 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
           {reports.length === 0 ? (
             <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
           ) : (
-            <ReportList reports={reports} issueByReport={issueByReport} />
+            <ReportList reports={reports} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
