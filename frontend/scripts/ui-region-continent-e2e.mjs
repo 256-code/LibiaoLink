@@ -10,15 +10,19 @@
  *   ② 分组可展开 / 收起：默认只展开「有勾选的洲」（面板打开是干净几行），「全部展开 / 全部收起」一键切换，
  *      组头带「N 个地区」与「已选 N」；分洲后一枚不多一枚不少（与库内 facets 对账）；
  *   ③ 点胶囊照旧按地区筛选（URL 写 filter[region]、卡片计数同步）；
- *   ④ 新建项目弹窗的地区下拉 = 分洲 + 顶部搜索框（打开即聚焦）：中文名与英文名都能搜（英 → 英国；Brazil → 巴西），
- *      搜不到给提示行、回车选第一条；**Push 194 起 = 纯选择器**（无「＋ 添加地区」、无行内删除、触发器不可手填）；
- *   ⑤ 洲口径 = 中国口径（与地图同一套国界 / 国名口径）：中国 / 日本 / 新加坡 在亚洲，英国 / 德国 / 俄罗斯 在欧洲，
+ *   ④ 新建项目弹窗的项目地区 = 贴字段弹出的小窗（Push 195 返工）：「还是要之前的小窗 然后最上方是已有项目地区」
+ *      ＋「小窗做分页 已有项目地区 / 全部地区 然后选中标蓝即可 不要这个勾」——两个页签：已有项目地区（有项目在用、
+ *      按用量降序、带项目数）/ 全部地区（标准国家清单 201 条（中国标准地图口径）+ 字典独有条目，按洲分组 —— 字典
+ *      没收录的国家也能搜到、选到）；两个页签的小窗同高同位（「两个分页的高度位置要一致」：固定尺寸，切页不跳）；
+ *      打开即聚焦搜索框、输入关键词自动切到全部地区页、中英文都能搜（冰岛 / Iceland）、
+ *      搜不到给提示行、回车选当前页第一条；选中态 = 标蓝（不带对勾）；纯选择：无「＋ 添加地区」、无行内删除、不支持手填；
+ *   ⑤ 洲口径 = 中国口径（与地图同一套国界 / 国名口径）：中国 / 日本 / 新加坡 在亚洲，英国 / 德国 / 俄罗斯 / 冰岛 在欧洲，
  *      南非 / 埃及 在非洲，美国 / 加拿大 在北美洲，巴西 / 秘鲁 在南美洲，澳大利亚 / 新西兰 在大洋洲；
- *      台湾 / 科索沃 / 北塞浦路斯 / 索马里兰 一个都不许出现（中国口径硬护栏）；
+ *      台湾 / 科索沃 / 北塞浦路斯 / 索马里兰 一个都不许出现（中国口径硬护栏），香港 / 澳门 也不在候选里；
  *   ⑥ 整洲筛选（Push 193）：「某一个洲点击可以直接筛选整个洲」—— 勾洲行最右侧的复选框 = 把该洲全部地区
  *      一起勾上（并展开），再点一次取消；URL / 工具条计数 / 复选框状态与库内对账；
- *   ⑦ 地区下拉不再承载字典维护（Push 194）：撤下「＋ 添加地区」与行内删除，只做选择 —— 断言无添加入口、
- *      无删除按钮、除搜索框外没有第二个输入框（不能手填）、触发器是 button；库内地区字典前后一行不差；
+ *   ⑦ 地区选择不再承载字典维护（Push 194 / 195）：断言无添加入口、无删除按钮、小窗里只有搜索框 1 个输入框
+ *      （不能手填）、地区触发器是 button；Esc / 再点触发器先关小窗、项目弹窗保持打开；库内地区字典前后一行不差；
  *   ⑧ 控制台零报错；跑完会话撤销、库内零残留（全程只读：不建项目、不写字典）。
  *
  * 前置（三件都在本机跑着）：
@@ -32,7 +36,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -62,14 +66,19 @@ const CONTINENT_SPOT = [
   ["大洋洲", ["澳大利亚", "新西兰"]]
 ];
 /**
- * 下拉候选里的洲归属抽查：挑几个「侧栏看不到 / 非欧洲」的字典条目（埃及 现在不在字典里了 —— 沙箱库会变，
- * 表里哪条不在当前字典里就跳过，只要求至少查到 2 条，别静默全跳过）。
+ * 小窗候选里的洲归属抽查（Push 195：候选 = 标准国家清单，不再依赖字典存量 —— 每条必须找到，不许跳过）：
+ * 六大洲各挑代表（含微国新加坡 与 用户原话场景冰岛 / 埃及 —— 后三条沙箱里通常没项目，用来在洲段严格对账）。
+ * 有项目在用的国家会被上提到「已有项目地区」段（业务口径），命中该段算通过、计入上提数。
  */
-const DROPDOWN_SPOT = [["非洲", "埃及"], ["欧洲", "丹麦"], ["亚洲", "土耳其"], ["北美洲", "美国"]];
+const PICKER_SPOT = [
+  ["亚洲", "中国"], ["亚洲", "新加坡"], ["亚洲", "约旦"], ["欧洲", "冰岛"], ["欧洲", "英国"], ["欧洲", "芬兰"],
+  ["非洲", "埃及"], ["非洲", "苏丹"], ["北美洲", "美国"], ["南美洲", "巴西"], ["大洋洲", "澳大利亚"], ["大洋洲", "新西兰"]
+];
 
-/** 搜索框关键词与预期候选（中文名 / 英文名各一条；库内没有第二条含这个词的条目） */
-const SEARCH_ZH = "英";
-const SEARCH_EN = "Brazil";
+/** 搜索框关键词与预期候选（冰岛 = 用户原话「搜索现在没有的国家」场景 —— 字典里没有、标准清单里必须有） */
+const SEARCH_ZH = "冰岛";
+const SEARCH_EN = "Iceland";
+const SEARCH_ALT_EN = "Brazil";
 const SEARCH_MISS = "zzzz";
 
 mkdirSync(SHOTS, { recursive: true });
@@ -215,8 +224,11 @@ const SIDEBAR_SECTION = "[data-region-section=true]";
 const SIDEBAR_SWITCH = "label:has(input[aria-controls=category-filter-panel])";
 const CONTINENT_GROUP_SELECTOR = "[data-continent-group]";
 const CONTINENT_ALL_SELECTOR = "[data-continent-all]";
-const POPOVER_SELECTOR = "[data-select-popover=true]";
 const REGION_TRIGGER = "[aria-label=" + j("选择项目地区") + "]";
+const PROJECT_DIALOG = "[role=dialog][aria-label=" + j("新建项目") + "]";
+const REGION_POPUP = "[data-region-popover=true]";
+const REGION_POPUP_SEARCH = REGION_POPUP + " input";
+const REGION_POPUP_OPTION = REGION_POPUP + " [role=listbox] [role=option]";
 const CREATE_BUTTON = "button:has(svg path[d=" + j("M12 5v14M5 12h14") + "])";
 
 async function openList(hash, width = 1440, height = 900) {
@@ -309,41 +321,50 @@ const readSidebar = () => {
   };
 };
 
-/** 页面探针：读地区下拉浮层（搜索框 / 分组小标题 / 候选行） */
-const readPopover = () => {
-  const popover = document.querySelector("[data-select-popover=true]");
-  if (popover === null) {
+/** 页面探针：读项目地区小窗（搜索框 / 分组小标题 / 候选行 / 选中态 / 已有项目数） */
+const readRegionPopup = () => {
+  const dialog = document.querySelector("[data-region-popover=true]");
+  if (dialog === null) {
     return null;
   }
-  const input = popover.querySelector("input");
+  const input = dialog.querySelector("input");
   let deleteButtons = 0;
-  for (const button of Array.from(popover.querySelectorAll("button"))) {
+  for (const button of Array.from(dialog.querySelectorAll("button"))) {
     if (String(button.getAttribute("aria-label") ?? "").indexOf("删除") === 0) {
       deleteButtons += 1;
     }
   }
-  const list = popover.querySelector("[role=listbox]");
+  const list = dialog.querySelector("[role=listbox]");
+  const activeTab = list === null ? null : list.getAttribute("data-region-tab");
+  const tabs = Array.from(dialog.querySelectorAll("[role=tab]")).map((node) => ({
+    key: node.getAttribute("data-region-tab"),
+    selected: node.getAttribute("aria-selected") === "true"
+  }));
   const rows = [];
   const groups = [];
-  let group = null;
   if (list !== null) {
-    for (const child of Array.from(list.children)) {
-      const header = child.getAttribute("data-option-group");
-      if (header !== null) {
-        group = header;
-        if (groups.indexOf(header) < 0) {
-          groups.push(header);
-        }
-        continue;
+    for (const wrapper of Array.from(list.children)) {
+      const header = wrapper.querySelector("[data-option-group]");
+      const group = header === null ? (activeTab === "used" ? "已有项目地区" : null) : header.getAttribute("data-option-group");
+      if (group !== null && groups.indexOf(group) < 0) {
+        groups.push(group);
       }
-      const option = child.getAttribute("role") === "option" ? child : child.querySelector("[role=option]");
-      if (option === null) {
-        continue;
+      const optionNodes = wrapper.getAttribute("role") === "option" ? [wrapper] : Array.from(wrapper.querySelectorAll("[role=option]"));
+      for (const option of optionNodes) {
+        const nameNode = option.querySelector("[data-region-name]");
+        const countMatch = option.textContent.match(/(\d+) 个项目/);
+        rows.push({
+          group: group,
+          name: nameNode === null ? option.textContent.trim() : nameNode.textContent.trim(),
+          value: option.getAttribute("data-region-option"),
+          selected: option.getAttribute("aria-selected") === "true",
+          count: countMatch === null ? null : Number(countMatch[1]),
+          text: option.textContent.trim()
+        });
       }
-      rows.push({ group: group, text: option.textContent.trim() });
     }
   }
-  const selected = popover.querySelector("[aria-selected=true]");
+  const selected = dialog.querySelector("[role=option][aria-selected=true]");
   const scroller = list === null ? null : list.parentElement;
   let selectedVisible = null;
   if (selected !== null && scroller !== null) {
@@ -351,21 +372,25 @@ const readPopover = () => {
     const box = scroller.getBoundingClientRect();
     selectedVisible = rowBox.top >= box.top - 1 && rowBox.bottom <= box.bottom + 1;
   }
+  const dialogBox = dialog.getBoundingClientRect();
   return {
+    /** 小窗盒子（Push 195 追订：两个页签要同高同位 —— 页面里直接量，不靠眼睛看）。 */
+    box: { top: Math.round(dialogBox.top), left: Math.round(dialogBox.left), width: Math.round(dialogBox.width), height: Math.round(dialogBox.height) },
     hasInput: input !== null,
-    inputLabel: input === null ? null : input.getAttribute("aria-label"),
     inputValue: input === null ? null : input.value,
     focused: input !== null && document.activeElement === input,
+    activeTab: activeTab,
+    tabs: tabs,
     rows: rows,
-    selectedText: selected === null ? null : selected.textContent.trim(),
-    selectedVisible: selectedVisible,
     groups: groups,
-    /** Push 194：地区下拉已撤下「＋ 添加地区」—— 此字段恒 false，留作「不许回来」的护栏。 */
-    hasAddRow: popover.textContent.indexOf("添加地区") >= 0,
-    hasEmptyText: popover.textContent.indexOf("没有匹配的地区") >= 0,
-    /** Push 194：纯选择器护栏 —— 删除按钮 0 个、输入框只有搜索框 1 个。 */
+    selectedName: selected === null ? null : (selected.querySelector("[data-region-name]") ?? selected).textContent.trim(),
+    selectedVisible: selectedVisible,
+    /** 纯选择器护栏（Push 194 / 195）：无「添加地区」入口、无删除按钮、只有搜索框 1 个输入框。 */
+    hasAddRow: dialog.textContent.indexOf("添加地区") >= 0,
+    hasEmptyText: dialog.textContent.indexOf("没有匹配的国家 / 地区") >= 0,
     deleteButtons: deleteButtons,
-    inputCount: popover.querySelectorAll("input").length
+    inputCount: dialog.querySelectorAll("input").length,
+    text: dialog.textContent
   };
 };
 /** 点某个按钮（按文本精确匹配；rootSelector 缺省 = 整页） */
@@ -457,9 +482,9 @@ const contiguityFailures = (rows) => {
   return bad;
 };
 
-/** 打开浮层后点一下搜索框（真实鼠标）—— 保证后面 insertText 有落点 */
-async function focusSearch() {
-  await clickSelector(POPOVER_SELECTOR + " input");
+/** 打开小窗后点一下搜索框（真实鼠标）—— 保证后面 insertText 有落点 */
+async function focusPopupSearch() {
+  await clickSelector(REGION_POPUP_SEARCH);
   await sleep(300);
 }
 
@@ -579,80 +604,169 @@ check(
   JSON.stringify({ checked: europeGroupOff === undefined ? null : europeGroupOff.checked, hash: hashAfterOff })
 );
 
-// ── ⑤ 新建项目弹窗：地区下拉 = 分洲 + 可搜索（打开即聚焦） ──
+// ── ⑤ 新建项目弹窗：项目地区 = 贴字段弹出的小窗（Push 195）——分页「已有项目地区 / 全部地区」 ──
 const DIALOG = "[role=dialog]";
-const projectsAllBefore = Number((await db.query("select count(*)::int as n from projects")).rows[0].n);
-await clickByText("body", "新建项目");
-await waitFor("document.querySelector(" + j(DIALOG) + ")!==null");
-await waitFor("document.querySelector(" + j(REGION_TRIGGER) + ")!==null");
-await clickSelector(REGION_TRIGGER);
-await sleep(600);
-let popover = await probe(readPopover);
-check("新建项目：点「选择项目地区」弹浮层，顶部搜索框在且打开即聚焦", popover !== null && popover.hasInput && popover.focused, JSON.stringify(popover === null ? null : { hasInput: popover.hasInput, focused: popover.focused, label: popover.inputLabel }));
-check("候选 = 地区字典 " + String(dictRegionCount) + " 条（一条不多一条不少）＋ 无「＋ 添加地区」入口（Push 194 纯选择器）", popover !== null && popover.rows.length === dictRegionCount && popover.hasAddRow === false, JSON.stringify(popover === null ? null : { rows: popover.rows.length, add: popover.hasAddRow }));
-const triggerTagOfRegion = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").tagName"));
-check("地区下拉 = 纯选择器（Push 194）：无删除按钮、除搜索框外没有第二个输入框（不能手填）", popover !== null && popover.deleteButtons === 0 && popover.inputCount === 1, JSON.stringify(popover === null ? null : { deleteButtons: popover.deleteButtons, inputs: popover.inputCount }));
-check("地区下拉触发器是 button（不是输入框：不支持手填）", triggerTagOfRegion === "BUTTON", triggerTagOfRegion);
-await shot("07-modal-region-select");
-const triggerAtOpen = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
-check("打开浮层就把当前选中项带进可视区（选中 " + String(popover === null ? "" : popover.selectedText) + " / 触发器 " + triggerAtOpen + "）", popover !== null && popover.selectedVisible === true && popover.selectedText === triggerAtOpen, JSON.stringify(popover === null ? null : { visible: popover.selectedVisible, selected: popover.selectedText, trigger: triggerAtOpen }));
-const popoverGroups = popover === null ? [] : popover.groups;
-const expectedGroupOrder = allowed.filter((name) => popoverGroups.indexOf(name) >= 0);
-check("候选按洲分组：小标题 " + String(popoverGroups.length) + " 个（" + popoverGroups.join(" / ") + "），按洲序排列、每条候选都归到某一洲、同洲成块不交叉", popover !== null && popoverGroups.length >= 6 && popoverGroups.every((name, index) => name === expectedGroupOrder[index]) && contiguityFailures(popover.rows).length === 0 && popover.rows.every((row) => row.group !== null), JSON.stringify(popover === null ? null : { groups: popoverGroups, expected: expectedGroupOrder, bad: contiguityFailures(popover.rows), ungrouped: popover.rows.filter((row) => row.group === null).length }));
-const dropdownSpotFailures = [];
-const dictNames = new Set(dictRegionRows.map((row) => row.name));
-const dropdownSpotChecked = DROPDOWN_SPOT.filter((entry) => dictNames.has(entry[1]));
-for (const entry of dropdownSpotChecked) {
-  const row = popover === null ? undefined : popover.rows.find((item) => item.text === entry[1]);
-  if (row === undefined || row.group !== entry[0]) {
-    dropdownSpotFailures.push(entry[1] + " 应在 " + entry[0] + "，实际 " + String(row === undefined ? "（没找到）" : row.group));
+/** 标准国家清单（worldMap.ts 生成物）：201 条中文名唯一 —— 「全部地区」页的「全覆盖」基准。 */
+const worldMapText = readFileSync(new URL("../src/data/worldMap.ts", import.meta.url), "utf8");
+const standardNames = Array.from(new Set(Array.from(worldMapText.matchAll(/nameZh: "([^"]+)"/g)).map((match) => match[1])));
+/** 期望候选数 = 标准清单 + 字典里不是标准国名的条目（旧「华东」类；当前库为 0）。 */
+const dictOnlyRows = dictRegionRows.filter((row) => standardNames.indexOf(row.name) < 0);
+const expectedPopupRows = standardNames.length + dictOnlyRows.length;
+/** 「已有项目地区」期望 = 有项目在用的启用字典条目（码 → 活项目数）。 */
+const usedCountByCode = new Map();
+for (const row of projectRows) {
+  if (dictRegionRows.some((item) => item.code === row.region)) {
+    usedCountByCode.set(row.region, (usedCountByCode.get(row.region) ?? 0) + Number(row.n));
   }
 }
-check("下拉洲归属抽查（" + String(dropdownSpotChecked.length) + " 条）：" + dropdownSpotChecked.map((entry) => entry[1] + "→" + entry[0]).join("、"), dropdownSpotChecked.length >= 2 && dropdownSpotFailures.length === 0, dropdownSpotFailures.join("；"));
-await shot("04-modal-region-groups");
+const usedCodes = Array.from(usedCountByCode.keys());
 
-await focusSearch();
-await typeText(SEARCH_ZH);
-popover = await probe(readPopover);
-check("搜中文「" + SEARCH_ZH + "」：候选收敛到 1 条 = 英国（所属洲 = 欧洲）", popover !== null && popover.rows.length === 1 && popover.rows[0].text === "英国" && popover.rows[0].group === "欧洲", JSON.stringify(popover === null ? null : popover.rows));
-await clearSearch();
-await focusSearch();
-await typeText(SEARCH_EN);
-popover = await probe(readPopover);
-check("搜英文「" + SEARCH_EN + "」：候选收敛到 1 条 = 巴西（南美洲）—— 英文国名也能搜", popover !== null && popover.rows.length === 1 && popover.rows[0].text === "巴西" && popover.rows[0].group === "南美洲", JSON.stringify(popover === null ? null : popover.rows));
-await shot("05-modal-region-search");
-await clearSearch();
-await focusSearch();
-await typeText(SEARCH_MISS);
-popover = await probe(readPopover);
-check("搜不到时：候选 0 条 + 提示行「没有匹配的地区。」", popover !== null && popover.rows.length === 0 && popover.hasEmptyText, JSON.stringify(popover === null ? null : { rows: popover.rows.length, empty: popover.hasEmptyText }));
-await clearSearch();
-await focusSearch();
-await typeText(SEARCH_EN);
-await pressEnter();
-await sleep(700);
-popover = await probe(readPopover);
-const triggerAfterEnter = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
-check("搜索框回车 = 选第一条（巴西）：浮层关掉、触发器显示巴西", popover === null && triggerAfterEnter === "巴西", JSON.stringify({ popover: popover === null, trigger: triggerAfterEnter }));
-
+const projectsAllBefore = Number((await db.query("select count(*)::int as n from projects")).rows[0].n);
+await clickByText("body", "新建项目");
+await waitFor("document.querySelector(" + j(PROJECT_DIALOG) + ")!==null");
+await waitFor("document.querySelector(" + j(REGION_TRIGGER) + ")!==null");
+const triggerTagOfRegion = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").tagName"));
+check("项目地区触发器是 button（不是输入框：不支持手填）", triggerTagOfRegion === "BUTTON", triggerTagOfRegion);
+const triggerAtOpen = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
 await clickSelector(REGION_TRIGGER);
 await sleep(600);
-popover = await probe(readPopover);
-check("重开浮层：关键词复位（空）、候选回到全量 " + String(dictRegionCount) + " 条", popover !== null && popover.inputValue === "" && popover.rows.length === dictRegionCount, JSON.stringify(popover === null ? null : { value: popover.inputValue, rows: popover.rows.length }));
-await focusSearch();
-await typeText(SEARCH_ZH);
-await clickSelector(POPOVER_SELECTOR + " [role=listbox] [role=option]");
-await sleep(700);
-popover = await probe(readPopover);
-const triggerAfterClick = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
-check("鼠标点候选（搜「英」后第一行 = 英国）：触发器显示英国", popover === null && triggerAfterClick === "英国", JSON.stringify({ popover: popover === null, trigger: triggerAfterClick }));
+let popup = await probe(readRegionPopup);
+check("点触发器：弹出「之前的小窗」（贴字段右侧），顶部搜索框在且打开即聚焦",
+  popup !== null && popup.hasInput && popup.focused,
+  JSON.stringify(popup === null ? null : { hasInput: popup.hasInput, focused: popup.focused }));
+check("小窗 = 纯选择器（Push 194 口径延续）：无删除按钮、只有搜索框 1 个输入框（不能手填）、无「添加地区」入口",
+  popup !== null && popup.deleteButtons === 0 && popup.inputCount === 1 && popup.hasAddRow === false,
+  JSON.stringify(popup === null ? null : { deleteButtons: popup.deleteButtons, inputs: popup.inputCount, hasAddRow: popup.hasAddRow }));
+check("小窗分页 = 「已有项目地区 / 全部地区」两页签，默认停在已有项目地区页",
+  popup !== null && popup.tabs.length === 2 && popup.tabs[0].key === "used" && popup.tabs[1].key === "all" && popup.activeTab === "used" && popup.tabs[0].selected === true && popup.tabs[1].selected === false,
+  JSON.stringify(popup === null ? null : { tabs: popup.tabs, active: popup.activeTab }));
+const usedRows = popup === null ? [] : popup.rows;
+const usedRowByValue = new Map(usedRows.map((row) => [row.value, row]));
+const usedMismatch = [];
+for (const code of usedCodes) {
+  const row = usedRowByValue.get(code);
+  if (row === undefined || row.count !== usedCountByCode.get(code)) {
+    usedMismatch.push(code + " 期望 " + String(usedCountByCode.get(code)) + "，实际 " + String(row === undefined ? "（没找到）" : row.count));
+  }
+}
+let usedDescending = true;
+for (let index = 1; index < usedRows.length; index += 1) {
+  if (usedRows[index].count > usedRows[index - 1].count) {
+    usedDescending = false;
+  }
+}
+check("已有项目地区页：" + String(usedCodes.length) + " 条有项目在用的地区、每行带项目数、按用量降序、与库内逐条对账",
+  popup !== null && popup.activeTab === "used" && usedRows.length === usedCodes.length && usedRows.every((row) => row.count !== null && row.group === "已有项目地区") && usedDescending && usedMismatch.length === 0,
+  JSON.stringify({ rows: usedRows.length, expected: usedCodes.length, descending: usedDescending, mismatch: usedMismatch.slice(0, 6) }));
+const createButtonDisabled = String(await ev("(() => { const button = Array.from(document.querySelectorAll(" + j(PROJECT_DIALOG + " button") + ")).find((item) => item.textContent.trim() === " + j("创建项目") + "); return button === undefined ? " + j("missing") + " : button.disabled; })()"));
+check("新建项目默认不带地区（业务口径「不要默认英国 默认为空即可」）：触发器 = 占位「请选择地区」、小窗里没有选中项、创建按钮禁用",
+  popup !== null && triggerAtOpen === "请选择地区" && popup.selectedName === null && createButtonDisabled === "true",
+  JSON.stringify({ trigger: triggerAtOpen, selected: popup === null ? null : popup.selectedName, disabled: createButtonDisabled }));
+await shot("07-modal-region-popover");
+const usedTabBox = popup === null ? null : popup.box;
 
-// —— ⑤b 地区字典只读（Push 194：下拉不再承载「添加 / 删除」，不写库） ——
+// 切到「全部地区」页：全量候选 + 分洲分组
+await clickSelector("[data-region-tab=all]");
+await sleep(400);
+popup = await probe(readRegionPopup);
+check("两个分页的小窗同高同位（追订「两个分页的高度位置要一致」）：已有页 / 全部页的盒子四边一致、切页不跳",
+  usedTabBox !== null && popup !== null && popup.box !== null && popup.box.height === usedTabBox.height && popup.box.top === usedTabBox.top && popup.box.left === usedTabBox.left && popup.box.width === usedTabBox.width,
+  JSON.stringify({ used: usedTabBox, all: popup === null ? null : popup.box }));
+check("点「全部地区」页签：候选 = 标准国家清单 " + String(standardNames.length) + " 条 + 字典独有条目 " + String(dictOnlyRows.length) + " 条，值不重复",
+  popup !== null && popup.activeTab === "all" && popup.rows.length === expectedPopupRows && new Set(popup.rows.map((row) => row.value)).size === expectedPopupRows,
+  JSON.stringify(popup === null ? null : { active: popup.activeTab, rows: popup.rows.length, expected: expectedPopupRows }));
+const popupGroups = popup === null ? [] : popup.groups;
+const expectedPopupGroupOrder = allowed.filter((name) => popupGroups.indexOf(name) >= 0);
+check("全部地区页按洲分组：小标题 " + String(popupGroups.length) + " 个（" + popupGroups.join(" / ") + "），按洲序排列、每条候选都归到某一洲、同洲成块不交叉",
+  popup !== null && popupGroups.length >= 6 && popupGroups.every((name, index) => name === expectedPopupGroupOrder[index]) && contiguityFailures(popup.rows).length === 0 && popup.rows.every((row) => row.group !== null),
+  JSON.stringify(popup === null ? null : { groups: popupGroups, expected: expectedPopupGroupOrder, bad: contiguityFailures(popup.rows), ungrouped: popup.rows.filter((row) => row.group === null).length }));
+const popupValues = new Set(popup === null ? [] : popup.rows.map((row) => row.value));
+const popupNames = new Set(popup === null ? [] : popup.rows.map((row) => row.name));
+const missingStandard = standardNames.filter((name) => popupValues.has(name) === false && popupNames.has(name) === false);
+check("标准国家清单全覆盖（" + String(standardNames.length) + " 条，值或名命中即可 —— 阿联酋这类字典条目占位）：缺 " + String(missingStandard.length) + " 条",
+  popup !== null && missingStandard.length === 0, JSON.stringify(missingStandard.slice(0, 8)));
+const missingDict = dictRegionRows.filter((row) => popupNames.has(row.name) === false && popupValues.has(row.code) === false);
+check("地区字典启用条目全覆盖（" + String(dictRegionCount) + " 条：命中国家的条目优先占位，值 = 字典码）",
+  popup !== null && missingDict.length === 0, JSON.stringify(missingDict.map((row) => row.code)));
+const popupSpotFailures = [];
+for (const entry of PICKER_SPOT) {
+  const row = popup === null ? undefined : popup.rows.find((item) => item.name === entry[1]);
+  if (row === undefined || row.group !== entry[0]) {
+    popupSpotFailures.push(entry[1] + " 应在 " + entry[0] + "，实际 " + String(row === undefined ? "（没找到）" : row.group));
+  }
+}
+check("候选洲归属抽查（" + String(PICKER_SPOT.length) + " 条）：" + PICKER_SPOT.map((entry) => entry[1] + "→" + entry[0]).join("、"),
+  popup !== null && popupSpotFailures.length === 0, popupSpotFailures.join("；"));
+check("中国口径护栏：候选里不出现台湾 / 科索沃 / 北塞浦路斯 / 索马里兰、也没有香港 / 澳门",
+  popup !== null && FORBIDDEN.concat(["香港", "澳门"]).every((name) => String(popup.text).indexOf(name) < 0),
+  FORBIDDEN.concat(["香港", "澳门"]).filter((name) => popup !== null && String(popup.text).indexOf(name) >= 0).join(","));
+await shot("08-modal-region-all");
+
+// 搜「冰岛」= 用户原话场景（字典里没有的国家，照样搜得到、选得上）；输入即自动切到全部地区页
+await focusPopupSearch();
+await typeText(SEARCH_ZH);
+popup = await probe(readRegionPopup);
+check("搜中文「" + SEARCH_ZH + "」：自动切到全部地区页、候选收敛到 1 条 = 冰岛（欧洲）—— 字典外的国家也能搜到",
+  popup !== null && popup.activeTab === "all" && popup.rows.length === 1 && popup.rows[0].name === "冰岛" && popup.rows[0].group === "欧洲",
+  JSON.stringify(popup === null ? null : { active: popup.activeTab, rows: popup.rows }));
+await shot("09-region-popup-search");
+await clickSelector(REGION_POPUP_OPTION);
+await sleep(600);
+popup = await probe(readRegionPopup);
+const triggerAfterIceland = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
+check("点选冰岛：小窗关掉、项目地区触发器显示「冰岛」（选中即回填，不写字典）",
+  popup === null && triggerAfterIceland === "冰岛", JSON.stringify({ popup: popup === null, trigger: triggerAfterIceland }));
+await clickSelector(REGION_TRIGGER);
+await sleep(600);
+popup = await probe(readRegionPopup);
+check("重开小窗：当前值不在已有页（冰岛没有项目），默认停在全部地区页；关键词复位、候选回到全量 " + String(expectedPopupRows) + " 条、选中项 = 冰岛且滚进可视区",
+  popup !== null && popup.activeTab === "all" && popup.inputValue === "" && popup.rows.length === expectedPopupRows && popup.selectedName === "冰岛" && popup.selectedVisible === true,
+  JSON.stringify(popup === null ? null : { active: popup.activeTab, value: popup.inputValue, rows: popup.rows.length, selected: popup.selectedName, visible: popup.selectedVisible }));
+await focusPopupSearch();
+await typeText(SEARCH_EN);
+popup = await probe(readRegionPopup);
+check("搜英文「" + SEARCH_EN + "」：候选收敛到 1 条 = 冰岛 —— 英文国名也能搜",
+  popup !== null && popup.rows.length === 1 && popup.rows[0].name === "冰岛", JSON.stringify(popup === null ? null : popup.rows));
+await clearSearch();
+await focusPopupSearch();
+await typeText(SEARCH_MISS);
+popup = await probe(readRegionPopup);
+check("搜不到时：候选 0 条 + 提示行「没有匹配的国家 / 地区。」",
+  popup !== null && popup.rows.length === 0 && popup.hasEmptyText, JSON.stringify(popup === null ? null : { rows: popup.rows.length, empty: popup.hasEmptyText }));
+await clearSearch();
+await focusPopupSearch();
+await typeText(SEARCH_ALT_EN);
+await pressEnter();
+await sleep(600);
+popup = await probe(readRegionPopup);
+const triggerAfterEnter = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
+check("搜索框回车 = 选当前页第一条（Brazil → 巴西）：小窗关掉、触发器显示巴西",
+  popup === null && triggerAfterEnter === "巴西", JSON.stringify({ popup: popup === null, trigger: triggerAfterEnter }));
+// 当前值 = 巴西（有项目在用）：重开默认停在已有项目地区页、滚到选中项；Esc 先关小窗（Push 195 两层分派）
+await clickSelector(REGION_TRIGGER);
+await sleep(600);
+popup = await probe(readRegionPopup);
+check("重开小窗（当前值 = 巴西，已在已有项目地区）：默认停在已有页、选中项 = 巴西且滚进可视区",
+  popup !== null && popup.activeTab === "used" && popup.selectedName === "巴西" && popup.selectedVisible === true,
+  JSON.stringify(popup === null ? null : { active: popup.activeTab, selected: popup.selectedName, visible: popup.selectedVisible }));
+await pressKey("Escape", "Escape", 27);
+await sleep(500);
+const popupAfterEsc = (await ev("document.querySelector(" + j(REGION_POPUP) + ")===null")) === true;
+const projectAfterEsc = (await ev("document.querySelector(" + j(PROJECT_DIALOG) + ")===null")) === false;
+check("Esc：先关掉小窗、项目弹窗保持打开（再按一次才关外层）", popupAfterEsc && projectAfterEsc, JSON.stringify({ popupClosed: popupAfterEsc, projectOpen: projectAfterEsc }));
+await clickSelector(REGION_TRIGGER);
+await sleep(600);
+await clickSelector(REGION_TRIGGER);
+await sleep(400);
+const popupAfterToggle = (await ev("document.querySelector(" + j(REGION_POPUP) + ")===null")) === true;
+check("再点触发器：小窗收起（开 / 合同一个按钮）", popupAfterToggle, String(popupAfterToggle));
+
+// —— ⑤b 地区字典只读（Push 194 / 195：小窗不承载「添加 / 删除」，不写库） ——
 const dictAfter = Number((await db.query("select count(*)::int as n from dict_items where type_code = $1 and enabled", ["region"])).rows[0].n);
-check("地区字典只读：回放前后 enabled 条数不变（" + String(dictRegionCount) + " 条，Push 194 下拉不写字典）", dictAfter === dictRegionCount, JSON.stringify({ before: dictRegionCount, after: dictAfter }));
+check("地区字典只读：回放前后 enabled 条数不变（" + String(dictRegionCount) + " 条，小窗不写字典）", dictAfter === dictRegionCount, JSON.stringify({ before: dictRegionCount, after: dictAfter }));
 await clickByText(DIALOG, "取消");
 await sleep(700);
-const dialogClosed = (await ev("document.querySelector(" + j(DIALOG) + ")===null")) === true;
+const dialogClosed = (await ev("document.querySelector(" + j(PROJECT_DIALOG) + ")===null")) === true;
 const projectsAllAfter = Number((await db.query("select count(*)::int as n from projects")).rows[0].n);
 check("关掉弹窗：库里项目数不变（回放只读，不建项目 / 不改字典，" + String(projectsAllBefore) + " 行）", dialogClosed && projectsAllAfter === projectsAllBefore, JSON.stringify({ dialogClosed, projectsAllBefore, projectsAllAfter }));
 

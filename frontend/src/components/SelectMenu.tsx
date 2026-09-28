@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { usePopover } from "./usePopover";
 
@@ -13,11 +13,6 @@ export type SelectOption = {
    * 悬停出原因（title）、无障碍名带上原因；与 deletable=false（根本不渲染删除位）是两种语义。
    */
   deleteDisabledReason?: string;
-  /**
-   * 分组小标题（Push 192：地区下拉按洲分组）：与本行上一条的 group 不同时，在该行之前插一行小标题；
-   * 不给 = 不分组（普通枚举下拉维持原样）。小标题只作视觉分隔，不改键盘 / 悬停高亮的下标口径。
-   */
-  group?: string;
 };
 
 type OptionListProps = {
@@ -53,19 +48,6 @@ export function OptionList({ options, value, onPick, ariaLabel, onDeleteOption, 
   return (
     <div role="listbox" aria-label={ariaLabel} className="p-1">
       {options.map((option, index) => {
-        /** 与本行上一条的 group 不同才插小标题（Push 192）；没有 group 的列表照旧是一串选项。 */
-        const previousGroup = index === 0 ? undefined : options[index - 1].group;
-        const groupHeader = option.group !== undefined && option.group !== previousGroup ? option.group : null;
-        const withHeader = (body: ReactNode) => (
-          <Fragment key={option.value}>
-            {groupHeader === null ? null : (
-              <p role="presentation" data-option-group={groupHeader} className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-zinc-400">
-                {groupHeader}
-              </p>
-            )}
-            {body}
-          </Fragment>
-        );
         const row = (
           <button
             key={option.value}
@@ -93,14 +75,14 @@ export function OptionList({ options, value, onPick, ariaLabel, onDeleteOption, 
           </button>
         );
         if (onDeleteOption === undefined || option.deletable === false) {
-          return withHeader(row);
+          return row;
         }
         const label = deleteLabelOf === undefined ? "删除" : deleteLabelOf(option);
         const reason = option.deleteDisabledReason;
         if (reason !== undefined) {
           // 业务拦住的删除位（Push 174 字典引用守卫）：置灰、点不动、悬停出原因；aria-label 把原因读全。
-          return withHeader(
-            <div className="group/opt relative">
+          return (
+            <div key={option.value} className="group/opt relative">
               {row}
               <span
                 title={reason}
@@ -113,8 +95,8 @@ export function OptionList({ options, value, onPick, ariaLabel, onDeleteOption, 
             </div>
           );
         }
-        return withHeader(
-          <div className="group/opt relative">
+        return (
+          <div key={option.value} className="group/opt relative">
             {row}
             <button
               type="button"
