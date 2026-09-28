@@ -36,19 +36,6 @@ type DictGrouping = {
   emptyText: string;
 };
 
-/**
- * 「＋ 添加」分支的搜索选择器（Push 193：地区 = 从标准国家 / 地区列表里搜着选，不手打）。
- * 给了 = 添加分支换成「搜索框 + 分组候选」；不给 = 原来的手打输入框（项目类型的自定义名称照旧）。
- */
-type DictAddPicker = {
-  /** 候选：name = 写进字典的名称（同时作码）；english = 英文名（展示 + 可搜）；group = 分组（洲）。 */
-  options: readonly { name: string; english: string; group: string }[];
-  /** 搜索框占位文案（同时作无障碍名）。 */
-  placeholder: string;
-  /** 搜不到时的提示行。 */
-  emptyText: string;
-};
-
 type DictSelectProps = {  /** 当前值（字典码 / 存量自定义值）。 */
   value: string;
   /** 字典项（GET /api/v1/dicts，已按 sort 升序、只含启用项）。 */
@@ -60,7 +47,8 @@ type DictSelectProps = {  /** 当前值（字典码 / 存量自定义值）。 *
   renderContent?: (name: string, item: DictItem | null) => ReactNode;
   /** 「＋ 添加」入口（不传 = 不渲染）：返回 null = 成功；返回文案 = 浮层内提示。 */
   onAdd?: (input: { name: string; metadata: Record<string, unknown> }) => Promise<string | null>;
-  addText: DictAddText;
+  /** 新增分支的文案（给 onAdd 时成套使用）。 */
+  addText?: DictAddText;
   /** 颜色模板（项目类型）：新增时选一个，写进条目 metadata.accent / metadata.accentText；已在用的颜色不进候选。 */
   palette?: { label: string; options: readonly DictAccent[] };
   /** 行内删除（物理删行 · 仅管理员 dict.manage；不传 = 不渲染）：返回 null = 成功；返回文案 = 浮层内提示。 */
@@ -69,8 +57,6 @@ type DictSelectProps = {  /** 当前值（字典码 / 存量自定义值）。 *
   deleteLabelOf?: (code: string, name: string) => string;
   /** 顶部搜索框 + 分组小标题（Push 192：地区下拉按洲分组可搜索）；不传 = 普通字典下拉。 */
   grouping?: DictGrouping;
-  /** 「＋ 添加」分支的搜索选择器（Push 193）：给了 = 添加时从标准列表里搜着选（地区），不给 = 手打名称。 */
-  addPicker?: DictAddPicker;
   onChange: (value: string) => void;
 };
 
@@ -141,11 +127,9 @@ function availableAccents(items: DictItem[], options: readonly DictAccent[]): re
  * - 名称校验：非空、≤ DICT_NAME_MAX 字、不含英文逗号（filter[...] 是多值逗号分隔，逗号会被拆成两个筛选值）；
  *   输入的名称已存在时直接选中、不重复添加。
  */
-export function DictSelect({ value, items, ariaLabel, placeholder, renderContent, onAdd, addText, palette, onDelete, deleteLabelOf, grouping, addPicker, onChange }: DictSelectProps) {
+export function DictSelect({ value, items, ariaLabel, placeholder, renderContent, onAdd, addText, palette, onDelete, deleteLabelOf, grouping, onChange }: DictSelectProps) {
   /** 搜索关键词（Push 192；只对配了 grouping 的下拉出现搜索框）。 */
   const [query, setQuery] = useState("");
-  /** 添加分支搜索选择器的关键词（Push 193；手打分支不用）。 */
-  const [addQuery, setAddQuery] = useState("");
   /**
    * 候选 = 字典项按关键词过滤后（中文名 / 码 / 调用方给的英文名）→ 分组 + 当前值兜底。
    * 关键词为空时不加过滤，等于原来那串候选。
@@ -179,40 +163,10 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
       }
     }
     const list = visible.length * 34 + headers * 24 + 14;
-    const addRow = onAdd === undefined ? 0 : addPicker === undefined ? 42 : 300;
+    const addRow = onAdd === undefined ? 0 : 42;
     const searchRow = grouping === undefined ? 0 : 42;
     return Math.min(list + addRow + searchRow, 420);
-  }, [options, onAdd, grouping, addPicker]);
-  /**
-   * 「添加」搜索选择器的候选（Push 193）：标准国家 / 地区 —— 已在字典里的（名称或码命中）不再列，
-   * 关键词按「中文名 + 英文名」过滤；按分组顺序稳定排序（同洲成块，小标题不来回跳）。
-   */
-  const addOptions = useMemo<SelectOption[]>(() => {
-    if (addPicker === undefined) {
-      return [];
-    }
-    const taken = new Set<string>();
-    for (const item of items) {
-      taken.add(item.name);
-      taken.add(item.code);
-    }
-    const keyword = addQuery.trim().toLowerCase();
-    const matched = addPicker.options.filter((option) => {
-      if (taken.has(option.name)) {
-        return false;
-      }
-      return keyword === "" || (option.name + " " + option.english).toLowerCase().includes(keyword);
-    });
-    const order = grouping?.groupOrder;
-    const rankOf = (group: string): number => {
-      const index = order === undefined ? -1 : order.indexOf(group);
-      return index < 0 ? (order === undefined ? 0 : order.length) : index;
-    };
-    return matched
-      .slice()
-      .sort((left, right) => rankOf(left.group) - rankOf(right.group))
-      .map((option) => ({ value: option.name, label: option.name + " " + option.english, group: option.group }));
-  }, [addPicker, items, addQuery, grouping]);
+  }, [options, onAdd, grouping]);
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, popoverHeight, "right");
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
@@ -240,7 +194,6 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     setListError(null);
     setPending(false);
     setQuery("");
-    setAddQuery("");
   };
 
   useEffect(() => {
@@ -290,8 +243,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
       setError(null);
       setListError(null);
       setQuery("");
-      setAddQuery("");
-    }
+      }
   }, [open]);
 
   /** 可选的色板：已在用的颜色不出现（业务口径）；全用满时回落完整色板。 */
@@ -300,7 +252,6 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     setAdding(true);
     setDraft("");
     setQuery("");
-    setAddQuery("");
     setError(null);
     setListError(null);
     const [firstAccent] = accentChoices;
@@ -341,23 +292,6 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
     setPending(true);
     const message = await onAdd({ name, metadata });
-    setPending(false);
-    if (message !== null) {
-      setError(message);
-      return;
-    }
-    onChange(name);
-    close();
-  };
-
-  /** 「添加」搜索选择器（Push 193 · 地区）：点一行 = 把该标准名称写进字典并选中（码 = 名称，与手打分支同口径）。 */
-  const submitAddCandidate = async (name: string): Promise<void> => {
-    if (onAdd === undefined || pending) {
-      return;
-    }
-    setPending(true);
-    setError(null);
-    const message = await onAdd({ name, metadata: {} });
     setPending(false);
     if (message !== null) {
       setError(message);
@@ -413,24 +347,6 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
   };
 
-  /** 添加分支搜索框（选择器）：回车 = 选第一条候选；Esc = 退回候选列表（与手打分支同口径）。 */
-  const handleAddSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const [first] = addOptions;
-      if (first !== undefined) {
-        void submitAddCandidate(first.value);
-      }
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setAdding(false);
-      setAddQuery("");
-      setError(null);
-    }
-  };
 
   return (
     <div className="relative">
@@ -468,63 +384,13 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
               className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
               style={{ top: position.top, left: position.left, width: position.width }}
             >
-              {adding && addPicker !== undefined ? (
-                <div className="p-2">
-                  <input
-                    ref={inputRef}
-                    data-add-search="true"
-                    value={addQuery}
-                    aria-label={addPicker.placeholder}
-                    placeholder={addPicker.placeholder}
-                    onChange={(event) => {
-                      setAddQuery(event.target.value);
-                      setError(null);
-                    }}
-                    onKeyDown={handleAddSearchKeyDown}
-                    className="w-full rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:bg-white focus:ring-1 focus:ring-zinc-300"
-                  />
-                  {addText.note === undefined || addText.note === "" ? null : (
-                    <p className="mt-1.5 text-[11px] text-zinc-400">{addText.note}</p>
-                  )}
-                  {error === null ? null : (
-                    <p role="alert" className="mt-1 text-[11px] text-rose-600">
-                      {error}
-                    </p>
-                  )}
-                  <div className={"mt-1 max-h-[240px] overflow-y-auto" + (pending ? " pointer-events-none opacity-60" : "")}>
-                    <OptionList
-                      options={addOptions}
-                      value=""
-                      ariaLabel={addPicker.placeholder}
-                      onPick={(name) => {
-                        void submitAddCandidate(name);
-                      }}
-                    />
-                  </div>
-                  {addOptions.length === 0 ? (
-                    <p className="border-t border-zinc-100 px-1 pt-2 text-[11px] text-zinc-400">{addPicker.emptyText}</p>
-                  ) : null}
-                  <div className="mt-2 flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAdding(false);
-                        setAddQuery("");
-                        setError(null);
-                      }}
-                      className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
-                    >
-                      取消
-                    </button>
-                  </div>
-                </div>
-              ) : adding ? (
+              {adding ? (
                 <div className="p-2">
                   <input
                     ref={inputRef}
                     value={draft}
-                    aria-label={addText.label}
-                    placeholder={addText.placeholder}
+                    aria-label={addText?.label}
+                    placeholder={addText?.placeholder}
                     onChange={(event) => {
                       setDraft(event.target.value);
                       setError(null);
@@ -562,8 +428,8 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                       </div>
                     </div>
                   )}
-                  {addText.note === undefined || addText.note === "" ? null : (
-                    <p className="mt-1.5 text-[11px] text-zinc-400">{addText.note}</p>
+                  {(addText?.note ?? "") === "" ? null : (
+                    <p className="mt-1.5 text-[11px] text-zinc-400">{addText?.note}</p>
                   )}
                   {error === null ? null : (
                     <p role="alert" className="mt-1 text-[11px] text-rose-600">
@@ -607,7 +473,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4 shrink-0">
                             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                           </svg>
-                          {addText.label}
+                          {addText?.label}
                         </button>
                       </div>
                       <div className="border-t border-zinc-100" />

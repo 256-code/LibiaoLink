@@ -11,15 +11,15 @@
  *      组头带「N 个地区」与「已选 N」；分洲后一枚不多一枚不少（与库内 facets 对账）；
  *   ③ 点胶囊照旧按地区筛选（URL 写 filter[region]、卡片计数同步）；
  *   ④ 新建项目弹窗的地区下拉 = 分洲 + 顶部搜索框（打开即聚焦）：中文名与英文名都能搜（英 → 英国；Brazil → 巴西），
- *      搜不到给提示行、回车选第一条、「＋ 添加地区」分支里搜索框收起；
+ *      搜不到给提示行、回车选第一条；**Push 194 起 = 纯选择器**（无「＋ 添加地区」、无行内删除、触发器不可手填）；
  *   ⑤ 洲口径 = 中国口径（与地图同一套国界 / 国名口径）：中国 / 日本 / 新加坡 在亚洲，英国 / 德国 / 俄罗斯 在欧洲，
  *      南非 / 埃及 在非洲，美国 / 加拿大 在北美洲，巴西 / 秘鲁 在南美洲，澳大利亚 / 新西兰 在大洋洲；
  *      台湾 / 科索沃 / 北塞浦路斯 / 索马里兰 一个都不许出现（中国口径硬护栏）；
  *   ⑥ 整洲筛选（Push 193）：「某一个洲点击可以直接筛选整个洲」—— 勾洲行最右侧的复选框 = 把该洲全部地区
  *      一起勾上（并展开），再点一次取消；URL / 工具条计数 / 复选框状态与库内对账；
- *   ⑦ 「＋ 添加地区」= 标准国家 / 地区搜索选择器（Push 193，不手打）：候选 = 地图同一份国家 / 微国列表（中英文可搜、
- *      分洲、已收录的不再列出）；点一行即新增（真 PG 落行），跑完把这一行物理删掉、零残留；
- *   ⑧ 控制台零报错；跑完会话撤销、库内零残留（除「⑦ 新增后即删」外只读：不建项目、不改其余字典）。
+ *   ⑦ 地区下拉不再承载字典维护（Push 194）：撤下「＋ 添加地区」与行内删除，只做选择 —— 断言无添加入口、
+ *      无删除按钮、除搜索框外没有第二个输入框（不能手填）、触发器是 button；库内地区字典前后一行不差；
+ *   ⑧ 控制台零报错；跑完会话撤销、库内零残留（全程只读：不建项目、不写字典）。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -81,12 +81,6 @@ if (userRow === undefined) {
   process.exit(1);
 }
 const dictRegionRows = (await db.query("select code, name from dict_items where type_code = $1 and enabled order by sort", ["region"])).rows;
-/* Push 193 回放要新增「冰岛」来验「添加地区」——先清掉上次意外残留的同一行（正常情况一行都没有）。 */
-const staleAdd = await db.query("delete from dict_items where type_code = $1 and code = $2", ["region", "冰岛"]);
-if (Number(staleAdd.rowCount) > 0) {
-  console.log("预清理：上次回放残留的「冰岛」条目已删除（" + String(staleAdd.rowCount) + " 行）");
-}
-const maxDictSort = Number((await db.query("select coalesce(max(sort), 0)::int as n from dict_items where type_code = $1 and enabled", ["region"])).rows[0].n);
 const dictRegionCount = dictRegionRows.length;
 const projectRows = (await db.query("select region, count(*)::int as n from projects where deleted_at is null group by region")).rows;
 const projectTotal = projectRows.reduce((sum, row) => sum + Number(row.n), 0);
@@ -322,6 +316,12 @@ const readPopover = () => {
     return null;
   }
   const input = popover.querySelector("input");
+  let deleteButtons = 0;
+  for (const button of Array.from(popover.querySelectorAll("button"))) {
+    if (String(button.getAttribute("aria-label") ?? "").indexOf("删除") === 0) {
+      deleteButtons += 1;
+    }
+  }
   const list = popover.querySelector("[role=listbox]");
   const rows = [];
   const groups = [];
@@ -360,9 +360,12 @@ const readPopover = () => {
     selectedText: selected === null ? null : selected.textContent.trim(),
     selectedVisible: selectedVisible,
     groups: groups,
+    /** Push 194：地区下拉已撤下「＋ 添加地区」—— 此字段恒 false，留作「不许回来」的护栏。 */
     hasAddRow: popover.textContent.indexOf("添加地区") >= 0,
     hasEmptyText: popover.textContent.indexOf("没有匹配的地区") >= 0,
-    hasAddEmpty: popover.textContent.indexOf("没有匹配的国家") >= 0
+    /** Push 194：纯选择器护栏 —— 删除按钮 0 个、输入框只有搜索框 1 个。 */
+    deleteButtons: deleteButtons,
+    inputCount: popover.querySelectorAll("input").length
   };
 };
 /** 点某个按钮（按文本精确匹配；rootSelector 缺省 = 整页） */
@@ -586,7 +589,11 @@ await clickSelector(REGION_TRIGGER);
 await sleep(600);
 let popover = await probe(readPopover);
 check("新建项目：点「选择项目地区」弹浮层，顶部搜索框在且打开即聚焦", popover !== null && popover.hasInput && popover.focused, JSON.stringify(popover === null ? null : { hasInput: popover.hasInput, focused: popover.focused, label: popover.inputLabel }));
-check("候选 = 地区字典 " + String(dictRegionCount) + " 条（一条不多一条不少）＋ 顶部「＋ 添加地区」入口", popover !== null && popover.rows.length === dictRegionCount && popover.hasAddRow, JSON.stringify(popover === null ? null : { rows: popover.rows.length, add: popover.hasAddRow }));
+check("候选 = 地区字典 " + String(dictRegionCount) + " 条（一条不多一条不少）＋ 无「＋ 添加地区」入口（Push 194 纯选择器）", popover !== null && popover.rows.length === dictRegionCount && popover.hasAddRow === false, JSON.stringify(popover === null ? null : { rows: popover.rows.length, add: popover.hasAddRow }));
+const triggerTagOfRegion = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").tagName"));
+check("地区下拉 = 纯选择器（Push 194）：无删除按钮、除搜索框外没有第二个输入框（不能手填）", popover !== null && popover.deleteButtons === 0 && popover.inputCount === 1, JSON.stringify(popover === null ? null : { deleteButtons: popover.deleteButtons, inputs: popover.inputCount }));
+check("地区下拉触发器是 button（不是输入框：不支持手填）", triggerTagOfRegion === "BUTTON", triggerTagOfRegion);
+await shot("07-modal-region-select");
 const triggerAtOpen = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
 check("打开浮层就把当前选中项带进可视区（选中 " + String(popover === null ? "" : popover.selectedText) + " / 触发器 " + triggerAtOpen + "）", popover !== null && popover.selectedVisible === true && popover.selectedText === triggerAtOpen, JSON.stringify(popover === null ? null : { visible: popover.selectedVisible, selected: popover.selectedText, trigger: triggerAtOpen }));
 const popoverGroups = popover === null ? [] : popover.groups;
@@ -640,69 +647,9 @@ popover = await probe(readPopover);
 const triggerAfterClick = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
 check("鼠标点候选（搜「英」后第一行 = 英国）：触发器显示英国", popover === null && triggerAfterClick === "英国", JSON.stringify({ popover: popover === null, trigger: triggerAfterClick }));
 
-await clickSelector(REGION_TRIGGER);
-await sleep(600);
-await clickByText(POPOVER_SELECTOR, "添加地区");
-await sleep(600);
-// —— ⑤b 「＋ 添加地区」= 标准国家 / 地区搜索选择器（Push 193，不手打） ——
-const ADD_PLACEHOLDER = "搜索国家 / 地区（中英文都行）";
-popover = await probe(readPopover);
-const addTexts = popover === null ? [] : popover.rows.map((row) => row.text);
-check(
-  "「＋ 添加地区」：换成搜索选择器（输入框 = " + ADD_PLACEHOLDER + "、打开即聚焦、候选 > 100）",
-  popover !== null && popover.inputLabel === ADD_PLACEHOLDER && popover.focused === true && popover.rows.length > 100,
-  JSON.stringify(popover === null ? null : { label: popover.inputLabel, focused: popover.focused, rows: popover.rows.length })
-);
-check(
-  "添加器候选 = 标准国家 / 地区库：分洲小标题 " + String(popover === null ? 0 : popover.groups.length) + " 个、同洲成块；不含已收录的 日本 / 中国，含 冰岛",
-  popover !== null && popover.groups.length >= 6 && contiguityFailures(popover.rows).length === 0 && addTexts.indexOf("日本 Japan") < 0 && addTexts.indexOf("中国 China") < 0 && addTexts.indexOf("冰岛 Iceland") >= 0,
-  JSON.stringify({ groups: popover === null ? null : popover.groups, japan: addTexts.indexOf("日本 Japan"), china: addTexts.indexOf("中国 China"), iceland: addTexts.indexOf("冰岛 Iceland") })
-);
-await focusSearch();
-await typeText("冰岛");
-popover = await probe(readPopover);
-check("添加器搜中文「冰岛」：候选收敛到 1 条 = 冰岛 Iceland（欧洲）", popover !== null && popover.rows.length === 1 && popover.rows[0].text === "冰岛 Iceland" && popover.rows[0].group === "欧洲", JSON.stringify(popover === null ? null : popover.rows));
-await clearSearch();
-await focusSearch();
-await typeText("Iceland");
-popover = await probe(readPopover);
-check("添加器搜英文「Iceland」：同样收敛到 冰岛（英文国名也能搜）", popover !== null && popover.rows.length === 1 && popover.rows[0].text === "冰岛 Iceland", JSON.stringify(popover === null ? null : popover.rows));
-await clearSearch();
-await focusSearch();
-await typeText(SEARCH_MISS);
-popover = await probe(readPopover);
-check("添加器搜不到：候选 0 条 + 提示行「没有匹配的国家 / 地区（已收录的不再列出）。」", popover !== null && popover.rows.length === 0 && popover.hasAddEmpty === true, JSON.stringify(popover === null ? null : { rows: popover.rows.length, empty: popover.hasAddEmpty }));
-await shot("07-modal-add-picker");
-await clickByText(POPOVER_SELECTOR, "取消");
-await sleep(500);
-popover = await probe(readPopover);
-check("点「取消」回到候选列表（一个字都没写进字典）", popover !== null && popover.rows.length === dictRegionCount, JSON.stringify(popover === null ? null : popover.rows.length));
-
-// —— ⑤c 点一行即新增（真 PG 落行）→ 断言后物理删掉、零残留 ——
-await clickByText(POPOVER_SELECTOR, "添加地区");
-await sleep(600);
-await focusSearch();
-await typeText("冰岛");
-popover = await probe(readPopover);
-check("添加器再搜「冰岛」：候选仍在（还没写进字典）", popover !== null && popover.rows.length === 1, JSON.stringify(popover === null ? null : popover.rows));
-await clickSelector(POPOVER_SELECTOR + " [role=listbox] [role=option]");
-await sleep(1000);
-const popoverAfterAdd = await probe(readPopover);
-const triggerAfterAdd = String(await ev("document.querySelector(" + j(REGION_TRIGGER) + ").textContent"));
-try {
-  const addedRow = (await db.query("select code, name, enabled, sort from dict_items where type_code = $1 and code = $2", ["region", "冰岛"])).rows[0];
-  check("点一行「冰岛」= 直接新增并选中：浮层关闭、触发器显示冰岛", popoverAfterAdd === null && triggerAfterAdd === "冰岛", JSON.stringify({ popover: popoverAfterAdd === null, trigger: triggerAfterAdd }));
-  check(
-    "新条目落进真 PG：code = name = 冰岛、enabled、sort 排到最后（>" + String(maxDictSort) + "）",
-    addedRow !== undefined && addedRow.name === "冰岛" && addedRow.enabled === true && Number(addedRow.sort) > maxDictSort,
-    JSON.stringify(addedRow === undefined ? null : addedRow)
-  );
-} finally {
-  await db.query("delete from dict_items where type_code = $1 and code = $2", ["region", "冰岛"]);
-}
-const addResidue = (await db.query("select count(*)::int as n from dict_items where type_code = $1 and code = $2", ["region", "冰岛"])).rows[0];
-check("清理：回放新增的「冰岛」已物理删掉、库内零残留", Number(addResidue.n) === 0, JSON.stringify(addResidue));
-
+// —— ⑤b 地区字典只读（Push 194：下拉不再承载「添加 / 删除」，不写库） ——
+const dictAfter = Number((await db.query("select count(*)::int as n from dict_items where type_code = $1 and enabled", ["region"])).rows[0].n);
+check("地区字典只读：回放前后 enabled 条数不变（" + String(dictRegionCount) + " 条，Push 194 下拉不写字典）", dictAfter === dictRegionCount, JSON.stringify({ before: dictRegionCount, after: dictAfter }));
 await clickByText(DIALOG, "取消");
 await sleep(700);
 const dialogClosed = (await ev("document.querySelector(" + j(DIALOG) + ")===null")) === true;

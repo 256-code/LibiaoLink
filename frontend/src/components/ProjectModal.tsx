@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { DICT_ACCENT_PALETTE, accentOfItem, type DictItem, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
 import type { Member } from "../data/members";
-import { REGION_CANDIDATE_OPTIONS, REGION_CONTINENT_GROUPS, continentOfRegion, regionSearchText } from "../data/regionContinents";
+import { REGION_CONTINENT_GROUPS, continentOfRegion, regionSearchText } from "../data/regionContinents";
 import { DictSelect } from "./DictSelect";
 import { MemberMultiSelect } from "./MemberSelect";
 
@@ -12,8 +12,9 @@ import { MemberMultiSelect } from "./MemberSelect";
  * 地区下拉的分组 + 搜索配置（Push 192）：按洲分组、可搜中英文名 —— 与首页筛选侧栏同一套洲口径
  * （src/data/regionContinents.ts，认国家的口径与地图悬停同源）。
  * 业务口径（2026-09-28）：「新建项目选择地区应该也要改 是不是要加一个国家地区选择器可搜索的那种」。
- * Push 193：「＋ 添加地区」从手打改成搜索选择器 —— 候选 = 标准国家 / 微国列表（与地图同一份数据），
- * 手打容易写出地图认不出的名字；业务口径「新建地区手打容易出问题吧 还是改成搜索选择器吧」。
+ * Push 194：地区 = 纯选择器 —— 「＋ 添加地区」与行内删除一并撤下（不支持手填 / 添加 / 删除，业务口径
+ * 「不支持手填和删除 直接改成这样的搜索选择器…只要选择项目 不要添加地区了 只要直接选择即可」）；
+ * 地区字典的新增 / 删除由种子 / 后台维护面负责，本弹窗只做选择。
  */
 const REGION_GROUPING = {
   groupOf: (name: string, code: string): string => continentOfRegion(name, code),
@@ -159,28 +160,12 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
           </div>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目地区</span>
+            {/* Push 194：地区 = 纯选择器 —— 不支持手填 / 添加 / 删除；字典新增 / 删除由种子 / 后台维护面负责 */}
             <DictSelect
               value={region}
               items={dicts.region}
               ariaLabel="选择项目地区"
               placeholder="请选择地区"
-              onAdd={(input) => dictTools.onAdd("region", input)}
-              addText={{
-                label: "添加地区",
-                placeholder: "搜索国家 / 地区，如 冰岛 / Iceland",
-                note: "从标准国家 / 地区列表里选（中英文都能搜）：保存后写入地区字典（C9），全站可选，并可在首页按它筛选；删除与改名由管理员维护。",
-              }}
-              addPicker={{
-                options: REGION_CANDIDATE_OPTIONS,
-                placeholder: "搜索国家 / 地区（中英文都行）",
-                emptyText: "没有匹配的国家 / 地区（已收录的不再列出）。",
-              }}
-              onDelete={
-                canManageDicts
-                  ? (code) => dictTools.onDelete("region", code)
-                  : undefined
-              }
-              deleteLabelOf={(_code, name) => "删除地区 " + name}
               grouping={REGION_GROUPING}
               onChange={setRegion}
             />
