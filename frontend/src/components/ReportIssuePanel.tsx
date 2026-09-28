@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { InlineCell, InlineMultiOptionCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, TextareaHTMLAttributes } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import {
   ISSUE_STATES,
   issuesForProject,
@@ -133,6 +133,12 @@ import type { MeResponse, Project } from "../types";
  *   ③ 「编辑后时间不变」：日期 / 提出日期列**不参与编辑**（单元格里没有可点目标），patch 也从不写 date / raisedAt /
  *      submittedAt —— 改完文字时间列原样；文字列保存前统一过一遍自动序号（renumberLines，与「日报填写」提交口径一致）；
  *   ④ 编辑落原型内存态（setReports / setIssues）：刷新 / 换项目即复位；字段级 PATCH 接口的契约挂 wmj 线。
+ *
+ * - Push 210（业务口径 2026-09-28「卡片要可以拖动」）：问题看板卡片接**指针拖动**（与「任务进展」看板 Push 108 / 156
+ *   同一套口径）—— 按住卡片位移超过 4px = 拖动（没超过 = 点一下开问题详情抽屉）；拖动中卡片跟手（半透明拖动卡 ·
+ *   data-drag-ghost）、目标列描边高亮 + 列顶浮出落点槽「放开：移到「X」」，拖到看板 / 列边缘逐帧自动滚；
+ *   放开 = 把问题状态改成目标列（同一 patchIssue 内存态：「问题追踪」表 / 计数 / 抽屉同步跟着变）；
+ *   同列不是落点（问题没有列内顺序，放开不改动）；Esc / 指针取消 = 原地取消；整段拖动没有原生拖拽参与，滚轮照常可用。
  */
 
 /** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
@@ -154,6 +160,65 @@ const CARD_NOISE =
 
 /** 卡片内容区（Push 106 口径：只保留外框，内容直接落在壳上）。 */
 const CARD_BODY = "relative px-4 py-3.5";
+
+/** 拖动卡片用的半透明壳（与「任务进展」看板同一套：拖动中跟手的那张卡）。 */
+const ISSUE_CARD_SHELL_GHOST =
+  "relative block w-full rounded-[35px] border border-zinc-900/[0.07] bg-white/[0.6] p-[9px] text-left backdrop-blur-[5px] backdrop-saturate-150 " +
+  "[box-shadow:0_18px_40px_-20px_rgba(15,23,42,0.18),0_4px_14px_-8px_rgba(15,23,42,0.06),inset_0_-2px_6px_rgba(15,23,42,0.05)]";
+
+/** 拖动判定阈值（Push 210 · 与「任务进展」看板同一套）：按下后位移不超过这么多像素 = 「点一下看详情」。 */
+const DRAG_THRESHOLD = 4;
+
+/** 拖卡片到边缘 = 看板跟着滚（Push 210 · 同「任务进展」Push 156）：进边缘 DRAG_EDGE_PX 内逐帧滚，越深越快。 */
+const DRAG_EDGE_PX = 72;
+const DRAG_EDGE_MAX_SPEED = 16;
+
+/** 边缘自动滚的速度：按深入边缘的程度 1~16px/帧。 */
+function dragEdgeScrollSpeed(depth: number): number {
+  return Math.min(Math.max((depth / DRAG_EDGE_PX) * DRAG_EDGE_MAX_SPEED, 1), DRAG_EDGE_MAX_SPEED);
+}
+
+/** ScrollArea 的滚动视口（组件内部那层带 data-scroll-area 的 div）—— 按轴找它。 */
+function dragScrollAreaViewport(root: ParentNode | null, axis: "horizontal" | "vertical"): HTMLElement | null {
+  if (root === null) {
+    return null;
+  }
+  const node = root.querySelector('[data-scroll-area="' + axis + '"]');
+  return node instanceof HTMLElement ? node : null;
+}
+
+/** 点 (x, y) 落在哪一列问题上（没有 = null）。 */
+function dragColumnAtPoint(x: number, y: number): Element | null {
+  const under = document.elementFromPoint(x, y);
+  return under === null ? null : under.closest("[data-issue-column]");
+}
+
+/** 拖卡片到边缘时的逐帧自动滚（Push 210）：横向滚看板本体、纵向滚指针底下那一列（列内列表也是 ScrollArea）。 */
+function autoScrollIssueDrag(root: HTMLElement | null, point: { x: number; y: number }): void {
+  const viewport = dragScrollAreaViewport(root, "horizontal");
+  if (viewport !== null) {
+    const rect = viewport.getBoundingClientRect();
+    if (point.y >= rect.top - 24 && point.y <= rect.bottom + 24) {
+      if (point.x < rect.left + DRAG_EDGE_PX) {
+        viewport.scrollLeft -= dragEdgeScrollSpeed(rect.left + DRAG_EDGE_PX - point.x);
+      } else if (point.x > rect.right - DRAG_EDGE_PX) {
+        viewport.scrollLeft += dragEdgeScrollSpeed(point.x - (rect.right - DRAG_EDGE_PX));
+      }
+    }
+  }
+  const under = document.elementFromPoint(point.x, point.y);
+  const column = under === null ? null : under.closest("[data-issue-column]");
+  const list = dragScrollAreaViewport(column, "vertical");
+  if (list === null) {
+    return;
+  }
+  const rect = list.getBoundingClientRect();
+  if (point.y < rect.top + DRAG_EDGE_PX) {
+    list.scrollTop -= dragEdgeScrollSpeed(rect.top + DRAG_EDGE_PX - point.y);
+  } else if (point.y > rect.bottom - DRAG_EDGE_PX) {
+    list.scrollTop += dragEdgeScrollSpeed(point.y - (rect.bottom - DRAG_EDGE_PX));
+  }
+}
 
 /** 问题三态色签（Push 207 · 业务样 = 图二「状态改成图二的三种」；同批再按业务口径「这个问题的状态想要
  *  和项目总览里面的状态样式同款」对齐「项目总览」任务状态胶囊 —— 底色 / 字色直取 TaskBoard 的
@@ -995,23 +1060,31 @@ function ReportList({ reports, onPatch }: { reports: readonly DailyReport[]; onP
  *  色签）/ 解决方案或建议（多行 pre-line，有才显示）/ 问题附图（40×40 缩略图，有才显示）；字段名 = 独占一行的浅灰小字。
  *  样式 = 与「任务进展」看板卡片同一套材质（CARD_SHELL 白壳 + 发丝边 + 三层投影 + 细纹），点一下开「问题详情」抽屉。
  *  同批下架（图一没有）：状态签 / 提出人 / 提出日期 —— 状态看列头、其余进抽屉（Push 207 的「责任 / 处理时限 / 所属任务」
- *  不再展示口径照旧不变）。 */
-function IssueCard({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
+ *  不再展示口径照旧不变）。Push 210（业务口径「卡片要可以拖动」）：卡片接指针拖动 —— 按住拖到别的列 = 改问题状态（细节见 IssueBoard）。 */
+function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost = false }: {
+  issue: Issue;
+  onOpen: () => void;
+  onPointerDownDrag?: (issueId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
+  dragging?: boolean;
+  ghost?: boolean;
+}) {
   return (
     <div
-      role="button"
-      tabIndex={0}
-      aria-label={"问题：" + issue.title}
-      title="点一下看问题详情（含来源日报内容）"
+      role={ghost ? undefined : "button"}
+      tabIndex={ghost ? undefined : 0}
+      aria-hidden={ghost ? true : undefined}
+      aria-label={ghost ? undefined : "问题：" + issue.title}
+      title={onPointerDownDrag === undefined ? undefined : "点一下看问题详情（含来源日报内容）；按住卡片拖到别的列 = 改问题状态"}
       data-issue-card={issue.id}
       onClick={onOpen}
+      onPointerDown={onPointerDownDrag === undefined ? undefined : (event) => { onPointerDownDrag(issue.id, event.currentTarget, event); }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onOpen();
         }
       }}
-      className={CARD_SHELL + " cursor-pointer"}
+      className={(ghost ? ISSUE_CARD_SHELL_GHOST : CARD_SHELL) + (dragging ? " cursor-grabbing" : " cursor-pointer")}
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
@@ -1030,6 +1103,264 @@ function IssueCard({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
           </Field>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 按下卡片、还没到拖动阈值时的暂存（Push 210）。 */
+type PendingIssueDrag = {
+  issueId: string;
+  pointerId: number;
+  /** 按下时的坐标：用来判「过没过阈值」。 */
+  x: number;
+  y: number;
+  /** 卡片 DOM：真拖起来之后把指针捕获在它身上（鼠标滑出窗口再放开也收得到 pointerup）。 */
+  node: HTMLElement;
+  dragging: boolean;
+};
+
+/**
+ * 「问题看板」列板 + 卡片拖动（Push 210 · 业务口径 2026-09-28「卡片要可以拖动」）：
+ * 与「任务进展」看板同一套指针拖动口径 —— 按住卡片位移超过 DRAG_THRESHOLD 才算拖动（没超过 = 点一下开
+ * 问题详情抽屉）；拖动中卡片跟手（半透明拖动卡），非当前列描边高亮 + 列顶浮出落点槽；拖到看板 / 列边缘逐帧自动滚；
+ * 放开 = 把问题状态改成目标列（同一 patchIssue 内存态：「问题追踪」表 / 计数 / 抽屉同步跟着变）。
+ * 同列不是落点（问题没有列内顺序，放开不改动）；Esc / 指针取消 = 原地取消；整段拖动没有原生拖拽参与，滚轮照常可用。
+ */
+function IssueBoard({ issues, onPatch, onOpen }: {
+  issues: readonly Issue[];
+  onPatch: (id: string, patch: IssuePatch) => void;
+  onOpen: (id: string) => void;
+}) {
+  /** 正在拖动的卡片 id（null = 没在拖）。 */
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  /** 当前落点列（null = 不在任何别的列上；同列不算落点）。 */
+  const [dropState, setDropState] = useState<IssueState | null>(null);
+  /** 按下卡片、还没过拖动阈值时的暂存（没过阈值就还是「点一下看详情」）。 */
+  const pendingRef = useRef<PendingIssueDrag | null>(null);
+  /** 拖动中鼠标的最后位置：滚轮 / 边缘自动滚时鼠标可以不动，落点按这个位置重算。 */
+  const pointerRef = useRef({ x: 0, y: 0 });
+  /** 拖动收尾那一下的 click 不当成「打开抽屉」。 */
+  const suppressClickRef = useRef(false);
+  /** 跟着鼠标走的拖动卡片：直接用 DOM 改 transform，不走 state（每帧都要动）。 */
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  /** 看板本体：拖到边缘自动滚按它找横向视口。 */
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  /** 抓取偏移：按下时鼠标在卡片内的位置 + 卡片宽度，拖动卡按这个对齐。 */
+  const grabRef = useRef({ dx: 0, dy: 0, width: 0 });
+  /** 最新问题表 / 落点判定 / 落值回调（指针与每帧回调里读，免得闭包吃到旧值）。 */
+  const issuesRef = useRef(issues);
+  const dropStateAtRef = useRef<(x: number, y: number) => IssueState | null>(() => null);
+  const patchRef = useRef(onPatch);
+
+  /** 鼠标底下是「哪一列」：别的列才是落点 —— 同列放开不改状态，所以同列不给提示；指针压到看板左右边缘之外时
+   *  夹回看板可视范围再判一次（同「任务进展」看板口径）。 */
+  const dropStateAt = (x: number, y: number, issueId: string): IssueState | null => {
+    const issue = issuesRef.current.find((item) => item.id === issueId);
+    if (issue === undefined) {
+      return null;
+    }
+    let column = dragColumnAtPoint(x, y);
+    if (column === null) {
+      const board = dragScrollAreaViewport(boardRef.current, "horizontal");
+      if (board !== null) {
+        const rect = board.getBoundingClientRect();
+        if (y >= rect.top && y <= rect.bottom && x >= rect.left - 64 && x <= rect.right + 64) {
+          column = dragColumnAtPoint(Math.min(Math.max(x, rect.left + 1), rect.right - 1), y);
+        }
+      }
+    }
+    if (column === null) {
+      return null;
+    }
+    const key = column.getAttribute("data-issue-column");
+    if (key === null || key === issue.state) {
+      return null;
+    }
+    return ISSUE_STATES.find((state) => state === key) ?? null;
+  };
+
+  // 三个「最新实现」的 ref：指针 / 每帧回调里读最新实现，免得闭包吃到上一轮的函数
+  useEffect(() => {
+    issuesRef.current = issues;
+    patchRef.current = onPatch;
+    dropStateAtRef.current = (x, y) => {
+      const pending = pendingRef.current;
+      return pending === null ? null : dropStateAt(x, y, pending.issueId);
+    };
+  });
+
+  /**
+   * 指针拖动（Push 210）：① 按下卡片后位移超过 DRAG_THRESHOLD 才算真拖动（没过阈值 = 点一下看详情）；
+   * ② 拖动中鼠标动一下就更新落点；③ 放开时落在哪一列就交给 patchIssue 改状态；④ Esc / 指针取消 = 原地取消。
+   * 整段拖动没有原生拖拽参与，所以滚轮照常可用。
+   */
+  useEffect(() => {
+    /** 收尾（放开 / Esc / 指针取消）：清掉暂存与落点，恢复页面文字选择。 */
+    const endDrag = () => {
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDraggingId(null);
+      setDropState(null);
+    };
+    const handleMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+      const pending = pendingRef.current;
+      if (pending === null || pending.dragging) {
+        return;
+      }
+      if (Math.abs(event.clientX - pending.x) + Math.abs(event.clientY - pending.y) < DRAG_THRESHOLD) {
+        return;
+      }
+      pending.dragging = true;
+      try {
+        // 指针捕获在卡片上：鼠标滑出窗口再放开也收得到 pointerup
+        pending.node.setPointerCapture(pending.pointerId);
+      } catch {
+        // 指针已经不在了（例如刚抬起）：忽略，落点照样按下面的逻辑算
+      }
+      const rect = pending.node.getBoundingClientRect();
+      grabRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top, width: rect.width };
+      document.body.style.userSelect = "none";
+      suppressClickRef.current = true;
+      setDraggingId(pending.issueId);
+      setDropState(dropStateAtRef.current(event.clientX, event.clientY));
+    };
+    const handleUp = (event: PointerEvent) => {
+      const pending = pendingRef.current;
+      if (pending === null) {
+        return;
+      }
+      const wasDragging = pending.dragging;
+      const target = wasDragging ? dropStateAt(event.clientX, event.clientY, pending.issueId) : null;
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDraggingId(null);
+      setDropState(null);
+      if (!wasDragging || target === null) {
+        return;
+      }
+      patchRef.current(pending.issueId, { state: target });
+    };
+    const handleCancel = () => {
+      endDrag();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && pendingRef.current !== null) {
+        endDrag();
+      }
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleCancel);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleCancel);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  /** 拖动中按帧重算落点：鼠标可以不动、容器在滚（滚轮 / 边缘自动滚），槽位得跟着走。 */
+  useEffect(() => {
+    if (draggingId === null) {
+      return;
+    }
+    let raf = window.requestAnimationFrame(function tick() {
+      const ghost = ghostRef.current;
+      if (ghost !== null) {
+        const grab = grabRef.current;
+        ghost.style.transform = "translate(" + (pointerRef.current.x - grab.dx) + "px," + (pointerRef.current.y - grab.dy) + "px)";
+      }
+      autoScrollIssueDrag(boardRef.current, pointerRef.current);
+      const next = dropStateAtRef.current(pointerRef.current.x, pointerRef.current.y);
+      setDropState((prev) => (prev === next ? prev : next));
+      raf = window.requestAnimationFrame(tick);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [draggingId]);
+
+  /** 按下卡片：先只记「可能拖动」，真拖动由上面的指针循环判定。 */
+  const beginCardDrag = (issueId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => {
+    pendingRef.current = { issueId, pointerId: event.pointerId, x: event.clientX, y: event.clientY, node, dragging: false };
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    suppressClickRef.current = false;
+  };
+
+  /** 点一下卡片 = 打开问题详情抽屉；拖动收尾那一下的 click 不算。 */
+  const openIssueCard = (issueId: string) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    onOpen(issueId);
+  };
+
+  /** 拖动中的那张问题（用来画跟着鼠标走的拖动卡）。 */
+  const draggingIssue = draggingId === null ? null : issues.find((issue) => issue.id === draggingId) ?? null;
+
+  return (
+    <div data-issue-board="" ref={boardRef}>
+      <ScrollArea axis="horizontal" ariaLabel="问题看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
+        {ISSUE_STATES.map((state) => {
+          const items = issues.filter((issue) => issue.state === state);
+          const isTarget = dropState === state;
+          return (
+            <section
+              key={state}
+              data-issue-column={state}
+              className={ISSUE_COLUMN + (isTarget ? " rounded-[28px] ring-2 ring-emerald-400/70 ring-offset-4 ring-offset-white" : "")}
+            >
+              <header className="mb-3 flex items-center gap-2 px-1">
+                <IssueStateTag state={state} />
+                <span className="shrink-0 text-xs text-zinc-400">{items.length}项</span>
+              </header>
+              <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"问题卡片：" + state}>
+                {isTarget ? (
+                  <div
+                    data-issue-drop-slot="true"
+                    className="flex items-center justify-center rounded-[35px] border-2 border-dashed border-emerald-400/70 bg-emerald-50/60 px-3 py-6 text-center text-[11px] font-medium text-emerald-700"
+                  >
+                    {"放开：移到「" + state + "」"}
+                  </div>
+                ) : null}
+                {items.length === 0 ? (
+                  isTarget ? null : (
+                    <p className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-zinc-300 px-3 text-center text-xs text-zinc-400">
+                      暂无问题
+                    </p>
+                  )
+                ) : (
+                  items.map((issue) => (
+                    <IssueCard
+                      key={issue.id}
+                      issue={issue}
+                      onOpen={() => {
+                        openIssueCard(issue.id);
+                      }}
+                      dragging={draggingId === issue.id}
+                      onPointerDownDrag={beginCardDrag}
+                    />
+                  ))
+                )}
+              </ScrollArea>
+            </section>
+          );
+        })}
+      </ScrollArea>
+      {draggingIssue === null ? null : (
+        <div
+          ref={ghostRef}
+          data-drag-ghost="true"
+          aria-hidden="true"
+          style={{ width: grabRef.current.width === 0 ? undefined : grabRef.current.width }}
+          className="pointer-events-none fixed left-0 top-0 z-50 will-change-transform"
+        >
+          <IssueCard issue={draggingIssue} ghost onOpen={() => undefined} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1813,42 +2144,11 @@ export function ReportIssuePanel({ project, me, focusMode }: {
         </section>
       ) : (
         <section className="space-y-3">
-          <SectionHeader title="问题看板" hint="三态：未解决 → 处理中 → 已完成（空列保留）" />
+          <SectionHeader title="问题看板" hint="三态：未解决 → 处理中 → 已完成（空列保留；按住卡片拖到别的列 = 改状态）" />
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <div data-issue-board="">
-              <ScrollArea axis="horizontal" ariaLabel="问题看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
-                {ISSUE_STATES.map((state) => {
-                  const items = issues.filter((issue) => issue.state === state);
-                  return (
-                    <section key={state} data-issue-column={state} className={ISSUE_COLUMN}>
-                      <header className="mb-3 flex items-center gap-2 px-1">
-                        <IssueStateTag state={state} />
-                        <span className="shrink-0 text-xs text-zinc-400">{items.length}项</span>
-                      </header>
-                      <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"问题卡片：" + state}>
-                        {items.length === 0 ? (
-                          <p className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-zinc-300 px-3 text-center text-xs text-zinc-400">
-                            暂无问题
-                          </p>
-                        ) : (
-                          items.map((issue) => (
-                            <IssueCard
-                              key={issue.id}
-                              issue={issue}
-                              onOpen={() => {
-                                setOpenIssueId(issue.id);
-                              }}
-                            />
-                          ))
-                        )}
-                      </ScrollArea>
-                    </section>
-                  );
-                })}
-              </ScrollArea>
-            </div>
+            <IssueBoard issues={issues} onPatch={patchIssue} onOpen={(id) => { setOpenIssueId(id); }} />
           )}
         </section>
       )}
