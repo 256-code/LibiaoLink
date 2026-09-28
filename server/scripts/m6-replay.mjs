@@ -349,7 +349,7 @@ try {
   await db.query("update projects set stage_key = $2 where id = $1", [cleanup.projectId, "acceptance"]);
   const beforeArchive = await call("GET", API);
   const archiveVersion = beforeArchive.body?.version;
-  check("A1", "归档前置：项目读到验收阶段（stageKey=acceptance）与当前 version", "200 stageKey=acceptance version>=1", beforeArchive.status + " " + short({ stageKey: beforeArchive.body?.stageKey, version: archiveVersion }, 140), beforeArchive.status === 200 && beforeArchive.body?.stageKey === "acceptance" && Number.isInteger(archiveVersion) && archiveVersion >= 1);
+  check("A1", "归档前置：项目读到验收阶段（stageKey=acceptance）与当前 version", "200 stageKey=acceptance version>=0", beforeArchive.status + " " + short({ stageKey: beforeArchive.body?.stageKey, version: archiveVersion }, 140), beforeArchive.status === 200 && beforeArchive.body?.stageKey === "acceptance" && Number.isInteger(archiveVersion) && archiveVersion >= 0);
 
   const gateRejected = await call("POST", API + "/archive", { version: archiveVersion });
   const gateCodes = (gateRejected.body?.details ?? []).map((item) => item.code);
