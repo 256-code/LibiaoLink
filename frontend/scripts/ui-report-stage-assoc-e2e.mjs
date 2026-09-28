@@ -72,6 +72,15 @@
  * Push 203（业务口径 2026-09-28「这个中间加个加号吧」→「改成Ctrl + V」）：附图「粘贴」键帽正名 —— 键帽文案 `CTRL V` → `Ctrl + V`
  *   （去掉 uppercase 变换、中间加「+」；材质与两半分半结构不变）；⑤c 组补 1 项（键帽文案 = `Ctrl + V` 且 text-transform = none），累计 61 项。
  *
+ * Push 204（业务口径 2026-09-28「做成文字吧」）：附图「粘贴」入口键帽**下架、改纯文字** `Ctrl + V`（去渐变底 / 内阴影 / 圆角等
+ *   键帽材质；字色随半区悬停 / 就绪态转深 —— 两半结构、两条入口与它处零改动）；⑤c 组补 1 项（左半为纯文字：无渐变底 / 无键帽投影 / 无圆角）。
+ *   同批续（业务口径「位置要居中」）：左半按钮 h-full 撑满右半图标定高的 44px 行（原来文字盒只有 36px、悬在行顶，视觉偏高 ~4px）——
+ *   文字中线与半区中线齐平；⑤c 组再补 1 项（文字中线 = 半区中线 ±1px 且两半等高）。
+ *   同批再续（业务口径「点击ctrl v 再点右侧图标就会卡ctrl v一直被点击的bug」）：卡片撤 `tabIndex` / `onFocus` 的「兜就绪态」——点右半
+ *   「选择文件」时浏览器焦点落点曾是卡片本身（label 里是 display:none 的文件框，接不了焦点），左半被重新点亮、Ctrl+V 被一直劫持；
+ *   就绪态只由左半驱动（贴图区 = 点左半），右半点按显式撤销就绪态并让落点失焦。⑤c 组再补 1 项（idle 点右半仍 idle / 就绪后
+ *   点右半 → 撤销 + 焦点不在卡内 + 文件框照常点得开），累计 64 项。
+ *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -483,7 +492,7 @@ check("⑤b 暂存不写「日报记录」（行数仍是提交产生的 1 行�
 await clickSelector('[data-subnav-item="日报填写"]');
 await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
 
-// ---------- ⑤c 附图：以「复制粘贴」为主入口（Push 202 同批续 · 业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」） ----------
+// ---------- ⑤c 附图：以「复制粘贴」为主入口（Push 202 同批续 · Push 204 键帽改文字 + 纯文字垂直居中 · 业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」→「做成文字吧」→「位置要居中」） ----------
 const PNG_B64 = pngBytes().toString("base64");
 const zonesProbe = await ev(
   "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");if(f===null){return null;}" +
@@ -491,19 +500,31 @@ const zonesProbe = await ev(
   "var fileInputs=f.querySelectorAll(" + j("input[type=file]") + ");" +
   "var ph=photo===null?null:photo.querySelector(" + j("[data-paste-half]") + ");var fh=photo===null?null:photo.querySelector(" + j("[data-file-half]") + ");" +
   "var cap=ph===null?null:ph.querySelector(" + j("span") + ");" +
+  "var pr=ph===null?null:ph.getBoundingClientRect();var cr=cap===null?null:cap.getBoundingClientRect();var fr=fh===null?null:fh.getBoundingClientRect();" +
   "return {photo:photo!==null,issue:issue!==null,files:fileInputs.length," +
   "pasteSvg:ph===null?0:ph.querySelectorAll(" + j("svg") + ").length,pasteText:ph===null?" + j("") + ":ph.textContent.trim(),pasteAria:ph===null?" + j("") + ":String(ph.getAttribute(" + j("aria-label") + "))," +
   "capTransform:cap===null?" + j("") + ":getComputedStyle(cap).textTransform," +
+  "capBgImage:cap===null?" + j("") + ":getComputedStyle(cap).backgroundImage," +
+  "capShadow:cap===null?" + j("") + ":getComputedStyle(cap).boxShadow," +
+  "capRadius:cap===null?" + j("") + ":getComputedStyle(cap).borderRadius," +
+  "pasteHalfH:pr===null?0:Math.round(pr.height*100)/100,fileHalfH:fr===null?0:Math.round(fr.height*100)/100," +
+  "capMidDelta:(pr===null||cr===null)?999:Math.round(((cr.top+cr.bottom)/2-(pr.top+pr.bottom)/2)*100)/100," +
   "fileSvg:fh===null?0:fh.querySelectorAll(" + j("svg") + ").length,fileText:fh===null?" + j("") + ":fh.textContent.trim(),fileAria:fh===null?" + j("") + ":String(fh.getAttribute(" + j("aria-label") + "))};})()"
 );
-check("⑤c 两个附图区（现场工作附图 / 当前问题附图）常驻 = 虚线卡左右分半：左半 `Ctrl + V` 键帽（Ctrl+V 主入口 · 键帽风底 + 内阴影）+ 右半文件 / 云图标（点击选择文件 · 原生文件框仍 2 个 · 两半无说明文字）",
+check("⑤c 两个附图区（现场工作附图 / 当前问题附图）常驻 = 虚线卡左右分半：左半 `Ctrl + V` 文字（Ctrl+V 主入口 · Push 204 起纯文字）+ 右半文件 / 云图标（点击选择文件 · 原生文件框仍 2 个 · 两半无说明文字）",
   zonesProbe !== null && zonesProbe.photo === true && zonesProbe.issue === true && zonesProbe.files === 2 &&
   zonesProbe.pasteText.replace(/\s+/g, " ").trim().toLowerCase() === "ctrl + v" && zonesProbe.pasteAria.indexOf("Ctrl+V") >= 0 &&
   zonesProbe.fileSvg === 1 && zonesProbe.fileText === "" && zonesProbe.fileAria.indexOf("选择文件") >= 0,
   zonesProbe === null ? "-" : JSON.stringify(zonesProbe));
-check("⑤c 键帽文案正名 = `Ctrl + V`（中间加「+」、大小写照文案、不再走 uppercase 变换 —— 业务口径「这个中间加个加号吧」→「改成Ctrl + V」）",
+check("⑤c 左半文案 = `Ctrl + V`（中间加「+」、大小写照文案、不走 uppercase 变换 —— 业务口径「这个中间加个加号吧」→「改成Ctrl + V」；Push 204 改纯文本后仍核）",
   zonesProbe !== null && zonesProbe.pasteText.replace(/\s+/g, " ") === "Ctrl + V" && zonesProbe.capTransform === "none",
   zonesProbe === null ? "-" : JSON.stringify({ text: zonesProbe.pasteText, transform: zonesProbe.capTransform }));
+check("⑤c 左半为**纯文字**（键帽下架：无渐变底 / 无键帽投影 / 无圆角 —— 业务口径「做成文字吧」）",
+  zonesProbe !== null && zonesProbe.capBgImage === "none" && zonesProbe.capShadow === "none" && zonesProbe.capRadius === "0px",
+  zonesProbe === null ? "-" : JSON.stringify({ bg: zonesProbe.capBgImage, shadow: zonesProbe.capShadow, radius: zonesProbe.capRadius }));
+check("⑤c 左半 `Ctrl + V` 垂直居中（业务口径「位置要居中」：h-full 撑满右半图标定高行 —— 文字中线 = 半区中线 ±1px、两半等高 ±1px）",
+  zonesProbe !== null && Math.abs(zonesProbe.capMidDelta) <= 1 && Math.abs(zonesProbe.pasteHalfH - zonesProbe.fileHalfH) <= 1 && zonesProbe.pasteHalfH > 40,
+  zonesProbe === null ? "-" : JSON.stringify({ capMidDelta: zonesProbe.capMidDelta, pasteHalfH: zonesProbe.pasteHalfH, fileHalfH: zonesProbe.fileHalfH }));
 await clickSelector("[data-paste-zone=photos] [data-paste-half]");
 const armedProbe = await ev(
   "(function(){var p=document.querySelector(" + j("[data-paste-zone=photos]") + ");var q=document.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");" +
@@ -515,6 +536,25 @@ const armedProbe = await ev(
 check("⑤c 真实鼠标点一下「现场工作附图」左半 → 就绪态（data-paste-hint=armed · 焦点落在不可见粘贴落点 INPUT 上 —— 浏览器只对有可编辑焦点的元素执行 Ctrl+V）· 未点的另一区仍 idle",
   armedProbe !== null && armedProbe.photo === "armed" && armedProbe.issue === "idle" && armedProbe.sinkFocused === true,
   armedProbe === null ? "-" : JSON.stringify(armedProbe));
+// 业务口径「点击ctrl v 再点右侧图标就会卡ctrl v一直被点击的bug」：右半「选择文件」是文件入口，不置就绪态；
+// 点过左半（就绪）再点右半要撤销就绪态 —— 原来卡片 tabIndex=0 + onFocus 会把浏览器焦点落点变成「点亮左半」、Ctrl+V 被一直劫持。
+await ev("(function(){window.__fileHalfClicks=0;document.addEventListener(" + j("click") + ",function(e){if(e.target&&e.target.tagName===" + j("INPUT") + "&&e.target.type===" + j("file") + "){window.__fileHalfClicks+=1;}},true);return true;})()");
+await clickSelector("[data-paste-zone=issuePhotos] [data-file-half]");
+const fileHalfIdle = await ev(
+  "(function(){var q=document.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");if(q===null){return null;}var h=q.querySelector(" + j("[data-paste-hint]") + ");" +
+  "return {hint:h===null?null:h.getAttribute(" + j("data-paste-hint") + "),clicks:window.__fileHalfClicks||0};})()"
+);
+await clickSelector("[data-paste-zone=photos] [data-file-half]");
+const fileHalfAfterArmed = await ev(
+  "(function(){var p=document.querySelector(" + j("[data-paste-zone=photos]") + ");if(p===null){return null;}var h=p.querySelector(" + j("[data-paste-hint]") + ");" +
+  "var sink=p.querySelector(" + j("[data-paste-sink]") + ");var act=document.activeElement;" +
+  "return {hint:h===null?null:h.getAttribute(" + j("data-paste-hint") + "),sinkFocused:act===sink,inZone:p.contains(act),clicks:window.__fileHalfClicks||0};})()"
+);
+check("⑤c 右半「选择文件」不置就绪态：从 idle 点它仍 idle；点过左半（就绪）再点它 → 就绪态撤销（hint 回 idle · 焦点不再落在卡片 / 粘贴落点上），两半的文件框照常点得开（业务口径「点击ctrl v 再点右侧图标就会卡ctrl v一直被点击的bug」）",
+  fileHalfIdle !== null && fileHalfIdle.hint === "idle" && fileHalfAfterArmed !== null && fileHalfAfterArmed.hint === "idle" &&
+  fileHalfAfterArmed.sinkFocused === false && fileHalfAfterArmed.inZone === false && fileHalfIdle.clicks >= 1 && fileHalfAfterArmed.clicks >= 2,
+  fileHalfIdle === null || fileHalfAfterArmed === null ? "-" : JSON.stringify({ idle: fileHalfIdle, afterArmed: fileHalfAfterArmed }));
+await clickSelector("[data-paste-zone=photos] [data-paste-half]");
 // 粘贴：优先「真实剪贴板 + 真实 Ctrl+V」（CDP 授权 + Input.dispatchKeyEvent，按键走浏览器 paste 加速键）；
 // 剪贴板不可用（无头环境偶发）才回落合成 ClipboardEvent —— 两条路都打在真实 document 监听上。
 await page.send("Browser.grantPermissions", { origin: FRONTEND, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
@@ -549,7 +589,7 @@ const chipsAfterRemove = await ev(chipsExpr("photos"));
 check("⑤c 附件胶囊可逐个移除（点 × 后「现场工作附图」回到 0 个附件）",
   chipsAfterRemove !== null && chipsAfterRemove.names.length === 0,
   chipsAfterRemove === null ? "-" : JSON.stringify(chipsAfterRemove.names));
-await clickSelector("[data-paste-zone=issuePhotos]");
+await clickSelector("[data-paste-zone=issuePhotos] [data-paste-half]");
 if (String(clipWrite) !== "ok") {
   await ev(
     "(function(){var bin=atob(" + j(PNG_B64) + ");var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++){arr[i]=bin.charCodeAt(i);}" +
