@@ -648,34 +648,41 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
     <div className="min-h-screen">
       <AppHeader me={me} project={project} />
       <main className="w-full px-6 pb-10 pt-3">
-        <div className="flex items-center gap-3 border-b border-zinc-200">
-          <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-            {VIEW_TABS.map((tab) => {
-              const active = tab === activeView;
-              return (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => replaceProjectView(project.id, VIEW_KEYS[tab])}
-                  aria-current={active ? "page" : undefined}
-                  className={
-                    "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
-                    (active
-                      ? "border-zinc-900 text-zinc-900"
-                      : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
-                  }
-                >
-                  {tab}
-                </button>
-              );
-            })}
-          </div>
-          {activeView === "项目总览" ? (
-            <div className="flex shrink-0 items-center gap-4">
-              <FocusModeToggle checked={focus} onToggle={(checked) => { void handleToggleFocusMode(checked); }} />
-              <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+        {/* 主标签栏吸顶（Push 201 业务口径「这个也做吸顶效果吧」）：滚动时停在应用顶栏（h-16 = 64px）正下方，
+            站灰底 + 毛玻璃兜住滚动内容；-mx-6 / -mt-3 + 同值内衬抵消：横幅铺满行宽、标签位置与原来一致。
+            自身高 59px（pt-3 12 + 标签 46 + 底边 1）—— 页面里的其它吸顶元素一律叠在它下面（top = 64 + 59 = 123px）：
+            项目总览的任务表头、日报及问题的页内导航栏。 */}
+        <div data-maintabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
+          <div className="flex items-center gap-3">
+            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+              {VIEW_TABS.map((tab) => {
+                const active = tab === activeView;
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    data-maintabs-item={tab}
+                    onClick={() => replaceProjectView(project.id, VIEW_KEYS[tab])}
+                    aria-current={active ? "page" : undefined}
+                    className={
+                      "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
+                      (active
+                        ? "border-zinc-900 text-zinc-900"
+                        : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
+                    }
+                  >
+                    {tab}
+                  </button>
+                );
+              })}
             </div>
-          ) : null}
+            {activeView === "项目总览" ? (
+              <div className="flex shrink-0 items-center gap-4">
+                <FocusModeToggle checked={focus} onToggle={(checked) => { void handleToggleFocusMode(checked); }} />
+                <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {toolError === null ? null : (
