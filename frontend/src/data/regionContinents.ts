@@ -7,6 +7,7 @@
  * 业务口径（2026-09-28）：「我觉得这里太乱了 要根据各个州分类 可以展开」「新建项目选择地区应该也要改 是不是要加一个国家地区选择器可搜索的那种」。
  */
 import { matchRegion } from "./mapProjects";
+import { WORLD_MAP_COUNTRIES, WORLD_MAP_MICRO_STATES } from "./worldMap";
 import { REGION_CONTINENT_OF_ISO, REGION_CONTINENT_ORDER } from "./worldMapContinents";
 
 /** 归不进任何一洲的兜底组（排在最后）。 */
@@ -45,6 +46,30 @@ export type ContinentGroup<T> = {
   readonly continent: string;
   readonly items: readonly T[];
 };
+
+/**
+ * 「添加地区」搜索选择器的候选（Push 193）：标准国家 / 微国名 —— 与地图 / 洲归属同一份数据，
+ * 新建地区不再手打（手打容易写出地图认不出的名字）。中英文都能搜；已收录的条目由下拉本体给出，候选里不再重复列。
+ * 业务口径（2026-09-28）：「新建地区手打容易出问题吧 还是改成搜索选择器吧」。
+ */
+export type RegionCandidateOption = { readonly name: string; readonly english: string; readonly group: string };
+
+export const REGION_CANDIDATE_OPTIONS: readonly RegionCandidateOption[] = (() => {
+  const rows: RegionCandidateOption[] = [];
+  const seen = new Set<string>();
+  for (const entry of [...WORLD_MAP_COUNTRIES, ...WORLD_MAP_MICRO_STATES]) {
+    if (seen.has(entry.nameZh)) {
+      continue;
+    }
+    seen.add(entry.nameZh);
+    rows.push({ name: entry.nameZh, english: entry.name, group: continentOfRegion(entry.nameZh, entry.id) });
+  }
+  rows.sort((left, right) => {
+    const byGroup = REGION_CONTINENT_GROUPS.indexOf(left.group) - REGION_CONTINENT_GROUPS.indexOf(right.group);
+    return byGroup !== 0 ? byGroup : left.name.localeCompare(right.name, "zh");
+  });
+  return rows;
+})();
 
 /**
  * 按洲分组：组内保持入参顺序，组间按 REGION_CONTINENT_GROUPS 排（认不出国家的条目落「其他」，永远在最后）；

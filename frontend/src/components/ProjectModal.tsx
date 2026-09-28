@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { DICT_ACCENT_PALETTE, accentOfItem, type DictItem, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
 import type { Member } from "../data/members";
-import { REGION_CONTINENT_GROUPS, continentOfRegion, regionSearchText } from "../data/regionContinents";
+import { REGION_CANDIDATE_OPTIONS, REGION_CONTINENT_GROUPS, continentOfRegion, regionSearchText } from "../data/regionContinents";
 import { DictSelect } from "./DictSelect";
 import { MemberMultiSelect } from "./MemberSelect";
 
@@ -12,6 +12,8 @@ import { MemberMultiSelect } from "./MemberSelect";
  * 地区下拉的分组 + 搜索配置（Push 192）：按洲分组、可搜中英文名 —— 与首页筛选侧栏同一套洲口径
  * （src/data/regionContinents.ts，认国家的口径与地图悬停同源）。
  * 业务口径（2026-09-28）：「新建项目选择地区应该也要改 是不是要加一个国家地区选择器可搜索的那种」。
+ * Push 193：「＋ 添加地区」从手打改成搜索选择器 —— 候选 = 标准国家 / 微国列表（与地图同一份数据），
+ * 手打容易写出地图认不出的名字；业务口径「新建地区手打容易出问题吧 还是改成搜索选择器吧」。
  */
 const REGION_GROUPING = {
   groupOf: (name: string, code: string): string => continentOfRegion(name, code),
@@ -165,8 +167,13 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               onAdd={(input) => dictTools.onAdd("region", input)}
               addText={{
                 label: "添加地区",
-                placeholder: "输入地区名称，如 东南亚",
-                note: "保存后写入地区字典（C9）：全站可选（所有项目的地区下拉都能选到），并可在首页按它筛选；删除与改名由管理员维护。",
+                placeholder: "搜索国家 / 地区，如 冰岛 / Iceland",
+                note: "从标准国家 / 地区列表里选（中英文都能搜）：保存后写入地区字典（C9），全站可选，并可在首页按它筛选；删除与改名由管理员维护。",
+              }}
+              addPicker={{
+                options: REGION_CANDIDATE_OPTIONS,
+                placeholder: "搜索国家 / 地区（中英文都行）",
+                emptyText: "没有匹配的国家 / 地区（已收录的不再列出）。",
               }}
               onDelete={
                 canManageDicts

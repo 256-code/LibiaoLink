@@ -42,6 +42,8 @@ type CategoryFilterSidebarProps = {
   savedFilters: SavedFilter[];
   appliedSavedFilterId: string | null;
   onToggleRegion: (region: string) => void;
+  /** 批量勾选 / 取消（Push 193 整洲筛选：values = 该洲全部地区，checked = 选中还是取消）。 */
+  onToggleRegions: (regions: string[], checked: boolean) => void;
   onToggleManager: (managerId: string) => void;
   onToggleType: (projectType: string) => void;
   onDateRangeChange: (range: DateRange | null) => void;
@@ -82,6 +84,7 @@ export function CategoryFilterSidebar({
   savedFilters,
   appliedSavedFilterId,
   onToggleRegion,
+  onToggleRegions,
   onToggleManager,
   onToggleType,
   onDateRangeChange,
@@ -170,6 +173,34 @@ export function CategoryFilterSidebar({
     }
     patchDraft({ regions: toggleValue(compose.criteria.regions, region) });
   };
+  /** 批量勾选 / 取消一组地区（Push 193 整洲筛选）：编辑态写草稿，否则直接改当前筛选。 */
+  const setRegionsChecked = (values: readonly string[], checked: boolean): void => {
+    if (compose === null) {
+      onToggleRegions(values.slice(), checked);
+      return;
+    }
+    const current = new Set(compose.criteria.regions);
+    for (const value of values) {
+      if (checked) {
+        current.add(value);
+      } else {
+        current.delete(value);
+      }
+    }
+    patchDraft({ regions: Array.from(current) });
+  };
+  /**
+   * 点洲名 = 整洲筛选（Push 193）：没选全 → 把该洲所有地区一起勾上并展开（看得见勾了哪些）；
+   * 已选全 → 再点一次取消。业务口径「某一个洲点击可以直接筛选整个洲」。
+   */
+  const handleToggleContinent = (group: ContinentGroup<FacetOption>): void => {
+    const values = group.items.map((option) => option.value);
+    const allPicked = values.length > 0 && values.every((value) => regionSelection.includes(value));
+    setRegionsChecked(values, !allPicked);
+    if (!allPicked) {
+      setCollapsedContinents((previous) => ({ ...previous, [group.continent]: false }));
+    }
+  };
   const handleToggleManager = (managerId: string) => {
     if (compose === null) {
       onToggleManager(managerId);
@@ -216,6 +247,8 @@ export function CategoryFilterSidebar({
           <button
             key={option.value}
             type="button"
+            data-chip={option.value}
+            aria-pressed={isSelected}
             onClick={() => {
               onToggle(option.value);
             }}
@@ -447,35 +480,70 @@ export function CategoryFilterSidebar({
               {regionGroups.map((group) => {
                 const expanded = groupExpanded(group);
                 const picked = group.items.filter((option) => regionSelection.includes(option.value)).length;
+                const allPicked = group.items.length > 0 && group.items.every((option) => regionSelection.includes(option.value));
                 return (
                   <div
                     key={group.continent}
                     data-continent-group={group.continent}
                     className="rounded-xl border border-zinc-200/70 bg-white/50 transition hover:border-zinc-300"
                   >
-                    <button
-                      type="button"
-                      data-continent-toggle={group.continent}
-                      aria-expanded={expanded}
-                      onClick={() => {
-                        setCollapsedContinents((previous) => ({ ...previous, [group.continent]: expanded }));
-                      }}
-                      className="flex w-full items-center gap-1.5 rounded-xl px-2.5 py-2 text-left"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        aria-hidden="true"
-                        className={"h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform " + (expanded ? "rotate-90" : "")}
+                    <div className="flex w-full items-center gap-1.5 rounded-xl pr-2.5">
+                      <button
+                        type="button"
+                        data-continent-toggle={group.continent}
+                        aria-expanded={expanded}
+                        onClick={() => {
+                          setCollapsedContinents((previous) => ({ ...previous, [group.continent]: expanded }));
+                        }}
+                        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-xl px-2.5 py-2 text-left"
                       >
-                        <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                      <span className="text-xs font-medium text-zinc-700">{group.continent}</span>
-                      <span className="text-[11px] text-zinc-400">{group.items.length} 个地区</span>
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          aria-hidden="true"
+                          className={"h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform " + (expanded ? "rotate-90" : "")}
+                        >
+                          <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span className="text-xs font-medium text-zinc-700">{group.continent}</span>
+                        <span className="text-[11px] text-zinc-400">{group.items.length} 个地区</span>
+                      </button>
                       {picked === 0 ? null : (
-                        <span className="ml-auto rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10px] font-medium text-white">已选 {picked}</span>
+                        <span className="shrink-0 rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10px] font-medium text-white">已选 {picked}</span>
                       )}
-                    </button>
+                      {/* 整洲筛选复选框（Push 193 追订 · 业务参考代码）：行最右侧；勾上 = 该洲全部地区一起选中（再点取消） */}
+                      <label
+                        className="group/continent-check -m-1 flex shrink-0 cursor-pointer items-center p-1"
+                        title={allPicked ? "取消筛选整个" + group.continent : "筛选整个" + group.continent + "（" + String(group.items.length) + " 个地区）"}
+                      >
+                        <input
+                          type="checkbox"
+                          data-continent-check={group.continent}
+                          className="peer sr-only"
+                          checked={allPicked}
+                          aria-label={"筛选整个" + group.continent}
+                          onChange={() => {
+                            handleToggleContinent(group);
+                          }}
+                        />
+                        <span className="relative flex h-4 w-4 items-center justify-center rounded-[5px] border border-zinc-300 bg-zinc-100 shadow-sm transition-all duration-500 group-hover/continent-check:scale-110 peer-checked:border-blue-500 peer-checked:bg-blue-500 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400/60">
+                          <span className="absolute inset-0 rounded-[5px] bg-gradient-to-br from-white/30 to-white/10 opacity-0 transition-all duration-500 peer-checked:animate-pulse peer-checked:opacity-100" />
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            aria-hidden="true"
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="hidden h-2.5 w-2.5 scale-50 text-white transition-transform duration-500 peer-checked:block peer-checked:scale-100"
+                          >
+                            <path
+                              clipRule="evenodd"
+                              fillRule="evenodd"
+                              d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 10-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z"
+                            />
+                          </svg>
+                        </span>
+                      </label>
+                    </div>
                     {expanded ? <div className="px-2.5 pb-2.5">{renderChips(group.items, regionSelection, handleToggleRegion, "")}</div> : null}
                   </div>
                 );
