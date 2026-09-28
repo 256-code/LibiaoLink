@@ -59,7 +59,7 @@
  *   （「标题都标标粗」）。
  *   断言：② 组 +3（双语表头 / 三框无占位提示 / 标题加粗）、④ 组 1 条状态断言拆成 2 条（时间列年月日 + 无状态签 · 净 +1）、
  *   ⑤b 组新增 9 项（多选弹层 / 两项绿勾 / 触发器顿号 / Esc 关闭 / 暂存提示 / 悬停背景 / 内容保留 / 不切视图 / 不写记录）；
- *   另：「暂存草稿」悬停反馈加明显（「鼠标放到暂存草稿的ui效果不太明显」——描边 200 → 400、背景 zinc-100、字色转深）；合计 59 项。
+ *   另：「暂存草稿」悬停反馈加明显（「鼠标放到暂存草稿的ui效果不太明显」——描边 200 → 400、背景 zinc-100、字色转深）；累计 60 项。
  *
  * Push 202 同批续（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：两个附图区
  *   （现场工作附图 / 当前问题附图）改 AttachmentPicker —— **粘贴为主入口**（点一下虚线区拿到焦点，Ctrl+V 直接粘图；
@@ -68,6 +68,9 @@
  *   同批续二（业务口径「图片要可以预览」+「图片名称可以自定义」）：胶囊出**缩略图**（`URL.createObjectURL`）、点开**大图预览层**（点任意处 / Esc 关）、**点名字可自定义**（回车 / 失焦提交、Esc 取消）；
  *   粘贴优先走**真实剪贴板 + 真实 Ctrl+V**（CDP 授权 clipboardReadWrite + Input.dispatchKeyEvent 走浏览器 paste 加速键），
  *   剪贴板不可用才回落合成 ClipboardEvent（两条路都打在真实 document 监听上）。
+ *
+ * Push 203（业务口径 2026-09-28「这个中间加个加号吧」→「改成Ctrl + V」）：附图「粘贴」键帽正名 —— 键帽文案 `CTRL V` → `Ctrl + V`
+ *   （去掉 uppercase 变换、中间加「+」；材质与两半分半结构不变）；⑤c 组补 1 项（键帽文案 = `Ctrl + V` 且 text-transform = none），累计 61 项。
  *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -487,15 +490,20 @@ const zonesProbe = await ev(
   "var photo=f.querySelector(" + j("[data-paste-zone=photos]") + ");var issue=f.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");" +
   "var fileInputs=f.querySelectorAll(" + j("input[type=file]") + ");" +
   "var ph=photo===null?null:photo.querySelector(" + j("[data-paste-half]") + ");var fh=photo===null?null:photo.querySelector(" + j("[data-file-half]") + ");" +
+  "var cap=ph===null?null:ph.querySelector(" + j("span") + ");" +
   "return {photo:photo!==null,issue:issue!==null,files:fileInputs.length," +
   "pasteSvg:ph===null?0:ph.querySelectorAll(" + j("svg") + ").length,pasteText:ph===null?" + j("") + ":ph.textContent.trim(),pasteAria:ph===null?" + j("") + ":String(ph.getAttribute(" + j("aria-label") + "))," +
+  "capTransform:cap===null?" + j("") + ":getComputedStyle(cap).textTransform," +
   "fileSvg:fh===null?0:fh.querySelectorAll(" + j("svg") + ").length,fileText:fh===null?" + j("") + ":fh.textContent.trim(),fileAria:fh===null?" + j("") + ":String(fh.getAttribute(" + j("aria-label") + "))};})()"
 );
-check("⑤c 两个附图区（现场工作附图 / 当前问题附图）常驻 = 虚线卡左右分半：左半 `ctrl v` 键帽（Ctrl+V 主入口 · 键帽风底 + 内阴影）+ 右半文件 / 云图标（点击选择文件 · 原生文件框仍 2 个 · 两半无说明文字）",
+check("⑤c 两个附图区（现场工作附图 / 当前问题附图）常驻 = 虚线卡左右分半：左半 `Ctrl + V` 键帽（Ctrl+V 主入口 · 键帽风底 + 内阴影）+ 右半文件 / 云图标（点击选择文件 · 原生文件框仍 2 个 · 两半无说明文字）",
   zonesProbe !== null && zonesProbe.photo === true && zonesProbe.issue === true && zonesProbe.files === 2 &&
-  zonesProbe.pasteText.replace(/\s+/g, " ").trim().toLowerCase() === "ctrl v" && zonesProbe.pasteAria.indexOf("Ctrl+V") >= 0 &&
+  zonesProbe.pasteText.replace(/\s+/g, " ").trim().toLowerCase() === "ctrl + v" && zonesProbe.pasteAria.indexOf("Ctrl+V") >= 0 &&
   zonesProbe.fileSvg === 1 && zonesProbe.fileText === "" && zonesProbe.fileAria.indexOf("选择文件") >= 0,
   zonesProbe === null ? "-" : JSON.stringify(zonesProbe));
+check("⑤c 键帽文案正名 = `Ctrl + V`（中间加「+」、大小写照文案、不再走 uppercase 变换 —— 业务口径「这个中间加个加号吧」→「改成Ctrl + V」）",
+  zonesProbe !== null && zonesProbe.pasteText.replace(/\s+/g, " ") === "Ctrl + V" && zonesProbe.capTransform === "none",
+  zonesProbe === null ? "-" : JSON.stringify({ text: zonesProbe.pasteText, transform: zonesProbe.capTransform }));
 await clickSelector("[data-paste-zone=photos] [data-paste-half]");
 const armedProbe = await ev(
   "(function(){var p=document.querySelector(" + j("[data-paste-zone=photos]") + ");var q=document.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");" +
