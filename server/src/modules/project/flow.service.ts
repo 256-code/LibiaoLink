@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ProjectFlowSchema, STAGE_NAMES, StageListResponseSchema, z } from "@libiaolink/contracts";
+import type { OutboxTopic } from "@libiaolink/contracts";
 import type { StageKey } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
@@ -21,7 +22,7 @@ const STAGE_NAME_BY_KEY = STAGE_NAMES as Record<string, string>;
 
 /** 门禁拒绝的内部信号（事务回滚后补写留痕，再转 422 契约错误）。 */
 class GateRejectedSignal extends Error {
-  constructor(readonly appError: AppError, readonly outbox: { topic: string; dedupeKey: string; payload: Record<string, unknown> }) {
+  constructor(readonly appError: AppError, readonly outbox: { topic: OutboxTopic; dedupeKey: string; payload: Record<string, unknown> }) {
     super("gate_rejected");
   }
 }

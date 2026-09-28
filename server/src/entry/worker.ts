@@ -1,10 +1,11 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { Logger } from "nestjs-pino";
+import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
 import { FileService, PreviewService } from "../modules/file/index.js";
-import { OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
+import { JobScheduler, OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
 const HEARTBEAT_MS = 60_000;
@@ -28,6 +29,7 @@ async function bootstrap(): Promise<void> {
   const dispatcher = app.get(OutboxDispatcher);
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
+  const scheduler = app.get(JobScheduler);
 
   if (process.argv.includes("--health-check")) {
     try {
@@ -43,7 +45,7 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费 · 积压与死信告警 · done 行保留期清理；调度器随后续卡片接入）",
+    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费 · 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
@@ -112,6 +114,32 @@ async function bootstrap(): Promise<void> {
   const outboxPoll = setInterval(() => void drainOutbox(), env.OUTBOX_POLL_MS);
   void drainOutbox();
 
+  // 调度器（S7-3 · i11 / M5-02）：每分钟 tick（契约 OUTBOX_SCHEDULER.tickMs）——单活 advisory lock 选主，
+  // 领取到期 jobs（SKIP LOCKED），窗口 (last_run_at, now] 按应执行清单补发；无生产者注册的 kind = 只存不跑。
+  // 与分派循环同用 draining 闸门思路：上一 tick 未跑完不叠加（单条任务可能触发多条产出）。
+  let scheduling = false;
+  const tickScheduler = async (): Promise<void> => {
+    if (scheduling) {
+      return;
+    }
+    scheduling = true;
+    try {
+      const stats = await scheduler.tickOnce();
+      if (stats.claimed > 0 || stats.failed > 0) {
+        logger.log(
+          "调度 tick：领取 " + stats.claimed + " / 执行 " + stats.executed + " / 失败 " + stats.failed + " / 产出 " +
+            stats.produced,
+        );
+      }
+    } catch (error) {
+      logger.error("调度 tick 失败：" + messageOf(error));
+    } finally {
+      scheduling = false;
+    }
+  };
+  const schedulerTick = setInterval(() => void tickScheduler(), OUTBOX_SCHEDULER.tickMs);
+  void tickScheduler();
+
   // 积压 / 最老待领取 / 近期死信告警（ADR-005）；死信单条即时告警不依赖本循环（dispatcher 直发）。
   const probeAlerts = async (): Promise<void> => {
     try {
@@ -139,6 +167,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(sweep);
     clearInterval(recycleSweep);
     clearInterval(outboxPoll);
+    clearInterval(schedulerTick);
     clearInterval(alertProbe);
     clearInterval(retentionSweep);
     logger.log("worker 收到 " + signal + "，正在退出");

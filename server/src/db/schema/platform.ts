@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   bigserial,
   check,
   index,
@@ -42,6 +43,62 @@ export const outboxEvents = pgTable(
       sql`${table.status} in ${sql.raw(sqlValueList(["pending", "processing", "done", "dead"]))}`,
     ),
     check("ck_outbox_attempts", sql`${table.attempts} >= 0`),
+  ],
+);
+
+/** jobs（S7-3 · i11 / M5-02：定时 / 单例任务定义与状态；kind ↔ worker 生产者注册表）。 */
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    /** cron 五段（分钟 小时 日 月 周；Asia/Shanghai · ADR-028）；null = 一次性任务。 */
+    cron: text("cron"),
+    /** 下次应执行时刻：cron 任务每轮推进到下一触发时刻；一次性任务执行后置 done。 */
+    runAt: timestamp("run_at", { withTimezone: true }).notNull(),
+    /** 上次成功执行时刻：补发窗口 = (last_run_at, now]，超补发跨度上限只记 skipped 留痕。 */
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    /** 领取者标识（migration 0039）：保留最后一次，便于多实例排障；完成后清 locked_at、保留 locked_by。 */
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("ck_jobs_status", sql`${table.status} in ('pending', 'done', 'failed')`),
+    check("ck_jobs_cron", sql`${table.cron} is null or ${table.cron} ~ '^\\S+( \\S+){4}$'`),
+    check("ck_jobs_attempts", sql`${table.attempts} >= 0`),
+    index("ix_jobs_due").on(table.runAt).where(sql`status = 'pending'`),
+    index("ix_jobs_locked").on(table.lockedAt).where(sql`status = 'pending' and locked_at is not null`),
+  ],
+);
+
+/** job_runs（S7-3：调度运行留痕 —— executed / skipped / failed）。 */
+export const jobRuns = pgTable(
+  "job_runs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    jobId: bigint("job_id", { mode: "number" })
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    windowFrom: timestamp("window_from", { withTimezone: true }).notNull(),
+    windowTo: timestamp("window_to", { withTimezone: true }).notNull(),
+    fireCount: integer("fire_count").notNull().default(0),
+    produced: integer("produced").notNull().default(0),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("ck_job_runs_status", sql`${table.status} in ('executed', 'skipped', 'failed')`),
+    check("ck_job_runs_fire_count", sql`${table.fireCount} >= 0`),
+    check("ck_job_runs_produced", sql`${table.produced} >= 0`),
+    index("ix_job_runs_job").on(table.jobId, table.createdAt),
   ],
 );
 

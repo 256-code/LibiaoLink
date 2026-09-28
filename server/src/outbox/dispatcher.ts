@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { hostname } from "node:os";
+import type { OutboxTopic } from "@libiaolink/contracts";
 import { ClockService } from "../common/clock/clock.service.js";
 import { AppConfig } from "../config/config.module.js";
 import type { Env } from "../config/env.js";
@@ -38,8 +39,8 @@ export class OutboxDispatcher {
 
   constructor(
     private readonly store: OutboxStore,
-    @Inject(OUTBOX_REGISTRY) private readonly registry: ReadonlyMap<string, OutboxTopicHandler>,
-    @Inject(OUTBOX_POLICIES) private readonly policies: ReadonlyMap<string, OutboxTopicPolicy>,
+    @Inject(OUTBOX_REGISTRY) private readonly registry: ReadonlyMap<OutboxTopic, OutboxTopicHandler>,
+    @Inject(OUTBOX_POLICIES) private readonly policies: ReadonlyMap<OutboxTopic, OutboxTopicPolicy>,
     @Inject(OUTBOX_ALERT_SINK) private readonly alerts: OutboxAlertSink,
     private readonly config: AppConfig,
     private readonly clock: ClockService,
@@ -81,7 +82,7 @@ export class OutboxDispatcher {
 
   /** 单条收敛：handler 只管业务与分类；回写与告警都在这里（失败路径永不外抛）。 */
   private async handleRow(
-    topic: string,
+    topic: OutboxTopic,
     handler: OutboxTopicHandler,
     policy: OutboxTopicPolicy,
     row: OutboxClaimedRow,
@@ -143,7 +144,7 @@ export class OutboxDispatcher {
 
   /** 终态：onDead 留痕（可选，失败只记日志）→ 落 dead → 死信告警。 */
   private async declareDead(
-    topic: string,
+    topic: OutboxTopic,
     handler: OutboxTopicHandler,
     policy: OutboxTopicPolicy,
     row: OutboxClaimedRow,
