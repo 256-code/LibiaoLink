@@ -362,6 +362,17 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         onToggleRegion={(region) => {
           updateFilters({ regions: toggleValue(activeFilters.regions, region) });
         }}
+        onToggleRegions={(values, checked) => {
+          const current = new Set(activeFilters.regions);
+          for (const value of values) {
+            if (checked) {
+              current.add(value);
+            } else {
+              current.delete(value);
+            }
+          }
+          updateFilters({ regions: Array.from(current) });
+        }}
         onToggleManager={(managerId) => {
           updateFilters({ managerIds: toggleValue(activeFilters.managerIds, managerId) });
         }}

@@ -330,7 +330,6 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
         <span className="hub-map-badge__zh">{shown === null ? "" : shown.nameZh}</span>
         <span className="hub-map-badge__en">{shown === null ? "" : shown.name}</span>
         {shownPillar === null ? null : <span className="hub-map-badge__count">{shownPillar.total} 个项目</span>}
-        {shownPillar === null || pinnedPillar !== null ? null : <span className="hub-map-badge__hint">点一下钉住</span>}
         {pinnedPillar === null ? null : <span className="hub-map-badge__pin">已钉住</span>}
       </div>
       {/* 项目梳理：触碰有项目的国家 / 立柱时，右上角列出该国的项目（类型色点 + 状态） */}

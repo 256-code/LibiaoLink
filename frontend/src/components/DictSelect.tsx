@@ -16,8 +16,7 @@ type DictAddText = {
   note?: string;
 };
 
-type DictSelectProps = {
-  /** 当前值（字典码 / 存量自定义值）。 */
+type DictSelectProps = {  /** 当前值（字典码 / 存量自定义值）。 */
   value: string;
   /** 字典项（GET /api/v1/dicts，已按 sort 升序、只含启用项）。 */
   items: DictItem[];
@@ -28,7 +27,8 @@ type DictSelectProps = {
   renderContent?: (name: string, item: DictItem | null) => ReactNode;
   /** 「＋ 添加」入口（不传 = 不渲染）：返回 null = 成功；返回文案 = 浮层内提示。 */
   onAdd?: (input: { name: string; metadata: Record<string, unknown> }) => Promise<string | null>;
-  addText: DictAddText;
+  /** 新增分支的文案（给 onAdd 时成套使用）。 */
+  addText?: DictAddText;
   /** 颜色模板（项目类型）：新增时选一个，写进条目 metadata.accent / metadata.accentText；已在用的颜色不进候选。 */
   palette?: { label: string; options: readonly DictAccent[] };
   /** 行内删除（物理删行 · 仅管理员 dict.manage；不传 = 不渲染）：返回 null = 成功；返回文案 = 浮层内提示。 */
@@ -65,7 +65,11 @@ function buildOptions(
       continue;
     }
     seen.add(item.code);
-    options.push({ value: item.code, label: labelOf(item.name, item), deleteDisabledReason: deleteBlockReason(item) });
+    options.push({
+      value: item.code,
+      label: labelOf(item.name, item),
+      deleteDisabledReason: deleteBlockReason(item)
+    });
   }
   if (value !== "" && !seen.has(value)) {
     options.push({ value, label: labelOf(value, null), deletable: false });
@@ -85,8 +89,9 @@ function availableAccents(items: DictItem[], options: readonly DictAccent[]): re
 }
 
 /**
- * 字典下拉（Push 167 地区；Push 172 抽成两类共用的一个组件）：与任务域 SelectMenu 同一套自绘下拉（原生 select 的弹层样式
- * 由浏览器控制，与全站不一致），浮层贴弹窗右侧弹出；顶部固定一行「＋ 添加…」，下面是可选条目。
+ * 字典下拉（Push 167；Push 172 抽成两类共用的一个组件；Push 195 起只剩「项目类型」在用 —— 项目地区改走
+ * RegionPickerModal 模态窗，随之下线「按洲分组 + 顶部搜索」的浮层管线）：与任务域 SelectMenu 同一套自绘下拉
+ * （原生 select 的弹层样式由浏览器控制，与全站不一致），浮层贴弹窗右侧弹出；顶部固定一行「＋ 添加…」，下面是可选条目。
  * - 新增：写字典（region = 任何登录用户 · 全站共享；projectType = dict.manage）；项目类型随颜色模板落 metadata；
  * - 删除：行内隐式（悬停 / 聚焦才浮现，与任务表行内删除同一套语言）= **物理删行**（Push 173，dict.manage）——
  *   条目从候选与首页筛选里消失，但存量项目仍按原码 / 原名渲染（无外键引用）；
@@ -98,10 +103,16 @@ function availableAccents(items: DictItem[], options: readonly DictAccent[]): re
  *   输入的名称已存在时直接选中、不重复添加。
  */
 export function DictSelect({ value, items, ariaLabel, placeholder, renderContent, onAdd, addText, palette, onDelete, deleteLabelOf, onChange }: DictSelectProps) {
+  /** 候选 = 字典项（按 sort 升序）→ 当前值兜底（不在字典里的存量值），按值去重。 */
   const options = useMemo(() => buildOptions(items, value, renderContent), [items, value, renderContent]);
   /** 浮层高度估算：选项最多按 8 行 + 顶部「＋ 添加」一行（超出部分列表内滚动）。 */
-  const visibleRows = Math.min(options.length, 8);
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, visibleRows * 34 + 58, "right");
+  const popoverHeight = useMemo(() => {
+    const visible = Math.min(options.length, 8);
+    const list = visible * 34 + 14;
+    const addRow = onAdd === undefined ? 0 : 42;
+    return Math.min(list + addRow, 420);
+  }, [options, onAdd]);
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, popoverHeight, "right");
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +121,8 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
   const [listError, setListError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  /** 打开浮层只把选中项带进可视区一次（用户自己滚过之后不再打扰）。 */
+  const listScrollDone = useRef(false);
   const selected = options.find((option) => option.value === value) ?? null;
   const nameOf = (code: string): string => {
     const item = items.find((entry) => entry.code === code);
@@ -132,13 +145,37 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
   }, [open, adding]);
 
+  /**
+   * 打开浮层把当前选中项滚进可视区（Push 192：按洲重排后，选中的那一条可能不在第一屏 —— 用列表容器算，
+   * 不碰页面滚动）。只在本次打开里做一次；没选中项 / 搜到 0 条时什么也不做。
+   */
+  useEffect(() => {
+    if (!open) {
+      listScrollDone.current = false;
+      return;
+    }
+    if (listScrollDone.current || position === null) {
+      return;
+    }
+    const listbox = popoverRef.current?.querySelector("[role=listbox]");
+    const row = listbox?.querySelector("[aria-selected=true]");
+    const scroller = listbox?.parentElement ?? null;
+    if (listbox === undefined || listbox === null || row === undefined || row === null || scroller === null) {
+      return;
+    }
+    const rowBox = row.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    scroller.scrollTop += rowBox.top - box.top - (box.height - rowBox.height) / 2;
+    listScrollDone.current = true;
+  }, [open, position, popoverRef]);
+
   useEffect(() => {
     if (!open) {
       setAdding(false);
       setDraft("");
       setError(null);
       setListError(null);
-    }
+      }
   }, [open]);
 
   /** 可选的色板：已在用的颜色不出现（业务口径）；全用满时回落完整色板。 */
@@ -227,6 +264,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
   };
 
+
   return (
     <div className="relative">
       <button
@@ -268,8 +306,8 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                   <input
                     ref={inputRef}
                     value={draft}
-                    aria-label={addText.label}
-                    placeholder={addText.placeholder}
+                    aria-label={addText?.label}
+                    placeholder={addText?.placeholder}
                     onChange={(event) => {
                       setDraft(event.target.value);
                       setError(null);
@@ -307,8 +345,8 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                       </div>
                     </div>
                   )}
-                  {addText.note === undefined || addText.note === "" ? null : (
-                    <p className="mt-1.5 text-[11px] text-zinc-400">{addText.note}</p>
+                  {(addText?.note ?? "") === "" ? null : (
+                    <p className="mt-1.5 text-[11px] text-zinc-400">{addText?.note}</p>
                   )}
                   {error === null ? null : (
                     <p role="alert" className="mt-1 text-[11px] text-rose-600">
@@ -352,7 +390,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4 shrink-0">
                             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                           </svg>
-                          {addText.label}
+                          {addText?.label}
                         </button>
                       </div>
                       <div className="border-t border-zinc-100" />
