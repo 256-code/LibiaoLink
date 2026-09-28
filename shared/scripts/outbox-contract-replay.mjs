@@ -93,10 +93,11 @@ check("同窗口同版本 → 同键（幂等不重发）", first === again, fir
 check("状态回退后版本推进 → 新键（再生）", first !== regenerated, first + " 与 " + regenerated + " 不同");
 check("状态版本窗口键形态 v{n}", stateVersionWindow(7) === "v7" && stateVersionWindow(0) === "v0", "v7 / v0");
 
-// 5) 调度口径常量自证（ADR-005：单活调度器 + 每分钟 tick；补发跨度为正整数天）。
+// 5) 调度口径常量自证（ADR-005：单活调度器 + 每分钟 tick；补发跨度为正整数天；每轮窗口上限为正整数）。
 check("调度器单活锁名非空", typeof OUTBOX_SCHEDULER.lockName === "string" && OUTBOX_SCHEDULER.lockName.length > 0, OUTBOX_SCHEDULER.lockName);
 check("tick = 60000ms（ADR-005 每分钟）", OUTBOX_SCHEDULER.tickMs === 60000, String(OUTBOX_SCHEDULER.tickMs));
 check("补发跨度为正整数天", Number.isInteger(OUTBOX_SCHEDULER.catchupMaxDays) && OUTBOX_SCHEDULER.catchupMaxDays > 0, String(OUTBOX_SCHEDULER.catchupMaxDays));
+check("每轮窗口上限为正整数", Number.isInteger(OUTBOX_SCHEDULER.maxWindowsPerTick) && OUTBOX_SCHEDULER.maxWindowsPerTick > 0, String(OUTBOX_SCHEDULER.maxWindowsPerTick));
 
 console.log("");
 console.log("汇总：PASS " + pass + " / FAIL " + fail);

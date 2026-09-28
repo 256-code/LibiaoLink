@@ -29,6 +29,7 @@ const ENV = {
   OUTBOX_SCHEDULER_BATCH_LIMIT: 10,
   OUTBOX_SCHEDULER_MAX_ATTEMPTS: 3,
   OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS: 7,
+  OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: 50,
 } as unknown as Env;
 
 function makeJob(overrides: Partial<JobRow> = {}): JobRow {
@@ -93,11 +94,12 @@ class FakeJobsStore {
 
 function makeScheduler(
   handlers: Map<string, OutboxJobHandler> = new Map(),
+  envOverrides: Partial<Env> = {},
 ): { scheduler: JobScheduler; store: FakeJobsStore } {
   const store = new FakeJobsStore();
   const clock = new ClockService();
   clock.setSource(() => NOW);
-  const config = new AppConfig({ ...ENV } as Env);
+  const config = new AppConfig({ ...ENV, ...envOverrides } as Env);
   const database = {
     db: {
       transaction: async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => callback(TX),
@@ -300,5 +302,69 @@ describe("JobScheduler.tickOnce（S7-3 调度 / 补发 / 单活）", () => {
     expect(called).toBe(0);
     expect(h.store.failures[0]!.error).toMatch(/无下一触发时刻/);
     expect(h.store.finished).toHaveLength(0);
+  });
+
+  it("窗口触顶（maxWindowsPerTick）：水位停在本轮最后处理的窗口 + run_at=now 顺延（不越过未处理窗口）", async () => {
+    const fires: string[][] = [];
+    const h = makeScheduler(
+      new Map([
+        [
+          "demo.kind",
+          {
+            run: async (context) => {
+              fires.push(context.fireTimes.map((time) => time.toISOString()));
+              return { produced: context.fireTimes.length };
+            },
+          },
+        ],
+      ]),
+      { OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: 3 },
+    );
+    h.store.due = [makeJob({ lastRunAt: new Date("2026-09-23T00:00:00Z"), runAt: new Date("2026-09-23T00:00:00Z") })];
+
+    const stats = await h.scheduler.tickOnce();
+
+    expect(stats).toMatchObject({ claimed: 1, executed: 1, produced: 3 });
+    expect(fires).toEqual([
+      ["2026-09-24T00:00:00.000Z", "2026-09-25T00:00:00.000Z", "2026-09-26T00:00:00.000Z"],
+    ]);
+    const finished = h.store.finished[0]!;
+    expect(finished.lastRunAt.toISOString()).toBe("2026-09-26T00:00:00.000Z");
+    expect(finished.windowTo.toISOString()).toBe("2026-09-26T00:00:00.000Z");
+    expect(finished.nextRunAt?.toISOString()).toBe(NOW.toISOString());
+    expect(finished.note).toMatch(/窗口触顶/);
+    expect(h.store.skipped).toHaveLength(0);
+  });
+
+  it("触顶顺延后下一轮追平：last_run_at=now、run_at=下一触发（不越过只在触顶轮生效）", async () => {
+    const fires: string[][] = [];
+    const h = makeScheduler(
+      new Map([
+        [
+          "demo.kind",
+          {
+            run: async (context) => {
+              fires.push(context.fireTimes.map((time) => time.toISOString()));
+              return { produced: context.fireTimes.length };
+            },
+          },
+        ],
+      ]),
+      { OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: 3 },
+    );
+    h.store.due = [makeJob({ lastRunAt: new Date("2026-09-23T00:00:00Z"), runAt: new Date("2026-09-23T00:00:00Z") })];
+    await h.scheduler.tickOnce();
+    const first = h.store.finished[0]!;
+
+    h.store.due = [makeJob({ lastRunAt: first.lastRunAt, runAt: first.nextRunAt! })];
+    const stats = await h.scheduler.tickOnce();
+
+    expect(stats).toMatchObject({ executed: 1, produced: 2 });
+    expect(fires[1]).toEqual(["2026-09-27T00:00:00.000Z", "2026-09-28T00:00:00.000Z"]);
+    const second = h.store.finished[1]!;
+    expect(second.lastRunAt.toISOString()).toBe(NOW.toISOString());
+    expect(second.windowTo.toISOString()).toBe(NOW.toISOString());
+    expect(second.nextRunAt?.toISOString()).toBe("2026-09-29T00:00:00.000Z");
+    expect(second.note).toBeNull();
   });
 });

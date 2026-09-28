@@ -3,7 +3,7 @@ import { enumerateFireTimes, nextFireAfter, parseCron, planCatchup } from "../sr
 
 /**
  * S7-3 调度窗口求值门禁（纯函数：不连库、不取系统时间）：cron 五段解析 / 下一触发时刻（Asia/Shanghai · ADR-028）/
- * 补发窗口枚举与跨度裁剪（契约 OUTBOX_SCHEDULER.catchupMaxDays）。
+ * 补发窗口枚举与跨度裁剪（契约 OUTBOX_SCHEDULER.catchupMaxDays）+ 每轮窗口上限（OUTBOX_SCHEDULER.maxWindowsPerTick）。
  * 真机语义（杀 worker 不丢 / 重复领取不重发 / 补发与状态回退再生落库）由 s7-3-scheduler-replay.mjs 覆盖。
  */
 
@@ -118,7 +118,8 @@ describe("planCatchup（last_run_at 补发与跨度裁剪）", () => {
     expect(plan.fireTimes.map((time) => time.toISOString())).toEqual(["2026-09-28T00:00:00.000Z"]);
     expect(plan.skippedFrom).toBeNull();
     expect(plan.skippedTo).toBeNull();
-    expect(plan.truncated).toBe(false);
+    expect(plan.pendingMore).toBe(false);
+    expect(plan.resumeFrom?.toISOString()).toBe("2026-09-28T00:00:00.000Z");
   });
 
   it("超跨度：窗口收窄到上限处，超出区间只记 skipped 留痕", () => {
@@ -140,6 +141,66 @@ describe("planCatchup（last_run_at 补发与跨度裁剪）", () => {
       "2026-09-29T00:00:00.000Z",
       "2026-09-30T00:00:00.000Z",
     ]);
-    expect(plan.truncated).toBe(false);
+    expect(plan.pendingMore).toBe(false);
+    expect(plan.resumeFrom?.toISOString()).toBe("2026-09-30T00:00:00.000Z");
+  });
+
+  it("窗口触顶（maxWindows）：只取前 N 个并置 pendingMore + resumeFrom（水位不越过未处理窗口）", () => {
+    const first = planCatchup({
+      cron: "0 8 * * *",
+      after: new Date("2026-09-23T06:00:00Z"),
+      now: new Date("2026-09-30T06:00:00Z"),
+      catchupMaxDays: 7,
+      maxWindows: 3,
+    });
+    expect(first.fireTimes.map((time) => time.toISOString())).toEqual([
+      "2026-09-24T00:00:00.000Z",
+      "2026-09-25T00:00:00.000Z",
+      "2026-09-26T00:00:00.000Z",
+    ]);
+    expect(first.pendingMore).toBe(true);
+    expect(first.resumeFrom?.toISOString()).toBe("2026-09-26T00:00:00.000Z");
+
+    const second = planCatchup({
+      cron: "0 8 * * *",
+      after: first.resumeFrom!,
+      now: new Date("2026-09-30T06:00:00Z"),
+      catchupMaxDays: 7,
+      maxWindows: 3,
+    });
+    expect(second.fireTimes.map((time) => time.toISOString())).toEqual([
+      "2026-09-27T00:00:00.000Z",
+      "2026-09-28T00:00:00.000Z",
+      "2026-09-29T00:00:00.000Z",
+    ]);
+    expect(second.pendingMore).toBe(true);
+
+    const third = planCatchup({
+      cron: "0 8 * * *",
+      after: second.resumeFrom!,
+      now: new Date("2026-09-30T06:00:00Z"),
+      catchupMaxDays: 7,
+      maxWindows: 3,
+    });
+    expect(third.fireTimes.map((time) => time.toISOString())).toEqual(["2026-09-30T00:00:00.000Z"]);
+    expect(third.pendingMore).toBe(false);
+    expect(third.resumeFrom?.toISOString()).toBe("2026-09-30T00:00:00.000Z");
+  });
+
+  it("恰为上限且无更多窗口：pendingMore=false（不被误判触顶）", () => {
+    const plan = planCatchup({
+      cron: "0 8 * * *",
+      after: new Date("2026-09-26T01:00:00Z"),
+      now: new Date("2026-09-30T06:00:00Z"),
+      catchupMaxDays: 7,
+      maxWindows: 4,
+    });
+    expect(plan.fireTimes.map((time) => time.toISOString())).toEqual([
+      "2026-09-27T00:00:00.000Z",
+      "2026-09-28T00:00:00.000Z",
+      "2026-09-29T00:00:00.000Z",
+      "2026-09-30T00:00:00.000Z",
+    ]);
+    expect(plan.pendingMore).toBe(false);
   });
 });

@@ -121,6 +121,8 @@ export const EnvSchema = z
     OUTBOX_SCHEDULER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
     /** 补发跨度上限（天）：重启 / 停机错过的窗口超此跨度只记 skipped 留痕（契约 OUTBOX_SCHEDULER.catchupMaxDays 建议值落 env）。 */
     OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    /** 单轮 tick 最多处理的补发窗口数（水位护栏）：触顶时 last_run_at 停在最后处理的窗口、run_at=now 下一轮顺延（契约 OUTBOX_SCHEDULER.maxWindowsPerTick 建议值落 env）。 */
+    OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: z.coerce.number().int().min(1).max(1000).default(20),
   })
   .superRefine((value, context) => {
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
