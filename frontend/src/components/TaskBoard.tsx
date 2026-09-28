@@ -11,6 +11,7 @@ import { Tracker } from "./Tracker";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { StageAddCard } from "./StageAddCard";
 import type { StagePlacement } from "./StageAddCard";
+import { TempTaskCreateForm } from "./TempTaskCreateForm";
 import type { TemplatePresetNode } from "../data/templatePresets";
 
 const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
@@ -215,8 +216,13 @@ type TaskBoardProps = {
   managerIds?: string[];
   /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
-  /** 任务描述改名（Push 196：抽屉里改临时任务名；节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
+  /** 任务描述改名（Push 196：抽屉里改临时任务名；阶段任务与节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
   onRenameTask?: (taskId: string, title: string, titleEn: string) => void;
+  /**
+   * 底部「临时任务」分组头的常驻新建入口（Push 197）：点分组头直接填名称新建（没有模板可挑），
+   * 返回新任务 id（失败 = null）—— 拿到后直接打开它的详情抽屉补时间等细节；不传 = 分组头点不动。
+   */
+  onCreateTempTask?: (values: { title: string; titleEn: string }) => Promise<string | null>;
   /** 表格行内编辑：只改任务字段（负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
   /** 任务表行内删除（Push 141：行悬停的删除按钮，不传 = 不显示该按钮）。 */
@@ -628,19 +634,26 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
-  const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
+  /**
+   * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
+   * （与看板 Push 196 同一口径）；行内点选走同一个入口。
+   */
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
+  /** 底部「临时任务」分组头的新建表单开着没有（Push 197；与阶段卡片互斥）。 */
+  const [tempFormOpen, setTempFormOpen] = useState(false);
   /** 卡片的落点（Push 67：固定在表格表头正下方、左边缘对齐「项目经理」列，不浮在页面右上角、也不跟着点击跑）。 */
   const [cardBox, setCardBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const boardCardRef = useRef<HTMLDivElement | null>(null);
   const headerRowRef = useRef<HTMLDivElement | null>(null);
-  const closeDrawer = () => setSelectedTask(null);
+  const closeDrawer = () => setSelectedTaskId(null);
   /** 抽屉里的任务按 id 取当前值（Push 98）：抽屉里点四格进度、卡片上改实际完成日期后，抽屉要立刻跟着变 ——
-   *  不能拿点击那一刻的任务快照，否则父级刷新后抽屉还显示旧进度。 */
-  const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
+   *  不能拿点击那一刻的任务快照，否则父级刷新后抽屉还显示旧进度。Push 197 起选中的是 id：新建的临时任务
+   *  先落 id、列表重取回来才找得到行（找得到才开抽屉）。 */
+  const drawerTask = selectedTaskId === null ? null : tasks.find((task) => task.id === selectedTaskId) ?? null;
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
   const gridTemplate = columns.map((column) => column.width).join(" ");
   const minWidth = columns.reduce((total, column) => total + column.min, 0);
@@ -654,9 +667,10 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
    */
   const stageTasksOf = (stage: string) =>
     tasks.filter((task) => task.stage === stage).map((task) => ({ id: task.id, title: task.title }));
-  // 换阶段标签（顶部）时把卡片关掉，避免卡片停在上一个阶段的上下文里
+  // 换阶段标签（顶部）时把卡片关掉，避免卡片停在上一个阶段的上下文里；「临时任务」新建表单同口径
   useEffect(() => {
     setCardStage(null);
+    setTempFormOpen(false);
   }, [viewStage]);
 
   /**
@@ -697,17 +711,31 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       setCardStage(null);
       return;
     }
+    setTempFormOpen(false);
     setCardBox(measureCardBox(stage));
     setCardStage(stage);
   };
 
+  /** 点底部「临时任务」分组头（Push 197）：再点 = 关掉；开的时候先量好落点（与阶段卡片同一套测量、同一落点）。 */
+  const toggleTempForm = () => {
+    if (tempFormOpen) {
+      setTempFormOpen(false);
+      return;
+    }
+    setCardStage(null);
+    setCardBox(measureCardBox(TEMP_TASK_STAGE));
+    setTempFormOpen(true);
+  };
+
+  /** 当前该量的浮层（Push 197）：「临时任务」新建表单开着就量它，否则量阶段卡片 —— 两者共用同一个落点。 */
+  const measureStage = tempFormOpen ? TEMP_TASK_STAGE : cardStage;
   // 表格尺寸变化（列显隐 / 阶段折叠 / 换项目）与窗口缩放时重新量落点
   useEffect(() => {
-    if (cardStage === null) {
+    if (measureStage === null) {
       return;
     }
     const update = () => {
-      setCardBox(cardStage === null ? null : measureCardBox(cardStage));
+      setCardBox(measureStage === null ? null : measureCardBox(measureStage));
     };
     update();
     window.addEventListener("resize", update);
@@ -723,10 +751,10 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       scroller?.removeEventListener("scroll", update);
       observer.disconnect();
     };
-  }, [cardStage, scrollRef]);
+  }, [measureStage, scrollRef]);
 
   /**
-   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下，
+   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在主标签栏（Push 201 起吸顶）之下，
    * 左右滚动（含底部滑块）时用 translateX 跟随 #task-board-scroll 的 scrollLeft，保证表头与各列始终对齐。
    */
   useEffect(() => {
@@ -751,7 +779,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
 
   /**
    * 阶段不在九阶段里的任务（看板「添加 → 临时任务」直接建的空任务）归到「临时任务」组（Push 196 改名，原「未分组」）：
-   * 固定在最后一组 —— 与九阶段一样常显（骨架），有任务时组头带完成计数。
+   * 固定在最后一组 —— 与九阶段一样常显（骨架），有任务时组头带完成计数；**Push 197 起组头可点**：
+   * 它没有节点 / 模板可挑，点击 = 直接出新建表单（自己填名称），建完直接打开详情抽屉补时间等细节。
    */
   const stageOf = (task: ProjectTask) => (task.stage === "" ? TEMP_TASK_STAGE : task.stage);
   const groups = [...STAGE_ORDER, TEMP_TASK_STAGE]
@@ -768,8 +797,14 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       <div ref={boardWrapRef} className="relative">
       <div ref={boardCardRef} className="rounded-xl border border-zinc-200 bg-white">
       {/* 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下；
-          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。 */}
-      <div className="sticky top-16 z-20 overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
+          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。
+          Push 201：主标签栏也吸顶 —— 表头让位、叠在主标签栏下面（设计位 top = 顶栏 64 + 主标签栏 59 = 123px）。
+          Push 201 补（业务口径「这个中间有条缝可以有办法解决一下吗」）：吸顶条的下边框在带缩放的屏上（Windows 150% 等）
+          被按设备像素吸附成 0.67px —— 栏高 59 → 58.67、下沿实际落在 122.67，表头钉 123 就会露 0.33px 缝，
+          滚动时白行 / 蓝色徽章从缝里闪过去。改为 top 122px：表头向上多叠 1px、缝被盖死（1x 下多叠的 1px
+          正好藏进主标签栏下边框后，视觉不变）；z 20 → 19（低于主标签栏 z-20）：叠压时下边框仍画在表头上，
+          边界保持一条实线而不是整条被表头盖掉。 */}
+      <div data-board-head="true" className="sticky top-[122px] z-[19] overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
         <div
           ref={headerRowRef}
           className="grid items-center px-5 py-2.5 text-xs font-medium text-zinc-400"
@@ -836,9 +871,23 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                     <Chevron collapsed={isCollapsed} />
                   </button>
                   {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉）；
-                      「临时任务」不是施工阶段、没有节点 / 模板可挑（Push 196）：标签只作分组名，点不动。 */}
+                      「临时任务」没有节点 / 模板可挑（Push 197）：点它 = 直接出新建表单（自己填名称），外观与阶段标签一致。 */}
                   {group.stage === TEMP_TASK_STAGE ? (
-                    <span className="relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 ring-zinc-200">
+                    <button
+                      type="button"
+                      data-temp-task-pill="true"
+                      aria-label={"添加任务：" + TEMP_TASK_STAGE}
+                      aria-expanded={tempFormOpen}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleTempForm();
+                      }}
+                      title="新建临时任务（没有模板，自己填名称）"
+                      className={
+                        "relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 transition " +
+                        (tempFormOpen ? "ring-2 ring-[#feca04]/70" : "ring-zinc-200 hover:ring-zinc-300")
+                      }
+                    >
                       <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
                       <span className="relative text-sm font-semibold text-zinc-800">{group.stage}</span>
                       {/* 空分组（没有临时任务的项目）：只留组名，不显示 0/0 完成 */}
@@ -847,7 +896,10 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                           已完成 {done}/{group.items.length}
                         </span>
                       )}
-                    </span>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="relative h-3 w-3 text-zinc-400">
+                        <path d="M12 5.5v13M5.5 12h13" strokeLinecap="round" />
+                      </svg>
+                    </button>
                   ) : (
                   <button
                     type="button"
@@ -886,14 +938,14 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                         task={task}
                         focusMode={focusMode === true}
                         columns={columns}
-                        selected={selectedTask !== null && selectedTask.id === task.id}
-                        onSelect={() => setSelectedTask(task)}
+                        selected={selectedTaskId !== null && selectedTaskId === task.id}
+                        onSelect={() => setSelectedTaskId(task.id)}
                         onProgress={(progress) => onSetProgress?.(task.id, progress)}
                         onDelete={
                           onDeleteTask === undefined
                             ? undefined
                             : () => {
-                                setSelectedTask((current) => (current !== null && current.id === task.id ? null : current));
+                                setSelectedTaskId((current) => (current === task.id ? null : current));
                                 onDeleteTask(task.id);
                               }
                         }
@@ -914,6 +966,26 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         </div>
       </div>
       </div>
+      {tempFormOpen && onCreateTempTask !== undefined ? (
+        <div
+          role="dialog"
+          aria-label={TEMP_TASK_STAGE + "：新建"}
+          style={cardBox === null ? { top: 10, left: 24 } : cardBox}
+          className="absolute z-40 w-[280px] max-w-[calc(100vw-3rem)] rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.98),rgba(255,255,255,0.94))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-2xl backdrop-saturate-150"
+        >
+          <TempTaskCreateForm
+            onCreate={async (values) => {
+              const createdId = await onCreateTempTask(values);
+              if (createdId !== null) {
+                setTempFormOpen(false);
+                setSelectedTaskId(createdId);
+              }
+              return createdId;
+            }}
+            onCancel={() => { setTempFormOpen(false); }}
+          />
+        </div>
+      ) : null}
       {cardStage !== null && (onAddNode !== undefined || onAddNodes !== undefined) ? (
         <StageAddCard
           stage={cardStage}
@@ -922,6 +994,19 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
           onAddNode={onAddNode}
           placement={onAddNodes === undefined ? undefined : { tasks: stageTasksOf(cardStage) }}
           onAddNodes={onAddNodes}
+          // 常驻「临时任务」入口（Push 197 · 业务口径「项目模板临时任务常驻…没有模板 点击后直接新建即可填写任务名称」）：
+          // 项目总览这条路径的卡片里也常驻一行「临时任务（没有模板 · 自己填名称）」；建完与分组头同一条收尾（抽屉自动开）
+          onCreateTempTask={
+            onCreateTempTask === undefined
+              ? undefined
+              : async (values) => {
+                  const createdId = await onCreateTempTask(values);
+                  if (createdId !== null) {
+                    setSelectedTaskId(createdId);
+                  }
+                  return createdId;
+                }
+          }
           onClose={() => setCardStage(null)}
           style={cardBox === null ? { top: 10, left: 24 } : cardBox}
         />

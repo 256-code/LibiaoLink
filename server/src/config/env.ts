@@ -68,10 +68,41 @@ export const EnvSchema = z
     // ---- Outbox 领取器（M4-05c：领取 + 消费 + 重试 + dead；不含规则 / 通知编排） ----
     /** 领取轮询周期（毫秒）。 */
     OUTBOX_POLL_MS: z.coerce.number().int().min(200).max(600000).default(5000),
-    /** 单轮领取条数上限：单条最长占满客户端超时（90s），默认 2 与转换器沙箱并发 2 对齐。 */
+    /** 每主题单轮领取条数上限：单条最长占满客户端超时（90s），默认 2 与转换器沙箱并发 2 对齐。 */
     OUTBOX_BATCH_LIMIT: z.coerce.number().int().min(1).max(50).default(2),
-    /** 领取后超过该时长未回写视为 worker 崩溃遗留、可重新领取（毫秒；必须 > 单条最长耗时）。 */
+    /** 领取后超过该时长未回写视为 worker 崩溃遗留、可重新领取（毫秒；必须 > 该主题单条最长耗时）。 */
     OUTBOX_STALE_MS: z.coerce.number().int().min(60000).max(86400000).default(600000),
+    // ---- Outbox 运行时（S7-1：重试 / 死信 / 告警 / done 行保留） ----
+    /** 通用主题重试上限（含首次）：preview.job 仍走 PREVIEW_CONVERT_MAX_ATTEMPTS。 */
+    OUTBOX_DEFAULT_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+    /** 通用主题退避基数（毫秒）：第 n 次失败后等 base * 2^(n-1)，封顶 OUTBOX_DEFAULT_BACKOFF_MAX_MS。 */
+    OUTBOX_DEFAULT_BACKOFF_BASE_MS: z.coerce.number().int().min(1000).max(3600000).default(15000),
+    OUTBOX_DEFAULT_BACKOFF_MAX_MS: z.coerce.number().int().min(1000).max(86400000).default(1800000),
+    /** 告警探针周期（毫秒）：积压 / 最老待领取年龄 / 近期新增死信；死信单条即时告警不依赖本周期。 */
+    OUTBOX_ALERT_INTERVAL_MS: z.coerce.number().int().min(10000).max(3600000).default(300000),
+    /** 待领取积压条数阈值（> 即告警）。 */
+    OUTBOX_ALERT_BACKLOG_MAX: z.coerce.number().int().min(1).max(1000000).default(1000),
+    /** 最老待领取消息年龄阈值（毫秒）。 */
+    OUTBOX_ALERT_OLDEST_MS: z.coerce.number().int().min(60000).max(86400000).default(900000),
+    /** 近期死信条数阈值（>= 即告警）：默认 1 = 窗口内出现任何死信都告警。 */
+    OUTBOX_ALERT_DEAD_RECENT_MAX: z.coerce.number().int().min(1).max(100000).default(1),
+    /** 死信「近期」窗口（毫秒）。 */
+    OUTBOX_ALERT_DEAD_WINDOW_MS: z.coerce.number().int().min(60000).max(86400000).default(3600000),
+    /** done 行保留期（天；ADR-005 约 90 天）。 */
+    OUTBOX_DONE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
+    /** 单批删除条数（清理循环每批上限）。 */
+    OUTBOX_RETENTION_BATCH: z.coerce.number().int().min(10).max(10000).default(1000),
+    /** done 行清理周期（毫秒）。 */
+    OUTBOX_RETENTION_INTERVAL_MS: z.coerce.number().int().min(60000).max(86400000).default(21600000),
+    /** 领取者标识（进 outbox_events.locked_by）：缺省 host:pid。 */
+    WORKER_ID: z.string().max(128).default(""),
+    // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
+    /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
+    OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
+    /** 调度任务失败最大尝试次数（含首次）：到顶置 jobs.status = failed（人工复位后继续）。 */
+    OUTBOX_SCHEDULER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
+    /** 补发跨度上限（天）：重启 / 停机错过的窗口超此跨度只记 skipped 留痕（契约 OUTBOX_SCHEDULER.catchupMaxDays 建议值落 env）。 */
+    OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS: z.coerce.number().int().min(1).max(90).default(7),
   })
   .superRefine((value, context) => {
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
@@ -97,6 +128,13 @@ export const EnvSchema = z
         code: "custom",
         message: "OUTBOX_STALE_MS 必须 >= PREVIEW_CONVERT_TIMEOUT_MS，否则正在转换的行会被当成崩溃遗留重复领取",
         path: ["OUTBOX_STALE_MS"],
+      });
+    }
+    if (value.OUTBOX_DEFAULT_BACKOFF_BASE_MS > value.OUTBOX_DEFAULT_BACKOFF_MAX_MS) {
+      context.addIssue({
+        code: "custom",
+        message: "OUTBOX_DEFAULT_BACKOFF_BASE_MS 必须 <= OUTBOX_DEFAULT_BACKOFF_MAX_MS",
+        path: ["OUTBOX_DEFAULT_BACKOFF_MAX_MS"],
       });
     }
     if (value.NODE_ENV !== "production") {

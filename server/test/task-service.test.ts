@@ -419,9 +419,9 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
     });
   });
 
-  it("临时任务（无来源节点）改任务描述：title / titleEn 落库 + 版本 +1 + 审计含 title、不写 task_events（Push 196）", async () => {
+  it("临时任务（未归入阶段、无来源节点）改任务描述：title / titleEn 落库 + 版本 +1 + 审计含 title、不写 task_events（Push 196）", async () => {
     const repo = new FakeTaskRepository();
-    repo.task = makeRow({ nodeId: null, taskNodeId: null, title: "临时任务", titleEn: null });
+    repo.task = makeRow({ stageKey: null, nodeId: null, taskNodeId: null, title: "临时任务", titleEn: null });
     const audit = new FakeAuditService();
     const service = makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit);
     const updated = await service.update(PROJECT, TASK, { title: "临时任务（改名）", titleEn: "Ad hoc task", version: 3 }, ACTOR);
@@ -437,7 +437,7 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
 
   it("临时任务清空英文名（titleEn=null）→ 落库为 null", async () => {
     const repo = new FakeTaskRepository();
-    repo.task = makeRow({ nodeId: null, taskNodeId: null, title: "临时任务", titleEn: "Ad hoc task" });
+    repo.task = makeRow({ stageKey: null, nodeId: null, taskNodeId: null, title: "临时任务", titleEn: "Ad hoc task" });
     const updated = await makeService(repo).update(PROJECT, TASK, { titleEn: null, version: 3 }, ACTOR);
     expect(updated.titleEn).toBeNull();
     expect(updated.title).toBe("临时任务");
@@ -461,6 +461,17 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
       code: "VALIDATION_FAILED",
       httpStatus: 400,
     });
+  });
+
+  it("阶段任务（stageKey 非空）即便没有来源节点也锁定：改名 → 400（Push 197 收窄）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ stageKey: "assembly", nodeId: null, taskNodeId: null });
+    await expect(makeService(repo).update(PROJECT, TASK, { title: "改个名", version: 3 }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    expect(repo.task?.title).toBe("货架组装");
+    expect(repo.task?.version).toBe(3);
   });
 });
 

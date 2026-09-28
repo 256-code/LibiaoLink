@@ -232,3 +232,20 @@ jobs:
           M2_06_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
           M2_06_BASE_URL: http://127.0.0.1:3011
         run: node scripts/m2-06-replay.mjs
+      # S7-2（PoC-4 投递语义 / PoC-5 50 并发领取 · i6 / i7 · lan 线，Push 176）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: S7-2 PoC-4 replay (outbox delivery semantics)
+        working-directory: server
+        env:
+          POC4_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/poc4-outbox-replay.mjs
+      - name: S7-2 PoC-5 replay (PG queue 50-way concurrent claim + bloat/vacuum)
+        working-directory: server
+        env:
+          POC5_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/poc5-outbox-concurrency.mjs
+      # S7-3（调度 / 补发 / 幂等执行键 / 状态回退再生窗口 · i11 / M5-02 · lan 线，Push 177）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: S7-3 scheduler replay (cron catch-up + single-active lock + replay idempotence)
+        working-directory: server
+        env:
+          S7_3_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/s7-3-scheduler-replay.mjs
