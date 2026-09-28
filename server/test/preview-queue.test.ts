@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
-import type { ClaimOutboxInput, OutboxClaimedRow, OutboxRetryInput } from "../src/db/outbox.store.js";
-import type { OutboxStore } from "../src/db/outbox.store.js";
+import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import type { FileRepository, FileRow, FileVersionRow } from "../src/modules/file/file.repository.js";
 import { ConverterError, PreviewConverter, type ConvertInput, type ConvertResult } from "../src/modules/file/preview.converter.js";
 import { buildPreviewJobPayload, parsePreviewJob, previewJobDedupeKey } from "../src/modules/file/preview.job.js";
@@ -16,7 +15,8 @@ import type { ObjectStorage } from "../src/storage/index.js";
 /**
  * M4-05c 预览转换队列门禁（不连库、不连转换器）：
  * ① 转换器客户端 —— 响应头 / 错误面 → 可重试 vs 确定性、管线版本比对、超时与不可达；
- * ② 队列消费 —— 三元组幂等（ready 复用 / failed 不原地重试）、产物键与元数据、失败降级与退避、dead 唤醒边界。
+ * ② 队列消费（S7-1 收敛为「消费与分类」）—— 三元组幂等（ready 复用 / failed 不原地重试）、产物键与元数据、
+ *    失败分类（retry / dead）与终态降级留痕；领取 / 退避排程 / dead 落库在 OutboxDispatcher（见 outbox-dispatcher.test.ts）。
  * 转换器真机行为（沙箱四性 / 中文字体 / 通道矩阵）由 px 线 M4-05b 证据文档与真机回放覆盖，这里只管接线口径。
  */
 
@@ -36,9 +36,6 @@ const ENV = {
   PREVIEW_CONVERT_MAX_ATTEMPTS: 3,
   PREVIEW_CONVERT_BACKOFF_MS: 15000,
   PREVIEW_CONVERT_MAX_SOURCE_MB: 100,
-  OUTBOX_POLL_MS: 5000,
-  OUTBOX_BATCH_LIMIT: 2,
-  OUTBOX_STALE_MS: 600000,
 } as unknown as Env;
 
 function makeFileRow(overrides: Partial<FileRow> = {}): FileRow {
@@ -330,32 +327,6 @@ describe("previewTargetsFor / preview.job（投递侧映射）", () => {
   });
 });
 
-/** outbox 领取器替身：claim 从 queue 取行并记账，回写三态各记一笔。 */
-class FakeOutboxStore {
-  queue: OutboxClaimedRow[] = [];
-  readonly claims: ClaimOutboxInput[] = [];
-  readonly done: number[] = [];
-  readonly retried: { id: number; input: OutboxRetryInput }[] = [];
-  readonly dead: { id: number; input: { attempts: number; error: string } }[] = [];
-
-  async claim(input: ClaimOutboxInput): Promise<OutboxClaimedRow[]> {
-    this.claims.push(input);
-    return this.queue.splice(0, input.limit);
-  }
-
-  async markDone(id: number): Promise<void> {
-    this.done.push(id);
-  }
-
-  async markRetry(id: number, input: OutboxRetryInput): Promise<void> {
-    this.retried.push({ id, input });
-  }
-
-  async markDead(id: number, input: { attempts: number; error: string }): Promise<void> {
-    this.dead.push({ id, input });
-  }
-}
-
 /** preview_artifacts 替身：内存三元组表（唯一键语义与真库一致）。 */
 class FakePreviewRepository {
   rows: PreviewArtifactRow[] = [];
@@ -456,10 +427,8 @@ class FakeConverter {
     return this.result;
   }
 }
-
 interface Harness {
   service: PreviewService;
-  outbox: FakeOutboxStore;
   previews: FakePreviewRepository;
   repo: FakeFileRepository;
   storage: FakeStorage;
@@ -468,7 +437,6 @@ interface Harness {
 }
 
 function makeService(env: Partial<Env> = {}): Harness {
-  const outbox = new FakeOutboxStore();
   const previews = new FakePreviewRepository();
   const repo = new FakeFileRepository();
   const storage = new FakeStorage();
@@ -479,23 +447,25 @@ function makeService(env: Partial<Env> = {}): Harness {
   const service = new PreviewService(
     repo as unknown as FileRepository,
     previews as unknown as PreviewRepository,
-    outbox as unknown as OutboxStore,
     storage as unknown as ObjectStorage,
     converter as unknown as PreviewConverter,
     config,
     clock,
   );
-  return { service, outbox, previews, repo, storage, converter, clock };
+  return { service, previews, repo, storage, converter, clock };
 }
 
-describe("PreviewService.drainOnce（M4-05c 预览队列消费）", () => {
-  it("成功链路：领取 → 直读源字节 → 转换 → 产物回对象存储（键 = 三元组）→ ready → done", async () => {
+/**
+ * S7-1 切片后本服务只负责「消费与分类」：`consume` 返回 done / retry / dead（不触库、不外抛），
+ * `onDead` 在 dispatcher 落 dead 前把产物置 failed。领取、退避排程与 outbox 三态回写见 outbox-dispatcher.test.ts。
+ */
+describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为分类）", () => {
+  it("成功链路：直读源字节 → 转换 → 产物回对象存储（键 = 三元组）→ ready → done", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
-    expect(h.outbox.claims[0]).toMatchObject({ topics: ["preview.job"], limit: 2, staleAfterMs: 600000 });
+    expect(outcome).toEqual({ outcome: "done" });
     expect(h.converter.calls).toHaveLength(1);
     expect(h.converter.calls[0]).toMatchObject({
       target: "pdf",
@@ -517,185 +487,128 @@ describe("PreviewService.drainOnce（M4-05c 预览队列消费）", () => {
     expect(h.previews.ready[0]!.key).toEqual({ contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" });
     expect(h.previews.ready[0]!.input.objectKey).toBe(ARTIFACT_KEY);
     expect(h.previews.ready[0]!.input.generatedAt).toBe(NOW);
-    expect(h.outbox.done).toEqual([OUTBOX_ID]);
-    expect(h.outbox.retried).toHaveLength(0);
-    expect(h.outbox.dead).toHaveLength(0);
-    expect(stats).toMatchObject({ claimed: 1, ready: 1, reused: 0, retried: 0, dead: 0, skipped: 0 });
   });
 
   it("三元组幂等：已有 ready 行 → 不调转换器、不重写产物，直接 done", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.previews.rows = [makeArtifactRow({ status: "ready", objectKey: ARTIFACT_KEY, generatedAt: NOW })];
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
+    expect(outcome).toEqual({ outcome: "done" });
     expect(h.converter.calls).toHaveLength(0);
     expect(h.storage.puts).toHaveLength(0);
     expect(h.previews.ready).toHaveLength(0);
-    expect(h.outbox.done).toEqual([OUTBOX_ID]);
-    expect(stats).toMatchObject({ claimed: 1, ready: 0, reused: 1 });
   });
 
   it("failed 是缓存态：不原地重试（由 pipeline_version 递增失效），任务直接 done", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.previews.rows = [makeArtifactRow({ status: "failed", error: "上一轮确定性失败" })];
 
-    await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
+    expect(outcome).toEqual({ outcome: "done" });
     expect(h.converter.calls).toHaveLength(0);
-    expect(h.outbox.done).toEqual([OUTBOX_ID]);
-    expect(h.outbox.dead).toHaveLength(0);
   });
 
-  it("确定性失败（422）：一次即降级 —— 产物 failed（error ≤ 500）+ outbox dead", async () => {
+  it("确定性失败（422）：分类 dead（不写 failed —— 终态留痕由 dispatcher 调 onDead 收口）", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.converter.result = new ConverterError("deterministic", "CONVERT_FAILED", 422, "LibreOffice 转换失败：文件已损坏");
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
-    expect(h.previews.failed).toHaveLength(1);
-    expect(h.previews.failed[0]).toMatchObject({
-      key: { contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" },
-      input: { error: "LibreOffice 转换失败：文件已损坏", updatedAt: NOW },
-    });
-    expect(h.outbox.dead[0]).toMatchObject({ id: OUTBOX_ID, input: { attempts: 1, error: "LibreOffice 转换失败：文件已损坏" } });
-    expect(h.outbox.retried).toHaveLength(0);
-    expect(stats).toMatchObject({ dead: 1, retried: 0 });
+    expect(outcome).toEqual({ outcome: "dead", error: "LibreOffice 转换失败：文件已损坏" });
+    expect(h.previews.failed).toHaveLength(0);
   });
 
-  it("可重试失败（503）：回 pending 退避（15s 起步），不写 failed（产物留在 not_ready）", async () => {
+  it("可重试失败（503）：分类 retry（退避与到顶转 dead 由 dispatcher 按策略收敛）", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.converter.result = new ConverterError("retryable", "SERVICE_BUSY", 503, "转换器忙，请稍后重试");
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
+    expect(outcome).toEqual({ outcome: "retry", error: "转换器忙，请稍后重试" });
     expect(h.previews.failed).toHaveLength(0);
-    expect(h.outbox.done).toHaveLength(0);
-    expect(h.outbox.retried[0]).toMatchObject({
-      id: OUTBOX_ID,
-      input: { attempts: 1, error: "转换器忙，请稍后重试" },
-    });
-    expect(h.outbox.retried[0]!.input.availableAt.getTime()).toBe(NOW.getTime() + 15000);
-    expect(stats).toMatchObject({ retried: 1, dead: 0 });
-  });
-
-  it("可重试到顶（第 3 次）：转 failed + dead，退避不再排程", async () => {
-    const h = makeService();
-    h.outbox.queue = [makeJobRow({ attempts: 2 })];
-    h.converter.result = new ConverterError("retryable", "CONVERT_TIMEOUT", 504, "转换超时（60s）");
-
-    const stats = await h.service.drainOnce();
-
-    expect(h.outbox.retried).toHaveLength(0);
-    expect(h.previews.failed[0]!.input.error).toBe("转换超时（60s）");
-    expect(h.outbox.dead[0]).toMatchObject({ id: OUTBOX_ID, input: { attempts: 3 } });
-    expect(stats).toMatchObject({ dead: 1 });
-  });
-
-  it("重试退避封顶 30 分钟（尝试次数多时不再翻倍）", async () => {
-    const h = makeService({ PREVIEW_CONVERT_MAX_ATTEMPTS: 10, PREVIEW_CONVERT_BACKOFF_MS: 600000 });
-    h.outbox.queue = [makeJobRow({ attempts: 5 })];
-    h.converter.result = new ConverterError("retryable", "SERVICE_BUSY", 503, "忙");
-
-    await h.service.drainOnce();
-
-    expect(h.outbox.retried[0]!.input.availableAt.getTime()).toBe(NOW.getTime() + 30 * 60_000);
   });
 
   it("structured 通道一期未启用：不调转换器，直接确定性降级", async () => {
     const h = makeService();
-    h.outbox.queue = [
-      makeJobRow({
-        payload: buildPreviewJobPayload({
-          projectId: PROJECT,
-          fileId: FILE,
-          versionId: VERSION,
-          contentHash: HASH,
-          target: "structured",
-          trigger: "read",
-        }),
+    const row = makeJobRow({
+      payload: buildPreviewJobPayload({
+        projectId: PROJECT,
+        fileId: FILE,
+        versionId: VERSION,
+        contentHash: HASH,
+        target: "structured",
+        trigger: "read",
       }),
-    ];
+    });
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(row);
 
+    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect((outcome as { error: string }).error).toContain("structured");
     expect(h.converter.calls).toHaveLength(0);
-    expect(h.previews.failed[0]!.input.error).toContain("structured");
-    expect(h.outbox.dead).toHaveLength(1);
-    expect(stats).toMatchObject({ dead: 1 });
   });
 
   it("超大源文件（> PREVIEW_CONVERT_MAX_SOURCE_MB）：不调转换器，直接降级「请下载」", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.repo.version = makeVersionRow({ sizeBytes: 101 * 1024 * 1024 });
 
-    await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
+    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect((outcome as { error: string }).error).toContain("超过预览转换上限 100 MB");
     expect(h.converter.calls).toHaveLength(0);
     expect(h.storage.puts).toHaveLength(0);
-    expect(h.previews.failed[0]!.input.error).toContain("超过预览转换上限 100 MB");
-    expect(h.outbox.dead).toHaveLength(1);
   });
 
   it("源对象缺失（存储侧读不到）：按可重试处理，不一次判死", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.storage.source = null;
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
+    expect(outcome).toMatchObject({ outcome: "retry" });
+    expect((outcome as { error: string }).error).toContain("源对象不存在");
     expect(h.converter.calls).toHaveLength(0);
-    expect(h.outbox.retried[0]!.input.error).toContain("源对象不存在");
-    expect(h.previews.failed).toHaveLength(0);
-    expect(stats).toMatchObject({ retried: 1 });
   });
 
   it("产物写库 / 写对象失败（存储抖动）：按可重试处理", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.storage.putError = new StorageError("unavailable", "对象存储暂不可用，请稍后重试");
 
-    await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
-    expect(h.outbox.retried).toHaveLength(1);
-    expect(h.outbox.dead).toHaveLength(0);
+    expect(outcome).toMatchObject({ outcome: "retry", error: "对象存储暂不可用，请稍后重试" });
     expect(h.previews.ready).toHaveLength(0);
   });
 
   it("源版本已不存在（彻底删除 / 到期清理）：任务跳过并消费掉，不留噪音", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
     h.repo.version = null;
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow());
 
+    expect(outcome).toEqual({ outcome: "done" });
     expect(h.converter.calls).toHaveLength(0);
     expect(h.previews.ensured).toHaveLength(0);
-    expect(h.outbox.done).toEqual([OUTBOX_ID]);
-    expect(stats).toMatchObject({ claimed: 1, skipped: 1, dead: 0 });
   });
 
-  it("载荷非法：转 dead（不猜默认值，也不占转换配额）", async () => {
+  it("载荷非法：分类 dead（不猜默认值，也不占转换配额）", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow({ payload: { fileId: FILE } })];
 
-    const stats = await h.service.drainOnce();
+    const outcome = await h.service.consume(makeJobRow({ payload: { fileId: FILE } }));
 
+    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect((outcome as { error: string }).error).toContain("载荷非法");
     expect(h.converter.calls).toHaveLength(0);
-    expect(h.outbox.dead[0]!.input.error).toContain("载荷非法");
-    expect(stats).toMatchObject({ dead: 1 });
   });
 
   it("首投登记：库内还没有产物行时补一条 not_ready（同三元组后续命中同一行）", async () => {
     const h = makeService();
-    h.outbox.queue = [makeJobRow()];
 
-    await h.service.drainOnce();
+    await h.service.consume(makeJobRow());
 
     expect(h.previews.ensured[0]).toMatchObject({
       fileId: FILE,
@@ -704,5 +617,23 @@ describe("PreviewService.drainOnce（M4-05c 预览队列消费）", () => {
       pipelineVersion: "1.0.0",
       target: "pdf",
     });
+  });
+
+  it("onDead 终态留痕：产物置 failed（error + clock 时刻）；载荷非法 / 源版本不存在时静默 no-op", async () => {
+    const h = makeService();
+
+    await h.service.onDead(makeJobRow(), "LibreOffice 转换失败：文件已损坏");
+    expect(h.previews.failed[0]).toMatchObject({
+      key: { contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" },
+      input: { error: "LibreOffice 转换失败：文件已损坏", updatedAt: NOW },
+    });
+
+    h.previews.failed.length = 0;
+    await h.service.onDead(makeJobRow({ payload: { fileId: FILE } }), "x");
+    expect(h.previews.failed).toHaveLength(0);
+
+    h.repo.version = null;
+    await h.service.onDead(makeJobRow(), "x");
+    expect(h.previews.failed).toHaveLength(0);
   });
 });

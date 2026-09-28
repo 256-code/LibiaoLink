@@ -21,6 +21,8 @@ export interface ClaimOutboxInput {
   limit: number;
   /** 超过该时长仍处 `processing` 的行视为崩溃遗留（migration 0028），可重新领取 —— 毫秒。 */
   staleAfterMs: number;
+  /** 领取者标识（migration 0037 的 `locked_by`）：WORKER_ID 或 host:pid —— 排障 / PoC-5 并发报告用。 */
+  workerId: string;
 }
 
 export interface OutboxRetryInput {
@@ -29,6 +31,38 @@ export interface OutboxRetryInput {
   /** 下次可领取时间（退避）。 */
   availableAt: Date;
   error: string | null;
+}
+
+/** 单主题积压明细（告警探针日志用）。 */
+export interface OutboxTopicBacklog {
+  topic: string;
+  due: number;
+  /** 该主题最老待领取消息的已等待时长（毫秒）。 */
+  oldestMs: number;
+}
+
+/** Outbox 健康快照（S7-1 告警探针）：积压 / 最老年龄 / 死信。 */
+export interface OutboxStatsSnapshot {
+  /** `pending` 且 `available_at <= now()`（真正可领取，不含退避未到点的行）。 */
+  duePending: number;
+  /** 最老待领取消息的已等待时长（毫秒）；无积压 = null。 */
+  oldestDueMs: number | null;
+  /** 窗口内新增的 dead 行数（按 updated_at）。 */
+  deadRecent: number;
+  deadTotal: number;
+  byTopic: OutboxTopicBacklog[];
+}
+
+export interface OutboxStatsInput {
+  /** 死信「近期」窗口（毫秒）。 */
+  deadWindowMs: number;
+}
+
+export interface PurgeDoneInput {
+  /** done 行保留期（天）。 */
+  retentionDays: number;
+  /** 单批删除条数上限。 */
+  batch: number;
 }
 
 /**
@@ -69,7 +103,7 @@ export class OutboxStore {
          for update skip locked
       )
       update outbox_events as e
-         set status = 'processing', locked_at = now()
+         set status = 'processing', locked_at = now(), locked_by = ${input.workerId}, updated_at = now()
         from claimed
        where e.id = claimed.id
       returning e.id, e.topic, e.payload, e.dedupe_key, e.attempts, e.available_at, e.locked_at
@@ -89,7 +123,7 @@ export class OutboxStore {
   async markDone(id: number, client: DbClient = this.database.db): Promise<void> {
     await client
       .update(outboxEvents)
-      .set({ status: "done", lockedAt: null, lastError: null })
+      .set({ status: "done", lockedAt: null, lastError: null, updatedAt: sql`now()` })
       .where(eq(outboxEvents.id, id));
   }
 
@@ -103,6 +137,7 @@ export class OutboxStore {
         availableAt: input.availableAt,
         lockedAt: null,
         lastError: input.error,
+        updatedAt: sql`now()`,
       })
       .where(eq(outboxEvents.id, id));
   }
@@ -115,7 +150,69 @@ export class OutboxStore {
   ): Promise<void> {
     await client
       .update(outboxEvents)
-      .set({ status: "dead", attempts: input.attempts, lockedAt: null, lastError: input.error })
+      .set({ status: "dead", attempts: input.attempts, lockedAt: null, lastError: input.error, updatedAt: sql`now()` })
       .where(eq(outboxEvents.id, id));
+  }
+
+  /**
+   * 健康快照（S7-1 告警探针）：积压 / 最老待领取年龄 / 死信。
+   * 只读、两条语句；`due` 只算 `available_at <= now()`（退避未到点的行不算「该干没干」）。
+   */
+  async stats(input: OutboxStatsInput): Promise<OutboxStatsSnapshot> {
+    const totals = await this.database.db.execute(sql`
+      select
+        count(*) filter (where status = 'pending' and available_at <= now())::int as due_pending,
+        extract(epoch from (now() - min(available_at) filter (where status = 'pending' and available_at <= now()))) * 1000 as oldest_due_ms,
+        count(*) filter (
+          where status = 'dead' and updated_at >= now() - ${input.deadWindowMs}::int * interval '1 millisecond'
+        )::int as dead_recent,
+        count(*) filter (where status = 'dead')::int as dead_total
+      from outbox_events
+    `);
+    const row = (totals.rows as unknown as Array<Record<string, unknown>>)[0] ?? {};
+    const byTopic = await this.database.db.execute(sql`
+      select
+        topic,
+        count(*)::int as due,
+        extract(epoch from (now() - min(available_at))) * 1000 as oldest_ms
+      from outbox_events
+      where status = 'pending' and available_at <= now()
+      group by topic
+      order by due desc, topic
+    `);
+    return {
+      duePending: Number(row.due_pending ?? 0),
+      oldestDueMs:
+        row.oldest_due_ms === null || row.oldest_due_ms === undefined ? null : Math.max(0, Number(row.oldest_due_ms)),
+      deadRecent: Number(row.dead_recent ?? 0),
+      deadTotal: Number(row.dead_total ?? 0),
+      byTopic: (byTopic.rows as unknown as Array<Record<string, unknown>>).map((item) => ({
+        topic: String(item.topic),
+        due: Number(item.due),
+        oldestMs: Math.max(0, Number(item.oldest_ms ?? 0)),
+      })),
+    };
+  }
+
+  /**
+   * done 行保留期清理（ADR-005：成功行约 90 天，观察表膨胀）。
+   * 单批删除（batch 上限），调用方循环到「不足一批」为止 —— 避免一次删太多把锁与 WAL 拉满。
+   */
+  async purgeDone(input: PurgeDoneInput): Promise<number> {
+    const result = await this.database.db.execute(sql`
+      with victims as (
+        select id
+          from outbox_events
+         where status = 'done'
+           and created_at < now() - ${input.retentionDays}::int * interval '1 day'
+         order by id
+         limit ${input.batch}
+      )
+      delete from outbox_events as e
+        using victims
+       where e.id = victims.id
+      returning e.id
+    `);
+    return (result.rows as unknown as unknown[]).length;
   }
 }

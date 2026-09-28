@@ -27,7 +27,11 @@ export const outboxEvents = pgTable(
     lastError: text("last_error"),
     /** 领取时刻（migration 0028）：worker 崩溃 / 重启后按超阈值重领，避免行永久卡在 processing。 */
     lockedAt: timestamp("locked_at", { withTimezone: true }),
+    /** 领取者标识（migration 0037）：WORKER_ID 或 host:pid —— 多 worker 排障 / PoC-5 并发领取报告用。 */
+    lockedBy: text("locked_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 状态迁移时刻（migration 0037）：markDone / markRetry / markDead 回写；死信告警按它判「最近新增」。 */
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     unique("outbox_events_dedupe_key_key").on(table.dedupeKey),
