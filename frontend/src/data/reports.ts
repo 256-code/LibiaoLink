@@ -37,9 +37,18 @@ export type DailyReport = {
   suggestion: string;
   /** 关联阶段（多选；标记当日完成工作对应的项目阶段，Push 198 由「关联任务」改口径） */
   stages: readonly string[];
-  /** 现场工作附图（原型只存文件名，正式版走文件库） */
-  photos: readonly string[];
+  /** 现场工作附图（原型：粘贴 / 选文件时存名字 + 图片预览用的 blob 地址；正式版走文件库） */
+  photos: readonly ReportPhoto[];
 };
+
+/** 一份附图（Push 202 同批续「图片要可以预览」）：`name` = 文件名；`url` = 图片预览地址（粘贴 / 选择的图片才有，演示数据一律 null）。 */
+export type ReportPhoto = {
+  name: string;
+  url: string | null;
+};
+
+/** 演示数据帮手：只有名字、没有预览（虚构附图）。 */
+const photoNames = (...names: string[]): ReportPhoto[] => names.map((name) => ({ name, url: null }));
 
 /** 一条问题记录（由日报「现场发现问题」自动生成；同一条日报只生成一次，A3-09）。 */
 export type Issue = {
@@ -83,7 +92,7 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "供应商原因",
     suggestion: "建议由采购联系供应商走补件流程，同步确认运输加固方案",
     stages: ["硬件实施", "试运行"],
-    photos: ["滑槽磕碰-01.jpg", "滑槽磕碰-02.jpg"],
+    photos: photoNames("滑槽磕碰-01.jpg", "滑槽磕碰-02.jpg"),
   },
   {
     id: "r-0921b",
@@ -98,7 +107,7 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "",
     suggestion: "",
     stages: ["软件部署"],
-    photos: ["联调记录-01.jpg"],
+    photos: photoNames("联调记录-01.jpg"),
   },
   {
     id: "r-0920",
@@ -113,7 +122,7 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "规划部",
     suggestion: "建议后端增加重试队列，并复核接口超时阈值",
     stages: ["硬件实施", "软件部署"],
-    photos: ["机柜理线-01.jpg", "联调日志-01.jpg"],
+    photos: photoNames("机柜理线-01.jpg", "联调日志-01.jpg"),
   },
   {
     id: "r-0919",
@@ -128,7 +137,7 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "客观原因",
     suggestion: "建议项目部协调客户做局部找平，或改用可调底座",
     stages: ["硬件实施"],
-    photos: ["地面平整度-01.jpg"],
+    photos: photoNames("地面平整度-01.jpg"),
   },
   {
     id: "r-0918",
@@ -143,7 +152,7 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "机械部",
     suggestion: "建议更换对射支架并加装遮光罩",
     stages: ["硬件实施"],
-    photos: ["工作站弹线-01.jpg"],
+    photos: photoNames("工作站弹线-01.jpg"),
   },
   {
     id: "r-0917",
@@ -158,7 +167,7 @@ const DEMO_REPORTS: DailyReport[] = [
     issueCategory: "客户原因",
     suggestion: "建议客户加装稳压器，UPS 切换前先做空载测试",
     stages: ["硬件实施"],
-    photos: ["1号巷道导轨-01.jpg", "安全培训-01.jpg"],
+    photos: photoNames("1号巷道导轨-01.jpg", "安全培训-01.jpg"),
   },
 ];
 

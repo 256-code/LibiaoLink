@@ -59,12 +59,13 @@
  *   （「标题都标标粗」）。
  *   断言：② 组 +3（双语表头 / 三框无占位提示 / 标题加粗）、④ 组 1 条状态断言拆成 2 条（时间列年月日 + 无状态签 · 净 +1）、
  *   ⑤b 组新增 9 项（多选弹层 / 两项绿勾 / 触发器顿号 / Esc 关闭 / 暂存提示 / 悬停背景 / 内容保留 / 不切视图 / 不写记录）；
- *   另：「暂存草稿」悬停反馈加明显（「鼠标放到暂存草稿的ui效果不太明显」——描边 200 → 400、背景 zinc-100、字色转深）；合计 52 项。
+ *   另：「暂存草稿」悬停反馈加明显（「鼠标放到暂存草稿的ui效果不太明显」——描边 200 → 400、背景 zinc-100、字色转深）；合计 59 项。
  *
  * Push 202 同批续（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：两个附图区
  *   （现场工作附图 / 当前问题附图）改 AttachmentPicker —— **粘贴为主入口**（点一下虚线区拿到焦点，Ctrl+V 直接粘图；
  *   剪贴板图没有名字时按「剪贴板图片-N.png」命名；附件胶囊可逐个移除）、「选择文件」降为次入口（原生文件框仍在）。
- *   ⑤c 组新增 5 项（两区常驻 + 次入口仍在 / 点一下进就绪态 / 粘贴出胶囊 / × 可移除 / 第二区同套生效）；
+ *   ⑤c 组新增 12 项（两区常驻 + 次入口仍在 / 点一下进就绪态 / 粘贴出胶囊 / × 可移除 / 第二区同套生效 / 缩略图预览 / 点开大图 / Esc 关预览 / 点名字进编辑 / Esc 取消改名 / 回车自定义名 / 记录列表出缩略图）；
+ *   同批续二（业务口径「图片要可以预览」+「图片名称可以自定义」）：胶囊出**缩略图**（`URL.createObjectURL`）、点开**大图预览层**（点任意处 / Esc 关）、**点名字可自定义**（回车 / 失焦提交、Esc 取消）；
  *   粘贴优先走**真实剪贴板 + 真实 Ctrl+V**（CDP 授权 clipboardReadWrite + Input.dispatchKeyEvent 走浏览器 paste 加速键），
  *   剪贴板不可用才回落合成 ClipboardEvent（两条路都打在真实 document 监听上）。
  *
@@ -557,6 +558,83 @@ const chipsIssueZone = await ev(chipsExpr("issuePhotos"));
 check("⑤c 「当前问题附图」同一套粘贴（点一下再 Ctrl+V）→ 该区也收到「剪贴板图片-1.png」",
   chipsIssueZone !== null && chipsIssueZone.names.length === 1 && chipsIssueZone.names[0] === "剪贴板图片-1.png",
   chipsIssueZone === null ? "-" : JSON.stringify(chipsIssueZone.names));
+
+// ⑤c 续：图片可预览（业务口径「图片要可以预览」）—— 胶囊缩略图 / 点开大图 / Esc 关 / 记录列表出缩略图
+const thumbExpr = (zone) =>
+  "(function(){var z=document.querySelector(" + j("[data-paste-zone=" + zone + "]") + ");if(z===null){return null;}" +
+  "var wrap=document.querySelector(" + j("[data-attachment-strip=" + zone + "]") + ");if(wrap===null){return null;}var t=wrap.querySelector(" + j("[data-attachment-thumb] img") + ");" +
+  "return t===null?null:{src:String(t.getAttribute(" + j("src") + ")),alt:String(t.getAttribute(" + j("alt") + ")),w:Math.round(t.getBoundingClientRect().width)};})()";
+const thumbProbe = await ev(thumbExpr("issuePhotos"));
+check("⑤c 粘贴后的图片胶囊带**缩略图**（[data-attachment-thumb] <img> 预览地址 = blob: 同源地址 · 业务口径「图片要可以预览」）",
+  thumbProbe !== null && String(thumbProbe.src).indexOf("blob:") === 0 && thumbProbe.w > 0,
+  thumbProbe === null ? "-" : JSON.stringify(thumbProbe));
+await clickSelector("[data-attachment-strip=issuePhotos] [data-attachment-thumb]");
+const previewOpen = await waitFor("document.querySelector(" + j("[data-photo-preview]") + ")!==null");
+const previewProbe = await ev("(function(){var p=document.querySelector(" + j("[data-photo-preview]") + ");if(p===null){return null;}var img=p.querySelector(" + j("img") + ");var r=p.getBoundingClientRect();return {src:img===null?" + j("") + ":String(img.getAttribute(" + j("src") + ")),w:Math.round(r.width),h:Math.round(r.height)};})()");
+check("⑤c 点缩略图 → 大图预览层（[data-photo-preview]）打开：放大图 = 与缩略图同一 blob 地址、浮层铺满视口",
+  previewOpen === true && previewProbe !== null && thumbProbe !== null && String(previewProbe.src) === String(thumbProbe.src) &&
+  Number(previewProbe.w) >= 300 && Number(previewProbe.h) >= 300,
+  previewProbe === null ? "-" : JSON.stringify(previewProbe));
+await pressKey("Escape", "Escape", 27);
+const previewClosed = await waitFor("document.querySelector(" + j("[data-photo-preview]") + ")==null");
+check("⑤c Esc 关预览层（与站内浮层同一套关闭口径）", previewClosed === true, String(previewClosed));
+// 记录列表也出缩略图：给「现场工作附图」再粘一张 → 填当日完成工作 → 提交 → 最新一行的附图列
+await clickSelector("[data-paste-zone=photos] [data-paste-half]");
+if (String(clipWrite) !== "ok") {
+  await ev(
+    "(function(){var bin=atob(" + j(PNG_B64) + ");var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++){arr[i]=bin.charCodeAt(i);}" +
+    "var dt=new DataTransfer();dt.items.add(new File([new Blob([arr],{type:" + j("image/png") + "})]," + j("") + ",{type:" + j("image/png") + "}));" +
+    "var e=new ClipboardEvent(" + j("paste") + ",{clipboardData:dt,bubbles:true,cancelable:true});document.dispatchEvent(e);return true;})()"
+  );
+} else {
+  await page.send("Page.bringToFront");
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2, commands: ["paste"] });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2 });
+}
+await sleep(500);
+// 图片名称可以自定义（业务口径「图片名称可以自定义」）：点名字进编辑 → 改 → Enter；Esc 取消
+await clickSelector("[data-attachment-strip=photos] [data-rename-attachment]");
+const renameOpen = await waitFor("document.querySelector(" + j("[data-attachment-input]") + ")!==null");
+check("⑤c 点附图名字进编辑态（[data-attachment-input] 就位 · 带原名）",
+  renameOpen === true, String(renameOpen));
+await ev("(function(){var i=document.querySelector(" + j("[data-attachment-input]") + ");if(i===null){return null;}i.select();return true;})()");
+await page.send("Input.insertText", { text: "加" });
+await pressKey("Escape", "Escape", 27);
+await sleep(300);
+const nameAfterEsc = await ev("(function(){var s=document.querySelector(" + j("[data-attachment-strip=photos]") + ");if(s===null){return null;}var b=s.querySelector(" + j("[data-rename-attachment]") + ");return b===null?null:b.getAttribute(" + j("aria-label") + ");})()");
+check("⑤c Esc 取消改名：名字保持原样（" + "剪贴板图片-2.png" + "）",
+  nameAfterEsc !== null && String(nameAfterEsc) === "重命名 剪贴板图片-2.png", String(nameAfterEsc));
+await clickSelector("[data-attachment-strip=photos] [data-rename-attachment]");
+await waitFor("document.querySelector(" + j("[data-attachment-input]") + ")!==null");
+const extProbe = await ev(
+  "(function(){var s=document.querySelector(" + j("[data-attachment-strip=photos]") + ");if(s===null){return null;}" +
+  "var box=s.querySelector(" + j("[data-attachment]") + ");if(box===null){return null;}var inp=box.querySelector(" + j("[data-attachment-input]") + ");" +
+  "return {text:box.textContent.trim(),value:inp===null?" + j("") + ":inp.value};})()"
+);
+check("⑤c 改名只改**主名**、后缀原位保留（业务口径「自定义把图片png格式删了怎么办」：输入框只装「剪贴板图片-2」、胶囊仍带灰字 .png）",
+  extProbe !== null && String(extProbe.value) === "剪贴板图片-2" && String(extProbe.text).indexOf(".png") >= 0,
+  extProbe === null ? "-" : JSON.stringify(extProbe));
+await ev("(function(){var i=document.querySelector(" + j("[data-attachment-input]") + ");if(i===null){return null;}i.select();return true;})()");
+await page.send("Input.insertText", { text: "滑槽磕碰-现场-01" });
+await pressKey("Enter", "Enter", 13);
+await sleep(300);
+const renamedProbe = await ev("(function(){var s=document.querySelector(" + j("[data-attachment-strip=photos]") + ");if(s===null){return null;}var cs=s.querySelectorAll(" + j("[data-attachment]") + ");var names=[];for(var i=0;i<cs.length;i++){names.push(cs[i].getAttribute(" + j("data-attachment") + "));}return {names:names};})()");
+check("⑤c 自定义图片名称：主名改成「滑槽磕碰-现场-01」（回车提交）→ 胶囊名 = 「滑槽磕碰-现场-01.png」（**后缀自动保留**）",
+  renamedProbe !== null && renamedProbe.names.length === 1 && renamedProbe.names[0] === "滑槽磕碰-现场-01.png",
+  renamedProbe === null ? "-" : JSON.stringify(renamedProbe.names));
+
+const DONE_TEXT_2 = "回放·附图预览·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+await typeInto("[data-fill-form] textarea[data-field=doneWork]", DONE_TEXT_2);
+await clickSelector("[data-fill-form] button[data-action=submit]");
+await waitFor("document.querySelector(" + j("[data-report-row]") + ")!==null");
+const rowThumb = await ev(
+  "(function(){var rows=document.querySelectorAll(" + j("[data-report-row]") + ");if(rows.length===0){return null;}" +
+  "var img=rows[0].querySelector(" + j("[data-attachment-thumb] img") + ");var chip=rows[0].querySelector(" + j("[data-attachment]") + ");" +
+  "return {rows:rows.length,src:img===null?" + j("") + ":String(img.getAttribute(" + j("src") + ")),name:chip===null?" + j("") + ":String(chip.getAttribute(" + j("data-attachment") + "))};})()"
+);
+check("⑤c 日报记录：最新一行「现场工作附图」列出缩略图（记录列表也能预览 · blob 地址 · 名字 = 自定义后的「滑槽磕碰-现场-01.png」）",
+  rowThumb !== null && String(rowThumb.src).indexOf("blob:") === 0 && String(rowThumb.name).indexOf("滑槽磕碰-现场-01.png") >= 0,
+  rowThumb === null ? "-" : JSON.stringify(rowThumb));
 
 // ---------- ⑥ 吸顶（Push 200 起 · Push 201 两层叠放 + 修三处 bug：投影外溢 / 吞字 / 接缝；业务口径「这个也做吸顶效果吧 图二吸顶后有bug」「这里的字被吞掉了」「这个中间有条缝可以有办法解决一下吗」） ----------
 // ⑥ 前置：**未吸顶**时的静态几何 —— 横幅下沿不得压住下方内容（Push 201 补：负 mb 把区块标题吞掉 16px）

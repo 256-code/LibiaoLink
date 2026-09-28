@@ -9,6 +9,7 @@ import {
   type DailyReport,
   type Issue,
   type IssueState,
+  type ReportPhoto,
 } from "../data/reports";
 import { PROJECT_STAGES } from "../data/projects";
 import type { MeResponse, Project } from "../types";
@@ -212,10 +213,10 @@ type ReportDraft = {
   suggestion: string;
   /** 关联阶段（按阶段名多选；九阶段口径） */
   stages: string[];
-  /** 现场工作附图（原型只记文件名） */
-  photos: string[];
+  /** 现场工作附图（名单 + 图片预览地址；Push 202 同批续「图片要可以预览」） */
+  photos: ReportPhoto[];
   /** 当前问题附图（「现场发现问题」非空时才填） */
-  issuePhotos: string[];
+  issuePhotos: ReportPhoto[];
 };
 
 /** 新建日报 / 问题的原型 id 序号（同一会话内不重号）。 */
@@ -317,12 +318,143 @@ function UploadIcon() {
     </svg>
   );
 }
-/** 附图选择（原型：只记文件名，正式版走站内文件库）。
+/** 图片预览层（业务口径「图片要可以预览」）：点缩略图放大看；点任意处 / Esc 关。 */
+function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      data-photo-preview=""
+      role="dialog"
+      aria-label={"预览 " + name}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/60 p-6"
+    >
+      <figure className="flex max-h-full max-w-full flex-col items-center">
+        <img src={url} alt={name} className="max-h-[80vh] max-w-[90vw] rounded-xl bg-white p-1 shadow-2xl" />
+        <figcaption className="mt-2 text-center text-xs text-white/80">{name}</figcaption>
+      </figure>
+    </div>
+  );
+}
+
+/** 附图清单：图片出**缩略图**（点开预览层看大图）、非图片出文件名胶囊；表单里再带 × 可逐个移除。 */
+function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string }) {
+  const [preview, setPreview] = useState<ReportPhoto | null>(null);
+  /** 正在改名的第几份（null = 没有在改名）；业务口径「图片名称可以自定义」。 */
+  const [editingAt, setEditingAt] = useState<number | null>(null);
+  /** 编辑中的**主名**（后缀不参与编辑 —— 业务口径「自定义把图片png格式删了怎么办」：格式由系统保留）。 */
+  const [editingText, setEditingText] = useState("");
+  /** 编辑中保留的后缀（含点；没后缀 = 空串）。 */
+  const [editingExt, setEditingExt] = useState("");
+  /** 提交改名：空名 / 没变 = 原样（不写回）。 */
+  const commitRename = () => {
+    if (editingAt === null || onRename === undefined) {
+      setEditingAt(null);
+      return;
+    }
+    const base = editingText.trim();
+    const next = base === "" ? items[editingAt].name : base + editingExt;
+    if (next !== items[editingAt].name) {
+      onRename(editingAt, next);
+    }
+    setEditingAt(null);
+  };
+
+  /** 开始改名：主名进输入框、后缀原位保留（图片 png 格式不会被改掉）。 */
+  const startRename = (at: number) => {
+    const name = items[at].name;
+    const dot = name.lastIndexOf(".");
+    const hasExt = dot > 0 && dot < name.length - 1;
+    setEditingAt(at);
+    setEditingText(hasExt ? name.slice(0, dot) : name);
+    setEditingExt(hasExt ? name.slice(dot) : "");
+  };
+  if (items.length === 0) {
+    return null;
+  }
+  const previewUrl = preview === null ? null : preview.url;
+  return (
+    <div data-attachment-strip={strip} className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {items.map((item, index) => (
+        <span key={item.name + "#" + String(index)} data-attachment={item.name} className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600">
+          {item.url === null ? null : (
+            <button
+              type="button"
+              data-attachment-thumb=""
+              aria-label={"预览 " + item.name}
+              onClick={() => setPreview(item)}
+              className="shrink-0 rounded-md transition hover:opacity-80"
+            >
+              <img src={item.url} alt={item.name} className="h-8 w-8 rounded-md border border-zinc-200 object-cover" />
+            </button>
+          )}
+          {editingAt === index ? (
+            <input
+              data-attachment-input=""
+              value={editingText}
+              autoFocus
+              onChange={(event) => setEditingText(event.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  commitRename();
+                }
+                if (event.key === "Escape") {
+                  setEditingAt(null);
+                }
+              }}
+              className="w-20 rounded border border-zinc-300 bg-white px-1 py-0.5 text-[10px] text-zinc-700 outline-none focus:border-zinc-400"
+            />
+          ) : null}
+          {editingAt === index && editingExt !== "" ? (
+            <span className="text-[10px] text-zinc-400">{editingExt}</span>
+          ) : onRename === undefined ? (
+            <span>{item.name}</span>
+          ) : (
+            <button
+              type="button"
+              data-rename-attachment=""
+              aria-label={"重命名 " + item.name}
+              title="点名字可自定义"
+              onClick={() => startRename(index)}
+              className="max-w-[9rem] truncate text-left transition hover:text-zinc-900 hover:underline"
+            >
+              {item.name}
+            </button>
+          )}
+          {onRemove === undefined ? null : (
+            <button
+              type="button"
+              data-action="remove-attachment"
+              aria-label={"移除 " + item.name}
+              onClick={() => onRemove(index)}
+              className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      {preview === null || previewUrl === null ? null : <PhotoPreview url={previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
+    </div>
+  );
+}
+
+/** 附图选择（原型：名字 + 图片预览地址，正式版走站内文件库）。
  *  Push 202 同批续：以**复制粘贴**为主入口（业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）——
  *  点一下虚线框拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
- *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**一分为二** —— 左半「复制粘贴」（主入口）、右半「点击选择文件」（次入口）；
+ *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `ctrl v` 键帽（主入口）、
+ *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 预览地址，胶囊出缩略图、点开可放大（「图片要可以预览」）；
  *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。 */
-function AttachmentPicker({ field, fileNames, onChange, ariaLabel }: { field: string; fileNames: readonly string[]; onChange: (names: string[]) => void; ariaLabel: string }) {
+function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string }) {
   /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
   const [armed, setArmed] = useState(false);
   /** 粘贴落点（左半里的不可见输入框：浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令）。 */
@@ -330,39 +462,38 @@ function AttachmentPicker({ field, fileNames, onChange, ariaLabel }: { field: st
   /** 粘贴图命名序号（截图多数没有名字 → 剪贴板图片-1.png / -2.png …）。 */
   const pasteSeq = useRef(0);
   /** 最新 props（document 级粘贴监听不随每次输入重挂）。 */
-  const latest = useRef({ fileNames, onChange });
-  latest.current = { fileNames, onChange };
+  const latest = useRef({ items, onChange });
+  latest.current = { items, onChange };
 
   /** 把一批新附件并进已有清单（粘贴与选文件共用；按现有顺序追加，同名不去重）。 */
-  const appendNames = (names: readonly string[]) => {
-    if (names.length === 0) {
+  const appendItems = (next: readonly ReportPhoto[]) => {
+    if (next.length === 0) {
       return;
     }
-    latest.current.onChange(latest.current.fileNames.concat(names));
+    latest.current.onChange(latest.current.items.concat(next));
   };
 
-  /** 剪贴板 / 文件框里的一批文件 → 文件名；其中没有图片时返回 false（不拦截这次粘贴）。 */
-  const appendImages = (files: readonly File[]): boolean => {
-    const images = files.filter((file) => file.type.indexOf("image/") === 0);
-    if (images.length === 0) {
-      return false;
-    }
-    appendNames(
-      images.map((file) => {
-        if (isClipboardGenericName(file.name) === false) {
-          return file.name;
-        }
-        pasteSeq.current += 1;
-        const slash = file.type.indexOf("/");
-        return "剪贴板图片-" + String(pasteSeq.current) + "." + (slash >= 0 ? file.type.slice(slash + 1) : "png");
-      }),
-    );
-    return true;
+  /** 一批文件 → 附件（图片给预览地址；`imagesOnly` = 粘贴路径只收图）。返回处理到的附件数。 */
+  const toItems = (files: readonly File[], imagesOnly: boolean): ReportPhoto[] => {
+    const picked = imagesOnly ? files.filter((file) => file.type.indexOf("image/") === 0) : files;
+    return picked.map((file) => {
+      const isImage = file.type.indexOf("image/") === 0;
+      if (isImage === false || isClipboardGenericName(file.name) === false) {
+        return { name: file.name, url: isImage ? URL.createObjectURL(file) : null };
+      }
+      pasteSeq.current += 1;
+      const slash = file.type.indexOf("/");
+      const ext = slash >= 0 ? file.type.slice(slash + 1) : "png";
+      return { name: "剪贴板图片-" + String(pasteSeq.current) + "." + ext, url: URL.createObjectURL(file) };
+    });
   };
 
   /** 一次粘贴：剪贴板里有图就留下（并 preventDefault，不让图片落成输入框内容）。 */
   const onPasteImage = (event: { clipboardData: DataTransfer | null; preventDefault: () => void }) => {
-    if (appendImages(Array.from(event.clipboardData?.files ?? []))) {
+    const files = Array.from(event.clipboardData?.files ?? []);
+    const next = toItems(files, true);
+    if (next.length > 0) {
+      appendItems(next);
       event.preventDefault();
     }
   };
@@ -429,31 +560,20 @@ function AttachmentPicker({ field, fileNames, onChange, ariaLabel }: { field: st
               type="file"
               multiple
               onChange={(event) => {
-                appendNames(Array.from(event.target.files ?? []).map((file) => file.name));
+                appendItems(toItems(Array.from(event.target.files ?? []), false));
                 event.target.value = "";
               }}
               className="hidden"
             />
           </label>
         </div>
-      </div>      {fileNames.length === 0 ? null : (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {fileNames.map((name, index) => (
-            <span key={name + "#" + String(index)} data-attachment={name} className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600">
-              {name}
-              <button
-                type="button"
-                data-action="remove-attachment"
-                aria-label={"移除 " + name}
-                onClick={() => onChange(fileNames.filter((_, at) => at !== index))}
-                className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
+      </div>
+      <PhotoStrip
+        items={items}
+        strip={field}
+        onRemove={(at) => onChange(items.filter((_, index) => index !== at))}
+        onRename={(at, name) => onChange(items.map((item, index) => (index === at ? { ...item, name } : item)))}
+      />
     </div>
   );
 }
@@ -506,17 +626,7 @@ function ReportList({ reports }: { reports: readonly DailyReport[] }) {
                 <td className="min-w-[210px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-800">{report.doneWork === "" ? "—" : report.doneWork}</td>
                 <td className="min-w-[180px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.plan === "" ? "—" : report.plan}</td>
                 <td className="min-w-[120px] border-b border-zinc-100 px-3 py-2.5">
-                  {report.photos.length === 0 ? (
-                    <span className="text-zinc-400">—</span>
-                  ) : (
-                    <span className="flex flex-wrap gap-1.5">
-                      {report.photos.map((photo) => (
-                        <span key={photo} className="rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600">
-                          {photo}
-                        </span>
-                      ))}
-                    </span>
-                  )}
+                  {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} />}
                 </td>
               </tr>
             );
@@ -771,7 +881,7 @@ function ReportFillForm({
           <div>
             <span className={FORM_LABEL}>当前问题附图</span>
             <div className="mt-1">
-              <AttachmentPicker field="issuePhotos" fileNames={draft.issuePhotos} onChange={(names) => onChange({ issuePhotos: names })} ariaLabel="当前问题附图：点击后 Ctrl+V 粘贴图片" />
+              <AttachmentPicker field="issuePhotos" items={draft.issuePhotos} onChange={(items) => onChange({ issuePhotos: items })} ariaLabel="当前问题附图：点击后 Ctrl+V 粘贴图片" />
             </div>
           </div>
         </div>
@@ -792,7 +902,7 @@ function ReportFillForm({
       <div>
         <span className={FORM_LABEL}>现场工作附图</span>
         <div className="mt-1">
-          <AttachmentPicker field="photos" fileNames={draft.photos} onChange={(names) => onChange({ photos: names })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
+          <AttachmentPicker field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
         </div>
       </div>
 
