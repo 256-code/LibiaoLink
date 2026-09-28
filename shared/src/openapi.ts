@@ -4,6 +4,8 @@ import { DateOnlySchema, IdempotencyKeySchema, UuidSchema } from "./common/conve
 import { StageKeySchema } from "./common/dicts.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
 import {
+  ProjectArchiveBodySchema,
+  ProjectArchiveViewSchema,
   ProjectCreateBodySchema,
   ProjectDeleteHeadersSchema,
   ProjectFacetsSchema,
@@ -253,6 +255,34 @@ export function buildOpenApiDocument() {
       409: commonErrors[409],
     },
   });
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/archive",
+    tags: ["projects"],
+    summary: "项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单）",
+    request: { params: idParams, body: json(ProjectArchiveBodySchema) },
+    responses: {
+      200: { description: "归档记录与清单（项目进入只读保护：写路径 409 PROJECT_ARCHIVED）", ...json(ProjectArchiveViewSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/archive",
+    tags: ["projects"],
+    summary: "归档清单（归档时点 + 统计口径 + 文件清单含版本；未归档 404）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "归档记录与清单", ...json(ProjectArchiveViewSchema) },
+      404: commonErrors[404],
+    },
+  });
+
   registry.registerPath({
     method: "get",
     path: "/api/v1/projects/{id}/members",

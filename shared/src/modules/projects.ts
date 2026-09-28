@@ -24,6 +24,12 @@ export const ProjectSchema = z
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
+    archivedAt: DateTimeSchema.nullable().openapi({
+      description: "归档时点（ADR-027 · M7-04）：仅归档端点置位；未归档 = null（归档后项目进入只读保护）",
+    }),
+    archivedBy: UuidSchema.nullable().openapi({
+      description: "归档操作人（users.id；仅归档端点置位）；未归档 = null",
+    }),
   })
   .openapi("Project", { description: "项目（v0.2 §2.3 projects）" });
 
@@ -75,6 +81,10 @@ export const ProjectListQuerySchema = z
     "filter[timeTo]": DateOnlySchema.optional().openapi({
       description: "项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断）",
     }),
+    "filter[archivedYear]": z
+      .string()
+      .optional()
+      .openapi({ description: "归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中）" }),
     q: z.string().optional().openapi({ description: "关键字（编号 / 名称 / 客户 / 序号）" }),
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
@@ -134,11 +144,101 @@ export const ProjectUpdateBodySchema = z
       description: "项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序",
     }),
     stageKey: StageKeySchema.optional(),
-    status: ProjectStatusSchema.optional(),
+    status: z
+      .enum(["active", "paused", "done"])
+      .optional()
+      .openapi({ description: "项目状态（active / paused / done）；archived 不接受 PATCH —— 归档只能走 POST /projects/{id}/archive（ADR-027 门禁 + 清单），确保归档必有清单与留痕" }),
     description: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
   })
   .openapi("ProjectUpdateBody");
+
+
+const ZeroOrMore = z.number().int().min(0);
+
+/**
+ * 归档（C4-02 / C4-03 · ADR-027 · M7-04）：门禁 + 引用式清单 + 冻结状态位（projects.status = archived）。
+ * 门禁两级：① 硬前置 = 验收阶段已完成（未完成 409 ARCHIVE_NOT_READY，不可确认越过）；
+ * ② 缺项清单 = 未完成任务 / 未定档文件 / 必交成果缺件（422 ARCHIVE_GATE_NOT_PASSED 返回明细；
+ *    项目经理确认（confirm = true）后放行归档，缺项随清单 acknowledgedMissing 留痕）。
+ * 清单为引用式快照：只记 id 与摘要（任务数与状态分布 / 阶段状态 / 文件清单含版本 / 变更 / 日报 / 问题），不复制业务数据；
+ * 归档不清数据、不改阶段；清单导出（目录结构 + 文件按类型 / 阶段组织）随 M7-03 导出框架。
+ */
+export const ProjectArchiveBodySchema = z
+  .object({
+    version: VersionSchema.openapi({ description: "项目当前 version（乐观锁；不匹配 409 VERSION_CONFLICT）" }),
+    confirm: z
+      .boolean()
+      .default(false)
+      .openapi({ description: "缺项确认：false（缺省）= 有缺项即 422；true = 确认带缺项归档（缺项入清单 acknowledgedMissing）" }),
+  })
+  .openapi("ProjectArchiveBody", { description: "归档请求：version 必带；缺项越过分两步（先 422 拿清单，再 confirm=true 重试）" });
+
+/** 归档缺项条目：422 明细与清单 acknowledgedMissing 同形（code / message / meta 三件套，与门禁 details 口径一致）。 */
+export const ProjectArchiveMissingSchema = z
+  .object({
+    code: z
+      .enum(["task_not_done", "file_not_final", "doc_missing"])
+      .openapi({ description: "缺项类型：task_not_done 未完成任务 / file_not_final 未定档文件 / doc_missing 必交成果缺件（A4-20 口径）" }),
+    message: z.string(),
+    meta: z.record(z.string(), z.unknown()).openapi({ description: "缺项定位（任务 id / 文件 id / 节点与文档类型等）" }),
+  })
+  .openapi("ProjectArchiveMissing", { description: "归档缺项条目（确认越过时原样入清单 acknowledgedMissing）" });
+
+/** 归档清单（引用式快照）：归档时点 + 统计口径 + 文件清单含版本；只记 id 与摘要，不复制业务数据。 */
+export const ProjectArchiveSnapshotSchema = z
+  .object({
+    stage: z.object({
+      stageKey: StageKeySchema,
+      status: z.string().openapi({ description: "阶段状态（归档时点；验收阶段应为 done）" }),
+      advancedAt: DateTimeSchema.nullable(),
+    }),
+    tasks: z.object({
+      total: ZeroOrMore,
+      byStatus: z.object({ pending: ZeroOrMore, active: ZeroOrMore, done: ZeroOrMore }),
+    }),
+    files: z.object({
+      total: ZeroOrMore,
+      items: z.array(
+        z.object({
+          id: UuidSchema,
+          name: z.string(),
+          docType: z.string().nullable().openapi({ description: "文档类型（字典 docType；未归类 = null）" }),
+          status: z.string().openapi({ description: "文件状态（draft / final / changed / archived / recycled 原样记）" }),
+          nodeId: UuidSchema.nullable().openapi({ description: "挂接节点（未挂节点 = null）" }),
+          versionCount: ZeroOrMore.openapi({ description: "版本数（含历史版本）" }),
+          latestSeq: ZeroOrMore.nullable().openapi({ description: "最新版本序号（无版本 = null）" }),
+          latestUploadedAt: DateTimeSchema.nullable(),
+        }),
+      ),
+    }),
+    changes: z.object({
+      total: ZeroOrMore,
+      items: z.array(
+        z.object({
+          id: UuidSchema,
+          reason: z.string().openapi({ description: "变更原因（摘要）" }),
+          stageKey: StageKeySchema.nullable(),
+          appliedAt: DateTimeSchema,
+        }),
+      ),
+    }),
+    reports: z.object({ total: ZeroOrMore, byState: z.object({ draft: ZeroOrMore, submitted: ZeroOrMore, supplement: ZeroOrMore }) }),
+    issues: z.object({ total: ZeroOrMore, byState: z.object({ unassigned: ZeroOrMore, open: ZeroOrMore, in_progress: ZeroOrMore, done: ZeroOrMore }) }),
+  })
+  .openapi("ProjectArchiveSnapshot", { description: "归档清单（引用式快照：统计口径 + 文件清单含版本 + 变更 / 日报 / 问题；只记 id 与摘要）" });
+
+export const ProjectArchiveViewSchema = z
+  .object({
+    id: UuidSchema,
+    projectId: UuidSchema,
+    archivedAt: DateTimeSchema,
+    archivedBy: UuidSchema,
+    archivedByName: z.string().nullable().openapi({ description: "归档操作人姓名（users.display_name；取不到 = null）" }),
+    snapshot: ProjectArchiveSnapshotSchema,
+    acknowledgedMissing: z.array(ProjectArchiveMissingSchema).openapi({ description: "确认越过的缺项清单（无缺项 = 空数组）" }),
+  })
+  .openapi("ProjectArchiveView", { description: "归档记录与清单（POST 归档返回；GET /projects/{id}/archive 读面同形）" });
 
 /** 首页侧边栏计数（facets）：与列表同一过滤口径（v0.2 §8.2）。 */
 export const ProjectFacetsSchema = z

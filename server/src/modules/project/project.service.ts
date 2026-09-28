@@ -43,6 +43,8 @@ export function toProjectView(view: ProjectViewRow): ProjectView {
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    archivedAt: row.archivedAt === null ? null : row.archivedAt.toISOString(),
+    archivedBy: row.archivedBy,
   };
 }
 

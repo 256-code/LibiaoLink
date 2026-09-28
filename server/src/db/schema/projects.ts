@@ -4,6 +4,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgTable,
   smallint,
   text,
@@ -36,6 +37,9 @@ export const projects = pgTable(
     /** deleted_at / deleted_by（0009）：软删（A5）；列表 / 详情 / facets 一律过滤 deleted_at is null。 */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: uuid("deleted_by"),
+    /** archived_at / archived_by（0036 · ADR-027 · M7-04）：归档端点置位（成对）；归档后写路径一律 409 PROJECT_ARCHIVED。 */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    archivedBy: uuid("archived_by"),
   },
   (table) => [
     unique("projects_code_key").on(table.code),
@@ -50,9 +54,37 @@ export const projects = pgTable(
     ),
     check("ck_projects_status", sql`${table.status} in ${sql.raw(sqlValueList(["active", "paused", "done", "archived"]))}`),
     check("ck_projects_version", sql`${table.version} >= 0`),
+    check("ck_projects_archived_pair", sql`(${table.archivedAt} is null) = (${table.archivedBy} is null)`),
     check("ck_projects_manager_ids", sql`cardinality(${table.managerIds}) >= 1`),
     check("ck_projects_manager_ids_no_null", sql`array_position(${table.managerIds}, null::uuid) is null`),
     check("ck_projects_seq_no", sql`${table.seqNo} > 0`),
+  ],
+);
+
+/**
+ * project_archives（0036 · ADR-027 · M7-04）：一项目一份的引用式归档清单 ——
+ * 只记 id 与摘要（任务数与状态分布 / 阶段状态 / 文件清单含版本 / 变更 / 日报 / 问题），不复制业务数据；
+ * 一期无解冻，唯一约束 = 一项目一份；归档不删任何数据、不改阶段。
+ */
+export const projectArchives = pgTable(
+  "project_archives",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id),
+    archivedAt: timestamp("archived_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 归档操作人（users.id；归档端点置位，与 projects.archived_by 同值）。 */
+    archivedBy: uuid("archived_by").notNull(),
+    /** 清单快照（引用式）：任务统计 / 阶段状态 / 文件清单含版本 / 变更 / 日报 / 问题；形态 = 契约 ProjectArchiveSnapshot。 */
+    snapshot: jsonb("snapshot").notNull(),
+    /** 确认越过的缺项（契约 ProjectArchiveMissing 数组；无缺项 = 空数组）。 */
+    acknowledgedMissing: jsonb("acknowledged_missing").notNull().default(sql`'[]'::jsonb`),
+  },
+  (table) => [
+    unique("uq_project_archives_project").on(table.projectId),
+    index("ix_project_archives_archived_at").on(table.archivedAt),
+    check("ck_project_archives_acknowledged", sql`jsonb_typeof(${table.acknowledgedMissing}) = 'array'`),
   ],
 );
 

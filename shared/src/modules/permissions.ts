@@ -7,12 +7,14 @@ import { UuidSchema } from "../common/conventions.ts";
  * 口径来源：技术设计v0.2 §4.1（六角色「关键能力 / 限制」列）+ ADR-011；新增键先入本数组，再落种子与策略表。
  * h8 起新增 calendar.manage（工作日历维护 D5-01 与顺延配置 D5-02，仅管理员）。
  * M6 起新增日报 / 问题四键（系统功能书 A3 与 §4.1「项目成员：日报、问题」）：report.view / report.fill / issue.view / issue.manage。
+ * M7-04 起新增 project.archive（ADR-027 归档端点：仅项目经理 / 管理员，归档写清单与审计）。
  */
 export const PERMISSION_KEYS = [
   "project.view",
   "project.create",
   "project.update",
   "project.delete",
+  "project.archive",
   "project.export",
   "member.view",
   "member.manage",

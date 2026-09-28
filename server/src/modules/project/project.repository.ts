@@ -7,7 +7,7 @@ import { changeRequests } from "../../db/schema/change.js";
 import { files, fileVersions } from "../../db/schema/files.js";
 import { nodeRequirements, projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
-import { projectMembers, projects, projectStages } from "../../db/schema/projects.js";
+import { projectArchives, projectMembers, projects, projectStages } from "../../db/schema/projects.js";
 import { dailyReports, issueEvents, issues } from "../../db/schema/reports.js";
 import { projectStakeholders } from "../../db/schema/stakeholders.js";
 import { taskEvents, tasks } from "../../db/schema/tasks.js";
@@ -237,7 +237,7 @@ export class ProjectRepository {
    * 同事务按外键依赖序清空项目聚合子表 → 删 projects 行；编号随行一起释放。
    * 子表顺序（全部 NO ACTION 外键，顺序错会撞 FK）：
    *   issue_events → task_events → file_versions → files → change_requests → issues → daily_reports
-   *   → tasks → node_requirements → project_nodes → project_stages → project_members → project_stakeholders。
+   *   → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders。
    * version 守卫落在最后一行 delete：不匹配返回 null（调用方抛 409，整事务回滚，子表一行不动）。
    */
   async hardDeleteWithVersion(
@@ -261,6 +261,7 @@ export class ProjectRepository {
     await client.delete(nodeRequirements).where(inArray(nodeRequirements.nodeId, nodeIds));
     await client.delete(projectNodes).where(eq(projectNodes.projectId, id));
     await client.delete(projectStages).where(eq(projectStages.projectId, id));
+    await client.delete(projectArchives).where(eq(projectArchives.projectId, id));
     await client.delete(projectMembers).where(eq(projectMembers.projectId, id));
     await client.delete(projectStakeholders).where(eq(projectStakeholders.projectId, id));
     const rows = await client
@@ -332,6 +333,10 @@ function projectConditions(filter: ProjectFilter, scope: ProjectScopeFilter): SQ
   // 「项目时间」区间 = **项目创建时间**（Push 175 业务定调；原 updated_at 口径作废）
   if (filter.createdFrom !== null) conditions.push(gte(projects.createdAt, filter.createdFrom));
   if (filter.createdToExclusive !== null) conditions.push(lt(projects.createdAt, filter.createdToExclusive));
+  // 归档年份（C4-07）：按 archived_at 的 Asia/Shanghai 年判定；未归档（archived_at 为空）不命中任何年份。
+  if (filter.archivedYears !== null) {
+    conditions.push(sql`extract(year from ${projects.archivedAt} at time zone ${String.fromCharCode(39)}Asia/Shanghai${String.fromCharCode(39)}) = any(${sql.param(filter.archivedYears)}::int[])`);
+  }
   return conditions;
 }
 

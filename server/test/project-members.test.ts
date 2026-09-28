@@ -133,6 +133,8 @@ function projectRow(status = "active"): ProjectViewRow {
       updatedAt: AT,
       deletedAt: null,
       deletedBy: null,
+      archivedAt: null,
+      archivedBy: null,
     },
     managerNames: ["项目经理甲"],
   };
