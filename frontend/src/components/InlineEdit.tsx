@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Member } from "../data/members";
 import { MemberSearchList } from "./MemberSelect";
-import { OptionList, type SelectOption } from "./SelectMenu";
+import { MultiOptionList, OptionList, type SelectOption } from "./SelectMenu";
 import { usePopover } from "./usePopover";
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
@@ -63,7 +63,7 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
           // Push 134：bare = 裸框模式 —— 撤掉小框的白底 / 描边 / 模糊，**尺寸与配色全交给调用方**（triggerClassName 给，
           // 例如状态列正常模式 = 色签填满整颗胶囊、醒目模式 = 只留深色字），基础类只留几何与过渡。
           (bare
-            ? "inline-flex max-w-full items-center justify-center rounded-lg text-left transition "
+            ? "inline-flex max-w-full items-center justify-start rounded-lg text-left transition "
             : "inline-flex max-w-full items-center gap-1 rounded-lg border px-1.5 py-[3px] text-left text-xs " +
               "backdrop-blur-[3px] transition " +
               (open
@@ -170,6 +170,40 @@ export function InlineOptionCell({ value, options, ariaLabel, onPick, display, b
             close();
           }}
         />
+      )}
+    />
+  );
+}
+
+type InlineMultiOptionCellProps = {
+  values: readonly string[];
+  options: readonly string[];
+  ariaLabel: string;
+  /** 勾选 / 取消勾选一枚（浮层不自动关 —— 可接着点下一枚）；落值 = 勾选顺序的数组。 */
+  onChange: (values: string[]) => void;
+  display: ReactNode;
+  /** 选项文案渲染（Push 208 追加 · 业务口径「要有颜色 两处」）：转交 MultiOptionList —— 给 = 出小色签。 */
+  renderLabel?: (option: string) => ReactNode;
+  /** 裸框模式（Push 134）：不套「液态玻璃」白底小框，底色 / 字色 / 内边距由 triggerClassName 给。 */
+  bare?: boolean;
+  /** 触发器附加类名（表格里给「悬停才现」的淡色可点提示）。 */
+  triggerClassName?: string;
+};
+
+/** 行内多选单元格（Push 208 · 业务口径「问题归类都要可以修改」）：浮层 = 与「问题归类」表单侧同款的
+ *  MultiOptionList（绿勾选中项、点选不收浮层、再点取消）；点浮层外 / Esc 收起。 */
+export function InlineMultiOptionCell({ values, options, ariaLabel, onChange, display, renderLabel, bare = false, triggerClassName }: InlineMultiOptionCellProps) {
+  return (
+    <InlineCell
+      ariaLabel={ariaLabel}
+      title="点击选择（可多选）"
+      width={180}
+      height={options.length * 34 + 12}
+      bare={bare}
+      triggerClassName={triggerClassName}
+      display={display}
+      render={() => (
+        <MultiOptionList values={values} options={options} ariaLabel={ariaLabel} onChange={onChange} renderLabel={renderLabel} />
       )}
     />
   );
@@ -407,17 +441,31 @@ function NumberEditor({
   );
 }
 
-/** 行内文本单元格（项目进展描述）。 */
+/** 行内文本单元格（项目进展描述；Push 208 起「问题描述 / 解决方案或建议 / 当日完成工作 / 明日计划」共用）。
+ *  「文字修改需要点击保存」（Push 208 业务口径）：浮层 = 多行框（自动聚焦）+ 取消 / 保存 —— **点「保存」才落值**
+ *  （落值即收浮层）；取消 / Esc / 点浮层外收起 = 原值不动（Push 208 同批把「保存不收层」改成「保存即收层」）。 */
 export function InlineTextCell({
   value,
   display,
   ariaLabel,
   onSave,
+  placeholder = "补充当前进展、风险或下一步",
+  rows = 3,
+  bare = false,
+  triggerClassName,
 }: {
   value: string;
   display: ReactNode;
   ariaLabel: string;
   onSave: (value: string) => void;
+  /** 空值时的框内占位文案（缺省 = 项目总览「项目进展描述」原口径）。 */
+  placeholder?: string;
+  /** 多行框的初始高度下限（行数）。 */
+  rows?: number;
+  /** 裸框模式（Push 134）：不套「液态玻璃」白底小框，底色 / 字色 / 内边距由 triggerClassName 给。 */
+  bare?: boolean;
+  /** 触发器附加类名。 */
+  triggerClassName?: string;
 }) {
   return (
     <InlineCell
@@ -425,23 +473,51 @@ export function InlineTextCell({
       title="点击填写"
       width={268}
       height={186}
+      bare={bare}
+      triggerClassName={triggerClassName}
       display={display}
-      render={(close) => <TextEditor value={value} onSave={onSave} onCancel={close} />}
+      render={(close) => (
+        <TextEditor
+          value={value}
+          ariaLabel={ariaLabel}
+          placeholder={placeholder}
+          rows={rows}
+          onSave={(next) => {
+            onSave(next);
+            close();
+          }}
+          onCancel={close}
+        />
+      )}
     />
   );
 }
 
-function TextEditor({ value, onSave, onCancel }: { value: string; onSave: (value: string) => void; onCancel: () => void }) {
+function TextEditor({
+  value,
+  ariaLabel,
+  placeholder,
+  rows,
+  onSave,
+  onCancel,
+}: {
+  value: string;
+  ariaLabel: string;
+  placeholder: string;
+  rows: number;
+  onSave: (value: string) => void;
+  onCancel: () => void;
+}) {
   const [text, setText] = useState(value);
 
   return (
     <div className="p-3">
       <textarea
         autoFocus
-        rows={3}
+        rows={rows}
         value={text}
-        aria-label="项目进展描述"
-        placeholder="补充当前进展、风险或下一步"
+        aria-label={ariaLabel}
+        placeholder={placeholder}
         onChange={(event) => {
           setText(event.target.value);
         }}
@@ -455,6 +531,7 @@ function TextEditor({ value, onSave, onCancel }: { value: string; onSave: (value
       <div className="mt-2.5 flex justify-end gap-2">
         <button
           type="button"
+          data-inline-cancel="true"
           onClick={onCancel}
           className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-100"
         >
@@ -462,6 +539,7 @@ function TextEditor({ value, onSave, onCancel }: { value: string; onSave: (value
         </button>
         <button
           type="button"
+          data-inline-save="true"
           onClick={() => {
             onSave(text.trim());
           }}
