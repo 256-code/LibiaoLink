@@ -4,6 +4,7 @@ import { Logger } from "nestjs-pino";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
 import { FileService, PreviewService } from "../modules/file/index.js";
+import { OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
 const HEARTBEAT_MS = 60_000;
@@ -24,11 +25,14 @@ async function bootstrap(): Promise<void> {
   const database = app.get(DatabaseService);
   const files = app.get(FileService);
   const previews = app.get(PreviewService);
+  const dispatcher = app.get(OutboxDispatcher);
+  const alerts = app.get(OutboxAlertProbe);
+  const retention = app.get(OutboxRetention);
 
   if (process.argv.includes("--health-check")) {
     try {
       await database.ping();
-      logger.log("worker 健康检查通过：PG 连通（骨架阶段无投递任务）");
+      logger.log("worker 健康检查通过：PG 连通（一次性检查，不启动常驻循环）");
       await app.close();
       process.exit(0);
     } catch (error) {
@@ -39,7 +43,7 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（已接入上传会话过期清理 / 回收站到期清理 / 预览转换队列；通用 Outbox 投递 / 调度 / 规则随后续卡片接入）",
+    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费 · 积压与死信告警 · done 行保留期清理；调度器随后续卡片接入）",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
@@ -69,12 +73,10 @@ async function bootstrap(): Promise<void> {
   const recycleSweep = setInterval(() => void sweepRecycled(), RECYCLE_SWEEP_INTERVAL_MS);
   void sweepRecycled();
 
-  // 预览转换队列（M4-05c）：一轮最多领 OUTBOX_BATCH_LIMIT 条（默认 2），串行消费；
-  // 单条最长占满客户端超时（默认 90s），用 draining 闸门避免上一轮没跑完就叠加下一轮。
-  const previewEnabled = env.PREVIEW_JOB_ENABLED === "true";
-  if (previewEnabled) {
-    // 启动自检：转换器可达性 + 管线版本比对（不一致只会让任务按确定性失败降级，绝不写错缓存键 ——
-    // 「换镜像必须递增 PREVIEW_PIPELINE_VERSION」，deploy/preview/README「四」）。
+  // 预览转换器启动自检（M4-05c）：可达性 + 管线版本比对（不一致只会让任务按确定性失败降级，绝不写错缓存键 ——
+  // 「换镜像必须递增 PREVIEW_PIPELINE_VERSION」，deploy/preview/README「四」）。
+  // 关闭时预览不入消费注册表（OutboxModule）：preview.job 只投递不消费，属排障态。
+  if (env.PREVIEW_JOB_ENABLED === "true") {
     const health = await previews.checkConverter();
     if (health.ok && health.versionMatches) {
       logger.log("预览转换器自检通过：" + health.detail);
@@ -85,44 +87,70 @@ async function bootstrap(): Promise<void> {
     logger.warn("预览转换队列已关闭（PREVIEW_JOB_ENABLED=false）：preview.job 只投递不消费");
   }
 
+  // Outbox 分派（S7-1）：一轮 = 按注册主题各领一批（每主题 OUTBOX_BATCH_LIMIT 条，SKIP LOCKED）后串行收敛；
+  // 单条预览最长占满客户端超时（默认 90s），用 draining 闸门避免上一轮没跑完就叠加下一轮。
   let draining = false;
-  const drainPreviews = async (): Promise<void> => {
+  const drainOutbox = async (): Promise<void> => {
     if (draining) {
       return;
     }
     draining = true;
     try {
-      const stats = await previews.drainOnce();
+      const stats = await dispatcher.drainOnce();
       if (stats.claimed > 0) {
         logger.log(
-          "预览队列：领取 " + stats.claimed + " / 就绪 " + stats.ready + " / 复用 " + stats.reused + " / 重试 " +
-            stats.retried + " / 放弃 " + stats.dead + " / 跳过 " + stats.skipped,
+          "outbox 分派：领取 " + stats.claimed + " / done " + stats.done + " / 重试 " + stats.retried + " / 死信 " +
+            stats.dead,
         );
       }
     } catch (error) {
-      logger.error("预览队列领取失败：" + (error instanceof Error ? error.message : String(error)));
+      logger.error("outbox 分派失败：" + messageOf(error));
     } finally {
       draining = false;
     }
   };
-  const previewPoll = previewEnabled ? setInterval(() => void drainPreviews(), env.OUTBOX_POLL_MS) : null;
-  if (previewPoll !== null) {
-    void drainPreviews();
-  }
+  const outboxPoll = setInterval(() => void drainOutbox(), env.OUTBOX_POLL_MS);
+  void drainOutbox();
+
+  // 积压 / 最老待领取 / 近期死信告警（ADR-005）；死信单条即时告警不依赖本循环（dispatcher 直发）。
+  const probeAlerts = async (): Promise<void> => {
+    try {
+      await alerts.probeOnce();
+    } catch (error) {
+      logger.error("outbox 告警探针失败：" + messageOf(error));
+    }
+  };
+  const alertProbe = setInterval(() => void probeAlerts(), env.OUTBOX_ALERT_INTERVAL_MS);
+  void probeAlerts();
+
+  // done 行保留期清理（ADR-005 约 90 天）：分批删除，内容与条数由 OutboxRetention 自记日志。
+  const sweepOutbox = async (): Promise<void> => {
+    try {
+      await retention.sweepOnce();
+    } catch (error) {
+      logger.error("outbox done 行清理失败：" + messageOf(error));
+    }
+  };
+  const retentionSweep = setInterval(() => void sweepOutbox(), env.OUTBOX_RETENTION_INTERVAL_MS);
+  void sweepOutbox();
 
   const shutdown = async (signal: string): Promise<void> => {
     clearInterval(heartbeat);
     clearInterval(sweep);
     clearInterval(recycleSweep);
-    if (previewPoll !== null) {
-      clearInterval(previewPoll);
-    }
+    clearInterval(outboxPoll);
+    clearInterval(alertProbe);
+    clearInterval(retentionSweep);
     logger.log("worker 收到 " + signal + "，正在退出");
     await app.close();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 await bootstrap();
