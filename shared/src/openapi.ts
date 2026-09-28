@@ -4,6 +4,8 @@ import { DateOnlySchema, IdempotencyKeySchema, UuidSchema } from "./common/conve
 import { StageKeySchema } from "./common/dicts.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
 import {
+  ProjectArchiveBodySchema,
+  ProjectArchiveViewSchema,
   ProjectCreateBodySchema,
   ProjectDeleteHeadersSchema,
   ProjectFacetsSchema,
@@ -75,6 +77,7 @@ import {
   IssueListResponseSchema,
   IssueUpdateBodySchema,
 } from "./modules/issues.ts";
+import { WorkspaceResponseSchema } from "./modules/workspace.ts";
 import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
@@ -243,15 +246,43 @@ export function buildOpenApiDocument() {
     method: "delete",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
-    summary: "删除项目（软删；If-Match 回传当前 version 防误删）",
+    summary: "删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删）",
     request: { params: idParams, headers: ProjectDeleteHeadersSchema },
     responses: {
-      200: { description: "已软删项目（列表 / 详情 / facets / 搜索不再返回）", ...json(ProjectSchema) },
+      200: { description: "已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建）", ...json(ProjectSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
     },
   });
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/archive",
+    tags: ["projects"],
+    summary: "项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单）",
+    request: { params: idParams, body: json(ProjectArchiveBodySchema) },
+    responses: {
+      200: { description: "归档记录与清单（项目进入只读保护：写路径 409 PROJECT_ARCHIVED）", ...json(ProjectArchiveViewSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/archive",
+    tags: ["projects"],
+    summary: "归档清单（归档时点 + 统计口径 + 文件清单含版本；未归档 404）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "归档记录与清单", ...json(ProjectArchiveViewSchema) },
+      404: commonErrors[404],
+    },
+  });
+
   registry.registerPath({
     method: "get",
     path: "/api/v1/projects/{id}/members",
@@ -1457,6 +1488,18 @@ export function buildOpenApiDocument() {
       409: commonErrors[409],
     },
   });
+  // ---- 工作台（M6-05 第一刀 · A6-01 / A6-03：我的任务 / 我负责的问题 · wmj 线）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/workspace",
+    tags: ["workspace"],
+    summary: "工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的）",
+    responses: {
+      200: { description: "工作台聚合（按会话用户；记录级可见性过滤后）", ...json(WorkspaceResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1482,6 +1525,7 @@ export function buildOpenApiDocument() {
       { name: "stakeholders", description: "干系人台账与项目关联（A5-01~A5-04 / A5-07；隐私字段走字段级策略）" },
       { name: "reports", description: "日报（A3-01 / A3-02 / A3-08 / A3-09；M6-01 / M6-02）" },
       { name: "issues", description: "问题闭环（A3-09~A3-13；四态流转 / 分派 / 留痕，M6-02 / M6-03）" },
+      { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
     ],
   });
 }

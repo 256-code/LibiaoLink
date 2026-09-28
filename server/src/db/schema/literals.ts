@@ -57,7 +57,7 @@ export const DATA_SCOPE_KEYS = [
 /**
  * 审计动作（audit_logs.action，h7 · C7 + M4-05）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 预览查看 / 离线下载 / 越权拒绝。
  * 与 shared/src/modules/audits.ts 的 AUDIT_ACTIONS 同序同值 —— 一致性由 test/schema-literals-parity.test.ts 守护
- * （check:db-schema 只比 CHECK 约束名、不比取值）；preview（D2-07）与 download（Push 160 定案 · A4-10）随 M4-05 一次补齐。
+ * （check:db-schema 只比 CHECK 约束名、不比取值）；preview（D2-07）与 download（Push 160 定案 · A4-10）随 M4-05 一次补齐；archive（M7-04 · ADR-027 归档）随 0036 补齐。
  */
 export const AUDIT_ACTION_KEYS = [
   "create",
@@ -67,6 +67,7 @@ export const AUDIT_ACTION_KEYS = [
   "complete",
   "advance",
   "rollback",
+  "archive",
   "preview",
   "download",
   "deny",

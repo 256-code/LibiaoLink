@@ -492,8 +492,8 @@ export class FlowService {
     return view;
   }
 
-  /** 节点增删 / 阶段推进的权限：项目经理（manager_ids 任一位）/ 名册项目经理 / 管理员（ADR-020 / A22）；记录级 404 语义随 h6。 */
-  private async assertProjectManager(projectId: string, managerIds: readonly string[], actorId: string, action: string): Promise<void> {
+  /** 节点增删 / 阶段推进 / 项目归档的权限：项目经理（manager_ids 任一位）/ 名册项目经理 / 管理员（ADR-020 / A22 / ADR-027）；记录级 404 语义随 h6。 */
+  async assertProjectManager(projectId: string, managerIds: readonly string[], actorId: string, action: string): Promise<void> {
     const authorization = await this.roles.getActorAuthorization(actorId);
     if (authorization.roleCodes.includes("admin")) return;
     if (managerIds.includes(actorId)) return;

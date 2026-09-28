@@ -7,6 +7,7 @@
 //   DATABASE_URL=postgres://user:pass@host:5432/db node scripts/seed.mjs
 //   DATABASE_URL=... node scripts/seed.mjs --dry-run
 //   DATABASE_URL=... node scripts/seed.mjs --only=roles
+//   DATABASE_URL=... node scripts/seed.mjs --with-optional   # 连可选种子（演示数据）一起跑
 //   也可用 PG* 环境变量（PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE）。
 
 import path from "node:path";
@@ -25,6 +26,7 @@ const LOCK_KEY = 20260919;
 const DRY_RUN = process.argv.includes("--dry-run");
 const ONLY_ARG = process.argv.find((arg) => arg.startsWith("--only="));
 const ONLY = ONLY_ARG === undefined ? null : ONLY_ARG.slice("--only=".length);
+const WITH_OPTIONAL = process.argv.includes("--with-optional");
 
 function describeTarget() {
   const url = process.env.DATABASE_URL;
@@ -36,7 +38,14 @@ function describeTarget() {
 }
 
 async function main() {
-  const selected = ONLY === null ? SEEDS : SEEDS.filter((seed) => seed.name === ONLY);
+  // 可选种子（optional = true，例如演示数据）：默认不执行 —— CI 与正式环境不需要它们；--with-optional 显式带上。
+  const optionalSeeds = SEEDS.filter((seed) => seed.optional === true);
+  const selected =
+    ONLY !== null
+      ? SEEDS.filter((seed) => seed.name === ONLY)
+      : WITH_OPTIONAL
+        ? SEEDS
+        : SEEDS.filter((seed) => seed.optional !== true);
   if (selected.length === 0) {
     console.error("seed: --only=" + ONLY + " 未匹配任何种子；可用：" + SEEDS.map((seed) => seed.name).join(" / "));
     process.exitCode = 1;
@@ -45,6 +54,11 @@ async function main() {
   console.log(
     "seed: 目标 " + describeTarget() + "，种子目录 " + SEEDS_DIR + (DRY_RUN ? "（dry-run，全部回滚）" : ""),
   );
+  if (ONLY === null && !WITH_OPTIONAL && optionalSeeds.length > 0) {
+    console.log(
+      "seed: 跳过可选种子 " + optionalSeeds.map((seed) => seed.name).join(" / ") + "（演示数据；--only=<name> 或 --with-optional 显式执行）",
+    );
+  }
   const client = new Client(process.env.DATABASE_URL ? { connectionString: process.env.DATABASE_URL } : {});
   await client.connect();
   try {

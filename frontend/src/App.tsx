@@ -245,7 +245,7 @@ export default function App() {
   };
 
   /**
-   * 删除项目（A5；Push 172 接上入口）：软删 + If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
+   * 删除项目（A5；Push 172 接上入口）：硬删（连同聚合子表物理删）+ If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
    * 点一下先出确认条（项目是数据级操作），确认后才调 DELETE —— 成功后 dataVersion +1 刷新列表 / 详情。
    */
   const handleConfirmDeleteProject = async (): Promise<void> => {
@@ -443,7 +443,7 @@ export default function App() {
           className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
         >
           <span>
-            删除项目 <span className="font-mono font-semibold">{pendingDelete.code}</span>（{pendingDelete.description}）？删除后列表与详情不再可见。
+            删除项目 <span className="font-mono font-semibold">{pendingDelete.code}</span>（{pendingDelete.description}）？删除后连同任务一起删除、编号可再用。
           </span>
           <button
             type="button"

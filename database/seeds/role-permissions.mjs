@@ -14,12 +14,14 @@ export const MATRIX = [
     // h7 起新增 dict.manage（字典维护，C9-02 变更留痕）与 audit.view（审计检索，C7-04）；
     // h8 起新增 calendar.manage（工作日历维护 D5-01 与顺延配置 D5-02）；管理面 UI 随 u12（px 线）。
     // M6 起新增日报 / 问题四键（report.view / report.fill / issue.view / issue.manage，A3 与 §4.1）。
+    // M7-04 起新增 project.archive（归档端点，ADR-027，仅项目经理 / 管理员）。
     roleCode: "admin",
     keys: [
       "project.view",
       "project.create",
       "project.update",
       "project.delete",
+      "project.archive",
       "project.export",
       "member.view",
       "member.manage",
@@ -51,6 +53,7 @@ export const MATRIX = [
   },
   {
     // 项目经理：「建项目 / 导入蓝图、成员、节点增删、定档、变更」；限制「不可越项目范围」由项目上下文（manager_id / 名册）保证。
+    // M7-04 起新增 project.archive（归档，ADR-027：门禁 + 清单 + 只读保护）。
     // 不含 blueprint.manage：蓝图维护仅管理员（ADR-019 / ADR-020）。
     roleCode: "project_manager",
     keys: [
@@ -58,6 +61,7 @@ export const MATRIX = [
       "project.create",
       "project.update",
       "project.delete",
+      "project.archive",
       "project.export",
       "member.view",
       "member.manage",

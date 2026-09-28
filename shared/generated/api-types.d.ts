@@ -28,6 +28,8 @@ export interface paths {
                     "filter[timeFrom]"?: components["schemas"]["DateOnly"];
                     /** @description 项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中） */
+                    "filter[archivedYear]"?: string;
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
@@ -139,6 +141,8 @@ export interface paths {
                     "filter[timeFrom]"?: components["schemas"]["DateOnly"];
                     /** @description 项目**创建时间**上界（YYYY-MM-DD，含当日；按次日 00:00:00+08:00 不含截断） */
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
+                    /** @description 归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中） */
+                    "filter[archivedYear]"?: string;
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
@@ -222,7 +226,7 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        /** 删除项目（软删；If-Match 回传当前 version 防误删） */
+        /** 删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删） */
         delete: {
             parameters: {
                 query?: never;
@@ -238,7 +242,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 已软删项目（列表 / 详情 / facets / 搜索不再返回） */
+                /** @description 已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建） */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -333,6 +337,126 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 归档清单（归档时点 + 统计口径 + 文件清单含版本；未归档 404） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 归档记录与清单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectArchiveView"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectArchiveBody"];
+                };
+            };
+            responses: {
+                /** @description 归档记录与清单（项目进入只读保护：写路径 409 PROJECT_ARCHIVED） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectArchiveView"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/{id}/members": {
@@ -2187,7 +2311,7 @@ export interface paths {
                     objectId?: string;
                     /** @description 操作人（按人检索 —— h7 验收项②） */
                     actorId?: components["schemas"]["Uuid"] & unknown;
-                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝 */
+                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝 */
                     action?: components["schemas"]["AuditAction"];
                     /** @description result=denied 即越权尝试（C7-03） */
                     result?: components["schemas"]["AuditResult"] & unknown;
@@ -5693,6 +5817,51 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 工作台聚合（按会话用户；记录级可见性过滤后） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5723,10 +5892,10 @@ export interface components {
             traceId: string;
         };
         /**
-         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
          * @enum {string}
          */
-        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "preview" | "download" | "deny";
+        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "archive" | "preview" | "download" | "deny";
         /** @description 字段级修改条目（C7-02） */
         AuditChange: {
             /** @description 字段名（契约口径 camelCase） */
@@ -6233,7 +6402,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -6507,7 +6676,7 @@ export interface components {
          * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
          * @enum {string}
          */
-        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage";
+        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.archive" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage";
         /** @description 当前用户授权画像（未登录 401） */
         PermissionMeResponse: {
             permissions: components["schemas"]["ActorPermissions"];
@@ -6557,6 +6726,103 @@ export interface components {
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
+            archivedAt: components["schemas"]["DateTime"] & (string | null);
+            archivedBy: components["schemas"]["Uuid"] & (string | null);
+        };
+        /** @description 归档请求：version 必带；缺项越过分两步（先 422 拿清单，再 confirm=true 重试） */
+        ProjectArchiveBody: {
+            version: components["schemas"]["Version"] & unknown;
+            /**
+             * @description 缺项确认：false（缺省）= 有缺项即 422；true = 确认带缺项归档（缺项入清单 acknowledgedMissing）
+             * @default false
+             */
+            confirm: boolean;
+        };
+        /** @description 归档缺项条目（确认越过时原样入清单 acknowledgedMissing） */
+        ProjectArchiveMissing: {
+            /**
+             * @description 缺项类型：task_not_done 未完成任务 / file_not_final 未定档文件 / doc_missing 必交成果缺件（A4-20 口径）
+             * @enum {string}
+             */
+            code: "task_not_done" | "file_not_final" | "doc_missing";
+            message: string;
+            /** @description 缺项定位（任务 id / 文件 id / 节点与文档类型等） */
+            meta: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description 归档清单（引用式快照：统计口径 + 文件清单含版本 + 变更 / 日报 / 问题；只记 id 与摘要） */
+        ProjectArchiveSnapshot: {
+            stage: {
+                stageKey: components["schemas"]["StageKey"];
+                /** @description 阶段状态（归档时点；验收阶段应为 done） */
+                status: string;
+                advancedAt: components["schemas"]["DateTime"] & (string | null);
+            };
+            tasks: {
+                total: number;
+                byStatus: {
+                    pending: number;
+                    active: number;
+                    done: number;
+                };
+            };
+            files: {
+                total: number;
+                items: {
+                    id: components["schemas"]["Uuid"];
+                    name: string;
+                    /** @description 文档类型（字典 docType；未归类 = null） */
+                    docType: string | null;
+                    /** @description 文件状态（draft / final / changed / archived / recycled 原样记） */
+                    status: string;
+                    nodeId: components["schemas"]["Uuid"] & (string | null);
+                    /** @description 版本数（含历史版本） */
+                    versionCount: number;
+                    /** @description 最新版本序号（无版本 = null） */
+                    latestSeq: number | null;
+                    latestUploadedAt: components["schemas"]["DateTime"] & (string | null);
+                }[];
+            };
+            changes: {
+                total: number;
+                items: {
+                    id: components["schemas"]["Uuid"];
+                    /** @description 变更原因（摘要） */
+                    reason: string;
+                    stageKey: components["schemas"]["StageKey"] & (string | null);
+                    appliedAt: components["schemas"]["DateTime"];
+                }[];
+            };
+            reports: {
+                total: number;
+                byState: {
+                    draft: number;
+                    submitted: number;
+                    supplement: number;
+                };
+            };
+            issues: {
+                total: number;
+                byState: {
+                    unassigned: number;
+                    open: number;
+                    in_progress: number;
+                    done: number;
+                };
+            };
+        };
+        /** @description 归档记录与清单（POST 归档返回；GET /projects/{id}/archive 读面同形） */
+        ProjectArchiveView: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            archivedAt: components["schemas"]["DateTime"];
+            archivedBy: components["schemas"]["Uuid"];
+            /** @description 归档操作人姓名（users.display_name；取不到 = null） */
+            archivedByName: string | null;
+            snapshot: components["schemas"]["ProjectArchiveSnapshot"];
+            /** @description 确认越过的缺项清单（无缺项 = 空数组） */
+            acknowledgedMissing: components["schemas"]["ProjectArchiveMissing"][];
         };
         /** @description 创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回 */
         ProjectCreateBody: {
@@ -6718,7 +6984,11 @@ export interface components {
             /** @description 项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序 */
             managerIds?: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
-            status?: components["schemas"]["ProjectStatus"];
+            /**
+             * @description 项目状态（active / paused / done）；archived 不接受 PATCH —— 归档只能走 POST /projects/{id}/archive（ADR-027 门禁 + 清单），确保归档必有清单与留痕
+             * @enum {string}
+             */
+            status?: "active" | "paused" | "done";
             description?: string | null;
             version: components["schemas"]["Version"];
         };
@@ -6981,7 +7251,7 @@ export interface components {
             titleEn?: string | null;
             taskNodeId?: components["schemas"]["Uuid"] & unknown;
             sourceNodeId?: components["schemas"]["Uuid"] & unknown;
-            /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理（projects.manager_ids）兜底；显式 [] = 「待分配」（不兜底项目经理，沿用 A18）；数组顺序 = 展示顺序 */
+            /** @description 任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置，数组顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
@@ -7002,7 +7272,7 @@ export interface components {
              * @default true
              */
             skipExisting: boolean;
-            /** @description 任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」 */
+            /** @description 任务负责人：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义 */
             ownerIds?: components["schemas"]["Uuid"][];
             /** @description 起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾 */
             sortIndex?: number;
@@ -7384,6 +7654,69 @@ export interface components {
         Uuid: string;
         /** @description 乐观锁版本：读取时返回，更新时必须原样回传，冲突返回 409 */
         Version: number;
+        /** @description 工作台问题项（跨项目） */
+        WorkspaceIssueItem: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            projectCode: string;
+            projectName: string;
+            taskId: components["schemas"]["Uuid"] & (string | null);
+            title: string;
+            category: components["schemas"]["IssueCategory"] & unknown;
+            state: components["schemas"]["IssueState"];
+            reporterId: components["schemas"]["Uuid"];
+            reporterName: string | null;
+            ownerDepartment: string | null;
+            ownerId: components["schemas"]["Uuid"] & (string | null);
+            ownerName: string | null;
+            dueAt: components["schemas"]["DateTime"] & (string | null);
+            raisedAt: components["schemas"]["DateOnly"] & unknown;
+            updatedAt: components["schemas"]["DateTime"];
+            version: components["schemas"]["Version"];
+        };
+        /** @description 我的问题两栏（A6-03）；同一问题两边都命中时两个清单都出现；未关闭在前、已完成后置 */
+        WorkspaceIssues: {
+            /** @description 我处理的（ownerId = 会话用户） */
+            handling: components["schemas"]["WorkspaceIssueItem"][];
+            /** @description 我提出的（reporterId = 会话用户） */
+            raised: components["schemas"]["WorkspaceIssueItem"][];
+        };
+        /** @description 工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏 */
+        WorkspaceResponse: {
+            today: components["schemas"]["DateOnly"] & unknown;
+            myTasks: components["schemas"]["WorkspaceTasks"];
+            myIssues: components["schemas"]["WorkspaceIssues"];
+        };
+        /** @description 工作台任务项（跨项目；按预计完成日期落入三组之一） */
+        WorkspaceTaskItem: {
+            id: components["schemas"]["Uuid"];
+            projectId: components["schemas"]["Uuid"];
+            /** @description 项目编号（跨项目列表直接展示） */
+            projectCode: string;
+            projectName: string;
+            stageKey: components["schemas"]["StageKey"] & (string | null);
+            title: string;
+            titleEn: string | null;
+            displayStatus: components["schemas"]["TaskDisplayStatus"] & unknown;
+            progress: components["schemas"]["TaskProgress"];
+            plannedStart: components["schemas"]["DateOnly"] & (string | null);
+            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
+            actualEnd: components["schemas"]["DateOnly"] & (string | null);
+            /** @description 任务负责人（多值；本组内必含会话用户） */
+            ownerIds: components["schemas"]["Uuid"][];
+            /** @description 负责人姓名（与 ownerIds 同下标；缺失为 null） */
+            ownerNames: (string | null)[];
+            priority: components["schemas"]["Priority"];
+        };
+        /** @description 我的任务三组（A6-01；组内按 plannedEnd 升序、id 升序） */
+        WorkspaceTasks: {
+            /** @description 今日待办：plannedEnd = 今天且未完成 */
+            today: components["schemas"]["WorkspaceTaskItem"][];
+            /** @description 即将到期：今天 < plannedEnd ≤ 今天 + 7 天且未完成 */
+            upcoming: components["schemas"]["WorkspaceTaskItem"][];
+            /** @description 已逾期：plannedEnd < 今天且未完成 */
+            overdue: components["schemas"]["WorkspaceTaskItem"][];
+        };
     };
     responses: never;
     parameters: never;

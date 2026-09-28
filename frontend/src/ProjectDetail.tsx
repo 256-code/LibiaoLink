@@ -10,7 +10,7 @@ import type { TaskEditSubmit } from "./components/TaskDrawer";
 import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
-import type { Member } from "./data/members";
+import { memberNameOf, type Member } from "./data/members";
 import type { ProjectTask, TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { projectManagerText } from "./types";
@@ -162,9 +162,14 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);
 
-  /** 单行替换（PATCH / 进度写入都回单行）：ownerNames 与文件摘要写入响应不带，从旧行继承。 */
+  /**
+   * 单行替换（PATCH / 进度写入都回单行）：文件摘要从旧行继承；
+   * 负责人姓名走用户目录（写回响应不带 ownerNames —— 不补的话改完负责人要刷新才显示）。
+   */
   const replaceRow = (view: ApiTaskListItem | ApiTask): void => {
-    setRawTasks((current) => current.map((row) => (row.id === view.id ? toUiTask(view, row) : row)));
+    setRawTasks((current) =>
+      current.map((row) => (row.id === view.id ? toUiTask(view, row, (id) => memberNameOf(members, id)) : row)),
+    );
   };
 
   /** 汇总卡重取（最慢 / 最新阶段、逾期与完成数都可能被一次写入改动）。 */

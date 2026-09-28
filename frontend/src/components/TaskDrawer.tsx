@@ -11,6 +11,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
+import { lockBodyScroll } from "../scrollLock";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
@@ -161,11 +162,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     if (taskId === null) {
       return;
     }
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
+    // Push 186：锁滚动时按滚动条实测宽度补 padding-right，否则抽屉一开一关会把整张表横向撑开再缩回（浏览器看起来是「抖一下」）。
+    // 细节与还原口径见 frontend/src/scrollLock.ts。
+    return lockBodyScroll();
   }, [taskId]);
 
   useEffect(() => {

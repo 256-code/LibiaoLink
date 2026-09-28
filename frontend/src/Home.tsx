@@ -36,7 +36,7 @@ type HomeProps = {
   canCreateProject: boolean;
   /** 是否持有 project.update（Push 173）：无权限时卡片编辑入口不渲染（与删除同款收敛口径）。 */
   canUpdateProject: boolean;
-  /** 卡片删除项目（软删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
+  /** 卡片删除项目（硬删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
   onDeleteProject: (project: Project) => void;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
   onCreate: (draft: ProjectDraft) => Promise<string | null>;

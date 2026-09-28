@@ -113,6 +113,7 @@ export const PROJECT_MANAGER_IMPLIED_KEYS: readonly PermissionKey[] = [
   ...PROJECT_MEMBER_IMPLIED_KEYS,
   "project.update",
   "project.delete",
+  "project.archive",
   "member.manage",
   "node.create",
   "node.delete",

@@ -241,7 +241,7 @@ export const TaskCreateBodySchema = z
     }),
     ownerIds: z.array(UuidSchema).optional().openapi({
       description:
-        "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理（projects.manager_ids）兜底；显式 [] = 「待分配」（不兜底项目经理，沿用 A18）；数组顺序 = 展示顺序",
+        "任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置，数组顺序 = 展示顺序",
     }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
@@ -302,7 +302,7 @@ export const TaskCreateFromTemplateBodySchema = z
     templateId: UuidSchema,
     nodeIds: z.array(UuidSchema).optional().openapi({ description: "只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400" }),
     skipExisting: z.boolean().default(true).openapi({ description: "已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409" }),
-    ownerIds: z.array(UuidSchema).optional().openapi({ description: "任务负责人（A23 · Push 136）：缺省 = 项目全部项目经理兜底；显式 [] = 「待分配」" }),
+    ownerIds: z.array(UuidSchema).optional().openapi({ description: "任务负责人：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义" }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description: "起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾",
     }),
