@@ -132,6 +132,9 @@
  *   ③ 点卡片 = 「问题详情」抽屉（业务样图二：上半问题本身 + 中间「已隐藏 · 6」折叠区 + 下半来源日报 r-0921a 内容），
  *   壳 = 任务抽屉同一套全局动画类 + 打开锁滚动 + Esc / 点遮罩关闭。
  *
+ * Push 210（业务口径 2026-09-28「卡片要可以拖动」）：问题看板卡片拖动回放 —— 新增 ⑩ 组；与「任务进展」看板
+ *   同一套指针拖动口径（阈值 4px / 拖动卡跟手 / 目标列描边高亮 + 落点槽 / 放开改状态 / 同列不是落点 / Esc 取消），
+ *   含「未过阈值仍算点击」反向实证；⑩ 组跑完把 i-01 拖回「未解决」（与 ⑧ / ⑨ 组基线一致）。
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -325,6 +328,24 @@ async function clickSelector(selector) {
   await clickAt(point);
   return point;
 }
+/** 真鼠标拖拽（Push 210 卡片拖动回放）：按下 → 分步移动（真指针事件；落点判定 elementFromPoint 也成立）→
+ *  midProbe 中途探针（可在探针里按 Esc 等）→ 放开；返回中途探针值。 */
+async function dragCard(from, to, midProbe) {
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y, buttons: 0 });
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", buttons: 1, clickCount: 1 });
+  for (let step = 1; step <= 8; step += 1) {
+    const x = Math.round(from.x + ((to.x - from.x) * step) / 8);
+    const y = Math.round(from.y + ((to.y - from.y) * step) / 8);
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left", buttons: 1 });
+    await sleep(45);
+  }
+  await sleep(260);
+  const mid = typeof midProbe === "function" ? await midProbe() : null;
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", buttons: 0, clickCount: 1 });
+  await sleep(420);
+  return mid;
+}
+
 async function pressKey(key, code, vk, modifiers = 0) {
   await page.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
   await page.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
@@ -1673,6 +1694,120 @@ const backdropClosed = await waitFor("document.querySelector(" + j("[data-issue-
 const backdropLock = await ev("document.body.style.overflow");
 check("⑨ 卡片可重复打开；点遮罩（抽屉外空白）同样关闭 + 再解锁滚动（同一套关闭口径 · 关闭后又可复活）",
   backdropClosed === true && backdropLock === "", JSON.stringify({ closed: backdropClosed, lock: backdropLock }));
+
+// ---------- ⑩ 问题看板卡片拖动（Push 210 · 业务口径 2026-09-28「卡片要可以拖动」） ----------
+// 口径：与「任务进展」看板同一套指针拖动 —— 按住卡片位移超过 4px = 拖动（没超过 = 点一下开抽屉）；
+//   拖动中卡片跟手（data-drag-ghost）+ 目标列描边高亮 + 落点槽；放开 = 改问题状态（同一内存态）；
+//   同列不是落点（问题没有列内顺序）；Esc = 原地取消；⑩ 组跑完把 i-01 拖回「未解决」（与 ⑧ / ⑨ 组基线一致）。
+await clickSelector("[data-subnav-item=" + Q + "问题看板" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-issue-column]") + ")!==null");
+/** 三列卡片数（现读 DOM）。 */
+const issueLaneCounts = async () => await ev(
+  "(function(){var out={};var cols=document.querySelectorAll(" + j("[data-issue-column]") + ");" +
+  "for(var i=0;i<cols.length;i++){out[cols[i].getAttribute(" + j("data-issue-column") + ")]=cols[i].querySelectorAll(" + j("[data-issue-card]") + ").length;}return out;})()"
+);
+/** i-01 现在在哪一列（现读 DOM；不在 = 空串）。 */
+const issueLaneOf = async () => await ev(
+  "(function(){var c=document.querySelector(" + j("[data-issue-card=i-01]") + ");if(c===null){return " + j("") + ";}" +
+  "var col=c.closest(" + j("[data-issue-column]") + ");return col===null?" + j("") + ":col.getAttribute(" + j("data-issue-column") + ");})()"
+);
+/** 拖动中的界面探针：拖动卡 / 落点槽 / 目标列与所在列描边 / i-01 是否仍在所在列。 */
+const dragUiProbe = async (targetState, homeState) => await ev(
+  "(function(){var g=document.querySelector(" + j("[data-drag-ghost]") + ");" +
+  "var s=document.querySelector(" + j("[data-issue-drop-slot]") + ");" +
+  "var t=document.querySelector(" + j("[data-issue-column=" + targetState + "]") + ");" +
+  "var o=document.querySelector(" + j("[data-issue-column=" + homeState + "]") + ");" +
+  "var home=document.querySelector(" + j("[data-issue-column=" + homeState + "] [data-issue-card=i-01]") + ");" +
+  "var r=g===null?null:g.getBoundingClientRect();" +
+  "return {ghost:g!==null,cx:r===null?0:Math.round(r.left+r.width/2),cy:r===null?0:Math.round(r.top+r.height/2)," +
+  "slot:s===null?" + j("") + ":s.textContent.trim()," +
+  "ringT:t===null||t===o?" + j("") + ":getComputedStyle(t).boxShadow," +
+  "ringO:o===null?" + j("") + ":getComputedStyle(o).boxShadow,stillHome:home!==null};})()"
+);
+const lane0 = (await issueLaneCounts()) ?? {"未解决":0,"处理中":0,"已完成":0};
+const lane0Of = await issueLaneOf();
+check("⑩ 拖动基线：i-01 在「未解决」列 + 三列计数现读（未解决 " + String(lane0["未解决"]) + " / 处理中 " + String(lane0["处理中"]) + " / 已完成 " + String(lane0["已完成"]) + "）",
+  lane0Of === "未解决" && lane0["未解决"] >= 1, JSON.stringify({ i01: lane0Of, lanes: lane0 }));
+
+const cardPt = await rectOf("[data-issue-column=" + Q + "未解决" + Q + "] [data-issue-card=i-01]");
+const lanePt = await rectOf("[data-issue-column=" + Q + "处理中" + Q + "]");
+const dragMid = await dragCard(cardPt, lanePt, async () => await dragUiProbe("处理中", "未解决"));
+check("⑩ 按住卡片拖向「处理中」：拖动卡跟着鼠标浮出（data-drag-ghost · 与任务看板同款）+ 卡片本体仍在「未解决」列（状态不提前落值）",
+  dragMid !== null && dragMid.ghost === true && dragMid.stillHome === true && Math.abs(dragMid.cx - lanePt.x) <= 100,
+  dragMid === null ? "-" : JSON.stringify({ ghost: dragMid.ghost, stillHome: dragMid.stillHome, cx: dragMid.cx, to: lanePt.x }));
+check("⑩ 拖动中目标列描边高亮（与「任务进展」看板同款 emerald ring · 原列无高亮）",
+  dragMid !== null && dragMid.ringT !== "" && dragMid.ringT !== "none" && dragMid.ringO === "none",
+  dragMid === null ? "-" : JSON.stringify({ ringT: dragMid.ringT.slice(0, 40), ringO: dragMid.ringO }));
+check("⑩ 拖动中目标列浮出落点槽（data-issue-drop-slot · 文案「放开：移到「处理中」」）",
+  dragMid !== null && dragMid.slot === "放开：移到「处理中」", dragMid === null ? "-" : dragMid.slot);
+
+const lane1 = await issueLaneCounts();
+const lane1Of = await issueLaneOf();
+check("⑩ 放开 = 改问题状态：i-01 落到「处理中」列（未解决 -1 / 处理中 +1 —— 与任务进展看板同款「拖到哪列 = 改成哪个状态」）",
+  lane1Of === "处理中" && lane1["未解决"] === lane0["未解决"] - 1 && lane1["处理中"] === lane0["处理中"] + 1,
+  JSON.stringify({ i01: lane1Of, lanes: lane1 }));
+const dropDrawer = await ev("document.querySelector(" + j("[data-issue-drawer]") + ")!==null");
+check("⑩ 拖动收尾那一下不当点击（放开后问题详情抽屉不会自己弹出来）",
+  dropDrawer === false, String(dropDrawer));
+
+await clickSelector("[data-issue-column=" + Q + "处理中" + Q + "] [data-issue-card=i-01]");
+await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")!==null");
+const drawerStateAfterDrag = await ev(
+  "(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}" +
+  "var f=d.querySelector(" + j("[data-issue-field=" + Q + "state" + Q + "]") + ");" +
+  "var t=f===null?null:f.querySelector(" + j("[data-issue-state]") + ");return t===null?" + j("") + ":t.textContent.trim();})()"
+);
+check("⑩ 同一内存态联动：点开 i-01 抽屉，「问题是否处理」= 处理中（现读内存态 · patchIssue 同一份数据）",
+  drawerStateAfterDrag === "处理中", String(drawerStateAfterDrag));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")===null");
+
+const cardPt2 = await rectOf("[data-issue-column=" + Q + "处理中" + Q + "] [data-issue-card=i-01]");
+const lanePt2 = await rectOf("[data-issue-column=" + Q + "处理中" + Q + "]");
+const sameMid = await dragCard(cardPt2, { x: lanePt2.x, y: lanePt2.y + 30 }, async () => await dragUiProbe("处理中", "处理中"));
+const lane2 = await issueLaneCounts();
+const lane2Of = await issueLaneOf();
+check("⑩ 同列不是落点（问题没有列内顺序）：在「处理中」列内拖动 —— 无落点槽 / 无列高亮（拖动卡照常出现），放开状态与计数都不变",
+  sameMid !== null && sameMid.ghost === true && sameMid.slot === "" && sameMid.ringO === "none" && lane2Of === "处理中" && lane2["处理中"] === lane1["处理中"] && lane2["未解决"] === lane1["未解决"],
+  sameMid === null ? "-" : JSON.stringify({ ghost: sameMid.ghost, slot: sameMid.slot, ring: sameMid.ringO, i01: lane2Of }));
+
+const cardPt3 = await rectOf("[data-issue-column=" + Q + "处理中" + Q + "] [data-issue-card=i-01]");
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: cardPt3.x, y: cardPt3.y, buttons: 0 });
+await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: cardPt3.x, y: cardPt3.y, button: "left", buttons: 1, clickCount: 1 });
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: cardPt3.x + 2, y: cardPt3.y, button: "left", buttons: 1 });
+await sleep(240);
+const ghostBelowThreshold = await ev("document.querySelector(" + j("[data-drag-ghost]") + ")===null");
+await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: cardPt3.x + 2, y: cardPt3.y, button: "left", buttons: 0, clickCount: 1 });
+const belowThresholdDrawer = await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")!==null");
+check("⑩ 拖动判定阈值（4px）反向实证：按住卡片只挪 2px 放开 = 仍按「点一下」处理（问题详情抽屉打开 · 拖动卡全程未出现）",
+  ghostBelowThreshold === true && belowThresholdDrawer === true, JSON.stringify({ ghostAbsent: ghostBelowThreshold, drawer: belowThresholdDrawer }));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")===null");
+
+const cardPt4 = await rectOf("[data-issue-column=" + Q + "处理中" + Q + "] [data-issue-card=i-01]");
+const donePt4 = await rectOf("[data-issue-column=" + Q + "已完成" + Q + "]");
+const escMid = await dragCard(cardPt4, donePt4, async () => {
+  const during = await dragUiProbe("已完成", "处理中");
+  await pressKey("Escape", "Escape", 27);
+  await sleep(280);
+  const after = await dragUiProbe("已完成", "处理中");
+  return { during, after };
+});
+const lane4 = await issueLaneCounts();
+const lane4Of = await issueLaneOf();
+const drawerAfterEsc = await ev("document.querySelector(" + j("[data-issue-drawer]") + ")!==null");
+check("⑩ Esc 取消拖动（原地取消 · 放开不改状态）：拖到「已完成」列后按 Esc —— 落点槽 / 拖动卡 / 高亮全清，i-01 仍在「处理中」列",
+  escMid !== null && escMid.during.ghost === true && escMid.during.slot === "放开：移到「已完成」" && escMid.after.ghost === false && escMid.after.slot === "" && escMid.after.ringT === "none" && lane4Of === "处理中" && lane4["处理中"] === lane1["处理中"] && drawerAfterEsc === false,
+  escMid === null ? "-" : JSON.stringify({ during: escMid.during.slot + "/" + String(escMid.during.ghost), after: escMid.after.slot + "/" + String(escMid.after.ghost) + "/" + escMid.after.ringT, i01: lane4Of }));
+
+const cardPt5 = await rectOf("[data-issue-column=" + Q + "处理中" + Q + "] [data-issue-card=i-01]");
+const homePt5 = await rectOf("[data-issue-column=" + Q + "未解决" + Q + "]");
+await dragCard(cardPt5, homePt5, async () => await dragUiProbe("未解决", "处理中"));
+const lane5 = await issueLaneCounts();
+const lane5Of = await issueLaneOf();
+check("⑩ 拖回「未解决」（还原）：i-01 回「未解决」列、三列计数回到进组基线（与 ⑧ / ⑨ 组的 i-01 状态一致）",
+  lane5Of === "未解决" && lane5["未解决"] === lane0["未解决"] && lane5["处理中"] === lane0["处理中"] && lane5["已完成"] === lane0["已完成"],
+  JSON.stringify({ i01: lane5Of, lanes: lane5 }));
 
 // ---------- 清理 ----------
 // 偏好还原（放在撤销临时会话之前）：focusMode 回到进厂原值，不给下一轮留状态
