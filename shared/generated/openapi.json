@@ -71,6 +71,10 @@
     {
       "name": "issues",
       "description": "问题闭环（A3-09~A3-13；四态流转 / 分派 / 留痕，M6-02 / M6-03）"
+    },
+    {
+      "name": "workspace",
+      "description": "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）"
     }
   ],
   "components": {
@@ -6646,6 +6650,354 @@
         "type": "integer",
         "minimum": 0,
         "description": "乐观锁版本：读取时返回，更新时必须原样回传，冲突返回 409"
+      },
+      "WorkspaceIssueItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectCode": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "taskId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "所属任务（可空：问题可不挂任务）"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "category": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IssueCategory"
+              },
+              {
+                "description": "问题归类（A3-11 · C9 字典十项）；一期为契约固定枚举，字典可维护随后"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/IssueState"
+          },
+          "reporterId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "reporterName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownerDepartment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownerId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "ownerName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dueAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "处理时限（ADR-026 SLA）"
+              }
+            ]
+          },
+          "raisedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "projectCode",
+          "projectName",
+          "taskId",
+          "title",
+          "category",
+          "state",
+          "reporterId",
+          "reporterName",
+          "ownerDepartment",
+          "ownerId",
+          "ownerName",
+          "dueAt",
+          "raisedAt",
+          "updatedAt",
+          "version"
+        ],
+        "description": "工作台问题项（跨项目）"
+      },
+      "WorkspaceIssues": {
+        "type": "object",
+        "properties": {
+          "handling": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceIssueItem"
+            },
+            "description": "我处理的（ownerId = 会话用户）"
+          },
+          "raised": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceIssueItem"
+            },
+            "description": "我提出的（reporterId = 会话用户）"
+          }
+        },
+        "required": [
+          "handling",
+          "raised"
+        ],
+        "description": "我的问题两栏（A6-03）；同一问题两边都命中时两个清单都出现；未关闭在前、已完成后置"
+      },
+      "WorkspaceResponse": {
+        "type": "object",
+        "properties": {
+          "today": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "分组基准日（Asia/Shanghai 今天 · ADR-028），前端可据此渲染「今天」标注"
+              }
+            ]
+          },
+          "myTasks": {
+            "$ref": "#/components/schemas/WorkspaceTasks"
+          },
+          "myIssues": {
+            "$ref": "#/components/schemas/WorkspaceIssues"
+          }
+        },
+        "required": [
+          "today",
+          "myTasks",
+          "myIssues"
+        ],
+        "description": "工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏"
+      },
+      "WorkspaceTaskItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectCode": {
+            "type": "string",
+            "description": "项目编号（跨项目列表直接展示）"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "stageKey": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StageKey"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "所属阶段；null = 「未分组」（A15）"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskDisplayStatus"
+              },
+              {
+                "description": "展示五态（A1-06 读时派生，含显式覆盖 · Push 179）：待开始 / 进行中 / 已完成 / 提前完成 / 已延期"
+              }
+            ]
+          },
+          "progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          },
+          "plannedStart": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "plannedEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "预计完成日期（分组依据；三组内必非空）"
+              }
+            ]
+          },
+          "actualEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "ownerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "任务负责人（多值；本组内必含会话用户）"
+          },
+          "ownerNames": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "负责人姓名（与 ownerIds 同下标；缺失为 null）"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/Priority"
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "projectCode",
+          "projectName",
+          "stageKey",
+          "title",
+          "titleEn",
+          "displayStatus",
+          "progress",
+          "plannedStart",
+          "plannedEnd",
+          "actualEnd",
+          "ownerIds",
+          "ownerNames",
+          "priority"
+        ],
+        "description": "工作台任务项（跨项目；按预计完成日期落入三组之一）"
+      },
+      "WorkspaceTasks": {
+        "type": "object",
+        "properties": {
+          "today": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTaskItem"
+            },
+            "description": "今日待办：plannedEnd = 今天且未完成"
+          },
+          "upcoming": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTaskItem"
+            },
+            "description": "即将到期：今天 < plannedEnd ≤ 今天 + 7 天且未完成"
+          },
+          "overdue": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTaskItem"
+            },
+            "description": "已逾期：plannedEnd < 今天且未完成"
+          }
+        },
+        "required": [
+          "today",
+          "upcoming",
+          "overdue"
+        ],
+        "description": "我的任务三组（A6-01；组内按 plannedEnd 升序、id 升序）"
       }
     },
     "parameters": {}
@@ -13385,6 +13737,36 @@
           },
           "409": {
             "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspace": {
+      "get": {
+        "tags": [
+          "workspace"
+        ],
+        "summary": "工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的）",
+        "responses": {
+          "200": {
+            "description": "工作台聚合（按会话用户；记录级可见性过滤后）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
             "content": {
               "application/json": {
                 "schema": {
