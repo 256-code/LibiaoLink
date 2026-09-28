@@ -139,6 +139,10 @@ import type { MeResponse, Project } from "../types";
  *   data-drag-ghost）、目标列描边高亮 + 列顶浮出落点槽「放开：移到「X」」，拖到看板 / 列边缘逐帧自动滚；
  *   放开 = 把问题状态改成目标列（同一 patchIssue 内存态：「问题追踪」表 / 计数 / 抽屉同步跟着变）；
  *   同列不是落点（问题没有列内顺序，放开不改动）；Esc / 指针取消 = 原地取消；整段拖动没有原生拖拽参与，滚轮照常可用。
+ *
+ * - Push 211（业务口径 2026-09-28「要加问题描述标题」）：问题看板**卡面首段补字段名「问题描述」** ——
+ *   与其余三段（问题归类 / 解决方案或建议 / 问题附图）同款 11px 浅灰小字；首段不带上间距（Field 增 first 变体）；
+ *   「问题追踪」表头 / 问题详情抽屉的「问题描述」口径照旧，三处一致。
  */
 
 /** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
@@ -554,10 +558,11 @@ function emptyDraft(): ReportDraft {
 }
 
 /** 卡片字段行（Push 209 改版 · 业务口径 2026-09-28「问题看板是这样的 要这些内容 然后样式参考任务进展的」）：
- *  字段名独占一行浅灰小字、取值在下一行 —— 与「任务进展」看板卡片的 Field 同一套口径（业务样 = 图一）。 */
-function Field({ label, children }: { label: string; children: ReactNode }) {
+ *  字段名独占一行浅灰小字、取值在下一行 —— 与「任务进展」看板卡片的 Field 同一套口径（业务样 = 图一）。
+ *  Push 211（业务口径「要加问题描述标题」）：增 first 变体 —— 卡面首段用它（不带上间距 mt-3）。 */
+function Field({ label, children, first = false }: { label: string; children: ReactNode; first?: boolean }) {
   return (
-    <div className="mt-3">
+    <div className={first ? "" : "mt-3"}>
       <p className="text-[11px] text-zinc-500">{label}</p>
       <div className="mt-1 min-w-0">{children}</div>
     </div>
@@ -1060,7 +1065,7 @@ function ReportList({ reports, onPatch }: { reports: readonly DailyReport[]; onP
  *  色签）/ 解决方案或建议（多行 pre-line，有才显示）/ 问题附图（40×40 缩略图，有才显示）；字段名 = 独占一行的浅灰小字。
  *  样式 = 与「任务进展」看板卡片同一套材质（CARD_SHELL 白壳 + 发丝边 + 三层投影 + 细纹），点一下开「问题详情」抽屉。
  *  同批下架（图一没有）：状态签 / 提出人 / 提出日期 —— 状态看列头、其余进抽屉（Push 207 的「责任 / 处理时限 / 所属任务」
- *  不再展示口径照旧不变）。Push 210（业务口径「卡片要可以拖动」）：卡片接指针拖动 —— 按住拖到别的列 = 改问题状态（细节见 IssueBoard）。 */
+ *  不再展示口径照旧不变）。Push 210（业务口径「卡片要可以拖动」）：卡片接指针拖动 —— 按住拖到别的列 = 改问题状态（细节见 IssueBoard）。Push 211（业务口径「要加问题描述标题」）：首段问题描述补「问题描述」字段名 —— 卡面四段全部有字段名。 */
 function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost = false }: {
   issue: Issue;
   onOpen: () => void;
@@ -1088,7 +1093,9 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
-        <p data-issue-card-title="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{issue.title}</p>
+        <Field label="问题描述" first>
+          <p data-issue-card-title="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{issue.title}</p>
+        </Field>
         <Field label="问题归类">
           <CategoryTags value={issue.category} />
         </Field>

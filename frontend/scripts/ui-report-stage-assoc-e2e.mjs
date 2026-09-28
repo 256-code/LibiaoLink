@@ -135,6 +135,8 @@
  * Push 210（业务口径 2026-09-28「卡片要可以拖动」）：问题看板卡片拖动回放 —— 新增 ⑩ 组；与「任务进展」看板
  *   同一套指针拖动口径（阈值 4px / 拖动卡跟手 / 目标列描边高亮 + 落点槽 / 放开改状态 / 同列不是落点 / Esc 取消），
  *   含「未过阈值仍算点击」反向实证；⑩ 组跑完把 i-01 拖回「未解决」（与 ⑧ / ⑨ 组基线一致）。
+ *
+ * Push 211（业务口径 2026-09-28「要加问题描述标题」）：问题看板卡面首段补「问题描述」字段名 —— ⑨ 组追加 1 项（11px 浅灰小字 / 在描述正文上方 / 首段不带上间距）；其余断言与 ⑩ 组不动。
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -1627,6 +1629,20 @@ check("⑨ 卡片材质 = 「任务进展」看板卡片同款：白壳 + 35px �
 check("⑨ 卡面 = 业务样「图一」要的内容：问题描述（= ⑧ 编辑后现值 · pre-line 多行）→ 问题归类（彩色色签「供应商原因」）→ 解决方案或建议（= ⑧ 编辑后现值 · 多行）→ 问题附图（2 枚 40×40 缩略图）；字段名独占一行；状态签 / 提出人 / 日期词都已下架；i-01 卡落在「未解决」列",
   cardProbe !== null && cardProbe.col === "未解决" && cardProbe.title === NUMLINE(EDIT_TITLE_TEXT) && cardProbe.titleWhite === "pre-line" && cardProbe.sol === NUMLINE(EDIT_SOL_TEXT) && cardProbe.chipN === 1 && cardProbe.chipName === "供应商原因" && cardProbe.chipBg === "rgb(255, 234, 153)" && cardProbe.thumbs === 2 && cardProbe.thumbBox === "40x40" && cardProbe.labels.indexOf("问题归类") >= 0 && cardProbe.labels.indexOf("解决方案或建议") >= 0 && cardProbe.labels.indexOf("问题附图") >= 0 && cardProbe.hasState === false && cardProbe.hasReporter === false && cardProbe.hasDate === false && cardProbe.hasOwnerTask === false,
   cardProbe === null ? "-" : JSON.stringify({ t: cardProbe.title, sol: cardProbe.sol, labels: cardProbe.labels, chip: cardProbe.chipBg, thumbs: cardProbe.thumbs }));
+// ⑨a2 Push 211（业务口径「要加问题描述标题」）：卡面首段「问题描述」字段名 —— 11px 浅灰小字、在描述正文上方、首段不带上间距。
+const descLabelProbe = await ev(
+  "(function(){var t=document.querySelector(" + j("[data-issue-card=i-01] [data-issue-card-title]") + ");if(t===null){return null;}" +
+  "var wrap=t.parentElement;var f=wrap===null?null:wrap.parentElement;if(f===null){return null;}" +
+  "var lab=f.querySelector(" + j("p") + ");var c=t.closest(" + j("[data-issue-card]") + ");var k=null;" +
+  "if(c!==null){var ps=c.querySelectorAll(" + j("p") + ");for(var i=0;i<ps.length;i++){if(ps[i].textContent.trim()===" + j("问题归类") + "){k=ps[i];break;}}}" +
+  "return {text:lab===null?" + j("") + ":lab.textContent.trim(),size:lab===null?" + j("") + ":getComputedStyle(lab).fontSize," +
+  "color:lab===null?" + j("") + ":getComputedStyle(lab).color,peer:k===null?" + j("") + ":getComputedStyle(k).color," +
+  "mt:getComputedStyle(f).marginTop,above:lab!==null&&lab.nextElementSibling!==null&&lab.nextElementSibling.contains(t)};})()"
+)
+check("⑨ 卡面首段补「问题描述」标题（业务口径 2026-09-28「要加问题描述标题」）：字段名 = 11px 浅灰小字（与其余三段同款）+ 在描述正文上方 + 首段不带上间距（mt-3 变体）",
+  descLabelProbe !== null && descLabelProbe.text === "问题描述" && descLabelProbe.size === "11px" && descLabelProbe.color === descLabelProbe.peer && descLabelProbe.peer !== "" && descLabelProbe.mt === "0px" && descLabelProbe.above === true,
+  descLabelProbe === null ? "-" : JSON.stringify(descLabelProbe));
+
 // ⑨b 点卡片 = 问题详情抽屉（业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：壳 = 任务抽屉同一套全局动画类
 //   （drawer-backdrop 遮罩 + drawer-panel 460px 右滑入 · role=dialog / aria-modal）+ 打开锁页面滚动；上半 = 问题本身四行、
 //   中间 =「已隐藏 · 6」折叠区（默认收起）、下半 = 来源日报 r-0921a 的七行内容（现读内存态 —— 行内编辑后的现值）。
