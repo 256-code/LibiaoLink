@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
-import { DICT_ACCENT_PALETTE, accentOfItem, type DictItem, type Dicts } from "../dicts";
+import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type DictItem, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
 import type { Member } from "../data/members";
 import { DictSelect } from "./DictSelect";
 import { MemberMultiSelect } from "./MemberSelect";
+import { RegionSelect } from "./RegionSelect";
+
+/**
+ * 项目地区（Push 195）：点开 = 贴字段弹出的小窗（RegionSelect）——最上方「已有项目地区」（有项目在用的，
+ * 带项目数），下面按洲分组列全部标准国家 / 地区（字典没收录的国家也能搜到、选到）。
+ * 业务口径（2026-09-28）：「还是要之前的小窗 然后最上方是已有项目地区」＋「那我搜索现在没有的国家不就还是不行吗」。
+ * 纯选择：不支持手填 / 添加 / 删除（Push 194 口径延续）——值 = 字典码 / 标准中文国名，地图立柱 / 侧栏筛选
+ * 按同一套认名规则识别（见 src/data/regionPicker.ts）。
+ */
 
 export type ProjectDraft = {
   code: string;
@@ -15,7 +24,7 @@ export type ProjectDraft = {
   managerIds: string[];
   /** 项目类型：字典 projectType 的码（主题色由字典元数据下发）。 */
   projectType: string;
-  /** 项目地区：字典 region 的码。 */
+  /** 项目地区：字典 region 的码 / 标准国家清单里的中文国名（Push 195 模态窗点选）。 */
   region: string;
 };
 
@@ -61,25 +70,34 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const [description, setDescription] = useState(initial?.description ?? "");
   const [managerIds, setManagerIds] = useState<string[]>(initial?.managerIds ?? []);
   const [projectType, setProjectType] = useState<string>(initial?.projectType ?? dicts.projectType[0]?.code ?? "");
-  const [region, setRegion] = useState<string>(initial?.region ?? dicts.region[0]?.code ?? "");
+  /** 新建默认不带地区（业务口径「新建项目不要默认英国 默认为空即可」）：占位「请选择地区」，由用户在小窗里点选。 */
+  const [region, setRegion] = useState<string>(initial?.region ?? "");
+  const [regionPopoverOpen, setRegionPopoverOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Esc：地区小窗开着时由它自己关（usePopover 统一处理），这里放行 —— 再按一次才关整个项目弹窗。 */
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
+      if (event.key !== "Escape") {
+        return;
       }
+      if (regionPopoverOpen) {
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onClose]);
+  }, [onClose, regionPopoverOpen]);
 
   const canSubmit =
     code.trim() !== "" && description.trim() !== "" && managerIds.length > 0 && projectType !== "" && region !== "" && !pending;
   const title = isEdit ? "编辑项目" : "新建项目";
+  /** 触发器上的展示名：字典条目给字典名（阿联酋 → 阿拉伯联合酋长国）；否则值本身（标准中文国名）。 */
+  const regionLabel = dictLabel(dicts, "region", region);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -143,24 +161,13 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
           </div>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目地区</span>
-            <DictSelect
+            {/* Push 195：小窗 = 搜索框 + 最上方「已有项目地区」+ 分洲全部国家（不支持手填 / 添加 / 删除，不写字典） */}
+            <RegionSelect
               value={region}
+              valueLabel={regionLabel}
               items={dicts.region}
-              ariaLabel="选择项目地区"
-              placeholder="请选择地区"
-              onAdd={(input) => dictTools.onAdd("region", input)}
-              addText={{
-                label: "添加地区",
-                placeholder: "输入地区名称，如 东南亚",
-                note: "保存后写入地区字典（C9）：全站可选（所有项目的地区下拉都能选到），并可在首页按它筛选；删除与改名由管理员维护。",
-              }}
-              onDelete={
-                canManageDicts
-                  ? (code) => dictTools.onDelete("region", code)
-                  : undefined
-              }
-              deleteLabelOf={(_code, name) => "删除地区 " + name}
               onChange={setRegion}
+              onOpenChange={setRegionPopoverOpen}
             />
           </div>
           <div className="block">
