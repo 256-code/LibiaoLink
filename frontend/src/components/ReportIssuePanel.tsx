@@ -11,7 +11,7 @@ import {
   type IssueState,
   type ReportState,
 } from "../data/reports";
-import { ownersLabel, type ProjectTask } from "../data/tasks";
+import { PROJECT_STAGES } from "../data/projects";
 import type { MeResponse, Project } from "../types";
 
 /**
@@ -23,10 +23,14 @@ import type { MeResponse, Project } from "../types";
  * - 内容列宽：视图整体**全宽**（日报记录 / 问题追踪 / 问题看板 照旧铺满）；只有「日报填写」收成**居中窄栏**
  *   （max-w-3xl = 768px），业务口径「我只要日报填写页面居中然后尺寸舒适一点、像一个表单，其它的不变还是全屏」。
  * - 「日报记录」= **列表 / 表格**（一行一篇；业务口径「日报记录还是做成列表 不要卡片」，原卡片网格已撤），列口径与原来
- *   的卡片一致（时间 + 状态签 + 提交时间 / 填写者 / 今日施工人数 / 关联任务 / 当日完成工作 / 明日计划 / 现场发现问题 /
+ *   的卡片一致（时间 + 状态签 + 提交时间 / 填写者 / 今日施工人数 / 关联阶段 / 当日完成工作 / 明日计划 / 现场发现问题 /
  *   解决方案或建议 / 现场工作附图），与「问题追踪」同一套表壳（白底 + 圆角 + 行悬停），窄屏横向滚动。
  * - 原型阶段数据存浏览器内存（换项目 / 刷新即重置；任务域已接线，本模块随 M4 日报切片接线）：演示数据只挂在示例项目印度 `inmu-0010`，
  *   其余项目从空白开始；「日报填写」提交后**真的会**写进「日报记录」，含「现场发现问题」时按 A3-09 自动生成一条「未分组」问题。
+ * - Push 198（业务口径 2026-09-28「日报这里关联任务改成关联阶段」）：「关联任务」改「**关联阶段**」——
+ *   多选项 = 九个施工阶段（`PROJECT_STAGES` 去掉「项目总览」，与任务表 / 看板同一份口径），不再列具体任务 / 负责人；
+ *   关联单位由「任务」改「阶段」后，契约层 `taskIds` → `stageKeys` 的修订挂 wmj 线（见 `前端功能需求.md` §3.8 A21），
+ *   原 A3-08「按任务回写项目进展描述」的副作用随之停用（落点待口径定案）。
  */
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
@@ -76,6 +80,9 @@ const ISSUE_CATEGORIES: readonly string[] = [
 
 /** 下拉选项：与任务抽屉（任务状态 / 紧急重要度）、甘特内筛选同一套 SelectMenu 口径。 */
 const ISSUE_CATEGORY_OPTIONS: SelectOption[] = ISSUE_CATEGORIES.map((category) => ({ value: category, label: category }));
+
+/** 日报「关联阶段」可选项（Push 198）：九个施工阶段 —— 与项目总览分组 / 两块看板同一份口径（不含「项目总览」汇总视图）。 */
+const REPORT_STAGES: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
 /** 表单小框（与任务表行内编辑同一套「白底 + 淡灰描边」口径）。 */
 const FORM_INPUT =
@@ -164,8 +171,8 @@ type ReportDraft = {
   foundIssue: string;
   issueCategory: string;
   suggestion: string;
-  /** 关联任务（按任务描述多选） */
-  tasks: string[];
+  /** 关联阶段（按阶段名多选；九阶段口径） */
+  stages: string[];
   /** 现场工作附图（原型只记文件名） */
   photos: string[];
   /** 当前问题附图（「现场发现问题」非空时才填） */
@@ -210,7 +217,7 @@ function clockText(): string {
 
 /** 空表单：日期默认今天，其余留空。 */
 function emptyDraft(): ReportDraft {
-  return { dateIso: todayIso(), headcount: "", doneWork: "", plan: "", foundIssue: "", issueCategory: "", suggestion: "", tasks: [], photos: [], issuePhotos: [] };
+  return { dateIso: todayIso(), headcount: "", doneWork: "", plan: "", foundIssue: "", issueCategory: "", suggestion: "", stages: [], photos: [], issuePhotos: [] };
 }
 
 /** 字段行（浅灰字段名 + 深灰取值），与两块看板卡片同一套口径。 */
@@ -282,7 +289,7 @@ const REPORT_COLUMNS: readonly string[] = [
   "时间",
   "填写者",
   "今日施工人数",
-  "关联任务",
+  "关联阶段",
   "当日完成工作",
   "明日计划",
   "现场发现问题",
@@ -324,7 +331,7 @@ function ReportList({ reports, issueByReport }: { reports: readonly DailyReport[
                   </span>
                 </td>
                 <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5 text-zinc-700">{report.headcount} 人</td>
-                <td className="min-w-[150px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.tasks.length === 0 ? "—" : report.tasks.join("、")}</td>
+                <td className="min-w-[150px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.stages.length === 0 ? "—" : report.stages.join("、")}</td>
                 <td className="min-w-[210px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-800">{report.doneWork === "" ? "—" : report.doneWork}</td>
                 <td className="min-w-[180px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.plan === "" ? "—" : report.plan}</td>
                 <td className="min-w-[250px] border-b border-zinc-100 px-3 py-2.5">
@@ -453,7 +460,6 @@ function IssueTable({ issues }: { issues: readonly Issue[] }) {
 function ReportFillForm({
   project,
   author,
-  tasks,
   draft,
   onChange,
   onSubmit,
@@ -461,7 +467,6 @@ function ReportFillForm({
 }: {
   project: Project;
   author: string;
-  tasks: readonly ProjectTask[];
   draft: ReportDraft;
   onChange: (patch: Partial<ReportDraft>) => void;
   onSubmit: () => void;
@@ -533,30 +538,25 @@ function ReportFillForm({
       </div>
 
       <div>
-        <span className={FORM_LABEL}>关联任务</span>
-        <span className="ml-2 text-[11px] text-zinc-400">可多选；「当日完成工作」关联任务后回写任务「项目进展描述」</span>
-        <div data-field="tasks" className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5">
-          {tasks.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-zinc-400">该项目还没有任务</p>
-          ) : (
-            tasks.map((task) => {
-              const checked = draft.tasks.includes(task.title);
-              return (
-                <label key={task.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() =>
-                      onChange({ tasks: checked ? draft.tasks.filter((title) => title !== task.title) : [...draft.tasks, task.title] })
-                    }
-                    className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                  <span className="shrink-0 text-[10px] text-zinc-400" title={ownersLabel(task.owners)}>{task.owners.length === 0 ? "待分配" : task.owners.join("、")}</span>
-                </label>
-              );
-            })
-          )}
+        <span className={FORM_LABEL}>关联阶段</span>
+        <span className="ml-2 text-[11px] text-zinc-400">可多选；标记「当日完成工作」对应的项目阶段</span>
+        <div data-field="stages" className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5">
+          {REPORT_STAGES.map((stage) => {
+            const checked = draft.stages.includes(stage);
+            return (
+              <label key={stage} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() =>
+                    onChange({ stages: checked ? draft.stages.filter((name) => name !== stage) : [...draft.stages, stage] })
+                  }
+                  className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
+                />
+                <span className="min-w-0 flex-1 truncate">{stage}</span>
+              </label>
+            );
+          })}
         </div>
       </div>
 
@@ -659,7 +659,7 @@ function ReportFillForm({
 }
 
 /** 「日报及问题」视图：页内四个键帽按钮（日报填写 / 日报记录 / 问题追踪 / 问题看板）+ 对应内容。 */
-export function ReportIssuePanel({ project, me, tasks }: { project: Project; me: MeResponse; tasks: readonly ProjectTask[] }) {
+export function ReportIssuePanel({ project, me }: { project: Project; me: MeResponse }) {
   /** 当前子视图（业务口径：第一块日报填写，默认停在这一块）。 */
   const [subTab, setSubTab] = useState<SubTab>(SUB_TABS[0]);
   /** 日报 / 问题（原型内存态：演示数据 + 本次填写新提交的条目）。 */
@@ -689,7 +689,7 @@ export function ReportIssuePanel({ project, me, tasks }: { project: Project; me:
       foundIssue: draft.foundIssue.trim(),
       issueCategory: draft.foundIssue.trim() === "" ? "" : draft.issueCategory,
       suggestion: draft.suggestion.trim(),
-      tasks: draft.tasks,
+      stages: draft.stages,
       photos: draft.photos,
     };
     setReports((previous) => [report, ...previous]);
@@ -703,7 +703,8 @@ export function ReportIssuePanel({ project, me, tasks }: { project: Project; me:
         category: report.issueCategory,
         reporter: author,
         owner: "",
-        task: report.tasks.length === 0 ? "" : report.tasks[0],
+        // Push 198：关联单位改为阶段后，自动生成的问题不再带「所属任务」（口径修订见 前端功能需求.md §3.8 A21）
+        task: "",
         raisedAt: dateCn,
         dueAt: cnDateOf(isoPlusDays(draft.dateIso, 2)),
         solution: "",
@@ -764,7 +765,6 @@ export function ReportIssuePanel({ project, me, tasks }: { project: Project; me:
           <ReportFillForm
             project={project}
             author={author}
-            tasks={tasks}
             draft={draft}
             onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))}
             onSubmit={() => handleSubmit("已提交")}

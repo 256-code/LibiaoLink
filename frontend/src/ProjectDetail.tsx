@@ -722,7 +722,7 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
             <GanttChart tasks={tasks} members={members} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
-            <ReportIssuePanel key={project.id} project={project} me={me} tasks={tasks} />
+            <ReportIssuePanel key={project.id} project={project} me={me} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}
