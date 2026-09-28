@@ -751,13 +751,19 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
     // 只有「日报填写」那一块在下面单独收成居中窄栏。
     <div className="w-full space-y-5">
       {/* 页内导航栏（业务样张：四个键帽按钮，紧贴主标签栏下方一排，尺寸收紧）；
-          Push 200 吸顶（业务口径「做吸顶效果」）；Push 201 修吸顶 bug（业务口径「图二吸顶后有bug」）：滚动时叠在**主标签栏**下面
-          —— top = 顶栏 64 + 主标签栏 59 = 123px；站灰底 + 毛玻璃兜住滚动内容；
+          Push 200 吸顶（业务口径「做吸顶效果」）；Push 201 修吸顶三处 bug（业务口径「图二吸顶后有bug」+「这里的字被吞掉了」
+          +「这个中间有条缝可以有办法解决一下吗」）：滚动时叠在**主标签栏**下面 —— top = 122px（设计位 123 = 顶栏 64 + 主标签栏 59，
+          **向上多叠 1px**）：吸顶条下边框在带缩放的屏上（Windows 150% 等）被按设备像素吸附成 0.67px，栏高 59 → 58.67、
+          下沿实际落在 122.67 —— 钉 123 会露 0.33px 缝、滚动内容从缝里闪过；多叠的 1px 正好藏进主标签栏下边框（1x 下视觉不变）；
+          站灰底 + 毛玻璃兜住滚动内容；
           下内衬 8 → 16px：原来装不下键帽的立体堆叠投影（最深 0.425em ≈ 5.5px + 落影 blur 0.5em ≈ 6.5px ≈ 12px），
           投影尾巴会糊到下方「日报记录」标题上、标题还被横幅下沿齐刷刷切一刀；
-          -mx-6 / -mt-2 -mb-4 + 同值内衬抵消：横幅铺满行宽、键帽位置与原来一致；
+          **mb 用 +4px 而不是负值**：本面板是 space-y-5（Tailwind v4 的 space-y 走 margin-bottom，写在元素自身上）——
+          负 mb 会把下面第一块内容拽进横幅里（上一版 -mb-4 = 下方内容被横幅盖住 16px，区块标题只剩几像素的「被吞」残影）；
+          现在 底内衬 16 + mb 4 = 20px，正好是 space-y-5 的节奏：键帽、横幅、下方内容三者位置都回到设计值；
+          -mx-6 / -mt-2 + 同值内衬抵消：横幅铺满行宽、键帽位置与原来一致；
           z-10（低于主标签栏 z-20）：往上滚时本条从主标签栏下面滑过去，不会反压住它。 */}
-      <nav data-subnav="true" className="sticky top-[123px] z-10 -mx-6 -mt-2 -mb-4 flex flex-wrap items-center gap-2 bg-[#f5f6f8]/95 px-6 pt-2 pb-4 backdrop-blur">
+      <nav data-subnav="true" className="sticky top-[122px] z-10 -mx-6 -mt-2 mb-1 flex flex-wrap items-center gap-2 bg-[#f5f6f8]/95 px-6 pt-2 pb-4 backdrop-blur">
         {SUB_TABS.map((tab) => tabButton(tab))}
       </nav>
 

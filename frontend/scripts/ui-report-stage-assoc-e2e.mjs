@@ -37,6 +37,17 @@
  *   （24 视框 · fillRule evenodd · fill=currentColor）。断言：① 组三条改写（放大镜就位 / 徽章让位 / 文件 + 警示圈下架）；
  *   ⑥ 组重写为 4 项（主标签栏吸顶 / 页内条叠放 + 内衬兜住投影 / 项目总览任务表头叠放）。
  *
+ * Push 201 补（业务口径 2026-09-28「这里的字被吞掉了」，问题看板截图）：页内导航栏上一版用负下边距抵消内衬，
+ *   而 Tailwind v4 的 space-y-5 走的是**元素自身 margin-bottom** —— 负 mb 把下面第一块内容拽进横幅里，
+ *   区块标题被横幅盖住 16px、只剩几像素的残影。改为 mb-1（4px = 20 space-y − 16 pb）：横幅下沿与下方内容留 4px，
+ *   键帽 / 横幅 / 内容三者位置同时回到设计值；⑥ 组补 2 项断言（日报填写 / 问题看板 各一条：未吸顶时下一个兄弟 top ≥ 横幅下沿 +2px）。
+ *
+ * Push 201 再补（业务口径 2026-09-28「这个中间有条缝可以有办法解决一下吗」，项目总览截图）：吸顶条下边框在带缩放的屏
+ *   （Windows 150% 等）被按设备像素吸附成 0.67px —— 栏高 59 → 58.67、下沿实际落在 122.67；下面两层吸顶元素钉 123
+ *   会露 0.33px 缝，滚动时白行 / 蓝色徽章从缝里闪过去。两张吸顶表（项目总览任务表头 / 日报及问题页内导航栏）
+ *   top 123 → **122px（向上多叠 1px）**，项目总览表头 z 20 → 19（低于主标签栏 z-20：叠压时下边框仍画在表头上）；
+ *   ⑥ 组两条叠放断言升级为「缝不变量」：叠层 top ≤ 主标签栏下沿 − 下边框宽（覆盖缩放屏下边框变细的情形）。
+ *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -326,7 +337,29 @@ const backReady = await waitFor("document.querySelector(" + j("[data-fill-form]"
 const form2 = await ev(formExpr());
 check("⑤ 回「日报填写」：表单复位（勾选 0 / 完成工作清空）", backReady === true && form2 !== null && form2.checked === 0 && form2.text.indexOf(DONE_TEXT) < 0, form2 === null ? "-" : "checked=" + String(form2.checked));
 
-// ---------- ⑥ 吸顶（Push 200 起 · Push 201 两层叠放 + 修投影外溢，业务口径「这个也做吸顶效果吧 图二吸顶后有bug」） ----------
+// ---------- ⑥ 吸顶（Push 200 起 · Push 201 两层叠放 + 修三处 bug：投影外溢 / 吞字 / 接缝；业务口径「这个也做吸顶效果吧 图二吸顶后有bug」「这里的字被吞掉了」「这个中间有条缝可以有办法解决一下吗」） ----------
+// ⑥ 前置：**未吸顶**时的静态几何 —— 横幅下沿不得压住下方内容（Push 201 补：负 mb 把区块标题吞掉 16px）
+const GAP_EXPR =
+  "(function(){var nav=document.querySelector(" + j("[data-subnav]") + ");if(nav===null){return null;}" +
+  "var sib=nav.nextElementSibling;if(sib===null){return null;}var n=nav.getBoundingClientRect();var s=sib.getBoundingClientRect();" +
+  "var head=sib.firstElementChild;var h=head===null?null:head.getBoundingClientRect();" +
+  "return {scrollY:Math.round(window.scrollY),navTop:Math.round(n.top),navBottom:Math.round(n.bottom),sibTop:Math.round(s.top)," +
+  "gap:Math.round(s.top-n.bottom),headTop:h===null?null:Math.round(h.top),stuck:Math.round(n.top)<=123};})()";
+await ev("window.scrollTo(0, 0)");
+await sleep(300);
+const gapDaily = await ev(GAP_EXPR);
+check("⑥ 页内导航栏不压住下方内容（未吸顶 · 日报填写：下一个兄弟 top ≥ 横幅下沿 +2px · 修「这里的字被吞掉了」）",
+  gapDaily !== null && gapDaily.stuck === false && gapDaily.gap >= 2,
+  gapDaily === null ? "-" : JSON.stringify(gapDaily));
+await clickSelector('[data-subnav-item="问题看板"]');
+await ev("window.scrollTo(0, 0)");
+await sleep(400);
+const gapBoard = await ev(GAP_EXPR);
+check("⑥ 页内导航栏不压住下方内容（未吸顶 · 问题看板：区块标题整行露在横幅下沿之外）",
+  gapBoard !== null && gapBoard.stuck === false && gapBoard.headTop !== null && gapBoard.headTop - gapBoard.navBottom >= 2,
+  gapBoard === null ? "-" : JSON.stringify(gapBoard));
+await clickSelector('[data-subnav-item="日报填写"]');
+await sleep(400);
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 520, deviceScaleFactor: 1, mobile: false });
 await sleep(400);
 await ev("window.scrollTo(0, 400)");
@@ -339,6 +372,7 @@ const stickProbe = await ev(
   "for(var i=0;i<ks.length;i++){var kb=ks[i].getBoundingClientRect().bottom;if(kb>keyBottom){keyBottom=kb;}}" +
   "return {scrollY:Math.round(window.scrollY),headerBottom:Math.round(header.getBoundingClientRect().bottom)," +
   "barTop:Math.round(b.top),barBottom:Math.round(b.bottom),barPosition:getComputedStyle(bar).position,barZ:getComputedStyle(bar).zIndex," +
+  "barBorder:parseFloat(getComputedStyle(bar).borderBottomWidth)," +
   "navTop:Math.round(n.top),navBottom:Math.round(n.bottom),navPosition:getComputedStyle(nav).position,navZ:getComputedStyle(nav).zIndex," +
   "shadowRoom:Math.round(n.bottom-keyBottom),visible:b.bottom>64&&b.top<window.innerHeight&&n.bottom>64&&n.top<window.innerHeight};})()"
 );
@@ -347,14 +381,15 @@ check("⑥ 主标签栏吸顶：滚动后停在顶栏正下方（top = 64 · pos
   Math.abs(stickProbe.barTop - 64) <= 2 && Math.abs(stickProbe.barTop - stickProbe.headerBottom) <= 2 &&
   stickProbe.barZ === "20" && stickProbe.visible === true,
   stickProbe === null ? "-" : JSON.stringify(stickProbe));
-check("⑥ 页内导航栏叠在主标签栏下面（top ≈ 主标签栏下沿 123 · position: sticky · z 更低不反压）",
-  stickProbe !== null && stickProbe.navPosition === "sticky" && Math.abs(stickProbe.navTop - 123) <= 2 &&
-  Math.abs(stickProbe.navTop - stickProbe.barBottom) <= 2 && Number(stickProbe.navZ) < Number(stickProbe.barZ),
-  stickProbe === null ? "-" : "navTop=" + String(stickProbe.navTop) + " · barBottom=" + String(stickProbe.barBottom) + " · z=" + String(stickProbe.navZ) + "/" + String(stickProbe.barZ));
+check("⑥ 页内导航栏叠在主标签栏下面（top = 122 多叠 1px · 缝不变量 navTop ≤ 栏下沿 − 下边框宽 · position: sticky · z 更低不反压）",
+  stickProbe !== null && stickProbe.navPosition === "sticky" && Math.abs(stickProbe.navTop - 122) <= 2 &&
+  stickProbe.navTop <= stickProbe.barBottom - stickProbe.barBorder + 0.05 && Number(stickProbe.navZ) < Number(stickProbe.barZ),
+  stickProbe === null ? "-" : "navTop=" + String(stickProbe.navTop) + " · barBottom=" + String(stickProbe.barBottom) + " − 下边框 " + String(stickProbe.barBorder) + " · z=" + String(stickProbe.navZ) + "/" + String(stickProbe.barZ));
 check("⑥ 键帽投影兜进横幅：导航栏下内衬 ≥ 投影（nav 底 - 键帽底 ≥ 12px · Push 201 修「图二吸顶后有bug」）",
   stickProbe !== null && stickProbe.shadowRoom >= 12,
   stickProbe === null ? "-" : "shadowRoom=" + String(stickProbe.shadowRoom) + "px");
-// ⑥b 项目总览：任务表头也叠在主标签栏下面（Push 201 重排 —— 原 top-16 会让主标签栏压住表头）
+// ⑥b 项目总览：任务表头也叠在主标签栏下面（Push 201 重排 —— 原 top-16 会让主标签栏压住表头；
+//     Push 201 再补「缝」—— top 122 多叠 1px + z 19 低于主标签栏，缩放屏下边框吸附变细也不露缝）
 await clickSelector('[data-maintabs-item="项目总览"]');
 const boardReady = await waitFor("document.querySelector(" + j("[data-board-head]") + ")!==null");
 await ev("window.scrollTo(0, 600)");
@@ -362,11 +397,13 @@ await sleep(350);
 const boardProbe = await ev(
   "(function(){var bar=document.querySelector(" + j("[data-maintabs]") + ");var head=document.querySelector(" + j("[data-board-head]") + ");" +
   "if(bar===null||head===null){return null;}var b=bar.getBoundingClientRect();var h=head.getBoundingClientRect();" +
-  "return {scrollY:Math.round(window.scrollY),barBottom:Math.round(b.bottom),headTop:Math.round(h.top),position:getComputedStyle(head).position};})()"
+  "return {scrollY:Math.round(window.scrollY),barBottom:Math.round(b.bottom),barBorder:parseFloat(getComputedStyle(bar).borderBottomWidth)," +
+  "headTop:Math.round(h.top),headZ:getComputedStyle(head).zIndex,position:getComputedStyle(head).position};})()"
 );
-check("⑥ 项目总览：任务表头叠在主标签栏下面（表头 top ≈ 主标签栏下沿 · position: sticky）",
+check("⑥ 项目总览：任务表头叠在主标签栏下面（表头 top = 122 多叠 1px · 缝不变量 headTop ≤ 栏下沿 − 下边框宽 · position: sticky · z 19）",
   boardReady === true && boardProbe !== null && boardProbe.scrollY >= 300 && boardProbe.position === "sticky" &&
-  Math.abs(boardProbe.headTop - boardProbe.barBottom) <= 2,
+  Math.abs(boardProbe.headTop - 122) <= 2 && boardProbe.headTop <= boardProbe.barBottom - boardProbe.barBorder + 0.05 &&
+  Number(boardProbe.headZ) < 20,
   boardProbe === null ? "-" : JSON.stringify(boardProbe));
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
 await ev("window.scrollTo(0, 0)");
