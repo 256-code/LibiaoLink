@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」+「日报记录列收窄」+「问题看板图标」（业务口径 2026-09-28 · Push 198 / 199）
+ * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」+「日报记录列收窄」+「导航栏图标 / 吸顶」（业务口径 2026-09-28 · Push 198 / 199 / 200）
  *
  * 业务口径：「日报这里关联任务改成关联阶段」——「日报填写」表单的「关联任务」多选（原列项目现有任务 + 负责人）
  * 改为「关联阶段」多选：选项 = 九个施工阶段（与项目总览分组 / 两块看板同一份口径、固定顺序 售前规划 → 验收），
@@ -21,6 +21,12 @@
  *   明日计划 / 现场工作附图；「今日施工人数 / 现场发现问题 / 解决方案或建议」三列从列表展示去掉（只改列表展示：
  *   表单字段与 A3-09 问题生成口径不变）。④ 组断言随之更新（列数 = 6 + 不含四词 + 行内下标前移 + 问题探针清零）；
  *   同批：「问题看板」项图标换业务给 SVG（① 组新增 3 项断言 —— 新图标就位 / 旧竖列图标下架 / 其余三项仍描边）。
+ *
+ * Push 200 追加（业务口径 2026-09-28「做吸顶效果」+「问题追溯改成这个 但是不能照搬 应该要修改」（实指「问题追踪」项））：
+ *   ① 「问题追踪」项图标换业务给样 —— 「文件 + 警示圈」（原 512×512 实心版首跑后业务反馈「不好看」→ 改浅版：文件描边走
+ *      1.8px + 小警示环，与「问题看板」徽章同一套语言）；② 页内导航栏整排**吸顶** —— 滚动时停在顶栏（h-16 = 64px）正下方
+ *      （站灰底 + 毛玻璃）。断言：① 组 +2（问题追踪新图标就位 / 旧表格图标下架）并把「其余仍描边」收成 2 项；
+ *      ⑥ 组 +1（缩小视口 → 滚动 → 粘在顶栏下方）。
  *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -228,7 +234,9 @@ const tabIcons = await ev(
   "(function(){var out=[];var bs=document.querySelectorAll(" + j("[data-subnav-item]") + ");" +
   "for(var i=0;i<bs.length;i++){var svg=bs[i].querySelector(" + j("svg") + ");var p=svg===null?null:svg.querySelector(" + j("path") + ");" +
   "out.push({tab:bs[i].getAttribute(" + j("data-subnav-item") + "),viewBox:svg===null?null:svg.getAttribute(" + j("viewBox") + ")," +
-  "stroke:svg===null?null:svg.getAttribute(" + j("stroke") + "),d:p===null?" + j("") + ":(p.getAttribute(" + j("d") + ")||" + j("") + ")});}return out;})()"
+  "stroke:svg===null?null:svg.getAttribute(" + j("stroke") + "),paths:svg===null?-1:svg.querySelectorAll(" + j("path") + ").length," +
+  "rects:svg===null?-1:svg.querySelectorAll(" + j("rect") + ").length," +
+  "d:p===null?" + j("") + ":(p.getAttribute(" + j("d") + ")||" + j("") + ")});}return out;})()"
 );
 const boardIcon = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab === "问题看板")[0] : undefined;
 check("① 问题看板项图标 = 业务给的面性圆环感叹号（16×16 · path M7.493 0.015…）",
@@ -237,9 +245,17 @@ check("① 问题看板项图标 = 业务给的面性圆环感叹号（16×16 ·
 check("① 问题看板项原两块竖列描边图标已换下",
   boardIcon !== undefined && boardIcon.d.indexOf("M4.5 6A1.5") < 0 && boardIcon.stroke === null,
   boardIcon === undefined ? "-" : "stroke=" + String(boardIcon.stroke));
-const strokeTabs = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab !== "问题看板") : [];
-check("① 其余三项导航图标照旧描边（stroke = currentColor · 共 3 项）",
-  strokeTabs.length === 3 && strokeTabs.every((item) => item.stroke === "currentColor"),
+const trackIcon = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab === "问题追踪")[0] : undefined;
+check("① 问题追踪项图标 = 「文件 + 警示章」浅版（24 视框 · 页 + 折角 + 警示环 5 条 path · 描边 1.8px）",
+  trackIcon !== undefined && trackIcon.viewBox === "0 0 24 24" && trackIcon.paths === 5 && trackIcon.rects === 0 &&
+  trackIcon.d.indexOf("M13.5 3H6.75A1.75") === 0 && trackIcon.stroke === "currentColor",
+  trackIcon === undefined ? "-" : trackIcon.viewBox + " · paths=" + String(trackIcon.paths) + " · " + trackIcon.d.slice(0, 22));
+check("① 问题追踪项原表格图标已换下（无 rect / 无 M4 10h16 表格线）",
+  trackIcon !== undefined && trackIcon.rects === 0 && trackIcon.d.indexOf("M4 10h16") < 0,
+  trackIcon === undefined ? "-" : "rects=" + String(trackIcon.rects));
+const strokeTabs = Array.isArray(tabIcons) ? tabIcons.filter((item) => item.tab !== "问题看板" && item.tab !== "问题追踪") : [];
+check("① 其余两项导航图标照旧描边（stroke = currentColor · 共 2 项）",
+  strokeTabs.length === 2 && strokeTabs.every((item) => item.stroke === "currentColor"),
   strokeTabs.map((item) => item.tab + ":" + String(item.stroke)).join(" / "));
 const formReady = await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
 const form0 = await ev(formExpr());
@@ -297,6 +313,24 @@ await clickSelector('[data-subnav-item="日报填写"]');
 const backReady = await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
 const form2 = await ev(formExpr());
 check("⑤ 回「日报填写」：表单复位（勾选 0 / 完成工作清空）", backReady === true && form2 !== null && form2.checked === 0 && form2.text.indexOf(DONE_TEXT) < 0, form2 === null ? "-" : "checked=" + String(form2.checked));
+
+// ---------- ⑥ 吸顶：滚动后页内导航栏停在顶栏正下方（Push 200） ----------
+await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 520, deviceScaleFactor: 1, mobile: false });
+await sleep(400);
+await ev("window.scrollTo(0, 400)");
+await sleep(350);
+const stickProbe = await ev(
+  "(function(){var nav=document.querySelector(" + j("[data-subnav]") + ");var header=document.querySelector(" + j("header") + ");" +
+  "if(nav===null||header===null){return null;}var box=nav.getBoundingClientRect();" +
+  "return {scrollY:Math.round(window.scrollY),top:Math.round(box.top),position:getComputedStyle(nav).position," +
+  "headerBottom:Math.round(header.getBoundingClientRect().bottom),visible:box.bottom>64&&box.top<window.innerHeight};})()"
+);
+check("⑥ 吸顶：滚动后页内导航栏停在顶栏正下方（top ≈ 顶栏底 · position: sticky · 仍可见）",
+  stickProbe !== null && stickProbe.scrollY >= 300 && stickProbe.position === "sticky" && Math.abs(stickProbe.top - stickProbe.headerBottom) <= 2 && stickProbe.visible === true,
+  stickProbe === null ? "-" : JSON.stringify(stickProbe));
+await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+await ev("window.scrollTo(0, 0)");
+await sleep(250);
 
 // ---------- 清理 ----------
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
