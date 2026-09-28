@@ -754,7 +754,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   }, [measureStage, scrollRef]);
 
   /**
-   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下，
+   * 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头已移出横向滚动容器、自身 sticky 在主标签栏（Push 201 起吸顶）之下，
    * 左右滚动（含底部滑块）时用 translateX 跟随 #task-board-scroll 的 scrollLeft，保证表头与各列始终对齐。
    */
   useEffect(() => {
@@ -797,8 +797,9 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       <div ref={boardWrapRef} className="relative">
       <div ref={boardCardRef} className="rounded-xl border border-zinc-200 bg-white">
       {/* 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下；
-          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。 */}
-      <div className="sticky top-16 z-20 overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
+          横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。
+          Push 201：主标签栏也吸顶 —— 表头让位、叠在主标签栏下面（top = 顶栏 64 + 主标签栏 59 = 123px）。 */}
+      <div data-board-head="true" className="sticky top-[123px] z-20 overflow-hidden rounded-t-xl border-b border-zinc-200 bg-zinc-50">
         <div
           ref={headerRowRef}
           className="grid items-center px-5 py-2.5 text-xs font-medium text-zinc-400"
