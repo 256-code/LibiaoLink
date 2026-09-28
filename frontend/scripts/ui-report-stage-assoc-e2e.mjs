@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」+「日报记录列收窄」+「导航栏图标 / 吸顶」（业务口径 2026-09-28 · Push 198 / 199 / 200 / 201）
+ * LibiaoLink 前端 · 回放：日报「关联任务 → 关联阶段」+「日报记录列收窄」+「导航栏图标 / 吸顶」+「分点提示 / 归类多选 / 记录口径 / 暂存保留」（业务口径 2026-09-28 · Push 198 / 199 / 200 / 201 / 202）
  *
  * 业务口径：「日报这里关联任务改成关联阶段」——「日报填写」表单的「关联任务」多选（原列项目现有任务 + 负责人）
  * 改为「关联阶段」多选：选项 = 九个施工阶段（与项目总览分组 / 两块看板同一份口径、固定顺序 售前规划 → 验收），
@@ -48,6 +48,26 @@
  *   top 123 → **122px（向上多叠 1px）**，项目总览表头 z 20 → 19（低于主标签栏 z-20：叠压时下边框仍画在表头上）；
  *   ⑥ 组两条叠放断言升级为「缝不变量」：叠层 top ≤ 主标签栏下沿 − 下边框宽（覆盖缩放屏下边框变细的情形）。
  *
+ * Push 202 追加（业务口径 2026-09-28「填日报文字提示如图分点」+「问题归类可以多选」+「日报记录英文加上 如图所示」
+ *   +「时间格式也要年月日 具体提交时间不需要 已提交状态也不要」+「点击暂存草稿就暂存在日报填写页面吧 … 暂存就保留
+ *   表单里面填的内容皆可」）：① 「日报填写」的「当日完成工作Work completed today」「明日计划Tomorrow's plan」
+ *   「现场发现问题Problem」三个多行框**补英文表头**（三行分点占位提示先落、随后业务看后撤回：「算了 不要提示文字了」——
+ *   最终三框**无占位提示文字**、行数回到原口径）；② 「问题归类」改**多选**（弹层点选不关闭、选中项绿勾、触发器顿号连接），
+ *   原型存储口径 = 多值顿号连接；③ 「日报记录」六列表头改**中英拼写**、时间列改**年月日**、撤「提交 HH:MM」小字与状态签；
+ *   ④ 「暂存草稿」不写记录、不切子视图、不清表单（只保留表单内容 + 顶部提示）。
+ *   另：「现场发现问题」撤琥珀色特殊底 / 字色（「这个也不用搞特殊 样式和别的保持一致」）、表单字段标题统一加粗
+ *   （「标题都标标粗」）。
+ *   断言：② 组 +3（双语表头 / 三框无占位提示 / 标题加粗）、④ 组 1 条状态断言拆成 2 条（时间列年月日 + 无状态签 · 净 +1）、
+ *   ⑤b 组新增 9 项（多选弹层 / 两项绿勾 / 触发器顿号 / Esc 关闭 / 暂存提示 / 悬停背景 / 内容保留 / 不切视图 / 不写记录）；
+ *   另：「暂存草稿」悬停反馈加明显（「鼠标放到暂存草稿的ui效果不太明显」——描边 200 → 400、背景 zinc-100、字色转深）；合计 52 项。
+ *
+ * Push 202 同批续（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：两个附图区
+ *   （现场工作附图 / 当前问题附图）改 AttachmentPicker —— **粘贴为主入口**（点一下虚线区拿到焦点，Ctrl+V 直接粘图；
+ *   剪贴板图没有名字时按「剪贴板图片-N.png」命名；附件胶囊可逐个移除）、「选择文件」降为次入口（原生文件框仍在）。
+ *   ⑤c 组新增 5 项（两区常驻 + 次入口仍在 / 点一下进就绪态 / 粘贴出胶囊 / × 可移除 / 第二区同套生效）；
+ *   粘贴优先走**真实剪贴板 + 真实 Ctrl+V**（CDP 授权 clipboardReadWrite + Input.dispatchKeyEvent 走浏览器 paste 加速键），
+ *   剪贴板不可用才回落合成 ClipboardEvent（两条路都打在真实 document 监听上）。
+ *
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -65,6 +85,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
+import { deflateSync } from "node:zlib";
 const PG_MODULE = process.env.PG_MODULE ?? new URL("../../server/node_modules/pg/lib/index.js", import.meta.url).href;
 const { default: pg } = await import(PG_MODULE);
 
@@ -81,7 +102,8 @@ const Q = String.fromCharCode(34);
 const j = (value) => JSON.stringify(value);
 const STAGES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "生产阶段", "验收"];
 const PICK = ["硬件实施", "试运行"];
-const REPORT_HEADERS = ["时间", "填写者", "关联阶段", "当日完成工作", "明日计划", "现场工作附图"];
+const REPORT_HEADERS = ["时间time", "填写者", "关联阶段Related stages", "当日完成工作Work completed today", "明日计划Tomorrow's plan", "现场工作附图On-site photos"];
+const STATE_WORDS = ["已提交", "草稿", "补填"];
 const DROPPED_HEADERS = ["今日施工人数", "现场发现问题", "解决方案或建议"];
 const NOT_A_STAGE = "布局定档";
 const DONE_TEXT = "回放·关联阶段·" + new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
@@ -171,11 +193,25 @@ await page.send("Runtime.enable");
 await page.send("Network.setCookie", { name: "ll_sid", value: token, url: FRONTEND + "/", path: "/", httpOnly: true, secure: false });
 await page.send("Network.setCookie", { name: "ll_csrf", value: csrf, url: FRONTEND + "/", path: "/", httpOnly: false, secure: false });
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+// 无头页默认「不聚焦」——浏览器粘贴命令只在聚焦文档里可用（Push 202 同批续：真实 Ctrl+V 回放用）
+await page.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ev = async (expression) => {
   const reply = await page.send("Runtime.evaluate", { expression, returnByValue: true });
   if (reply.exceptionDetails !== undefined) {
     throw new Error("页面表达式抛异常：" + JSON.stringify(reply.exceptionDetails).slice(0, 300) + " | 表达式：" + expression.slice(0, 160));
+  }
+  return reply.result.value;
+};
+/** 同 ev，但等页面 Promise 落地（真实剪贴板写入这类异步操作用；userGesture = 给一次瞬时激活）。 */
+const evAwait = async (expression, userGesture) => {
+  const params = { expression, returnByValue: true, awaitPromise: true };
+  if (userGesture === true) {
+    params.userGesture = true;
+  }
+  const reply = await page.send("Runtime.evaluate", params);
+  if (reply.exceptionDetails !== undefined) {
+    return "THROWN:" + JSON.stringify(reply.exceptionDetails).slice(0, 200);
   }
   return reply.result.value;
 };
@@ -226,6 +262,36 @@ async function typeInto(selector, text) {
   await page.send("Input.insertText", { text });
   await sleep(500);
 }
+/** 1×1 红色 PNG（真实剪贴板写入用；手搓字节 + 手写 CRC32，避免引入依赖 / 依赖 Node 版本）。 */
+function pngBytes() {
+  const crcTable = [];
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = (c & 1) !== 0 ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    crcTable[n] = c >>> 0;
+  }
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (const byte of buf) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body), 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const idat = deflateSync(Buffer.from([0, 255, 64, 32]));
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", idat), chunk("IEND", Buffer.alloc(0))]);
+}
+
 /** 表单内某枚阶段 checkbox 的标签中心（真实鼠标点标签 = 勾选）。 */
 async function clickStageLabel(text) {
   const point = await ev(
@@ -293,6 +359,24 @@ const labels0 = form0 === null ? [] : form0.labels;
 check("② 选项 = 恰好九枚、顺序 = 售前规划 → 验收（九阶段口径）", labels0.length === 9 && STAGES.every((name, index) => labels0[index] === name), labels0.join(" / "));
 check("② 选项**不再列任务名**（对照组：真实任务「" + NOT_A_STAGE + "」不在表单里）", form0 !== null && form0.labels.indexOf(NOT_A_STAGE) < 0 && form0.text.indexOf(NOT_A_STAGE) < 0, "labels=" + String(labels0.length));
 check("② 开局 0 勾选", form0 !== null && form0.checked === 0, form0 === null ? "-" : "checked=" + String(form0.checked));
+const holdProbe = await ev(
+  "(function(){var d=document.querySelector(" + j('[data-fill-form] textarea[data-field="doneWork"]') + ");" +
+  "var p=document.querySelector(" + j('[data-fill-form] textarea[data-field="plan"]') + ");" +
+  "var f=document.querySelector(" + j('[data-fill-form] textarea[data-field="foundIssue"]') + ");" +
+  "return {done:d===null?null:d.getAttribute(" + j("placeholder") + "),plan:p===null?null:p.getAttribute(" + j("placeholder") + "),found:f===null?null:f.getAttribute(" + j("placeholder") + ")};})()"
+);
+check("② 当日完成工作 / 明日计划 / 现场发现问题 三个多行框无占位提示文字（业务口径「算了 不要提示文字了」）",
+  holdProbe !== null && holdProbe.done === null && holdProbe.plan === null && holdProbe.found === null,
+  holdProbe === null ? "-" : JSON.stringify(holdProbe));
+check("② 表头双语：当日完成工作Work completed today / 明日计划Tomorrow's plan / 现场发现问题Problem（图 1 / 图 3 口径）",
+  form0 !== null && form0.text.indexOf("当日完成工作Work completed today") >= 0 && form0.text.indexOf("明日计划Tomorrow's plan") >= 0 && form0.text.indexOf("现场发现问题Problem") >= 0,
+  form0 === null ? "-" : "ok");
+const labelWeight = await ev(
+  "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");if(f===null){return null;}" +
+  "var ss=f.querySelectorAll(" + j("span") + ");for(var i=0;i<ss.length;i++){if(ss[i].textContent.trim()===" + j("明日计划Tomorrow's plan") + "){return getComputedStyle(ss[i]).fontWeight;}}return null;})()"
+);
+check("② 表单字段标题加粗（「明日计划Tomorrow's plan」标签 computed font-weight = 700 · 业务口径「标题都标标粗」）",
+  labelWeight === "700", String(labelWeight));
 
 // ---------- ③ 真实鼠标勾选 + 填完成工作 + 提交 ----------
 await clickStageLabel(PICK[0]);
@@ -310,11 +394,11 @@ check("③ 提交后自动切到「日报记录」子视图", switched === true,
 const headers = await ev(
   "(function(){var ts=document.querySelectorAll(" + j("table") + ");for(var i=0;i<ts.length;i++){" +
   "var hs=ts[i].querySelectorAll(" + j("thead th") + ");var out=[];for(var k=0;k<hs.length;k++){out.push(hs[k].textContent.trim());}" +
-  "if(out.indexOf(" + j("关联阶段") + ")>=0||out.indexOf(" + j("关联任务") + ")>=0){return out;}}return null;})()"
+  "if(out.indexOf(" + j("关联阶段Related stages") + ")>=0||out.indexOf(" + j("关联任务") + ")>=0){return out;}}return null;})()"
 );
-check("④ 日报记录表头含「关联阶段」", Array.isArray(headers) && headers.indexOf("关联阶段") >= 0, Array.isArray(headers) ? headers.join(" / ") : String(headers));
+check("④ 日报记录表头含「关联阶段Related stages」", Array.isArray(headers) && headers.indexOf("关联阶段Related stages") >= 0, Array.isArray(headers) ? headers.join(" / ") : String(headers));
 check("④ 日报记录表头不再有「关联任务」", Array.isArray(headers) && headers.indexOf("关联任务") < 0, Array.isArray(headers) ? "ok" : "-");
-check("④ 日报记录表头 = 恰好六列（时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图 · Push 199 收窄）",
+check("④ 日报记录表头 = 恰好六列且中英拼写（时间time / 填写者 / 关联阶段Related stages / 当日完成工作Work completed today / 明日计划Tomorrow's plan / 现场工作附图On-site photos · Push 202）",
   Array.isArray(headers) && headers.length === 6 && REPORT_HEADERS.every((name, index) => headers[index] === name),
   Array.isArray(headers) ? headers.join(" / ") : String(headers));
 check("④ 日报记录表头不含「今日施工人数 / 现场发现问题 / 解决方案或建议」（Push 199 只保留内容列）",
@@ -322,20 +406,157 @@ check("④ 日报记录表头不含「今日施工人数 / 现场发现问题 / 
 const rowProbe = await ev(
   "(function(){var r=document.querySelector(" + j("[data-report-row]") + ");if(r===null){return null;}" +
   "var tds=r.querySelectorAll(" + j("td") + ");return {id:r.getAttribute(" + j("data-report-row") + "),cells:tds.length," +
-  "stage:tds[2]===undefined?" + j("") + ":tds[2].textContent.trim(),done:tds[3]===undefined?" + j("") + ":tds[3].textContent.trim(),state:(r.textContent||" + j("") + ")};})()"
+  "time:tds[0]===undefined?" + j("") + ":tds[0].textContent.trim()," +
+  "stage:tds[2]===undefined?" + j("") + ":tds[2].textContent.trim(),done:tds[3]===undefined?" + j("") + ":tds[3].textContent.trim()," +
+  "text:(r.textContent||" + j("") + ")};})()"
 );
 const issueProbes = await ev("document.querySelectorAll(" + j("[data-report-issue-link]") + ").length");
 check("④ 最新一行 = 6 个单元格（与收窄后的列头一一对齐）", rowProbe !== null && rowProbe.cells === 6, rowProbe === null ? "-" : String(rowProbe.cells));
 check("④ 列表已无问题记录探针 [data-report-issue-link]（该列随 Push 199 移除）", issueProbes === 0, String(issueProbes));
 check("④ 最新一行关联阶段列 = 「" + PICK[0] + "、" + PICK[1] + "」", rowProbe !== null && rowProbe.stage === PICK[0] + "、" + PICK[1], rowProbe === null ? "-" : String(rowProbe.stage));
 check("④ 最新一行「当日完成工作」= 回放文本", rowProbe !== null && rowProbe.done === DONE_TEXT, rowProbe === null ? "-" : String(rowProbe.done));
-check("④ 最新一行状态 = 已提交", rowProbe !== null && rowProbe.state.indexOf("已提交") >= 0, rowProbe === null ? "-" : "ok");
+const CN_DATE = /^\d{4}年\d{1,2}月\d{1,2}日$/;
+check("④ 最新一行时间列 = 年月日（YYYY年M月D日 · 业务口径「时间格式也要年月日」）且不带「提交 HH:MM」小字",
+  rowProbe !== null && CN_DATE.test(rowProbe.time) && rowProbe.text.indexOf("提交") < 0, rowProbe === null ? "-" : String(rowProbe.time));
+check("④ 最新一行不再有状态签（已提交 / 草稿 / 补填 三词都不在行内 · 业务口径「已提交状态也不要」）",
+  rowProbe !== null && STATE_WORDS.every((word) => rowProbe.text.indexOf(word) < 0), rowProbe === null ? "-" : "ok");
 
 // ---------- ⑤ 回「日报填写」表单复位 ----------
 await clickSelector('[data-subnav-item="日报填写"]');
 const backReady = await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
 const form2 = await ev(formExpr());
 check("⑤ 回「日报填写」：表单复位（勾选 0 / 完成工作清空）", backReady === true && form2 !== null && form2.checked === 0 && form2.text.indexOf(DONE_TEXT) < 0, form2 === null ? "-" : "checked=" + String(form2.checked));
+
+// ---------- ⑤b 暂存草稿（Push 202：保留表单内容 / 不写记录 / 不切子视图）+ 问题归类多选（业务口径「问题归类可以多选」） ----------
+const STAMP = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+const PLAN_TEXT = "回放·明日计划·" + STAMP;
+const ISSUE_TEXT = "回放·现场问题·" + STAMP;
+await typeInto('[data-fill-form] textarea[data-field="plan"]', PLAN_TEXT);
+await typeInto('[data-fill-form] textarea[data-field="foundIssue"]', ISSUE_TEXT);
+await clickStageLabel(PICK[0]);
+await clickSelector('[data-field="issueCategory"] button');
+const multiOpen = await waitFor("document.querySelector(" + j("[data-multi-popover]") + ")!==null");
+check("⑤b 问题归类多选弹层可打开（[data-multi-popover] 就位 · Push 202 该字段由单选改多选）", multiOpen === true, String(multiOpen));
+await clickSelector('[data-multi-option="物流原因"]');
+await clickSelector('[data-multi-option="供应商原因"]');
+const multiProbe = await ev(
+  "(function(){var pop=document.querySelector(" + j("[data-multi-popover]") + ");if(pop===null){return null;}" +
+  "var sel=pop.querySelectorAll(" + j('[role="option"][aria-selected="true"]') + ");var names=[];for(var i=0;i<sel.length;i++){names.push(sel[i].getAttribute(" + j("data-multi-option") + "));}" +
+  "var box=document.querySelector(" + j('[data-field="issueCategory"]') + ");" +
+  "return {sel:names,trigger:box===null?" + j("") + ":box.textContent.trim()};})()"
+);
+check("⑤b 勾选「物流原因」「供应商原因」→ 2 项绿勾（aria-selected · 弹层点选不关闭）",
+  multiProbe !== null && multiProbe.sel.length === 2 && multiProbe.sel.indexOf("物流原因") >= 0 && multiProbe.sel.indexOf("供应商原因") >= 0,
+  multiProbe === null ? "-" : multiProbe.sel.join(" / "));
+check("⑤b 触发器显示已选两项（顿号连接）", multiProbe !== null && multiProbe.trigger.indexOf("物流原因、供应商原因") >= 0, multiProbe === null ? "-" : String(multiProbe.trigger));
+await pressKey("Escape", "Escape", 27);
+const multiClosed = await waitFor("document.querySelector(" + j("[data-multi-popover]") + ")===null");
+check("⑤b Esc 关闭弹层（站点浮层同一套关闭口径）", multiClosed === true, String(multiClosed));
+const draftPoint = await clickSelector('[data-fill-form] button[data-action="draft"]');
+await sleep(400);
+const draftHoverBg = await ev("(function(){var b=document.querySelector(" + j('[data-fill-form] button[data-action="draft"]') + ");return b===null?null:getComputedStyle(b).backgroundColor;})()");
+check("⑤b 暂存草稿悬停反馈明显（指针停在按钮上时背景 = zinc-100（oklch(0.967 …) / rgb(244,244,245)）· 业务口径「鼠标放到暂存草稿的ui效果不太明显」）",
+  draftHoverBg !== null && (String(draftHoverBg) === "rgb(244, 244, 245)" || String(draftHoverBg).indexOf("oklch(0.967") >= 0),
+  String(draftHoverBg) + (draftPoint === null ? " · no point" : ""));
+const draftNotice = await ev("(function(){var n=document.querySelector(" + j("[data-subnav-notice]") + ");return n===null?null:n.textContent.trim();})()");
+check("⑤b 暂存草稿 → 顶部提示「已暂存」（不写记录 / 不切视图 / 不清表单）", draftNotice !== null && draftNotice.indexOf("已暂存") >= 0, draftNotice === null ? "-" : String(draftNotice));
+const keptProbe = await ev(
+  "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");if(f===null){return null;}" +
+  "var plan=f.querySelector(" + j('textarea[data-field="plan"]') + ");var issue=f.querySelector(" + j('textarea[data-field="foundIssue"]') + ");" +
+  "var box=f.querySelector(" + j('[data-field="stages"]') + ");var inputs=box===null?[]:box.querySelectorAll(" + j("input[type=checkbox]") + ");var checked=0;for(var i=0;i<inputs.length;i++){if(inputs[i].checked){checked++;}}" +
+  "var cat=document.querySelector(" + j('[data-field="issueCategory"]') + ");" +
+  "return {plan:plan===null?" + j("") + ":plan.value,issue:issue===null?" + j("") + ":issue.value,checked:checked,cat:cat===null?" + j("") + ":cat.textContent.trim()};})()"
+);
+check("⑤b 暂存后表单内容保留（明日计划 / 现场发现问题 / 勾选 1 阶段 / 归类两项 · 业务口径「暂存就保留表单里面填的内容皆可」）",
+  keptProbe !== null && keptProbe.plan === PLAN_TEXT && keptProbe.issue === ISSUE_TEXT && keptProbe.checked === 1 && keptProbe.cat.indexOf("物流原因、供应商原因") >= 0,
+  keptProbe === null ? "-" : JSON.stringify(keptProbe));
+const stillFill = await ev("(function(){var b=document.querySelector(" + j('[data-subnav-item="日报填写"]') + ");return b!==null && b.getAttribute(" + j("aria-current") + ")===" + j("page") + ";})()");
+check("⑤b 暂存后仍停在「日报填写」（不再自动切「日报记录」）", stillFill === true, String(stillFill));
+await clickSelector('[data-subnav-item="日报记录"]');
+await waitFor("document.querySelector(" + j("[data-report-row]") + ")!==null");
+const rowsAfterDraft = await ev("document.querySelectorAll(" + j("[data-report-row]") + ").length");
+check("⑤b 暂存不写「日报记录」（行数仍是提交产生的 1 行）", rowsAfterDraft === 1, String(rowsAfterDraft));
+await clickSelector('[data-subnav-item="日报填写"]');
+await waitFor("document.querySelector(" + j("[data-fill-form]") + ")!==null");
+
+// ---------- ⑤c 附图：以「复制粘贴」为主入口（Push 202 同批续 · 业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」） ----------
+const PNG_B64 = pngBytes().toString("base64");
+const zonesProbe = await ev(
+  "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");if(f===null){return null;}" +
+  "var photo=f.querySelector(" + j("[data-paste-zone=photos]") + ");var issue=f.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");" +
+  "var fileInputs=f.querySelectorAll(" + j("input[type=file]") + ");" +
+  "var ph=photo===null?null:photo.querySelector(" + j("[data-paste-half]") + ");var fh=photo===null?null:photo.querySelector(" + j("[data-file-half]") + ");" +
+  "return {photo:photo!==null,issue:issue!==null,files:fileInputs.length," +
+  "pasteSvg:ph===null?0:ph.querySelectorAll(" + j("svg") + ").length,pasteText:ph===null?" + j("") + ":ph.textContent.trim(),pasteAria:ph===null?" + j("") + ":String(ph.getAttribute(" + j("aria-label") + "))," +
+  "fileSvg:fh===null?0:fh.querySelectorAll(" + j("svg") + ").length,fileText:fh===null?" + j("") + ":fh.textContent.trim(),fileAria:fh===null?" + j("") + ":String(fh.getAttribute(" + j("aria-label") + "))};})()"
+);
+check("⑤c 两个附图区（现场工作附图 / 当前问题附图）常驻 = 虚线卡左右分半：左半 `ctrl v` 键帽（Ctrl+V 主入口 · 键帽风底 + 内阴影）+ 右半文件 / 云图标（点击选择文件 · 原生文件框仍 2 个 · 两半无说明文字）",
+  zonesProbe !== null && zonesProbe.photo === true && zonesProbe.issue === true && zonesProbe.files === 2 &&
+  zonesProbe.pasteText.replace(/\s+/g, " ").trim().toLowerCase() === "ctrl v" && zonesProbe.pasteAria.indexOf("Ctrl+V") >= 0 &&
+  zonesProbe.fileSvg === 1 && zonesProbe.fileText === "" && zonesProbe.fileAria.indexOf("选择文件") >= 0,
+  zonesProbe === null ? "-" : JSON.stringify(zonesProbe));
+await clickSelector("[data-paste-zone=photos] [data-paste-half]");
+const armedProbe = await ev(
+  "(function(){var p=document.querySelector(" + j("[data-paste-zone=photos]") + ");var q=document.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");" +
+  "var h=p===null?null:p.querySelector(" + j("[data-paste-hint]") + ");var h2=q===null?null:q.querySelector(" + j("[data-paste-hint]") + ");" +
+  "var sink=p===null?null:p.querySelector(" + j("[data-paste-sink]") + ");var act=document.activeElement;" +
+  "return {photo:h===null?null:h.getAttribute(" + j("data-paste-hint") + "),issue:h2===null?null:h2.getAttribute(" + j("data-paste-hint") + ")," +
+  "sinkFocused:sink!==null && act===sink,activeTag:act===null?" + j("") + ":act.tagName};})()"
+);
+check("⑤c 真实鼠标点一下「现场工作附图」左半 → 就绪态（data-paste-hint=armed · 焦点落在不可见粘贴落点 INPUT 上 —— 浏览器只对有可编辑焦点的元素执行 Ctrl+V）· 未点的另一区仍 idle",
+  armedProbe !== null && armedProbe.photo === "armed" && armedProbe.issue === "idle" && armedProbe.sinkFocused === true,
+  armedProbe === null ? "-" : JSON.stringify(armedProbe));
+// 粘贴：优先「真实剪贴板 + 真实 Ctrl+V」（CDP 授权 + Input.dispatchKeyEvent，按键走浏览器 paste 加速键）；
+// 剪贴板不可用（无头环境偶发）才回落合成 ClipboardEvent —— 两条路都打在真实 document 监听上。
+await page.send("Browser.grantPermissions", { origin: FRONTEND, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
+const clipWrite = await evAwait(
+  "(async function(){try{var bin=atob(" + j(PNG_B64) + ");var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++){arr[i]=bin.charCodeAt(i);}" +
+  "await navigator.clipboard.write([new ClipboardItem({" + j("image/png") + ":new Blob([arr],{type:" + j("image/png") + "})})]);return " + j("ok") + ";}catch(e){return " + j("ERR:") + "+String(e);}})()"
+);
+let pasteVia = "clipboard+ctrlv";
+if (String(clipWrite) !== "ok") {
+  pasteVia = "synthetic-event(" + String(clipWrite).slice(0, 60) + ")";
+  await ev(
+    "(function(){var bin=atob(" + j(PNG_B64) + ");var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++){arr[i]=bin.charCodeAt(i);}" +
+    "var dt=new DataTransfer();dt.items.add(new File([new Blob([arr],{type:" + j("image/png") + "})]," + j("") + ",{type:" + j("image/png") + "}));" +
+    "var e=new ClipboardEvent(" + j("paste") + ",{clipboardData:dt,bubbles:true,cancelable:true});document.dispatchEvent(e);return true;})()"
+  );
+} else {
+  await page.send("Page.bringToFront");
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2, commands: ["paste"] });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2 });
+}
+await sleep(500);
+const chipsExpr = (zone) =>
+  "(function(){var z=document.querySelector(" + j("[data-paste-zone=" + zone + "]") + ");if(z===null){return null;}" +
+  "var wrap=z.parentElement;if(wrap===null){return null;}var cs=wrap.querySelectorAll(" + j("[data-attachment]") + ");var names=[];for(var i=0;i<cs.length;i++){names.push(cs[i].getAttribute(" + j("data-attachment") + "));}" +
+  "return {names:names};})()";
+const chipsAfterPaste = await ev(chipsExpr("photos"));
+check("⑤c 粘贴一张图（" + pasteVia + "）→ 「现场工作附图」出现附件胶囊；剪贴板图无文件名 → 按「剪贴板图片-1.png」命名",
+  chipsAfterPaste !== null && chipsAfterPaste.names.length === 1 && chipsAfterPaste.names[0] === "剪贴板图片-1.png",
+  chipsAfterPaste === null ? "-" : JSON.stringify(chipsAfterPaste.names));
+await clickSelector('[data-attachment="剪贴板图片-1.png"] button[data-action="remove-attachment"]');
+const chipsAfterRemove = await ev(chipsExpr("photos"));
+check("⑤c 附件胶囊可逐个移除（点 × 后「现场工作附图」回到 0 个附件）",
+  chipsAfterRemove !== null && chipsAfterRemove.names.length === 0,
+  chipsAfterRemove === null ? "-" : JSON.stringify(chipsAfterRemove.names));
+await clickSelector("[data-paste-zone=issuePhotos]");
+if (String(clipWrite) !== "ok") {
+  await ev(
+    "(function(){var bin=atob(" + j(PNG_B64) + ");var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++){arr[i]=bin.charCodeAt(i);}" +
+    "var dt=new DataTransfer();dt.items.add(new File([new Blob([arr],{type:" + j("image/png") + "})]," + j("") + ",{type:" + j("image/png") + "}));" +
+    "var e=new ClipboardEvent(" + j("paste") + ",{clipboardData:dt,bubbles:true,cancelable:true});document.dispatchEvent(e);return true;})()"
+  );
+} else {
+  await page.send("Page.bringToFront");
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2, commands: ["paste"] });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2 });
+}
+await sleep(500);
+const chipsIssueZone = await ev(chipsExpr("issuePhotos"));
+check("⑤c 「当前问题附图」同一套粘贴（点一下再 Ctrl+V）→ 该区也收到「剪贴板图片-1.png」",
+  chipsIssueZone !== null && chipsIssueZone.names.length === 1 && chipsIssueZone.names[0] === "剪贴板图片-1.png",
+  chipsIssueZone === null ? "-" : JSON.stringify(chipsIssueZone.names));
 
 // ---------- ⑥ 吸顶（Push 200 起 · Push 201 两层叠放 + 修三处 bug：投影外溢 / 吞字 / 接缝；业务口径「这个也做吸顶效果吧 图二吸顶后有bug」「这里的字被吞掉了」「这个中间有条缝可以有办法解决一下吗」） ----------
 // ⑥ 前置：**未吸顶**时的静态几何 —— 横幅下沿不得压住下方内容（Push 201 补：负 mb 把区块标题吞掉 16px）
