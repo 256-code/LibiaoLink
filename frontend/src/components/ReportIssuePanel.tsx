@@ -14,6 +14,7 @@ import {
 } from "../data/reports";
 import { PROJECT_STAGES } from "../data/projects";
 import { lockBodyScroll } from "../scrollLock";
+import { RowDeleteButton } from "./RowDeleteButton";
 import { ScrollArea } from "./ScrollArea";
 import type { MeResponse, Project } from "../types";
 
@@ -151,6 +152,13 @@ import type { MeResponse, Project } from "../types";
  *   解决方案或建议 / 关联阶段 / 当日完成工作 / 明日计划 / 问题是否处理（同一套 InlineEdit 组件与落值口径）。
  *   续（业务口径「图片也要可以增删」）：两张附图（问题附图 / 现场工作附图）接 AttachmentPicker —— 复制粘贴 / 选文件**增图**、
  *   × **删图**（与「日报填写」同一套组件与钩子），落 value 走 patchIssue / patchReport 的 photos 字段。
+ *
+ * - Push 213（业务口径 2026-09-28「日报记录 和 问题追随都要有删除按钮 和之前的删除同款 请你看看有没有合适的位置
+ *   这两个任意删除谁都是关联的 都会导致双方都删除 因为他们本质是同一个日报」）：两块表**行尾各加一列动作列**
+ *   （固定 48px 槽位 + 同款 RowDeleteButton —— 静止 24px 幽灵态随行悬停浮现、悬停展开 48px 红胶囊「删除」），
+ *   槽位是**预留**的：展开只在槽内长大，列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」）。
+ *   删除语义 = **按「同一篇日报」整组删**：删日报 = 连它派生的全部问题；删问题 = 连它来源的那篇日报；
+ *   无派生问题的日报 / 无来源日报的问题只删自己（纯前端内存态，服务端 DELETE 契约挂 wmj 线）。
  */
 
 /** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
@@ -1004,9 +1012,9 @@ const REPORT_COLUMNS: readonly string[] = [
  *  Push 206（业务口径「这个日报记录要大一点效果要如图二所示」+「用户填写后换行 填到表格后也要是换行的」）：
  *  整表放大（字号 xs → sm、单元格内边距 py-2.5 → py-4、表头 py-3.5、表格 min-w 900 → 1080）+「当日完成工作 / 明日计划」
  *  两列 whitespace-pre-line 按行换行 + 「现场工作附图」列 PhotoStrip 大图瓦片（size 档位 lg）。 */
-function ReportList({ reports, onPatch }: { reports: readonly DailyReport[]; onPatch: (id: string, patch: ReportPatch) => void }) {
+function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyReport[]; onPatch: (id: string, patch: ReportPatch) => void; onDelete: (id: string) => void }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+    <div data-report-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
         <thead className="bg-zinc-50 text-zinc-500">
           <tr>
@@ -1015,12 +1023,17 @@ function ReportList({ reports, onPatch }: { reports: readonly DailyReport[]; onP
                 {title}
               </th>
             ))}
+            {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
+                与任务表同一个 48px 槽位、同款 RowDeleteButton（静止 24px 幽灵态、悬停展开红胶囊「删除」），行内不动其它列。 */}
+            <th className="w-20 border-b border-zinc-200 px-4 py-3.5 font-medium">
+              <span className="sr-only">操作</span>
+            </th>
           </tr>
         </thead>
         <tbody>
           {reports.map((report) => {
             return (
-              <tr key={report.id} data-report-row={report.id} className="align-top transition hover:bg-zinc-50/70">
+              <tr key={report.id} data-report-row={report.id} className="group align-top transition hover:bg-zinc-50/70">
                 <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
                   {/* Push 202：时间列只留年月日（业务口径「时间格式也要年月日 具体提交时间不需要 已提交状态也不要」）——
                       状态签与「提交 HH:MM」小字一并下架（state 字段仍保留在数据模型里） */}
@@ -1099,7 +1112,21 @@ function ReportList({ reports, onPatch }: { reports: readonly DailyReport[]; onP
                   />
                 </td>
                 <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
+                  {/* 只读展示（同上 · 业务口径「太丑了 取消修改」）：附图增删在「日报填写」表单与抽屉里做。 */}
                   {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} size="lg" />}
+                </td>
+                <td className="w-20 border-b border-zinc-100 px-4 py-4 align-top" data-report-delete-cell="">
+                  {/* 行尾动作槽位（任务表同款：RowDeleteButton 注释里那套「展开只吃预留的 48px 槽位」）——
+                      幽灵态 24px → 悬停 48px **只在槽内长大**，单元格内容宽不变 ⇒ 表格列宽/表宽一格不动。
+                      px-4(16×2) + 48 = 80 = w-20，列宽正好对上表头。业务反馈：「鼠标触碰表格会动」。 */}
+                  <span data-report-delete-slot="" className="flex h-6 w-12 shrink-0 items-center">
+                    <RowDeleteButton
+                      label={"删除日报（" + report.date + "）—— 会连同这篇日报派生的问题一起删除"}
+                      onDelete={() => {
+                        onDelete(report.id);
+                      }}
+                    />
+                  </span>
                 </td>
               </tr>
             );
@@ -1430,7 +1457,7 @@ function IssueBoard({ issues, onPatch, onOpen }: {
  *  divide-zinc-100 细分割线 / hover:bg-zinc-50/80。
  *  Push 207 同批追加「增加项目总览 同款醒目模式在问题追踪里面」：`focus` = 醒目模式开 —— 整行铺该问题状态的
  *  底色（ISSUE_ROW_CLASS · 6% / 悬停 12%，与项目总览任务表同一套口径），状态列只留深色字；关 = 原样。 */
-function IssueTable({ issues, focus, onPatch }: { issues: readonly Issue[]; focus: boolean; onPatch: (id: string, patch: IssuePatch) => void }) {
+function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Issue[]; focus: boolean; onPatch: (id: string, patch: IssuePatch) => void; onDelete: (issue: Issue) => void }) {
   return (
     <div data-issue-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
@@ -1441,11 +1468,16 @@ function IssueTable({ issues, focus, onPatch }: { issues: readonly Issue[]; focu
                 {column.label}
               </th>
             ))}
+            {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
+                与「日报记录」/ 任务表同一个 48px 槽位与同款 RowDeleteButton；删问题 = 连它来源的那篇日报一起删（同一篇日报整组）。 */}
+            <th className="w-[88px] border-b border-zinc-200 px-5 py-2.5 font-medium">
+              <span className="sr-only">操作</span>
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => (
-            <tr key={issue.id} data-issue-row={issue.id} className={"transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
+            <tr key={issue.id} data-issue-row={issue.id} className={"group transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
               <td className="whitespace-nowrap px-5 py-2.5 text-zinc-700">{issue.raisedAt}</td>
               <td className="min-w-[320px] px-5 py-2.5">
                 {/* Push 208：问题描述行内可改 —— 文字修改需要点击保存，日期列（提出日期）不动 */}
@@ -1492,6 +1524,7 @@ function IssueTable({ issues, focus, onPatch }: { issues: readonly Issue[]; focu
                 />
               </td>
               <td className="min-w-[130px] px-5 py-2.5">
+                {/* 只读展示：附图增删在「日报填写」表单与问题详情抽屉里做（业务口径「太丑了 取消修改」）。 */}
                 {issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="md" />}
               </td>
               <td className="whitespace-nowrap px-5 py-2.5">
@@ -1507,6 +1540,18 @@ function IssueTable({ issues, focus, onPatch }: { issues: readonly Issue[]; focu
                     onPatch(issue.id, { state: value as IssueState });
                   }}
                 />
+              </td>
+              <td className="w-[88px] px-5 py-2.5" data-issue-delete-cell="">
+                {/* 同上：预留 48px 动作槽位，幽灵态 24px → 悬停 48px 只在槽内长大，不推挤左侧列
+                    （业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。px-5(20×2) + 48 = 88 = w-[88px]。 */}
+                <span data-issue-delete-slot="" className="flex h-6 w-12 shrink-0 items-center">
+                  <RowDeleteButton
+                    label={"删除问题（" + issue.raisedAt + "）—— 会连同来源日报一起删除"}
+                    onDelete={() => {
+                      onDelete(issue);
+                    }}
+                  />
+                </span>
               </td>
             </tr>
           ))}
@@ -2185,6 +2230,31 @@ export function ReportIssuePanel({ project, me, focusMode }: {
     setIssues((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
 
+  /** 日报 ↔ 问题是一体两面（A3-09：日报的「现场发现问题」提交时自动生成一条问题，`Issue.reportId` 指回那篇日报）——
+   *  删哪边都按「**这一篇日报**（连同它派生的全部问题）」整组摘掉（Push 213 业务口径「这两个任意删除谁都是关联的
+   *  都会导致双方都删除 因为他们本质是同一个日报」）：两块表 / 问题看板 / 抽屉都读同一份内存态，删完一起消失。 */
+  const deleteReportUnit = (reportId: string) => {
+    setReports((previous) => previous.filter((item) => item.id !== reportId));
+    setIssues((previous) => previous.filter((item) => item.reportId !== reportId));
+    setOpenIssueId((current) => {
+      if (current === null) {
+        return current;
+      }
+      const open = issues.find((item) => item.id === current);
+      return open !== undefined && open.reportId === reportId ? null : current;
+    });
+  };
+
+  /** 问题侧删除：有来源日报（`reportId` 非空）= 连那篇日报整组删；无来源日报（脱离日报的存量数据）只摘这一条。 */
+  const deleteIssueUnit = (issue: Issue) => {
+    if (issue.reportId === "") {
+      setIssues((previous) => previous.filter((item) => item.id !== issue.id));
+      setOpenIssueId((current) => (current === issue.id ? null : current));
+      return;
+    }
+    deleteReportUnit(issue.reportId);
+  };
+
   /** 抽屉要展示的问题 / 它的来源日报（现找现用）。 */
   const openIssue = openIssueId === null ? null : issues.find((item) => item.id === openIssueId) ?? null;
   const openIssueReport = openIssue === null ? null : reports.find((item) => item.id === openIssue.reportId) ?? null;
@@ -2318,7 +2388,7 @@ export function ReportIssuePanel({ project, me, focusMode }: {
           {reports.length === 0 ? (
             <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
           ) : (
-            <ReportList reports={reports} onPatch={patchReport} />
+            <ReportList reports={reports} onPatch={patchReport} onDelete={deleteReportUnit} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
@@ -2328,7 +2398,7 @@ export function ReportIssuePanel({ project, me, focusMode }: {
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <IssueTable issues={issues} focus={focus} onPatch={patchIssue} />
+            <IssueTable issues={issues} focus={focus} onPatch={patchIssue} onDelete={deleteIssueUnit} />
           )}
         </section>
       ) : (
