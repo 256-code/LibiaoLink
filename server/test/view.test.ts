@@ -64,7 +64,7 @@ class FakeViewRepository {
     return id;
   }
 
-  async clearOtherDefaults(ownerId: string, keepId: string): Promise<void> {
+  async clearOtherDefaults(ownerId: string, keepId: string | null): Promise<void> {
     this.cleared.push(ownerId + "/" + keepId);
     for (const row of this.rows) {
       if (row.ownerId === ownerId && row.id !== keepId) row.isDefault = false;
@@ -139,7 +139,7 @@ describe("视图服务（M2-06 首刀 · A1-03）", () => {
     });
     expect(repo.insertCalls[0]?.name).toBe("安装视图");
     expect(created.isDefault).toBe(true);
-    expect(repo.cleared).toEqual([ME + "/" + VIEW_A]);
+    expect(repo.cleared).toEqual([ME + "/null"]);
     expect(repo.rows.find((row) => row.id === VIEW_B)?.isDefault).toBe(false);
   });
 

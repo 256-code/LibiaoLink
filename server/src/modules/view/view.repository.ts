@@ -151,12 +151,15 @@ export class ProjectViewRepository {
     return rows[0]?.id ?? null;
   }
 
-  /** 清掉同一人的其它默认（不动 updated_at：系统侧标志位，避免清单排序被静默顶位）。 */
-  async clearOtherDefaults(ownerId: string, keepId: string, tx?: DbClient): Promise<void> {
+  /**
+   * 清掉同一人的默认（不动 updated_at：系统侧标志位，避免清单排序被静默顶位）。
+   * keepId = null 表示清空该人全部默认 —— 建新默认前必须先清旧，再落新（部分唯一索引 uq_project_views_owner_default
+   * 不允许两条默认并存，后清会在插入时先撞唯一键；单测替身库不校验索引，故口径以本注释与真机回放为准）。
+   */
+  async clearOtherDefaults(ownerId: string, keepId: string | null, tx?: DbClient): Promise<void> {
     const db = tx ?? this.database.db;
-    await db
-      .update(projectViews)
-      .set({ isDefault: false })
-      .where(and(eq(projectViews.ownerId, ownerId), eq(projectViews.isDefault, true), ne(projectViews.id, keepId)));
+    const conditions = [eq(projectViews.ownerId, ownerId), eq(projectViews.isDefault, true)];
+    if (keepId !== null) conditions.push(ne(projectViews.id, keepId));
+    await db.update(projectViews).set({ isDefault: false }).where(and(...conditions));
   }
 }

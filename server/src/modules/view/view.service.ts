@@ -35,7 +35,10 @@ export class ViewService {
   async create(actorId: string, body: ViewCreateBody): Promise<SavedView> {
     const at = new Date();
     const row = await this.database.db.transaction(async (tx) => {
-      const created = await this.views.insert(
+      if (body.isDefault) {
+        await this.views.clearOtherDefaults(actorId, null, tx);
+      }
+      return this.views.insert(
         {
           ownerId: actorId,
           scope: body.scope,
@@ -49,10 +52,6 @@ export class ViewService {
         at,
         tx,
       );
-      if (created.isDefault) {
-        await this.views.clearOtherDefaults(actorId, created.id, tx);
-      }
-      return created;
     });
     return toContract(row);
   }
@@ -77,11 +76,10 @@ export class ViewService {
       if (body.sort !== undefined) patch.sort = body.sort;
       if (body.grouping !== undefined) patch.grouping = body.grouping;
       if (body.isDefault !== undefined) patch.isDefault = body.isDefault;
-      const updated = await this.views.update(id, patch, at, tx);
-      if (updated.isDefault) {
+      if (patch.isDefault === true) {
         await this.views.clearOtherDefaults(actorId, id, tx);
       }
-      return updated;
+      return this.views.update(id, patch, at, tx);
     });
     return toContract(row);
   }

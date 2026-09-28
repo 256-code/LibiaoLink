@@ -12,7 +12,7 @@
 - **契约**：`shared/src/modules/views.ts` —— `VIEW_SCOPES`（personal / public）、`SavedView`（ownerId / ownerName / scope / name / filters / columns / sort / grouping / isDefault + 时间戳）、`ViewFilterValue`（string / number / boolean / string[] / null）+ `ViewFilters`（最多 30 键 · superRefine 硬顶）/ `ViewColumns`（最多 60 列）/ `ViewSort` / `ViewGrouping`、`ViewCreateBody` / `ViewUpdateBody`（局部更新，空更新 400）/ `ViewDeleteResponse`；`shared/src/openapi.ts` 新增 `GET|POST /api/v1/views`、`PATCH|DELETE /api/v1/views/{id}`（tags = views）。
 - **数据面（迁移 `0037`）**：`project_views`（`owner_id` → users 级联删；`scope` CHECK；`name` btrim 1~50 CHECK；`filters` / `columns` jsonb 形状 CHECK；`sort` / `grouping` jsonb；`is_default`；部分唯一索引 `uq_project_views_owner_default (owner_id) where is_default`；`ix_project_views_owner_updated` / `ix_project_views_scope_updated`）；Drizzle `server/src/db/schema/views.ts` 对齐。
 - **读面**：`GET /api/v1/views?scope=`（缺省 = 我的个人视图 + 全部公共视图；个人在前 → `updatedAt` 降序 → id 升序；随行 `ownerName`）。
-- **写面**：`POST`（201；`isDefault` 置位时同事务清掉本人其它默认）、`PATCH /{id}`（局部更新；空更新 400）、`DELETE /{id}`（物理删，响应 `{ id, deleted: true }`）。
+- **写面**：`POST`（201；`isDefault` 置位时同事务**先清本人其它默认、再落新默认** —— 部分唯一索引 `uq_project_views_owner_default` 不允许两条默认并存，后清会在插入时先撞唯一键）、`PATCH /{id}`（局部更新；空更新 400；置默认同样先清后落）、`DELETE /{id}`（物理删，响应 `{ id, deleted: true }`）。
 - **归属规则**：个人视图他人改 / 删 = 404（不可见防 IDOR）；公共视图非创建者改 / 删 = 403（可见但无写权）。
 - **鉴权与留痕**：读 = `SessionGuard`、写 = `SessionGuard + CsrfGuard`；无功能权限键、不写审计、无乐观锁（个人界面配置、单写者 —— 先例 `user_preferences` · Push 169）。
 - **差异登记**：① 公共视图「共享给指定角色」（A1-03）未做 —— 一期公共视图 = 全员可见、创建者可改；② 列键 / 排序键 / 分组键 / 筛选键均为字符串（≤ 40 字），白名单由目标列表（任务表 / 项目列表）维护；③ 视图应用（打开视图实时反映数据）为前端行为，随 M2-07（px 线）。
