@@ -43,3 +43,23 @@ export type {
   ReplaySubjectRecipient,
   ReplayTask,
 } from "./automation.replay.js";
+export {
+  AUTOMATION_SCHEDULE_JOB_KIND,
+  evaluateEventMessages,
+  listEnabledRules,
+  planWindowMessages,
+  toIssueSubject,
+  toProjectDaySubject,
+  toReportMemberSubject,
+  toTodoSubject,
+} from "./automation.runtime.js";
+export type {
+  EventEvaluationInput,
+  IssueSnapshot,
+  ProjectDaySnapshot,
+  ReportMemberSnapshot,
+  RuntimeEvaluation,
+  RuntimeSkip,
+  TodoSnapshot,
+  WindowPlanInput,
+} from "./automation.runtime.js";
