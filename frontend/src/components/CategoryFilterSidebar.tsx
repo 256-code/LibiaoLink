@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ScrollArea } from "./ScrollArea";
 import { DateRangePicker } from "./DateRangePicker";
 import type { DateRange } from "./DateRangePicker";
@@ -11,6 +11,7 @@ import {
   normalizeFilterName,
 } from "../savedFilters";
 import type { FilterCriteria, SavedFilter } from "../savedFilters";
+import { groupByContinent, type ContinentGroup } from "../data/regionContinents";
 
 /** 「液态玻璃」材质（与任务表行内编辑单元格同口径，Push 66 / 67 定稿）：白底 + 发丝描边 + 顶部内高光 + 极轻投影。 */
 const GLASS_SURFACE =
@@ -134,6 +135,30 @@ export function CategoryFilterSidebar({
         ? { from: compose.criteria.timeFrom, to: compose.criteria.timeTo }
         : null;
 
+  /**
+   * 「地区」按洲分组（Push 192；业务口径 2026-09-28「我觉得这里太乱了 要根据各个州分类 可以展开」）：
+   * 组内还是原来那排胶囊（选中态 / 计数 / 点击口径一行没改），组间可折叠。分组口径见 src/data/regionContinents.ts
+   * （与地图认国家同一套，不是第二套国名表）。
+   */
+  const regionGroups = useMemo(
+    () => groupByContinent(regions, (option) => ({ name: option.label, code: option.value })),
+    [regions],
+  );
+  /** 折叠记忆（只记「被手动折叠过 / 展开过」的洲）：没记过的洲默认「有勾选才展开」，面板打开就是干净的几行。 */
+  const [collapsedContinents, setCollapsedContinents] = useState<Record<string, boolean>>({});
+  const groupExpanded = (group: ContinentGroup<FacetOption>): boolean =>
+    collapsedContinents[group.continent] === undefined
+      ? group.items.some((option) => regionSelection.includes(option.value))
+      : collapsedContinents[group.continent] === false;
+  const allGroupsExpanded = regionGroups.length > 0 && regionGroups.every((group) => groupExpanded(group));
+  const setAllGroupsExpanded = (expanded: boolean): void => {
+    const next: Record<string, boolean> = {};
+    for (const group of regionGroups) {
+      next[group.continent] = !expanded;
+    }
+    setCollapsedContinents(next);
+  };
+
   const toggleValue = (list: string[], value: string) => (list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
   const patchDraft = (patch: Partial<FilterCriteria>) => {
     setCompose((current) => (current === null ? current : { ...current, criteria: { ...current.criteria, ...patch } }));
@@ -178,8 +203,13 @@ export function CategoryFilterSidebar({
     setCompose(null);
   };
 
-  const renderChips = (options: Array<{ value: string; count: number; label?: string }>, selected: string[], onToggle: (value: string) => void) => (
-    <div className="mt-3 flex flex-wrap gap-2">
+  const renderChips = (
+    options: ReadonlyArray<{ value: string; count: number; label?: string }>,
+    selected: string[],
+    onToggle: (value: string) => void,
+    containerClass = "mt-3",
+  ) => (
+    <div className={(containerClass === "" ? "" : containerClass + " ") + "flex flex-wrap gap-2"}>
       {options.map((option) => {
         const isSelected = selected.includes(option.value);
         return (
@@ -397,9 +427,60 @@ export function CategoryFilterSidebar({
               </div>
             )}
           </section>
-          <section>
-            <p className="text-sm font-semibold tracking-wide text-zinc-700">地区</p>
-            {renderChips(regions, regionSelection, handleToggleRegion)}
+          <section data-region-section="true">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold tracking-wide text-zinc-700">地区</p>
+              {regionGroups.length === 0 ? null : (
+                <button
+                  type="button"
+                  data-continent-all={allGroupsExpanded ? "collapse" : "expand"}
+                  onClick={() => {
+                    setAllGroupsExpanded(!allGroupsExpanded);
+                  }}
+                  className="text-[11px] text-zinc-400 transition hover:text-zinc-700"
+                >
+                  {allGroupsExpanded ? "全部收起" : "全部展开"}
+                </button>
+              )}
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {regionGroups.map((group) => {
+                const expanded = groupExpanded(group);
+                const picked = group.items.filter((option) => regionSelection.includes(option.value)).length;
+                return (
+                  <div
+                    key={group.continent}
+                    data-continent-group={group.continent}
+                    className="rounded-xl border border-zinc-200/70 bg-white/50 transition hover:border-zinc-300"
+                  >
+                    <button
+                      type="button"
+                      data-continent-toggle={group.continent}
+                      aria-expanded={expanded}
+                      onClick={() => {
+                        setCollapsedContinents((previous) => ({ ...previous, [group.continent]: expanded }));
+                      }}
+                      className="flex w-full items-center gap-1.5 rounded-xl px-2.5 py-2 text-left"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        aria-hidden="true"
+                        className={"h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform " + (expanded ? "rotate-90" : "")}
+                      >
+                        <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span className="text-xs font-medium text-zinc-700">{group.continent}</span>
+                      <span className="text-[11px] text-zinc-400">{group.items.length} 个地区</span>
+                      {picked === 0 ? null : (
+                        <span className="ml-auto rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10px] font-medium text-white">已选 {picked}</span>
+                      )}
+                    </button>
+                    {expanded ? <div className="px-2.5 pb-2.5">{renderChips(group.items, regionSelection, handleToggleRegion, "")}</div> : null}
+                  </div>
+                );
+              })}
+            </div>
           </section>
           <section>
             <p className="text-sm font-semibold tracking-wide text-zinc-700">项目类型</p>

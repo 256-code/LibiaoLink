@@ -4,8 +4,22 @@ import type { ReactNode } from "react";
 import { DICT_ACCENT_PALETTE, accentOfItem, type DictItem, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
 import type { Member } from "../data/members";
+import { REGION_CONTINENT_GROUPS, continentOfRegion, regionSearchText } from "../data/regionContinents";
 import { DictSelect } from "./DictSelect";
 import { MemberMultiSelect } from "./MemberSelect";
+
+/**
+ * 地区下拉的分组 + 搜索配置（Push 192）：按洲分组、可搜中英文名 —— 与首页筛选侧栏同一套洲口径
+ * （src/data/regionContinents.ts，认国家的口径与地图悬停同源）。
+ * 业务口径（2026-09-28）：「新建项目选择地区应该也要改 是不是要加一个国家地区选择器可搜索的那种」。
+ */
+const REGION_GROUPING = {
+  groupOf: (name: string, code: string): string => continentOfRegion(name, code),
+  groupOrder: REGION_CONTINENT_GROUPS,
+  searchTextOf: (name: string): string => regionSearchText(name),
+  placeholder: "搜索国家 / 地区（中英文都行）",
+  emptyText: "没有匹配的地区。"
+};
 
 export type ProjectDraft = {
   code: string;
@@ -160,6 +174,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
                   : undefined
               }
               deleteLabelOf={(_code, name) => "删除地区 " + name}
+              grouping={REGION_GROUPING}
               onChange={setRegion}
             />
           </div>

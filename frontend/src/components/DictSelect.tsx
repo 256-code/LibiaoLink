@@ -16,8 +16,27 @@ type DictAddText = {
   note?: string;
 };
 
-type DictSelectProps = {
-  /** 当前值（字典码 / 存量自定义值）。 */
+/**
+ * 可搜索 + 分组的候选（Push 192：地区下拉）。不给 = 与原来完全一样（普通字典下拉）。
+ * 业务口径（2026-09-28）：「新建项目选择地区应该也要改 是不是要加一个国家地区选择器可搜索的那种」。
+ */
+type DictGrouping = {
+  /** 选项所属分组（地区下拉 = 洲；认不出国家的条目由调用方归「其他」）。 */
+  groupOf: (name: string, code: string) => string;
+  /** 搜索框额外可搜的词（地区下拉给英文国名：输入 United 能搜到「美国」）；不给 = 只按名称与码搜。 */
+  searchTextOf?: (name: string, code: string) => string;
+  /**
+   * 分组展示顺序（地区下拉 = 六大洲 + 其他）：给了就按它重排候选 —— 字典的 sort 是录入口径、不按洲走，
+   * 不重排会出现「欧洲 / 亚洲 / 欧洲」这种小标题来回跳（同一洲被切成好几段）。组内仍按字典 sort。
+   */
+  groupOrder?: readonly string[];
+  /** 搜索框占位文案（同时作无障碍名）。 */
+  placeholder: string;
+  /** 搜不到时的提示行文案。 */
+  emptyText: string;
+};
+
+type DictSelectProps = {  /** 当前值（字典码 / 存量自定义值）。 */
   value: string;
   /** 字典项（GET /api/v1/dicts，已按 sort 升序、只含启用项）。 */
   items: DictItem[];
@@ -35,6 +54,8 @@ type DictSelectProps = {
   onDelete?: (code: string) => Promise<string | null>;
   /** 删除按钮的无障碍名（如「删除地区 华东」）。 */
   deleteLabelOf?: (code: string, name: string) => string;
+  /** 顶部搜索框 + 分组小标题（Push 192：地区下拉按洲分组可搜索）；不传 = 普通字典下拉。 */
+  grouping?: DictGrouping;
   onChange: (value: string) => void;
 };
 
@@ -55,6 +76,9 @@ function buildOptions(
   items: DictItem[],
   value: string,
   renderContent: ((name: string, item: DictItem | null) => ReactNode) | undefined,
+  groupOf?: (name: string, code: string) => string,
+  /** 搜索中且当前值（不在字典里的存量值）不匹配关键词时不带兜底项 —— 候选只剩真正匹配的。 */
+  fallbackVisible = true,
 ): SelectOption[] {
   const options: SelectOption[] = [];
   const seen = new Set<string>();
@@ -65,10 +89,15 @@ function buildOptions(
       continue;
     }
     seen.add(item.code);
-    options.push({ value: item.code, label: labelOf(item.name, item), deleteDisabledReason: deleteBlockReason(item) });
+    options.push({
+      value: item.code,
+      label: labelOf(item.name, item),
+      deleteDisabledReason: deleteBlockReason(item),
+      group: groupOf === undefined ? undefined : groupOf(item.name, item.code)
+    });
   }
-  if (value !== "" && !seen.has(value)) {
-    options.push({ value, label: labelOf(value, null), deletable: false });
+  if (fallbackVisible && value !== "" && !seen.has(value)) {
+    options.push({ value, label: labelOf(value, null), deletable: false, group: groupOf === undefined ? undefined : groupOf(value, value) });
   }
   return options;
 }
@@ -97,11 +126,47 @@ function availableAccents(items: DictItem[], options: readonly DictAccent[]): re
  * - 名称校验：非空、≤ DICT_NAME_MAX 字、不含英文逗号（filter[...] 是多值逗号分隔，逗号会被拆成两个筛选值）；
  *   输入的名称已存在时直接选中、不重复添加。
  */
-export function DictSelect({ value, items, ariaLabel, placeholder, renderContent, onAdd, addText, palette, onDelete, deleteLabelOf, onChange }: DictSelectProps) {
-  const options = useMemo(() => buildOptions(items, value, renderContent), [items, value, renderContent]);
-  /** 浮层高度估算：选项最多按 8 行 + 顶部「＋ 添加」一行（超出部分列表内滚动）。 */
-  const visibleRows = Math.min(options.length, 8);
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, visibleRows * 34 + 58, "right");
+export function DictSelect({ value, items, ariaLabel, placeholder, renderContent, onAdd, addText, palette, onDelete, deleteLabelOf, grouping, onChange }: DictSelectProps) {
+  /** 搜索关键词（Push 192；只对配了 grouping 的下拉出现搜索框）。 */
+  const [query, setQuery] = useState("");
+  /**
+   * 候选 = 字典项按关键词过滤后（中文名 / 码 / 调用方给的英文名）→ 分组 + 当前值兜底。
+   * 关键词为空时不加过滤，等于原来那串候选。
+   */
+  const options = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    const textOf = (name: string, code: string): string =>
+      grouping === undefined || grouping.searchTextOf === undefined ? name + " " + code : grouping.searchTextOf(name, code);
+    const matched = (name: string, code: string): boolean => keyword === "" || textOf(name, code).toLowerCase().indexOf(keyword) >= 0;
+    const filtered = items.filter((item) => matched(item.name, item.code));
+    const fallbackVisible = value !== "" && !items.some((item) => item.code === value) && matched(value, value);
+    const built = buildOptions(filtered, value, renderContent, grouping === undefined ? undefined : grouping.groupOf, fallbackVisible);
+    const order = grouping === undefined ? undefined : grouping.groupOrder;
+    if (order === undefined) {
+      return built;
+    }
+    /** 组间按调用方给的洲序（组内保持字典 sort —— sort 稳定，同组不会被搅乱）。 */
+    const rankOf = (option: SelectOption): number => {
+      const index = order.indexOf(option.group ?? "");
+      return index < 0 ? order.length : index;
+    };
+    return built.slice().sort((left, right) => rankOf(left) - rankOf(right));
+  }, [items, value, renderContent, grouping, query]);
+  /** 浮层高度估算：选项最多按 8 行 + 分组小标题 + 顶部「＋ 添加」一行 / 搜索框（超出部分列表内滚动）。 */
+  const popoverHeight = useMemo(() => {
+    const visible = options.slice(0, 8);
+    let headers = 0;
+    for (let index = 0; index < visible.length; index += 1) {
+      if (visible[index].group !== undefined && (index === 0 || visible[index].group !== visible[index - 1].group)) {
+        headers += 1;
+      }
+    }
+    const list = visible.length * 34 + headers * 24 + 14;
+    const addRow = onAdd === undefined ? 0 : 42;
+    const searchRow = grouping === undefined ? 0 : 42;
+    return Math.min(list + addRow + searchRow, 420);
+  }, [options, onAdd, grouping]);
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, popoverHeight, "right");
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +175,9 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
   const [listError, setListError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  /** 打开浮层只把选中项带进可视区一次（用户自己滚过之后不再打扰）。 */
+  const listScrollDone = useRef(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const selected = options.find((option) => option.value === value) ?? null;
   const nameOf = (code: string): string => {
     const item = items.find((entry) => entry.code === code);
@@ -124,6 +192,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     setError(null);
     setListError(null);
     setPending(false);
+    setQuery("");
   };
 
   useEffect(() => {
@@ -132,12 +201,47 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
   }, [open, adding]);
 
+  /**
+   * 打开浮层把当前选中项滚进可视区（Push 192：按洲重排后，选中的那一条可能不在第一屏 —— 用列表容器算，
+   * 不碰页面滚动）。只在本次打开里做一次；没选中项 / 搜到 0 条时什么也不做。
+   */
+  useEffect(() => {
+    if (!open) {
+      listScrollDone.current = false;
+      return;
+    }
+    if (listScrollDone.current || position === null) {
+      return;
+    }
+    const listbox = popoverRef.current?.querySelector("[role=listbox]");
+    const row = listbox?.querySelector("[aria-selected=true]");
+    const scroller = listbox?.parentElement ?? null;
+    if (listbox === undefined || listbox === null || row === undefined || row === null || scroller === null) {
+      return;
+    }
+    const rowBox = row.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    scroller.scrollTop += rowBox.top - box.top - (box.height - rowBox.height) / 2;
+    listScrollDone.current = true;
+  }, [open, position, popoverRef]);
+
+  /**
+   * 打开浮层就把光标放进搜索框（配了 grouping 才有）：弹出即可直接打字（Push 192）。
+   * position 也要进依赖：浮层要等定位算完才挂进 portal，第一帧 searchRef 还是空的（漏了它聚焦就落空）。
+   */
+  useEffect(() => {
+    if (open && grouping !== undefined && !adding) {
+      searchRef.current?.focus();
+    }
+  }, [open, position, grouping, adding]);
+
   useEffect(() => {
     if (!open) {
       setAdding(false);
       setDraft("");
       setError(null);
       setListError(null);
+      setQuery("");
     }
   }, [open]);
 
@@ -146,6 +250,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
   const enterAdd = (): void => {
     setAdding(true);
     setDraft("");
+    setQuery("");
     setError(null);
     setListError(null);
     const [firstAccent] = accentChoices;
@@ -210,6 +315,20 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     if (message !== null) {
       setListError(message);
     }
+  };
+
+  /** 搜索框里回车 = 选中第一条候选（鼠标点第一行同效）；Esc 交给浮层统一关掉。 */
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    const [first] = options;
+    if (first === undefined) {
+      return;
+    }
+    onChange(first.value);
+    close();
   };
 
   const handleDraftKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
@@ -358,6 +477,22 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                       <div className="border-t border-zinc-100" />
                     </>
                   )}
+                  {grouping === undefined ? null : (
+                    <div className="border-b border-zinc-100 p-1.5">
+                      <input
+                        ref={searchRef}
+                        type="text"
+                        value={query}
+                        aria-label={grouping.placeholder}
+                        placeholder={grouping.placeholder}
+                        onChange={(event) => {
+                          setQuery(event.target.value);
+                        }}
+                        onKeyDown={handleSearchKeyDown}
+                        className="w-full rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:bg-white focus:ring-1 focus:ring-zinc-300"
+                      />
+                    </div>
+                  )}
                   <div className="max-h-[280px] overflow-y-auto">
                     <OptionList
                       options={options}
@@ -381,6 +516,9 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                       }}
                     />
                   </div>
+                  {grouping !== undefined && options.length === 0 ? (
+                    <p className="border-t border-zinc-100 px-3 py-2 text-[11px] text-zinc-400">{grouping.emptyText}</p>
+                  ) : null}
                   {listError === null ? null : (
                     <p role="alert" className="border-t border-zinc-100 px-3 py-2 text-[11px] text-rose-600">
                       {listError}
