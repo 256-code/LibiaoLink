@@ -1,10 +1,10 @@
 /*
  * Outbox 消费与调度契约回放（M5-02 草案 · Push 165 · wmj）：契约内不变式 + 键形态与再生窗口（Zod 层，无 DB / 无 HTTP）。
  * 运行：shared/ 下 node scripts/outbox-contract-replay.mjs；退出码 0 = 全过。
- * 口径：主题白名单（规则可订阅事件为其子集）/ 状态与库侧 CHECK 同值 / 幂等执行键 scope:entityId:window（含状态版本再生）。
+ * 口径：主题白名单（规则可订阅事件为其子集 + 写入端 ⊆ 白名单）/ 状态与库侧 CHECK 同值 / 幂等执行键 scope:entityId:window（含状态版本再生）。
  * 说明：库侧权威门禁在 server 的 test/schema-literals-parity.test.ts（lan 线，本脚本只做静态旁证）。
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { RULE_EVENT_TOPICS } from "../src/modules/automation.ts";
 import {
   OUTBOX_DEDUPE_KEY_PATTERN,
@@ -26,6 +26,42 @@ function check(name, ok, detail) {
 // 1) 规则可订阅主题必须是 outbox 主题白名单的子集（跨契约不变式）。
 const missing = RULE_EVENT_TOPICS.filter((topic) => !OUTBOX_TOPICS.includes(topic));
 check("RULE_EVENT_TOPICS 是 OUTBOX_TOPICS 的子集", missing.length === 0, missing.length ? "缺：" + missing.join(", ") : RULE_EVENT_TOPICS.length + " 个主题全部在册");
+// 1b) 写入端 ↔ 白名单零漂移（静态旁证：扫 server/src 的主题字面量与主题常量；不连库）。
+const SERVER_SRC_URL = new URL("../../server/src/", import.meta.url);
+const TOPIC_CONSTANTS = { PREVIEW_JOB_TOPIC: "preview.job" };
+const RESERVED_TOPICS = ["notify.message"];
+function listTsFiles(dirUrl) {
+  const files = [];
+  for (const entry of readdirSync(dirUrl, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      files.push(...listTsFiles(new URL(entry.name + "/", dirUrl)));
+    } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
+      files.push(new URL(entry.name, dirUrl));
+    }
+  }
+  return files;
+}
+const writtenTopics = new Set();
+const unresolvedConstants = new Set();
+for (const file of listTsFiles(SERVER_SRC_URL)) {
+  const text = readFileSync(file, "utf8");
+  for (const match of text.matchAll(/topic:\s*"([a-z][a-z0-9._-]*)"/g)) {
+    writtenTopics.add(match[1]);
+  }
+  for (const match of text.matchAll(/topic:\s*([A-Z][A-Z0-9_]{2,})\b/g)) {
+    if (TOPIC_CONSTANTS[match[1]] !== undefined) {
+      writtenTopics.add(TOPIC_CONSTANTS[match[1]]);
+    } else {
+      unresolvedConstants.add(match[1]);
+    }
+  }
+}
+const unknownWrites = [...writtenTopics].filter((topic) => !OUTBOX_TOPICS.includes(topic)).sort();
+check("写入端主题 ⊆ 白名单（扫 server/src 字面量）", unknownWrites.length === 0, unknownWrites.length ? "未登记：" + unknownWrites.join(", ") : writtenTopics.size + " 个写入主题全部在册");
+check("主题常量均已在扫描表登记", unresolvedConstants.size === 0, unresolvedConstants.size ? "未登记常量：" + [...unresolvedConstants].join(", ") : Object.keys(TOPIC_CONSTANTS).length + " 个常量已登记");
+const deadTopics = OUTBOX_TOPICS.filter((topic) => !writtenTopics.has(topic) && !RESERVED_TOPICS.includes(topic));
+check("白名单无死条目（未写入者均在预留清单）", deadTopics.length === 0, deadTopics.length ? "死条目：" + deadTopics.join(", ") : "预留 " + RESERVED_TOPICS.length + " 项：" + RESERVED_TOPICS.join(", "));
+
 
 // 2) 状态四值与库侧 CHECK ck_outbox_status 同值（读 0001 迁移文本，静态旁证）。
 const sql = readFileSync(new URL("../../database/migrations/0001_baseline.sql", import.meta.url), "utf8");
