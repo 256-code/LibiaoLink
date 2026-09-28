@@ -333,9 +333,9 @@ function projectConditions(filter: ProjectFilter, scope: ProjectScopeFilter): SQ
   // 「项目时间」区间 = **项目创建时间**（Push 175 业务定调；原 updated_at 口径作废）
   if (filter.createdFrom !== null) conditions.push(gte(projects.createdAt, filter.createdFrom));
   if (filter.createdToExclusive !== null) conditions.push(lt(projects.createdAt, filter.createdToExclusive));
-  // 归档年份（C4-07）：按 archived_at 的 Asia/Shanghai 年判定；未归档（archived_at 为空）不命中任何年份。
+  // 归档年份（C4-07）：按 archived_at 的 Asia/Shanghai 年判定；未归档（archived_at 为空）不命中任何年份。 时区字面量走 sql.raw（drizzle 模板会把普通插值当绑定参数，直接内插会变成 $n）。
   if (filter.archivedYears !== null) {
-    conditions.push(sql`extract(year from ${projects.archivedAt} at time zone ${String.fromCharCode(39)}Asia/Shanghai${String.fromCharCode(39)}) = any(${sql.param(filter.archivedYears)}::int[])`);
+    conditions.push(sql`extract(year from ${projects.archivedAt} at time zone ${sql.raw("'Asia/Shanghai'")}) = any(${sql.param(filter.archivedYears)}::int[])`);
   }
   return conditions;
 }
