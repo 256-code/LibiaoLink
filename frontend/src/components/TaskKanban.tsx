@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent a
 import type { Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -22,7 +22,7 @@ import { trackerLabel } from "./Tracker";
  * 外层壳的内边距（9px）/ 圆角（35px）/ 白色壳 + 发丝边 + 投影、以及壳上的细纹叠加都保持不变。
  * 卡片只出任务里真实存在的字段（标题 / 所属阶段 / 日期 / 状态 / 负责人 / 进度 / 是否按时交付）；任务字段里没有「里程碑」这一项，所以阶段一栏的口径是「所属阶段」，不写「阶段性里程碑」。
  * Push 98：进度一栏的文字由百分比改成中文档位（与任务表 Tracker 同一套标签），并新增「实际完成日期」一栏 —— 卡片上直接点选小日历就能改（口径同表格行内编辑：填 = 完成、清 = 退回进行中）。
- * 列底「添加」固定在列底、不随卡片滚动（Push 86），两种口径：**临时任务**（自己填标题，阶段留空 → 卡片「所属阶段」显示「未分组」、到「项目总览」落在「未分组」组）/ **阶段任务**（先选阶段，再从该阶段的节点池 / 模板里挑节点加进项目，任务自带阶段）。
+ * 列底「添加」固定在列底、不随卡片滚动（Push 86），两种口径：**临时任务**（自己填标题，阶段留空 → 卡片「所属阶段」显示「临时任务」（Push 196 起，原「未分组」）、到「项目总览」落在垫底的「临时任务」组；创建成功直接打开任务详情抽屉补时间等细节，名字在抽屉里可二次更改）/ **阶段任务**（先选阶段，再从该阶段的节点池 / 模板里挑节点加进项目，任务自带阶段）。
  * Push 104：**卡片可拖动换列** —— 按住卡片拖到别的列放开即可（负责人看板 = 改任务负责人、拖到「待分配」列 = 清空负责人；进展看板 = 改任务状态），
  * 与任务表行内编辑走同一条 `onPatchTask`（同一张覆盖表），状态那一路同时写四格进度并在改成非完成态时清空实际完成日期 —— 卡片上的进度档位 / 实际完成日期 / 是否按时交付因此同步跟着变。
  * Push 105（业务反馈「然后要有合适的交互显示拖动后的位置」；「拖动要实体化 / 不要虚化」一条后由业务口径修正为**不做成实体化**）：① 被拖动的卡片**样式保持原样** —— 不加淡出、也不做抬起的实体态、不换自定义拖影，只在拖动中把光标换成抓手；
@@ -65,8 +65,7 @@ const STAGE_TAG_CLASS: Record<string, string> = {
   验收: "bg-lime-100 text-lime-700",
 };
 
-/** 没有阶段的任务（直接在看板「添加」出来的）：卡片「所属阶段」显示「未分组」。 */
-const UNGROUPED_STAGE = "未分组";
+
 
 /** 卡片外壳（样张结构：内边距 9px + 圆角 35px + 壳 + 三层投影）。配色按业务反馈（2026-09-20）改回**白色**：白壳 + 发丝边 + 柔和投影 + 底部内阴影。 */
 const CARD_SHELL =
@@ -223,8 +222,11 @@ type TaskKanbanProps = {
   managers: string;
   /** 项目经理 id 名单（任务详情抽屉里「项目经理」字段的当前选中项，Push 136）。 */
   managerIds: string[];
-  /** 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。 */
-  onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
+  /**
+   * 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。
+   * 返回 = 新建任务的 id（失败 = null）—— Push 196 起建完由看板直接打开它的任务详情抽屉，补时间等细节。
+   */
+  onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => Promise<string | null>;
   /**
    * 列底「添加 → 阶段任务」：从该阶段节点池 / 模板挑的节点加进项目，并带上所在列的负责人 / 状态。
    * Push 111：`nodes` 支持一次多个（「整套添加」按列表顺序整段插入），`placement` = 该阶段内的插入位置（业务口径「人员要指定位置放入」）。
@@ -232,6 +234,8 @@ type TaskKanbanProps = {
   onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 任务编辑保存（与表格共用同一张覆盖表）。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
+  /** 任务描述改名（Push 196）：抽屉里改临时任务名（节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
+  onRenameTask?: (taskId: string, title: string, titleEn: string) => void;
   /** 卡片上直接改字段（Push 98：实际完成日期；与表格行内同一套口径）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
   /** 卡片 / 抽屉里改任务状态（五态；联动由服务端裁决）。 */
@@ -336,11 +340,11 @@ function ProgressBar({ progress }: { progress: number }) {
   );
 }
 
-/** 「所属阶段」：任务所属的施工阶段（看板里直接建的任务没有阶段，显示「未分组」）。 */
+/** 「所属阶段」：任务所属的施工阶段（看板里直接建的任务没有阶段，显示「临时任务」· Push 196 起）。 */
 function StageChip({ stage }: { stage: string }) {
   return (
     <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + (STAGE_TAG_CLASS[stage] ?? "bg-zinc-200 text-zinc-600")}>
-      {stage === "" ? UNGROUPED_STAGE : stage}
+      {stage === "" ? TEMP_TASK_STAGE : stage}
     </span>
   );
 }
@@ -535,7 +539,8 @@ function KanbanColumn({
   dropIndex: number | null;
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下 / 拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
-  onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => void;
+  /** 建完临时任务返回新任务 id（Push 196：TaskKanban 拿到后直接打开它的详情抽屉）。 */
+  onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => Promise<string | null>;
   onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 该阶段现有任务（Push 111）：给「插入位置」当锚点 —— 顺序 = 项目总览里这些任务的先后。 */
   stageTasksOf: (stage: string) => readonly { id: string; title: string }[];
@@ -701,7 +706,8 @@ function KanbanColumn({
                 if (title.trim() === "") {
                   return;
                 }
-                onAddTask(context, { title: title.trim(), titleEn: titleEn.trim() });
+                // Push 196：建完由上层拿到新任务 id 并直接打开它的详情抽屉（不阻塞浮层关闭）
+                void onAddTask(context, { title: title.trim(), titleEn: titleEn.trim() });
                 closePanels();
               }}
             >
@@ -762,8 +768,12 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress }: TaskKanbanProps) {
-  const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress }: TaskKanbanProps) {
+  /**
+   * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
+   * 新建的临时任务等列表刷新回来即自动打开详情，不依赖点击那一刻的快照。
+   */
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   /**
    * 「添加」浮层（Push 118）：整块看板共用的**单值**状态 —— 业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」。
    * 原来这份状态是每列一份（列内局部 state），六列互不感知、能同时开着菜单；提到这一层之后同一时刻只会有一个。
@@ -794,8 +804,8 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
   const tasksRef = useRef(tasks);
   const dropTargetAtRef = useRef<(x: number, y: number) => DropTarget | null>(() => null);
   const moveTaskRef = useRef<(taskId: string, group: KanbanGroup, index: number) => void>(() => undefined);
-  /** 抽屉里的任务按 id 取当前值（Push 98）：卡片 / 抽屉里改完，抽屉要立刻反映最新进度与日期。 */
-  const drawerTask = selectedTask === null ? null : tasks.find((task) => task.id === selectedTask.id) ?? selectedTask;
+  /** 抽屉里的任务按 id 取当前值（Push 98 / 196）：卡片 / 抽屉里改完，抽屉要立刻反映最新进度与日期；id 不在列表里（刚建还没刷新回来 / 已删）时先不渲染。 */
+  const drawerTask = selectedTaskId === null ? null : tasks.find((task) => task.id === selectedTaskId) ?? null;
   const groups = groupTasks(tasks, mode);
   /** 已经在项目里的任务 id：模板节点按 id 判重 —— 「阶段任务」里已加过的节点显示「已添加」、点不动。 */
   /** 项目里已添加的节点判重键（见 `addedNodeKeysOf`）：添加卡片的节点 / 模板条目按它显示「已添加」并跳过重复。 */
@@ -1082,7 +1092,19 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
       suppressClickRef.current = false;
       return;
     }
-    setSelectedTask(task);
+    setSelectedTaskId(task.id);
+  };
+
+  /**
+   * 列底「添加 → 临时任务」（Push 196）：建完直接打开这个任务的详情抽屉（确认时间等细节；名字可在抽屉里再改）——
+   * 表单提交那一刻先关浮层，创建成功（拿到 id）再开抽屉；新建行随列表刷新回来即渲染。
+   */
+  const addTaskAndOpen = async (context: KanbanAddContext, values: { title: string; titleEn: string }): Promise<string | null> => {
+    const createdId = await onAddTask(context, values);
+    if (createdId !== null) {
+      setSelectedTaskId(createdId);
+    }
+    return createdId;
   };
 
   if (tasks.length === 0) {
@@ -1115,7 +1137,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
               overlay={addOverlay}
               setOverlay={setAddOverlay}
               onOpenTask={openTask}
-              onAddTask={onAddTask}
+              onAddTask={addTaskAndOpen}
               onAddStageTask={onAddStageTask}
               stageTasksOf={stageTasksOf}
               members={members}
@@ -1144,11 +1166,12 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
         managerIds={managerIds}
         members={members}
         onSubmit={onSubmitTaskEdit}
+        onRename={onRenameTask}
         onProgress={onSetProgress}
         onSetStatus={onSetStatus}
         onSetActualEnd={onSetActualEnd}
         onClose={() => {
-          setSelectedTask(null);
+          setSelectedTaskId(null);
         }}
       />
     </>

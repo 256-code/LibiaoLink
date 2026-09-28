@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
-import { addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
@@ -181,7 +181,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -215,6 +215,8 @@ type TaskBoardProps = {
   managerIds?: string[];
   /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
+  /** 任务描述改名（Push 196：抽屉里改临时任务名；节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
+  onRenameTask?: (taskId: string, title: string, titleEn: string) => void;
   /** 表格行内编辑：只改任务字段（负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述）。 */
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
   /** 任务表行内删除（Push 141：行悬停的删除按钮，不传 = 不显示该按钮）。 */
@@ -626,7 +628,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
@@ -747,9 +749,12 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
     };
   }, [scrollRef]);
 
-  /** 阶段不在九阶段里的任务（看板「添加」直接建的空任务）归到「未分组」组，依旧能在表里看到。 */
-  const stageOf = (task: ProjectTask) => (task.stage === "" ? "未分组" : task.stage);
-  const groups = [...STAGE_ORDER, "未分组"]
+  /**
+   * 阶段不在九阶段里的任务（看板「添加 → 临时任务」直接建的空任务）归到「临时任务」组（Push 196 改名，原「未分组」）：
+   * 固定在最后一组 —— 与九阶段一样常显（骨架），有任务时组头带完成计数。
+   */
+  const stageOf = (task: ProjectTask) => (task.stage === "" ? TEMP_TASK_STAGE : task.stage);
+  const groups = [...STAGE_ORDER, TEMP_TASK_STAGE]
     .map((stage) => ({
       stage,
       items: tasks.filter((task) => stageOf(task) === stage),
@@ -830,7 +835,20 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                   >
                     <Chevron collapsed={isCollapsed} />
                   </button>
-                  {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉） */}
+                  {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉）；
+                      「临时任务」不是施工阶段、没有节点 / 模板可挑（Push 196）：标签只作分组名，点不动。 */}
+                  {group.stage === TEMP_TASK_STAGE ? (
+                    <span className="relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 ring-zinc-200">
+                      <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
+                      <span className="relative text-sm font-semibold text-zinc-800">{group.stage}</span>
+                      {/* 空分组（没有临时任务的项目）：只留组名，不显示 0/0 完成 */}
+                      {group.items.length === 0 ? null : (
+                        <span className="relative text-xs text-zinc-500">
+                          已完成 {done}/{group.items.length}
+                        </span>
+                      )}
+                    </span>
+                  ) : (
                   <button
                     type="button"
                     data-stage-pill="true"
@@ -858,6 +876,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                       <path d="M14.5 5v14" />
                     </svg>
                   </button>
+                  )}
                 </div>
                 {isCollapsed ? null : (
                   <div className="divide-y divide-zinc-100">
@@ -914,6 +933,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         managerIds={managerIds ?? []}
         members={members}
         onSubmit={onSubmitTaskEdit}
+        onRename={onRenameTask}
         onProgress={onSetProgress}
         onSetStatus={onSetStatus}
         onSetActualEnd={onSetActualEnd}

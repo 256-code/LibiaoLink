@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Member } from "../data/members";
 import {
+  TEMP_TASK_STAGE,
   cnDateFromIso,
   dateOnlyText,
   ownersLabel,
@@ -83,6 +84,9 @@ export type TaskEditSubmit = {
 
 /** 抽屉里的表单草稿（「所见即所存」：抽屉打开期间不随父级刷新重置）。 */
 type Draft = {
+  /** 任务描述（Push 196：临时任务可改，中文必填 / 英文可留空）。 */
+  title: string;
+  titleEn: string;
   managerIds: string[];
   ownerIds: string[];
   range: DateRange | null;
@@ -99,6 +103,8 @@ function rangeOf(task: ProjectTask): DateRange | null {
 
 function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
   return {
+    title: task === null ? "" : task.title,
+    titleEn: task === null ? "" : task.titleEn,
     managerIds,
     ownerIds: task === null ? [] : [...task.ownerIds],
     range: task === null ? null : rangeOf(task),
@@ -116,6 +122,11 @@ type TaskDrawerProps = {
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => void;
+  /**
+   * 任务描述改名（Push 196）：只对**无来源节点**的临时任务开放（节点 / 模板生成的任务按 A1-17 锁定，抽屉内只读）；
+   * 失焦即存；不传 = 该行不渲染。
+   */
+  onRename?: (taskId: string, title: string, titleEn: string) => void;
   /** 点四格进度条（Push 98；联动口径同任务表 §6.4：0 格 = 待开始、1~3 格 = 进行中、4 格 = 交回完成态派生）。 */
   onProgress?: (taskId: string, progress: number) => void;
   /** 任务状态下拉（五态；联动由服务端裁决）；不传 = 状态字段只读。 */
@@ -134,9 +145,11 @@ type TaskDrawerProps = {
  * 进度自 Push 98 起也能在抽屉里改：进度条长度不变，**四颗点平均分布在条上**（刚开工 / 完成一半 / 快完成了 / 已完成），点哪颗写哪档；
  * 任务状态与实际完成日期自 Push 101 起也能在抽屉里直接改（口径与任务表行内 / 看板卡片完全一致，§6.9：
  * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
- * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、文件（走文件库）、变更关联。
+ * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、文件（走文件库）、变更关联；
+ * 任务描述（中文 / 英文）自 Push 196 起对**无来源节点**的临时任务开放（失焦即存，中文名必填），
+ * 节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onProgress, onSetStatus, onSetActualEnd, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -242,6 +255,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   }
 
   const editable = onSubmit !== undefined;
+  /** 任务描述改名（Push 196）：只有**无来源节点**的临时任务能改（节点 / 模板生成的任务按 A1-17 锁定；服务端同口径 400 兜底）。 */
+  const titleEditable = onRename !== undefined && task.nodeId === null && task.sourceNodeId === null;
   const canEditStatus = onSetStatus !== undefined;
   const canEditActualEnd = onSetActualEnd !== undefined;
   /** 逾期提示与服务端展示态同一口径（已延期 = 未完成且过了预计完成日期）。 */
@@ -269,6 +284,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const headcountText = draft.headcount.trim();
   const headcountValue = headcountText === "" ? 0 : Number(headcountText);
   const headcountInvalid = headcountText !== "" && (Number.isNaN(headcountValue) || headcountValue < 0);
+  /** 任务描述校验（Push 196）：中文名必填 —— 输入过程中为空只标红提示，失焦时还原成原值、不写库。 */
+  const titleInvalid = titleEditable && draft.title.trim() === "";
 
   /** 失焦才存的字段（施工人数 / 进展描述）：值没变就不写；人数不合法时不写（红字提示留着）。
    *  读 `draftRef` 而不是渲染期的 `draft` —— 失焦可能与最后一次输入同一批处理，渲染期的值会是旧的。 */
@@ -289,7 +306,73 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     commit({});
   };
 
+  /**
+   * 任务描述改名（Push 196）：失焦即存（与施工人数 / 进展描述同一套「值没变不写」）；
+   * 中文名必填 —— 清空失焦时还原成原值、不写库。
+   */
+  const commitTitle = () => {
+    if (!titleEditable || onRename === undefined) {
+      return;
+    }
+    const current = draftRef.current;
+    const nextTitle = current.title.trim();
+    if (nextTitle === "") {
+      updateDraft({ title: task.title });
+      return;
+    }
+    const nextTitleEn = current.titleEn.trim();
+    if (nextTitle === task.title && nextTitleEn === task.titleEn) {
+      return;
+    }
+    updateDraft({ title: nextTitle, titleEn: nextTitleEn });
+    onRename(task.id, nextTitle, nextTitleEn);
+    setSavedTick(Date.now());
+  };
+
   const rows: Array<{ label: string; value: ReactNode }> = [
+    // 任务描述（Push 196）：只有无来源节点的临时任务出这一行；节点 / 模板生成的任务保持锁定（不渲染可编辑控件）
+    ...(titleEditable
+      ? [
+          {
+            label: "任务描述",
+            value: (
+              <>
+                <input
+                  value={draft.title}
+                  onChange={(event) => {
+                    updateDraft({ title: event.target.value });
+                  }}
+                  onBlur={commitTitle}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  placeholder="任务名称（必填）"
+                  aria-label="任务描述（中文）"
+                  className={FIELD_CLASS + (titleInvalid ? " border-rose-300 focus:border-rose-400 focus:ring-rose-500/15" : "")}
+                />
+                <input
+                  value={draft.titleEn}
+                  onChange={(event) => {
+                    updateDraft({ titleEn: event.target.value });
+                  }}
+                  onBlur={commitTitle}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  placeholder="英文名（可留空）"
+                  aria-label="任务描述（英文）"
+                  className={FIELD_CLASS + " mt-1.5"}
+                />
+                <span className={CAPTION_CLASS}>临时任务可直接改（改完即存；中文名必填，留空自动还原）</span>
+              </>
+            ),
+          },
+        ]
+      : []),
     {
       label: "项目经理",
       value: editable ? (
@@ -559,7 +642,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage === "" ? "未分组" : task.stage}</span>
+              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage === "" ? TEMP_TASK_STAGE : task.stage}</span>
               <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
             </div>
             <button

@@ -269,9 +269,20 @@ export const TaskStatusWriteSchema = z
     description: "任务状态写入：基础三态 pending / active / done + 显式覆盖 overdue（已延期）/ early_done（提前完成）",
   });
 
-/** 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。 */
+/**
+ * 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。
+ * Push 196 起例外：**无来源节点**的任务（看板「添加 → 临时任务」手工创建）的任务描述（title / titleEn）可走本接口直接改 ——
+ * 节点 / 模板生成的任务仍锁定；带这俩字段请求节点任务 = 400 VALIDATION_FAILED。
+ */
 export const TaskUpdateBodySchema = z
   .object({
+    title: z.string().min(1).max(200).optional().openapi({
+      description:
+        "任务描述（中文；Push 196）：仅**无来源节点**的任务可改（看板「添加 → 临时任务」手工创建）；节点 / 模板生成的任务按 A1-17 锁定，带该字段请求 400",
+    }),
+    titleEn: z.string().max(200).nullable().optional().openapi({
+      description: "任务描述（英文；Push 196）：与 title 同一门禁；null = 清空",
+    }),
     ownerIds: z.array(UuidSchema).optional().openapi({
       description: "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换、顺序 = 展示顺序",
     }),
@@ -293,7 +304,7 @@ export const TaskUpdateBodySchema = z
   })
   .openapi("TaskUpdateBody", {
     description:
-      "编辑任务（乐观锁 version 必传；任务描述 / 成果文件 / 阶段不在本接口；status 只收基础三态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）",
+      "编辑任务（乐观锁 version 必传；成果文件 / 阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**无来源节点**的临时任务可改，节点 / 模板生成的任务仍锁定（带字段请求 400）",
   });
 
 /** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
