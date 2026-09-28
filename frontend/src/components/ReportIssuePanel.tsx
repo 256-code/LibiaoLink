@@ -64,7 +64,7 @@ import type { MeResponse, Project } from "../types";
  *   ⑥ 表单字段标题统一**加粗**（业务口径「标题都标标粗」：`FORM_LABEL` 字重 medium → bold；字色口径不变）；
  *   ⑦ **附图以「复制粘贴」为主入口**（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：
  *      两个附图区（现场工作附图 / 当前问题附图）改 `AttachmentPicker` —— 形态按业务给的样（虚线卡 + 文件 / 云图标）
- *      **左右分半（无说明文字）**：左半 = `ctrl v` 键帽（业务给样：搜索框键帽风 —— 点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
+ *      **左右分半（无说明文字）**：左半 = `Ctrl + V` 键帽（业务给样：搜索框键帽风 —— 点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
  *      剪贴板图没有名字时按「剪贴板图片-N.png」命名）、右半 = 文件 / 云图标（点击选择文件，次入口，原生文件框仍在）；
  *      左半里放一个不可见的粘贴落点输入框 —— 浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令，粘贴一律 preventDefault、不落文字；
  *      附件胶囊可逐个移除。
@@ -451,7 +451,7 @@ function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly Repo
 /** 附图选择（原型：名字 + 图片预览地址，正式版走站内文件库）。
  *  Push 202 同批续：以**复制粘贴**为主入口（业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）——
  *  点一下虚线框拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
- *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `ctrl v` 键帽（主入口）、
+ *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `Ctrl + V` 键帽（主入口）、
  *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 预览地址，胶囊出缩略图、点开可放大（「图片要可以预览」）；
  *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。 */
 function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string }) {
@@ -532,8 +532,8 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
               onClick={() => sinkRef.current?.focus()}
               className={"flex w-full items-center justify-center px-2 py-3 transition " + (armed ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")}
             >
-              <span className={"rounded-[3px] px-2 py-1 text-[11px] font-bold uppercase leading-none transition [background:linear-gradient(-225deg,#d5dbe4,#f8f8f8)] [box-shadow:inset_0_-2px_0_0_#cdcde6,inset_0_0_1px_1px_#fff,0_1px_2px_1px_rgba(30,35,90,0.4)] " + (armed ? "text-zinc-600" : "text-[#969faf]")}>
-                ctrl v
+              <span className={"rounded-[3px] px-2 py-1 text-[11px] font-bold leading-none transition [background:linear-gradient(-225deg,#d5dbe4,#f8f8f8)] [box-shadow:inset_0_-2px_0_0_#cdcde6,inset_0_0_1px_1px_#fff,0_1px_2px_1px_rgba(30,35,90,0.4)] " + (armed ? "text-zinc-600" : "text-[#969faf]")}>
+                Ctrl + V
               </span>
             </button>
             {/* 粘贴落点：不可见、不可点，只借它的可编辑焦点接浏览器的 Ctrl+V（粘贴被 preventDefault，不会落文字） */}
