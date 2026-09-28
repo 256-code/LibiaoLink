@@ -571,7 +571,7 @@ server/
 ## M2-06 回放（视图 / 关注 · A1-03 / A1-15 · Push 168）
 
 - 脚本：`scripts/m2-06-replay.mjs`（真 PG + 真 api；铸临时管理员会话 + 合成复核用户（无角色，用于 404 / 全员可见对照）；建 3 个回放项目（M2RPL- 主 / ARC 归档 / DEL 硬删）+ 视图 / 关注靶子；跑完硬删 projects 全链 + `project_views` + `follows` + 合成用户）。
-- 断言组：P1 ~ P6（前置：会话 / 字典 / 用户目录 / 项目就绪）、V1 ~ V11（视图 CRUD / 归属 404 与 403 / 默认互斥 / 物理删）、F1 ~ F11（关注幂等 / 清单 / 批量逐条计数 / 取关 / 防 IDOR / 归档不可新关注 / 项目硬删后关注行清理 2 → 0）。
+- 断言组：P1 ~ P6（前置：会话 / 字典 / 用户目录 / 项目就绪）、V1 ~ V11（视图 CRUD / 归属 404 与 403 / 默认互斥 / 物理删）、F1 ~ F11（关注幂等 / 清单 / 批量逐条计数 / 取关 / 可见性按 PERMISSION_ENFORCED 分派（判权限态 404 防 IDOR / 一期全员可见态 201 + 取关清理）/ 归档不可新关注 / 项目硬删后关注行清理 2 → 0）。
 - 复跑：`cd server && M2_06_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m2-06-replay.mjs [--base-url http://127.0.0.1:3001] [--keep]`；退出码 0 = 全过。
 - CI 接线：`.github/workflows/ci.yml` 的 `database` job（M6 回放之后追加一步）—— `.github/` 属 px 线，随本刀代记，请 px 复核（先例 Push 156 / 157）。
 - 说明：本机无 PG，真机证据以 CI `database` job 为准（不伪造）。
