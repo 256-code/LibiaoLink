@@ -6328,6 +6328,274 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 收件箱清单（C5-01 / C5-02）：状态 / 类型 / 关联对象 + 投递时刻区间 + 分页；只返回已投递主行（合并子行仅在库内留档）；随行未读角标计数 */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 状态过滤（缺省 = 全部三态） */
+                    status?: components["schemas"]["NotificationStatus"] & unknown;
+                    /** @description 类型过滤（C5-02 分类；缺省 = 全部） */
+                    type?: components["schemas"]["NotificationType"] & unknown;
+                    /** @description 关联对象类型过滤（如 task / issue；缺省 = 全部） */
+                    refType?: string;
+                    /** @description 投递时刻下界（含；缺省 = 不限） */
+                    from?: components["schemas"]["DateTime"] & unknown;
+                    /** @description 投递时刻上界（含；缺省 = 不限） */
+                    to?: components["schemas"]["DateTime"] & unknown;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 收件箱清单（含未读计数） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotificationMarkBody"];
+                };
+            };
+            responses: {
+                /** @description 标记后的通知 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/notifications/mark-all-read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 全部标记已读（C5-01）：本人未读主行一次性置为已读；幂等（无未读时 updated=0） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 置位结果（updated / unreadCount=0） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationMarkAllReadResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 通知偏好（C2-09）：免打扰时段 / 每日上限 / 合并窗口 —— 读面为生效值（个人配置缺省时回退 env 缺省） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 生效中的通知偏好 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotifyPrefs"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 更新通知偏好（局部更新：只传变更键；免打扰两键成对，双 null = 关闭；空更新 400；null = 恢复缺省） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotifyPrefsUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的生效偏好 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotifyPrefs"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7210,6 +7478,78 @@ export interface components {
          * @enum {string}
          */
         NodeStatus: "pending" | "active" | "done" | "deleted";
+        /** @description 收件箱条目（已投递；合并子行不进收件箱、只在库内留档） */
+        Notification: {
+            /** @description 通知 id（库内自增；收件箱以 id 降序） */
+            id: number;
+            type: components["schemas"]["NotificationType"];
+            /** @description 标题（已剔除前后空白） */
+            title: string;
+            /** @description 正文（已剔除前后空白；首条消息的正文，被合并行正文留档在库内） */
+            body: string;
+            status: components["schemas"]["NotificationStatus"];
+            /** @description 关联对象类型（可空） */
+            refType: string | null;
+            refId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 模板码（可空） */
+            templateCode: string | null;
+            /** @description 合并条数：同期同合并键的消息条数（未合并 = 1） */
+            mergedCount: number;
+            deliveredAt: components["schemas"]["DateTime"] & unknown;
+            createdAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 收件箱清单（含未读角标计数） */
+        NotificationListResponse: {
+            items: components["schemas"]["Notification"][];
+            page: number;
+            limit: number;
+            /** @description 当前筛选下的总条数 */
+            total: number;
+            /** @description 未读总数（不受 status 过滤影响；角标口径） */
+            unreadCount: number;
+        };
+        /** @description 全部标记已读结果 */
+        NotificationMarkAllReadResponse: {
+            /** @description 本次实际置为已读的条数 */
+            updated: number;
+            /** @description 置位后的未读数（恒为 0；回读口径） */
+            unreadCount: number;
+        };
+        /** @description 标记收件箱状态（幂等；已处理可退回已读） */
+        NotificationMarkBody: {
+            status: components["schemas"]["NotificationStatus"];
+        };
+        /**
+         * @description 收件箱状态：unread 未读 / read 已读 / handled 已处理（标记接口幂等；允许回退到更早状态）
+         * @enum {string}
+         */
+        NotificationStatus: "unread" | "read" | "handled";
+        /**
+         * @description 通知类型（C5-02 分类）：reminder 提醒（任务 / 日报 / 问题等业务提醒）/ approval 审批（待办审批与门禁）/ broadcast 播报（喜报 / 阶段达成 / 摘要群发同步留档）/ system 系统（账号 / 权限 / 运维通知）
+         * @enum {string}
+         */
+        NotificationType: "reminder" | "approval" | "broadcast" | "system";
+        /** @description 通知偏好（免打扰时段 / 每日上限 / 合并窗口；读面为生效值） */
+        NotifyPrefs: {
+            quietHours: components["schemas"]["NotifyQuietHours"];
+            /** @description 免打扰开始（生效值，HH:MM，Asia/Shanghai）；null = 免打扰关闭 */
+            quietFrom: string | null;
+            /** @description 免打扰结束（生效值，HH:MM，Asia/Shanghai）；跨零点允许（from > to）；null = 免打扰关闭 */
+            quietTo: string | null;
+            /** @description 每人每日投递上限（0 = 不限）；超限消息排到次日窗口起点 */
+            dailyLimit: number;
+            /** @description 合并窗口（毫秒；0 = 不合并）：同人同合并键、窗口内未读主行合并为一条 */
+            mergeWindowMs: number;
+            updatedAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 通知偏好更新（局部更新：只传变更键；quietHours 三态 default / off / HH:MM-HH:MM；空更新 400） */
+        NotifyPrefsUpdateBody: {
+            quietHours?: components["schemas"]["NotifyQuietHours"];
+            dailyLimit?: number;
+            mergeWindowMs?: number;
+        };
+        /** @description 免打扰配置（三态）：default 继承缺省（env NOTIFY_QUIET_HOURS，缺省 22:00-08:00）/ off 关闭 / HH:MM-HH:MM 自定义（Asia/Shanghai，跨零点允许） */
+        NotifyQuietHours: string;
         /**
          * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
          * @enum {string}

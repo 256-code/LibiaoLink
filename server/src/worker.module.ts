@@ -4,6 +4,7 @@ import { AppConfigModule } from "./config/config.module.js";
 import type { Env } from "./config/env.js";
 import { DatabaseModule } from "./db/db.module.js";
 import { FileModule } from "./modules/file/index.js";
+import { NotifyModule } from "./modules/notify/index.js";
 import { OutboxModule } from "./outbox/index.js";
 import { StorageModule } from "./storage/index.js";
 
@@ -24,6 +25,7 @@ export class WorkerModule {
         DatabaseModule,
         StorageModule,
         FileModule,
+        NotifyModule,
         OutboxModule.forRoot(env),
       ],
     };
