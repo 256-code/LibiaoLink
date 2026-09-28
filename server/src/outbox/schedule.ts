@@ -19,7 +19,7 @@ const DAY_MS = 86_400_000;
 const SHANGHAI_OFFSET_MS = 8 * HOUR_MS;
 /** nextFireAfter 扫描上限（天）：给「不可能 cron」（如 2 月 31 日）兜底，避免无界扫描。 */
 const MAX_SCAN_DAYS = 731;
-/** 单次补发窗口枚举上限：超过只取前 N 个并标记 truncated（防异常 cron 撑爆内存）。 */
+/** 补发窗口枚举的内存兜底上限：超过只取前 N 个并标记 truncated（防异常 cron 撑爆内存）；每轮策略上限见 planCatchup 的 maxWindows（契约 OUTBOX_SCHEDULER.maxWindowsPerTick）。 */
 export const MAX_CATCHUP_FIRES = 2000;
 
 export interface ParsedCron {
@@ -195,10 +195,13 @@ export interface CatchupPlan {
   windowFrom: Date;
   windowTo: Date;
   fireTimes: Date[];
+  /** 本轮窗口上限触顶：还有未处理窗口 —— 调用方须把水位停在本轮最后处理的窗口，不得越过。 */
+  pendingMore: boolean;
+  /** 本轮最后处理的窗口（fireTimes 末项；无窗口 = null）—— 触顶时下一轮窗口下限。 */
+  resumeFrom: Date | null;
   /** 超跨度被跳过的区间 (skippedFrom, skippedTo]；无跳过 = null。 */
   skippedFrom: Date | null;
   skippedTo: Date | null;
-  truncated: boolean;
 }
 
 export function planCatchup(input: {
@@ -211,17 +214,25 @@ export function planCatchup(input: {
   after: Date;
   now: Date;
   catchupMaxDays: number;
+  /**
+   * 单轮最多处理的窗口数（水位护栏 · OUTBOX_SCHEDULER.maxWindowsPerTick）：触顶时只取前 N 个窗口并置
+   * pendingMore=true，调用方须把水位（last_run_at）停在 resumeFrom、下一轮从它继续。
+   * 缺省 = MAX_CATCHUP_FIRES（内存兜底）；生产调用方显式传 env 值。
+   */
+  maxWindows?: number;
 }): CatchupPlan {
   const capStart = new Date(input.now.getTime() - input.catchupMaxDays * DAY_MS);
   const capped = input.after.getTime() < capStart.getTime();
   const windowFrom = capped ? capStart : input.after;
-  const { times, truncated } = enumerateFireTimes(input.cron, windowFrom, input.now);
+  const maxWindows = Math.max(1, Math.min(input.maxWindows ?? MAX_CATCHUP_FIRES, MAX_CATCHUP_FIRES));
+  const { times, truncated } = enumerateFireTimes(input.cron, windowFrom, input.now, maxWindows);
   return {
     windowFrom,
     windowTo: input.now,
     fireTimes: times,
+    pendingMore: truncated,
+    resumeFrom: times.length === 0 ? null : times[times.length - 1] ?? null,
     skippedFrom: capped ? input.after : null,
     skippedTo: capped ? capStart : null,
-    truncated,
   };
 }
