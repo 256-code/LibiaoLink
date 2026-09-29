@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：项目详情「干系人」标签接真（Push 221 · A27 / M6-06 前端接线）
+ * LibiaoLink 前端 · 回放：项目详情「干系人」标签接真（Push 221 · A27 / M6-06 前端接线；Push 222 口径修订：表单不录具体公司名 / 编辑只走行尾按钮）
  *
  * 前置（都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -15,7 +15,7 @@
  * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完物理删、零残留）在真机浏览器里跑一遍
  * 「干系人」标签接真后的读写口径 ——
  *   ① 标签在项目详情导航栏**最右侧**（第 6 个）且走地址 ?view=stakeholders；
- *   ② 表格口径：8 列表头 / 只列本项目关联（A5-03 反查；未关联的不出现）/ 电话 / 公司分类徽标 / 填写者；
+ *   ② 表格口径：8 列表头 / 只列本项目关联（A5-03 反查；未关联的不出现）/ 电话 / 公司分类徽标 / 填写者 / 点击行体不进入编辑（Push 222：编辑只走行尾「编辑」按钮）；
  *   ③ 新建（UI 表单）：落库 + 自动关联本项目（A5-03 projectIds）；
  *   ④ 编辑（PATCH 部分更新）：改职务 + 清空微信（null 落库）；
  *   ⑤ 删除二次确认（第一下只开口）→ 软删（deleted_at 置位 + 读面 404 + 行消失）；
@@ -310,18 +310,25 @@ const table = await ev(TABLE_PROBE);
 check("②a 表头 8 列（姓名 / 电话 / 微信 / 邮箱 / 职务 / 所属公司 / 填写者 / 动作）", table.has === true && table.cols === "干系人姓名|电话 / WhatsApp|微信|邮箱 Email|职务 / 责任板块|所属公司|填写者|", JSON.stringify({ cols: table.cols }));
 check("②b 只列本项目关联：1 行（乙不出现）+ 计数 1 + 底部滑块在位", table.rowCount === 1 && table.ids === jia.id && table.total === "1" && table.bar === true, JSON.stringify({ rows: table.rowCount, total: table.total, bar: table.bar }));
 const jiaRow = await ev(rowProbe(jia.id));
-check("②c 行内容：姓名 / 电话 / 微信 / 邮箱 / 职务 / 公司分类徽标 + 具体公司名 / 填写者",
-  jiaRow.name === "回放·干系人甲" && jiaRow.phone === "+86 138 0000 0001" && jiaRow.wechat === "px-replay-jia" && jiaRow.email === "jia@example.com" && jiaRow.title === "现场项目经理" && jiaRow.company.indexOf("立镖机器人") >= 0 && jiaRow.company.indexOf("立镖机器人（回放）") >= 0 && jiaRow.createdBy.indexOf("潘兴") >= 0 && jiaRow.edit === true && jiaRow.del === true,
+check("②c 行内容：姓名 / 电话 / 微信 / 邮箱 / 职务 / 公司分类徽标 + 存量公司名（只读）/ 填写者",
+  jiaRow.name === "回放·干系人甲" && jiaRow.phone === "+86 138 0000 0001" && jiaRow.wechat === "px-replay-jia" && jiaRow.email === "jia@example.com" && jiaRow.title === "现场项目经理" && jiaRow.company.indexOf("立镖机器人") >= 0 && jiaRow.company.indexOf("立镖机器人（回放）") >= 0 && jiaRow.createdBy.indexOf("潘兴") >= 0 && jiaRow.role === null && jiaRow.edit === true && jiaRow.del === true,
   JSON.stringify(jiaRow));
+// ②d 点击行体不进入编辑（Push 222 业务口径：编辑只走行尾「编辑」按钮）
+const bodyPoint = await ev("(function(){var r=document.querySelector(" + j("[data-stakeholder-row=" + Q + jia.id + Q + "]") + ");if(r===null){return null;}var c=r.querySelector(" + j("[data-stakeholder-cell=name]") + ");var box=(c===null?r:c).getBoundingClientRect();return {x:Math.round(box.left+box.width/2),y:Math.round(box.top+box.height/2)};})()");
+await clickAt(bodyPoint);
+await sleep(700);
+const modalAfterBodyClick = await ev("document.querySelector(" + j("[data-stakeholder-modal]") + ") !== null");
+check("②d 点行体不进入编辑（Push 222：编辑只走行尾按钮）", modalAfterBodyClick === false, String(modalAfterBodyClick));
+
 // ---------- ③ 新建（UI 表单）：落库 + 自动关联本项目 ----------
 await clickSelector("[data-stakeholder-new]");
 const modalOpen = await waitFor("document.querySelector(" + j("[data-stakeholder-modal]") + ") !== null", 5000);
-check("③a 点「新建干系人」= 弹窗打开", modalOpen === true, String(modalOpen));
+const modalFields = await ev("(function(){return {open:document.querySelector(" + j("[data-stakeholder-modal]") + ")!==null,hasCompanyField:document.querySelector(" + j("[data-stakeholder-field=company]") + ")!==null};})()");
+check("③a 点「新建干系人」= 弹窗打开、且无「具体公司名称」字段（Push 222）", modalOpen === true && modalFields.open === true && modalFields.hasCompanyField === false, JSON.stringify(modalFields));
 await typeInto("[data-stakeholder-field=name]", "回放·干系人丙");
 await clickSelector("[data-stakeholder-field=companyType] button");
 await sleep(400);
 await clickOptionByText("客户");
-await typeInto("[data-stakeholder-field=company]", "回放客户公司");
 await typeInto("[data-stakeholder-field=title]", "采购经理");
 await typeInto("[data-stakeholder-field=phone]", "+86 139 0000 0002");
 await typeInto("[data-stakeholder-field=wechat]", "px-replay-bing");
@@ -333,10 +340,10 @@ check("③b 提交后弹窗关闭、表格 2 行、计数 2", modalClosed === tr
 const listAfterCreate = await listOfProject();
 const bing = listAfterCreate.json.items.filter((row) => row.name === "回放·干系人丙")[0];
 check("③c 落库：分类 customer / 关联本项目 / 填写者 = 潘兴 / 联系方式齐全",
-  bing !== undefined && bing.companyType === "customer" && bing.projects.length === 1 && bing.projects[0].id === projectId && bing.createdByName === userRow.display_name && bing.phone === "+86 139 0000 0002" && bing.email === "bing@example.com",
-  JSON.stringify(bing === undefined ? null : { companyType: bing.companyType, projects: bing.projects.length, createdByName: bing.createdByName, phone: bing.phone }));
+  bing !== undefined && bing.companyType === "customer" && bing.projects.length === 1 && bing.projects[0].id === projectId && bing.createdByName === userRow.display_name && bing.company === null && bing.phone === "+86 139 0000 0002" && bing.email === "bing@example.com",
+  JSON.stringify(bing === undefined ? null : { companyType: bing.companyType, projects: bing.projects.length, createdByName: bing.createdByName, company: bing.company, phone: bing.phone }));
 const bingRow0 = await ev(rowProbe(bing.id));
-check("③d 表格行同步：分类徽标「客户」+ 电话 / 邮箱 / 职务", bingRow0.company.indexOf("客户") >= 0 && bingRow0.phone === "+86 139 0000 0002" && bingRow0.title === "采购经理" && bingRow0.email === "bing@example.com", JSON.stringify(bingRow0));
+check("③d 表格行同步：分类徽标「客户」（表单不录具体公司名）+ 电话 / 邮箱 / 职务", bingRow0.company === "客户" && bingRow0.phone === "+86 139 0000 0002" && bingRow0.title === "采购经理" && bingRow0.email === "bing@example.com", JSON.stringify(bingRow0));
 
 // ---------- ④ 编辑（PATCH 部分更新：改职务 + 清空微信 = null） ----------
 await clickSelector("[data-stakeholder-row=" + Q + bing.id + Q + "] [data-stakeholder-edit-slot] button");

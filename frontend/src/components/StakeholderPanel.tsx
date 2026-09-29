@@ -20,7 +20,8 @@ import { SelectMenu, type SelectOption } from "./SelectMenu";
  * 项目详情「干系人」面板（A27 · M6-06 前端接线；标签排在最右侧）：表格形态与「项目总览」同一套 ——
  * 白卡片 + 表头固定在主标签栏之下（sticky top-[122px]，横向滚动时用 translateX 跟随 scrollLeft）+
  * 每行 CSS grid + minWidth 横向滚动，底部共用 TableScrollbar 滑块（见 ProjectDetail.tsx）。
- * 列 = 用户口径字段：姓名 / 电话（含 WhatsApp）/ 微信 / 邮箱 / 职务（责任板块）/ 所属公司（分类 + 具体公司名）/ 填写者 / 行尾动作；
+ * 列 = 用户口径字段：姓名 / 电话（含 WhatsApp）/ 微信 / 邮箱 / 职务（责任板块）/ 所属公司（分类色签；具体公司名为存量只读展示）/ 填写者 / 行尾动作；
+ * Push 222（业务 2026-09-29：「这个不需要 然后编辑是点编辑按钮才是编辑 点击表格不能编辑」）：① 新建 / 编辑弹窗不再录入「具体公司名称」（写入面不带 company；存量数据照常展示）；② 编辑只走行尾「编辑」按钮 —— 点击行体不再进编辑。
  * 「干系人角色」源表与契约都没有该列（字段对照清单 §二.1「口径未定，暂不落列」），不落列，待契约扩列后再补。
  * 数据面：GET /api/v1/stakeholders?filter[projectId]（A5-03 按项目查看联系人清单），写 = stakeholder.manage。
  * 字段级脱敏（A5-07 · C3-08）：无权字段**键不存在** —— 表格渲染浅灰「—」并悬停说明，表单对应输入禁用、绝不回写（缺键当空值会清空无权字段）。
@@ -47,7 +48,10 @@ const fieldClass =
 /** 受字段级策略保护的字段（A5-07）：无权时响应里没有该键（不是 null）。 */
 type MaskableField = "company" | "title" | "phone" | "wechat" | "email";
 
-const MASKABLE_FIELDS: readonly MaskableField[] = ["company", "title", "phone", "wechat", "email"];
+/** 表单可编辑的受保护字段（Push 222 起 company 移出 —— 具体公司名不再录入，只在读面展示）。 */
+type EditableField = "title" | "phone" | "wechat" | "email";
+
+const EDITABLE_FIELDS: readonly EditableField[] = ["title", "phone", "wechat", "email"];
 
 function recordOf(row: Stakeholder): Record<string, unknown> {
   return row as unknown as Record<string, unknown>;
@@ -78,7 +82,6 @@ function textOf(row: Stakeholder, field: MaskableField): string {
 export type StakeholderDraft = {
   name: string;
   companyType: string;
-  company: string;
   title: string;
   phone: string;
   wechat: string;
@@ -90,7 +93,6 @@ function draftOf(row: Stakeholder): StakeholderDraft {
   return {
     name: row.name,
     companyType: row.companyType,
-    company: missingKey(row, "company") ? "" : textOf(row, "company"),
     title: missingKey(row, "title") ? "" : textOf(row, "title"),
     phone: missingKey(row, "phone") ? "" : textOf(row, "phone"),
     wechat: missingKey(row, "wechat") ? "" : textOf(row, "wechat"),
@@ -108,7 +110,6 @@ function createBodyOf(draft: StakeholderDraft, projectId: string): StakeholderCr
   return {
     name: draft.name.trim(),
     companyType: draft.companyType,
-    company: compact(draft.company),
     title: compact(draft.title),
     phone: compact(draft.phone),
     wechat: compact(draft.wechat),
@@ -126,7 +127,7 @@ function patchOf(draft: StakeholderDraft, row: Stakeholder): StakeholderPatch {
   if (draft.companyType !== row.companyType) {
     patch.companyType = draft.companyType;
   }
-  for (const field of MASKABLE_FIELDS) {
+  for (const field of EDITABLE_FIELDS) {
     if (missingKey(row, field)) {
       continue;
     }
@@ -174,7 +175,7 @@ function StakeholderModal({
 }) {
   const [draft, setDraft] = useState<StakeholderDraft>(() =>
     row === null
-      ? { name: "", companyType: "", company: "", title: "", phone: "", wechat: "", email: "" }
+      ? { name: "", companyType: "", title: "", phone: "", wechat: "", email: "" }
       : draftOf(row),
   );
   const [pending, setPending] = useState(false);
@@ -248,17 +249,6 @@ function StakeholderModal({
             </div>
           </div>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">具体公司名称{lockNote("company")}</span>
-            <input
-              data-stakeholder-field="company"
-              className={fieldClass}
-              disabled={locked("company")}
-              value={draft.company}
-              onChange={(event) => edit("company", event.target.value)}
-              placeholder={locked("company") ? "无权限查看 / 修改（字段级权限）" : "如 立镖机器人（可选）"}
-            />
-          </label>
-          <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">职务 / 责任板块{lockNote("title")}</span>
             <input
               data-stakeholder-field="title"
@@ -329,7 +319,7 @@ function StakeholderModal({
     </div>
   );
 }
-/** 表格行（与任务表行同一套：group grid + px-5 py-2.5；悬停 / 聚焦浮出行尾「编辑 / 删除」两枚胶囊）。 */
+/** 表格行（与任务表行同一套：group grid + px-5 py-2.5；悬停浮出行尾「编辑 / 删除」两枚胶囊）。Push 222 起行体不再可点 —— 编辑只走行尾「编辑」按钮。 */
 function StakeholderRow({
   row,
   canManage,
@@ -350,24 +340,7 @@ function StakeholderRow({
   return (
     <div
       data-stakeholder-row={row.id}
-      role={canManage ? "button" : undefined}
-      tabIndex={canManage ? 0 : undefined}
-      title={canManage ? "点击编辑干系人" : undefined}
-      onClick={canManage ? onEdit : undefined}
-      onKeyDown={
-        canManage
-          ? (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onEdit();
-              }
-            }
-          : undefined
-      }
-      className={
-        "group grid items-center border-b border-zinc-100 px-5 py-2.5 transition-colors last:border-b-0 focus-visible:outline-none " +
-        (canManage ? "cursor-pointer hover:bg-zinc-50/80 focus-visible:bg-zinc-50" : "")
-      }
+      className="group grid items-center border-b border-zinc-100 px-5 py-2.5 transition-colors last:border-b-0 hover:bg-zinc-50/80"
       style={{ gridTemplateColumns: GRID_TEMPLATE }}
     >
       <div data-stakeholder-cell="name" className="min-w-0 pr-3">
@@ -392,7 +365,8 @@ function StakeholderRow({
           <span className={"inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[11px] font-medium " + stakeholderCompanyTypeBadge(row.companyType)}>
             {stakeholderCompanyTypeName(row.companyType)}
           </span>
-          <CellText value={company} />
+          {/* 具体公司名（Push 222 起表单不录）：有值 / 无权（缺键该给「—」说明）才渲染，空值不再挂一个多余的「—」 */}
+          {missingKey(row, "company") || (typeof row.company === "string" && row.company.trim() !== "") ? <CellText value={company} /> : null}
         </span>
       </div>
       <div data-stakeholder-cell="createdBy" className="flex min-w-0 items-center justify-center">
