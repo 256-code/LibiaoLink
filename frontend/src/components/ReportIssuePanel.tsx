@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DateRangePicker } from "./DateRangePicker";
-import { MultiSelectMenu } from "./SelectMenu";
-import type { ReactNode } from "react";
+import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
+import { InlineCell, InlineMultiOptionCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import {
   ISSUE_STATES,
   issuesForProject,
@@ -12,6 +13,10 @@ import {
   type ReportPhoto,
 } from "../data/reports";
 import { PROJECT_STAGES } from "../data/projects";
+import { lockBodyScroll } from "../scrollLock";
+import type { DailySubView } from "../useHashRoute";
+import { RowDeleteButton } from "./RowDeleteButton";
+import { ScrollArea } from "./ScrollArea";
 import type { MeResponse, Project } from "../types";
 
 /**
@@ -26,7 +31,10 @@ import type { MeResponse, Project } from "../types";
  *   **Push 201**：图标再对调 —— 原「问题看板」的「圆环 + 感叹号」徽章**让给「问题追踪」**，「问题看板」改业务给样「放大镜」
  *   （24 视框 `fill="currentColor"` + evenodd；同样不照搬：去 SVGRepo 外壳、黑填充改 `currentColor`、缩 16px 与其余图标同高）；
  *   吸顶条随主标签栏吸顶改叠位（`top` 16 → 123px = 顶栏 64 + 主标签栏 59），并加下内衬兜住键帽投影（业务反馈「图二吸顶后有bug」）。
- * - 数据口径承 `系统功能书.md` A3：日报字段 A3-01 / 草稿与补填 A3-02 / 提交校验 A3-04 / 自动生成问题 A3-09 / 问题四态 A3-10；处理时限 SLA 见 ADR-026。
+ *   **Push 214**（业务口径「这几个页面也要做路由」）：四块子视图进地址 `?view=daily&sub=form|records|issues|board` ——
+ *   中文标签 ↔ slug 映射见下方 `SUB_TAB_KEYS`，当前块由 `ProjectDetail` 从地址派生后透传（本组件不再自持子视图状态），
+ *   缺省「日报填写」form 不落参数；提交后自动切「日报记录」= 写回 `sub=records`。
+ * - 数据口径承 `系统功能书.md` A3：日报字段 A3-01 / 草稿与补填 A3-02 / 提交校验 A3-04 / 自动生成问题 A3-09 / 问题三态 A3-10（Push 207 业务口径「取消未分组 未分组就是未解决」修订 —— 原四态的四态 → 三态契约修订挂 wmj 线）；处理时限 SLA 见 ADR-026。
  * - 内容列宽：视图整体**全宽**（日报记录 / 问题追踪 / 问题看板 照旧铺满）；只有「日报填写」收成**居中窄栏**
  *   （max-w-3xl = 768px），业务口径「我只要日报填写页面居中然后尺寸舒适一点、像一个表单，其它的不变还是全屏」。
  * - 「日报记录」= **列表 / 表格**（一行一篇；业务口径「日报记录还是做成列表 不要卡片」，原卡片网格已撤），列口径 = 时间
@@ -35,7 +43,7 @@ import type { MeResponse, Project } from "../types";
  *   解决方案或建议」三列**不在列表展示**（表单字段 A3-01 与 A3-09 自动生成问题的口径不变）；
  *   与「问题追踪」同一套表壳（白底 + 圆角 + 行悬停），窄屏横向滚动。
  * - 原型阶段数据存浏览器内存（换项目 / 刷新即重置；任务域已接线，本模块随 M4 日报切片接线）：演示数据只挂在示例项目印度 `inmu-0010`，
- *   其余项目从空白开始；「日报填写」提交后**真的会**写进「日报记录」，含「现场发现问题」时按 A3-09 自动生成一条「未分组」问题。
+ *   其余项目从空白开始；「日报填写」提交后**真的会**写进「日报记录」，含「现场发现问题」时按 A3-09 自动生成一条「未解决」问题（Push 207 起三态：未分组并入未解决）。
  * - Push 198（业务口径 2026-09-28「日报这里关联任务改成关联阶段」）：「关联任务」改「**关联阶段**」——
  *   多选项 = 九个施工阶段（`PROJECT_STAGES` 去掉「项目总览」，与任务表 / 看板同一份口径），不再列具体任务 / 负责人；
  *   关联单位由「任务」改「阶段」后，契约层 `taskIds` → `stageKeys` 的修订挂 wmj 线（见 `前端功能需求.md` §3.8 A21），
@@ -50,7 +58,7 @@ import type { MeResponse, Project } from "../types";
  *   ① 「日报填写」：「当日完成工作Work completed today」「明日计划Tomorrow's plan」「现场发现问题Problem」三个多行框
  *      **补英文表头**；三行分点占位提示（`1:` / `2:` / `3:`）先落、随后业务看后撤回（「算了 不要提示文字了」）——
  *      三个多行框最终**无占位提示文字**、行数回到原口径（下一个改动即此）；「当日完成工作」是 A3-04 必填（星号保留），
- *      图 1 「明日计划」的必填星**未采纳** —— A3-04 必填口径不变；
+ *      图 1 「明日计划」的必填星当时**未采纳**（Push 205 业务口径「明日计划也是必填项」已改必填）；
  *   ② 「问题归类」由单选改**多选**（`SelectMenu.tsx` 新增 `MultiSelectMenu`：弹层点选不关闭、选中项绿勾，
  *      触发器顿号连接已选项）—— 原型存储口径 = 多值顿号连接（`issueCategories` → `issueCategory` 字符串 / `Issue.category`），
  *      `issue_category` 单值 → 多值的契约修订挂 wmj 线（见 `字段对照清单.md` §二.3 增补）；
@@ -64,11 +72,107 @@ import type { MeResponse, Project } from "../types";
  *   ⑥ 表单字段标题统一**加粗**（业务口径「标题都标标粗」：`FORM_LABEL` 字重 medium → bold；字色口径不变）；
  *   ⑦ **附图以「复制粘贴」为主入口**（业务口径 2026-09-28「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）：
  *      两个附图区（现场工作附图 / 当前问题附图）改 `AttachmentPicker` —— 形态按业务给的样（虚线卡 + 文件 / 云图标）
- *      **左右分半（无说明文字）**：左半 = `Ctrl + V` 纯文字（Push 204：键帽下架改文字，业务口径「做成文字吧」—— 去渐变底 / 内阴影 / 圆角键帽材质，字色随半区悬停 / 就绪态转深；垂直居中与右半图标中线齐平 —— 业务口径「位置要居中」；点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
+ *      **左右分半（无说明文字）**：左半 = **剪贴板图标**（Push 204 由键帽改纯文字、Push 212 续再按业务口径「ctrl v 的地方改成这个图标吧」换成 PasteIcon —— 无键帽材质、字色随半区悬停 / 就绪态转深；垂直居中与右半图标中线齐平 —— 业务口径「位置要居中」；点一下，Ctrl+V 直接粘图；截图 / 复制的图片文件都收；
  *      剪贴板图没有名字时按「剪贴板图片-N.png」命名）、右半 = 文件 / 云图标（点击选择文件，次入口，原生文件框仍在）；
  *      左半里放一个不可见的粘贴落点输入框 —— 浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令，粘贴一律 preventDefault、不落文字；
  *      附件胶囊可逐个移除。
+ * - Push 205（业务口径 2026-09-28「这里应该先填发现的问题 才能填另外三个」+「明日计划也是必填项」）：
+ *   ① 「现场发现问题」= **前置开关** —— 为空时「问题归类」「当前问题附图」「解决方案或建议」三项**禁用**（灰底 / 灰字 / 点不开，
+ *      与「问题归类」原禁用口径同一套）；填了「现场发现问题」三项立即解禁、清空又回禁用；「现场工作附图」不受影响；
+ *   ② 「明日计划」改**必填**（A3-04 口径修订：必填 = 时间 + 当日完成工作 + 明日计划，标签补红色必填星）——
+ *      服务端契约 / 校验（reports.ts superRefine、库侧成对 CHECK）的同步修订挂 wmj 线。
+ * - Push 206（业务口径 2026-09-28「这个日报记录要大一点效果要如图二所示」+「图三还是文字提示改成图四的吧 然后用户填写后换行
+ *   填到表格后也要是换行的」）：
+ *   ① 「日报记录」整表放大 —— 字号 xs → sm、单元格内边距 py-2.5 → py-4（表头 py-3.5）、表格 min-w 900 → 1080，
+ *      行高随多行内容撑开（业务样 = 图 2 的多维表格：行更高、留白更足）；
+ *   ② 「当日完成工作 / 明日计划」两列 whitespace-pre-line —— 用户在多行框里按行写（回车换行），填到表格后**按行换行**显示；
+ *   ③ 「现场工作附图」列改**大图瓦片**（PhotoStrip 新增 size 档位 lg：约 128×96、多张自动折行、只出图不带文件名 —— 业务样 = 图 2）；
+ *   ④ 分点提示（1: / 2: / 3: 三行灰色小字）曾按图 4 落在「当日完成工作」「明日计划」，并随「这个现场问题也要同上」
+ *      扩到「现场发现问题」；随后按业务口径「有了自动的扩展 那这个提示就不要了」**整体撤回**（三个框都不留静态提示）；
+ *   ⑤ （同批追加 ·「自动添加序号可以做到吗」+「这个现场问题也要同上」）「当日完成工作 / 明日计划 / 现场发现问题」
+ *      三个多行框**自动序号** —— 空框聚焦预置 1: 、回车自动带下一行序号（2: / 3: …）、失焦与提交前 "renumberLines"
+ *      统一重排（剥旧号 / 去空行 / 重编）；落库即带序号文本，「日报记录」表格里序号 + 换行一并显示；
+ *      判定「现场发现问题」是否算填（前置开关）先剥序号 —— 空框只剩「1: 」不算填；
+ *   ⑥ （同批再追加 ·「换行很多时要自动下扩」）「日报填写」四个多行框（当日完成工作 / 明日计划 / 现场发现问题 /
+ *      解决方案或建议）改 GrowingTextarea**自动下扩** —— 高度随行数长（下限 = 原 rows 行），不再出内滚动条。
+ * - Push 207（业务口径 2026-09-28「责任这一栏不需要 删除吧」+「状态改成图二的三种」+「取消未分组 未分组就是未解决」+
+ *   「问题归类也要用不同颜色来展示」+「格式参考这种 然后处理时限不需要 所属任务也不需要」+「文字标题参考图五的来」+
+ *   「整体列表样式参考图6 项目总览页面」）：问题侧整批改版 ——
+ *   ① 「问题追踪」表格重做：列口径 = 业务样「图五」六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 /
+ *      问题是否处理）—— 列头**纯文字**（首版按图五复刻了小图标与排序小漏斗，随后按同批业务口径「这些图标不需要」整体下架）；
+ *      撤「责任 / 处理时限 / 所属任务」三列（业务口径「责任这一栏不需要」+
+ *      「处理时限不需要 所属任务也不需要」；三个字段仍在数据模型里，只是不展示）；「提出人」并进问题描述列的灰字小行
+ *      （图五没有该列，信息不丢）；「问题描述 / 解决方案或建议」按行换行（whitespace-pre-line —— 承接 Push 206 自动序号）；
+ *   ② 行样式 = 业务样「图六」（项目总览任务表）：白卡 + 圆角边框 + 列头 `bg-zinc-50 text-xs font-medium text-zinc-400`
+ *      + 行 `px-5 py-2.5` + `divide-zinc-100` 细分割线 + 行悬停 `hover:bg-zinc-50/80`；
+ *   ③ 状态三态（业务样「图二」·「状态改成图二的三种」）：未分组并入未解决 —— `ISSUE_STATES` = 未解决 / 处理中 / 已完成；
+ *      色签 = 项目总览「任务状态」同款（同批业务口径「这个问题的状态想要和项目总览里面的状态样式同款」）：
+ *      未解决 = 待开始 `bg-sky-100 text-sky-700` / 处理中 = 进行中 `bg-amber-100 text-amber-800` /
+ *      已完成 `bg-emerald-100 text-emerald-700`（色值 / 圆角 / 内距直接对齐 TaskBoard 的 STATUS_CAPSULE_CLASS 同名档）；
+ *      问题看板四列 → **三列**（空列保留）；新建问题初始态 = 未解决；「未分组」字样从问题域整体下线
+ *      （四态 → 三态的契约 / 库侧修订挂 wmj 线，见 `系统功能书.md` A3-10 与 `前端功能需求.md` §6.12）；
+ *   ④ 问题归类彩色胶囊（业务样「图三 / 图四」·「问题归类也要用不同颜色来展示」）：机械部 `#adcbff` /
+ *      采购部 · 项目部 `#ade4ff` / 规划部 `#ace2c5` / 物流原因 `#dcdfe4` / 供应商原因 `#ffea99` / 客户原因 `#ffb5b3` /
+ *      客观原因 `#e7b4ff` / 生产原因 `#ffb3dc` / 其它原因 `#ffcea3`（浅底 + 深字）；多选值按「、」拆开逐枚出签，
+ *      未知值 / 空值回落浅灰；
+ *   ⑤ 「问题附图」列（新增数据面）：`Issue.photos` —— 来源 = 日报「当前问题附图」（提交时带入问题记录），
+ *      列里出 40×40 缩略图（点开看大图 · PhotoStrip 新增 `md` 档位）、空 = 「—」；演示问题补内联 SVG 占位图；
+ *   ⑥ （同批追加 ·「这个也要1 2 3 同上」）「解决方案或建议」并进自动序号一套 —— 解禁后空框聚焦预置 1: 、
+ *      回车续号（2: / 3: …）、失焦与提交前 "renumberLines" 重排（与上三个多行框同一套口径）。
+ *   ⑦ （同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」+「醒目模式放在标签导航栏的最右侧」）「问题追踪」接**醒目模式**——
+ *      开关本体由 ProjectDetail 渲染在**标签栏最右侧**（与项目总览同一枚 `FocusModeToggle`、同一个账号偏好；
+ *      本视图没有列显隐按钮，它就落在最右），本组件只吃 `focusMode` 布尔做表格呈现：开 = 问题表整行铺该问题状态的
+ *      底色 —— 未解决 = 天蓝 sky / 处理中 = 琥珀 amber / 已完成 = emerald，同样压到 **6% 不透明度**、
+ *      行悬停抬到 **12%**（与项目总览任务表同一套马卡龙口径），状态列同时收口 = 撤色签底、只留深色字（加粗、透明底）；
+ *      关掉 = 行还原（白底 + 行悬停灰）、状态列回「项目总览同款」色签胶囊。
+ * - Push 208（业务口径 2026-09-28「问题追溯里面也要可以这样编辑 文字 以及问题归类都要可以修改 文字修改需要点击保存
+ *   编辑后时间不变 日报记录同理」）：两块表接**行内编辑**（复用项目总览那套 InlineEdit，业务样 = 项目总览状态列的行内下拉）——
+ *   ① 「问题追踪」：**问题描述 / 解决方案或建议**（文字列）= InlineTextCell 多行框 —— **点「保存」才落值**（Esc / 点浮层外 =
+ *      取消，原值不动）；**问题归类** = InlineMultiOptionCell（与「问题归类」表单侧同款多选：绿勾选中项、点选不收浮层、
+ *      再点取消，落值仍按「、」连接）；**问题是否处理** = InlineOptionCell 三态下拉（色签同项目总览，醒目模式下只留深色字）；
+ *   ② 「日报记录」：「当日完成工作 / 明日计划」两列同款文字编辑（业务口径「日报记录同理」）；
+ *   ⑤ 「日报记录」的**关联阶段**同批追加行内编辑（业务口径 2026-09-28「这个也要可以编辑筛选选择」）——
+ *      浮层 = 与「日报填写」表单侧完全同款的九阶段勾选清单（勾选不收浮层 · 值仍是同一份 REPORT_STAGES 口径）；
+ *   ⑥ 关联阶段「显示态」也出彩色色签（同日追加 · 业务口径 2026-09-28「显示也要有颜色」）：StageTags 逐枚出签、
+ *      与浮层共用同一张九阶段色表，空值 = 「—」灰字（问题归类显示态色签见 ④，两处同款）。
+ *   ③ 「编辑后时间不变」：日期 / 提出日期列**不参与编辑**（单元格里没有可点目标），patch 也从不写 date / raisedAt /
+ *      submittedAt —— 改完文字时间列原样；文字列保存前统一过一遍自动序号（renumberLines，与「日报填写」提交口径一致）；
+ *   ④ 编辑落原型内存态（setReports / setIssues）：刷新 / 换项目即复位；字段级 PATCH 接口的契约挂 wmj 线。
+ *
+ * - Push 210（业务口径 2026-09-28「卡片要可以拖动」）：问题看板卡片接**指针拖动**（与「任务进展」看板 Push 108 / 156
+ *   同一套口径）—— 按住卡片位移超过 4px = 拖动（没超过 = 点一下开问题详情抽屉）；拖动中卡片跟手（半透明拖动卡 ·
+ *   data-drag-ghost）、目标列描边高亮 + 列顶浮出落点槽「放开：移到「X」」，拖到看板 / 列边缘逐帧自动滚；
+ *   放开 = 把问题状态改成目标列（同一 patchIssue 内存态：「问题追踪」表 / 计数 / 抽屉同步跟着变）；
+ *   同列不是落点（问题没有列内顺序，放开不改动）；Esc / 指针取消 = 原地取消；整段拖动没有原生拖拽参与，滚轮照常可用。
+ *
+ * - Push 211（业务口径 2026-09-28「要加问题描述标题」）：问题看板**卡面首段补字段名「问题描述」** ——
+ *   与其余三段（问题归类 / 解决方案或建议 / 问题附图）同款 11px 浅灰小字；首段不带上间距（Field 增 first 变体）；
+ *   「问题追踪」表头 / 问题详情抽屉的「问题描述」口径照旧，三处一致。
+ *
+ * - Push 212（业务口径 2026-09-28「只保留关联阶段 且不需要隐藏」）：问题详情抽屉**撤「已隐藏 · N」折叠区** ——
+ *   中间区只留「关联阶段」一行、改常显（无折叠开关）；其余五枚次要字段整体下架（提出人在抽屉头部已有、
+ *   来源日报在页脚已有；提交时间 / 日报状态 / 问题编号不再展示）。
+ *   同批（业务口径「抽屉里面可以编辑内容」）：抽屉内**两块表能编辑的字段同样可编辑** —— 问题描述 / 问题归类 /
+ *   解决方案或建议 / 关联阶段 / 当日完成工作 / 明日计划 / 问题是否处理（同一套 InlineEdit 组件与落值口径）。
+ *   续（业务口径「图片也要可以增删」）：两张附图（问题附图 / 现场工作附图）接 AttachmentPicker —— 复制粘贴 / 选文件**增图**、
+ *   × **删图**（与「日报填写」同一套组件与钩子），落 value 走 patchIssue / patchReport 的 photos 字段。
+ *
+ * - Push 213（业务口径 2026-09-28「日报记录 和 问题追随都要有删除按钮 和之前的删除同款 请你看看有没有合适的位置
+ *   这两个任意删除谁都是关联的 都会导致双方都删除 因为他们本质是同一个日报」）：两块表**行尾各加一列动作列**
+ *   （固定 48px 槽位 + 同款 RowDeleteButton —— 静止 24px 幽灵态随行悬停浮现、悬停展开 48px 红胶囊「删除」），
+ *   槽位是**预留**的：展开只在槽内长大，列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」）。
+ *   删除语义 = **按「同一篇日报」整组删**：删日报 = 连它派生的全部问题；删问题 = 连它来源的那篇日报；
+ *   无派生问题的日报 / 无来源日报的问题只删自己（纯前端内存态，服务端 DELETE 契约挂 wmj 线）。
  */
+
+/** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
+ *  文字两列 + 关联阶段多选 —— 时间 / 填写者不动（「编辑后时间不变」）。
+ *  Push 212 续（业务口径「图片也要可以增删」）：追加**现场工作附图**（photos）—— 抽屉里与两列文字共用同一份 patchReport 内存态。 */
+export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stages" | "photos">>;
+
+/** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。
+ *  Push 212 续：追加**问题附图**（photos）。 */
+export type IssuePatch = Partial<Pick<Issue, "title" | "category" | "solution" | "state" | "photos">>;
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
 const CARD_SHELL =
@@ -83,16 +187,210 @@ const CARD_NOISE =
 /** 卡片内容区（Push 106 口径：只保留外框，内容直接落在壳上）。 */
 const CARD_BODY = "relative px-4 py-3.5";
 
-/** 问题四态色签：未分组 = 灰（还没分派）、未解决 = 红、处理中 = 琥珀（同任务「进行中」）、已完成 = 绿。 */
+/** 拖动卡片用的半透明壳（与「任务进展」看板同一套：拖动中跟手的那张卡）。 */
+const ISSUE_CARD_SHELL_GHOST =
+  "relative block w-full rounded-[35px] border border-zinc-900/[0.07] bg-white/[0.6] p-[9px] text-left backdrop-blur-[5px] backdrop-saturate-150 " +
+  "[box-shadow:0_18px_40px_-20px_rgba(15,23,42,0.18),0_4px_14px_-8px_rgba(15,23,42,0.06),inset_0_-2px_6px_rgba(15,23,42,0.05)]";
+
+/** 拖动判定阈值（Push 210 · 与「任务进展」看板同一套）：按下后位移不超过这么多像素 = 「点一下看详情」。 */
+const DRAG_THRESHOLD = 4;
+
+/** 拖卡片到边缘 = 看板跟着滚（Push 210 · 同「任务进展」Push 156）：进边缘 DRAG_EDGE_PX 内逐帧滚，越深越快。 */
+const DRAG_EDGE_PX = 72;
+const DRAG_EDGE_MAX_SPEED = 16;
+
+/** 边缘自动滚的速度：按深入边缘的程度 1~16px/帧。 */
+function dragEdgeScrollSpeed(depth: number): number {
+  return Math.min(Math.max((depth / DRAG_EDGE_PX) * DRAG_EDGE_MAX_SPEED, 1), DRAG_EDGE_MAX_SPEED);
+}
+
+/** ScrollArea 的滚动视口（组件内部那层带 data-scroll-area 的 div）—— 按轴找它。 */
+function dragScrollAreaViewport(root: ParentNode | null, axis: "horizontal" | "vertical"): HTMLElement | null {
+  if (root === null) {
+    return null;
+  }
+  const node = root.querySelector('[data-scroll-area="' + axis + '"]');
+  return node instanceof HTMLElement ? node : null;
+}
+
+/** 点 (x, y) 落在哪一列问题上（没有 = null）。 */
+function dragColumnAtPoint(x: number, y: number): Element | null {
+  const under = document.elementFromPoint(x, y);
+  return under === null ? null : under.closest("[data-issue-column]");
+}
+
+/** 拖卡片到边缘时的逐帧自动滚（Push 210）：横向滚看板本体、纵向滚指针底下那一列（列内列表也是 ScrollArea）。 */
+function autoScrollIssueDrag(root: HTMLElement | null, point: { x: number; y: number }): void {
+  const viewport = dragScrollAreaViewport(root, "horizontal");
+  if (viewport !== null) {
+    const rect = viewport.getBoundingClientRect();
+    if (point.y >= rect.top - 24 && point.y <= rect.bottom + 24) {
+      if (point.x < rect.left + DRAG_EDGE_PX) {
+        viewport.scrollLeft -= dragEdgeScrollSpeed(rect.left + DRAG_EDGE_PX - point.x);
+      } else if (point.x > rect.right - DRAG_EDGE_PX) {
+        viewport.scrollLeft += dragEdgeScrollSpeed(point.x - (rect.right - DRAG_EDGE_PX));
+      }
+    }
+  }
+  const under = document.elementFromPoint(point.x, point.y);
+  const column = under === null ? null : under.closest("[data-issue-column]");
+  const list = dragScrollAreaViewport(column, "vertical");
+  if (list === null) {
+    return;
+  }
+  const rect = list.getBoundingClientRect();
+  if (point.y < rect.top + DRAG_EDGE_PX) {
+    list.scrollTop -= dragEdgeScrollSpeed(rect.top + DRAG_EDGE_PX - point.y);
+  } else if (point.y > rect.bottom - DRAG_EDGE_PX) {
+    list.scrollTop += dragEdgeScrollSpeed(point.y - (rect.bottom - DRAG_EDGE_PX));
+  }
+}
+
+/** 问题三态色签（Push 207 · 业务样 = 图二「状态改成图二的三种」；同批再按业务口径「这个问题的状态想要
+ *  和项目总览里面的状态样式同款」对齐「项目总览」任务状态胶囊 —— 底色 / 字色直取 TaskBoard 的
+ *  STATUS_CAPSULE_CLASS 同名档：未解决 = 待开始 蓝 bg-sky-100 text-sky-700 / 处理中 = 进行中 琥珀
+ *  bg-amber-100 text-amber-800 / 已完成 = emerald 绿 bg-emerald-100 text-emerald-700）；
+ *  原四态色签（未分组灰 / 未解决红 / 处理中琥珀 / 已完成绿）随「取消未分组 未分组就是未解决」改版下架，
+ *  首版实色三态（#ade4ff / #feca04 / #dcdfe4）随本口径下架。 */
 const ISSUE_TAG_CLASS: Record<IssueState, string> = {
-  未分组: "bg-zinc-200 text-zinc-600",
-  未解决: "bg-rose-100 text-rose-700",
+  未解决: "bg-sky-100 text-sky-700",
   处理中: "bg-amber-100 text-amber-800",
   已完成: "bg-emerald-100 text-emerald-700",
 };
 
-/** 问题看板列壳：四列固定宽度、横向排布，空列保留。 */
-const ISSUE_COLUMN = "flex w-[300px] shrink-0 flex-col rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3";
+/** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）的整行底色：与项目总览任务表的
+ *  STATUS_ROW_CLASS 同一套口径 —— 状态色系压到 **6% 不透明**、行悬停抬到 **12%**；三态色系对照 =
+ *  未解决 / sky（项目总览「待开始」）、处理中 / amber（「进行中」）、已完成 / emerald（「已完成」）。 */
+const ISSUE_ROW_CLASS: Record<IssueState, string> = {
+  未解决: "bg-sky-500/[0.06] hover:bg-sky-500/[0.12]",
+  处理中: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
+  已完成: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
+};
+
+/** 醒目模式下的状态字色：整行已有状态色，撤色签底只留深色字（同 TaskBoard 的 STATUS_TAG_TEXT_CLASS 口径）。 */
+const ISSUE_TAG_TEXT_CLASS: Record<IssueState, string> = {
+  未解决: "text-sky-700",
+  处理中: "text-amber-800",
+  已完成: "text-emerald-700",
+};
+
+/** 问题归类色签（Push 207 · 业务样 = 图三 / 图四「问题归类也要用不同颜色来展示」）：浅底 + 深字，
+ *  色值取自业务样 —— 机械部 #adcbff / 采购部 · 项目部 #ade4ff / 规划部 #ace2c5 / 物流原因 #dcdfe4 /
+ *  供应商原因 #ffea99 / 客户原因 #ffb5b3 / 客观原因 #e7b4ff / 生产原因 #ffb3dc / 其它原因 #ffcea3；
+ *  未收录 / 空值回落浅灰。多选值（「、」连接）按分类拆开逐枚出签。 */
+const ISSUE_CATEGORY_CLASS: Record<string, string> = {
+  机械部: "bg-[#adcbff]",
+  采购部: "bg-[#ade4ff]",
+  规划部: "bg-[#ace2c5]",
+  项目部: "bg-[#ade4ff]",
+  物流原因: "bg-[#dcdfe4]",
+  供应商原因: "bg-[#ffea99]",
+  客户原因: "bg-[#ffb5b3]",
+  客观原因: "bg-[#e7b4ff]",
+  生产原因: "bg-[#ffb3dc]",
+  其它原因: "bg-[#ffcea3]",
+  其它: "bg-[#ffcea3]",
+};
+
+/** 问题归类色签组（多选值逐枚渲染；空值 = 「未归类」灰签）。 */
+function CategoryTags({ value }: { value: string }) {
+  const items = value === "" ? ["未归类"] : value.split("、").filter((part) => part !== "");
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {items.map((item, index) => (
+        <span
+          key={item + "#" + String(index)}
+          data-issue-category={item}
+          className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + (ISSUE_CATEGORY_CLASS[item] ?? "bg-zinc-100")}
+        >
+          {item}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** 关联阶段色签（Push 208 追加 · 业务口径「要有颜色 两处」· 业务样 = 九阶段各一档浅色）：
+ *  售前规划 #adcbff / 设计开发 #ade4ff / 加工采购 #dcdfe4 / 组装发货 #ffb5b3 / 硬件实施 #ace2c5 /
+ *  软件部署 #ffcea3 / 试运行 #ffea99 / 生产阶段 #e7b4ff / 验收 #ffb3dc —— 与「问题归类」共用同一张调色盘。 */
+const STAGE_TAG_CLASS: Record<string, string> = {
+  售前规划: "bg-[#adcbff]",
+  设计开发: "bg-[#ade4ff]",
+  加工采购: "bg-[#dcdfe4]",
+  组装发货: "bg-[#ffb5b3]",
+  硬件实施: "bg-[#ace2c5]",
+  软件部署: "bg-[#ffcea3]",
+  试运行: "bg-[#ffea99]",
+  生产阶段: "bg-[#e7b4ff]",
+  验收: "bg-[#ffb3dc]",
+};
+
+/** 关联阶段色签组（Push 208 追加 · 业务口径 2026-09-28「显示也要有颜色」）：多选值逐枚出签，与浮层
+ *  小签同一张色表；空值 = 「—」灰字（与列内其它空态一致）。 */
+function StageTags({ names }: { names: readonly string[] }) {
+  if (names.length === 0) return <span className="text-zinc-300">—</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {names.map((item, index) => (
+        <span key={item + "#" + String(index)} data-report-stage={item}
+          className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + (STAGE_TAG_CLASS[item] ?? "bg-zinc-100")}>
+          {item}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** 浮层里的小色签（Push 208 追加）：问题归类 / 关联阶段两个多选浮层的选项都按各自的色表出签。 */
+function tagChip(name: string, tagClass: string) {
+  return <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + tagClass}>{name}</span>;
+}
+
+/** 问题归类的小色签（浮层用；与表内 CategoryTags 同一张色表）。 */
+const categoryChip = (name: string) => tagChip(name, ISSUE_CATEGORY_CLASS[name] ?? "bg-zinc-100");
+
+/** 关联阶段的小色签（浮层用）。 */
+const stageChip = (name: string) => tagChip(name, STAGE_TAG_CLASS[name] ?? "bg-zinc-100");
+/** 问题状态色签（一处出签：追踪表「问题是否处理」列 + 看板卡片 / 列头共用）。Push 207 追加：壳体与「项目总览」
+ *  任务状态胶囊同款（rounded-lg + px-3 py-1.5 + text-[11px] font-medium —— 项目总览侧是可点下拉、悬停深一档；
+ *  静态签不挂悬停加深，其余逐项对齐）。`focus` = 醒目模式（仅追踪表传 true）：整行已铺状态底色，色签收口成
+ *  只留深色字（透明底 + 加粗 —— 同 TaskBoard 醒目模式状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
+function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: boolean }) {
+  return (
+    <span
+      data-issue-state={state}
+      className={
+        "inline-block " +
+        (focus
+          ? "text-xs font-semibold " + ISSUE_TAG_TEXT_CLASS[state]
+          : "rounded-lg px-3 py-1.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state])
+      }
+    >
+      {state}
+    </span>
+  );
+}
+
+/** 问题状态行内下拉的可选项（Push 208）：与「项目总览」任务状态同款 —— 弹层里每项 = 该状态的色签胶囊。 */
+const ISSUE_STATE_OPTIONS: SelectOption[] = ISSUE_STATES.map((state) => ({
+  value: state,
+  label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{state}</span>,
+}));
+/** 问题追踪列头（Push 207 · 业务样 = 图五）：六列**纯文字列名**（同批业务口径 2026-09-28「这些图标不需要」——
+ *  首版列头曾带日历 / A 字 / 分栏 / 图片 / 对勾圈小图标与排序小漏斗，随后按上面口径整体下架）。 */
+const ISSUE_TABLE_COLUMNS: readonly { key: string; label: string }[] = [
+  { key: "date", label: "日期" },
+  { key: "title", label: "问题描述" },
+  { key: "category", label: "问题归类" },
+  { key: "solution", label: "解决方案或建议" },
+  { key: "photos", label: "问题附图" },
+  { key: "state", label: "问题是否处理" },
+];
+
+/** 问题看板列壳（Push 209 改版 · 业务口径「样式参考任务进展的」）：与「任务进展」看板**同一套列壳** —— 原灰底面板
+ *  （白底 + 圆角 + 描边）整体下架，列 = 纯列容器（280px 宽、铺满视口、上限 52rem、下限 22rem）；列内 / 列间滚动条
+ *  都走 ScrollArea 的隐式口径（原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块）。 */
+const ISSUE_COLUMN = "flex h-[calc(100vh-12.75rem)] max-h-[52rem] min-h-[22rem] w-[280px] shrink-0 flex-col";
 
 /** 问题归类（C9 字典「问题归类」取值，口径见技术设计 v0.2 §6）。 */
 const ISSUE_CATEGORIES: readonly string[] = [
@@ -118,6 +416,27 @@ const FORM_INPUT =
 /** 表单字段名（浅灰小字；Push 202「标题都标标粗」—— 字重 medium → bold）。 */
 const FORM_LABEL = "text-xs font-bold text-zinc-500";
 
+/** 行内编辑触发器 · 文字列（Push 208）：静息 = 文字原样（无白底无描边），悬停给一层淡色可点提示；
+ *  -mx-1.5 -my-0.5 与 px-1.5 py-0.5 相抵 —— 文字位置 / 行高与静态展示逐像素对齐，不给表格加高度。 */
+const CELL_EDIT_TEXT = "w-full -mx-1.5 -my-0.5 justify-start rounded-lg px-1.5 py-0.5 text-left hover:bg-zinc-900/[0.04]";
+
+/** 行内编辑触发器 · 色签列（Push 208）：问题归类 / 问题状态用 —— 触发器贴着内容（不满宽），四周留 2px 可点外沿。 */
+const CELL_EDIT_CHIP = "-m-0.5 rounded-lg p-0.5 hover:bg-zinc-900/[0.04]";
+
+
+/** 行首序号（自动序号用：1: / 2. / 3、/ 4：都算 —— 重排时先剥掉，再统一按 1: / 2: / 3: 编）。 */
+const LINE_NUMBER_HEAD = /^[ 　]*[0-9]+[ 　]*[:：.、．][ 　]*/;
+
+/** 「自动序号」重排（Push 206 续 · 业务口径「自动添加序号可以做到吗」）：剥掉各行行首序号 → 去空行 → 按 1: / 2: / 3: 重编；
+ *  空文本 / 全是空行 → 空串（只聚焦自动预置的「1: 」不算有效内容，失焦即还原为空）。 */
+function renumberLines(text: string): string {
+  const lines = text
+    .split("\n")
+    .map((line) => line.replace(LINE_NUMBER_HEAD, "").trim())
+    .filter((line) => line !== "");
+  return lines.map((line, index) => String(index + 1) + ": " + line).join("\n");
+}
+
 /** 主按钮（提交日报）。 */
 const BTN_PRIMARY =
   "rounded-lg bg-zinc-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300";
@@ -131,6 +450,18 @@ const BTN_SECONDARY =
 type SubTab = "日报填写" | "日报记录" | "问题追踪" | "问题看板";
 
 const SUB_TABS: readonly SubTab[] = ["日报填写", "日报记录", "问题追踪", "问题看板"];
+
+/**
+ * 中文标签 ↔ 地址 slug（Push 214 · 业务口径「这几个页面也要做路由」）：四块子视图进地址 `?view=daily&sub=`，
+ * 与主标签栏 `?view=` 同一套「地址即状态」口径 —— 刷新 / 收藏 / 分享 / 上次后退都能停在原块；
+ * 缺省「日报填写」= form 不落参数（旧链接 `?view=daily` 原样打开 = 日报填写）。
+ */
+const SUB_TAB_KEYS: Record<SubTab, DailySubView> = {
+  日报填写: "form",
+  日报记录: "records",
+  问题追踪: "issues",
+  问题看板: "board",
+};
 
 /** 导航项图标（按钮内统一 16px 图标 + 单行文字）；「日报填写」「日报记录」描边 1.8px；两个「问题*」项各有一枚徽章：
  *  「问题追踪」= Push 199 业务给的 16×16「圆环 + 感叹号」面性样（`fill="currentColor"`）—— Push 201 由「问题看板」让位而来
@@ -260,12 +591,14 @@ function emptyDraft(): ReportDraft {
   return { dateIso: todayIso(), headcount: "", doneWork: "", plan: "", foundIssue: "", issueCategories: [], suggestion: "", stages: [], photos: [], issuePhotos: [] };
 }
 
-/** 字段行（浅灰字段名 + 深灰取值），与两块看板卡片同一套口径。 */
-function Field({ label, children }: { label: string; children: ReactNode }) {
+/** 卡片字段行（Push 209 改版 · 业务口径 2026-09-28「问题看板是这样的 要这些内容 然后样式参考任务进展的」）：
+ *  字段名独占一行浅灰小字、取值在下一行 —— 与「任务进展」看板卡片的 Field 同一套口径（业务样 = 图一）。
+ *  Push 211（业务口径「要加问题描述标题」）：增 first 变体 —— 卡面首段用它（不带上间距 mt-3）。 */
+function Field({ label, children, first = false }: { label: string; children: ReactNode; first?: boolean }) {
   return (
-    <div className="mt-2 flex min-w-0 items-baseline gap-2 text-xs">
-      <span className="shrink-0 text-zinc-400">{label}</span>
-      <span className="min-w-0 flex-1">{children}</span>
+    <div className={first ? "" : "mt-3"}>
+      <p className="text-[11px] text-zinc-500">{label}</p>
+      <div className="mt-1 min-w-0">{children}</div>
     </div>
   );
 }
@@ -305,16 +638,30 @@ function isClipboardGenericName(name: string): boolean {
   return name === "" || /^image\.(png|jpe?g|gif|webp)$/i.test(name);
 }
 
-/** 附图图标（右半「点击选择文件」= 业务给的样：文件 + 云；fill=currentColor 随字色）。 */
-function UploadIcon() {
+/** 附图图标（右半「点击选择文件」= 业务给的样：文件 + 云；fill=currentColor 随字色；Push 212 续按业务口径「小一点 太大了」缩到 16px）。 */
+function UploadIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
       <path
         fillRule="evenodd"
         clipRule="evenodd"
         d="M10 1C9.73478 1 9.48043 1.10536 9.29289 1.29289L3.29289 7.29289C3.10536 7.48043 3 7.73478 3 8V20C3 21.6569 4.34315 23 6 23H7C7.55228 23 8 22.5523 8 22C8 21.4477 7.55228 21 7 21H6C5.44772 21 5 20.5523 5 20V9H10C10.5523 9 11 8.55228 11 8V3H18C18.5523 3 19 3.44772 19 4V9C19 9.55228 19.4477 10 20 10C20.5523 10 21 9.55228 21 9V4C21 2.34315 19.6569 1 18 1H10ZM9 7H6.41421L9 4.41421V7ZM14 15.5C14 14.1193 15.1193 13 16.5 13C17.8807 13 19 14.1193 19 15.5V16V17H20C21.1046 17 22 17.8954 22 19C22 20.1046 21.1046 21 20 21H13C11.8954 21 11 20.1046 11 19C11 17.8954 11.8954 17 13 17H14V16V15.5ZM16.5 11C14.142 11 12.2076 12.8136 12.0156 15.122C10.2825 15.5606 9 17.1305 9 19C9 21.2091 10.7909 23 13 23H20C22.2091 23 24 21.2091 24 19C24 17.1305 22.7175 15.5606 20.9844 15.122C20.7924 12.8136 18.858 11 16.5 11Z"
         fill="currentColor"
       />
+    </svg>
+  );
+}
+/** 粘贴入口图标（Push 212 续 · 业务口径「ctrl v 的地方改成这个图标吧」→「两个图标不协调」）：业务给的 1024 视框「剪贴板 + 文件」图。
+ *  原图直接缩到 16px 时字形只占视框 81%、线圈仅 ~41 单位（≈0.68px），与右半「文件 + 云」（24 视框 / 2 单位描边 ⇒ 16px 下 1.33px）又细又小 ≈ 不协调；
+ *  对齐口径：viewBox 收成 "40 40 944 944"（字形内容 828×890 居中，四周各留 40）并给 strokeWidth="38" ⇒
+ *  线圈 ≈ 79 单位 × 16/944 ≈ 1.34px ≈ 右半 1.33px，字形占宽 ≈ 866/944 ≈ 91.7% ≈ 右半 22/24；round 转角与站内图标同观感。
+ *  形状仍是原图三条 path（未改一笔），只改视框与描边。 */
+function PasteIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="40 40 944 944" fill="currentColor" stroke="currentColor" strokeWidth="38" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true" className={className}>
+      <path d="M922.21 787.33l0.31-0.45c0.32-0.5 0.62-1 0.9-1.51l0.06-0.12c0.3-0.56 0.57-1.14 0.81-1.72l0.18-0.46q0.27-0.66 0.48-1.35c0.06-0.17 0.11-0.35 0.16-0.53q0.24-0.81 0.42-1.65v-0.18c0.12-0.62 0.21-1.24 0.28-1.86v-0.52c0-0.48 0.06-1 0.07-1.46v-363.9a21.51 21.51 0 0 0-21.5-21.5H487.81a21.53 21.53 0 0 0-21.5 21.57L468 935.76a21.51 21.51 0 0 0 21.5 21.44h256.07c0.71 0 1.42 0 2.13-0.11 0.23 0 0.45-0.07 0.68-0.1 0.47-0.06 0.94-0.12 1.41-0.21 0.29-0.06 0.58-0.15 0.87-0.22s0.79-0.18 1.17-0.3 0.57-0.2 0.85-0.3 0.77-0.25 1.14-0.41 0.51-0.24 0.77-0.36 0.77-0.35 1.14-0.55 0.49-0.29 0.74-0.44 0.73-0.41 1.08-0.65 0.56-0.41 0.84-0.62 0.59-0.42 0.87-0.65a19.92 19.92 0 0 0 1.59-1.46l158.9-160.49a19 19 0 0 0 1.25-1.43l0.35-0.43c0.32-0.37 0.65-0.75 0.86-1.14zM509.38 433.12H883V753.7H745.58a21.5 21.5 0 0 0-21.5 21.5v139H510.91z m331 376.23l-73.34 74.07V796.7h85.85z" />
+      <path d="M138.92 751.28V201.57h86v10.75a38.14 38.14 0 0 0 11.1 26.8 37.62 37.62 0 0 0 26.8 11.1h246a37.9 37.9 0 0 0 37.89-37.9v-10.75h71.47v118.06h40.9V181.12a20.49 20.49 0 0 0-20.45-20.45h-91.91v-9.84a38.13 38.13 0 0 0-11.1-26.8 37.59 37.59 0 0 0-26.78-11.1h-58.17a68.64 68.64 0 0 0-129.69 0h-58.17A37.63 37.63 0 0 0 236 124a38.16 38.16 0 0 0-11.09 26.8v9.84H118.47A20.49 20.49 0 0 0 98 181.12V771.7a20.07 20.07 0 0 0 0.11 2c0 0.29 0.07 0.58 0.12 0.86l0.07 0.46c0 0.23 0.06 0.46 0.11 0.68 0.09 0.43 0.2 0.85 0.33 1.35v0.12c0 0.16 0.08 0.31 0.13 0.48 0.14 0.45 0.31 0.89 0.47 1.32v0.11c0 0.15 0.11 0.3 0.17 0.45 0.15 0.36 0.33 0.72 0.5 1.07l0.13 0.26c0.07 0.16 0.15 0.32 0.23 0.48s0.33 0.56 0.5 0.83l0.2 0.33a5.58 5.58 0 0 0 0.34 0.56c0.14 0.21 0.3 0.42 0.46 0.63l0.27 0.36c0.15 0.2 0.3 0.41 0.46 0.61l0.56 0.63 0.3 0.32c0.15 0.18 0.31 0.35 0.47 0.51a4.58 4.58 0 0 0 0.46 0.42l0.28 0.26c0.24 0.22 0.48 0.44 0.74 0.66l0.47 0.36 0.3 0.23 0.83 0.6 0.43 0.27 0.16 0.09c0.37 0.23 0.74 0.46 1.13 0.67a4.8 4.8 0 0 0 0.45 0.22c0.45 0.23 0.89 0.45 1.36 0.64l0.41 0.15c0.48 0.19 1 0.37 1.45 0.52 0.15 0 0.3 0.08 0.53 0.14 0.47 0.13 0.94 0.26 1.41 0.35 0.22 0 0.45 0.08 0.67 0.11l0.48 0.07c0.28 0.05 0.56 0.09 0.85 0.12 0.51 0.06 1.07 0.08 1.68 0.09H382.55v-40.81z m126.9-597.45h92.24v-18.38a27.76 27.76 0 1 1 55.52 0v18.35h92.25v55.5h-240z" />
+      <path d="M385.83 117.05a18.39 18.39 0 1 0 0 36.78h3v-0.24a18.38 18.38 0 0 0-3-36.51z" />
     </svg>
   );
 }
@@ -345,8 +692,14 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
   );
 }
 
-/** 附图清单：图片出**缩略图**（点开预览层看大图）、非图片出文件名胶囊；表单里再带 × 可逐个移除。 */
-function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string }) {
+/** 附图清单：图片出**缩略图**（点开预览层看大图）、非图片出文件名胶囊；表单里再带 × 可逐个移除。
+ *  Push 206 加 size 档位：sm（默认 —— 表单贴图区：32×32 小缩略图 + 文件名胶囊）/ lg（「日报记录」列表用：
+ *  约 128×96 大图瓦片、多张自动折行、只出图不带文件名 —— 业务样 = 图 2；名字放 title 提示）。
+ *  Push 207 再加 md（「问题追踪 → 问题附图」列用：40×40 紧凑缩略图、只出图不带文件名 —— 业务样 = 图五）。 */
+function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg" }) {
+  const isLarge = size === "lg";
+  /** 列表里的紧凑缩略图档（40×40、名字进 title）。 */
+  const isThumb = size === "md";
   const [preview, setPreview] = useState<ReportPhoto | null>(null);
   /** 正在改名的第几份（null = 没有在改名）；业务口径「图片名称可以自定义」。 */
   const [editingAt, setEditingAt] = useState<number | null>(null);
@@ -382,9 +735,18 @@ function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly Repo
   }
   const previewUrl = preview === null ? null : preview.url;
   return (
-    <div data-attachment-strip={strip} className="mt-1.5 flex flex-wrap items-center gap-1.5">
+    <div data-attachment-strip={strip} className={isLarge ? "mt-1.5 flex flex-wrap items-start gap-2" : isThumb ? "flex flex-wrap items-center gap-1.5" : "mt-1.5 flex flex-wrap items-center gap-1.5"}>
       {items.map((item, index) => (
-        <span key={item.name + "#" + String(index)} data-attachment={item.name} className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600">
+        <span
+          key={item.name + "#" + String(index)}
+          data-attachment={item.name}
+          title={isLarge || isThumb ? item.name : undefined}
+          className={
+            isLarge || isThumb
+              ? "relative inline-flex shrink-0"
+              : "inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600"
+          }
+        >
           {item.url === null ? null : (
             <button
               type="button"
@@ -393,7 +755,11 @@ function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly Repo
               onClick={() => setPreview(item)}
               className="shrink-0 rounded-md transition hover:opacity-80"
             >
-              <img src={item.url} alt={item.name} className="h-8 w-8 rounded-md border border-zinc-200 object-cover" />
+              <img
+                src={item.url}
+                alt={item.name}
+                className={isLarge ? "h-24 w-32 rounded-lg border border-zinc-200 object-cover" : isThumb ? "h-10 w-10 rounded-md border border-zinc-200 object-cover" : "h-8 w-8 rounded-md border border-zinc-200 object-cover"}
+              />
             </button>
           )}
           {editingAt === index ? (
@@ -414,7 +780,7 @@ function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly Repo
               className="w-20 rounded border border-zinc-300 bg-white px-1 py-0.5 text-[10px] text-zinc-700 outline-none focus:border-zinc-400"
             />
           ) : null}
-          {editingAt === index && editingExt !== "" ? (
+          {isLarge || isThumb ? null : editingAt === index && editingExt !== "" ? (
             <span className="text-[10px] text-zinc-400">{editingExt}</span>
           ) : onRename === undefined ? (
             <span>{item.name}</span>
@@ -430,7 +796,19 @@ function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly Repo
               {item.name}
             </button>
           )}
-          {onRemove === undefined ? null : (
+          {onRemove === undefined ? null : isLarge || isThumb ? (
+            // Push 212 续：md / lg 瓦片走**角标**移除（absolute 覆盖在图上，不占行宽 —— 保证大瓦片仍能并排折行）。
+            <button
+              type="button"
+              data-action="remove-attachment"
+              aria-label={"移除 " + item.name}
+              onClick={() => onRemove(index)}
+              title="移除这张图"
+              className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white text-[11px] leading-none text-zinc-500 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-800"
+            >
+              ×
+            </button>
+          ) : (
             <button
               type="button"
               data-action="remove-attachment"
@@ -451,10 +829,12 @@ function PhotoStrip({ items, onRemove, onRename, strip }: { items: readonly Repo
 /** 附图选择（原型：名字 + 图片预览地址，正式版走站内文件库）。
  *  Push 202 同批续：以**复制粘贴**为主入口（业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）——
  *  点一下虚线框**左半**（`Ctrl + V` 半区）拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
- *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半 `Ctrl + V` 纯文字（主入口；Push 204 起键帽材质下架 —— 业务口径「做成文字吧」；h-full 撑满 44px 行、垂直居中 —— 「位置要居中」）、
+ *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半**剪贴板图标**（主入口；Push 204 起键帽材质下架 —— 业务口径「做成文字吧」、Push 212 续文字换 PasteIcon —— 「ctrl v 的地方改成这个图标吧」；h-full 撑满 44px 行、垂直居中 —— 「位置要居中」）、
  *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 预览地址，胶囊出缩略图、点开可放大（「图片要可以预览」）；
- *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。 */
-function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string }) {
+ *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。
+ *  Push 205：「当前问题附图」加**前置开关**（业务口径「先填发现的问题 才能填另外三个」）—— disabled 时整卡灰底 / 灰字、
+ *  两半都点不开（左半按钮 disabled、粘贴落点不可聚焦、文件框 disabled、文档级粘贴监听不挂）。 */
+function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card" }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact" }) {
   /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
   const [armed, setArmed] = useState(false);
   /** 粘贴落点（左半里的不可见输入框：浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令）。 */
@@ -464,6 +844,10 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
   /** 最新 props（document 级粘贴监听不随每次输入重挂）。 */
   const latest = useRef({ items, onChange });
   latest.current = { items, onChange };
+  /** 就绪态 = 已点过左半 **且未禁用**（禁用态一律不亮、不接粘贴）。 */
+  const armedNow = armed && disabled === false;
+  /** 紧凑形态（抽屉）：不套虚线卡 —— 只留两枚小图标入口（粘贴 / 选文件）。 */
+  const compact = variant === "compact";
 
   /** 把一批新附件并进已有清单（粘贴与选文件共用；按现有顺序追加，同名不去重）。 */
   const appendItems = (next: readonly ReportPhoto[]) => {
@@ -500,7 +884,7 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
 
   /** document 级粘贴监听：兜底 —— 焦点在别处（如刚点过右半）时，仍投给「最近点过的贴图区」。 */
   useEffect(() => {
-    if (!armed) {
+    if (!armed || disabled) {
       return;
     }
     const onPaste = (event: ClipboardEvent) => {
@@ -508,7 +892,7 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [armed]);
+  }, [armed, disabled]);
 
   return (
     <div>
@@ -517,33 +901,61 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
           就绪态只由左半（点击 → 粘贴落点聚焦）驱动。 */}
       <div
         data-paste-zone={field}
+        data-paste-disabled={disabled ? "true" : "false"}
         role="group"
         aria-label={ariaLabel}
+        aria-disabled={disabled}
         className={
-          "overflow-hidden rounded-xl border border-dashed bg-white transition " +
-          (armed ? "border-zinc-400 ring-2 ring-zinc-900/5" : "border-zinc-300 hover:border-zinc-400")
+          compact
+            ? "relative flex items-center gap-1"
+            : "overflow-hidden rounded-xl border border-dashed transition " +
+              (disabled
+                ? "border-zinc-200 bg-zinc-50"
+                : armedNow
+                  ? "border-zinc-400 bg-white ring-2 ring-zinc-900/5"
+                  : "border-zinc-300 bg-white hover:border-zinc-400")
         }
       >
-        <div className="grid grid-cols-2 divide-x divide-zinc-200 text-center">
+        <div className={compact ? "flex items-center gap-1" : "grid grid-cols-2 divide-x divide-zinc-200 text-center"}>
           <div className="relative">
             <button
               type="button"
               data-paste-half=""
               aria-label="复制粘贴（点一下再按 Ctrl+V 粘图）"
-              onClick={() => sinkRef.current?.focus()}
-              className={"flex h-full w-full items-center justify-center px-2 py-3 transition " + (armed ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")}
+              disabled={disabled}
+              onClick={() => {
+                if (disabled) {
+                  return;
+                }
+                sinkRef.current?.focus();
+              }}
+              className={
+                compact
+                  ? "flex h-7 w-7 items-center justify-center rounded-lg transition " +
+                    (disabled
+                      ? "cursor-not-allowed text-zinc-300"
+                      : armedNow
+                        ? "bg-zinc-100 text-zinc-900"
+                        : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600")
+                  : "flex h-full w-full items-center justify-center px-2 py-3 transition " +
+                    (disabled
+                      ? "cursor-not-allowed text-zinc-300"
+                      : armedNow
+                        ? "bg-zinc-100 text-zinc-900"
+                        : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")
+              }
             >
               {/* Push 204：键帽下架、改纯文字（业务口径「做成文字吧」）—— 去渐变底 / 内阴影 / 圆角材质；字色随半区悬停 / 就绪态转深（不再单独写字色）
-                  垂直居中（业务口径「位置要居中」）：h-full 撑满右半图标定高的 44px 行，文字中线与右半图标中线齐平 */}
-              <span className="text-xs font-medium leading-none">
-                Ctrl + V
-              </span>
+                  垂直居中（业务口径「位置要居中」）：h-full 撑满右半图标定高的 44px 行。
+                  Push 212 续（业务口径「ctrl v 的地方改成这个图标吧」→「小一点 太大了」）：文字换**剪贴板图标**（PasteIcon —— 与右半「文件 + 云」同款 currentColor / 16px 口径）。 */}
+              <PasteIcon className={compact ? "h-4 w-4" : "h-5 w-5"} />
             </button>
             {/* 粘贴落点：不可见、不可点，只借它的可编辑焦点接浏览器的 Ctrl+V（粘贴被 preventDefault，不会落文字） */}
             <input
               ref={sinkRef}
               data-paste-sink=""
-              data-paste-hint={armed ? "armed" : "idle"}
+              data-paste-hint={armedNow ? "armed" : "idle"}
+              disabled={disabled}
               aria-hidden="true"
               tabIndex={-1}
               onFocus={() => setArmed(true)}
@@ -554,19 +966,29 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
           </div>
           <label
             data-file-half=""
-            aria-label="点击选择文件（可多选）"
+            aria-label={disabled ? "先填「现场发现问题」后可选择文件" : "点击选择文件（可多选）"}
             onClick={() => {
+              if (disabled) {
+                return;
+              }
               // 右半是文件入口：点它 = 放弃本区粘贴就绪态（修「点右半点亮左半、Ctrl+V 卡住」），并让粘贴落点失焦。
               setArmed(false);
               sinkRef.current?.blur();
             }}
-            className="flex cursor-pointer items-center justify-center px-2 py-3 text-zinc-400 transition hover:bg-zinc-50 hover:text-zinc-600"
+            className={
+              compact
+                ? "flex h-7 w-7 items-center justify-center rounded-lg transition " +
+                  (disabled ? "cursor-not-allowed text-zinc-300" : "cursor-pointer text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600")
+                : "flex items-center justify-center px-2 py-3 transition " +
+                  (disabled ? "cursor-not-allowed text-zinc-300" : "cursor-pointer text-zinc-400 hover:bg-zinc-50 hover:text-zinc-600")
+            }
           >
-            <UploadIcon />
+            <UploadIcon className={compact ? "h-4 w-4" : "h-5 w-5"} />
             <input
               data-field={field}
               type="file"
               multiple
+              disabled={disabled}
               onChange={(event) => {
                 appendItems(toItems(Array.from(event.target.files ?? []), false));
                 event.target.value = "";
@@ -579,6 +1001,7 @@ function AttachmentPicker({ field, items, onChange, ariaLabel }: { field: string
       <PhotoStrip
         items={items}
         strip={field}
+        size={size}
         onRemove={(at) => onChange(items.filter((_, index) => index !== at))}
         onRename={(at, name) => onChange(items.map((item, index) => (index === at ? { ...item, name } : item)))}
       />
@@ -601,40 +1024,125 @@ const REPORT_COLUMNS: readonly string[] = [
 
 /** 一篇日报一行：**列表 / 表格**（业务口径「日报记录还是做成列表 不要卡片」），列内容与原来的卡片一致；
  *  表格壳与「问题追踪」同一套（白底 + 圆角边框 + 行悬停），窄屏横向滚动。
- *  （Push 199 收窄后不再带问题记录当前态 —— 问题态仍在「问题追踪 / 问题看板」可查。） */
-function ReportList({ reports }: { reports: readonly DailyReport[] }) {
+ *  （Push 199 收窄后不再带问题记录当前态 —— 问题态仍在「问题追踪 / 问题看板」可查。）
+ *  Push 206（业务口径「这个日报记录要大一点效果要如图二所示」+「用户填写后换行 填到表格后也要是换行的」）：
+ *  整表放大（字号 xs → sm、单元格内边距 py-2.5 → py-4、表头 py-3.5、表格 min-w 900 → 1080）+「当日完成工作 / 明日计划」
+ *  两列 whitespace-pre-line 按行换行 + 「现场工作附图」列 PhotoStrip 大图瓦片（size 档位 lg）。 */
+function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyReport[]; onPatch: (id: string, patch: ReportPatch) => void; onDelete: (id: string) => void }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
-      <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+    <div data-report-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+      <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
         <thead className="bg-zinc-50 text-zinc-500">
           <tr>
             {REPORT_COLUMNS.map((title) => (
-              <th key={title} className="whitespace-nowrap border-b border-zinc-200 px-3 py-2.5 font-medium">
+              <th key={title} className="whitespace-nowrap border-b border-zinc-200 px-4 py-3.5 font-medium">
                 {title}
               </th>
             ))}
+            {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
+                与任务表同一个 48px 槽位、同款 RowDeleteButton（静止 24px 幽灵态、悬停展开红胶囊「删除」），行内不动其它列。 */}
+            <th className="w-20 border-b border-zinc-200 px-4 py-3.5 font-medium">
+              <span className="sr-only">操作</span>
+            </th>
           </tr>
         </thead>
         <tbody>
           {reports.map((report) => {
             return (
-              <tr key={report.id} data-report-row={report.id} className="align-top transition hover:bg-zinc-50/70">
-                <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5">
+              <tr key={report.id} data-report-row={report.id} className="group align-top transition hover:bg-zinc-50/70">
+                <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
                   {/* Push 202：时间列只留年月日（业务口径「时间格式也要年月日 具体提交时间不需要 已提交状态也不要」）——
                       状态签与「提交 HH:MM」小字一并下架（state 字段仍保留在数据模型里） */}
-                  <p className="font-semibold text-zinc-900">{report.date}</p>
+                  {/* Push 207 同批追加：时间列**去加粗**（业务口径「问题追踪里面的时间不用加粗」· 业务样 = 图里日报记录时间列）
+                      —— 字重回常规、字色对齐「问题追踪」日期列 text-zinc-700（不再用 font-semibold / zinc-900） */}
+                  <p data-report-date="" className="text-zinc-700">{report.date}</p>
                 </td>
-                <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5">
+                <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
                   <span className="flex min-w-0 items-center gap-1.5">
                     <InitialAvatar name={report.author} />
                     <span className="truncate text-zinc-700">{report.author}</span>
                   </span>
                 </td>
-                <td className="min-w-[150px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.stages.length === 0 ? "—" : report.stages.join("、")}</td>
-                <td className="min-w-[210px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-800">{report.doneWork === "" ? "—" : report.doneWork}</td>
-                <td className="min-w-[180px] border-b border-zinc-100 px-3 py-2.5 leading-5 text-zinc-700">{report.plan === "" ? "—" : report.plan}</td>
-                <td className="min-w-[120px] border-b border-zinc-100 px-3 py-2.5">
-                  {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} />}
+                <td className="min-w-[150px] border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
+                  {/* Push 208 追加（业务口径「这个也要可以编辑筛选选择」+ 同日追加「显示也要有颜色」）：关联阶段行内可改 ——
+                      浮层 = 与表单同款九阶段勾选清单；显示态 = StageTags 色签组（逐枚出签、与浮层共用一张色表） */}
+                  <InlineCell
+                    ariaLabel={"修改关联阶段（" + report.date + "）"}
+                    title="点击选择（可多选）"
+                    width={220}
+                    height={REPORT_STAGES.length * 30 + 12}
+                    bare
+                    triggerClassName={CELL_EDIT_TEXT}
+                    display={<StageTags names={report.stages} />}
+                    render={() => (
+                      <MultiOptionList
+                        values={report.stages}
+                        options={REPORT_STAGES}
+                        ariaLabel={"修改关联阶段（" + report.date + "）"}
+                        onChange={(next) => {
+                          onPatch(report.id, { stages: next });
+                        }}
+                        renderLabel={stageChip}
+                      />
+                    )}
+                  />
+                </td>
+                <td className="min-w-[240px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-800">
+                  {/* Push 208「日报记录同理」：当日完成工作行内可改（文字修改需要点击保存 · 时间列不动） */}
+                  <InlineTextCell
+                    bare
+                    value={report.doneWork}
+                    ariaLabel={"修改当日完成工作（" + report.date + "）"}
+                    triggerClassName={CELL_EDIT_TEXT}
+                    placeholder="填写当日完成的工作，点「保存」生效"
+                    display={
+                      report.doneWork === "" ? (
+                        <span className="text-zinc-300">—</span>
+                      ) : (
+                        <span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork}</span>
+                      )
+                    }
+                    onSave={(text) => {
+                      onPatch(report.id, { doneWork: renumberLines(text) });
+                    }}
+                  />
+                </td>
+                <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
+                  {/* Push 208：明日计划行内可改（同款文字编辑：点「保存」才落值） */}
+                  <InlineTextCell
+                    bare
+                    value={report.plan}
+                    ariaLabel={"修改明日计划（" + report.date + "）"}
+                    triggerClassName={CELL_EDIT_TEXT}
+                    placeholder="填写明日计划，点「保存」生效"
+                    display={
+                      report.plan === "" ? (
+                        <span className="text-zinc-300">—</span>
+                      ) : (
+                        <span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan}</span>
+                      )
+                    }
+                    onSave={(text) => {
+                      onPatch(report.id, { plan: renumberLines(text) });
+                    }}
+                  />
+                </td>
+                <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
+                  {/* 只读展示（同上 · 业务口径「太丑了 取消修改」）：附图增删在「日报填写」表单与抽屉里做。 */}
+                  {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} size="lg" />}
+                </td>
+                <td className="w-20 border-b border-zinc-100 px-4 py-4 align-top" data-report-delete-cell="">
+                  {/* 行尾动作槽位（任务表同款：RowDeleteButton 注释里那套「展开只吃预留的 48px 槽位」）——
+                      幽灵态 24px → 悬停 48px **只在槽内长大**，单元格内容宽不变 ⇒ 表格列宽/表宽一格不动。
+                      px-4(16×2) + 48 = 80 = w-20，列宽正好对上表头。业务反馈：「鼠标触碰表格会动」。 */}
+                  <span data-report-delete-slot="" className="flex h-6 w-12 shrink-0 items-center">
+                    <RowDeleteButton
+                      label={"删除日报（" + report.date + "）—— 会连同这篇日报派生的问题一起删除"}
+                      onDelete={() => {
+                        onDelete(report.id);
+                      }}
+                    />
+                  </span>
                 </td>
               </tr>
             );
@@ -645,79 +1153,422 @@ function ReportList({ reports }: { reports: readonly DailyReport[] }) {
   );
 }
 
-/** 一条问题记录（问题看板的一张卡）：未分组 = 还没分派责任（显示「待分派」）。 */
-function IssueCard({ issue }: { issue: Issue }) {
+/** 一条问题记录（问题看板的一张卡 · Push 209 改版 —— 业务口径 2026-09-28「问题看板是这样的 要这些内容 然后样式
+ *  参考任务进展的」）：卡面与业务样「图一」对齐 —— 只出**问题内容**四段：问题描述（多行 pre-line）/ 问题归类（彩色
+ *  色签）/ 解决方案或建议（多行 pre-line，有才显示）/ 问题附图（40×40 缩略图，有才显示）；字段名 = 独占一行的浅灰小字。
+ *  样式 = 与「任务进展」看板卡片同一套材质（CARD_SHELL 白壳 + 发丝边 + 三层投影 + 细纹），点一下开「问题详情」抽屉。
+ *  同批下架（图一没有）：状态签 / 提出人 / 提出日期 —— 状态看列头、其余进抽屉（Push 207 的「责任 / 处理时限 / 所属任务」
+ *  不再展示口径照旧不变）。Push 210（业务口径「卡片要可以拖动」）：卡片接指针拖动 —— 按住拖到别的列 = 改问题状态（细节见 IssueBoard）。Push 211（业务口径「要加问题描述标题」）：首段问题描述补「问题描述」字段名 —— 卡面四段全部有字段名。 */
+function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost = false }: {
+  issue: Issue;
+  onOpen: () => void;
+  onPointerDownDrag?: (issueId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
+  dragging?: boolean;
+  ghost?: boolean;
+}) {
   return (
-    <div data-issue-card={issue.id} className={CARD_SHELL}>
+    <div
+      role={ghost ? undefined : "button"}
+      tabIndex={ghost ? undefined : 0}
+      aria-hidden={ghost ? true : undefined}
+      aria-label={ghost ? undefined : "问题：" + issue.title}
+      title={onPointerDownDrag === undefined ? undefined : "点一下看问题详情（含来源日报内容）；按住卡片拖到别的列 = 改问题状态"}
+      data-issue-card={issue.id}
+      onClick={onOpen}
+      onPointerDown={onPointerDownDrag === undefined ? undefined : (event) => { onPointerDownDrag(issue.id, event.currentTarget, event); }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      className={(ghost ? ISSUE_CARD_SHELL_GHOST : CARD_SHELL) + (dragging ? " cursor-grabbing" : " cursor-pointer")}
+    >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
-        <div className="flex items-center gap-2">
-          <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[issue.state]}>{issue.state}</span>
-          <span className="ml-auto text-[10px] text-zinc-400">{issue.reporter} 提出</span>
-        </div>
-        <p className="mt-1.5 text-sm font-bold leading-5 text-zinc-900">{issue.title}</p>
+        <Field label="问题描述" first>
+          <p data-issue-card-title="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{issue.title}</p>
+        </Field>
         <Field label="问题归类">
-          <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700">
-            {issue.category === "" ? "未归类" : issue.category}
-          </span>
-        </Field>
-        <Field label="责任">
-          {issue.owner === "" ? <span className="text-sm text-amber-600">待分派</span> : <span className="text-sm text-zinc-800">{issue.owner}</span>}
-        </Field>
-        <Field label="提出日期">
-          <span className="text-sm text-zinc-800">{issue.raisedAt}</span>
-        </Field>
-        <Field label="处理时限">
-          <span className="text-sm text-zinc-800">{issue.dueAt}</span>
-        </Field>
-        <Field label="所属任务">
-          <span className="text-xs leading-5 text-zinc-800">{issue.task === "" ? "—" : issue.task}</span>
+          <CategoryTags value={issue.category} />
         </Field>
         {issue.solution === "" ? null : (
-          <div className="mt-3 rounded-lg bg-emerald-50/70 px-2.5 py-2">
-            <p className="text-[11px] font-medium text-emerald-700">解决方案 / 回复</p>
-            <p className="mt-0.5 text-xs leading-5 text-zinc-700">{issue.solution}</p>
-          </div>
+          <Field label="解决方案或建议">
+            <p data-issue-card-solution="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{issue.solution}</p>
+          </Field>
+        )}
+        {issue.photos.length === 0 ? null : (
+          <Field label="问题附图">
+            <PhotoStrip items={issue.photos} size="md" />
+          </Field>
         )}
       </div>
     </div>
   );
 }
 
-/** 问题追踪：一条问题一行的表格（列口径与问题看板卡片一致）。 */
-function IssueTable({ issues }: { issues: readonly Issue[] }) {
+/** 按下卡片、还没到拖动阈值时的暂存（Push 210）。 */
+type PendingIssueDrag = {
+  issueId: string;
+  pointerId: number;
+  /** 按下时的坐标：用来判「过没过阈值」。 */
+  x: number;
+  y: number;
+  /** 卡片 DOM：真拖起来之后把指针捕获在它身上（鼠标滑出窗口再放开也收得到 pointerup）。 */
+  node: HTMLElement;
+  dragging: boolean;
+};
+
+/**
+ * 「问题看板」列板 + 卡片拖动（Push 210 · 业务口径 2026-09-28「卡片要可以拖动」）：
+ * 与「任务进展」看板同一套指针拖动口径 —— 按住卡片位移超过 DRAG_THRESHOLD 才算拖动（没超过 = 点一下开
+ * 问题详情抽屉）；拖动中卡片跟手（半透明拖动卡），非当前列描边高亮 + 列顶浮出落点槽；拖到看板 / 列边缘逐帧自动滚；
+ * 放开 = 把问题状态改成目标列（同一 patchIssue 内存态：「问题追踪」表 / 计数 / 抽屉同步跟着变）。
+ * 同列不是落点（问题没有列内顺序，放开不改动）；Esc / 指针取消 = 原地取消；整段拖动没有原生拖拽参与，滚轮照常可用。
+ */
+function IssueBoard({ issues, onPatch, onOpen }: {
+  issues: readonly Issue[];
+  onPatch: (id: string, patch: IssuePatch) => void;
+  onOpen: (id: string) => void;
+}) {
+  /** 正在拖动的卡片 id（null = 没在拖）。 */
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  /** 当前落点列（null = 不在任何别的列上；同列不算落点）。 */
+  const [dropState, setDropState] = useState<IssueState | null>(null);
+  /** 按下卡片、还没过拖动阈值时的暂存（没过阈值就还是「点一下看详情」）。 */
+  const pendingRef = useRef<PendingIssueDrag | null>(null);
+  /** 拖动中鼠标的最后位置：滚轮 / 边缘自动滚时鼠标可以不动，落点按这个位置重算。 */
+  const pointerRef = useRef({ x: 0, y: 0 });
+  /** 拖动收尾那一下的 click 不当成「打开抽屉」。 */
+  const suppressClickRef = useRef(false);
+  /** 跟着鼠标走的拖动卡片：直接用 DOM 改 transform，不走 state（每帧都要动）。 */
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  /** 看板本体：拖到边缘自动滚按它找横向视口。 */
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  /** 抓取偏移：按下时鼠标在卡片内的位置 + 卡片宽度，拖动卡按这个对齐。 */
+  const grabRef = useRef({ dx: 0, dy: 0, width: 0 });
+  /** 最新问题表 / 落点判定 / 落值回调（指针与每帧回调里读，免得闭包吃到旧值）。 */
+  const issuesRef = useRef(issues);
+  const dropStateAtRef = useRef<(x: number, y: number) => IssueState | null>(() => null);
+  const patchRef = useRef(onPatch);
+
+  /** 鼠标底下是「哪一列」：别的列才是落点 —— 同列放开不改状态，所以同列不给提示；指针压到看板左右边缘之外时
+   *  夹回看板可视范围再判一次（同「任务进展」看板口径）。 */
+  const dropStateAt = (x: number, y: number, issueId: string): IssueState | null => {
+    const issue = issuesRef.current.find((item) => item.id === issueId);
+    if (issue === undefined) {
+      return null;
+    }
+    let column = dragColumnAtPoint(x, y);
+    if (column === null) {
+      const board = dragScrollAreaViewport(boardRef.current, "horizontal");
+      if (board !== null) {
+        const rect = board.getBoundingClientRect();
+        if (y >= rect.top && y <= rect.bottom && x >= rect.left - 64 && x <= rect.right + 64) {
+          column = dragColumnAtPoint(Math.min(Math.max(x, rect.left + 1), rect.right - 1), y);
+        }
+      }
+    }
+    if (column === null) {
+      return null;
+    }
+    const key = column.getAttribute("data-issue-column");
+    if (key === null || key === issue.state) {
+      return null;
+    }
+    return ISSUE_STATES.find((state) => state === key) ?? null;
+  };
+
+  // 三个「最新实现」的 ref：指针 / 每帧回调里读最新实现，免得闭包吃到上一轮的函数
+  useEffect(() => {
+    issuesRef.current = issues;
+    patchRef.current = onPatch;
+    dropStateAtRef.current = (x, y) => {
+      const pending = pendingRef.current;
+      return pending === null ? null : dropStateAt(x, y, pending.issueId);
+    };
+  });
+
+  /**
+   * 指针拖动（Push 210）：① 按下卡片后位移超过 DRAG_THRESHOLD 才算真拖动（没过阈值 = 点一下看详情）；
+   * ② 拖动中鼠标动一下就更新落点；③ 放开时落在哪一列就交给 patchIssue 改状态；④ Esc / 指针取消 = 原地取消。
+   * 整段拖动没有原生拖拽参与，所以滚轮照常可用。
+   */
+  useEffect(() => {
+    /** 收尾（放开 / Esc / 指针取消）：清掉暂存与落点，恢复页面文字选择。 */
+    const endDrag = () => {
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDraggingId(null);
+      setDropState(null);
+    };
+    const handleMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+      const pending = pendingRef.current;
+      if (pending === null || pending.dragging) {
+        return;
+      }
+      if (Math.abs(event.clientX - pending.x) + Math.abs(event.clientY - pending.y) < DRAG_THRESHOLD) {
+        return;
+      }
+      pending.dragging = true;
+      try {
+        // 指针捕获在卡片上：鼠标滑出窗口再放开也收得到 pointerup
+        pending.node.setPointerCapture(pending.pointerId);
+      } catch {
+        // 指针已经不在了（例如刚抬起）：忽略，落点照样按下面的逻辑算
+      }
+      const rect = pending.node.getBoundingClientRect();
+      grabRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top, width: rect.width };
+      document.body.style.userSelect = "none";
+      suppressClickRef.current = true;
+      setDraggingId(pending.issueId);
+      setDropState(dropStateAtRef.current(event.clientX, event.clientY));
+    };
+    const handleUp = (event: PointerEvent) => {
+      const pending = pendingRef.current;
+      if (pending === null) {
+        return;
+      }
+      const wasDragging = pending.dragging;
+      const target = wasDragging ? dropStateAt(event.clientX, event.clientY, pending.issueId) : null;
+      pendingRef.current = null;
+      document.body.style.userSelect = "";
+      setDraggingId(null);
+      setDropState(null);
+      if (!wasDragging || target === null) {
+        return;
+      }
+      patchRef.current(pending.issueId, { state: target });
+    };
+    const handleCancel = () => {
+      endDrag();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && pendingRef.current !== null) {
+        endDrag();
+      }
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleCancel);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleCancel);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  /** 拖动中按帧重算落点：鼠标可以不动、容器在滚（滚轮 / 边缘自动滚），槽位得跟着走。 */
+  useEffect(() => {
+    if (draggingId === null) {
+      return;
+    }
+    let raf = window.requestAnimationFrame(function tick() {
+      const ghost = ghostRef.current;
+      if (ghost !== null) {
+        const grab = grabRef.current;
+        ghost.style.transform = "translate(" + (pointerRef.current.x - grab.dx) + "px," + (pointerRef.current.y - grab.dy) + "px)";
+      }
+      autoScrollIssueDrag(boardRef.current, pointerRef.current);
+      const next = dropStateAtRef.current(pointerRef.current.x, pointerRef.current.y);
+      setDropState((prev) => (prev === next ? prev : next));
+      raf = window.requestAnimationFrame(tick);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [draggingId]);
+
+  /** 按下卡片：先只记「可能拖动」，真拖动由上面的指针循环判定。 */
+  const beginCardDrag = (issueId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => {
+    pendingRef.current = { issueId, pointerId: event.pointerId, x: event.clientX, y: event.clientY, node, dragging: false };
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    suppressClickRef.current = false;
+  };
+
+  /** 点一下卡片 = 打开问题详情抽屉；拖动收尾那一下的 click 不算。 */
+  const openIssueCard = (issueId: string) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    onOpen(issueId);
+  };
+
+  /** 拖动中的那张问题（用来画跟着鼠标走的拖动卡）。 */
+  const draggingIssue = draggingId === null ? null : issues.find((issue) => issue.id === draggingId) ?? null;
+
   return (
-    <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
-      <table className="w-full min-w-[1180px] border-collapse text-left text-xs">
-        <thead className="bg-zinc-50 text-zinc-500">
+    <div data-issue-board="" ref={boardRef}>
+      <ScrollArea axis="horizontal" ariaLabel="问题看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
+        {ISSUE_STATES.map((state) => {
+          const items = issues.filter((issue) => issue.state === state);
+          const isTarget = dropState === state;
+          return (
+            <section
+              key={state}
+              data-issue-column={state}
+              className={ISSUE_COLUMN + (isTarget ? " rounded-[28px] ring-2 ring-emerald-400/70 ring-offset-4 ring-offset-white" : "")}
+            >
+              <header className="mb-3 flex items-center gap-2 px-1">
+                <IssueStateTag state={state} />
+                <span className="shrink-0 text-xs text-zinc-400">{items.length}项</span>
+              </header>
+              <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"问题卡片：" + state}>
+                {isTarget ? (
+                  <div
+                    data-issue-drop-slot="true"
+                    className="flex items-center justify-center rounded-[35px] border-2 border-dashed border-emerald-400/70 bg-emerald-50/60 px-3 py-6 text-center text-[11px] font-medium text-emerald-700"
+                  >
+                    {"放开：移到「" + state + "」"}
+                  </div>
+                ) : null}
+                {items.length === 0 ? (
+                  isTarget ? null : (
+                    <p className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-zinc-300 px-3 text-center text-xs text-zinc-400">
+                      暂无问题
+                    </p>
+                  )
+                ) : (
+                  items.map((issue) => (
+                    <IssueCard
+                      key={issue.id}
+                      issue={issue}
+                      onOpen={() => {
+                        openIssueCard(issue.id);
+                      }}
+                      dragging={draggingId === issue.id}
+                      onPointerDownDrag={beginCardDrag}
+                    />
+                  ))
+                )}
+              </ScrollArea>
+            </section>
+          );
+        })}
+      </ScrollArea>
+      {draggingIssue === null ? null : (
+        <div
+          ref={ghostRef}
+          data-drag-ghost="true"
+          aria-hidden="true"
+          style={{ width: grabRef.current.width === 0 ? undefined : grabRef.current.width }}
+          className="pointer-events-none fixed left-0 top-0 z-50 will-change-transform"
+        >
+          <IssueCard issue={draggingIssue} ghost onOpen={() => undefined} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 问题追踪：一条问题一行的表格（Push 207 改版）。列口径 = 业务样「图五」六列 —— 日期 / 问题描述 / 问题归类 /
+ *  解决方案或建议 / 问题附图 / 问题是否处理（列头带小图标）；撤「责任 / 处理时限 / 所属任务」（业务口径「责任这一栏
+ *  不需要 删除吧」+「处理时限不需要 所属任务也不需要」）；「提出人」并进问题描述列的灰字小行（图五没有这一列，
+ *  信息不丢）；「问题描述 / 解决方案或建议」按行换行（whitespace-pre-line —— 承接 Push 206 自动序号）。
+ *  行样式 = 业务样「图六」（项目总览任务表）：白卡 + 圆角边框 + 列头 bg-zinc-50 小字 + 行 px-5 py-2.5 /
+ *  divide-zinc-100 细分割线 / hover:bg-zinc-50/80。
+ *  Push 207 同批追加「增加项目总览 同款醒目模式在问题追踪里面」：`focus` = 醒目模式开 —— 整行铺该问题状态的
+ *  底色（ISSUE_ROW_CLASS · 6% / 悬停 12%，与项目总览任务表同一套口径），状态列只留深色字；关 = 原样。 */
+function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Issue[]; focus: boolean; onPatch: (id: string, patch: IssuePatch) => void; onDelete: (issue: Issue) => void }) {
+  return (
+    <div data-issue-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+      <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
+        <thead className="bg-zinc-50 text-xs font-medium text-zinc-400">
           <tr>
-            {["问题描述", "问题归类", "状态", "提出人", "提出日期", "处理时限", "责任", "所属任务", "解决方案 / 回复"].map((title) => (
-              <th key={title} className="whitespace-nowrap border-b border-zinc-200 px-3 py-2.5 font-medium">
-                {title}
+            {ISSUE_TABLE_COLUMNS.map((column) => (
+              <th key={column.key} data-issue-head={column.key} className="whitespace-nowrap border-b border-zinc-200 px-5 py-2.5 font-medium">
+                {column.label}
               </th>
             ))}
+            {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
+                与「日报记录」/ 任务表同一个 48px 槽位与同款 RowDeleteButton；删问题 = 连它来源的那篇日报一起删（同一篇日报整组）。 */}
+            <th className="w-[88px] border-b border-zinc-200 px-5 py-2.5 font-medium">
+              <span className="sr-only">操作</span>
+            </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => (
-            <tr key={issue.id} data-issue-row={issue.id} className="align-top transition hover:bg-zinc-50/70">
-              <td className="min-w-[260px] border-b border-zinc-100 px-3 py-2.5 font-medium text-zinc-800">{issue.title}</td>
-              <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5">
-                <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700">
-                  {issue.category === "" ? "未归类" : issue.category}
+            <tr key={issue.id} data-issue-row={issue.id} className={"group transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
+              <td className="whitespace-nowrap px-5 py-2.5 text-zinc-700">{issue.raisedAt}</td>
+              <td className="min-w-[320px] px-5 py-2.5">
+                {/* Push 208：问题描述行内可改 —— 文字修改需要点击保存，日期列（提出日期）不动 */}
+                <InlineTextCell
+                  bare
+                  value={issue.title}
+                  ariaLabel={"修改问题描述（" + issue.raisedAt + "）"}
+                  triggerClassName={CELL_EDIT_TEXT}
+                  placeholder="修改问题描述，点「保存」生效"
+                  display={<span data-issue-title="" className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>}
+                  onSave={(text) => {
+                    onPatch(issue.id, { title: renumberLines(text) });
+                  }}
+                />
+                <p className="mt-1 text-[11px] leading-4 text-zinc-400">提出人：{issue.reporter}</p>
+              </td>
+              <td className="whitespace-nowrap px-5 py-2.5">
+                {/* Push 208：问题归类行内可改 —— 浮层 = 表单侧同款多选（绿勾 · 点选不收浮层），落值按「、」连接 */}
+                <InlineMultiOptionCell
+                  bare
+                  values={issue.category === "" ? [] : issue.category.split("、").filter((part) => part !== "")}
+                  options={ISSUE_CATEGORIES}
+                  ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
+                  renderLabel={categoryChip}
+                  triggerClassName={CELL_EDIT_CHIP}
+                  display={<CategoryTags value={issue.category} />}
+                  onChange={(values) => {
+                    onPatch(issue.id, { category: values.join("、") });
+                  }}
+                />
+              </td>
+              <td className="min-w-[280px] px-5 py-2.5">
+                {/* Push 208：解决方案或建议行内可改（文字列同款：点「保存」才落值） */}
+                <InlineTextCell
+                  bare
+                  value={issue.solution}
+                  ariaLabel={"修改解决方案或建议（" + issue.raisedAt + "）"}
+                  triggerClassName={CELL_EDIT_TEXT}
+                  placeholder="补充解决方案或建议，点「保存」生效"
+                  display={<span data-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : issue.solution}</span>}
+                  onSave={(text) => {
+                    onPatch(issue.id, { solution: renumberLines(text) });
+                  }}
+                />
+              </td>
+              <td className="min-w-[130px] px-5 py-2.5">
+                {/* 只读展示：附图增删在「日报填写」表单与问题详情抽屉里做（业务口径「太丑了 取消修改」）。 */}
+                {issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="md" />}
+              </td>
+              <td className="whitespace-nowrap px-5 py-2.5">
+                {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚），色签壳直接复用 IssueStateTag */}
+                <InlineOptionCell
+                  bare
+                  value={issue.state}
+                  options={ISSUE_STATE_OPTIONS}
+                  ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
+                  triggerClassName={CELL_EDIT_CHIP}
+                  display={<IssueStateTag state={issue.state} focus={focus} />}
+                  onPick={(value) => {
+                    onPatch(issue.id, { state: value as IssueState });
+                  }}
+                />
+              </td>
+              <td className="w-[88px] px-5 py-2.5" data-issue-delete-cell="">
+                {/* 同上：预留 48px 动作槽位，幽灵态 24px → 悬停 48px 只在槽内长大，不推挤左侧列
+                    （业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。px-5(20×2) + 48 = 88 = w-[88px]。 */}
+                <span data-issue-delete-slot="" className="flex h-6 w-12 shrink-0 items-center">
+                  <RowDeleteButton
+                    label={"删除问题（" + issue.raisedAt + "）—— 会连同来源日报一起删除"}
+                    onDelete={() => {
+                      onDelete(issue);
+                    }}
+                  />
                 </span>
               </td>
-              <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5">
-                <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[issue.state]}>{issue.state}</span>
-              </td>
-              <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5 text-zinc-700">{issue.reporter}</td>
-              <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5 text-zinc-700">{issue.raisedAt}</td>
-              <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5 text-zinc-700">{issue.dueAt}</td>
-              <td className="whitespace-nowrap border-b border-zinc-100 px-3 py-2.5 text-zinc-700">
-                {issue.owner === "" ? <span className="text-amber-600">待分派</span> : issue.owner}
-              </td>
-              <td className="min-w-[180px] border-b border-zinc-100 px-3 py-2.5 text-zinc-700">{issue.task === "" ? "—" : issue.task}</td>
-              <td className="min-w-[240px] border-b border-zinc-100 px-3 py-2.5 text-zinc-600">{issue.solution === "" ? "—" : issue.solution}</td>
             </tr>
           ))}
         </tbody>
@@ -726,7 +1577,59 @@ function IssueTable({ issues }: { issues: readonly Issue[] }) {
   );
 }
 
-/** 「日报填写」表单（字段按 A3-01；校验口径 A3-04：日期 + 当日完成工作必填，「现场发现问题」非空时问题归类必填）。 */
+/** 自动下扩的多行框（Push 206 续 · 业务口径「换行很多时要自动下扩」）：行数多起来高度随内容长，不出内滚动条；
+ *  高度下限 = rows 行（空框不塌），其余 props（data-field / 事件 / 样式）原样透传给原生 textarea。 */
+function GrowingTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  const value = props.value;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el === null) {
+      return;
+    }
+    el.style.height = "auto";
+    el.style.height = String(el.scrollHeight + (el.offsetHeight - el.clientHeight)) + "px";
+  }, [value]);
+  return <textarea {...props} ref={ref} />;
+}
+
+/** 关联阶段勾选清单（Push 198 表单侧口径 · 只服务「日报填写」表单 —— 「日报记录」的行内编辑浮层走
+ *  九阶段复选行 —— 点一行勾 / 取消勾（**点选不收浮层**，可连着勾几个），值 = 勾选顺序的数组。
+ *  dataField = 表单侧的 data-field 钩子（回放探针用）；行内浮层不传（浮层自带 data-inline-popover 钩子）。 */
+function StageChecklist({
+  values,
+  onChange,
+  dataField,
+  boxClass,
+}: {
+  values: readonly string[];
+  onChange: (next: string[]) => void;
+  dataField?: string;
+  boxClass: string;
+}) {
+  return (
+    <div data-field={dataField} className={boxClass}>
+      {REPORT_STAGES.map((stage) => {
+        const checked = values.includes(stage);
+        return (
+          <label key={stage} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={() => onChange(checked ? values.filter((name) => name !== stage) : [...values, stage])}
+              className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
+            />
+            <span className="min-w-0 flex-1 truncate">{stage}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+/** 「日报填写」表单（字段按 A3-01；校验口径 A3-04 + Push 205：日期 + 当日完成工作 + 明日计划必填；
+ *  「现场发现问题」= 前置开关 —— 非空时问题归类必填，且「问题归类 / 当前问题附图 / 解决方案或建议」三项才可填；
+ *  Push 206 续：「当日完成工作 / 明日计划」自动序号 —— 聚焦预置 1: 、回车补下一行序号、失焦 / 提交前重排；
+ *  四个多行框均走自动下扩（换行多时随内容长高 ——「换行很多时要自动下扩」）。 */
 function ReportFillForm({
   project,
   author,
@@ -742,6 +1645,8 @@ function ReportFillForm({
   onSubmit: () => void;
   onSaveDraft: () => void;
 }) {
+  // 自动序号（Push 206 续）：判定「现场发现问题」有没有真填内容先剥掉行首序号 —— 空框只剩「1: 」不算填
+  const issueFilled = renumberLines(draft.foundIssue) !== "";
   const missing: string[] = [];
   if (draft.dateIso === "") {
     missing.push("时间");
@@ -749,10 +1654,31 @@ function ReportFillForm({
   if (draft.doneWork.trim() === "") {
     missing.push("当日完成工作");
   }
-  if (draft.foundIssue.trim() !== "" && draft.issueCategories.length === 0) {
+  if (draft.plan.trim() === "") {
+    missing.push("明日计划");
+  }
+  if (issueFilled && draft.issueCategories.length === 0) {
     missing.push("问题归类");
   }
-  const issueFilled = draft.foundIssue.trim() !== "";
+
+  /** 回车「自动序号」（Push 206 续 · 业务口径「自动添加序号可以做到吗」；Push 207 同批扩到「解决方案或建议」·「这个也要1 2 3 同上」）：
+   *  光标处插入「换行 + 下一行序号」（2: / 3: …）并补回光标。失焦 / 提交前还会统一 "renumberLines"
+   *  重排 —— 中途删改、行序乱掉也能归位。 */
+  const numberOnEnter = (field: "doneWork" | "plan" | "foundIssue" | "suggestion") => (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    const target = event.currentTarget;
+    const value = field === "doneWork" ? draft.doneWork : field === "plan" ? draft.plan : field === "foundIssue" ? draft.foundIssue : draft.suggestion;
+    const caret = target.selectionStart === null ? value.length : target.selectionStart;
+    const before = value.slice(0, caret);
+    const insert = "\n" + String(before.split("\n").length + 1) + ": ";
+    const nextValue = before + insert + value.slice(caret);
+    onChange(field === "doneWork" ? { doneWork: nextValue } : field === "plan" ? { plan: nextValue } : field === "foundIssue" ? { foundIssue: nextValue } : { suggestion: nextValue });
+    const nextCaret = before.length + insert.length;
+    requestAnimationFrame(() => target.setSelectionRange(nextCaret, nextCaret));
+  };
 
   return (
     <form
@@ -810,47 +1736,71 @@ function ReportFillForm({
       <div>
         <span className={FORM_LABEL}>关联阶段</span>
         <span className="ml-2 text-[11px] text-zinc-400">可多选；标记「当日完成工作」对应的项目阶段</span>
-        <div data-field="stages" className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5">
-          {REPORT_STAGES.map((stage) => {
-            const checked = draft.stages.includes(stage);
-            return (
-              <label key={stage} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() =>
-                    onChange({ stages: checked ? draft.stages.filter((name) => name !== stage) : [...draft.stages, stage] })
-                  }
-                  className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
-                />
-                <span className="min-w-0 flex-1 truncate">{stage}</span>
-              </label>
-            );
-          })}
-        </div>
+        {/* Push 208：清单本体抽成 StageChecklist —— 「日报记录」的行内编辑浮层复用同一份（两处口径永远一致） */}
+        <StageChecklist
+          values={draft.stages}
+          onChange={(next) => onChange({ stages: next })}
+          dataField="stages"
+          boxClass="mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5"
+        />
       </div>
 
       <label className="block">
         <span className={FORM_LABEL}>
           当日完成工作Work completed today<span className="ml-1 text-rose-500">*</span>
         </span>
-        {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落（无 placeholder） */}
-        <textarea
+        {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落（无 placeholder）。
+            Push 206：按图 4 复落的分点提示随后按业务口径「有了自动的扩展 那这个提示就不要了」撤回 ——
+            不落静态提示（自动序号见空框聚焦预置「1: 」+ 回车续号） */}
+        <GrowingTextarea
           data-field="doneWork"
           value={draft.doneWork}
           onChange={(event) => onChange({ doneWork: event.target.value })}
+          onFocus={(event) => {
+            // 自动序号（Push 206 续）：空框聚焦预置「1: 」，用户直接写内容、序号随回车自动排（没写内容失焦后还原为空）
+            if (draft.doneWork === "") {
+              onChange({ doneWork: "1: " });
+              const target = event.currentTarget;
+              requestAnimationFrame(() => target.setSelectionRange(target.value.length, target.value.length));
+            }
+          }}
+          onBlur={() => {
+            const next = renumberLines(draft.doneWork);
+            if (next !== draft.doneWork) {
+              onChange({ doneWork: next });
+            }
+          }}
+          onKeyDown={numberOnEnter("doneWork")}
           rows={3}
           className={FORM_INPUT + " mt-1 resize-y"}
         />
       </label>
 
       <label className="block">
-        {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落（图 1 的必填星同样未采纳 —— A3-04 口径不变） */}
-        <span className={FORM_LABEL}>明日计划Tomorrow's plan</span>
-        <textarea
+        {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落。
+            Push 205：业务口径「明日计划也是必填项」—— 补红色必填星（A3-04 必填口径同步修订） */}
+        <span className={FORM_LABEL}>
+          明日计划Tomorrow's plan<span className="ml-1 text-rose-500">*</span>
+        </span>
+        <GrowingTextarea
           data-field="plan"
           value={draft.plan}
           onChange={(event) => onChange({ plan: event.target.value })}
+          onFocus={(event) => {
+            // 自动序号（Push 206 续）：同「当日完成工作」—— 空框聚焦预置「1: 」、回车自动排下一行序号
+            if (draft.plan === "") {
+              onChange({ plan: "1: " });
+              const target = event.currentTarget;
+              requestAnimationFrame(() => target.setSelectionRange(target.value.length, target.value.length));
+            }
+          }}
+          onBlur={() => {
+            const next = renumberLines(draft.plan);
+            if (next !== draft.plan) {
+              onChange({ plan: next });
+            }
+          }}
+          onKeyDown={numberOnEnter("plan")}
           rows={2}
           className={FORM_INPUT + " mt-1 resize-y"}
         />
@@ -861,11 +1811,27 @@ function ReportFillForm({
       <div>
         <label className="block">
           <span className={FORM_LABEL}>现场发现问题Problem</span>
-          <span className="ml-2 text-[11px] text-zinc-400">填了这里，提交时会自动生成一条问题记录（未分组）</span>
-          <textarea
+          <span className="ml-2 text-[11px] text-zinc-400">填了这里，提交时会自动生成一条问题记录（未解决）</span>
+          {/* Push 206 续：业务口径「这个现场问题也要同上」—— 补自动序号（空框聚焦预置 1: 、回车续号、失焦重排） */}
+          <GrowingTextarea
             data-field="foundIssue"
             value={draft.foundIssue}
             onChange={(event) => onChange({ foundIssue: event.target.value })}
+            onFocus={(event) => {
+              // 自动序号：空框聚焦预置「1: 」，用户直接写内容、序号随回车自动排（没写内容失焦后还原为空）
+              if (draft.foundIssue === "") {
+                onChange({ foundIssue: "1: " });
+                const target = event.currentTarget;
+                requestAnimationFrame(() => target.setSelectionRange(target.value.length, target.value.length));
+              }
+            }}
+            onBlur={() => {
+              const next = renumberLines(draft.foundIssue);
+              if (next !== draft.foundIssue) {
+                onChange({ foundIssue: next });
+              }
+            }}
+            onKeyDown={numberOnEnter("foundIssue")}
             rows={2}
             className={FORM_INPUT + " mt-1 resize-y"}
           />
@@ -887,23 +1853,44 @@ function ReportFillForm({
             </div>
           </label>
           <div>
+            {/* Push 205：「现场发现问题」= 前置开关（业务口径「先填发现的问题 才能填另外三个」）—— 为空时本项禁用 */}
             <span className={FORM_LABEL}>当前问题附图</span>
+            {issueFilled ? null : <span className="ml-2 text-[11px] text-zinc-400">（「现场发现问题」非空后可填）</span>}
             <div className="mt-1">
-              <AttachmentPicker field="issuePhotos" items={draft.issuePhotos} onChange={(items) => onChange({ issuePhotos: items })} ariaLabel="当前问题附图：点击后 Ctrl+V 粘贴图片" />
+              <AttachmentPicker field="issuePhotos" items={draft.issuePhotos} onChange={(items) => onChange({ issuePhotos: items })} ariaLabel="当前问题附图：点击后 Ctrl+V 粘贴图片" disabled={issueFilled === false} />
             </div>
           </div>
         </div>
       </div>
 
       <label className="block">
+        {/* Push 205：「现场发现问题」= 前置开关 —— 为空时本项禁用（灰底灰字，占位提示同「问题归类」禁用口径）。
+            Push 207 追加（业务口径「这个也要1 2 3 同上」）：本框并进自动序号一套 —— 解禁后空框聚焦预置 1: 、
+            回车续号、失焦重排（禁用态点不进来，预置自然不会触发） */}
         <span className={FORM_LABEL}>解决方案或建议</span>
-        <textarea
+        <GrowingTextarea
           data-field="suggestion"
           value={draft.suggestion}
           onChange={(event) => onChange({ suggestion: event.target.value })}
+          onFocus={(event) => {
+            // 自动序号（同「当日完成工作」一套）：空框聚焦预置「1: 」，用户直接写内容、序号随回车自动排
+            if (draft.suggestion === "") {
+              onChange({ suggestion: "1: " });
+              const target = event.currentTarget;
+              requestAnimationFrame(() => target.setSelectionRange(target.value.length, target.value.length));
+            }
+          }}
+          onBlur={() => {
+            const next = renumberLines(draft.suggestion);
+            if (next !== draft.suggestion) {
+              onChange({ suggestion: next });
+            }
+          }}
+          onKeyDown={numberOnEnter("suggestion")}
+          disabled={issueFilled === false}
           rows={2}
-          placeholder="如：建议由采购联系供应商走补件流程"
-          className={FORM_INPUT + " mt-1 resize-y"}
+          placeholder={issueFilled ? "如：建议由采购联系供应商走补件流程" : "（「现场发现问题」非空后可填）"}
+          className={FORM_INPUT + " mt-1 resize-y disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400"}
         />
       </label>
 
@@ -930,9 +1917,317 @@ function ReportFillForm({
 }
 
 /** 「日报及问题」视图：页内四个键帽按钮（日报填写 / 日报记录 / 问题追踪 / 问题看板）+ 对应内容。 */
-export function ReportIssuePanel({ project, me }: { project: Project; me: MeResponse }) {
-  /** 当前子视图（业务口径：第一块日报填写，默认停在这一块）。 */
-  const [subTab, setSubTab] = useState<SubTab>(SUB_TABS[0]);
+/** 抽屉关闭动画时长（同「任务详情抽屉」：先播 170ms 退场动画再真正卸载）。 */
+const CLOSE_ANIMATION_MS = 170;
+
+/** 问题详情抽屉（Push 209 · 业务口径 2026-09-28「点击要出现抽屉 是关于这个问题的日报内容」）：
+ *  卡面只留摘要，点开抽屉看全量 —— 上半 = 问题本身（问题描述 / 问题归类 / 解决方案或建议 / 问题附图），下半 = 来源日报
+ *  （当日完成工作 / 日期 / 填写者 / 明日计划 / 现场工作附图 / 问题是否处理 / 施工人数），
+ *  中间 = 「关联阶段」一行（Push 212 起常显 —— 业务口径「只保留关联阶段 且不需要隐藏」：原「已隐藏 · 6」折叠区整块撤除，
+ *  其余五枚次要字段下架；提出人在抽屉头部、来源日报在页脚本就有）。
+ *  壳与交互动效复用「任务详情抽屉」那套（drawer-backdrop / drawer-panel 两枚全局类 + Esc / 点遮罩关闭 + 锁页面滚动）。
+ *  Push 212 同批（业务口径「抽屉里面可以编辑内容」）：抽屉内**两块表能编辑的字段这里同样可编辑** —— 问题描述 / 问题归类 /
+ *  解决方案或建议（IssuePatch）+ 关联阶段 / 当日完成工作 / 明日计划（ReportPatch）+ 问题是否处理（IssuePatch）；文字列点
+ *  「保存」才落值、Esc / 点浮层外 = 取消（与两块表同一套 InlineEdit 口径）；日期 / 填写者 / 施工人数保持只读（「编辑后时间不变」）。
+ *  续（业务口径「图片也要可以增删」）：问题附图 / 现场工作附图接 AttachmentPicker（与「日报填写」同款：点左半 Ctrl+V 粘贴 /
+ *  右半选文件 = 增图，胶囊 / 瓦片上的 × = 删图），落值走 patchIssue({ photos }) / patchReport({ photos })。 */
+function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
+  issue: Issue;
+  report: DailyReport | null;
+  onPatchIssue: (id: string, patch: IssuePatch) => void;
+  onPatchReport: (id: string, patch: ReportPatch) => void;
+  onClose: () => void;
+}) {
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+
+  useEffect(() => lockBodyScroll(), [issue.id]);
+
+  const requestClose = useCallback(() => {
+    if (closingRef.current) {
+      return;
+    }
+    closingRef.current = true;
+    setClosing(true);
+    window.setTimeout(onClose, CLOSE_ANIMATION_MS);
+  }, [onClose]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        requestClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [requestClose]);
+  /** 上半：问题本身（业务样 = 图二前四行；Push 212 同批：前三行接行内编辑 —— 与「问题追踪」表同一套组件与落值口径）。 */
+  const rows: { key: string; label: string; value: ReactNode }[] = [
+    {
+      key: "title",
+      label: "问题描述",
+      value: (
+        <InlineTextCell
+          bare
+          value={issue.title}
+          ariaLabel={"修改问题描述（" + issue.raisedAt + "）"}
+          triggerClassName={CELL_EDIT_TEXT}
+          placeholder="修改问题描述，点「保存」生效"
+          display={<span data-issue-title="" className="block whitespace-pre-line break-words">{issue.title}</span>}
+          onSave={(text) => {
+            onPatchIssue(issue.id, { title: renumberLines(text) });
+          }}
+        />
+      ),
+    },
+    {
+      key: "category",
+      label: "问题归类",
+      value: (
+        <InlineMultiOptionCell
+          bare
+          values={issue.category === "" ? [] : issue.category.split("、").filter((part) => part !== "")}
+          options={ISSUE_CATEGORIES}
+          ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
+          renderLabel={categoryChip}
+          triggerClassName={CELL_EDIT_CHIP}
+          display={<CategoryTags value={issue.category} />}
+          onChange={(values) => {
+            onPatchIssue(issue.id, { category: values.join("、") });
+          }}
+        />
+      ),
+    },
+    {
+      key: "solution",
+      label: "解决方案或建议",
+      value: (
+        <InlineTextCell
+          bare
+          value={issue.solution}
+          ariaLabel={"修改解决方案或建议（" + issue.raisedAt + "）"}
+          triggerClassName={CELL_EDIT_TEXT}
+          placeholder="补充解决方案或建议，点「保存」生效"
+          display={<span data-issue-solution="" className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : issue.solution}</span>}
+          onSave={(text) => {
+            onPatchIssue(issue.id, { solution: renumberLines(text) });
+          }}
+        />
+      ),
+    },
+    {
+      key: "issuePhotos",
+      label: "问题附图",
+      // Push 212 续（业务口径「图片也要可以增删」）：与「日报填写 → 当前问题附图」同一套 AttachmentPicker —— 复制粘贴 / 选文件增图、
+      // × 删图（改名随组件口径）；图幅沿用抽屉原样 md。
+      value: (
+        <AttachmentPicker
+          variant="compact"
+          field="issuePhotos"
+          size="md"
+          items={issue.photos}
+          onChange={(items) => {
+            onPatchIssue(issue.id, { photos: items });
+          }}
+          ariaLabel="问题附图：点击后 Ctrl+V 粘贴图片，或点右半选择文件"
+        />
+      ),
+    },
+  ];
+
+  /** 下半：来源日报（问题是否处理 = 问题侧状态、施工人数 = 日报侧人数；业务样 = 图二后七行）。
+   *  Push 212 同批：当日完成工作 / 明日计划 / 问题是否处理接行内编辑（与「日报记录」「问题追踪」同一套口径）。 */
+  const reportRows: { key: string; label: string; value: ReactNode }[] =
+    report === null
+      ? [{ key: "report", label: "来源日报", value: <span className="text-zinc-400">未找到（原型内存态可能已复位）</span> }]
+      : [
+          {
+            key: "doneWork",
+            label: "当日完成工作",
+            value: (
+              <InlineTextCell
+                bare
+                value={report.doneWork}
+                ariaLabel={"修改当日完成工作（" + report.date + "）"}
+                triggerClassName={CELL_EDIT_TEXT}
+                placeholder="填写当日完成的工作，点「保存」生效"
+                display={<span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : report.doneWork}</span>}
+                onSave={(text) => {
+                  onPatchReport(report.id, { doneWork: renumberLines(text) });
+                }}
+              />
+            ),
+          },
+          { key: "date", label: "日期", value: report.date },
+          {
+            key: "author",
+            label: "填写者",
+            value: (
+              <span className="flex items-center gap-1.5">
+                <InitialAvatar name={report.author} />
+                <span>{report.author}</span>
+              </span>
+            ),
+          },
+          {
+            key: "plan",
+            label: "明日计划",
+            value: (
+              <InlineTextCell
+                bare
+                value={report.plan}
+                ariaLabel={"修改明日计划（" + report.date + "）"}
+                triggerClassName={CELL_EDIT_TEXT}
+                placeholder="填写明日计划，点「保存」生效"
+                display={<span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : report.plan}</span>}
+                onSave={(text) => {
+                  onPatchReport(report.id, { plan: renumberLines(text) });
+                }}
+              />
+            ),
+          },
+          {
+            key: "reportPhotos",
+            label: "现场工作附图",
+            // Push 212 续（业务口径「图片也要可以增删」）：与「日报填写 → 现场工作附图」同一套 AttachmentPicker；图幅沿用抽屉原样 lg。
+            value: (
+              <AttachmentPicker
+                variant="compact"
+                field="photos"
+                size="lg"
+                items={report.photos}
+                onChange={(items) => {
+                  onPatchReport(report.id, { photos: items });
+                }}
+                ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片，或点右半选择文件"
+              />
+            ),
+          },
+          {
+            key: "state",
+            label: "问题是否处理",
+            value: (
+              <InlineOptionCell
+                bare
+                value={issue.state}
+                options={ISSUE_STATE_OPTIONS}
+                ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
+                triggerClassName={CELL_EDIT_CHIP}
+                display={<IssueStateTag state={issue.state} />}
+                onPick={(value) => {
+                  onPatchIssue(issue.id, { state: value as IssueState });
+                }}
+              />
+            ),
+          },
+          { key: "headcount", label: "施工人数", value: String(report.headcount) },
+        ];
+  /** 中间区：只留「关联阶段」一行、常显（Push 212 · 业务口径「只保留关联阶段 且不需要隐藏」——
+   *  原「已隐藏 · N」折叠区与其余五枚次要字段整块撤除）；同批接行内多选（与「日报记录」表同款九阶段清单）。 */
+  const stagesRow: { key: string; label: string; value: ReactNode } = {
+    key: "stages",
+    label: "关联阶段",
+    value:
+      report === null ? (
+        <span className="text-zinc-400">—</span>
+      ) : (
+        <InlineCell
+          ariaLabel={"修改关联阶段（" + report.date + "）"}
+          title="点击选择（可多选）"
+          width={220}
+          height={REPORT_STAGES.length * 30 + 12}
+          bare
+          triggerClassName={CELL_EDIT_TEXT}
+          display={<StageTags names={report.stages} />}
+          render={() => (
+            <MultiOptionList
+              values={report.stages}
+              options={REPORT_STAGES}
+              ariaLabel={"修改关联阶段（" + report.date + "）"}
+              onChange={(next) => {
+                onPatchReport(report.id, { stages: next });
+              }}
+              renderLabel={stageChip}
+            />
+          )}
+        />
+      ),
+  };
+
+  const rowView = (row: { key: string; label: string; value: ReactNode }) => (
+    <div key={row.key} data-issue-field={row.key} className="grid grid-cols-[96px_1fr] items-start gap-x-4 border-b border-zinc-50 py-3 last:border-b-0">
+      <dt className="pt-px text-xs leading-5 text-zinc-400">{row.label}</dt>
+      <dd className="min-w-0 text-sm leading-5 text-zinc-800">{row.value}</dd>
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 z-50">
+      <div
+        className={"drawer-backdrop absolute inset-0 bg-zinc-900/25" + (closing ? " is-closing" : "")}
+        onClick={requestClose}
+        aria-hidden="true"
+      />
+      <aside
+        data-issue-drawer=""
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="issue-drawer-title"
+        className={
+          "drawer-panel absolute right-0 top-0 flex h-full w-[460px] max-w-[94vw] flex-col bg-white shadow-[-24px_0_60px_rgba(15,23,42,0.18)]" +
+          (closing ? " is-closing" : "")
+        }
+      >        <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">问题详情</span>
+              <IssueStateTag state={issue.state} />
+            </div>
+            <button
+              type="button"
+              onClick={requestClose}
+              aria-label="关闭问题详情"
+              className="-mr-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+          <h2 id="issue-drawer-title" className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
+            {issue.title}
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">{issue.raisedAt} · {issue.reporter} 提出</p>
+        </header>
+        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="问题详情字段">
+          <dl>{rows.map(rowView)}</dl>
+          <dl>{rowView(stagesRow)}</dl>
+          <dl>{reportRows.map(rowView)}</dl>
+        </ScrollArea>
+
+        <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
+          <p className="text-[11px] text-zinc-400">来源日报：{issue.reportId}；点空白处或按 Esc 关闭</p>
+        </footer>
+      </aside>
+    </div>
+  );
+}
+
+export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
+  project: Project;
+  me: MeResponse;
+  /** 醒目模式（Push 207 同批追加）：与项目总览**同一个账号偏好**（App 层持有、ProjectDetail 透传）；开关本体在标签栏最右侧，这里只吃值做表格呈现；null = 偏好尚未取到 → 按默认「关」渲染。 */
+  focusMode?: boolean | null;
+  /** 当前页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生：form = 日报填写（缺省）/ records / issues / board）。 */
+  sub: DailySubView;
+  /** 切页内子视图（写回地址 · replace，不新增历史条目）。 */
+  onChangeSub: (sub: DailySubView) => void;
+}) {
+  /** 当前子视图（地址是唯一来源：slug → 中文标签；不认识的取值已在路由层落回 form）。 */
+  const subTab = SUB_TABS.find((tab) => SUB_TAB_KEYS[tab] === sub) ?? SUB_TABS[0];
+  /** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）：投影到本地布尔（null = 关）。 */
+  const focus = focusMode === true;
   /** 日报 / 问题（原型内存态：演示数据 + 本次填写新提交的条目）。 */
   const [reports, setReports] = useState<DailyReport[]>(() => reportsForProject(project.id));
   const [issues, setIssues] = useState<Issue[]>(() => issuesForProject(project.id));
@@ -940,6 +2235,49 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
   const [draft, setDraft] = useState<ReportDraft>(() => emptyDraft());
   /** 提交后的提示（切子视图即清掉）。 */
   const [notice, setNotice] = useState<string>("");
+  /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
+   *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
+  const [openIssueId, setOpenIssueId] = useState<string | null>(null);
+
+  /** 行内编辑落值（Push 208 · 业务口径「问题追溯里面也要可以这样编辑 … 日报记录同理」）：只改被编辑的那个字段 ——
+   *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）。 */
+  const patchReport = (id: string, patch: ReportPatch) => {
+    setReports((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  /** 问题行内编辑落值（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 提出日期不动。 */
+  const patchIssue = (id: string, patch: IssuePatch) => {
+    setIssues((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  /** 日报 ↔ 问题是一体两面（A3-09：日报的「现场发现问题」提交时自动生成一条问题，`Issue.reportId` 指回那篇日报）——
+   *  删哪边都按「**这一篇日报**（连同它派生的全部问题）」整组摘掉（Push 213 业务口径「这两个任意删除谁都是关联的
+   *  都会导致双方都删除 因为他们本质是同一个日报」）：两块表 / 问题看板 / 抽屉都读同一份内存态，删完一起消失。 */
+  const deleteReportUnit = (reportId: string) => {
+    setReports((previous) => previous.filter((item) => item.id !== reportId));
+    setIssues((previous) => previous.filter((item) => item.reportId !== reportId));
+    setOpenIssueId((current) => {
+      if (current === null) {
+        return current;
+      }
+      const open = issues.find((item) => item.id === current);
+      return open !== undefined && open.reportId === reportId ? null : current;
+    });
+  };
+
+  /** 问题侧删除：有来源日报（`reportId` 非空）= 连那篇日报整组删；无来源日报（脱离日报的存量数据）只摘这一条。 */
+  const deleteIssueUnit = (issue: Issue) => {
+    if (issue.reportId === "") {
+      setIssues((previous) => previous.filter((item) => item.id !== issue.id));
+      setOpenIssueId((current) => (current === issue.id ? null : current));
+      return;
+    }
+    deleteReportUnit(issue.reportId);
+  };
+
+  /** 抽屉要展示的问题 / 它的来源日报（现找现用）。 */
+  const openIssue = openIssueId === null ? null : issues.find((item) => item.id === openIssueId) ?? null;
+  const openIssueReport = openIssue === null ? null : reports.find((item) => item.id === openIssue.reportId) ?? null;
 
   const author = me.user.displayName ?? me.user.name ?? "未署名用户";
 
@@ -947,6 +2285,8 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
   const handleSubmit = () => {
     const dateCn = cnDateOf(draft.dateIso);
     const headcount = Number.parseInt(draft.headcount, 10);
+    // 自动序号（Push 206 续）：提交前统一重排「现场发现问题」（剥旧号 / 去空行 / 重编），落库与自动生成的问题标题同文本
+    const foundIssueText = renumberLines(draft.foundIssue);
     const report: DailyReport = {
       id: "r-new-" + String(++newReportSeq),
       date: dateCn,
@@ -954,12 +2294,13 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
       submittedAt: clockText(),
       state: "已提交",
       headcount: Number.isFinite(headcount) ? headcount : 0,
-      doneWork: draft.doneWork.trim(),
-      plan: draft.plan.trim(),
-      foundIssue: draft.foundIssue.trim(),
+      doneWork: renumberLines(draft.doneWork),
+      plan: renumberLines(draft.plan),
+      foundIssue: foundIssueText,
       // Push 202：问题归类可多选 —— 原型存储口径 = 多值顿号连接（单值列 `issue_category` 的多值修订挂 wmj 线）
-      issueCategory: draft.foundIssue.trim() === "" ? "" : draft.issueCategories.join("、"),
-      suggestion: draft.suggestion.trim(),
+      issueCategory: foundIssueText === "" ? "" : draft.issueCategories.join("、"),
+      // Push 207（「这个也要1 2 3 同上」）：提交前同套重排「解决方案或建议」（剥旧号 / 去空行 / 重编）
+      suggestion: renumberLines(draft.suggestion),
       stages: draft.stages,
       photos: draft.photos,
     };
@@ -970,7 +2311,8 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
       const issue: Issue = {
         id: "i-new-" + String(++newIssueSeq),
         title: report.foundIssue,
-        state: "未分组",
+        // Push 207：新问题的初始态 = 未解决（原四态的「未分组」并入「未解决」）
+        state: "未解决",
         category: report.issueCategory,
         reporter: author,
         owner: "",
@@ -979,6 +2321,8 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
         raisedAt: dateCn,
         dueAt: cnDateOf(isoPlusDays(draft.dateIso, 2)),
         solution: "",
+        // Push 207：日报「当前问题附图」提交时带入问题记录（问题追踪「问题附图」列出缩略图）
+        photos: draft.issuePhotos,
         reportId: report.id,
       };
       setIssues((previous) => [issue, ...previous]);
@@ -989,7 +2333,7 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
     setNotice(
       "已提交 " + dateCn + " 的日报。" + (issueState === null ? "" : "「现场发现问题」已自动生成问题记录（" + issueState + "），见「问题追踪」/「问题看板」。"),
     );
-    setSubTab("日报记录");
+    onChangeSub("records");
   };
 
   /** 暂存草稿（Push 202 修订）：不写「日报记录」、不切子视图、**不清表单** —— 只保留表单里已填内容 + 顶部提示
@@ -1007,7 +2351,7 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
         data-subnav-item={tab}
         aria-current={active ? "page" : undefined}
         onClick={() => {
-          setSubTab(tab);
+          onChangeSub(SUB_TAB_KEYS[tab]);
           setNotice("");
         }}
         className={SUBNAV_KEY + " " + (active ? SUBNAV_KEY_CURRENT : SUBNAV_KEY_IDLE)}
@@ -1064,49 +2408,32 @@ export function ReportIssuePanel({ project, me }: { project: Project; me: MeResp
           {reports.length === 0 ? (
             <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
           ) : (
-            <ReportList reports={reports} />
+            <ReportList reports={reports} onPatch={patchReport} onDelete={deleteReportUnit} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
         <section className="space-y-3">
+          {/* 醒目模式开关不在这里：按业务口径「醒目模式放在标签导航栏的最右侧」由 ProjectDetail 渲染在主标签栏右侧工具区 */}
           <SectionHeader title="问题追踪" hint={"共 " + String(issues.length) + " 条 · 由日报「现场发现问题」自动生成，按提出日期倒序"} />
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <IssueTable issues={issues} />
+            <IssueTable issues={issues} focus={focus} onPatch={patchIssue} onDelete={deleteIssueUnit} />
           )}
         </section>
       ) : (
         <section className="space-y-3">
-          <SectionHeader title="问题看板" hint="四态：未分组 → 未解决 → 处理中 → 已完成（空列保留）" />
+          <SectionHeader title="问题看板" hint="三态：未解决 → 处理中 → 已完成（空列保留；按住卡片拖到别的列 = 改状态）" />
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              {ISSUE_STATES.map((state) => {
-                const items = issues.filter((issue) => issue.state === state);
-                return (
-                  <section key={state} data-issue-column={state} className={ISSUE_COLUMN}>
-                    <div className="flex items-center gap-2">
-                      <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{state}</span>
-                      <span className="ml-auto text-xs text-zinc-400">{items.length} 项</span>
-                    </div>
-                    <div className="mt-3 space-y-3">
-                      {items.length === 0 ? (
-                        <p className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-zinc-300 px-3 text-center text-xs text-zinc-400">
-                          暂无问题
-                        </p>
-                      ) : (
-                        items.map((issue) => <IssueCard key={issue.id} issue={issue} />)
-                      )}
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
+            <IssueBoard issues={issues} onPatch={patchIssue} onOpen={(id) => { setOpenIssueId(id); }} />
           )}
         </section>
       )}
+
+      {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
+      {openIssue === null ? null : <IssueDrawer issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
     </div>
   );
 }

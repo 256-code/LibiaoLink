@@ -116,7 +116,9 @@ export function stateVersionWindow(version: number): string {
 
 /**
  * 调度与补发口径（ADR-005：任务定义入 DB、每分钟 tick、单活调度器、错过窗口按 last_run_at 补发）。
- * `tickMs` / `catchupMaxDays` 为**建议值**（实施时可按量级调，语义不变；落 env 便于按环境调档）；
+ * `tickMs` / `catchupMaxDays` / `maxWindowsPerTick` 为**建议值**（实施时可按量级调，语义不变；落 env 便于按环境调档）；
+ * `maxWindowsPerTick` 是**水位护栏**：单轮 tick 最多处理 N 个补发窗口，触顶时 last_run_at 只推进到本轮
+ *   最后处理的窗口（不越过未处理窗口），剩余窗口下一轮顺延；
  * `lockName` 是排障锚点（`pg_locks` / 日志里能看到谁在调度）。
  */
 export const OUTBOX_SCHEDULER = {
@@ -126,6 +128,8 @@ export const OUTBOX_SCHEDULER = {
   tickMs: 60_000,
   /** 补发跨度上限（天）：重启 / 停机期间错过的窗口按 last_run_at 与窗口比对补发，超出跨度只记 skipped 留痕。 */
   catchupMaxDays: 7,
+  /** 单轮 tick 最多处理的补发窗口数：触顶时水位停在最后处理的窗口，剩余窗口下一轮顺延（不越过未处理窗口）。 */
+  maxWindowsPerTick: 20,
 } as const;
 
 // 重试与死信口径（**语义**为契约，数值按主题落 env）：

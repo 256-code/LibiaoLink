@@ -42,6 +42,7 @@ function makeRow(topic: OutboxTopic, id: number, overrides: Partial<OutboxClaime
     attempts: 0,
     availableAt: NOW,
     lockedAt: NOW,
+    createdAt: NOW,
     ...overrides,
   };
 }

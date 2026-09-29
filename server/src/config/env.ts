@@ -121,6 +121,18 @@ export const EnvSchema = z
     OUTBOX_SCHEDULER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
     /** 补发跨度上限（天）：重启 / 停机错过的窗口超此跨度只记 skipped 留痕（契约 OUTBOX_SCHEDULER.catchupMaxDays 建议值落 env）。 */
     OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    /** 单轮 tick 最多处理的补发窗口数（水位护栏）：触顶时 last_run_at 停在最后处理的窗口、run_at=now 下一轮顺延（契约 OUTBOX_SCHEDULER.maxWindowsPerTick 建议值落 env）。 */
+    OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK: z.coerce.number().int().min(1).max(1000).default(20),
+    // ---- 规则接线（S7·outbox · S7-4 规则接线段：automation 规则 → notify.message 生产） ----
+    /** 规则接线总开关：关 = 不注册规则事件消费者与 automation-schedule.job（事件积压可见 · 排障态）。 */
+    AUTOMATION_WIRING_ENABLED: z
+      .enum(["true", "false"])
+      .default("true"),
+    /**
+     * 冷启动保护阈值（毫秒）：事件行创建时刻距今超此阈值 → 不评估主体、逐规则登记 `event_too_old`（消费掉不产消息）。
+     * 用途：接线前积压的历史事件（重启 / 停机 / 首次上线）不补发业务通知；缺省 6 小时。
+     */
+    AUTOMATION_EVENT_MAX_AGE_MS: z.coerce.number().int().min(0).default(21600000),
   })
   .superRefine((value, context) => {
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
