@@ -512,7 +512,6 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       <div className="flex flex-wrap items-center gap-3">
         <p data-stakeholder-count="" className="text-xs text-zinc-500">
           共 <span data-stakeholder-total="" className="text-sm font-semibold text-zinc-800">{total}</span> 位干系人
-          <span className="ml-2 text-[11px] text-zinc-400">按项目关联反查（A5-03）；最近更新在前</span>
         </p>
         {total > items.length ? (
           <span className="text-[11px] text-amber-600">
