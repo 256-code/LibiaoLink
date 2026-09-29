@@ -13,7 +13,7 @@
  *   - actual_start：无库列 → 恒 null（R04 的「尚未实际开始」条件据此恒真，待实际开始字段落地后收口）；
  *   - project.group：无群绑定列 → 恒 null（R03 ~ R06 / A02 的群收件人恒 recipient_missing，随 M5-03 企微落地补）；
  *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 供 R06；
- *   - task.urgency：直接透传 tasks.priority（三档「高 / 中 / 低」）；R07 条件仍是旧四象限值（待 wmj 定案）；
+ *   - task.urgency：直接透传 tasks.priority（三档「高 / 中 / 低」）；R07 条件已按三档定案（高 + 中命中 · wmj · Push 171）；
  *   - task.file_count：与任务详情「文件摘要」同口径（draft / final / changed / archived，排除回收站）；
  *   - A02（群渠道未落地）与 A14（todos 表未落）本层不产主体 —— 登记差异，随 M5-03 / 待办表落地补。
  *
