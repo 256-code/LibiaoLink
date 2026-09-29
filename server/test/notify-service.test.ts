@@ -212,6 +212,7 @@ function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxC
     attempts: 0,
     availableAt: DAYTIME,
     lockedAt: DAYTIME,
+    createdAt: DAYTIME,
     ...overrides,
   };
 }
@@ -243,6 +244,13 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     repo.failInsert = true;
     const retry = await service.consume(claimedRow(payload()));
     expect(retry.outcome).toBe("retry");
+  });
+  it("消费：非 inbox 渠道未落地（M5-03 前）→ 确定性失败 dead，不落行", async () => {
+    const repo = new FakeNotifyRepository();
+    const service = makeService(repo, DAYTIME);
+    const outcome = await service.consume(claimedRow(payload({ channel: "wecom_app" })));
+    expect(outcome.outcome).toBe("dead");
+    expect(repo.rows).toHaveLength(0);
   });
 
   it("合并：窗口内同人同键未读主行 → 新行挂主行留档、主行 mergedCount=2、不单独投递", async () => {

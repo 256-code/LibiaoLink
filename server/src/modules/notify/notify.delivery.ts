@@ -135,7 +135,19 @@ export function parseNotifyMessage(raw: Record<string, unknown>): NotifyMessageP
     refId: value.refId ?? null,
     templateCode: trimOrNull(value.templateCode),
     mergeKey: trimOrNull(value.mergeKey),
+    channel: value.channel ?? "inbox",
   };
+}
+
+/**
+ * 一期可投递渠道（M5-03 前）：站内信 `inbox`。其余渠道（wecom_app / wecom_group / email）在投递层按
+ * **确定性失败**收口（consume → dead + 告警），不得静默当站内信投递 —— wmj PR #197 提请的接线段护栏。
+ */
+export const DELIVERABLE_CHANNELS: readonly string[] = ["inbox"];
+
+/** 渠道是否可投递：非白名单 = 未落地通道，调用方按确定性失败收口（M5-03 起飞后扩表）。 */
+export function isDeliverableChannel(channel: string): boolean {
+  return DELIVERABLE_CHANNELS.includes(channel);
 }
 
 export interface DeliveryPlanInput {

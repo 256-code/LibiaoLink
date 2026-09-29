@@ -255,3 +255,9 @@ jobs:
         env:
           S7_4_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
         run: node scripts/s7-4-notify-replay.mjs
+      # S7-4 接线（规则事件消费 RULE_EVENT_TOPICS + automation-schedule.job → notify.message 生产 · M5-02 接线段 · lan 线，Push 180）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: S7-4 automation wiring replay (rule event consumers + schedule producer)
+        working-directory: server
+        env:
+          S7_4_WIRING_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/s7-4-automation-wiring-replay.mjs

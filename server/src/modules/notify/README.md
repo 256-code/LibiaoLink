@@ -1,9 +1,9 @@
-# notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178）
+# notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178 + 接线段渠道护栏 · Push 180）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 平台模块（platform · check-boundaries 的 PLATFORM_MODULES） |
-| 职责 | 站内信投递内核：outbox `notify.message` 消费（幂等落行 / 同期合并 / 免打扰次日补发 / 每人每日上限）+ 收件箱读面（C5-01 / C5-02 / C5-03：未读 / 已读 / 已处理、分类筛选、全量留档）+ 通知偏好 |
+| 职责 | 站内信投递内核：outbox `notify.message` 消费（幂等落行 / 同期合并 / 免打扰次日补发 / 每人每日上限）+ 收件箱读面（C5-01 / C5-02 / C5-03：未读 / 已读 / 已处理、分类筛选、全量留档）+ 通知偏好 + 渠道护栏（非 inbox 确定性 dead · S7-4 接线段 Push 180） |
 | 主责 | lan（团队分工 §2） |
 | 对外接口 | `NotifyService`（`index.ts` 出口；另导出 `NOTIFY_MESSAGE_TOPIC` 与投递纯函数，供装配 / 测试 / 回放） |
 
@@ -17,7 +17,7 @@
 - **读面（个人资源）**：`GET /api/v1/notifications`（状态 / 类型 / 关联对象 + 投递时刻 `from` / `to` + 分页；**只返回已投递主行** —— 排队中的行不入收件箱；`from > to` 400；随行 `unreadCount`）、`PATCH /api/v1/notifications/{id}`（unread / read / handled 幂等；他人 / 合并子行 / 未投递行统一 404 防 IDOR）、`POST /api/v1/notifications/mark-all-read`（幂等，返回 updated + unreadCount）、`GET|PATCH /api/v1/notifications/prefs`（生效值 + 三态回显；局部更新、空更新 400）。
 - **鉴权与留痕**：读 = `SessionGuard`；写 = `SessionGuard + CsrfGuard`；无功能权限键、不写审计（先例 `user_preferences` / `project_views`）。路由顺序：静态段 `prefs` / `mark-all-read` 声明在 `:id` 之前（Nest 按声明顺序匹配）。
 - **ENV（七项，均落 `config/env.ts` 并带缺省）**：`NOTIFY_DELIVERY_ENABLED`（缺省 true —— 关 = 不注册消费者，`notify.message` 留 pending）/ `NOTIFY_FLUSH_INTERVAL_MS`（60000）/ `NOTIFY_FLUSH_BATCH`（50）/ `NOTIFY_MERGE_WINDOW_MS`（1800000 = 30 分钟）/ `NOTIFY_QUIET_HOURS`（`22:00-08:00`；空串 = 关闭；superRefine 校验 `HH:MM-HH:MM` 且起止不同）/ `NOTIFY_DAILY_LIMIT`（200）/ `NOTIFY_DAILY_WINDOW_START_MINUTE`（480 = 08:00）。
-- **差异登记**：① 企微通道（M5-03）与 SSE 实时推送（M5-04 余项）未做；② 稍后提醒（snooze）未做；③ 通知生产端（i12 / i13 / j1 —— 规则调度与业务事件生产 `notify.message`）未做，本刀只落消费侧；④ 偏好无「类型级开关」，一期粒度 = 免打扰 / 每日上限 / 合并窗口；⑤ 合并只在**未读主行**上发生（已读 / 已处理后同键消息不再并入；若业务要求跨已读合并另议）；⑥ 「合并窗口」为 env / 偏好数值，非契约枚举。
-- **测试**：`test/notify-delivery.test.ts`（10 例：载荷解析 / 合并键回退 / 免打扰 / 日界 / 投递计划四分支）+ `test/notify-service.test.ts`（15 例：消费 done·dead·retry / 幂等重放 / 合并 / 静默与上限排期 / flush / 收件箱读面 / 标记 / 偏好三态）；`test/schema-literals-parity.test.ts` +2 例（通知类型 / 状态 ↔ 库侧 CHECK 同值）；`test/outbox-policy.test.ts` 白名单清单更新（preview.job + notify.message）。`npm test` 全绿（**729 例 / 52 文件**）。
-- **真机回放**：`server/scripts/s7-4-notify-replay.mjs`（`S7_4_DATABASE_URL`，`--out` / `--json` / `--keep`）—— S0 基线自清理 / S1 投递落库与合并键回退 / S2 同期合并 / S3 消费幂等重放 / S4 非法载荷 dead 且零落库 / S5 免打扰静默与次日补发 / S6 每日上限与次日重置 / S7 收件箱读面与标记（含他人 404）/ S8 偏好三态与局部更新 / S9 自清理，共 **19 断言**；已入 CI `database` job（`.github/` 属 px 线 —— 代记，**请 px 复核**）。
-- **对齐项（PR 说明）**：迁移 `0040` 属高风险变更（DDL · CONTRIBUTING §15）—— 两张新表「只加不改」，回滚语句写在迁移头注，**请 wmj 评审**；`shared/src/modules/notifications.ts` / `shared/src/openapi.ts` 与 `shared/scripts/outbox-contract-replay.mjs` 主题常量登记（`NOTIFY_MESSAGE_TOPIC`）为跨线（`shared/` 属 wmj 线）代记，**请 wmj 复核**；CI 接线请 px 复核。
+- **差异登记**：① 企微通道（M5-03）与 SSE 实时推送（M5-04 余项）未做；② 稍后提醒（snooze）未做；③ 通知生产端：规则调度生产已落地（S7-4 规则接线 · Push 180 —— `src/outbox/automation-wiring.ts` 产 `notify.message`，非 inbox 动作不产行），业务事件生产端（i12 / i13）未做；④ 偏好无「类型级开关」，一期粒度 = 免打扰 / 每日上限 / 合并窗口；⑤ 合并只在**未读主行**上发生（已读 / 已处理后同键消息不再并入；若业务要求跨已读合并另议）；⑥ 「合并窗口」为 env / 偏好数值，非契约枚举。
+- **测试**：`test/notify-delivery.test.ts`（10 例：载荷解析 / 合并键回退 / 免打扰 / 日界 / 投递计划四分支）+ `test/notify-service.test.ts`（15 例：消费 done·dead·retry / 幂等重放 / 合并 / 静默与上限排期 / flush / 收件箱读面 / 标记 / 偏好三态）；`test/schema-literals-parity.test.ts` +2 例（通知类型 / 状态 ↔ 库侧 CHECK 同值）；`test/outbox-policy.test.ts` 白名单清单更新（preview.job + notify.message）。`npm test` 全绿（**757 例 / 54 文件** —— 含接线段 `test/automation-wiring.test.ts` 11 例与投递层新增用例）。
+- **真机回放**：`server/scripts/s7-4-notify-replay.mjs`（`S7_4_DATABASE_URL`，`--out` / `--json` / `--keep`）—— S0 基线自清理 / S1 投递落库与合并键回退 / S2 同期合并 / S3 消费幂等重放 / S4 非法载荷 dead 且零落库 / S5 免打扰静默与次日补发 / S6 每日上限与次日重置 / S7 收件箱读面与标记（含他人 404）/ S8 偏好三态与局部更新 / S9 自清理，共 **19 断言**；已入 CI `database` job（`.github/` 属 px 线 —— 代记，**请 px 复核**）。接线段真机回放 = `server/scripts/s7-4-automation-wiring-replay.mjs`（24 断言：规则产出落行 + 消费入收件箱 / 渠道护栏 dead 零落库 / 调度产出与重放幂等），见 `server/README.md`「规则接线段」节。
+- **对齐项（PR 说明）**：迁移 `0040` 属高风险变更（DDL · CONTRIBUTING §15）—— 两张新表「只加不改」，回滚语句写在迁移头注，**请 wmj 评审**；`shared/src/modules/notifications.ts` / `shared/src/openapi.ts` 与 `shared/scripts/outbox-contract-replay.mjs` 主题常量登记（`NOTIFY_MESSAGE_TOPIC`）为跨线（`shared/` 属 wmj 线）代记，**请 wmj 复核**；CI 接线请 px 复核。**接线段追加（Push 180）**：本切片 `shared/` 无契约改动；`.env.example` 补「通知投递 + 规则接线」两段（前刀遗漏登记，随本刀补齐）；渠道护栏口径（`DELIVERABLE_CHANNELS` / `isDeliverableChannel`）见本文件「消费面」与 `server/README.md`「站内信接口」节。
