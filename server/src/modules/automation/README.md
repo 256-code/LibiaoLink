@@ -39,6 +39,6 @@
 ## 边界与后续
 
 - 依赖方向：automation → calendar（`index.ts`：T±N 求值 / 顺延 / 业务日时刻）。不反向依赖业务模块。
-- 未落（lan 线）：M5-06 规则管理端点与运行留痕、M5-03 企微通道 / M5-04 SSE 与后续（站内信投递内核已落 · lan Push 178）、S7-4 规则接线（`RULE_EVENT_TOPICS` 事件消费 + `automation-schedule.job` handler —— 前置 = 本切片运行时入口，已就绪）、`automation_rules` 落库形态（A03 同 code 两窗口如何落行）。
+- 未落（lan 线）：M5-06 规则管理端点与运行留痕、M5-03 企微通道 / M5-04 SSE 与后续（站内信投递内核已落 · lan Push 178）、S7-4 规则接线（`RULE_EVENT_TOPICS` 事件消费 + `automation-schedule.job` handler）—— **已落地（Push 180 · lan；落点 = outbox 接线层 `automation-subjects.ts` / `automation-wiring.ts`，引擎侧零改动）**、`automation_rules` 落库形态（A03 同 code 两窗口如何落行）。
 - 未落（数据面）：`todos` 表与重复规则展开（A14 落库）、漏填名单「已提醒」标记（随 M5-06 发送记录）—— 均已在文案文档登记为差异。
 - 合并文案：R07 / A01 的分组形态（同一收件人一条清单式消息）为先行口径（模板 `R07_APP_MERGED` / `A01_INBOX_MERGED` / `A01_WECOM_MERGED`），业务回执后按结论改文案与断言（待确认项见 `docs/rules` 两份文案文件文末清单）。

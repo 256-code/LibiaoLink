@@ -14,6 +14,8 @@ export interface OutboxClaimedRow {
   attempts: number;
   availableAt: Date;
   lockedAt: Date | null;
+  /** 事件行创建时刻（`created_at`）：规则接线的冷启动保护（AUTOMATION_EVENT_MAX_AGE_MS）按「at - eventAt」判定。 */
+  createdAt: Date;
 }
 
 export interface ClaimOutboxInput {
@@ -107,7 +109,7 @@ export class OutboxStore {
          set status = 'processing', locked_at = now(), locked_by = ${input.workerId}, updated_at = now()
         from claimed
        where e.id = claimed.id
-      returning e.id, e.topic, e.payload, e.dedupe_key, e.attempts, e.available_at, e.locked_at
+      returning e.id, e.topic, e.payload, e.dedupe_key, e.attempts, e.available_at, e.locked_at, e.created_at
     `);
     return (result.rows as unknown as Array<Record<string, unknown>>).map((row) => ({
       id: Number(row.id),
@@ -118,6 +120,7 @@ export class OutboxStore {
       attempts: Number(row.attempts),
       availableAt: new Date(row.available_at as string | number | Date),
       lockedAt: row.locked_at ? new Date(row.locked_at as string | number | Date) : null,
+      createdAt: new Date(row.created_at as string | number | Date),
     }));
   }
 

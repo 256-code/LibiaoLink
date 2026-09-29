@@ -113,6 +113,7 @@ function makeJobRow(overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow
     attempts: 0,
     availableAt: NOW,
     lockedAt: NOW,
+    createdAt: NOW,
     ...overrides,
   };
 }

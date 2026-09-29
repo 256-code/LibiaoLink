@@ -140,10 +140,13 @@ describe("通知投递 · 免打扰与每日上限（S7-4 · C2-09）", () => {
       refId: REF_ID,
       templateCode: null,
       mergeKey: null,
+      channel: "inbox",
     });
     expect(parseNotifyMessage({ recipientId: RECIPIENT, type: "reminder", title: " ", body: "正文" })).toBeNull();
     expect(parseNotifyMessage({ type: "reminder", title: "标题", body: "正文" })).toBeNull();
     expect(parseNotifyMessage({ recipientId: RECIPIENT, type: "unknown", title: "标题", body: "正文" })).toBeNull();
     expect(parseNotifyMessage({ recipientId: RECIPIENT, type: "reminder", title: "标题", body: "正文", refType: "task" })).toBeNull();
+    expect(parseNotifyMessage({ recipientId: RECIPIENT, type: "reminder", title: "标题", body: "正文" })?.channel).toBe("inbox");
+    expect(parseNotifyMessage({ recipientId: RECIPIENT, type: "reminder", title: "标题", body: "正文", channel: "wecom_app" })?.channel).toBe("wecom_app");
   });
 });
