@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 type TableScrollbarProps = {
   scrollRef: RefObject<HTMLDivElement | null>;
   onOverflowChange?: (overflowing: boolean) => void;
+  /** 受控表格的滚动容器 id（aria-controls；缺省 = 项目总览的任务表）。 */
+  controlsId?: string;
 };
 
 type Metrics = {
@@ -17,7 +19,7 @@ const HIDDEN: Metrics = { visible: false, thumbWidth: 0, offset: 0, progress: 0 
 const MIN_THUMB_WIDTH = 56;
 const KEYBOARD_STEP = 160;
 
-export function TableScrollbar({ scrollRef, onOverflowChange }: TableScrollbarProps) {
+export function TableScrollbar({ scrollRef, onOverflowChange, controlsId = "task-board-scroll" }: TableScrollbarProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [metrics, setMetrics] = useState<Metrics>(HIDDEN);
   const overflowHandlerRef = useRef(onOverflowChange);
@@ -200,7 +202,7 @@ export function TableScrollbar({ scrollRef, onOverflowChange }: TableScrollbarPr
         <div
           role="scrollbar"
           aria-orientation="horizontal"
-          aria-controls="task-board-scroll"
+          aria-controls={controlsId}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={metrics.progress}

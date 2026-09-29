@@ -389,6 +389,12 @@ export default function App() {
    * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
    */
   const canManageBlueprint = hasPermission(permissions, "blueprint.manage");
+  /**
+   * 干系人写入口（Push 221 · A27）：新建 / 编辑 / 删除 = stakeholder.manage。与 project.create / project.update
+   * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
+   * 全部角色都有，标签本身不收敛。
+   */
+  const canManageStakeholders = permissions === null || hasPermission(permissions, "stakeholder.manage");
 
   if (state.kind === "loading") {
     return (
@@ -554,6 +560,7 @@ export default function App() {
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           focusMode={focusMode}
           onFocusModeChange={handleSaveFocusMode}
+          canManageStakeholders={canManageStakeholders}
         />
         {editModal}
         {bottomBars}
