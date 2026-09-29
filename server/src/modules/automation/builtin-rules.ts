@@ -169,7 +169,8 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     trigger: { kind: "schedule", cron: "30 9 * * 1", window: "WEEKLY" },
     conditions: [
       { field: "task.display_status", op: "eq", value: "active" },
-      { field: "task.urgency", op: "in", value: ["重要且紧急", "紧急但不重要", "重要但不紧急"] },
+      // 2026-09-24 定案三档「高 / 中 / 低」（迁移 0031）：R07 命中 = 高 + 中（排除低；等值原「非 不紧急不重要」· wmj 定案 · Push 171）。
+      { field: "task.urgency", op: "in", value: ["高", "中"] },
     ],
     actions: [
       { kind: "notify", channel: "wecom_app", recipient: "task.owner", template: "R07_APP", groupBy: ["task.owner_id"] },

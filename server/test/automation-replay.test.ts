@@ -12,7 +12,7 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
     title: "安装摄像头",
     version: 5,
     displayStatus: "active",
-    urgency: "重要且紧急",
+    urgency: "高",
     plannedStart: null,
     plannedEnd: null,
     actualStart: null,
@@ -168,9 +168,9 @@ describe("R07 每周一重点任务提醒（周窗口 + 合并 + 幂等）", () 
 
   it("同一负责人两条重点任务合并为一条清单式消息（标题逐字 + 清单顺序稳定）", () => {
     const report = replay(MONDAY, [
-      task({ id: "t-1", title: "安装摄像头", displayStatus: "active", urgency: "重要且紧急" }),
-      task({ id: "t-2", title: "调试网络", displayStatus: "active", urgency: "重要但不紧急" }),
-      task({ id: "t-3", title: "整理资料", displayStatus: "active", urgency: "不紧急不重要" }),
+      task({ id: "t-1", title: "安装摄像头", displayStatus: "active", urgency: "高" }),
+      task({ id: "t-2", title: "调试网络", displayStatus: "active", urgency: "中" }),
+      task({ id: "t-3", title: "整理资料", displayStatus: "active", urgency: "低" }),
     ]);
     const r07 = report.messages.filter((item) => item.ruleCode === "R07");
     expect(r07).toHaveLength(1);

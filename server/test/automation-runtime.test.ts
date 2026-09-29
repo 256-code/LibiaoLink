@@ -31,7 +31,7 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
     title: "安装摄像头",
     version: 5,
     displayStatus: "active",
-    urgency: "重要且紧急",
+    urgency: "高",
     plannedStart: null,
     plannedEnd: null,
     actualStart: null,
@@ -229,6 +229,31 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
     expect(included.messages.every((message) => message.windowKey === "2026-09-24")).toBe(true);
   });
 
+  it("R07 三档口径（定案 · Push 171）：高 + 中命中、低不命中（窗口形态与逐日回放等价）", () => {
+    const subjects: ReplaySubject[] = [
+      toTaskSubject(task({ id: "t-1", title: "安装摄像头", urgency: "高" })),
+      toTaskSubject(task({ id: "t-2", title: "调试网络", urgency: "中" })),
+      toTaskSubject(task({ id: "t-3", title: "整理资料", urgency: "低" })),
+    ];
+    const window = {
+      from: new Date(atShanghaiTime("2026-09-20", "12:00")),
+      to: new Date(atShanghaiTime("2026-09-21", "23:59")),
+    };
+    const plan = planWindowMessages({ jobKind: AUTOMATION_SCHEDULE_JOB_KIND, window, rules: BUILTIN_RULES, subjects, at: window.to, calendar: CALENDAR });
+    const union: ReplayMessage[] = [];
+    for (const date of ["2026-09-20", "2026-09-21"]) {
+      union.push(...replayRules({ businessDate: date, subjects, calendar: CALENDAR, shiftEnabled: false }).messages);
+    }
+    expect(plan.messages).toEqual([...union].sort((left, right) => sortKey(left).localeCompare(sortKey(right))));
+    expect(plan.messages).toHaveLength(1);
+    const merged = plan.messages[0];
+    expect(merged?.ruleCode).toBe("R07");
+    expect(merged?.channel).toBe("wecom_app");
+    expect(merged?.dedupeKey).toBe("R07:u-1:2026-W39");
+    expect(merged?.mergedFrom).toEqual(["t-1", "t-2"]);
+    expect(merged?.body).toBe("以下重点任务正在进行中：安装摄像头、调试网络请关注并及时推进任务~");
+    expect(plan.skipped).toEqual([{ reason: "not_matched", ruleCode: "R07", entityId: "t-3" }]);
+  });
   it("disabled 规则登记一次；jobKind / 窗口边界错误显性抛错", () => {
     const base = BUILTIN_RULES.find((rule) => rule.code === "A01");
     if (base === undefined) throw new Error("A01 缺失");
