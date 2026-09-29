@@ -9,7 +9,7 @@ import { users } from "./identity.js";
 import { projects } from "./projects.js";
 import { STAKEHOLDER_COMPANY_TYPE_KEYS, sqlValueList } from "./literals.js";
 
-/** 干系人台账（A5-01）：name / company_type / company / title / phone / wechat / email / remark 八个业务字段。 */
+/** 干系人台账（A5-01）：name / company_type / company / title / phone / wechat / email / remark / role 九个业务字段（role = 「干系人角色」，Push 225 增列）。 */
 export const stakeholders = pgTable(
   "stakeholders",
   {
@@ -22,6 +22,8 @@ export const stakeholders = pgTable(
     wechat: text("wechat"),
     email: text("email"),
     remark: text("remark"),
+    /** 干系人角色（A5-01 · Push 225 增列）：自由文本 1..80，未填为 null；不登记字段级策略（有 stakeholder.view 即可见）。 */
+    role: text("role"),
     /** 录入人（A5-04）：数据范围 own_stakeholders 据此判定「我录入的干系人」；系统导入可空。 */
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -43,6 +45,7 @@ export const stakeholders = pgTable(
     check("ck_stakeholders_wechat", sql`${table.wechat} is null or char_length(btrim(${table.wechat})) between 1 and 64`),
     check("ck_stakeholders_email", sql`${table.email} is null or char_length(btrim(${table.email})) between 3 and 120`),
     check("ck_stakeholders_remark", sql`${table.remark} is null or char_length(btrim(${table.remark})) between 1 and 500`),
+    check("ck_stakeholders_role", sql`${table.role} is null or char_length(btrim(${table.role})) between 1 and 80`),
   ],
 );
 

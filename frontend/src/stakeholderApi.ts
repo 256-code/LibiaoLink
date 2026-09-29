@@ -5,6 +5,7 @@
  * - 更新 PATCH /api/v1/stakeholders/{id}（部分更新：null = 清空该字段、缺键 = 不改）
  * - 删除 DELETE /api/v1/stakeholders/{id}（软删，回 { id, deleted: true }；页面本地移除即可）
  * 字段级脱敏（A5-07 / C3-08）：phone / wechat / email / company / title / remark 无权时响应里**没有该键** ——
+ * role（干系人角色 · Push 225 契约增列）未登记字段级策略：恒返回（空为 null），不参与缺键口径。
  * 页面按「键是否存在」渲染占位（见 components/StakeholderPanel.tsx），缺键绝不回写（否则会把无权字段清空）。
  */
 import { ApiError, apiRequest, apiSend } from "./api";
@@ -58,6 +59,7 @@ export type Stakeholder = {
   wechat?: string | null;
   email?: string | null;
   remark?: string | null;
+  role: string | null;
   createdBy: string | null;
   createdByName: string | null;
   projects: StakeholderProjectRef[];
@@ -76,6 +78,7 @@ export type StakeholderCreateInput = {
   phone?: string;
   wechat?: string;
   email?: string;
+  role?: string;
   projectIds?: string[];
 };
 
@@ -88,6 +91,7 @@ export type StakeholderPatch = {
   phone?: string | null;
   wechat?: string | null;
   email?: string | null;
+  role?: string | null;
 };
 
 /** 列表一次取满（契约 limit 上限 200）；总数用响应 total，超出时页面另提示。 */

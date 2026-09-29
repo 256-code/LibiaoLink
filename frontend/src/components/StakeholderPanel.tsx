@@ -20,9 +20,9 @@ import { SelectMenu, type SelectOption } from "./SelectMenu";
  * 项目详情「干系人」面板（A27 · M6-06 前端接线；标签排在最右侧）：表格形态与「项目总览」同一套 ——
  * 白卡片 + 表头固定在主标签栏之下（sticky top-[122px]，横向滚动时用 translateX 跟随 scrollLeft）+
  * 每行 CSS grid + minWidth 横向滚动，底部共用 TableScrollbar 滑块（见 ProjectDetail.tsx）。
- * 列 = 用户口径字段：姓名 / 电话（含 WhatsApp）/ 微信 / 邮箱 / 职务（责任板块）/ 所属公司（分类色签；具体公司名为存量只读展示）/ 填写者 / 行尾动作；
+ * 列 = 用户口径字段：姓名 / 电话（含 WhatsApp）/ 微信 / 邮箱 / 职务（责任板块）/ 所属公司（分类色签；具体公司名为存量只读展示）/ 填写者 / 干系人角色 / 行尾动作；
  * Push 222（业务 2026-09-29：「这个不需要 然后编辑是点编辑按钮才是编辑 点击表格不能编辑」）：① 新建 / 编辑弹窗不再录入「具体公司名称」（写入面不带 company；存量数据照常展示）；② 编辑只走行尾「编辑」按钮 —— 点击行体不再进编辑。
- * 「干系人角色」源表与契约都没有该列（字段对照清单 §二.1「口径未定，暂不落列」），不落列，待契约扩列后再补。
+ * Push 225（代 wmj 线扩契约，请 wmj 复核）：`stakeholders.role`（迁移 0042）+ 契约 `Stakeholder.role` 落地 ——「干系人角色」列随本刀补上（自由文本；未登记字段级策略 = 恒可见）。
  * 数据面：GET /api/v1/stakeholders?filter[projectId]（A5-03 按项目查看联系人清单），写 = stakeholder.manage。
  * 字段级脱敏（A5-07 · C3-08）：无权字段**键不存在** —— 表格渲染浅灰「—」并悬停说明，表单对应输入禁用、绝不回写（缺键当空值会清空无权字段）。
  */
@@ -36,6 +36,7 @@ const COLUMNS = [
   { key: "title", label: "职务 / 责任板块", width: "190px", min: 190 },
   { key: "company", label: "所属公司", width: "210px", min: 210 },
   { key: "createdBy", label: "填写者", width: "110px", min: 110 },
+  { key: "role", label: "干系人角色", width: "150px", min: 150 },
   { key: "actions", label: "", width: "96px", min: 96 },
 ] as const;
 
@@ -86,6 +87,7 @@ export type StakeholderDraft = {
   phone: string;
   wechat: string;
   email: string;
+  role: string;
 };
 
 /** 编辑草稿：缺键字段留空（表单里禁用，提交时不带上 —— 绝不把无权字段当空值清掉）。 */
@@ -97,6 +99,7 @@ function draftOf(row: Stakeholder): StakeholderDraft {
     phone: missingKey(row, "phone") ? "" : textOf(row, "phone"),
     wechat: missingKey(row, "wechat") ? "" : textOf(row, "wechat"),
     email: missingKey(row, "email") ? "" : textOf(row, "email"),
+    role: row.role ?? "",
   };
 }
 
@@ -114,6 +117,7 @@ function createBodyOf(draft: StakeholderDraft, projectId: string): StakeholderCr
     phone: compact(draft.phone),
     wechat: compact(draft.wechat),
     email: compact(draft.email),
+    role: compact(draft.role),
     projectIds: [projectId],
   };
 }
@@ -136,6 +140,11 @@ function patchOf(draft: StakeholderDraft, row: Stakeholder): StakeholderPatch {
       continue;
     }
     patch[field] = next === "" ? null : next;
+  }
+  // role 未登记字段级策略（恒可见）：与 name 同口径直接比对；清空 = null。
+  const nextRole = draft.role.trim();
+  if (nextRole !== (row.role ?? "")) {
+    patch.role = nextRole === "" ? null : nextRole;
   }
   return patch;
 }
@@ -175,7 +184,7 @@ function StakeholderModal({
 }) {
   const [draft, setDraft] = useState<StakeholderDraft>(() =>
     row === null
-      ? { name: "", companyType: "", title: "", phone: "", wechat: "", email: "" }
+      ? { name: "", companyType: "", role: "", title: "", phone: "", wechat: "", email: "" }
       : draftOf(row),
   );
   const [pending, setPending] = useState(false);
@@ -292,6 +301,16 @@ function StakeholderModal({
               placeholder={locked("email") ? "无权限查看 / 修改（字段级权限）" : "如 name@example.com（可选）"}
             />
           </label>
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">干系人角色</span>
+            <input
+              data-stakeholder-field="role"
+              className={fieldClass}
+              value={draft.role}
+              onChange={(event) => edit("role", event.target.value)}
+              placeholder="如 决策人 / 技术接口人（可选）"
+            />
+          </label>
           {error === null ? null : (
             <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
@@ -336,6 +355,8 @@ function StakeholderRow({
   const email = fieldText(row, "email");
   const title = fieldText(row, "title");
   const company = fieldText(row, "company");
+  /** 角色未登记字段级策略：恒有值（空 = 未填），行内「—」与姓名列同款。 */
+  const role = row.role ?? "";
 
   return (
     <div
@@ -372,6 +393,11 @@ function StakeholderRow({
       <div data-stakeholder-cell="createdBy" className="flex min-w-0 items-center justify-center">
         <span className="truncate text-sm text-zinc-600" title={row.createdByName ?? undefined}>
           {row.createdByName === null || row.createdByName === "" ? "—" : row.createdByName}
+        </span>
+      </div>
+      <div data-stakeholder-cell="role" className="flex min-w-0 items-center justify-center">
+        <span className="truncate text-sm text-zinc-600" title={role === "" ? undefined : role}>
+          {role === "" ? "—" : role}
         </span>
       </div>
       <div data-stakeholder-cell="actions" className="flex items-center justify-end gap-1.5">

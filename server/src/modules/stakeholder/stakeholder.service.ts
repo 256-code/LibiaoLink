@@ -18,7 +18,7 @@ import type { StakeholderProjectRow, StakeholderRow } from "./stakeholder.reposi
 import { buildStakeholderFilter, parseStakeholderSort, stakeholderVisibility } from "./stakeholder.rules.js";
 import type { StakeholderVisibility } from "./stakeholder.rules.js";
 
-/** 台账快照（字段级留痕口径：八个业务字段可改）。 */
+/** 台账快照（字段级留痕口径：九个业务字段可改 —— role 为 Push 225 增列）。 */
 function stakeholderSnapshot(row: StakeholderRow): Record<string, unknown> {
   return {
     name: row.name,
@@ -29,6 +29,7 @@ function stakeholderSnapshot(row: StakeholderRow): Record<string, unknown> {
     wechat: row.wechat,
     email: row.email,
     remark: row.remark,
+    role: row.role,
   };
 }
 
@@ -89,6 +90,7 @@ export class StakeholderService {
           wechat: body.wechat ?? null,
           email: body.email ?? null,
           remark: body.remark ?? null,
+          role: body.role ?? null,
         },
         actorId,
         at,
@@ -235,6 +237,7 @@ export class StakeholderService {
       wechat: row.wechat,
       email: row.email,
       remark: row.remark,
+      role: row.role,
       createdBy: row.createdBy,
       createdByName: row.createdByName,
       projects: links

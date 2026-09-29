@@ -7,6 +7,7 @@ import { DateTimeSchema, PageQuerySchema, SortQuerySchema, UuidSchema, paginated
  * 表口径见 database/migrations/0019_stakeholders.sql。
  *
  * 隐私字段（A5-07 / C3-08）：联系方式（phone / wechat / email）需 stakeholder.contact.view、company / title 需 stakeholder.view、
+ * role（干系人角色，A5-01）未登记字段级策略 —— 登录且可见即返回（与 name / companyType 同档）；
  * remark 需 stakeholder.manage —— 无权时服务端**不返回该键**（不做打码，契约侧一律 optional），页面 / 导出 / 搜索 / 消息同一策略（五出口同源）。
  */
 
@@ -50,6 +51,7 @@ export const StakeholderSchema = z
     wechat: z.string().nullable().optional().openapi({ description: "微信号；需 stakeholder.contact.view，无权时键不存在（A5-07）" }),
     email: z.string().nullable().optional().openapi({ description: "邮箱；需 stakeholder.contact.view，无权时键不存在（A5-07）" }),
     remark: z.string().nullable().optional().openapi({ description: "备注；需 stakeholder.manage，无权时键不存在" }),
+    role: z.string().nullable().openapi({ description: "干系人角色（A5-01 · Push 225 增列）；自由文本，未登记字段级策略 —— 与姓名 / 公司分类同档：登录且可见即返回，空为 null" }),
     createdBy: UuidSchema.nullable().openapi({ description: "录入人 users.id（A5-04 销售端口）；系统导入为空" }),
     createdByName: z.string().nullable().openapi({ description: "录入人显示名（清单「填写者」列）" }),
     projects: z.array(StakeholderProjectRefSchema).openapi({ description: "关联项目（A5-03）；按干系人反查" }),
@@ -69,6 +71,7 @@ export const StakeholderCreateBodySchema = z
     wechat: z.string().min(1).max(64).optional(),
     email: z.string().max(120).optional().openapi({ description: "邮箱（格式校验在服务端软校验，避免历史数据误拦）" }),
     remark: z.string().min(1).max(500).optional(),
+    role: z.string().min(1).max(80).optional().openapi({ description: "干系人角色；不传则空" }),
     projectIds: z.array(UuidSchema).max(50).optional().openapi({ description: "建台账时一并关联的项目（A5-03）；项目不存在 404" }),
   })
   .openapi("StakeholderCreateBody", { description: "新增干系人：变更写审计留痕（对象 = stakeholder）；判重提示（姓名 + 手机号）随批量导入（A5-05，lan 线 M8-01）落地，本切片不阻断" });
@@ -84,6 +87,7 @@ export const StakeholderUpdateBodySchema = z
     wechat: z.string().max(64).nullable().optional(),
     email: z.string().max(120).nullable().optional(),
     remark: z.string().max(500).nullable().optional(),
+    role: z.string().max(80).nullable().optional(),
   })
   .openapi("StakeholderUpdateBody", { description: "更新干系人（部分更新；null = 清空该字段）：变更写审计留痕（字段级 before / after）" });
 

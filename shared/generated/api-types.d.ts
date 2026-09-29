@@ -8052,6 +8052,8 @@ export interface components {
             email?: string | null;
             /** @description 备注；需 stakeholder.manage，无权时键不存在 */
             remark?: string | null;
+            /** @description 干系人角色（A5-01 · Push 225 增列）；自由文本，未登记字段级策略 —— 与姓名 / 公司分类同档：登录且可见即返回，空为 null */
+            role: string | null;
             createdBy: components["schemas"]["Uuid"] & (string | null);
             /** @description 录入人显示名（清单「填写者」列） */
             createdByName: string | null;
@@ -8077,6 +8079,8 @@ export interface components {
             /** @description 邮箱（格式校验在服务端软校验，避免历史数据误拦） */
             email?: string;
             remark?: string;
+            /** @description 干系人角色；不传则空 */
+            role?: string;
             /** @description 建台账时一并关联的项目（A5-03）；项目不存在 404 */
             projectIds?: components["schemas"]["Uuid"][];
         };
@@ -8114,6 +8118,7 @@ export interface components {
             wechat?: string | null;
             email?: string | null;
             remark?: string | null;
+            role?: string | null;
         };
         /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124） */
         Task: {
