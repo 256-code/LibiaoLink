@@ -7,10 +7,12 @@ import {
   z,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { DatabaseService } from "../../db/database.service.js";
 import { CalendarService } from "../calendar/index.js";
 import { ProjectMemberService } from "../project/index.js";
 import { shanghaiToday } from "../task/index.js";
 import { ReportRepository, type DailyReportRow } from "./report.repository.js";
+import { loadReportPhotos } from "./report-issue.links.js";
 import { isFutureDate, type DailyReportState } from "./report-issue.rules.js";
 import { toDailyReportView } from "./report.service.js";
 
@@ -24,11 +26,12 @@ function isSubmittedState(state: string | null): boolean {
   return state !== null && state !== "draft";
 }
 
-/** 提交时刻升序、同刻按作者 id 兜底（稳定序 —— 契约 entries 顺序口径，草稿 submittedAt 为空排最后）。 */
+/** 提交时刻升序、同刻按创建时间 / 作者 id 兜底（稳定序 —— 契约 entries 顺序口径，草稿 submittedAt 为空排最后）。 */
 function bySubmittedAt(left: DailyReportRow, right: DailyReportRow): number {
   const leftAt = left.submittedAt === null ? 0 : left.submittedAt.getTime();
   const rightAt = right.submittedAt === null ? 0 : right.submittedAt.getTime();
   if (leftAt !== rightAt) return leftAt - rightAt;
+  if (left.createdAt.getTime() !== right.createdAt.getTime()) return left.createdAt.getTime() - right.createdAt.getTime();
   return left.authorId < right.authorId ? -1 : left.authorId > right.authorId ? 1 : 0;
 }
 
@@ -46,6 +49,7 @@ function hasFoundIssue(row: DailyReportRow): boolean {
 @Injectable()
 export class ReportSummaryService {
   constructor(
+    private readonly database: DatabaseService,
     private readonly reports: ReportRepository,
     private readonly calendar: CalendarService,
     private readonly members: ProjectMemberService,
@@ -55,8 +59,8 @@ export class ReportSummaryService {
   async summary(projectId: string, query: DailyReportDayQuery): Promise<DailyReportSummaryResponse> {
     const day = await this.resolveDay(query.date);
     const rows = await this.reports.listByDate(projectId, day.date);
-    const titles = await this.reports.taskTitles(projectId, rows.flatMap((row) => row.taskIds));
     const entries = rows.filter((row) => isSubmittedState(row.state)).sort(bySubmittedAt);
+    const photos = await loadReportPhotos(entries.map((row) => row.id), this.database.db);
     return {
       date: day.date,
       isWorkday: day.isWorkday,
@@ -66,7 +70,7 @@ export class ReportSummaryService {
       draftCount: rows.length - entries.length,
       headcountTotal: entries.reduce((sum, row) => sum + (row.headcount ?? 0), 0),
       issueCount: entries.filter(hasFoundIssue).length,
-      entries: entries.map((row) => toDailyReportView(row, titles)),
+      entries: entries.map((row) => toDailyReportView(row, photos.get(row.id) ?? { onsite: [], issue: [] })),
     };
   }
 
@@ -75,7 +79,16 @@ export class ReportSummaryService {
     const day = await this.resolveDay(query.date);
     const rows = await this.reports.listByDate(projectId, day.date);
     const roster = await this.members.listMembers(projectId);
-    const byAuthor = new Map(rows.map((row) => [row.authorId, row]));
+    // 同日多条（Push 215）：有已提交取已提交（首条），否则取任一条草稿；缺省 = 未填报。
+    const byAuthor = new Map<string, DailyReportRow>();
+    for (const row of rows) {
+      const existing = byAuthor.get(row.authorId);
+      if (existing === undefined) {
+        byAuthor.set(row.authorId, row);
+      } else if (!isSubmittedState(existing.state) && isSubmittedState(row.state)) {
+        byAuthor.set(row.authorId, row);
+      }
+    }
     const members = roster.items.map((member) => {
       const row = byAuthor.get(member.userId);
       return {

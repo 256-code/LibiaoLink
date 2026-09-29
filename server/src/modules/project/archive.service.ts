@@ -183,7 +183,7 @@ export class ArchiveService {
     const sum = (source: Record<string, number>, keys: readonly string[]): number => keys.reduce((total, key) => total + countOf(source, key), 0);
     const taskKeys = ["pending", "active", "done"] as const;
     const reportKeys = ["draft", "submitted", "supplement"] as const;
-    const issueKeys = ["unassigned", "open", "in_progress", "done"] as const;
+    const issueKeys = ["open", "in_progress", "done"] as const;
     return {
       stage: {
         stageKey: stage.stageKey as StageKey,
@@ -223,7 +223,6 @@ export class ArchiveService {
       issues: {
         total: sum(issueCounts, issueKeys),
         byState: {
-          unassigned: countOf(issueCounts, "unassigned"),
           open: countOf(issueCounts, "open"),
           in_progress: countOf(issueCounts, "in_progress"),
           done: countOf(issueCounts, "done"),

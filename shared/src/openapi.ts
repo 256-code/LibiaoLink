@@ -63,6 +63,7 @@ import {
 } from "./modules/stakeholders.ts";
 import {
   DailyReportCreateBodySchema,
+  DailyReportDeleteResponseSchema,
   DailyReportDayQuerySchema,
   DailyReportListQuerySchema,
   DailyReportListResponseSchema,
@@ -72,6 +73,7 @@ import {
   DailyReportUpdateBodySchema,
 } from "./modules/reports.ts";
 import {
+  IssueDeleteResponseSchema,
   IssueDetailSchema,
   IssueListQuerySchema,
   IssueListResponseSchema,
@@ -1440,13 +1442,12 @@ export function buildOpenApiDocument() {
     path: "/api/v1/projects/{id}/reports",
     tags: ["reports"],
     summary:
-      "新建日报（A3-01 / A3-02 · M6-01）：一人一项目一天一条（重复 409 REPORT_ALREADY_EXISTS）；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等）",
+      "新建日报（A3-01 / A3-02 · M6-01）：同人同项目同日可多条；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等）",
     request: { params: idParams, body: json(DailyReportCreateBodySchema) },
     responses: {
       201: { description: "新建的日报", ...json(DailyReportSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
-      409: commonErrors[409],
     },
   });
 
@@ -1467,13 +1468,25 @@ export function buildOpenApiDocument() {
     path: "/api/v1/projects/{id}/reports/{reportId}",
     tags: ["reports"],
     summary:
-      "编辑 / 提交日报（A3-02 草稿提交 · A3-08 回写关联任务「项目进展描述」）：乐观锁 version；date 不可改；已提交行不允许退回草稿",
+      "编辑 / 提交日报（A3-02 草稿提交）：乐观锁 version；date 不可改；已提交行不允许退回草稿",
     request: { params: z.object({ id: UuidSchema, reportId: UuidSchema }), body: json(DailyReportUpdateBodySchema) },
     responses: {
       200: { description: "更新后的日报", ...json(DailyReportSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/projects/{id}/reports/{reportId}",
+    tags: ["reports"],
+    summary: "删除日报（成对删除：删日报 = 连它派生的全部问题 + 两侧附图关联；写审计与 outbox）",
+    request: { params: z.object({ id: UuidSchema, reportId: UuidSchema }) },
+    responses: {
+      200: { description: "删除结果（cascadedIssueIds 为连带删除的问题）", ...json(DailyReportDeleteResponseSchema) },
+      404: commonErrors[404],
     },
   });
 
@@ -1507,13 +1520,25 @@ export function buildOpenApiDocument() {
     path: "/api/v1/projects/{id}/issues/{issueId}",
     tags: ["issues"],
     summary:
-      "问题更新（A3-10 四态流转 / A3-12 分派 / A3-13 解决方案）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at）",
+      "问题更新（A3-10 三态流转 / A3-12 分派 / A3-13 解决方案 / 描述与归类行内编辑 / 附图）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at）",
     request: { params: z.object({ id: UuidSchema, issueId: UuidSchema }), body: json(IssueUpdateBodySchema) },
     responses: {
       200: { description: "更新后的问题详情", ...json(IssueDetailSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/projects/{id}/issues/{issueId}",
+    tags: ["issues"],
+    summary: "删除问题（成对删除：删问题 = 连它来源的那篇日报及其全部问题；写审计与 outbox）",
+    request: { params: z.object({ id: UuidSchema, issueId: UuidSchema }) },
+    responses: {
+      200: { description: "删除结果（cascadedReportId 为连带删除的来源日报）", ...json(IssueDeleteResponseSchema) },
+      404: commonErrors[404],
     },
   });
   // ---- 工作台（M6-05 第一刀 · A6-01 / A6-03：我的任务 / 我负责的问题 · wmj 线）----
@@ -1724,8 +1749,8 @@ export function buildOpenApiDocument() {
       { name: "calendar", description: "工作日历（D5）：日历维护 / 顺延规则配置 / T-1·T+1 求值（h8）" },
       { name: "changes", description: "变更记录（一期申请即通过、全程留痕；v0.2 §5.3 / A4-13~A4-15）" },
       { name: "stakeholders", description: "干系人台账与项目关联（A5-01~A5-04 / A5-07；隐私字段走字段级策略）" },
-      { name: "reports", description: "日报（A3-01 / A3-02 / A3-08 / A3-09；M6-01 / M6-02）" },
-      { name: "issues", description: "问题闭环（A3-09~A3-13；四态流转 / 分派 / 留痕，M6-02 / M6-03）" },
+      { name: "reports", description: "日报（A3-01 / A3-02 / A3-09；M6-01 / M6-02）" },
+      { name: "issues", description: "问题闭环（A3-09~A3-13；三态流转 / 分派 / 留痕，M6-02 / M6-03）" },
       { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
       { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
       { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },

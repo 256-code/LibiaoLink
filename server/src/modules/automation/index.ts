@@ -48,14 +48,12 @@ export {
   evaluateEventMessages,
   listEnabledRules,
   planWindowMessages,
-  toIssueSubject,
   toProjectDaySubject,
   toReportMemberSubject,
   toTodoSubject,
 } from "./automation.runtime.js";
 export type {
   EventEvaluationInput,
-  IssueSnapshot,
   ProjectDaySnapshot,
   ReportMemberSnapshot,
   RuntimeEvaluation,

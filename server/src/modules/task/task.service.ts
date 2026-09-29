@@ -520,8 +520,8 @@ export class TaskService {
    * ③ 组内位次同事务压缩，保持「0 起、密集」不变式（A19 / A20）；
    * ④ 来源节点约束随软删释放（节点回到「可添加」，A10 / A11 口径不变 —— 判重走 findTaskIdByNode 已过滤软删）；
    * ⑤ 权限沿用 task.update（与编辑同一权限位，不新增权限键）；归档项目写保护照旧 409 PROJECT_ARCHIVED。
-   * ⑥ 已有引用（日报 / 问题 / 变更记录）的任务不允许删除 = 409 TASK_HAS_REFERENCES（系统功能书 A2-01「已产生日报 / 问题 / 变更的任务不允许删除，只能关闭或标记」；
-   *   日报 / 问题两表随 0023 落地，本卡（M5）在守卫处补齐判定：details[].code = change_ref / report_ref / issue_ref）；
+   * ⑥ 已有引用（问题 / 变更记录）的任务不允许删除 = 409 TASK_HAS_REFERENCES（系统功能书 A2-01「已产生日报 / 问题 / 变更的任务不允许删除，只能关闭或标记」；
+   *   Push 215 起日报「关联任务」改「关联阶段」，日报一侧引用守卫随批删除：details[].code = change_ref / issue_ref）；
    * 留痕：审计 action=delete（objectType=task，changes = 删除前快照）+ outbox task.deleted；
    * 不写 task_events —— 其类型为四值闭集（status_change / date_change / progress_change / note_change），删除不属于字段级变更。
    */
@@ -534,7 +534,7 @@ export class TaskService {
       if (references.length > 0) {
         throw new AppError(
           "TASK_HAS_REFERENCES",
-          "任务已产生日报 / 问题 / 变更，不允许删除（系统功能书 A2-01）；只能关闭或标记",
+          "任务已产生问题 / 变更，不允许删除（系统功能书 A2-01）；只能关闭或标记",
           references,
         );
       }
@@ -641,8 +641,8 @@ export class TaskService {
 
   /** 写路径统一前置（M3-05）：锁行 + 校验归属本项目 + 未软删；已删任务 = 404（与读面不可见同口径）。 */
   /**
-   * 删除引用守卫明细（A2-01；Push 152 登记「日报 / 问题随 M5 加判定」，本卡补齐）：
-   * ① 变更记录（tasks.change_refs）逐条明细；② 日报（daily_reports.task_ids 含本任务）；③ 问题（issues.task_id）。
+   * 删除引用守卫明细（A2-01；Push 152 登记「问题随 M5 加判定」；Push 215 删日报一侧）：
+   * ① 变更记录（tasks.change_refs）逐条明细；② 问题（issues.task_id）。
    * 任一非空即 409 TASK_HAS_REFERENCES —— 拒绝时不软删 / 不压缩位次 / 不写留痕（抛在事务内，整体回滚）。
    */
   private async referencesOf(tx: DbClient, task: TaskRow): Promise<ErrorDetail[]> {
@@ -652,10 +652,6 @@ export class TaskService {
       path: "changeRefs",
       meta: { changeRequestId: changeId },
     }));
-    const reportRefs = await this.repository.countReportRefs(task.id, tx);
-    if (reportRefs > 0) {
-      details.push({ code: "report_ref", message: "关联日报：" + reportRefs + " 条", path: "reports", meta: { count: reportRefs } });
-    }
     const issueRefs = await this.repository.countIssueRefs(task.id, tx);
     if (issueRefs > 0) {
       details.push({ code: "issue_ref", message: "关联问题：" + issueRefs + " 条", path: "issues", meta: { count: issueRefs } });

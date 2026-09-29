@@ -7,10 +7,10 @@ export function sqlValueList(values: readonly string[]): string {
 /** 日报状态（daily_reports.state · A3-02）：草稿 / 已提交 / 补填（对过去日期首次提交）。 */
 export const DAILY_REPORT_STATE_KEYS = ["draft", "submitted", "supplement"] as const;
 
-/** 问题四态（issues.state · A3-10；允许回退且留痕）：未分组 → 未解决 → 处理中 → 已完成。 */
-export const ISSUE_STATE_KEYS = ["unassigned", "open", "in_progress", "done"] as const;
+/** 问题三态（issues.state · A3-10 · Push 215）：未解决 / 处理中 / 已完成；允许回退且留痕（「未分组」并入「未解决」）。 */
+export const ISSUE_STATE_KEYS = ["open", "in_progress", "done"] as const;
 
-/** 问题归类（issues.category · A3-11 · C9 字典十项）：一期为契约固定枚举，字典可维护随后（差异登记）。 */
+/** 问题归类（issues.categories · A3-11 · C9 字典十项 · Push 215 多值）：一期为契约固定枚举，字典可维护随后（差异登记）。 */
 export const ISSUE_CATEGORY_KEYS = [
   "机械部",
   "采购部",

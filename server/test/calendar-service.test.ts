@@ -268,7 +268,7 @@ describe("CalendarService · 顺延与 T-N / T+N 求值（D5-03）", () => {
     expect(forced).toMatchObject({ date: "2026-10-08", shifted: true });
   });
 
-  it("offset：T+1 逐级（A03 / A06 升级链路的时间基准，+3 / +7 同理）", async () => {
+  it("offset：T+1 逐级（升级链路的时间基准，+3 / +7 同理）", async () => {
     const { service } = makeService();
     await expect(service.offset({ date: "2026-09-30", days: 1, shift: "on" })).resolves.toMatchObject({
       rawDate: "2026-10-01",

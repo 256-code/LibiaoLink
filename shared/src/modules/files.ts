@@ -20,6 +20,14 @@ export const Sha256Schema = z
   .regex(/^[a-f0-9]{64}$/i)
   .openapi("Sha256", { description: "SHA-256 内容哈希（十六进制）；用于重复内容提示与变更前后留痕" });
 
+/** 图片附件引用（file_links 读面 · Push 215）：日报现场图 / 问题图等贴图场景；预览地址按需走 /files/{fileId}/preview（短时签名，D2）。 */
+export const FilePhotoRefSchema = z
+  .object({
+    fileId: UuidSchema,
+    name: z.string().openapi({ description: "原文件名（缩略图角标 / 无障碍文案）" }),
+  })
+  .openapi("FilePhotoRef", { description: "图片附件引用（多态关联读面；不做匿名直链，预览经预览接口换短时签名）" });
+
 export const UploadIntentSchema = z.enum(["version", "change"]).openapi("UploadIntent", {
   description:
     "上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）",

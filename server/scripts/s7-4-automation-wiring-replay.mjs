@@ -9,11 +9,11 @@
  *   证据三（主体不可解析）：taskId 不存在 → outbox 行 dead（确定性失败一次即弃）、零产出。
  *   证据四（无事件型规则订阅）：issue.updated 主题 → 直接消费完成、零产出（不产无主通知）。
  *   证据五（渠道护栏）：notify.message 行 channel=wecom_app → 投递层 dead + 零落库（M5-03 前不静默当站内信）。
- *   证据六（调度窗口 · A03 T+1）：真 JobScheduler tick 领取 automation-schedule.job → 产出与 last_run_at 推进
+ *   证据六（调度窗口 · A01 应填未填）：真 JobScheduler tick 领取 automation-schedule.job → 产出与 last_run_at 推进
  *        同事务提交、job_runs 留痕（executed / fire_count / produced / note）→ 消费 → 收件箱可见。
  *   证据七（调度窗口 · A01 合并）：同一人名下多项目 → 收件人粒度一条（项目清单合并文案 + 幂等键收件人粒度）。
  *   证据八（重放幂等）：回拨窗口重放 → 产出幂等键不重复（appendOutboxIfAbsent 唯一约束兜底）、job_runs 如实留痕。
- *   证据九（非 inbox 跳过）：R02 / A03 的 wecom_app 动作不产行，接线层 warn + channelSkipped 计数入 note。
+ *   证据九（非 inbox 跳过）：R02 / A01 的 wecom_app 动作不产行，接线层 warn + channelSkipped 计数入 note。
  *   证据十（自清理）：合成前缀 / 实体 id 全量精确清理，零残留（finally 兜底）。
  *
  * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）。
@@ -46,11 +46,11 @@ const WORKER_ID = "s74wire-replay";
 const HOUR_MS = 3_600_000;
 /** 与 env 缺省同档（6h）：冷启动保护证据按它构造「过旧」行。 */
 const EVENT_MAX_AGE_MS = 6 * HOUR_MS;
-/** 固定时钟：上海 2026-09-24 20:00 —— A03 T+1（当日 09:00）与 A01（当日 19:30）触发均已过且在窗口内。 */
+/** 固定时钟：上海 2026-09-24 20:00 —— A01（当日 19:30）触发已过且在窗口内。 */
 const CLOCK_NOW = new Date("2026-09-24T12:00:00.000Z");
 /** 调度窗口起点：上海 2026-09-24 00:00 —— 窗口 (起点, now] 覆盖当日全部触发时刻。 */
 const JOB_WINDOW_START = new Date("2026-09-23T16:00:00.000Z");
-/** 业务日（A01 上报基准日 / A03 T+1 触发日；上海 2026-09-24 周四 = 缺省工作日）。 */
+/** 业务日（A01 上报基准日；上海 2026-09-24 周四 = 缺省工作日）。 */
 const BUSINESS_DATE = "2026-09-24";
 
 const report = [];
@@ -382,8 +382,8 @@ function buildEnv(overrides = {}) {
     const taskB = cleanup.taskIds[1];
 
     const issues = await db.query(
-      "insert into issues (project_id, title, category, state, reporter_id, owner_id, due_at, raised_at) values ($1, $2, '其它原因', 'open', $3, $4, $5, date '2026-09-20') returning id",
-      [projectA, "现场漏水", manager, owner, "2026-09-23T09:00:00+08:00"],
+      "insert into issues (project_id, title, categories, state, reporter_id, owner_id, raised_at) values ($1, $2, array['其它原因'], 'open', $3, $4, date '2026-09-20') returning id",
+      [projectA, "现场漏水", manager, owner],
     );
     cleanup.issueIds = issues.rows.map((row) => row.id);
     const issue = cleanup.issueIds[0];
@@ -397,7 +397,6 @@ function buildEnv(overrides = {}) {
 
     const r02TaskAKey = trackedKey("R02:" + taskA + ":v" + tasks.rows[0].version);
     const r02TaskBKey = trackedKey("R02:" + taskB + ":v" + tasks.rows[1].version);
-    const a03Key = trackedKey("A03:" + issue + ":" + BUSINESS_DATE);
     const a01Key = trackedKey("A01:" + owner + ":" + BUSINESS_DATE);
     const wecomKey = trackedKey(OUTBOX_PREFIX + tag + ".chan.wecom");
 
@@ -538,7 +537,7 @@ function buildEnv(overrides = {}) {
     const issueTopicRow = await outboxRow(OUTBOX_PREFIX + tag + ".evt.issue-updated");
     check(
       "S4",
-      "无事件型规则订阅：issue.updated（A03 为调度型）→ 直接消费完成、零产出",
+      "无事件型规则订阅：issue.updated → 直接消费完成、零产出（不产无主通知）",
       "status=done / claimed=1 / done=1 / 产出数不变",
       short({ status: issueTopicRow?.status, ...drain6, messages: await ourMessageCount() }),
       issueTopicRow?.status === "done" &&
@@ -568,7 +567,7 @@ function buildEnv(overrides = {}) {
         (await notifyRowCount(wecomKey)) === 0,
     );
 
-    // ------------------------- 证据六/七：调度窗口（A03 T+1 提醒 + A01 日报合并）
+    // ------------------------- 证据六/七：调度窗口（A01 应填未填 + 同人多项目合并）
     const tick1 = await scheduler.tickOnce();
     const jobAfter = (await db.query("select id, kind, status, attempts, last_run_at, locked_by, locked_at, cron from jobs where id = $1", [jobId])).rows[0] ?? null;
     const runs1 = (await db.query("select status, window_from, window_to, fire_count, produced, note from job_runs where job_id = $1 order by id", [jobId])).rows;
@@ -586,34 +585,20 @@ function buildEnv(overrides = {}) {
     );
     check(
       "S6b",
-      "job_runs 留痕：executed / fire_count=1 / produced=2 / note 含主体数与非 inbox 跳过数",
-      "1 行 / executed / produced=2 / note 含「主体 5」与「非 inbox 跳过 2 条」",
+      "job_runs 留痕：executed / fire_count=1 / produced=1 / note 含主体数与非 inbox 跳过数",
+      "1 行 / executed / produced=1 / note 含「主体 4」与「非 inbox 跳过 1 条」",
       short(runs1),
       runs1.length === 1 &&
         runs1[0]?.status === "executed" &&
-        runs1[0]?.produced === 2 &&
+        runs1[0]?.produced === 1 &&
         runs1[0]?.fire_count === 1 &&
-        String(runs1[0]?.note).includes("主体 5") &&
-        String(runs1[0]?.note).includes("非 inbox 跳过 2 条"),
-    );
-    const a03Row = await outboxRow(a03Key);
-    const a03Payload = a03Row?.payload ?? {};
-    check(
-      "S6c",
-      "A03 T+1 产出：提醒责任人（issue.owner）一条，关联问题、模板 A03_T1_INBOX",
-      "A03:{issue}:2026-09-24 / recipient=责任人 / ref=issue:" + issue + " / A03_T1_INBOX",
-      short({ key: a03Row !== null, recipient: a03Payload.recipientId === owner, ref: a03Payload.refType + "/" + a03Payload.refId, template: a03Payload.templateCode, body: a03Payload.body }),
-      a03Row !== null &&
-        a03Payload.recipientId === owner &&
-        a03Payload.refType === "issue" &&
-        a03Payload.refId === issue &&
-        a03Payload.templateCode === "A03_T1_INBOX" &&
-        String(a03Payload.body).includes("现场漏水"),
+        String(runs1[0]?.note).includes("主体 4") &&
+        String(runs1[0]?.note).includes("非 inbox 跳过 1 条"),
     );
     const a01Row = await outboxRow(a01Key);
     const a01Payload = a01Row?.payload ?? {};
     check(
-      "S6d",
+      "S6c",
       "A01 合并产出：同一人名下两项目合并一条（收件人粒度幂等键 + 项目清单文案 + 无单一关联对象）",
       "A01:{owner}:2026-09-24 / refType=null / A01_INBOX_MERGED / 正文含两项目名",
       short({ key: a01Row !== null, ref: a01Payload.refType, template: a01Payload.templateCode, body: a01Payload.body }),
@@ -629,23 +614,24 @@ function buildEnv(overrides = {}) {
     const inboxOwner = await notify.list(owner, { page: 1, limit: 50 });
     const ownerTemplates = inboxOwner.items.map((item) => item.templateCode).sort();
     check(
-      "S6e",
-      "调度产出消费：A03 + A01 落行 → 责任人收件箱共 3 条（R02 + A03 + A01）",
-      "claimed=2 / done=2 / total=3 / unreadCount=3 / 模板集命中",
+      "S6d",
+      "调度产出消费：A01 落行 → 责任人收件箱共 2 条（R02 + A01）",
+      "claimed=1 / done=1 / total=2 / unreadCount=2 / 模板集命中",
       short({ ...drain8, total: inboxOwner.total, unread: inboxOwner.unreadCount, templates: ownerTemplates }),
-      drain8.claimed === 2 &&
-        drain8.done === 2 &&
-        inboxOwner.total === 3 &&
-        inboxOwner.unreadCount === 3 &&
-        JSON.stringify(ownerTemplates) === JSON.stringify(["A01_INBOX_MERGED", "A03_T1_INBOX", "R02_INBOX"]),
+      drain8.claimed === 1 &&
+        drain8.done === 1 &&
+        inboxOwner.total === 2 &&
+        inboxOwner.unreadCount === 2 &&
+        JSON.stringify(ownerTemplates) === JSON.stringify(["A01_INBOX_MERGED", "R02_INBOX"]),
     );
     check(
-      "S6f",
-      "非 inbox 跳过（证据九）：接线层 warn 含「渠道未落地」；本回放产出消息数 = 5（R02×2 + 护栏行 + A03 + A01）",
-      "warn 命中 / notify.message=5",
+      "S6e",
+      "非 inbox 跳过（证据九）：接线层 warn 含「渠道未落地」；本回放产出消息数 = 4（R02×2 + 护栏行 + A01）",
+      "warn 命中 / notify.message=4",
       short({ warnHit: wiringLogs.warn.some((line) => line.includes("渠道未落地")), messages: await ourMessageCount() }),
-      wiringLogs.warn.some((line) => line.includes("渠道未落地")) && (await ourMessageCount()) === 5,
-    );    // ------------------------------------- 证据八：同窗口重放（幂等键兜底不重发）
+      wiringLogs.warn.some((line) => line.includes("渠道未落地")) && (await ourMessageCount()) === 4,
+    );
+    // ------------------------------------- 证据八：同窗口重放（幂等键兜底不重发）
     await db.query(
       "update jobs set status = 'pending', run_at = $2, last_run_at = $2, attempts = 0, locked_at = null, locked_by = null where id = $1",
       [jobId, JOB_WINDOW_START],
@@ -653,7 +639,6 @@ function buildEnv(overrides = {}) {
     const messagesBeforeReplay = await ourMessageCount();
     const tick2 = await scheduler.tickOnce();
     const runs2 = (await db.query("select status, produced, note from job_runs where job_id = $1 order by id", [jobId])).rows;
-    const a03Replay = await outboxRow(a03Key);
     const a01Replay = await outboxRow(a01Key);
     check(
       "S7",
@@ -664,16 +649,15 @@ function buildEnv(overrides = {}) {
         (await ourMessageCount()) === messagesBeforeReplay &&
         runs2.length === 2 &&
         runs2[1]?.status === "executed" &&
-        a03Replay !== null &&
         a01Replay !== null,
     );
     const inboxAfterReplay = await notify.list(owner, { page: 1, limit: 50 });
     check(
       "S7b",
-      "重放不重发（读面）：责任人收件箱仍 3 条（无重复通知）",
-      "total=3 / unreadCount=3",
+      "重放不重发（读面）：责任人收件箱仍 2 条（无重复通知）",
+      "total=2 / unreadCount=2",
       short({ total: inboxAfterReplay.total, unread: inboxAfterReplay.unreadCount }),
-      inboxAfterReplay.total === 3 && inboxAfterReplay.unreadCount === 3,
+      inboxAfterReplay.total === 2 && inboxAfterReplay.unreadCount === 2,
     );
   } finally {
     try {

@@ -12,7 +12,7 @@ import {
   type ReplaySubject,
 } from "../src/modules/automation/index.js";
 
-/** 金标基准日：2026-09-24（周四）；A03 用 2026-09-21（周一）/ 2026-09-23（周三）两窗口各一日。 */
+/** 金标基准日：2026-09-24（周四）；A14 待办提醒用当日、A01/A02 用当日槽位（A03 随处理时限下线 · Push 215）。 */
 const BUSINESS_DAY = "2026-09-24";
 const NO_EXCEPTIONS = calendarWindow("2026-09-01", "2026-12-31", []);
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
@@ -75,31 +75,6 @@ function projectDay(input: {
     },
     recipients: {
       "project.group": input.groupMissing === true ? null : { id: "g-1", name: null },
-    },
-  };
-}
-
-/** A03 问题：时限 due_at 为业务日基准（T+1 = due+1、T+3 = due+3，ADR-026）。 */
-function issueSubject(input: {
-  id?: string;
-  title?: string;
-  state?: string;
-  due: string;
-  ownerMissing?: boolean;
-  managerMissing?: boolean;
-}): ReplaySubject {
-  return {
-    kind: "issue",
-    id: input.id ?? "issue-1",
-    fields: {
-      "issue.title": input.title ?? "配电柜到货延迟",
-      "issue.state": input.state ?? "in_progress",
-      "issue.owner_name": input.ownerMissing === true ? null : "张三",
-      "issue.due_at": input.due,
-    },
-    recipients: {
-      "issue.owner": input.ownerMissing === true ? null : { id: "u-1", name: "张三" },
-      "project.manager": input.managerMissing === true ? null : { id: "u-9", name: "李四" },
     },
   };
 }
@@ -224,67 +199,6 @@ describe("A02 日报每日汇总群播报（19:00 · 项目群）", () => {
   });
 });
 
-describe("A03 问题 SLA（T+1 提醒责任人 · T+3 升级项目经理 · 09:00）", () => {
-  const T1_DAY = "2026-09-21";
-  const T3_DAY = "2026-09-23";
-
-  it("T+1（due+1）→ 站内信 + 企微各一条提醒责任人，文案逐字", () => {
-    const report = replay(T1_DAY, [issueSubject({ due: "2026-09-20" })]);
-    const a03 = report.messages.filter((message) => message.ruleCode === "A03");
-    expect(a03).toHaveLength(2);
-    expect(a03.map((message) => message.channel)).toEqual(["inbox", "wecom_app"]);
-    for (const message of a03) {
-      expect(message.ruleName).toBe("问题超期提醒（T+1 责任人）");
-      expect(message.title).toBe("问题处理超时提醒");
-      expect(message.body).toBe("张三，你的问题「配电柜到货延迟」已超过处理时限 1 天，请尽快处理并更新进展！");
-      expect(message.recipientId).toBe("u-1");
-      expect(message.windowKey).toBe(T1_DAY);
-    }
-    expect(a03[0]?.dedupeKey).toBe(dedupeKey("A03", "issue-1", T1_DAY));
-    expect(report.details.some((detail) => detail.ruleName.includes("T+3") && detail.skipped === "window_mismatch")).toBe(true);
-  });
-
-  it("T+3（due+3）→ 只升级项目经理（责任人当日不重复轰炸）", () => {
-    const report = replay(T3_DAY, [issueSubject({ due: "2026-09-20" })]);
-    const a03 = report.messages.filter((message) => message.ruleCode === "A03");
-    expect(a03).toHaveLength(2);
-    for (const message of a03) {
-      expect(message.ruleName).toBe("问题超期升级（T+3 项目经理）");
-      expect(message.title).toBe("问题超期升级");
-      expect(message.body).toBe("李四，问题「配电柜到货延迟」超期 3 天仍未闭环，已升级给你，请关注并推动处理！");
-      expect(message.recipientId).toBe("u-9");
-      expect(message.windowKey).toBe(T3_DAY);
-    }
-    expect(a03[0]?.dedupeKey).toBe(dedupeKey("A03", "issue-1", T3_DAY));
-    expect(report.details.some((detail) => detail.ruleName.includes("T+1") && detail.skipped === "window_mismatch")).toBe(true);
-  });
-
-  it("完成即止：已闭环的问题 T+1 / T+3 两个窗口都不发", () => {
-    const t1 = replay(T1_DAY, [issueSubject({ due: "2026-09-20", state: "done" })]);
-    expect(t1.messages).toHaveLength(0);
-    expect(t1.details.find((detail) => detail.ruleName.includes("T+1"))?.skipped).toBe("not_matched");
-    const t3 = replay(T3_DAY, [issueSubject({ due: "2026-09-20", state: "done" })]);
-    expect(t3.messages).toHaveLength(0);
-    expect(t3.details.find((detail) => detail.ruleName.includes("T+3"))?.skipped).toBe("not_matched");
-  });
-
-  it("责任人未分派 → T+1 无收件人（recipient_missing），T+3 仍升级项目经理", () => {
-    const t1 = replay(T1_DAY, [issueSubject({ due: "2026-09-20", ownerMissing: true })]);
-    expect(t1.messages).toHaveLength(0);
-    expect(t1.details.find((detail) => detail.ruleName.includes("T+1"))?.skipped).toBe("recipient_missing");
-    const t3 = replay(T3_DAY, [issueSubject({ due: "2026-09-20", ownerMissing: true })]);
-    expect(t3.messages.filter((message) => message.ruleCode === "A03")).toHaveLength(2);
-    expect(t3.messages[0]?.recipientId).toBe("u-9");
-  });
-
-  it("幂等：同问题同窗口已发送 → duplicate（重跑不重复提醒）", () => {
-    const report = replay(T1_DAY, [issueSubject({ due: "2026-09-20" })], {
-      sentKeys: [dedupeKey("A03", "issue-1", T1_DAY)],
-    });
-    expect(report.messages).toHaveLength(0);
-    expect(report.details.filter((detail) => detail.ruleName.includes("T+1")).every((detail) => detail.skipped === "duplicate")).toBe(true);
-  });
-});
 describe("A14 自定义待办提醒（提醒日 09:00 · 站内信 + 企微）", () => {
   it("提醒日命中 → 双渠道逐字（标题含待办标题、正文含内容）", () => {
     const report = replay(BUSINESS_DAY, [todoSubject({ remindDate: BUSINESS_DAY })]);
@@ -322,7 +236,7 @@ describe("A14 自定义待办提醒（提醒日 09:00 · 站内信 + 企微）",
 });
 
 describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文案一致性）", () => {
-  it("T_PLUS_3 窗口：基准日后 3 天 09:00（A03 升级）", () => {
+  it("T_PLUS_3 窗口：基准日后 3 天 09:00（窗口口径保留 —— A03 规则下线，调度器能力不动）", () => {
     const fire = resolveScheduleFire({
       window: "T_PLUS_3",
       businessDate: "2026-09-23",
@@ -338,20 +252,18 @@ describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文�
   });
 
   it("主体类型不匹配 → subject_mismatch（A 系列主体不被 R 系列规则误命中，反之亦然）", () => {
-    const report = replay("2026-09-22", [issueSubject({ due: "2026-09-20" })]);
-    expect(report.messages).toHaveLength(0);
+    const report = replay("2026-09-22", [todoSubject({ remindDate: "2026-09-22" })]);
     expect(report.details.find((detail) => detail.ruleCode === "R02")?.skipped).toBe("subject_mismatch");
     expect(report.details.find((detail) => detail.ruleCode === "A01")?.skipped).toBe("subject_mismatch");
-    expect(report.details.find((detail) => detail.ruleCode === "A03")?.skipped).toBe("window_mismatch");
+    expect(report.messages.every((message) => message.ruleCode === "A14")).toBe(true);
   });
 
-  it("内置规则集：A 系列四条（A03 两窗口）与主体类型登记齐备", () => {
+  it("内置规则集：A 系列三条（A03 随处理时限下线）与主体类型登记齐备", () => {
     const codes = BUILTIN_RULES.map((rule) => rule.code);
-    for (const code of ["A01", "A02", "A03", "A14"]) expect(codes).toContain(code);
-    expect(BUILTIN_RULES.filter((rule) => rule.code === "A03").map((rule) => rule.trigger.window)).toEqual(["T_PLUS_1", "T_PLUS_3"]);
+    for (const code of ["A01", "A02", "A14"]) expect(codes).toContain(code);
+    expect(codes).not.toContain("A03"); // 问题主体类型 issue 随处理时限（due_at）一并下线，A 系列只剩三条
     expect(subjectKindOf("A01")).toBe("report_slot");
     expect(subjectKindOf("A02")).toBe("project_day");
-    expect(subjectKindOf("A03")).toBe("issue");
     expect(subjectKindOf("A14")).toBe("todo");
     expect(subjectKindOf("R03")).toBe("task");
   });

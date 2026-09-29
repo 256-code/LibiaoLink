@@ -2,7 +2,7 @@ import { z } from "../zod.ts";
 import { DateOnlySchema, DateTimeSchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { PrioritySchema, StageKeySchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
 import { TaskProgressSchema } from "./tasks.ts";
-import { IssueCategorySchema, IssueStateSchema } from "./issues.ts";
+import { IssueCategoryListSchema, IssueStateSchema } from "./issues.ts";
 
 /**
  * 工作台（M6-05 第一刀 · 系统功能书 A6-01 / A6-03）：跨项目的个人聚合读面 ——
@@ -15,8 +15,8 @@ import { IssueCategorySchema, IssueStateSchema } from "./issues.ts";
  *   未排期（plannedEnd 为空）与 7 天以外的远期任务不进工作台；「我参与的任务」口径未定（差异登记，本刀不含）。
  * - 归档项目（ADR-027 冻结）与软删项目下的任务 / 问题一律不进工作台（不再催办 / 不可见）。
  * - 「我的问题」= 我处理（ownerId = 我）与我提出的（reporterId = 我）两个清单；同一问题两边都命中时两个清单都出现。
- * - 排序：任务组内按 plannedEnd 升序、同日期按 id 升序；问题未关闭（state != done）在前 —— 先按处理时限升序
- *   （无时限最后）、再按提出日期（raisedAt）升序、id 升序；已完成后置。
+ * - 排序：任务组内按 plannedEnd 升序、同日期按 id 升序；问题未关闭（state != done）在前 —— 按提出日期（raisedAt）升序、
+ *   id 升序；已完成后置。
  * - 记录级可见性：只含对我可见的项目（ADR-011；PERMISSION_ENFORCED 关闭期等价全量）。
  */
 
@@ -72,14 +72,13 @@ export const WorkspaceIssueItemSchema = z
     projectName: z.string(),
     taskId: UuidSchema.nullable().openapi({ description: "所属任务（可空：问题可不挂任务）" }),
     title: z.string(),
-    category: IssueCategorySchema,
+    categories: IssueCategoryListSchema,
     state: IssueStateSchema,
     reporterId: UuidSchema,
     reporterName: z.string().nullable(),
     ownerDepartment: z.string().nullable(),
     ownerId: UuidSchema.nullable(),
     ownerName: z.string().nullable(),
-    dueAt: DateTimeSchema.nullable().openapi({ description: "处理时限（ADR-026 SLA）" }),
     raisedAt: DateOnlySchema,
     updatedAt: DateTimeSchema,
     version: VersionSchema,

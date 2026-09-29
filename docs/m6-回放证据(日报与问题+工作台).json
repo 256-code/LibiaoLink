@@ -1,0 +1,460 @@
+{
+  "steps": [
+    {
+      "id": "P1",
+      "title": "api 可用（/healthz）",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "extra": "先起 api 再跑本脚本"
+    },
+    {
+      "id": "P2",
+      "title": "管理员账号可用（roles.code = admin；空库自动建合成管理员）",
+      "expected": "非空 userId",
+      "actual": "\"02e76fdb-821a-4c62-9f38-3ec8d5189550\"",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "P3",
+      "title": "临时会话可用（GET /api/v1/projects）",
+      "expected": "200",
+      "actual": "200 109",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "P4",
+      "title": "建回放项目（M6RPL-）",
+      "expected": "201",
+      "actual": "201 {\"id\":\"5190cf4d-fdd2-4b78-b17a-f59549ca7bb6\",\"code\":\"M6RPL-20260929015835\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "P5",
+      "title": "建 2 个任务（引用守卫靶子 + 无引用对照）",
+      "expected": "201 x 2",
+      "actual": "{\"a\":\"803ca6a4-a489-4297-81a8-0d7f60c8f72b\",\"b\":\"ce957361-a77a-4a1a-96b3-5189c12c73a1\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R1",
+      "title": "新报今天（submitted + 关联阶段去重 + 现场附图 + 系统字段）",
+      "expected": "201 / submitted / stageKeys=[install] / photos[0]=现场图 / issuePhotos=[]",
+      "actual": "201 / submitted / {\"stageKeys\":[\"install\"],\"stageNames\":[\"硬件实施\"],\"photos\":[{\"fileId\":\"132405cc-c98e-43ef-959a-75733baeac30\",\"name\":\"M6RPL-现场照片.jpg\"}],\"issuePhotos\":[]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R2",
+      "title": "同日多条（Push 215）：同人同项目同日第二条照常新建（无 409 判重）",
+      "expected": "201 / 新 id / issueCategories 两项",
+      "actual": "201 {\"id\":\"a6aba769-b543-4ae5-9240-7156c08728cb\",\"first\":\"4963416a-5ca2-40e1-a7ca-4c8afd5284f8\",\"categories\":[\"机械部\",\"供应商原因\"]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R3",
+      "title": "未来日期 400 VALIDATION_FAILED",
+      "expected": "400 VALIDATION_FAILED",
+      "actual": "400 VALIDATION_FAILED",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R4",
+      "title": "补填昨天（state=supplement）",
+      "expected": "201 supplement",
+      "actual": "201 supplement",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R5",
+      "title": "草稿写库（state=draft 落行）+ 提交（过去日期 = 补填 supplement）",
+      "expected": "201 draft（库内 state=draft / submitted_at 为空）-> 200 supplement",
+      "actual": "201 draft / 库内 {\"state\":\"draft\",\"submitted_at\":null} -> 200 supplement",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R6",
+      "title": "日报列表：4 条 + 日期倒序",
+      "expected": "200 / total=4 / 首行 2026-09-29",
+      "actual": "200 / total=4 / 2026-09-29,2026-09-29,2026-09-28,2026-09-27",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R7",
+      "title": "日报详情（A3-01 全字段回读：阶段 / 附图 / 建议）",
+      "expected": "200 + stageKeys[0]=install / photos[0]=现场图 / suggestion 一致",
+      "actual": "200 {\"stageKeys\":[\"install\"],\"photos\":[{\"fileId\":\"132405cc-c98e-43ef-959a-75733baeac30\",\"name\":\"M6RPL-现场照片.jpg\"}],\"suggestion\":\"复测后复紧地脚螺栓\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R8",
+      "title": "日报详情（现场发现问题 + 多值归类 + 附件两栏位）",
+      "expected": "200 + issueCategories 两项 / photos[0]=现场图-2",
+      "actual": "200 {\"categories\":[\"机械部\",\"供应商原因\"],\"photos\":[{\"fileId\":\"e05af7a5-3a70-4a9a-acca-a33e5693da08\",\"name\":\"M6RPL-现场照片-2.jpg\"}]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "R9",
+      "title": "附图校验：文件不存在 / 不属于本项目 -> 400 VALIDATION_FAILED",
+      "expected": "400 VALIDATION_FAILED",
+      "actual": "400 VALIDATION_FAILED",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "I1",
+      "title": "A3-09：提交自动生成问题（原文 / 多值归类 / 提出人 / 提出日期 / A3-12 归类分派）",
+      "expected": "total=1 + state=open + categories 两项 + ownerDepartment=机械部",
+      "actual": "200 total=1 {\"title\":\"现场发现：支架尺寸偏差 3mm\",\"categories\":[\"机械部\",\"供应商原因\"],\"state\":\"open\",\"dept\":\"机械部\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "I2",
+      "title": "附图转挂（方案一）：提交生成问题时问题图从日报侧转挂到问题侧，日报侧只剩现场图",
+      "expected": "问题 photos[0]=问题图 / 日报 issuePhotos=[] / 日报 photos[0]=现场图-2",
+      "actual": "{\"issuePhotos\":[{\"fileId\":\"6c7b955b-7f5a-4475-83a8-64d7004cc02d\",\"name\":\"M6RPL-问题照片.jpg\"}],\"reportIssuePhotos\":[],\"reportPhotos\":[{\"fileId\":\"e05af7a5-3a70-4a9a-acca-a33e5693da08\",\"name\":\"M6RPL-现场照片-2.jpg\"}]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "I3",
+      "title": "附图链路落库（file_links）：日报侧 onsite=1、问题侧 =1（kind=空串），issue 侧链由问题持有",
+      "expected": "report/onsite=1 + issue/=1（无 report/issue 残留 — 已转挂）",
+      "actual": "[\"issue/=1\",\"report/onsite=1\"]",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "I4",
+      "title": "幂等重放：重编辑已提交日报（重跑副作用）-> 问题仍 1 条、事件不重复（仅 created）",
+      "expected": "issues total=1 / issue_events=1",
+      "actual": "issues total=1 / issue_events=1",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "T1",
+      "title": "A3-08 停用（Push 215）：提交日报不再回写任务进展（note 空 / 无 note_change 事件）",
+      "expected": "note 为空 / note_change=0",
+      "actual": "{\"note\":null,\"events\":0}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E1",
+      "title": "三态：open -> in_progress（写一条 state_change）",
+      "expected": "200 in_progress / events=2",
+      "actual": "200 in_progress / events=2",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E2",
+      "title": "三态：in_progress -> done（同写 closed_at / closed_by + solution 事件）",
+      "expected": "200 done / closedBy=admin / events=4",
+      "actual": "200 done closedBy=02e76fdb-821a-4c62-9f38-3ec8d5189550 / events=4",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E3",
+      "title": "A3-10 允许回退：done -> open（自动清空关闭对）",
+      "expected": "200 open / closedAt=null / events=5",
+      "actual": "200 open closedAt=null / events=5",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E4",
+      "title": "空更新 400 VALIDATION_FAILED（防刷留痕）",
+      "expected": "400 VALIDATION_FAILED",
+      "actual": "400 VALIDATION_FAILED",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E5",
+      "title": "乐观锁：过期 version 409 VERSION_CONFLICT",
+      "expected": "409 VERSION_CONFLICT",
+      "actual": "409 VERSION_CONFLICT",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E6",
+      "title": "问题列表：状态 / 关键字 / 多值归类筛选（命中任一即入选）",
+      "expected": "open total=1 / 支架 total=1 / 供应商原因 total=1 / 其它原因 total=0",
+      "actual": "state total=1 / q total=1 / category total=1 / miss total=0",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E7",
+      "title": "PATCH 扩项：描述 / 归类（多值）可改（走审计，不写事件 -> events 仍 5）",
+      "expected": "200 / title 更新 / categories 两项 / events=5",
+      "actual": "200 {\"title\":\"现场发现：支架尺寸偏差 3mm（复测）\",\"categories\":[\"机械部\",\"生产原因\"],\"events\":5}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "E8",
+      "title": "A3-13 留痕：分派（assignment）与四类事件齐备（created / state_change / solution / assignment）",
+      "expected": "ownerId=admin + events=6 + 四类齐备",
+      "actual": "{\"owner\":\"02e76fdb-821a-4c62-9f38-3ec8d5189550\",\"count\":6,\"types\":[\"created\",\"state_change\",\"solution\",\"state_change\",\"state_change\",\"assignment\"]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G0",
+      "title": "附带数据：同日补一条带问题日报（供我的问题两栏 / 归档清单留存量），问题负责人 = 我",
+      "expected": "201 + issue total=1 + ownerId=admin",
+      "actual": "201 / {\"report\":\"a4ee2778-a07b-4373-a8f6-2da11823e7dc\",\"issue\":\"3d630f8e-f0db-4231-9222-0e610dfd4fd7\",\"owner\":\"02e76fdb-821a-4c62-9f38-3ec8d5189550\",\"state\":\"open\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G1a",
+      "title": "成对删除前置：新建带问题日报（靶子）",
+      "expected": "201 + 派生问题 1 条",
+      "actual": "201 {\"report\":\"c5bd86cd-7bb6-40c6-b506-0424dfe58321\",\"issue\":\"fc04f58e-b235-40fd-9d6d-511cfd28c363\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G1",
+      "title": "成对删除：DELETE 日报 = 连带删除它派生的全部问题 + 两侧附图链（cascadedIssueIds 回执）",
+      "expected": "200 deleted + cascadedIssueIds=[派生问题] / 问题与日报 404 / file_links 0 行",
+      "actual": "200 {\"body\":{\"id\":\"c5bd86cd-7bb6-40c6-b506-0424dfe58321\",\"deleted\":true,\"cascadedIssueIds\":[\"fc04f58e-b235-40fd-9d6d-511cfd28c363\"]},\"issue\":404,\"report\":404,\"links\":0}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G2",
+      "title": "成对删除：DELETE 问题（有来源日报）= 连带删除来源日报及其全部问题（cascadedReportId 回执）",
+      "expected": "200 deleted + cascadedReportId=a6aba769-b543-4ae5-9240-7156c08728cb / 来源日报 404 / 派生问题清零",
+      "actual": "200 {\"body\":{\"id\":\"a61ffe54-efa3-4233-9604-a5bc360f40ff\",\"deleted\":true,\"cascadedReportId\":\"a6aba769-b543-4ae5-9240-7156c08728cb\",\"cascadedIssueIds\":[]},\"report\":404,\"issuesLeft\":0}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G3",
+      "title": "A2-01：被问题引用的任务 DELETE 409（details[].code = issue_ref，带条数）",
+      "expected": "409 TASK_HAS_REFERENCES + 仅 issue_ref",
+      "actual": "409 TASK_HAS_REFERENCES [\"issue_ref\"]",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G4",
+      "title": "无引用任务可删（200）+ 重复删除 404",
+      "expected": "200 / 404",
+      "actual": "200 / 404",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G5",
+      "title": "记录级 404：不存在 / 跨项目 id 的日报与问题详情",
+      "expected": "404 / 404",
+      "actual": "404 / 404",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "S0",
+      "title": "A7-05 前置：回放成员落名册（M2-05 幂等 upsert）+ 身份随行下发",
+      "expected": "200 / userId=adminId / roleInProject=project_manager",
+      "actual": "200 {\"userId\":\"02e76fdb-821a-4c62-9f38-3ec8d5189550\",\"role\":\"project_manager\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "S1",
+      "title": "A7-01 当日汇总：已提交条目聚合（entryCount=2 / 人数合计=17 / 问题数=1；同一人多条各计一条）",
+      "expected": "200 entryCount=2 headcountTotal=17 issueCount=1 + 阶段名与附图随行",
+      "actual": "200 {\"date\":\"2026-09-29\",\"entryCount\":2,\"headcountTotal\":17,\"issueCount\":1,\"stages\":[\"硬件实施\"],\"photos\":1}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "S2",
+      "title": "A7-01 / A7-05 缺省日期 = 今天（Asia/Shanghai）",
+      "expected": "200 date=2026-09-29",
+      "actual": "200 2026-09-29 / isWorkday=true",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "S3",
+      "title": "未来日期 400 VALIDATION_FAILED（汇总 / 应填未填同口径，A3-04）",
+      "expected": "400 x 2",
+      "actual": "400 / 400",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "S4",
+      "title": "A7-05 应填未填：名册 × 当日状态（已提交 → 不在漏填名单；同一人多条取首条已提交）",
+      "expected": "200 memberCount≥1 submittedCount=1 / 漏填 = 名册 − 1",
+      "actual": "200 {\"memberCount\":1,\"submittedCount\":1,\"missingCount\":0,\"missingUserIds\":[]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "S5",
+      "title": "A7-05 应填未填：工作日无日报（2026-09-25）→ 名册全员进漏填名单",
+      "expected": "200 submittedCount=0 / missingCount=memberCount / missingUserIds 全量",
+      "actual": "200 {\"date\":\"2026-09-25\",\"memberCount\":1,\"missingCount\":1,\"missingUserIds\":[\"02e76fdb-821a-4c62-9f38-3ec8d5189550\"]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "S6",
+      "title": "A7-05 非工作日整列为空（2026-09-26 / weekend / 无例外名）",
+      "expected": "200 missingCount=0 missingUserIds=[]",
+      "actual": "200 {\"isWorkday\":false,\"dayKind\":\"weekend\",\"dayName\":null,\"missingCount\":0,\"members\":1}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W0",
+      "title": "工作台前置：建靶子任务（缺省「待分配」）",
+      "expected": "201 / ownerIds=[]",
+      "actual": "201 {\"id\":\"9f24d2a8-3cdb-4459-945f-50df5342126e\",\"ownerIds\":[]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W1",
+      "title": "A6-01 已逾期组：负责人含我 + plannedEnd < 今天 → overdue（displayStatus=overdue）",
+      "expected": "200 / overdue 含靶子 / displayStatus=overdue",
+      "actual": "200 {\"patch\":200,\"hit\":true,\"displayStatus\":\"overdue\",\"base\":\"2026-09-29\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W2",
+      "title": "A6-01 今日待办组：plannedEnd = 今天 → today（不落他组）",
+      "expected": "200 / today 含靶子 / 他组无",
+      "actual": "200 {\"patch\":200,\"hit\":true,\"leak\":[]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W3",
+      "title": "A6-01 即将到期组：plannedEnd = 明天（今天起 7 天窗口内）→ upcoming",
+      "expected": "200 / upcoming 含靶子",
+      "actual": "200 {\"patch\":200,\"hit\":true,\"plannedEnd\":\"2026-09-30\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W4",
+      "title": "A6-01 待分配不进：显式 ownerIds=[] 后三组均不含靶子",
+      "expected": "200 / 三组全无",
+      "actual": "200 {\"patch\":200,\"ownerIds\":[],\"leak\":[]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W5",
+      "title": "工作台靶子复位：重新指派后回 upcoming（供归档剔除 W7 反证）",
+      "expected": "200 / upcoming 含靶子",
+      "actual": "200 {\"patch\":200,\"hit\":true}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W6",
+      "title": "A6-03 我的问题两栏：双命中（ownerId / reporterId 均为我）两边都出现；多值归类随行",
+      "expected": "200 / handling 与 raised 均含问题 / categories=客户原因",
+      "actual": "200 {\"handling\":\"3d630f8e-f0db-4231-9222-0e610dfd4fd7\",\"raised\":\"3d630f8e-f0db-4231-9222-0e610dfd4fd7\",\"state\":\"open\",\"categories\":[\"客户原因\"]}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "A1",
+      "title": "归档前置：项目读到验收阶段（stageKey=acceptance）与当前 version",
+      "expected": "200 stageKey=acceptance version>=0",
+      "actual": "200 {\"stageKey\":\"acceptance\",\"version\":0}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "A2",
+      "title": "归档门禁：有缺项且未确认 -> 422 ARCHIVE_GATE_NOT_PASSED（details 带缺项明细）",
+      "expected": "422 ARCHIVE_GATE_NOT_PASSED + details 含 task_not_done",
+      "actual": "422 ARCHIVE_GATE_NOT_PASSED [\"task_not_done\",\"task_not_done\",\"file_not_final\",\"file_not_final\",\"file_not_final\",\"doc_missing\",\"doc_missing\",\"doc_missing\",\"doc_missing\",\"doc_missing\",\"doc_m...",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "A3",
+      "title": "门禁拒绝：不置位（仍 active）+ 写失败留痕（audit archive / failed）",
+      "expected": "200 status=active + audit failed>=1",
+      "actual": "200 {\"status\":\"active\",\"failed\":1}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "A4",
+      "title": "确认越过（confirm=true）-> 200：置 archived + 引用式清单落库（缺项随 acknowledgedMissing 留痕；问题三态快照）",
+      "expected": "200 projectId/archivedBy 对齐 + status=archived + archivedAt 非空 + snapshot 齐全 + ack 含 task_not_done",
+      "actual": "200 {\"id\":\"30965108-fe0e-455d-be09-6a4803f4dc3d\",\"projectId\":\"5190cf4d-fdd2-4b78-b17a-f59549ca7bb6\",\"archivedBy\":\"02e76fdb-821a-4c62-9f38-3ec8d5189550\",\"ack\":[\"task_not_done\",\"task_not_done\",\"file_not_final\",\"file_not_final\",\"file_not_final\",\"doc_missing\",\"doc_missing\",\"doc_missing\",\"doc_missing\",\"doc_missing\",\"doc_missing...",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "A5",
+      "title": "归档清单读面：GET /archive 200（与写面同形；未归档项目 404 见单测）",
+      "expected": "200 同 id / 同 projectId / 同任务数",
+      "actual": "200 {\"id\":\"30965108-fe0e-455d-be09-6a4803f4dc3d\",\"tasks\":2}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "A6",
+      "title": "契约收紧反证：PATCH 项目不再接受 status=archived（归档只能走归档端点）",
+      "expected": "400 VALIDATION_FAILED",
+      "actual": "400 VALIDATION_FAILED",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "A7",
+      "title": "归档检索：filter[archivedYear]=2026 命中（当年归档）；错年不命中",
+      "expected": "200 含该项目 / 错年不含",
+      "actual": "200 {\"hit\":true,\"wrong\":false}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "G4b",
+      "title": "归档写保护（ADR-027）：日报填报 / 问题处理 / 任务删除均 409 PROJECT_ARCHIVED",
+      "expected": "409 PROJECT_ARCHIVED x 3",
+      "actual": "{\"report\":\"409:PROJECT_ARCHIVED\",\"issue\":\"409:PROJECT_ARCHIVED\",\"task\":\"409:PROJECT_ARCHIVED\"}",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "id": "W7",
+      "title": "工作台 × 归档（ADR-027）：归档项目整项目剔除（任务三组 / 问题两栏零残留）",
+      "expected": "200 / 该项目条目零残留",
+      "actual": "200 {\"tasks\":[],\"issues\":[]}",
+      "ok": true,
+      "extra": ""
+    }
+  ]
+}

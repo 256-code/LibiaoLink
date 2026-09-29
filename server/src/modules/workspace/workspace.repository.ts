@@ -38,14 +38,13 @@ export interface WorkspaceIssueRow {
   projectName: string;
   taskId: string | null;
   title: string;
-  category: string;
+  categories: string[];
   state: string;
   reporterId: string;
   reporterName: string | null;
   ownerDepartment: string | null;
   ownerId: string | null;
   ownerName: string | null;
-  dueAt: Date | null;
   raisedAt: string;
   updatedAt: Date;
   version: number;
@@ -114,7 +113,7 @@ export class WorkspaceRepository {
     return rows as WorkspaceTaskRow[];
   }
 
-  /** 我的问题：我处理（ownerId）∪ 我提出的（reporterId）；未关闭在前 —— 处理时限升序（无时限最后）→ raisedAt → id。 */
+  /** 我的问题：我处理（ownerId）∪ 我提出的（reporterId）；未关闭在前 —— raisedAt（提出日期）升序 → id（Push 215 删处理时限档）。 */
   async listMyIssues(
     actorId: string,
     scope: ProjectScopeFilter,
@@ -135,14 +134,13 @@ export class WorkspaceRepository {
         projectName: projects.name,
         taskId: issues.taskId,
         title: issues.title,
-        category: issues.category,
+        categories: issues.categories,
         state: issues.state,
         reporterId: issues.reporterId,
         reporterName: users.displayName,
         ownerDepartment: issues.ownerDepartment,
         ownerId: issues.ownerId,
         ownerName: ISSUE_OWNER.displayName,
-        dueAt: issues.dueAt,
         raisedAt: issues.raisedAt,
         updatedAt: issues.updatedAt,
         version: issues.version,
@@ -154,7 +152,6 @@ export class WorkspaceRepository {
       .where(and(...conditions))
       .orderBy(
         sql`case when ${issues.state} = ${"done"} then 1 else 0 end`,
-        sql`${issues.dueAt} asc nulls last`,
         asc(issues.raisedAt),
         asc(issues.id),
       );

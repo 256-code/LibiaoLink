@@ -75,14 +75,13 @@ function makeIssue(overrides: Partial<WorkspaceIssueRow> = {}): WorkspaceIssueRo
     projectName: "示范项目",
     taskId: TASK_A,
     title: "物料到货延迟",
-    category: "采购部",
+    categories: ["采购部"],
     state: "in_progress",
     reporterId: OTHER,
     reporterName: "他人",
     ownerDepartment: "采购部",
     ownerId: ME,
     ownerName: "我",
-    dueAt: new Date("2026-09-30T09:00:00.000Z"),
     raisedAt: "2026-09-20",
     updatedAt: new Date("2026-09-25T01:00:00.000Z"),
     version: 3,
@@ -164,18 +163,18 @@ describe("工作台服务（M6-05 第一刀）", () => {
     expect(response.myTasks.today[0]?.ownerNames).toEqual([]);
   });
 
-  it("问题两栏：我处理 / 我提出的；双命中两边都出现；映射保留顺序与时间格式", async () => {
+  it("问题两栏：我处理 / 我提出的；双命中两边都出现；多值归类与时间格式原样映射（Push 215 删处理时限）", async () => {
     const repo = new FakeWorkspaceRepository();
     repo.issueRows = [
       makeIssue({ id: ISSUE_A, ownerId: ME, reporterId: OTHER }),
-      makeIssue({ id: ISSUE_B, ownerId: OTHER, reporterId: ME, dueAt: null }),
+      makeIssue({ id: ISSUE_B, ownerId: OTHER, reporterId: ME, categories: ["采购部", "供应商原因"] }),
       makeIssue({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", ownerId: ME, reporterId: ME, state: "done" }),
     ];
     const response = await makeService(repo, new FakePermissionService()).get(ME);
     expect(response.myIssues.handling.map((item) => item.id)).toEqual([ISSUE_A, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"]);
     expect(response.myIssues.raised.map((item) => item.id)).toEqual([ISSUE_B, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"]);
-    expect(response.myIssues.raised[0]?.dueAt).toBeNull();
-    expect(response.myIssues.handling[0]?.dueAt).toBe("2026-09-30T09:00:00.000Z");
+    expect(response.myIssues.raised[0]?.categories).toEqual(["采购部", "供应商原因"]);
+    expect("dueAt" in (response.myIssues.raised[0] ?? {})).toBe(false);
     expect(response.myIssues.handling[0]?.updatedAt).toBe("2026-09-25T01:00:00.000Z");
   });
 

@@ -224,7 +224,7 @@ export const ProjectArchiveSnapshotSchema = z
       ),
     }),
     reports: z.object({ total: ZeroOrMore, byState: z.object({ draft: ZeroOrMore, submitted: ZeroOrMore, supplement: ZeroOrMore }) }),
-    issues: z.object({ total: ZeroOrMore, byState: z.object({ unassigned: ZeroOrMore, open: ZeroOrMore, in_progress: ZeroOrMore, done: ZeroOrMore }) }),
+    issues: z.object({ total: ZeroOrMore, byState: z.object({ open: ZeroOrMore, in_progress: ZeroOrMore, done: ZeroOrMore }) }),
   })
   .openapi("ProjectArchiveSnapshot", { description: "归档清单（引用式快照：统计口径 + 文件清单含版本 + 变更 / 日报 / 问题；只记 id 与摘要）" });
 
