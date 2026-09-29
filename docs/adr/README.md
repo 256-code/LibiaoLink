@@ -15,7 +15,7 @@
 | ADR-002 | 总体架构形态 | 模块化单体 + api / worker 多进程 + 转换容器，Compose 单机 | 需要多实例部署或独立扩缩容 | 草案 |
 | ADR-003 | 语言与后端框架 | TypeScript + NestJS 12（新项目直接评估 12.x） | 公司 IT 强制 Java 或团队交接 Java | 草案 |
 | ADR-004 | 数据库与数据访问 | PostgreSQL 18 + Drizzle + 显式 SQL 迁移 | 公司 DBA 强制 MySQL 且不可协商 | 草案 |
-| ADR-005 | 队列与调度 | PG 原生：Outbox + SKIP LOCKED + advisory lock，不引入 Redis | 多实例 / 外发超 5 条每秒 / PG 竞争成瓶颈 | 草案 |
+| ADR-005 | 队列与调度 | PG 原生：Outbox + SKIP LOCKED + advisory lock，不引入 Redis | 多实例 / 外发超 5 条每秒 / PG 竞争成瓶颈 | 已采纳（Accepted · 2026-09-29：S7·outbox S7-1 ~ S7-5 落地收口 · PR #221 / Push 181） |
 | ADR-006 | 对象存储 | S3 协议抽象 + 可替换实现（沙箱 MinIO pinned；生产实现待选：内网既有存储 / SeaweedFS / 云 OSS） | 已触发（2026-09-21：MinIO 上游归档 + 分发下线）→ 生产实现 M8 前关闭；后续看公司云策略 | 已采纳（2026-09-21 修订；2026-09-24 复审 —— 结论不变） |
 | ADR-007 | 在线预览管道 | 自建转换管道，只读、系统内直接查看，不支持在线编辑 | CAD 覆盖需求扩大且外部方案 PoC 更优 | 草案 |
 | ADR-008 | 三维与 CAD 查看 | 二维条件性交付（PoC 达标才上线）；三维自建（开源优先），数据不出内网 | CAD PoC 不达标降级仅下载；三维无合适组件则自研评估 | 草案 |
