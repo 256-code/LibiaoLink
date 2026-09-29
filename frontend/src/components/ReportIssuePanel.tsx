@@ -3,15 +3,24 @@ import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { InlineCell, InlineMultiOptionCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
+import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
 import {
-  ISSUE_STATES,
-  issuesForProject,
-  reportsForProject,
-  type DailyReport,
-  type Issue,
-  type IssueState,
-  type ReportPhoto,
-} from "../data/reports";
+  ISSUE_STATE_NAMES,
+  REPORT_STATE_NAMES,
+  createReport,
+  deleteIssue,
+  deleteReport,
+  fetchProjectIssues,
+  fetchProjectReports,
+  updateIssue,
+  updateReport,
+  type IssueUpdateInput,
+  type ReportUpdateInput,
+  type ReportWriteInput,
+} from "../reportApi";
+import { ApiError } from "../api";
+import { uploadPhoto, usePhotoUrl } from "../fileApi";
+import { stageKeyOfName } from "../taskApi";
 import { PROJECT_STAGES } from "../data/projects";
 import { lockBodyScroll } from "../scrollLock";
 import type { DailySubView } from "../useHashRoute";
@@ -168,11 +177,11 @@ import type { MeResponse, Project } from "../types";
 /** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
  *  文字两列 + 关联阶段多选 —— 时间 / 填写者不动（「编辑后时间不变」）。
  *  Push 212 续（业务口径「图片也要可以增删」）：追加**现场工作附图**（photos）—— 抽屉里与两列文字共用同一份 patchReport 内存态。 */
-export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stages" | "photos">>;
+export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stageNames" | "photos">>;
 
 /** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。
  *  Push 212 续：追加**问题附图**（photos）。 */
-export type IssuePatch = Partial<Pick<Issue, "title" | "category" | "solution" | "state" | "photos">>;
+export type IssuePatch = Partial<Pick<Issue, "title" | "categories" | "solution" | "state" | "photos">>;
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
 const CARD_SHELL =
@@ -253,25 +262,25 @@ function autoScrollIssueDrag(root: HTMLElement | null, point: { x: number; y: nu
  *  原四态色签（未分组灰 / 未解决红 / 处理中琥珀 / 已完成绿）随「取消未分组 未分组就是未解决」改版下架，
  *  首版实色三态（#ade4ff / #feca04 / #dcdfe4）随本口径下架。 */
 const ISSUE_TAG_CLASS: Record<IssueState, string> = {
-  未解决: "bg-sky-100 text-sky-700",
-  处理中: "bg-amber-100 text-amber-800",
-  已完成: "bg-emerald-100 text-emerald-700",
+  open: "bg-sky-100 text-sky-700",
+  in_progress: "bg-amber-100 text-amber-800",
+  done: "bg-emerald-100 text-emerald-700",
 };
 
 /** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）的整行底色：与项目总览任务表的
  *  STATUS_ROW_CLASS 同一套口径 —— 状态色系压到 **6% 不透明**、行悬停抬到 **12%**；三态色系对照 =
  *  未解决 / sky（项目总览「待开始」）、处理中 / amber（「进行中」）、已完成 / emerald（「已完成」）。 */
 const ISSUE_ROW_CLASS: Record<IssueState, string> = {
-  未解决: "bg-sky-500/[0.06] hover:bg-sky-500/[0.12]",
-  处理中: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
-  已完成: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
+  open: "bg-sky-500/[0.06] hover:bg-sky-500/[0.12]",
+  in_progress: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
+  done: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
 };
 
 /** 醒目模式下的状态字色：整行已有状态色，撤色签底只留深色字（同 TaskBoard 的 STATUS_TAG_TEXT_CLASS 口径）。 */
 const ISSUE_TAG_TEXT_CLASS: Record<IssueState, string> = {
-  未解决: "text-sky-700",
-  处理中: "text-amber-800",
-  已完成: "text-emerald-700",
+  open: "text-sky-700",
+  in_progress: "text-amber-800",
+  done: "text-emerald-700",
 };
 
 /** 问题归类色签（Push 207 · 业务样 = 图三 / 图四「问题归类也要用不同颜色来展示」）：浅底 + 深字，
@@ -289,12 +298,11 @@ const ISSUE_CATEGORY_CLASS: Record<string, string> = {
   客观原因: "bg-[#e7b4ff]",
   生产原因: "bg-[#ffb3dc]",
   其它原因: "bg-[#ffcea3]",
-  其它: "bg-[#ffcea3]",
 };
 
-/** 问题归类色签组（多选值逐枚渲染；空值 = 「未归类」灰签）。 */
-function CategoryTags({ value }: { value: string }) {
-  const items = value === "" ? ["未归类"] : value.split("、").filter((part) => part !== "");
+/** 问题归类色签组（契约多值数组逐枚渲染；空数组 = 「未归类」灰签）。 */
+function CategoryTags({ values }: { values: readonly string[] }) {
+  const items = values.length === 0 ? ["未归类"] : values;
   return (
     <span className="flex flex-wrap items-center gap-1">
       {items.map((item, index) => (
@@ -366,7 +374,7 @@ function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: bo
           : "rounded-lg px-3 py-1.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state])
       }
     >
-      {state}
+      {ISSUE_STATE_NAMES[state]}
     </span>
   );
 }
@@ -374,7 +382,7 @@ function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: bo
 /** 问题状态行内下拉的可选项（Push 208）：与「项目总览」任务状态同款 —— 弹层里每项 = 该状态的色签胶囊。 */
 const ISSUE_STATE_OPTIONS: SelectOption[] = ISSUE_STATES.map((state) => ({
   value: state,
-  label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{state}</span>,
+  label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{ISSUE_STATE_NAMES[state]}</span>,
 }));
 /** 问题追踪列头（Push 207 · 业务样 = 图五）：六列**纯文字列名**（同批业务口径 2026-09-28「这些图标不需要」——
  *  首版列头曾带日历 / A 字 / 分栏 / 图片 / 对勾圈小图标与排序小漏斗，随后按上面口径整体下架）。 */
@@ -403,7 +411,7 @@ const ISSUE_CATEGORIES: readonly string[] = [
   "客户原因",
   "客观原因",
   "生产原因",
-  "其它",
+  "其它原因",
 ];
 
 /** 日报「关联阶段」可选项（Push 198）：九个施工阶段 —— 与项目总览分组 / 两块看板同一份口径（不含「项目总览」汇总视图）。 */
@@ -550,10 +558,6 @@ type ReportDraft = {
   issuePhotos: ReportPhoto[];
 };
 
-/** 新建日报 / 问题的原型 id 序号（同一会话内不重号）。 */
-let newReportSeq = 0;
-let newIssueSeq = 0;
-
 /** ISO 日期 → 「YYYY年M月D日」（Push 202 起带年：业务口径「时间格式也要年月日」；原「M月D日」写法下架）。 */
 function cnDateOf(iso: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -561,15 +565,6 @@ function cnDateOf(iso: string): string {
     return iso;
   }
   return String(Number(match[1])) + "年" + String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
-}
-
-/** ISO 日期 + N 天（问题处理时限用）。 */
-function isoPlusDays(iso: string, days: number): string {
-  const base = new Date(iso + "T00:00:00");
-  base.setDate(base.getDate() + days);
-  const month = String(base.getMonth() + 1).padStart(2, "0");
-  const day = String(base.getDate()).padStart(2, "0");
-  return String(base.getFullYear()) + "-" + month + "-" + day;
 }
 
 /** 当天 ISO 日期（YYYY-MM-DD）。 */
@@ -580,15 +575,107 @@ function todayIso(): string {
   return String(now.getFullYear()) + "-" + month + "-" + day;
 }
 
-/** 提交时间（HH:MM）。 */
-function clockText(): string {
-  const now = new Date();
-  return String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
-}
-
 /** 空表单：日期默认今天，其余留空。 */
 function emptyDraft(): ReportDraft {
   return { dateIso: todayIso(), headcount: "", doneWork: "", plan: "", foundIssue: "", issueCategories: [], suggestion: "", stages: [], photos: [], issuePhotos: [] };
+}
+
+/** 接口错误 → 页面提示文案（ApiError.message 已是服务端中文口径）。 */
+function friendlyError(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? error.message : fallback;
+}
+
+/** 可落库的附图文件 id（用户中途删掉的、上传中 / 失败的都不在内）。 */
+function readyFileIds(photos: readonly ReportPhoto[]): string[] {
+  return photos.filter((photo) => photo.pending === undefined && photo.fileId !== "").map((photo) => photo.fileId);
+}
+
+/** 提交 / 暂存前拦「图片还在上传 / 上传失败」（返回空串 = 放行）。 */
+function uploadBlockingMessage(draft: ReportDraft): string {
+  const photos = draft.photos.concat(draft.issuePhotos);
+  if (photos.some((photo) => photo.pending === "uploading")) {
+    return "还有图片在上传中，请等上传完成后再提交。";
+  }
+  if (photos.some((photo) => photo.pending === "failed")) {
+    return "有图片上传失败，请先移除失败图片（或重新粘贴）再提交。";
+  }
+  return "";
+}
+
+/** 界面 patch → 契约日报写体（只带被改字段；plan 空串 = 清空 → null）。 */
+function reportUpdateBody(current: DailyReport, patch: ReportPatch): ReportUpdateInput {
+  const body: ReportUpdateInput = { version: current.version };
+  if (patch.doneWork !== undefined) {
+    body.doneWork = patch.doneWork;
+  }
+  if (patch.plan !== undefined) {
+    body.plan = patch.plan === "" ? null : patch.plan;
+  }
+  if (patch.stageNames !== undefined) {
+    body.stageKeys = patch.stageNames.map(stageKeyOfName).filter((key): key is string => key !== null);
+  }
+  if (patch.photos !== undefined) {
+    body.photoFileIds = readyFileIds(patch.photos);
+  }
+  return body;
+}
+
+/** 界面 patch → 契约问题写体（solution 空串 = 清空 → null）。 */
+function issueUpdateBody(current: Issue, patch: IssuePatch): IssueUpdateInput {
+  const body: IssueUpdateInput = { version: current.version };
+  if (patch.title !== undefined) {
+    body.title = patch.title;
+  }
+  if (patch.categories !== undefined) {
+    body.categories = patch.categories;
+  }
+  if (patch.solution !== undefined) {
+    body.solution = patch.solution === "" ? null : patch.solution;
+  }
+  if (patch.state !== undefined) {
+    body.state = patch.state;
+  }
+  if (patch.photos !== undefined) {
+    body.photoFileIds = readyFileIds(patch.photos);
+  }
+  return body;
+}
+
+/** 新建体口径（Push 216 接真）：`DailyReportCreateBodySchema` 里 headcount / plan / foundIssue / issueCategories / suggestion
+ *  都是**可选非空**（`z.string().min(1).optional()`）—— 空值必须**省字段**；显式传 null 会被 Zod 拒（invalid_type）。
+ *  只有 PATCH 更新体（`DailyReportUpdateBodySchema`）才用 null 表示「清空」，所以这一层只在 create 路径上做。 */
+function createBody(body: ReportWriteInput): ReportWriteInput {
+  const next: ReportWriteInput = { ...body };
+  if (next.headcount === null) {
+    delete next.headcount;
+  }
+  if (next.plan === null) {
+    delete next.plan;
+  }
+  if (next.suggestion === null) {
+    delete next.suggestion;
+  }
+  if (next.foundIssue === null) {
+    delete next.foundIssue;
+    delete next.issueCategories;
+  }
+  return next;
+}
+
+/** 去掉 create 专有的 date 字段（PATCH 编辑体不含 date —— 填报日期不可改）。 */
+function withoutDate(body: ReportWriteInput): Omit<ReportWriteInput, "date"> {
+  return {
+    state: body.state,
+    headcount: body.headcount,
+    doneWork: body.doneWork,
+    plan: body.plan,
+    foundIssue: body.foundIssue,
+    issueCategories: body.issueCategories,
+    suggestion: body.suggestion,
+    stageKeys: body.stageKeys,
+    photoFileIds: body.photoFileIds,
+    issuePhotoFileIds: body.issuePhotoFileIds,
+  };
 }
 
 /** 卡片字段行（Push 209 改版 · 业务口径 2026-09-28「问题看板是这样的 要这些内容 然后样式参考任务进展的」）：
@@ -692,6 +779,128 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
   );
 }
 
+/** 单枚附图瓦片（Push 216）：预览地址本地 blob 优先、否则懒取服务端预览签名；pending 态出「上传中 / 上传失败」标记。 */
+function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, editingExt, setEditingText, setEditingAt, commitRename, startRename, onRename, onRemove, onPreview }: {
+  item: ReportPhoto;
+  index: number;
+  isLarge: boolean;
+  isThumb: boolean;
+  editingAt: number | null;
+  editingText: string;
+  editingExt: string;
+  setEditingText: (text: string) => void;
+  setEditingAt: (at: number | null) => void;
+  commitRename: () => void;
+  startRename: (at: number) => void;
+  onRename?: (at: number, name: string) => void;
+  onRemove?: (at: number) => void;
+  onPreview: (url: string, name: string) => void;
+}) {
+  const url = usePhotoUrl(item.fileId, item.url);
+  const editing = editingAt === index;
+  return (
+    <span
+      data-attachment={item.name}
+      title={isLarge || isThumb ? item.name : undefined}
+      className={
+        isLarge || isThumb
+          ? "relative inline-flex shrink-0"
+          : "inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600"
+      }
+    >
+      {url === null ? null : (
+        <button
+          type="button"
+          data-attachment-thumb=""
+          aria-label={"预览 " + item.name}
+          onClick={() => onPreview(url, item.name)}
+          className="shrink-0 rounded-md transition hover:opacity-80"
+        >
+          <img
+            src={url}
+            alt={item.name}
+            className={
+              (isLarge ? "h-24 w-32 rounded-lg border border-zinc-200 object-cover" : isThumb ? "h-10 w-10 rounded-md border border-zinc-200 object-cover" : "h-8 w-8 rounded-md border border-zinc-200 object-cover") +
+              (item.pending === "failed" ? " ring-1 ring-rose-400" : item.pending === "uploading" ? " opacity-60" : "")
+            }
+          />
+        </button>
+      )}
+      {editing ? (
+        <input
+          data-attachment-input=""
+          value={editingText}
+          autoFocus
+          onChange={(event) => setEditingText(event.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commitRename();
+            }
+            if (event.key === "Escape") {
+              setEditingAt(null);
+            }
+          }}
+          className="w-20 rounded border border-zinc-300 bg-white px-1 py-0.5 text-[10px] text-zinc-700 outline-none focus:border-zinc-400"
+        />
+      ) : null}
+      {item.pending === undefined ? null : isLarge || isThumb ? (
+        <span
+          className={
+            "pointer-events-none absolute inset-x-0 bottom-0 rounded-b-lg px-1 py-0.5 text-center text-[10px] leading-3 text-white " +
+            (item.pending === "failed" ? "bg-rose-600/85" : "bg-zinc-900/70")
+          }
+        >
+          {item.pending === "uploading" ? "上传中…" : "上传失败"}
+        </span>
+      ) : (
+        <span className={"text-[10px] " + (item.pending === "failed" ? "text-rose-500" : "text-zinc-400")}>
+          {item.pending === "uploading" ? "上传中…" : "上传失败"}
+        </span>
+      )}
+      {isLarge || isThumb ? null : editing && editingExt !== "" ? (
+        <span className="text-[10px] text-zinc-400">{editingExt}</span>
+      ) : onRename === undefined || item.pending !== undefined ? (
+        <span>{item.name}</span>
+      ) : (
+        <button
+          type="button"
+          data-rename-attachment=""
+          aria-label={"重命名 " + item.name}
+          title="点名字可自定义"
+          onClick={() => startRename(index)}
+          className="max-w-[9rem] truncate text-left transition hover:text-zinc-900 hover:underline"
+        >
+          {item.name}
+        </button>
+      )}
+      {onRemove === undefined ? null : isLarge || isThumb ? (
+        // Push 212 续：md / lg 瓦片走**角标**移除（absolute 覆盖在图上，不占行宽 —— 保证大瓦片仍能并排折行）。
+        <button
+          type="button"
+          data-action="remove-attachment"
+          aria-label={"移除 " + item.name}
+          onClick={() => onRemove(index)}
+          title="移除这张图"
+          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white text-[11px] leading-none text-zinc-500 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-800"
+        >
+          ×
+        </button>
+      ) : (
+        <button
+          type="button"
+          data-action="remove-attachment"
+          aria-label={"移除 " + item.name}
+          onClick={() => onRemove(index)}
+          className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
 /** 附图清单：图片出**缩略图**（点开预览层看大图）、非图片出文件名胶囊；表单里再带 × 可逐个移除。
  *  Push 206 加 size 档位：sm（默认 —— 表单贴图区：32×32 小缩略图 + 文件名胶囊）/ lg（「日报记录」列表用：
  *  约 128×96 大图瓦片、多张自动折行、只出图不带文件名 —— 业务样 = 图 2；名字放 title 提示）。
@@ -700,7 +909,8 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
   const isLarge = size === "lg";
   /** 列表里的紧凑缩略图档（40×40、名字进 title）。 */
   const isThumb = size === "md";
-  const [preview, setPreview] = useState<ReportPhoto | null>(null);
+  /** 大图预览（Push 216：存已解析的展示地址 —— 本地 blob 或服务端预览签名）。 */
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   /** 正在改名的第几份（null = 没有在改名）；业务口径「图片名称可以自定义」。 */
   const [editingAt, setEditingAt] = useState<number | null>(null);
   /** 编辑中的**主名**（后缀不参与编辑 —— 业务口径「自定义把图片png格式删了怎么办」：格式由系统保留）。 */
@@ -733,95 +943,28 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
   if (items.length === 0) {
     return null;
   }
-  const previewUrl = preview === null ? null : preview.url;
   return (
     <div data-attachment-strip={strip} className={isLarge ? "mt-1.5 flex flex-wrap items-start gap-2" : isThumb ? "flex flex-wrap items-center gap-1.5" : "mt-1.5 flex flex-wrap items-center gap-1.5"}>
       {items.map((item, index) => (
-        <span
+        <PhotoTile
           key={item.name + "#" + String(index)}
-          data-attachment={item.name}
-          title={isLarge || isThumb ? item.name : undefined}
-          className={
-            isLarge || isThumb
-              ? "relative inline-flex shrink-0"
-              : "inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600"
-          }
-        >
-          {item.url === null ? null : (
-            <button
-              type="button"
-              data-attachment-thumb=""
-              aria-label={"预览 " + item.name}
-              onClick={() => setPreview(item)}
-              className="shrink-0 rounded-md transition hover:opacity-80"
-            >
-              <img
-                src={item.url}
-                alt={item.name}
-                className={isLarge ? "h-24 w-32 rounded-lg border border-zinc-200 object-cover" : isThumb ? "h-10 w-10 rounded-md border border-zinc-200 object-cover" : "h-8 w-8 rounded-md border border-zinc-200 object-cover"}
-              />
-            </button>
-          )}
-          {editingAt === index ? (
-            <input
-              data-attachment-input=""
-              value={editingText}
-              autoFocus
-              onChange={(event) => setEditingText(event.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  commitRename();
-                }
-                if (event.key === "Escape") {
-                  setEditingAt(null);
-                }
-              }}
-              className="w-20 rounded border border-zinc-300 bg-white px-1 py-0.5 text-[10px] text-zinc-700 outline-none focus:border-zinc-400"
-            />
-          ) : null}
-          {isLarge || isThumb ? null : editingAt === index && editingExt !== "" ? (
-            <span className="text-[10px] text-zinc-400">{editingExt}</span>
-          ) : onRename === undefined ? (
-            <span>{item.name}</span>
-          ) : (
-            <button
-              type="button"
-              data-rename-attachment=""
-              aria-label={"重命名 " + item.name}
-              title="点名字可自定义"
-              onClick={() => startRename(index)}
-              className="max-w-[9rem] truncate text-left transition hover:text-zinc-900 hover:underline"
-            >
-              {item.name}
-            </button>
-          )}
-          {onRemove === undefined ? null : isLarge || isThumb ? (
-            // Push 212 续：md / lg 瓦片走**角标**移除（absolute 覆盖在图上，不占行宽 —— 保证大瓦片仍能并排折行）。
-            <button
-              type="button"
-              data-action="remove-attachment"
-              aria-label={"移除 " + item.name}
-              onClick={() => onRemove(index)}
-              title="移除这张图"
-              className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white text-[11px] leading-none text-zinc-500 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-800"
-            >
-              ×
-            </button>
-          ) : (
-            <button
-              type="button"
-              data-action="remove-attachment"
-              aria-label={"移除 " + item.name}
-              onClick={() => onRemove(index)}
-              className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
-            >
-              ×
-            </button>
-          )}
-        </span>
+          item={item}
+          index={index}
+          isLarge={isLarge}
+          isThumb={isThumb}
+          editingAt={editingAt}
+          editingText={editingText}
+          editingExt={editingExt}
+          setEditingText={setEditingText}
+          setEditingAt={setEditingAt}
+          commitRename={commitRename}
+          startRename={startRename}
+          onRename={onRename}
+          onRemove={onRemove}
+          onPreview={(url, name) => setPreview({ url, name })}
+        />
       ))}
-      {preview === null || previewUrl === null ? null : <PhotoPreview url={previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
+      {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => setPreview(null)} />}
     </div>
   );
 }
@@ -830,11 +973,12 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
  *  Push 202 同批续：以**复制粘贴**为主入口（业务口径「附图要可以复制粘贴 不能全靠选择文件 我们以复制粘贴为主」）——
  *  点一下虚线框**左半**（`Ctrl + V` 半区）拿到焦点，Ctrl+V 直接粘图（截图 / 复制的图片文件都收；剪贴板图没有名字时按「剪贴板图片-N.png」命名）；
  *  形态按业务给的样（虚线卡 + 文件 / 云图标）本地化：**左右分半、无说明文字** —— 左半**剪贴板图标**（主入口；Push 204 起键帽材质下架 —— 业务口径「做成文字吧」、Push 212 续文字换 PasteIcon —— 「ctrl v 的地方改成这个图标吧」；h-full 撑满 44px 行、垂直居中 —— 「位置要居中」）、
- *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 预览地址，胶囊出缩略图、点开可放大（「图片要可以预览」）；
+ *  右半文件 / 云图标（点击选择文件 · 次入口）；图片存 `URL.createObjectURL` 本地预览地址、**同时立即上传站内文件库**
+ *  （Push 216 接真：完成回填 `fileId` —— 提交时随 `photoFileIds` 落 `file_links`；上传中 / 失败在瓦片上出标记）；
  *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。
  *  Push 205：「当前问题附图」加**前置开关**（业务口径「先填发现的问题 才能填另外三个」）—— disabled 时整卡灰底 / 灰字、
  *  两半都点不开（左半按钮 disabled、粘贴落点不可聚焦、文件框 disabled、文档级粘贴监听不挂）。 */
-function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card" }: { field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact" }) {
+function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card" }: { projectId: string; field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact" }) {
   /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
   const [armed, setArmed] = useState(false);
   /** 粘贴落点（左半里的不可见输入框：浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令）。 */
@@ -857,18 +1001,36 @@ function AttachmentPicker({ field, items, onChange, ariaLabel, disabled = false,
     latest.current.onChange(latest.current.items.concat(next));
   };
 
-  /** 一批文件 → 附件（图片给预览地址；`imagesOnly` = 粘贴路径只收图）。返回处理到的附件数。 */
+  /** 按条目引用回填（用户中途删掉 = 找不到、自然忽略）。 */
+  const updateEntry = (entry: ReportPhoto, update: (current: ReportPhoto) => ReportPhoto) => {
+    latest.current.onChange(latest.current.items.map((item) => (item === entry ? update(item) : item)));
+  };
+
+  /** 单张上传（Push 216 接真）：文件库直传完成回填 fileId；失败标「uploaded failed」等待用户删除重贴。 */
+  const startUpload = async (file: File, entry: ReportPhoto) => {
+    try {
+      const fileId = await uploadPhoto(projectId, file, entry.name);
+      updateEntry(entry, (current) => ({ ...current, fileId, pending: undefined }));
+    } catch {
+      updateEntry(entry, (current) => ({ ...current, pending: "failed" }));
+    }
+  };
+
+  /** 一批文件 → 附件（Push 216 接真：本地 blob 预览 + 立即上传文件库；`imagesOnly` = 粘贴路径只收图）。 */
   const toItems = (files: readonly File[], imagesOnly: boolean): ReportPhoto[] => {
     const picked = imagesOnly ? files.filter((file) => file.type.indexOf("image/") === 0) : files;
     return picked.map((file) => {
       const isImage = file.type.indexOf("image/") === 0;
-      if (isImage === false || isClipboardGenericName(file.name) === false) {
-        return { name: file.name, url: isImage ? URL.createObjectURL(file) : null };
+      let name = file.name;
+      if (isImage && isClipboardGenericName(file.name)) {
+        pasteSeq.current += 1;
+        const slash = file.type.indexOf("/");
+        const ext = slash >= 0 ? file.type.slice(slash + 1) : "png";
+        name = "剪贴板图片-" + String(pasteSeq.current) + "." + ext;
       }
-      pasteSeq.current += 1;
-      const slash = file.type.indexOf("/");
-      const ext = slash >= 0 ? file.type.slice(slash + 1) : "png";
-      return { name: "剪贴板图片-" + String(pasteSeq.current) + "." + ext, url: URL.createObjectURL(file) };
+      const entry: ReportPhoto = { fileId: "", name, url: isImage ? URL.createObjectURL(file) : null, pending: "uploading" };
+      void startUpload(file, entry);
+      return entry;
     });
   };
 
@@ -1055,7 +1217,18 @@ function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyRep
                       状态签与「提交 HH:MM」小字一并下架（state 字段仍保留在数据模型里） */}
                   {/* Push 207 同批追加：时间列**去加粗**（业务口径「问题追踪里面的时间不用加粗」· 业务样 = 图里日报记录时间列）
                       —— 字重回常规、字色对齐「问题追踪」日期列 text-zinc-700（不再用 font-semibold / zinc-900） */}
-                  <p data-report-date="" className="text-zinc-700">{report.date}</p>
+                  <p data-report-date="" className="text-zinc-700">{cnDateOf(report.date)}</p>
+                  {report.state === "submitted" ? null : (
+                    <span
+                      data-report-state={report.state}
+                      className={
+                        "mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium " +
+                        (report.state === "draft" ? "bg-zinc-100 text-zinc-600" : "bg-amber-100 text-amber-800")
+                      }
+                    >
+                      {REPORT_STATE_NAMES[report.state]}
+                    </span>
+                  )}
                 </td>
                 <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
                   <span className="flex min-w-0 items-center gap-1.5">
@@ -1073,14 +1246,14 @@ function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyRep
                     height={REPORT_STAGES.length * 30 + 12}
                     bare
                     triggerClassName={CELL_EDIT_TEXT}
-                    display={<StageTags names={report.stages} />}
+                    display={<StageTags names={report.stageNames} />}
                     render={() => (
                       <MultiOptionList
-                        values={report.stages}
+                        values={report.stageNames}
                         options={REPORT_STAGES}
                         ariaLabel={"修改关联阶段（" + report.date + "）"}
                         onChange={(next) => {
-                          onPatch(report.id, { stages: next });
+                          onPatch(report.id, { stageNames: next });
                         }}
                         renderLabel={stageChip}
                       />
@@ -1190,7 +1363,7 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
           <p data-issue-card-title="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{issue.title}</p>
         </Field>
         <Field label="问题归类">
-          <CategoryTags value={issue.category} />
+          <CategoryTags values={issue.categories} />
         </Field>
         {issue.solution === "" ? null : (
           <Field label="解决方案或建议">
@@ -1494,7 +1667,7 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => (
             <tr key={issue.id} data-issue-row={issue.id} className={"group transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
-              <td className="whitespace-nowrap px-5 py-2.5 text-zinc-700">{issue.raisedAt}</td>
+              <td className="whitespace-nowrap px-5 py-2.5 text-zinc-700">{cnDateOf(issue.raisedAt)}</td>
               <td className="min-w-[320px] px-5 py-2.5">
                 {/* Push 208：问题描述行内可改 —— 文字修改需要点击保存，日期列（提出日期）不动 */}
                 <InlineTextCell
@@ -1514,14 +1687,14 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
                 {/* Push 208：问题归类行内可改 —— 浮层 = 表单侧同款多选（绿勾 · 点选不收浮层），落值按「、」连接 */}
                 <InlineMultiOptionCell
                   bare
-                  values={issue.category === "" ? [] : issue.category.split("、").filter((part) => part !== "")}
+                  values={issue.categories}
                   options={ISSUE_CATEGORIES}
                   ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
                   renderLabel={categoryChip}
                   triggerClassName={CELL_EDIT_CHIP}
-                  display={<CategoryTags value={issue.category} />}
+                  display={<CategoryTags values={issue.categories} />}
                   onChange={(values) => {
-                    onPatch(issue.id, { category: values.join("、") });
+                    onPatch(issue.id, { categories: values });
                   }}
                 />
               </td>
@@ -1634,6 +1807,7 @@ function ReportFillForm({
   project,
   author,
   draft,
+  submitting = false,
   onChange,
   onSubmit,
   onSaveDraft,
@@ -1641,6 +1815,8 @@ function ReportFillForm({
   project: Project;
   author: string;
   draft: ReportDraft;
+  /** 提交 / 暂存请求在飞（Push 216 接真）：两枚按钮转「提交中…」并禁用。 */
+  submitting?: boolean;
   onChange: (patch: Partial<ReportDraft>) => void;
   onSubmit: () => void;
   onSaveDraft: () => void;
@@ -1857,7 +2033,7 @@ function ReportFillForm({
             <span className={FORM_LABEL}>当前问题附图</span>
             {issueFilled ? null : <span className="ml-2 text-[11px] text-zinc-400">（「现场发现问题」非空后可填）</span>}
             <div className="mt-1">
-              <AttachmentPicker field="issuePhotos" items={draft.issuePhotos} onChange={(items) => onChange({ issuePhotos: items })} ariaLabel="当前问题附图：点击后 Ctrl+V 粘贴图片" disabled={issueFilled === false} />
+              <AttachmentPicker projectId={project.id} field="issuePhotos" items={draft.issuePhotos} onChange={(items) => onChange({ issuePhotos: items })} ariaLabel="当前问题附图：点击后 Ctrl+V 粘贴图片" disabled={issueFilled === false} />
             </div>
           </div>
         </div>
@@ -1897,15 +2073,15 @@ function ReportFillForm({
       <div>
         <span className={FORM_LABEL}>现场工作附图</span>
         <div className="mt-1">
-          <AttachmentPicker field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
+          <AttachmentPicker projectId={project.id} field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-zinc-100 pt-4">
-        <button type="submit" data-action="submit" disabled={missing.length > 0} className={BTN_PRIMARY}>
-          提交日报
+        <button type="submit" data-action="submit" disabled={missing.length > 0 || submitting} className={BTN_PRIMARY}>
+          {submitting ? "提交中…" : "提交日报"}
         </button>
-        <button type="button" data-action="draft" onClick={onSaveDraft} disabled={draft.dateIso === ""} className={BTN_SECONDARY}>
+        <button type="button" data-action="draft" onClick={onSaveDraft} disabled={draft.dateIso === "" || submitting} className={BTN_SECONDARY}>
           暂存草稿
         </button>
         <span data-fill-hint className={"text-xs " + (missing.length === 0 ? "text-zinc-400" : "text-rose-500")}>
@@ -1931,7 +2107,8 @@ const CLOSE_ANIMATION_MS = 170;
  *  「保存」才落值、Esc / 点浮层外 = 取消（与两块表同一套 InlineEdit 口径）；日期 / 填写者 / 施工人数保持只读（「编辑后时间不变」）。
  *  续（业务口径「图片也要可以增删」）：问题附图 / 现场工作附图接 AttachmentPicker（与「日报填写」同款：点左半 Ctrl+V 粘贴 /
  *  右半选文件 = 增图，胶囊 / 瓦片上的 × = 删图），落值走 patchIssue({ photos }) / patchReport({ photos })。 */
-function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
+function IssueDrawer({ projectId, issue, report, onPatchIssue, onPatchReport, onClose }: {
+  projectId: string;
   issue: Issue;
   report: DailyReport | null;
   onPatchIssue: (id: string, patch: IssuePatch) => void;
@@ -1988,14 +2165,14 @@ function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
       value: (
         <InlineMultiOptionCell
           bare
-          values={issue.category === "" ? [] : issue.category.split("、").filter((part) => part !== "")}
+          values={issue.categories}
           options={ISSUE_CATEGORIES}
           ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
           renderLabel={categoryChip}
           triggerClassName={CELL_EDIT_CHIP}
-          display={<CategoryTags value={issue.category} />}
+          display={<CategoryTags values={issue.categories} />}
           onChange={(values) => {
-            onPatchIssue(issue.id, { category: values.join("、") });
+            onPatchIssue(issue.id, { categories: values });
           }}
         />
       ),
@@ -2024,6 +2201,7 @@ function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
       // × 删图（改名随组件口径）；图幅沿用抽屉原样 md。
       value: (
         <AttachmentPicker
+          projectId={projectId}
           variant="compact"
           field="issuePhotos"
           size="md"
@@ -2060,7 +2238,7 @@ function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
               />
             ),
           },
-          { key: "date", label: "日期", value: report.date },
+          { key: "date", label: "日期", value: cnDateOf(report.date) },
           {
             key: "author",
             label: "填写者",
@@ -2094,6 +2272,7 @@ function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
             // Push 212 续（业务口径「图片也要可以增删」）：与「日报填写 → 现场工作附图」同一套 AttachmentPicker；图幅沿用抽屉原样 lg。
             value: (
               <AttachmentPicker
+                projectId={projectId}
                 variant="compact"
                 field="photos"
                 size="lg"
@@ -2140,14 +2319,14 @@ function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
           height={REPORT_STAGES.length * 30 + 12}
           bare
           triggerClassName={CELL_EDIT_TEXT}
-          display={<StageTags names={report.stages} />}
+          display={<StageTags names={report.stageNames} />}
           render={() => (
             <MultiOptionList
-              values={report.stages}
+              values={report.stageNames}
               options={REPORT_STAGES}
               ariaLabel={"修改关联阶段（" + report.date + "）"}
               onChange={(next) => {
-                onPatchReport(report.id, { stages: next });
+                onPatchReport(report.id, { stageNames: next });
               }}
               renderLabel={stageChip}
             />
@@ -2198,7 +2377,7 @@ function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
           <h2 id="issue-drawer-title" className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
             {issue.title}
           </h2>
-          <p className="mt-1 text-xs leading-5 text-zinc-400">{issue.raisedAt} · {issue.reporter} 提出</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">{cnDateOf(issue.raisedAt)} · {issue.reporter} 提出</p>
         </header>
         <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="问题详情字段">
           <dl>{rows.map(rowView)}</dl>
@@ -2228,52 +2407,136 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
   const subTab = SUB_TABS.find((tab) => SUB_TAB_KEYS[tab] === sub) ?? SUB_TABS[0];
   /** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）：投影到本地布尔（null = 关）。 */
   const focus = focusMode === true;
-  /** 日报 / 问题（原型内存态：演示数据 + 本次填写新提交的条目）。 */
-  const [reports, setReports] = useState<DailyReport[]>(() => reportsForProject(project.id));
-  const [issues, setIssues] = useState<Issue[]>(() => issuesForProject(project.id));
-  /** 填写草稿（切子视图不丢；「暂存草稿」保留内容，提交后复位）。 */
+  /** 日报 / 问题（Push 216 接真：来自服务端；项目内成员读写）。 */
+  const [reports, setReports] = useState<DailyReport[]>([]);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  /** 首屏加载态（loading / ready / error）。 */
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  /** 最新两份数据（写回调里读最新 version，不随渲染闭包过期）。 */
+  const reportsRef = useRef(reports);
+  reportsRef.current = reports;
+  const issuesRef = useRef(issues);
+  issuesRef.current = issues;
+  /** 填写草稿（切子视图不丢；「暂存草稿」写库后保留内容，提交后复位）。 */
   const [draft, setDraft] = useState<ReportDraft>(() => emptyDraft());
-  /** 提交后的提示（切子视图即清掉）。 */
+  /** 当前表单对应的草稿行 id（Push 216：暂存 = 写库 state=draft；提交 = 把这条草稿 PATCH 成已提交；null = 还没暂存过）。 */
+  const [draftId, setDraftId] = useState<string | null>(null);
+  /** 写请求防重入（提交 / 暂存）。 */
+  const [saving, setSaving] = useState(false);
+  /** 操作提示（提交 / 暂存 / 删除 / 失败）。 */
   const [notice, setNotice] = useState<string>("");
   /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
    *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
 
-  /** 行内编辑落值（Push 208 · 业务口径「问题追溯里面也要可以这样编辑 … 日报记录同理」）：只改被编辑的那个字段 ——
-   *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）。 */
+  /** 拉取两份列表（首屏 / 写失败后重取）。 */
+  const reload = useCallback(async () => {
+    try {
+      const [nextReports, nextIssues] = await Promise.all([fetchProjectReports(project.id), fetchProjectIssues(project.id)]);
+      setReports(nextReports);
+      setIssues(nextIssues);
+      setLoadState("ready");
+    } catch (error) {
+      setLoadState("error");
+      setNotice(friendlyError(error, "日报 / 问题加载失败。"));
+    }
+  }, [project.id]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  /** 行内编辑落值（Push 216 接真）：先本地乐观更新，PATCH 回包替换该行；失败提示并重取（409 乐观锁冲突同路）。
+   *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）；
+   *  「当日完成工作」是契约必填，清空会被服务端拒绝 —— 前端先拦。 */
   const patchReport = (id: string, patch: ReportPatch) => {
-    setReports((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-  };
-
-  /** 问题行内编辑落值（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 提出日期不动。 */
-  const patchIssue = (id: string, patch: IssuePatch) => {
-    setIssues((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-  };
-
-  /** 日报 ↔ 问题是一体两面（A3-09：日报的「现场发现问题」提交时自动生成一条问题，`Issue.reportId` 指回那篇日报）——
-   *  删哪边都按「**这一篇日报**（连同它派生的全部问题）」整组摘掉（Push 213 业务口径「这两个任意删除谁都是关联的
-   *  都会导致双方都删除 因为他们本质是同一个日报」）：两块表 / 问题看板 / 抽屉都读同一份内存态，删完一起消失。 */
-  const deleteReportUnit = (reportId: string) => {
-    setReports((previous) => previous.filter((item) => item.id !== reportId));
-    setIssues((previous) => previous.filter((item) => item.reportId !== reportId));
-    setOpenIssueId((current) => {
-      if (current === null) {
-        return current;
-      }
-      const open = issues.find((item) => item.id === current);
-      return open !== undefined && open.reportId === reportId ? null : current;
-    });
-  };
-
-  /** 问题侧删除：有来源日报（`reportId` 非空）= 连那篇日报整组删；无来源日报（脱离日报的存量数据）只摘这一条。 */
-  const deleteIssueUnit = (issue: Issue) => {
-    if (issue.reportId === "") {
-      setIssues((previous) => previous.filter((item) => item.id !== issue.id));
-      setOpenIssueId((current) => (current === issue.id ? null : current));
+    if (patch.doneWork !== undefined && patch.doneWork === "") {
+      setNotice("「当日完成工作」不能为空。");
       return;
     }
-    deleteReportUnit(issue.reportId);
+    const current = reportsRef.current.find((item) => item.id === id);
+    if (current === undefined) {
+      return;
+    }
+    setReports((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    void updateReport(project.id, id, reportUpdateBody(current, patch))
+      .then((updated) => {
+        setReports((previous) => previous.map((item) => (item.id === id ? updated : item)));
+      })
+      .catch((error) => {
+        setNotice(friendlyError(error, "日报修改失败。"));
+        void reload();
+      });
   };
+
+  /** 问题行内编辑落值（Push 216 接真）：同日报一套 —— 乐观更新 + PATCH 回包替换；提出日期不动。 */
+  const patchIssue = (id: string, patch: IssuePatch) => {
+    if (patch.title !== undefined && patch.title === "") {
+      setNotice("「问题描述」不能为空。");
+      return;
+    }
+    if (patch.categories !== undefined && patch.categories.length === 0) {
+      setNotice("「问题归类」至少保留一项。");
+      return;
+    }
+    const current = issuesRef.current.find((item) => item.id === id);
+    if (current === undefined) {
+      return;
+    }
+    setIssues((previous) => previous.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    void updateIssue(project.id, id, issueUpdateBody(current, patch))
+      .then((updated) => {
+        setIssues((previous) => previous.map((item) => (item.id === id ? updated : item)));
+      })
+      .catch((error) => {
+        setNotice(friendlyError(error, "问题修改失败。"));
+        void reload();
+      });
+  };
+
+  /** 删除日报（Push 216 接真）：服务端成对删除（连带派生问题）—— 本地按来源关系清两表、关掉被删的抽屉 / 表单草稿。 */
+  const deleteReportUnit = (reportId: string) => {
+    void deleteReport(project.id, reportId)
+      .then(() => {
+        setReports((previous) => previous.filter((item) => item.id !== reportId));
+        setIssues((previous) => previous.filter((item) => item.reportId !== reportId));
+        setOpenIssueId((current) => {
+          if (current === null) {
+            return current;
+          }
+          const open = issuesRef.current.find((item) => item.id === current);
+          return open !== undefined && open.reportId === reportId ? null : current;
+        });
+        setDraftId((current) => (current === reportId ? null : current));
+        setNotice("已删除该日报；它派生的全部问题随日报一起删除。");
+      })
+      .catch((error) => {
+        setNotice(friendlyError(error, "日报删除失败。"));
+        void reload();
+      });
+  };
+
+  /** 问题侧删除（Push 216 接真）：服务端成对删除 —— 有来源日报连那篇日报整组删；无来源日报只摘这一条。 */
+  const deleteIssueUnit = (issue: Issue) => {
+    void deleteIssue(project.id, issue.id)
+      .then((result) => {
+        setIssues((previous) =>
+          previous.filter((item) => item.id !== issue.id && (issue.reportId === "" || item.reportId !== issue.reportId)),
+        );
+        if (result.cascadedReportId !== null) {
+          const cascaded = result.cascadedReportId;
+          setReports((previous) => previous.filter((item) => item.id !== cascaded));
+          setDraftId((current) => (current === cascaded ? null : current));
+        }
+        setOpenIssueId((current) => (current === issue.id ? null : current));
+        setNotice(result.cascadedReportId === null ? "已删除该问题。" : "已删除该问题；来源日报随问题一起删除。");
+      })
+      .catch((error) => {
+        setNotice(friendlyError(error, "问题删除失败。"));
+        void reload();
+      });
+  };
+
 
   /** 抽屉要展示的问题 / 它的来源日报（现找现用）。 */
   const openIssue = openIssueId === null ? null : issues.find((item) => item.id === openIssueId) ?? null;
@@ -2281,65 +2544,103 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
 
   const author = me.user.displayName ?? me.user.name ?? "未署名用户";
 
-  /** 提交（已提交）：写进「日报记录」；含「现场发现问题」时按 A3-09 自动生成一条问题；表单复位并切到「日报记录」。 */
-  const handleSubmit = () => {
-    const dateCn = cnDateOf(draft.dateIso);
-    const headcount = Number.parseInt(draft.headcount, 10);
-    // 自动序号（Push 206 续）：提交前统一重排「现场发现问题」（剥旧号 / 去空行 / 重编），落库与自动生成的问题标题同文本
+  /** 表单 → 契约日报写体（state 由调用方给；空值口径：plan / suggestion 空串清空 → null）。 */
+  const draftWriteBody = (state: "draft" | "submitted"): ReportWriteInput => {
     const foundIssueText = renumberLines(draft.foundIssue);
-    const report: DailyReport = {
-      id: "r-new-" + String(++newReportSeq),
-      date: dateCn,
-      author,
-      submittedAt: clockText(),
-      state: "已提交",
-      headcount: Number.isFinite(headcount) ? headcount : 0,
+    const headcount = Number.parseInt(draft.headcount, 10);
+    const plan = renumberLines(draft.plan);
+    const suggestion = renumberLines(draft.suggestion);
+    return {
+      date: draft.dateIso,
+      state,
+      headcount: Number.isFinite(headcount) ? headcount : null,
       doneWork: renumberLines(draft.doneWork),
-      plan: renumberLines(draft.plan),
-      foundIssue: foundIssueText,
-      // Push 202：问题归类可多选 —— 原型存储口径 = 多值顿号连接（单值列 `issue_category` 的多值修订挂 wmj 线）
-      issueCategory: foundIssueText === "" ? "" : draft.issueCategories.join("、"),
-      // Push 207（「这个也要1 2 3 同上」）：提交前同套重排「解决方案或建议」（剥旧号 / 去空行 / 重编）
-      suggestion: renumberLines(draft.suggestion),
-      stages: draft.stages,
-      photos: draft.photos,
+      plan: plan === "" ? null : plan,
+      foundIssue: foundIssueText === "" ? null : foundIssueText,
+      issueCategories: foundIssueText === "" ? null : draft.issueCategories,
+      suggestion: suggestion === "" ? null : suggestion,
+      stageKeys: draft.stages.map(stageKeyOfName).filter((key): key is string => key !== null),
+      photoFileIds: readyFileIds(draft.photos),
+      issuePhotoFileIds: readyFileIds(draft.issuePhotos),
     };
-    setReports((previous) => [report, ...previous]);
-
-    let issueState: IssueState | null = null;
-    if (report.foundIssue !== "") {
-      const issue: Issue = {
-        id: "i-new-" + String(++newIssueSeq),
-        title: report.foundIssue,
-        // Push 207：新问题的初始态 = 未解决（原四态的「未分组」并入「未解决」）
-        state: "未解决",
-        category: report.issueCategory,
-        reporter: author,
-        owner: "",
-        // Push 198：关联单位改为阶段后，自动生成的问题不再带「所属任务」（口径修订见 前端功能需求.md §3.8 A21）
-        task: "",
-        raisedAt: dateCn,
-        dueAt: cnDateOf(isoPlusDays(draft.dateIso, 2)),
-        solution: "",
-        // Push 207：日报「当前问题附图」提交时带入问题记录（问题追踪「问题附图」列出缩略图）
-        photos: draft.issuePhotos,
-        reportId: report.id,
-      };
-      setIssues((previous) => [issue, ...previous]);
-      issueState = issue.state;
-    }
-
-    setDraft(emptyDraft());
-    setNotice(
-      "已提交 " + dateCn + " 的日报。" + (issueState === null ? "" : "「现场发现问题」已自动生成问题记录（" + issueState + "），见「问题追踪」/「问题看板」。"),
-    );
-    onChangeSub("records");
   };
 
-  /** 暂存草稿（Push 202 修订）：不写「日报记录」、不切子视图、**不清表单** —— 只保留表单里已填内容 + 顶部提示
-   *  （业务口径「点击暂存草稿就暂存在日报填写页面吧 … 暂存就保留表单里面填的内容皆可」；原「左侧草稿卡片」方案已撤回）。 */
+  /** 提交（已提交）：写库（有本表单草稿 = PATCH 把草稿提交，否则新建）→ 服务端按 A3-09 自动生成问题（幂等）；
+   *  成功后重取两表、表单复位并切「日报记录」。 */
+  const handleSubmit = () => {
+    if (saving) {
+      return;
+    }
+    const blocking = uploadBlockingMessage(draft);
+    if (blocking !== "") {
+      setNotice(blocking);
+      return;
+    }
+    const body = draftWriteBody("submitted");
+    const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
+    const dateCn = cnDateOf(draft.dateIso);
+    const hasIssue = body.foundIssue !== null;
+    setSaving(true);
+    const write =
+      draftRow === null
+        ? createReport(project.id, createBody(body))
+        : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftRow.version });
+    write
+      .then(() => {
+        setDraft(emptyDraft());
+        setDraftId(null);
+        setNotice(
+          "已提交 " + dateCn + " 的日报" + (hasIssue ? "；「现场发现问题」已自动生成问题记录（未解决），见「问题追踪」/「问题看板」。" : "。"),
+        );
+        onChangeSub("records");
+        return reload();
+      })
+      .catch((error) => {
+        setNotice(friendlyError(error, "日报提交失败。"));
+        void reload();
+      })
+      .finally(() => {
+        setSaving(false);
+      });
+  };
+
+  /** 暂存草稿（Push 216 接真 · 业务口径「接真后草稿到底写不写库 写」）：写库 state=draft（同日多条不设限；
+   *  已有本表单草稿 = 更新那一条）；契约「当日完成工作」必填 —— 暂存同样先填，否则服务端 400。 */
   const handleSaveDraft = () => {
-    setNotice("已暂存：内容保留在表单里，可继续修改；提交后才写进「日报记录」。");
+    if (saving) {
+      return;
+    }
+    if (renumberLines(draft.doneWork) === "") {
+      setNotice("暂存草稿也需要先填「当日完成工作」。");
+      return;
+    }
+    const blocking = uploadBlockingMessage(draft);
+    if (blocking !== "") {
+      setNotice(blocking);
+      return;
+    }
+    const body = draftWriteBody("draft");
+    const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
+    setSaving(true);
+    const write =
+      draftRow === null
+        ? createReport(project.id, createBody(body))
+        : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftRow.version });
+    write
+      .then((saved) => {
+        if (draftRow === null) {
+          setDraftId(saved.id);
+        }
+        setNotice("已暂存：草稿已写入「日报记录」（可继续修改，点「提交日报」后生效）。");
+        return reload();
+      })
+      .catch((error) => {
+        setNotice(friendlyError(error, "草稿暂存失败。"));
+        void reload();
+      })
+      .finally(() => {
+        setSaving(false);
+      });
   };
 
   const tabButton = (tab: SubTab) => {
@@ -2397,10 +2698,28 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
             project={project}
             author={author}
             draft={draft}
+            submitting={saving}
             onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))}
             onSubmit={handleSubmit}
             onSaveDraft={handleSaveDraft}
           />
+        </div>
+      ) : loadState === "loading" ? (
+        /* Push 216 接真：三个列表子视图共用同一份首屏加载态 */
+        <EmptyCard text="加载中…" hint="正在从服务端取该项目的日报与问题记录。" />
+      ) : loadState === "error" ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-white/50 px-6 py-12 text-center">
+          <p className="text-sm text-zinc-500">日报 / 问题加载失败。</p>
+          <button
+            type="button"
+            onClick={() => {
+              setNotice("");
+              void reload();
+            }}
+            className={BTN_SECONDARY}
+          >
+            重新加载
+          </button>
         </div>
       ) : subTab === "日报记录" ? (
         <section className="space-y-3">
@@ -2433,7 +2752,7 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
       )}
 
       {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
-      {openIssue === null ? null : <IssueDrawer issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
+      {openIssue === null ? null : <IssueDrawer projectId={project.id} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
     </div>
   );
 }
