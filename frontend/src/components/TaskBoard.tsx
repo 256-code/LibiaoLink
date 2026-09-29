@@ -994,19 +994,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
           onAddNode={onAddNode}
           placement={onAddNodes === undefined ? undefined : { tasks: stageTasksOf(cardStage) }}
           onAddNodes={onAddNodes}
-          // 常驻「临时任务」入口（Push 197 · 业务口径「项目模板临时任务常驻…没有模板 点击后直接新建即可填写任务名称」）：
-          // 项目总览这条路径的卡片里也常驻一行「临时任务（没有模板 · 自己填名称）」；建完与分组头同一条收尾（抽屉自动开）
-          onCreateTempTask={
-            onCreateTempTask === undefined
-              ? undefined
-              : async (values) => {
-                  const createdId = await onCreateTempTask(values);
-                  if (createdId !== null) {
-                    setSelectedTaskId(createdId);
-                  }
-                  return createdId;
-                }
-          }
+          // Push 207 撤（业务口径「临时任务不应该存在于阶段里面新建」）：阶段卡片不再收「临时任务」入口 ——
+          // 临时任务的新建仍走本表底部「临时任务」分组头（见下方常驻入口）与看板列底「添加」菜单
           onClose={() => setCardStage(null)}
           style={cardBox === null ? { top: 10, left: 24 } : cardBox}
         />

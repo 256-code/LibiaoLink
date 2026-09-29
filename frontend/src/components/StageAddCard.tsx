@@ -4,7 +4,6 @@ import { addedNodeKey } from "../data/tasks";
 import type { TemplatePresetNode } from "../data/templatePresets";
 import { fetchStageNodes, fetchStageTemplates, type TemplateItem } from "../templateApi";
 import { ScrollArea } from "./ScrollArea";
-import { TempTaskCreateForm } from "./TempTaskCreateForm";
 import { usePopover } from "./usePopover";
 
 /**
@@ -193,11 +192,10 @@ type StageAddCardProps = {
   /** 加一批 + 指定插入位置（看板那条路径）；templateId = 这批来自哪块模板（有它时上层走模板实例化接口，整套同事务）。 */
   onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /**
-   * 常驻「临时任务」入口（Push 197 · 业务口径「临时任务常驻…没有模板 点击后直接新建即可填写任务名称」）：
-   * 不传 = 不出这条入口；传入 = 「任务节点」标签列表上方常驻一行「临时任务（没有模板 · 自己填名称）」，
-   * 点它就地出新建表单（中文名必填），创建成功由上层打开新任务的详情抽屉、卡片随后关闭。
+   * Push 207 撤（业务口径 2026-09-28「临时任务不应该存在于阶段里面新建」）：本卡片原常驻的「临时任务
+   * （没有模板 · 自己填名称）」入口（Push 197）整体下架 —— 阶段面板只出节点 / 模板两类来源；
+   * 临时任务的常驻入口仍留在项目总览底部「临时任务」分组头与看板列底「添加」菜单（都不属于阶段面板）。
    */
-  onCreateTempTask?: (values: { title: string; titleEn: string }) => Promise<string | null>;
   /**
    * 插入位置（Push 113，业务口径「我要点击这个添加后选择位置」）：给了就「**点 ＋ 添加 → 先弹位置浮层 → 选完才加进项目**」。
    * 浮层里前两档固定（该阶段最后（默认）/ 该阶段最前），下面按当前阶段的任务顺序列一遍（点一条 = 插到它后面）；
@@ -218,9 +216,9 @@ type StageAddCardProps = {
  * 其余每个标签 = 这个阶段的一块模板（按预设顺序预览、可鼠标滚动，也能逐条 / 整套加）。
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
-export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, onAddNodes, onCreateTempTask, placement, onClose, style }: StageAddCardProps) {
-  /** 常驻「临时任务」入口的展开态（Push 197）：点入口 = 就地出新建表单；换阶段 / 创建成功收起。 */
-  const [tempOpen, setTempOpen] = useState(false);
+export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
+  /** Push 207：原「常驻临时任务入口」的展开态（tempOpen）随入口一并下架。 */
+
   /** 点了「＋ 添加」/「整套添加」之后、还没选位置的那一次（Push 113）：`nodes` = 这次要加的一条 / 一批，`anchor` = 贴哪一行浮出。 */
   const [armed, setArmed] = useState<{ nodes: readonly TemplatePresetNode[]; anchor: HTMLElement; templateId?: string } | null>(null);
   /**
@@ -246,10 +244,9 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
   const [activeTab, setActiveTab] = useState("nodes");
   const cardRef = useRef<HTMLElement | null>(null);
 
-  // 换阶段（点了别的阶段标签）时回到第一个标签，并收起「临时任务」表单
+  // 换阶段（点了别的阶段标签）时回到第一个标签（Push 207：原「收起临时任务表单」随入口下架）
   useEffect(() => {
     setActiveTab("nodes");
-    setTempOpen(false);
   }, [stage]);
 
   // 节点库取数（换阶段 / 重试重取）：失败只在卡片里提示（卡片本来就是临时浮层，不占全局提示条）
@@ -477,38 +474,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
         </div>
       </div>
 
-      {/* 常驻「临时任务」入口（Push 197）：不属于任何节点 / 模板 —— 点开直接填名称新建（建完上层直接开详情抽屉）；
-          节点库还在加载 / 加载失败时也照常可用（它是本地表单，不依赖节点库取数）。 */}
-      {onCreateTempTask === undefined ? null : tempOpen ? (
-        <div className="mt-2 shrink-0 rounded-lg border border-white/70 bg-white/70 p-2.5">
-          <TempTaskCreateForm
-            onCreate={async (values) => {
-              const createdId = await onCreateTempTask(values);
-              if (createdId !== null) {
-                setTempOpen(false);
-                onClose();
-              }
-              return createdId;
-            }}
-            onCancel={() => { setTempOpen(false); }}
-          />
-        </div>
-      ) : (
-        <button
-          type="button"
-          data-temp-task-entry="true"
-          aria-label={stage + "：新建临时任务（自己填名称）"}
-          title="没有模板 · 点击直接新建，自己填任务名称"
-          onClick={() => { setTempOpen(true); }}
-          className="mt-2 flex w-full shrink-0 items-center gap-2 rounded-lg border border-dashed border-zinc-300/90 bg-white/70 px-2.5 py-1.5 text-left transition hover:border-zinc-400 hover:bg-white"
-        >
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium text-zinc-700">临时任务</span>
-            <span className="block truncate text-[10px] text-zinc-400">没有模板 · 自己填名称</span>
-          </span>
-          <span className="shrink-0 text-[11px] font-medium text-emerald-700">＋ 新建</span>
-        </button>
-      )}
+      {/* Push 207 撤：本卡片原「常驻临时任务入口」整块在此，按业务口径「临时任务不应该存在于阶段里面新建」下架。 */}
 
       {listNotice !== null ? (
         <p className="mt-2 flex min-h-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-200 px-3 text-center text-xs text-zinc-500">

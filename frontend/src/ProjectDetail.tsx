@@ -15,7 +15,7 @@ import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
-import { replaceProjectView, type ProjectView } from "./useHashRoute";
+import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
 import { ApiError } from "./api";
 import {
   createTask,
@@ -82,6 +82,8 @@ type ProjectDetailProps = {
   project: Project | null;
   /** 顶部标签的当前视图（Push 154 起由地址 `?view=` 派生，缺省「项目总览」）。 */
   view: ProjectView;
+  /** 「日报及问题」的页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生，缺省「日报填写」form）；其它标签下无意义。 */
+  dailySub: DailySubView;
   /** 人员候选（GET /api/v1/users → directoryMemberOptions）：项目经理列 / 任务负责人 / 任务详情抽屉的多选共用。 */
   members: readonly Member[];
   /** 任务编辑里改「项目经理」时回写项目（项目经理是项目级字段，Push 136 起可多位）。 */
@@ -98,7 +100,7 @@ type ProjectDetailProps = {
   onFocusModeChange?: (value: boolean) => Promise<string | null>;
 };
 
-export default function ProjectDetail({ me, project, view, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
@@ -676,10 +678,16 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
                 );
               })}
             </div>
-            {activeView === "项目总览" ? (
+            {/* 标签栏右侧工具区：醒目模式（Push 134）项目总览 / 日报及问题两处都有 —— 业务口径 2026-09-28
+                「增加项目总览 同款醒目模式在问题追踪里面」+「醒目模式放在标签导航栏的最右侧」：日报及问题视图
+                没有列显隐按钮，开关落在标签栏最右侧；两处同一枚开关、同一个账号偏好（Push 171 起按账号存服务端）。
+                列显隐（ColumnPicker）仍按原口径只在项目总览出现。 */}
+            {activeView === "项目总览" || activeView === "日报及问题" ? (
               <div className="flex shrink-0 items-center gap-4">
                 <FocusModeToggle checked={focus} onToggle={(checked) => { void handleToggleFocusMode(checked); }} />
-                <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+                {activeView === "项目总览" ? (
+                  <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -729,7 +737,8 @@ export default function ProjectDetail({ me, project, view, members, onChangeMana
             <GanttChart tasks={tasks} members={members} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
-            <ReportIssuePanel key={project.id} project={project} me={me} />
+            // Push 207 同批追加：醒目模式值透传给「问题追踪」做表格呈现（开关本体在标签栏最右侧，见上）；失败提示沿用同一条 toolError
+            <ReportIssuePanel key={project.id} project={project} me={me} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}
