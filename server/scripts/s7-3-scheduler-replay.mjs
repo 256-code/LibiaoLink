@@ -22,7 +22,7 @@
  *       node --env-file-if-exists=.env scripts/s7-3-scheduler-replay.mjs [--out <报告.md>] [--json <证据.json>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
  * 说明：本机无 PG 时只做语法门禁；真机证据以 CI database job 为准（不伪造）。合成 kind / 去重键前缀独立，
- *   全部产出取契约白名单预留主题 notify.message（S7-4 前无消费者）→ 不干扰生产领取侧。
+ *   全部产出取契约白名单主题 notify.message（回放环境不启动消费侧 → 稳定留在 pending）→ 不干扰生产领取侧。
  */
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -40,7 +40,7 @@ const DATABASE_URL =
 /** 本回放全部合成 kind / 去重键前缀（清理 / 计数用）：证据专用，不落生产代码。 */
 const KIND_PREFIX = "s73replay.";
 const DEDUPE_PREFIX = "s73Replay";
-/** 产出行的主题：契约白名单预留主题 notify.message（S7-4 前无消费者；领取侧不注册 → 稳定留在 pending）。 */
+/** 产出行的主题：契约白名单主题 notify.message（回放环境不启动消费侧；领取侧不注册 → 稳定留在 pending）。 */
 const PRODUCED_TOPIC = "notify.message";
 /** OUTBOX_STALE_MS 的 env 下限（60000）；CI 不等满窗口，用「回拨 locked_at」等价模拟崩溃超窗。 */
 const STALE_MS = 60_000;
