@@ -14,6 +14,7 @@ import {
 } from "../data/reports";
 import { PROJECT_STAGES } from "../data/projects";
 import { lockBodyScroll } from "../scrollLock";
+import type { DailySubView } from "../useHashRoute";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { ScrollArea } from "./ScrollArea";
 import type { MeResponse, Project } from "../types";
@@ -30,6 +31,9 @@ import type { MeResponse, Project } from "../types";
  *   **Push 201**：图标再对调 —— 原「问题看板」的「圆环 + 感叹号」徽章**让给「问题追踪」**，「问题看板」改业务给样「放大镜」
  *   （24 视框 `fill="currentColor"` + evenodd；同样不照搬：去 SVGRepo 外壳、黑填充改 `currentColor`、缩 16px 与其余图标同高）；
  *   吸顶条随主标签栏吸顶改叠位（`top` 16 → 123px = 顶栏 64 + 主标签栏 59），并加下内衬兜住键帽投影（业务反馈「图二吸顶后有bug」）。
+ *   **Push 214**（业务口径「这几个页面也要做路由」）：四块子视图进地址 `?view=daily&sub=form|records|issues|board` ——
+ *   中文标签 ↔ slug 映射见下方 `SUB_TAB_KEYS`，当前块由 `ProjectDetail` 从地址派生后透传（本组件不再自持子视图状态），
+ *   缺省「日报填写」form 不落参数；提交后自动切「日报记录」= 写回 `sub=records`。
  * - 数据口径承 `系统功能书.md` A3：日报字段 A3-01 / 草稿与补填 A3-02 / 提交校验 A3-04 / 自动生成问题 A3-09 / 问题三态 A3-10（Push 207 业务口径「取消未分组 未分组就是未解决」修订 —— 原四态的四态 → 三态契约修订挂 wmj 线）；处理时限 SLA 见 ADR-026。
  * - 内容列宽：视图整体**全宽**（日报记录 / 问题追踪 / 问题看板 照旧铺满）；只有「日报填写」收成**居中窄栏**
  *   （max-w-3xl = 768px），业务口径「我只要日报填写页面居中然后尺寸舒适一点、像一个表单，其它的不变还是全屏」。
@@ -446,6 +450,18 @@ const BTN_SECONDARY =
 type SubTab = "日报填写" | "日报记录" | "问题追踪" | "问题看板";
 
 const SUB_TABS: readonly SubTab[] = ["日报填写", "日报记录", "问题追踪", "问题看板"];
+
+/**
+ * 中文标签 ↔ 地址 slug（Push 214 · 业务口径「这几个页面也要做路由」）：四块子视图进地址 `?view=daily&sub=`，
+ * 与主标签栏 `?view=` 同一套「地址即状态」口径 —— 刷新 / 收藏 / 分享 / 上次后退都能停在原块；
+ * 缺省「日报填写」= form 不落参数（旧链接 `?view=daily` 原样打开 = 日报填写）。
+ */
+const SUB_TAB_KEYS: Record<SubTab, DailySubView> = {
+  日报填写: "form",
+  日报记录: "records",
+  问题追踪: "issues",
+  问题看板: "board",
+};
 
 /** 导航项图标（按钮内统一 16px 图标 + 单行文字）；「日报填写」「日报记录」描边 1.8px；两个「问题*」项各有一枚徽章：
  *  「问题追踪」= Push 199 业务给的 16×16「圆环 + 感叹号」面性样（`fill="currentColor"`）—— Push 201 由「问题看板」让位而来
@@ -2198,14 +2214,18 @@ function IssueDrawer({ issue, report, onPatchIssue, onPatchReport, onClose }: {
   );
 }
 
-export function ReportIssuePanel({ project, me, focusMode }: {
+export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
   project: Project;
   me: MeResponse;
   /** 醒目模式（Push 207 同批追加）：与项目总览**同一个账号偏好**（App 层持有、ProjectDetail 透传）；开关本体在标签栏最右侧，这里只吃值做表格呈现；null = 偏好尚未取到 → 按默认「关」渲染。 */
   focusMode?: boolean | null;
+  /** 当前页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生：form = 日报填写（缺省）/ records / issues / board）。 */
+  sub: DailySubView;
+  /** 切页内子视图（写回地址 · replace，不新增历史条目）。 */
+  onChangeSub: (sub: DailySubView) => void;
 }) {
-  /** 当前子视图（业务口径：第一块日报填写，默认停在这一块）。 */
-  const [subTab, setSubTab] = useState<SubTab>(SUB_TABS[0]);
+  /** 当前子视图（地址是唯一来源：slug → 中文标签；不认识的取值已在路由层落回 form）。 */
+  const subTab = SUB_TABS.find((tab) => SUB_TAB_KEYS[tab] === sub) ?? SUB_TABS[0];
   /** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）：投影到本地布尔（null = 关）。 */
   const focus = focusMode === true;
   /** 日报 / 问题（原型内存态：演示数据 + 本次填写新提交的条目）。 */
@@ -2313,7 +2333,7 @@ export function ReportIssuePanel({ project, me, focusMode }: {
     setNotice(
       "已提交 " + dateCn + " 的日报。" + (issueState === null ? "" : "「现场发现问题」已自动生成问题记录（" + issueState + "），见「问题追踪」/「问题看板」。"),
     );
-    setSubTab("日报记录");
+    onChangeSub("records");
   };
 
   /** 暂存草稿（Push 202 修订）：不写「日报记录」、不切子视图、**不清表单** —— 只保留表单里已填内容 + 顶部提示
@@ -2331,7 +2351,7 @@ export function ReportIssuePanel({ project, me, focusMode }: {
         data-subnav-item={tab}
         aria-current={active ? "page" : undefined}
         onClick={() => {
-          setSubTab(tab);
+          onChangeSub(SUB_TAB_KEYS[tab]);
           setNotice("");
         }}
         className={SUBNAV_KEY + " " + (active ? SUBNAV_KEY_CURRENT : SUBNAV_KEY_IDLE)}

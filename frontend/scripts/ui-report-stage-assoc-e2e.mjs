@@ -163,6 +163,12 @@
  *   3 条成对删除语义（删 i-07 ⇒ i-07 与来源 r-0915 双消、删 r-0921a ⇒ r-0921a 与派生 i-01 双消、删 r-0921b ⇒ 只掉自己）；
  *   ④ / ⑦ 表头断言改写成「六列内容 + 行尾一列动作列」（第 7 列可视空、无障碍名 =「操作」的隐藏单元格）。
  *   附带：「表格内直接增删附图」曾试做，按业务口径「太丑了 取消修改」整体撤回（未保留任何代码 / 断言）。
+ * Push 214（业务口径 2026-09-28「这几个页面也要做路由」）：「日报及问题」的四块**页内子视图进地址** ——
+ *   `?view=daily&sub=form|records|issues|board`（ASCII slug；缺省「日报填写」form 不落参数，旧链接 `?view=daily` 原样打开 = 日报填写）；
+ *   写回用 `replaceProjectSubView`（replace，不新增历史条目）；不认识的 slug 落回 form（地址不纠正，与 `?view=` 同口径）；
+ *   新增 ⑫ 组 11 项：缺省不带 sub / 点「问题追踪」写回 sub=issues / 刷新直开停在原块 / 四个 slug 逐一 ↔ 内容块 /
+ *   三连切不增历史条目 / `?sub=bogus` 落回缺省 / 只带 `?sub=` 时无意义（落项目总览）/ 主标签切走再切回 = 回缺省日报填写。
+ *   ③ 组「提交后自动切「日报记录」」同步加地址断言（写回 `sub=records`）。
  * 前置（四件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -579,7 +585,9 @@ const submitEnabled = await ev("(function(){var b=document.querySelector(" + j("
 check("③ 再填「明日计划」后「提交日报」可点（必填齐：时间 + 当日完成工作 + 明日计划）", submitEnabled === true, String(submitEnabled));
 await clickSelector('[data-fill-form] button[data-action="submit"]');
 const switched = await waitFor("(function(){var b=document.querySelector(" + j('[data-subnav-item="日报记录"]') + ");return b!==null && b.getAttribute(" + j("aria-current") + ")===" + j("page") + ";})()");
-check("③ 提交后自动切到「日报记录」子视图", switched === true, String(switched));
+const submitHash = await ev("window.location.hash");
+check("③ 提交后自动切到「日报记录」子视图（Push 214 起同步写回地址 sub=records）",
+  switched === true && String(submitHash).endsWith("?view=daily&sub=records"), String(submitHash));
 
 // ---------- ④ 日报记录：列头（Push 199 收窄后六列）/ 最新一行 ----------
 const headerProbe = await ev(
@@ -2154,6 +2162,89 @@ check("⑪ 同一份内存态联动：「问题看板」上 i-01 / i-07 两张�
   lanesAfterDelete["已完成"] === lanesAtStart["已完成"] - 1 &&
   lanesAfterDelete["处理中"] === lanesAtStart["处理中"],
   JSON.stringify({ lanes: lanesAfterDelete, ...cardsGone }));
+
+// ---------- ⑫ 页内子视图路由（Push 214） ----------
+// 业务口径 2026-09-28：「这几个页面也要做路由」—— 「日报及问题」的四块页内子视图（日报填写 / 日报记录 / 问题追踪 / 问题看板）
+//   与主标签栏同一套「地址即状态」口径：`?view=daily&sub=form|records|issues|board`（ASCII slug；缺省「日报填写」form 不落参数）。
+//   本组验：① 缺省 / 四个 slug 与内容块一一对应；② 写回 = replace（不新增历史条目）；③ 刷新 / 收藏 / 分享直开停在原块；
+//   ④ 不认识的 slug 落回缺省（地址不纠正 · 与 ?view= 同口径）；⑤ 脱离 view=daily 时 sub 无意义（落项目总览）；
+//   ⑥ 主标签切走再切回 = 固定落回缺省「日报填写」。
+/** 子视图快照：地址 + 当前主标签 / 页内块 + 四块内容是否在案。 */
+const routeProbe = async () => await ev(
+  "(function(){var c=document.querySelector(" + j("[data-subnav-item][aria-current=page]") + ");" +
+  "var mt=document.querySelector(" + j("[data-maintabs-item][aria-current=page]") + ");" +
+  "return {hash:window.location.hash," +
+  "active:c===null?" + j("") + ":c.getAttribute(" + j("data-subnav-item") + ")," +
+  "maintab:mt===null?" + j("") + ":mt.getAttribute(" + j("data-maintabs-item") + ")," +
+  "form:document.querySelector(" + j("[data-fill-form]") + ")!==null," +
+  "records:document.querySelector(" + j("[data-report-table]") + ")!==null," +
+  "issues:document.querySelector(" + j("[data-issue-table]") + ")!==null," +
+  "board:document.querySelector(" + j("[data-issue-column]") + ")!==null};})()"
+);
+
+// ① 缺省 ?view=daily = 日报填写（缺省参数不落地址 · 旧链接原样打开口径不变）
+await openHash("?view=daily");
+let routeNow = await routeProbe();
+check("⑫ 缺省 ?view=daily → 日报填写，地址不带 sub（旧链接 / 书签口径不变）",
+  routeNow.hash.endsWith("?view=daily") && routeNow.active === "日报填写" && routeNow.form === true, JSON.stringify(routeNow));
+
+// ② 点「问题追踪」= 地址写回 &sub=issues（replace 写回 · 刷新 / 收藏 / 分享停在同一块）
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+routeNow = await routeProbe();
+check("⑫ 点「问题追踪」→ 地址写回 ?view=daily&sub=issues（内容同步切到问题表）",
+  routeNow.hash.endsWith("?view=daily&sub=issues") && routeNow.active === "问题追踪" && routeNow.issues === true, JSON.stringify(routeNow));
+
+// ③ 刷新（同地址重开）= 仍停在问题追踪
+await openHash("?view=daily&sub=issues");
+routeNow = await routeProbe();
+check("⑫ 刷新 / 收藏 ?sub=issues 直开 → 仍停在问题追踪",
+  routeNow.active === "问题追踪" && routeNow.issues === true, JSON.stringify(routeNow));
+
+// ④ 四个 slug ↔ 四块内容逐一对应（真实鼠标点页内导航栏逐项核）
+await openHash("?view=daily");
+const SUB_ROUTES = [["日报记录", "records", "records"], ["问题追踪", "issues", "issues"], ["问题看板", "board", "board"], ["日报填写", "form", "form"]];
+for (let i = 0; i < SUB_ROUTES.length; i += 1) {
+  const subName = SUB_ROUTES[i][0];
+  const subSlug = SUB_ROUTES[i][1];
+  const subField = SUB_ROUTES[i][2];
+  await clickSelector("[data-subnav-item=" + Q + subName + Q + "]");
+  const subNow = await routeProbe();
+  const wantHash = subSlug === "form" ? "?view=daily" : "?view=daily&sub=" + subSlug;
+  check("⑫ 点「" + subName + "」→ 地址 " + wantHash + "（内容块 " + subField + " 在案）",
+    subNow.hash.endsWith(wantHash) && subNow.active === subName && subNow[subField] === true, JSON.stringify(subNow));
+}
+
+// ⑤ 写回 = replace（不新增历史条目）：连切三块 history.length 不动
+await openHash("?view=daily");
+const histBefore = await ev("window.history.length");
+await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await clickSelector("[data-subnav-item=" + Q + "问题看板" + Q + "]");
+const histAfter = await ev("window.history.length");
+check("⑫ 子视图切换不新增历史条目（replace 写回 · " + String(histBefore) + " → " + String(histAfter) + "）",
+  histBefore === histAfter, String(histBefore) + " → " + String(histAfter));
+
+// ⑥ 不认识的 slug 落回缺省（地址不纠正 · 与 ?view= 不认识取值同口径）
+await openHash("?view=daily&sub=bogus");
+routeNow = await routeProbe();
+check("⑫ ?sub=bogus 落回日报填写（地址不纠正 —— 与 ?view= 同口径）",
+  routeNow.active === "日报填写" && routeNow.form === true && routeNow.hash.indexOf("sub=bogus") >= 0, JSON.stringify(routeNow));
+
+// ⑦ 脱离 view=daily 时 sub 无意义（落项目总览）
+await openHash("?sub=board");
+routeNow = await routeProbe();
+check("⑫ 只带 ?sub=board（无 view=daily）→ 项目总览（sub 无意义）",
+  routeNow.maintab === "项目总览" && routeNow.active === "", JSON.stringify(routeNow));
+
+// ⑧ 主标签切走再切回 = 固定落回缺省「日报填写」
+await openHash("?view=daily&sub=board");
+await clickSelector("[data-maintabs-item=" + Q + "项目总览" + Q + "]");
+const overviewHash = await ev("window.location.hash");
+await clickSelector("[data-maintabs-item=" + Q + "日报及问题" + Q + "]");
+routeNow = await routeProbe();
+check("⑫ 主标签切走再切回：地址回 ?view=daily、视图回日报填写",
+  String(overviewHash).endsWith("#/project/" + PROJECT_ID) && routeNow.hash.endsWith("?view=daily") && routeNow.active === "日报填写",
+  JSON.stringify({ afterOverview: overviewHash, back: routeNow }));
 
 // ---------- 清理 ----------
 // 偏好还原（放在撤销临时会话之前）：focusMode 回到进厂原值，不给下一轮留状态

@@ -546,6 +546,7 @@ export default function App() {
           me={state.me}
           project={detail}
           view={route.view}
+          dailySub={route.sub}
           members={directoryMemberOptions(directory)}
           onChangeManagers={handleChangeManagers}
           onTaskEdited={handleTaskEdited}
