@@ -17,6 +17,7 @@ import type { DbClient } from "../../db/db-client.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import {
   formatClockMinute,
+  isDeliverableChannel,
   mergeKeyOf,
   parseNotifyMessage,
   parseQuietHours,
@@ -79,6 +80,15 @@ export class NotifyService {
       return {
         outcome: "dead",
         error: "通知载荷非法（缺 recipientId / type / title / body 或超长）：" + row.dedupeKey,
+      };
+    }
+    if (!isDeliverableChannel(message.channel ?? "inbox")) {
+      // 接线段护栏（wmj PR #197 提请）：非 inbox 渠道在 M5-03 落地前按确定性失败收口（dead + 告警），
+      // 不得静默当站内信投递 —— 一次即弃，不进重试退避。
+      this.logger.warn("通知渠道未落地（确定性失败转 dead）：outbox#" + row.id + " · channel=" + message.channel);
+      return {
+        outcome: "dead",
+        error: "非 inbox 渠道未落地（M5-03 前按确定性失败收口）：channel=" + message.channel + " · " + row.dedupeKey,
       };
     }
     try {

@@ -5,6 +5,7 @@ export type { NotifyFlushStats } from "./notify.service.js";
 export { NOTIFY_MESSAGE_TOPIC } from "./notify.constants.js";
 export {
   formatClockMinute,
+  isDeliverableChannel,
   isWithinQuiet,
   mergeKeyOf,
   nextDayWindowStart,
