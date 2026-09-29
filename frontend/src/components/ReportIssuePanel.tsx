@@ -2520,6 +2520,9 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
   const [saving, setSaving] = useState(false);
   /** 操作提示（提交 / 暂存 / 删除 / 失败）。 */
   const [notice, setNotice] = useState<string>("");
+  /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到底部确认条
+   *  （与首页「删除项目」/ 模板面板同款非阻断浮条），第二下「删除」才真删 —— 成对删除的连带范围写进文案。 */
+  const [pendingDelete, setPendingDelete] = useState<{ kind: "report"; report: DailyReport } | { kind: "issue"; issue: Issue } | null>(null);
   /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
    *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
@@ -2630,6 +2633,33 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
         setNotice(friendlyError(error, "问题删除失败。"));
         void reload();
       });
+  };
+
+  /** 行尾删除的第一下（日报记录表）：只记下待删日报 —— 派生问题的连带删除语义见 deleteReportUnit。 */
+  const requestDeleteReport = (reportId: string) => {
+    const report = reportsRef.current.find((item) => item.id === reportId);
+    if (report !== undefined) {
+      setPendingDelete({ kind: "report", report });
+    }
+  };
+
+  /** 行尾删除的第一下（问题追踪表）：只记下待删问题 —— 来源日报的连带删除语义见 deleteIssueUnit。 */
+  const requestDeleteIssue = (issue: Issue) => {
+    setPendingDelete({ kind: "issue", issue });
+  };
+
+  /** 底部确认条的第二下：先收浮条、再按待删项派发真删（成对删除都在上面两个 delete*Unit 里落库）。 */
+  const confirmPendingDelete = () => {
+    const pending = pendingDelete;
+    if (pending === null) {
+      return;
+    }
+    setPendingDelete(null);
+    if (pending.kind === "report") {
+      deleteReportUnit(pending.report.id);
+    } else {
+      deleteIssueUnit(pending.issue);
+    }
   };
 
 
@@ -2749,6 +2779,7 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
         onClick={() => {
           onChangeSub(SUB_TAB_KEYS[tab]);
           setNotice("");
+          setPendingDelete(null);
         }}
         className={SUBNAV_KEY + " " + (active ? SUBNAV_KEY_CURRENT : SUBNAV_KEY_IDLE)}
       >
@@ -2822,7 +2853,7 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
           {reports.length === 0 ? (
             <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
           ) : (
-            <ReportList reports={reports} onPatch={patchReport} onDelete={deleteReportUnit} />
+            <ReportList reports={reports} onPatch={patchReport} onDelete={requestDeleteReport} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
@@ -2832,7 +2863,7 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <IssueTable issues={issues} focus={focus} onPatch={patchIssue} onDelete={deleteIssueUnit} />
+            <IssueTable issues={issues} focus={focus} onPatch={patchIssue} onDelete={requestDeleteIssue} />
           )}
         </section>
       ) : (
@@ -2848,6 +2879,44 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
 
       {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
       {openIssue === null ? null : <IssueDrawer projectId={project.id} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
+
+      {/* 删除二次确认条（Push 218 业务口径「删除要二次提示」）：与首页「删除项目」/ 模板面板同款固定底栏 ——
+          非阻断（第一下只是开口，不锁页面），第二下「删除」才真删；文案把成对删除的连带范围写清。 */}
+      {pendingDelete === null ? null : (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+          <div
+            role="dialog"
+            aria-label={pendingDelete.kind === "report" ? "确认删除日报" : "确认删除问题"}
+            data-delete-confirm-strip=""
+            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+          >
+            <span>
+              {pendingDelete.kind === "report"
+                ? "删除日报（" + pendingDelete.report.date + "）？它派生的全部问题会随这篇日报一起删除，删除后不可恢复。"
+                : pendingDelete.issue.reportId === ""
+                  ? "删除问题（" + pendingDelete.issue.raisedAt + "）？这条问题没有来源日报，只删它这一条，删除后不可恢复。"
+                  : "删除问题（" + pendingDelete.issue.raisedAt + "）？它来源的那篇日报会随这条问题一起删除，删除后不可恢复。"}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDelete(null);
+              }}
+              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              data-delete-confirm=""
+              onClick={confirmPendingDelete}
+              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+            >
+              删除
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
