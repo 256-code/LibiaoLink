@@ -60,6 +60,7 @@ function makeRow(overrides: Partial<StakeholderRow> = {}): StakeholderRow {
     wechat: "christian-w",
     email: "christian@acme.example",
     remark: "决策人",
+    role: "决策人",
     createdBy: ME,
     createdByName: "销售甲",
     createdAt: AT,
@@ -197,6 +198,7 @@ describe("字段级脱敏（A5-07 / C3-08）", () => {
     expect(item.company).toBe("ACME Ltd");
     expect(item.title).toBe("项目经理");
     expect(item.remark).toBe("决策人");
+    expect(item.role).toBe("决策人");
   });
 
   it("任务负责人：联系方式与备注**键不存在**（不返回而非打码），公司与职务仍在", async () => {
@@ -220,12 +222,13 @@ describe("字段级脱敏（A5-07 / C3-08）", () => {
     expect("phone" in item).toBe(false);
   });
 
-  it("未登记字段（name / companyType / 录入人）恒返回", async () => {
+  it("未登记字段（name / companyType / role / 录入人）恒返回", async () => {
     const { service } = makeService(VIEWER, { kind: "ids", ids: [PROJECT] });
     const item = await service.get(STAKEHOLDER, ME);
     expect(item.name).toBe("Christian Winkler");
     expect(item.companyType).toBe("customer");
     expect(item.createdByName).toBe("销售甲");
+    expect(item.role).toBe("决策人");
   });
 });
 
@@ -277,7 +280,7 @@ describe("记录级可见集（A5-03 / A5-04）", () => {
 });
 
 describe("用例与留痕", () => {
-  it("新建：写审计 create（八字段 before → after），并回读", async () => {
+  it("新建：写审计 create（九字段 before → after），并回读", async () => {
     const { service, audit } = makeService(SALES);
     const created = await service.create({ name: "李四", companyType: "supplier", phone: "13800000000" }, ME);
     expect(created.name).toBe("李四");
@@ -293,6 +296,7 @@ describe("用例与留痕", () => {
       "name",
       "phone",
       "remark",
+      "role",
       "title",
       "wechat",
     ]);
