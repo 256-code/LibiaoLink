@@ -173,7 +173,7 @@ export const FIELD_POLICIES: readonly FieldPolicyRow[] = [
 
 /** 实体字段全集：出口投影的输入（与各模块契约字段对齐；落地时以契约为准）。 */
 export const ENTITY_FIELDS: Record<FieldEntity, readonly string[]> = {
-  stakeholder: ["name", "company", "title", "phone", "wechat", "email", "remark"],
+  stakeholder: ["name", "company", "title", "phone", "wechat", "email", "remark", "role"],
   user: ["username", "displayName", "email", "status"],
 };
 

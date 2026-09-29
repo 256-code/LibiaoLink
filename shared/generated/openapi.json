@@ -5504,6 +5504,13 @@
             ],
             "description": "备注；需 stakeholder.manage，无权时键不存在"
           },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "干系人角色（A5-01 · Push 225 增列）；自由文本，未登记字段级策略 —— 与姓名 / 公司分类同档：登录且可见即返回，空为 null"
+          },
           "createdBy": {
             "allOf": [
               {
@@ -5550,6 +5557,7 @@
           "id",
           "name",
           "companyType",
+          "role",
           "createdBy",
           "createdByName",
           "projects",
@@ -5609,6 +5617,12 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 500
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "干系人角色；不传则空"
           },
           "projectIds": {
             "type": "array",
@@ -5764,6 +5778,13 @@
               "null"
             ],
             "maxLength": 500
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
           }
         },
         "description": "更新干系人（部分更新；null = 清空该字段）：变更写审计留痕（字段级 before / after）"
