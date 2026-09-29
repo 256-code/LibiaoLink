@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { InlineCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
-import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
 import {
   ISSUE_STATE_NAMES,
@@ -26,6 +26,7 @@ import { PROJECT_STAGES } from "../data/projects";
 import { lockBodyScroll } from "../scrollLock";
 import type { DailySubView } from "../useHashRoute";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { RowEditButton } from "./RowEditButton";
 import { ScrollArea } from "./ScrollArea";
 import type { MeResponse, Project } from "../types";
 
@@ -194,16 +195,29 @@ import type { MeResponse, Project } from "../types";
  *      「施工人数抽屉也要可以编辑」）：`headcount` 为 null 时不再渲染字面量「null」，与「项目总览」任务详情抽屉同款出
  *      text-zinc-300 的 —；并接 `InlineNumberCell`（项目总览任务表同款：点开浮层 / 0 以上的整数 / 带「人」后缀 /
  *      落值即收浮层），落值走 `PATCH …/reports/{id}` 的 headcount（null = 清空）。
+ *
+ * - Push 223（业务口径 2026-09-29「日报记录 问题追溯里面 这个编辑也要和干系人同款 不是像现在这样」+
+ *   「文字和图片编辑要同款 下拉框的保持原来的」）：两块表的**行尾动作列补一枚「编辑」按钮**
+ *   （与「干系人」台账同款 `RowEditButton`：静止 24px 幽灵态随行悬停浮现、悬停展开 48px 近黑胶囊「编辑」）——
+ *   点它打开**编辑弹窗**（与「干系人」弹窗同款：遮罩 + max-w-md 圆角白卡 + 品牌黄主按钮 + Esc / 点遮罩关闭）；
+ *   **文字列 / 图片列改走弹窗**：「日报记录」= 当日完成工作 / 明日计划 / 现场工作附图，
+ *   「问题追踪」= 问题描述 / 解决方案或建议 / 问题附图（图片 = 与表格 / 抽屉同一套 `AttachmentPicker`：
+ *   粘贴 / 选文件增图、× 删图、改名、点开大图）；**下拉口径保持原来的行内编辑** ——
+ *   「关联阶段」（日报）/ 「问题归类」「问题是否处理」（问题）三处仍是点单元格直接改、不进弹窗；
+ *   表格里点空白 / 点行体依旧不进入编辑（编辑只走行尾按钮）；行尾两枚按钮共用**预留槽位**，
+ *   展开只在槽内长大、列宽 / 表宽一格不动（沿用「鼠标触碰表格会动」的修法）。
  */
 
 /** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
  *  文字两列 + 关联阶段多选 —— 时间 / 填写者不动（「编辑后时间不变」）。
  *  Push 212 续（业务口径「图片也要可以增删」）：追加**现场工作附图**（photos）—— 抽屉里与两列文字共用同一份 patchReport 内存态。
- *  Push 217 续⑥（业务口径「施工人数抽屉也要可以编辑」）：追加**施工人数**（headcount，契约 number | null，null = 清空）。 */
+ *  Push 217 续⑥（业务口径「施工人数抽屉也要可以编辑」）：追加**施工人数**（headcount，契约 number | null，null = 清空）。
+ *  Push 223：文字两列 / 现场工作附图改走行尾「编辑」弹窗（表格内只做展示），「关联阶段」仍是行内多选。 */
 export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stageNames" | "photos" | "headcount">>;
 
 /** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。
- *  Push 212 续：追加**问题附图**（photos）。 */
+ *  Push 212 续：追加**问题附图**（photos）。
+ *  Push 223：文字两列 / 问题附图改走行尾「编辑」弹窗（表格内只做展示），「问题归类 / 问题是否处理」仍是行内下拉。 */
 export type IssuePatch = Partial<Pick<Issue, "title" | "categories" | "solution" | "state" | "photos">>;
 
 /** 卡片外壳（与两块任务看板同一套材质：白壳 + 发丝边 + 三层投影）。 */
@@ -851,7 +865,7 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
       title={isLarge || isThumb ? item.name : undefined}
       className={
         isLarge || isThumb
-          ? "relative inline-flex shrink-0"
+          ? "group relative inline-flex shrink-0"
           : "inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-600"
       }
     >
@@ -928,13 +942,14 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
       )}
       {onRemove === undefined ? null : isLarge || isThumb ? (
         // Push 212 续：md / lg 瓦片走**角标**移除（absolute 覆盖在图上，不占行宽 —— 保证大瓦片仍能并排折行）。
+        // Push 224：× 角标改为**悬停才显形**（业务口径「鼠标放置图片右上再显示叉」—— 默认 opacity-0，悬停瓦片或键盘聚焦时显出）。
         <button
           type="button"
           data-action="remove-attachment"
           aria-label={"移除 " + item.name}
           onClick={() => onRemove(index)}
           title="移除这张图"
-          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white text-[11px] leading-none text-zinc-500 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-800"
+          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white text-[11px] leading-none text-zinc-500 opacity-0 shadow-sm transition group-hover:opacity-100 hover:bg-zinc-100 hover:text-zinc-800 focus-visible:opacity-100"
         >
           ×
         </button>
@@ -958,12 +973,31 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
  *  约 128×96 大图瓦片、多张自动折行、只出图不带文件名 —— 业务样 = 图 2；名字放 title 提示）。
  *  Push 207 再加 md（40×40 紧凑缩略图、只出图不带文件名 —— 业务样 = 图五；Push 217 起「问题追踪」表改用 lg，
  *  现用于「问题看板」卡片与问题详情抽屉的贴图区）。 */
-function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg" }) {
+function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemove = false }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg"; /** Push 224 续：移除图片二次确认（只开在抽屉口径 —— 抽屉里 × 是即时落库的，业务口径「移除图片要加二次确认」；表单 / 编辑弹窗里的删除仍是一下即摘，保存时才落库）。 */ confirmRemove?: boolean }) {
   const isLarge = size === "lg";
   /** 列表里的紧凑缩略图档（40×40、名字进 title）。 */
   const isThumb = size === "md";
   /** 大图预览（Push 216：存已解析的展示地址 —— 本地 blob 或服务端预览签名）。 */
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  /** 移除图片二次确认（Push 224 续 · 业务口径「移除图片要加二次确认」，只开在抽屉口径）：
+   *  第一下「×」只出底部确认条（与行删除二次提示同款固定底栏），第二下「移除」才真摘。
+   *  确认条 portal 到 body —— 抽屉壳 .drawer-panel 的入场动画会当 containing block，留在组件里会偏移。 */
+  const [pendingRemove, setPendingRemove] = useState<{ at: number; name: string } | null>(null);
+  const requestRemove = (at: number) => {
+    const item = items[at];
+    if (item === undefined) {
+      return;
+    }
+    setPendingRemove({ at, name: item.name });
+  };
+  const confirmPendingRemove = () => {
+    if (pendingRemove === null || onRemove === undefined) {
+      setPendingRemove(null);
+      return;
+    }
+    onRemove(pendingRemove.at);
+    setPendingRemove(null);
+  };
   /** 正在改名的第几份（null = 没有在改名）；业务口径「图片名称可以自定义」。 */
   const [editingAt, setEditingAt] = useState<number | null>(null);
   /** 编辑中的**主名**（后缀不参与编辑 —— 业务口径「自定义把图片png格式删了怎么办」：格式由系统保留）。 */
@@ -1013,11 +1047,39 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
           commitRename={commitRename}
           startRename={startRename}
           onRename={onRename}
-          onRemove={onRemove}
+          onRemove={onRemove === undefined ? undefined : confirmRemove ? requestRemove : onRemove}
           onPreview={(url, name) => setPreview({ url, name })}
         />
       ))}
       {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => setPreview(null)} />}
+      {pendingRemove === null ? null : createPortal(
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
+          <div
+            role="dialog"
+            aria-label="确认移除图片"
+            data-remove-attachment-confirm-strip=""
+            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+          >
+            <span>移除图片「{pendingRemove.name}」？</span>
+            <button
+              type="button"
+              onClick={() => { setPendingRemove(null); }}
+              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              data-remove-attachment-confirm=""
+              onClick={confirmPendingRemove}
+              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+            >
+              移除
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -1031,7 +1093,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: 
  *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。
  *  Push 205：「当前问题附图」加**前置开关**（业务口径「先填发现的问题 才能填另外三个」）—— disabled 时整卡灰底 / 灰字、
  *  两半都点不开（左半按钮 disabled、粘贴落点不可聚焦、文件框 disabled、文档级粘贴监听不挂）。 */
-function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card" }: { projectId: string; field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact" }) {
+function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card", confirmRemove = false }: { projectId: string; field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact"; /** Push 224 续：移除图片二次确认 —— 仅抽屉两处开启（× 即时落库，先出确认条）。 */ confirmRemove?: boolean }) {
   /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
   const [armed, setArmed] = useState(false);
   /** 粘贴落点（左半里的不可见输入框：浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令）。 */
@@ -1217,6 +1279,7 @@ function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabl
         items={items}
         strip={field}
         size={size}
+        confirmRemove={confirmRemove}
         onRemove={(at) => onChange(items.filter((_, index) => index !== at))}
         onRename={(at, name) => onChange(items.map((item, index) => (index === at ? { ...item, name } : item)))}
       />
@@ -1242,8 +1305,18 @@ const REPORT_COLUMNS: readonly string[] = [
  *  （Push 199 收窄后不再带问题记录当前态 —— 问题态仍在「问题追踪 / 问题看板」可查。）
  *  Push 206（业务口径「这个日报记录要大一点效果要如图二所示」+「用户填写后换行 填到表格后也要是换行的」）：
  *  整表放大（字号 xs → sm、单元格内边距 py-2.5 → py-4、表头 py-3.5、表格 min-w 900 → 1080）+「当日完成工作 / 明日计划」
- *  两列 whitespace-pre-line 按行换行 + 「现场工作附图」列 PhotoStrip 大图瓦片（size 档位 lg）。 */
-function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyReport[]; onPatch: (id: string, patch: ReportPatch) => void; onDelete: (id: string) => void }) {
+ *  两列 whitespace-pre-line 按行换行 + 「现场工作附图」列 PhotoStrip 大图瓦片（size 档位 lg）。
+ *  Push 223（业务口径 2026-09-29「日报记录 … 这个编辑也要和干系人同款」+「文字和图片编辑要同款 下拉框的保持原来的」）：
+ *  行尾补一枚干系人同款「编辑」按钮 —— 文字两列 / 现场工作附图改走编辑弹窗（ReportEditModal）落值
+ *  （表格里只做展示），「关联阶段」是下拉口径、保持原来的行内多选。 */
+function ReportList({ reports, onEdit, onPatch, onDelete }: {
+  reports: readonly DailyReport[];
+  /** 行尾「编辑」按钮（Push 223）：打开日报编辑弹窗 —— 文字两列 + 现场工作附图（关联阶段是下拉口径，保持行内）。 */
+  onEdit: (report: DailyReport) => void;
+  /** 行内编辑落值（Push 208 口径保留）：本表只剩「关联阶段」一列。 */
+  onPatch: (id: string, patch: ReportPatch) => void;
+  onDelete: (id: string) => void;
+}) {
   return (
     <div data-report-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
@@ -1255,8 +1328,9 @@ function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyRep
               </th>
             ))}
             {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
-                与任务表同一个 48px 槽位、同款 RowDeleteButton（静止 24px 幽灵态、悬停展开红胶囊「删除」），行内不动其它列。 */}
-            <th className="w-20 border-b border-zinc-200 px-4 py-3.5 font-medium">
+                Push 223 再补一枚「编辑」（干系人同款 RowEditButton）—— 两枚共用一枚预留槽位（78px = 悬停展开 48 + 间距 6 + 静止 24），
+                哪一枚展开都只吃槽内空间 ⇒ 列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」的修法照旧）。 */}
+            <th className="w-[110px] border-b border-zinc-200 px-4 py-3.5 font-medium">
               <span className="sr-only">操作</span>
             </th>
           </tr>
@@ -1291,14 +1365,16 @@ function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyRep
                 </td>
                 <td className="min-w-[150px] border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
                   {/* Push 208 追加（业务口径「这个也要可以编辑筛选选择」+ 同日追加「显示也要有颜色」）：关联阶段行内可改 ——
-                      浮层 = 与表单同款九阶段勾选清单；显示态 = StageTags 色签组（逐枚出签、与浮层共用一张色表） */}
+                      浮层 = 与表单同款九阶段勾选清单；显示态 = StageTags 色签组（逐枚出签、与浮层共用一张色表）。
+                      Push 223 续（业务口径 2026-09-29「阴影太大了」）：触发器 hover 底色改**贴色签**（CELL_EDIT_CHIP ——
+                      不再 w-full 铺满整列），只有色签四周那圈 2px 亮起。 */}
                   <InlineCell
                     ariaLabel={"修改关联阶段（" + report.date + "）"}
                     title="点击选择（可多选）"
                     width={220}
                     height={REPORT_STAGES.length * 30 + 12}
                     bare
-                    triggerClassName={CELL_EDIT_TEXT}
+                    triggerClassName={CELL_EDIT_CHIP}
                     display={<StageTags names={report.stageNames} />}
                     render={() => (
                       <MultiOptionList
@@ -1314,60 +1390,48 @@ function ReportList({ reports, onPatch, onDelete }: { reports: readonly DailyRep
                   />
                 </td>
                 <td className="min-w-[240px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-800">
-                  {/* Push 208「日报记录同理」：当日完成工作行内可改（文字修改需要点击保存 · 时间列不动） */}
-                  <InlineTextCell
-                    bare
-                    value={report.doneWork}
-                    ariaLabel={"修改当日完成工作（" + report.date + "）"}
-                    triggerClassName={CELL_EDIT_TEXT}
-                    placeholder="填写当日完成的工作，点「保存」生效"
-                    display={
-                      report.doneWork === "" ? (
-                        <span className="text-zinc-300">—</span>
-                      ) : (
-                        <span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork}</span>
-                      )
-                    }
-                    onSave={(text) => {
-                      onPatch(report.id, { doneWork: renumberLines(text) });
-                    }}
-                  />
+                  {/* Push 223（业务口径「文字和图片编辑要同款」）：当日完成工作改由行尾「编辑」弹窗落值 ——
+                      表格里只做展示，不再是可点目标（点表格不进入任何编辑）。 */}
+                  {report.doneWork === "" ? (
+                    <span className="text-zinc-300">—</span>
+                  ) : (
+                    <span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork}</span>
+                  )}
                 </td>
                 <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
-                  {/* Push 208：明日计划行内可改（同款文字编辑：点「保存」才落值） */}
-                  <InlineTextCell
-                    bare
-                    value={report.plan}
-                    ariaLabel={"修改明日计划（" + report.date + "）"}
-                    triggerClassName={CELL_EDIT_TEXT}
-                    placeholder="填写明日计划，点「保存」生效"
-                    display={
-                      report.plan === "" ? (
-                        <span className="text-zinc-300">—</span>
-                      ) : (
-                        <span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan}</span>
-                      )
-                    }
-                    onSave={(text) => {
-                      onPatch(report.id, { plan: renumberLines(text) });
-                    }}
-                  />
+                  {/* Push 223：明日计划同上（展示only，编辑在行尾弹窗里做）。 */}
+                  {report.plan === "" ? (
+                    <span className="text-zinc-300">—</span>
+                  ) : (
+                    <span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan}</span>
+                  )}
                 </td>
                 <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
-                  {/* 只读展示（同上 · 业务口径「太丑了 取消修改」）：附图增删在「日报填写」表单与抽屉里做。 */}
+                  {/* 展示only（Push 223）：现场工作附图的增删 / 改名改由行尾「编辑」弹窗（AttachmentPicker）做（点图仍可看大图）。 */}
                   {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} size="lg" />}
                 </td>
-                <td className="w-20 border-b border-zinc-100 px-4 py-4 align-top" data-report-delete-cell="">
-                  {/* 行尾动作槽位（任务表同款：RowDeleteButton 注释里那套「展开只吃预留的 48px 槽位」）——
-                      幽灵态 24px → 悬停 48px **只在槽内长大**，单元格内容宽不变 ⇒ 表格列宽/表宽一格不动。
-                      px-4(16×2) + 48 = 80 = w-20，列宽正好对上表头。业务反馈：「鼠标触碰表格会动」。 */}
-                  <span data-report-delete-slot="" className="flex h-6 w-12 shrink-0 items-center">
-                    <RowDeleteButton
-                      label={"删除日报（" + report.date + "）—— 会连同这篇日报派生的问题一起删除"}
-                      onDelete={() => {
-                        onDelete(report.id);
-                      }}
-                    />
+                <td className="w-[110px] border-b border-zinc-100 px-4 py-4 align-top" data-report-delete-cell="">
+                  {/* 行尾动作槽位（Push 223 · 干系人同款两枚：编辑 + 删除）——
+                      幽灵态 24px → 悬停 48px **只在槽内长大**；槽容器固定 78px（48 展开 + 6 间距 + 24 静止），
+                      单元格内容宽不变 ⇒ 表格列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」）。
+                      px-4(16×2) + 78 = 110 = w-[110px]，列宽正好对上表头。 */}
+                  <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
+                    <span data-report-edit-slot="">
+                      <RowEditButton
+                        label={"编辑日报（" + report.date + "）"}
+                        onEdit={() => {
+                          onEdit(report);
+                        }}
+                      />
+                    </span>
+                    <span data-report-delete-slot="">
+                      <RowDeleteButton
+                        label={"删除日报（" + report.date + "）—— 会连同这篇日报派生的问题一起删除"}
+                        onDelete={() => {
+                          onDelete(report.id);
+                        }}
+                      />
+                    </span>
                   </span>
                 </td>
               </tr>
@@ -1707,8 +1771,18 @@ function IssueBoard({ issues, onPatch, onOpen }: {
  *  「问题是否处理」列单元格补 text-center —— 状态色签（InlineOptionCell 触发器 = 行内级盒）在列内**始终水平居中**；
  *  另（业务口径「会出现截断的问题」）：归类单元格改 `wrapContent` —— 包裹层撤 `truncate` 裁剪，窄窗 / 列被挤到最小时色签不再被裁掉一角。
  *  Push 207 同批追加「增加项目总览 同款醒目模式在问题追踪里面」：`focus` = 醒目模式开 —— 整行铺该问题状态的
- *  底色（ISSUE_ROW_CLASS · 6% / 悬停 12%，与项目总览任务表同一套口径），状态列只留深色字；关 = 原样。 */
-function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Issue[]; focus: boolean; onPatch: (id: string, patch: IssuePatch) => void; onDelete: (issue: Issue) => void }) {
+ *  底色（ISSUE_ROW_CLASS · 6% / 悬停 12%，与项目总览任务表同一套口径），状态列只留深色字；关 = 原样。
+ *  Push 223（业务口径 2026-09-29「日报记录 问题追溯里面 这个编辑也要和干系人同款」+「文字和图片编辑要同款 下拉框的保持原来的」）：
+ *  行尾补一枚干系人同款「编辑」按钮 —— 「问题描述 / 解决方案或建议 / 问题附图」改走编辑弹窗（IssueEditModal）
+ *  落值（表格里只做展示）；「问题归类」「问题是否处理」是下拉口径、保持原来的行内编辑。 */
+function IssueTable({ issues, focus, onEdit, onPatch, onDelete }: {
+  issues: readonly Issue[];
+  focus: boolean;
+  /** 行尾「编辑」按钮（Push 223）：打开问题编辑弹窗 —— 文字两列 + 问题附图（归类 / 状态是下拉口径，保持行内）。 */
+  onEdit: (issue: Issue) => void;
+  onPatch: (id: string, patch: IssuePatch) => void;
+  onDelete: (issue: Issue) => void;
+}) {
   return (
     <div data-issue-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
@@ -1720,8 +1794,9 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
               </th>
             ))}
             {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
-                与「日报记录」/ 任务表同一个 48px 槽位与同款 RowDeleteButton；删问题 = 连它来源的那篇日报一起删（同一篇日报整组）。 */}
-            <th className="w-20 border-b border-zinc-200 px-4 py-3.5 font-medium">
+                Push 223 再补一枚「编辑」（干系人同款 RowEditButton）—— 两枚共用同一枚预留槽位
+                （78px = 悬停展开 48 + 间距 6 + 静止 24）；删问题 = 连它来源的那篇日报一起删（同一篇日报整组）。 */}
+            <th className="w-[110px] border-b border-zinc-200 px-4 py-3.5 font-medium">
               <span className="sr-only">操作</span>
             </th>
           </tr>
@@ -1733,18 +1808,9 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
               <td className="min-w-[240px] px-4 py-4">
                 {/* Push 217 续（业务口径「问题归类去左侧一些这个间距不协调」）：min-w 320 → 240 —— 收窄本列与
                     「问题归类」之间的空档，归类列（及其后各列）随之前移；描述 / 「提出人」小行仍按行换行，不截断。 */}
-                {/* Push 208：问题描述行内可改 —— 文字修改需要点击保存，日期列（提出日期）不动 */}
-                <InlineTextCell
-                  bare
-                  value={issue.title}
-                  ariaLabel={"修改问题描述（" + issue.raisedAt + "）"}
-                  triggerClassName={CELL_EDIT_TEXT}
-                  placeholder="修改问题描述，点「保存」生效"
-                  display={<span data-issue-title="" className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>}
-                  onSave={(text) => {
-                    onPatch(issue.id, { title: renumberLines(text) });
-                  }}
-                />
+                {/* Push 223（业务口径「文字和图片编辑要同款」）：问题描述改由行尾「编辑」弹窗落值 ——
+                    表格里只做展示，不再是可点目标（点表格不进入任何编辑）。 */}
+                <span data-issue-title="" className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>
                 <p className="mt-1 text-[11px] leading-4 text-zinc-400">提出人：{issue.reporter}</p>
               </td>
               <td className="whitespace-nowrap px-4 py-4">
@@ -1766,21 +1832,11 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
                 />
               </td>
               <td className="min-w-[280px] px-4 py-4">
-                {/* Push 208：解决方案或建议行内可改（文字列同款：点「保存」才落值） */}
-                <InlineTextCell
-                  bare
-                  value={issue.solution}
-                  ariaLabel={"修改解决方案或建议（" + issue.raisedAt + "）"}
-                  triggerClassName={CELL_EDIT_TEXT}
-                  placeholder="补充解决方案或建议，点「保存」生效"
-                  display={<span data-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : issue.solution}</span>}
-                  onSave={(text) => {
-                    onPatch(issue.id, { solution: renumberLines(text) });
-                  }}
-                />
+                {/* Push 223：解决方案或建议同上（展示only，编辑在行尾弹窗里做）。 */}
+                <span data-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : issue.solution}</span>
               </td>
               <td className="min-w-[440px] px-4 py-4">
-                {/* 只读展示：附图增删在「日报填写」表单与问题详情抽屉里做（业务口径「太丑了 取消修改」）。
+                {/* 展示only（Push 223）：问题附图的增删 / 改名改由行尾「编辑」弹窗（AttachmentPicker）做（点图仍可看大图）。
                     Push 217 续（业务口径「这比例完全不一样啊 包括图片」）：图幅 md（40×40）→ lg（约 128×96 大图瓦片、
                     多张自动折行、只出图不带文件名 —— 与「日报记录 → 现场工作附图」同一档），列宽同口径 min-w-[440px]。 */}
                 {issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="lg" />}
@@ -1801,16 +1857,27 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
                   }}
                 />
               </td>
-              <td className="w-20 px-4 py-4" data-issue-delete-cell="">
-                {/* 同上：预留 48px 动作槽位，幽灵态 24px → 悬停 48px 只在槽内长大，不推挤左侧列
-                    （业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。px-4(16×2) + 48 = 80 = w-20（Push 217 与「日报记录」同槽位）。 */}
-                <span data-issue-delete-slot="" className="flex h-6 w-12 shrink-0 items-center">
-                  <RowDeleteButton
-                    label={"删除问题（" + issue.raisedAt + "）—— 会连同来源日报一起删除"}
-                    onDelete={() => {
-                      onDelete(issue);
-                    }}
-                  />
+              <td className="w-[110px] px-4 py-4" data-issue-delete-cell="">
+                {/* 行尾动作槽位（Push 223 · 干系人同款两枚：编辑 + 删除）—— 槽容器固定 78px（48 展开 + 6 间距 + 24 静止），
+                    幽灵态 24px → 悬停 48px 只在槽内长大，不推挤左侧列（业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。
+                    px-4(16×2) + 78 = 110 = w-[110px]（与「日报记录」同槽位）。 */}
+                <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
+                  <span data-issue-edit-slot="">
+                    <RowEditButton
+                      label={"编辑问题（" + issue.raisedAt + "）"}
+                      onEdit={() => {
+                        onEdit(issue);
+                      }}
+                    />
+                  </span>
+                  <span data-issue-delete-slot="">
+                    <RowDeleteButton
+                      label={"删除问题（" + issue.raisedAt + "）—— 会连同来源日报一起删除"}
+                      onDelete={() => {
+                        onDelete(issue);
+                      }}
+                    />
+                  </span>
                 </span>
               </td>
             </tr>
@@ -1818,6 +1885,286 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** 「日报记录 / 问题追踪」行编辑弹窗外壳（Push 223 · 与「干系人」新建 / 编辑弹窗同款：遮罩 + max-w-md 圆角白卡 + 品牌黄主按钮
+ *  + Esc / 点遮罩关闭；内容超高时表单区自己滚动、页脚按钮不跟着滚）。 */
+function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, onClose, onSubmit, children }: {
+  label: string;
+  hint: string;
+  submitLabel: string;
+  /** 提交中（主按钮转「保存中…」并禁用）。 */
+  pending: boolean;
+  canSubmit: boolean;
+  /** 服务端失败文案（非空时显示在按钮上方；窗口保持打开）。 */
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-zinc-900/40" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        data-record-edit-modal=""
+        className="relative flex max-h-[calc(100vh-3rem)] w-full max-w-md flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
+      >
+        <h2 className="text-lg font-bold text-zinc-900">{label}</h2>
+        <p className="mt-1 text-sm text-zinc-500">{hint}</p>
+        <form className="mt-5 flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-0.5">{children}</div>
+          {error === null ? null : (
+            <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </p>
+          )}
+          <div className="mt-5 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              data-record-edit-submit=""
+              disabled={!canSubmit}
+              className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {pending ? "保存中…" : submitLabel}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/** 「日报记录」行编辑弹窗（Push 223 · 业务口径「日报记录 … 这个编辑也要和干系人同款」+「文字和图片编辑要同款」）：
+ *  只收**文字 + 图片**两类字段 —— 当日完成工作 / 明日计划 / 现场工作附图；「关联阶段」是下拉口径，
+ *  按业务要求**保持原来的行内编辑**，不进弹窗。
+ *  PATCH 合并语义与「干系人」弹窗一致：只提交改动过的键（文字保存前统一过自动序号 renumberLines）。 */
+function ReportEditModal({ projectId, row, onClose, onSubmit }: {
+  projectId: string;
+  row: DailyReport;
+  onClose: () => void;
+  /** 提交：返回 null = 成功（父层关窗）；返回文案 = 失败提示，窗口保持打开。 */
+  onSubmit: (patch: ReportPatch) => Promise<string | null>;
+}) {
+  const [doneWork, setDoneWork] = useState(row.doneWork);
+  const [plan, setPlan] = useState(row.plan);
+  const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** 保存前统一过一遍自动序号（与表格行内编辑 / 「日报填写」提交同一口径）。 */
+  const nextDoneWork = renumberLines(doneWork);
+  const nextPlan = renumberLines(plan);
+  /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
+  const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos });
+  /** 「当日完成工作」是契约必填 —— 清空不允许保存（与行内编辑同口径）。 */
+  const canSubmit = nextDoneWork !== "" && uploadBlocked === "" && !pending;
+  /** 只提交改动过的键（与干系人弹窗的 PATCH 合并语义一致）；无改动 = 空 patch（父层直接关窗）。 */
+  const changedPatch = (): ReportPatch => {
+    const patch: ReportPatch = {};
+    if (nextDoneWork !== row.doneWork) {
+      patch.doneWork = nextDoneWork;
+    }
+    if (nextPlan !== row.plan) {
+      patch.plan = nextPlan;
+    }
+    if (readyFileIds(photos).join("|") !== readyFileIds(row.photos).join("|")) {
+      patch.photos = photos;
+    }
+    return patch;
+  };
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+    setPending(true);
+    setError(null);
+    void onSubmit(changedPatch()).then((message) => {
+      setPending(false);
+      if (message !== null) {
+        setError(message);
+      }
+    });
+  };
+  return (
+    <RecordEditModal
+      label="编辑日报"
+      hint={cnDateOf(row.date) + " · " + row.author + " —— 只提交改动过的字段；清空「明日计划」= 删除该字段内容。"}
+      submitLabel="保存修改"
+      pending={pending}
+      canSubmit={canSubmit}
+      error={error}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+    >
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          当日完成工作<span className="ml-1 text-xs font-normal text-zinc-400">必填</span>
+        </span>
+        <GrowingTextarea
+          data-record-field="doneWork"
+          className={FORM_INPUT + " resize-none leading-6"}
+          rows={3}
+          value={doneWork}
+          onChange={(event) => setDoneWork(event.target.value)}
+          placeholder="填写当日完成的工作"
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          明日计划<span className="ml-1 text-xs font-normal text-zinc-400">可选 · 留空 = 清空</span>
+        </span>
+        <GrowingTextarea
+          data-record-field="plan"
+          className={FORM_INPUT + " resize-none leading-6"}
+          rows={3}
+          value={plan}
+          onChange={(event) => setPlan(event.target.value)}
+          placeholder="填写明日计划（可选）"
+        />
+      </label>
+      <div className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          现场工作附图
+        </span>
+        <AttachmentPicker
+          projectId={projectId}
+          variant="compact"
+          field="photos"
+          size="lg"
+          items={photos}
+          onChange={setPhotos}
+          ariaLabel="现场工作附图：点击左半后 Ctrl+V 粘贴图片，或点右半选择文件"
+        />
+      </div>
+      {uploadBlocked === "" ? null : <p className="text-xs text-amber-700">{uploadBlocked}</p>}
+    </RecordEditModal>
+  );
+}
+
+/** 「问题追踪」行编辑弹窗（Push 223 · 业务口径「问题追溯里面 这个编辑也要和干系人同款」+「文字和图片编辑要同款」）：
+ *  只收**文字 + 图片**两类字段 —— 问题描述 / 解决方案或建议 / 问题附图；「问题归类」「问题是否处理」是下拉口径，
+ *  按业务要求**保持原来的行内编辑**，不进弹窗。 */
+function IssueEditModal({ projectId, row, onClose, onSubmit }: {
+  projectId: string;
+  row: Issue;
+  onClose: () => void;
+  onSubmit: (patch: IssuePatch) => Promise<string | null>;
+}) {
+  const [title, setTitle] = useState(row.title);
+  const [solution, setSolution] = useState(row.solution);
+  const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** 保存前统一过一遍自动序号（与表格行内编辑同一口径）。 */
+  const nextTitle = renumberLines(title);
+  const nextSolution = renumberLines(solution);
+  /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
+  const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos });
+  /** 「问题描述」是契约必填（清空会被服务端拒）—— 前端先拦（与行内编辑同口径）。 */
+  const canSubmit = nextTitle !== "" && uploadBlocked === "" && !pending;
+  /** 只提交改动过的键（solution 空串 = 清空 → 契约 null，口径同 issueUpdateBody）。 */
+  const changedPatch = (): IssuePatch => {
+    const patch: IssuePatch = {};
+    if (nextTitle !== row.title) {
+      patch.title = nextTitle;
+    }
+    if (nextSolution !== row.solution) {
+      patch.solution = nextSolution;
+    }
+    if (readyFileIds(photos).join("|") !== readyFileIds(row.photos).join("|")) {
+      patch.photos = photos;
+    }
+    return patch;
+  };
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+    setPending(true);
+    setError(null);
+    void onSubmit(changedPatch()).then((message) => {
+      setPending(false);
+      if (message !== null) {
+        setError(message);
+      }
+    });
+  };
+  return (
+    <RecordEditModal
+      label="编辑问题"
+      hint={cnDateOf(row.raisedAt) + " · " + row.reporter + " 提出 —— 只提交改动过的字段。"}
+      submitLabel="保存修改"
+      pending={pending}
+      canSubmit={canSubmit}
+      error={error}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+    >
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          问题描述<span className="ml-1 text-xs font-normal text-zinc-400">必填</span>
+        </span>
+        <GrowingTextarea
+          data-record-field="title"
+          className={FORM_INPUT + " resize-none leading-6"}
+          rows={3}
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="修改问题描述"
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          解决方案或建议<span className="ml-1 text-xs font-normal text-zinc-400">可选 · 留空 = 清空</span>
+        </span>
+        <GrowingTextarea
+          data-record-field="solution"
+          className={FORM_INPUT + " resize-none leading-6"}
+          rows={3}
+          value={solution}
+          onChange={(event) => setSolution(event.target.value)}
+          placeholder="补充解决方案或建议（可选）"
+        />
+      </label>
+      <div className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          问题附图
+        </span>
+        <AttachmentPicker
+          projectId={projectId}
+          variant="compact"
+          field="issuePhotos"
+          size="md"
+          items={photos}
+          onChange={setPhotos}
+          ariaLabel="问题附图：点击左半后 Ctrl+V 粘贴图片，或点右半选择文件"
+        />
+      </div>
+      {uploadBlocked === "" ? null : <p className="text-xs text-amber-700">{uploadBlocked}</p>}
+    </RecordEditModal>
   );
 }
 
@@ -2281,6 +2628,7 @@ function IssueDrawer({ projectId, issue, report, onPatchIssue, onPatchReport, on
           variant="compact"
           field="issuePhotos"
           size="md"
+          confirmRemove
           items={issue.photos}
           onChange={(items) => {
             onPatchIssue(issue.id, { photos: items });
@@ -2352,6 +2700,7 @@ function IssueDrawer({ projectId, issue, report, onPatchIssue, onPatchReport, on
                 variant="compact"
                 field="photos"
                 size="lg"
+                confirmRemove
                 items={report.photos}
                 onChange={(items) => {
                   onPatchReport(report.id, { photos: items });
@@ -2527,6 +2876,10 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
    *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
 
+  /** 编辑弹窗（Push 223 · 业务口径「这个编辑也要和干系人同款」）：存打开行的 id —— 渲染时现找该行
+   *  （行内下拉改过之后，弹窗里也始终是最新值）；编辑只走行尾「编辑」按钮，点行体不进入编辑。 */
+  const [editModal, setEditModal] = useState<{ kind: "report"; id: string } | { kind: "issue"; id: string } | null>(null);
+
   /** 拉取两份列表（首屏 / 写失败后重取）。 */
   const reload = useCallback(async () => {
     try {
@@ -2590,6 +2943,45 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
         setNotice(friendlyError(error, "问题修改失败。"));
         void reload();
       });
+  };
+
+
+  /** 日报编辑弹窗落值（Push 223）：与行内编辑同一套（乐观更新 + PATCH 回包替换该行）；
+   *  区别是**把失败文案还给弹窗**（窗口保持打开、不关）—— 失败同时重取，409 乐观锁冲突同路。 */
+  const submitReportEdit = async (row: DailyReport, patch: ReportPatch): Promise<string | null> => {
+    if (Object.keys(patch).length === 0) {
+      setEditModal(null);
+      return null;
+    }
+    setReports((previous) => previous.map((item) => (item.id === row.id ? { ...item, ...patch } : item)));
+    try {
+      const updated = await updateReport(project.id, row.id, reportUpdateBody(row, patch));
+      setReports((previous) => previous.map((item) => (item.id === row.id ? updated : item)));
+      setEditModal(null);
+      return null;
+    } catch (error) {
+      void reload();
+      return friendlyError(error, "日报修改失败。");
+    }
+  };
+
+
+  /** 问题编辑弹窗落值（Push 223）：同日报一套（同样把失败文案还给弹窗）。 */
+  const submitIssueEdit = async (row: Issue, patch: IssuePatch): Promise<string | null> => {
+    if (Object.keys(patch).length === 0) {
+      setEditModal(null);
+      return null;
+    }
+    setIssues((previous) => previous.map((item) => (item.id === row.id ? { ...item, ...patch } : item)));
+    try {
+      const updated = await updateIssue(project.id, row.id, issueUpdateBody(row, patch));
+      setIssues((previous) => previous.map((item) => (item.id === row.id ? updated : item)));
+      setEditModal(null);
+      return null;
+    } catch (error) {
+      void reload();
+      return friendlyError(error, "问题修改失败。");
+    }
   };
 
   /** 删除日报（Push 216 接真）：服务端成对删除（连带派生问题）—— 本地按来源关系清两表、关掉被删的抽屉 / 表单草稿。 */
@@ -2666,6 +3058,12 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
   /** 抽屉要展示的问题 / 它的来源日报（现找现用）。 */
   const openIssue = openIssueId === null ? null : issues.find((item) => item.id === openIssueId) ?? null;
   const openIssueReport = openIssue === null ? null : reports.find((item) => item.id === openIssue.reportId) ?? null;
+
+
+
+  /** 编辑弹窗要编辑的行（现找现用；行不存在 = 不开窗）。 */
+  const editingReport = editModal !== null && editModal.kind === "report" ? reports.find((item) => item.id === editModal.id) ?? null : null;
+  const editingIssue = editModal !== null && editModal.kind === "issue" ? issues.find((item) => item.id === editModal.id) ?? null : null;
 
   const author = me.user.displayName ?? me.user.name ?? "未署名用户";
 
@@ -2853,7 +3251,7 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
           {reports.length === 0 ? (
             <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
           ) : (
-            <ReportList reports={reports} onPatch={patchReport} onDelete={requestDeleteReport} />
+            <ReportList reports={reports} onEdit={(report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={patchReport} onDelete={requestDeleteReport} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
@@ -2863,7 +3261,7 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
           ) : (
-            <IssueTable issues={issues} focus={focus} onPatch={patchIssue} onDelete={requestDeleteIssue} />
+            <IssueTable issues={issues} focus={focus} onEdit={(issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={patchIssue} onDelete={requestDeleteIssue} />
           )}
         </section>
       ) : (
@@ -2879,6 +3277,24 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
 
       {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
       {openIssue === null ? null : <IssueDrawer projectId={project.id} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
+
+      {/* 行编辑弹窗（Push 223）：日报 / 问题各一枚 —— 与「干系人」弹窗同款；取消 / Esc / 点遮罩关闭，保存成功才关 */}
+      {editingReport === null ? null : (
+        <ReportEditModal
+          projectId={project.id}
+          row={editingReport}
+          onClose={() => { setEditModal(null); }}
+          onSubmit={(patch) => submitReportEdit(editingReport, patch)}
+        />
+      )}
+      {editingIssue === null ? null : (
+        <IssueEditModal
+          projectId={project.id}
+          row={editingIssue}
+          onClose={() => { setEditModal(null); }}
+          onSubmit={(patch) => submitIssueEdit(editingIssue, patch)}
+        />
+      )}
 
       {/* 删除二次确认条（Push 218 业务口径「删除要二次提示」）：与首页「删除项目」/ 模板面板同款固定底栏 ——
           非阻断（第一下只是开口，不锁页面），第二下「删除」才真删；文案把成对删除的连带范围写清。 */}

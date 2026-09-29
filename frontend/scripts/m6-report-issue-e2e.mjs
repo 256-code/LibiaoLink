@@ -20,7 +20,9 @@
  *   ③ 提交落库：日报 submitted + 服务端按「现场发现问题」自动生成问题（open）+ 问题图**转挂**问题侧（日报侧 issuePhotos 归零）；
  *   ④ 同日多条：同一天第二篇照样落库（无唯一约束），列表两行；
  *   ⑤ 草稿写库：暂存 = state=draft（列表出「草稿」签）；同一表单再点「提交日报」= PATCH 转 submitted（不新增行）；
- *   ⑥ 行内编辑落库：日报（完成工作 / 明日计划 / 关联阶段）与问题（描述 / 归类 / 状态三态）PATCH 回包替换该行、version 递增；
+ *   ⑥ 编辑落库（Push 223 起：文字 / 图片走干系人同款弹窗、下拉保持行内）：日报（完成工作 / 明日计划 / 现场工作附图 / 关联阶段）
+ *      与问题（描述 / 解决方案 / 问题附图 / 归类 / 状态三态）PATCH 回包替换该行、version 递增；
+ *      Push 224 续：问题详情抽屉里「移除图片」要二次确认（第一下 × 只出确认条、第二下「移除」才落库）；
  *   ⑦ 成对删除：删问题连来源日报、删日报连派生问题（两侧读面同时归零）；
  *   ⑧ 收尾：删临时项目（物理删）→ 读面 404；撤销临时会话；库内零残留。
  * 证据：docs/m6-回放证据(日报及问题接真·前端).md
@@ -450,17 +452,8 @@ const draftAfter = list4.items.filter((row) => row.id === draftRow.id)[0];
 check("⑤d 同一表单再点「提交日报」= PATCH 那条草稿转 submitted（不新增行 · total 仍 3）", list4.total === 3 && draftAfter !== undefined && draftAfter.state === "submitted" && draftAfter.version > draftRow.version, JSON.stringify({ total: list4.total, state: draftAfter === undefined ? "-" : draftAfter.state, version: draftAfter === undefined ? "-" : draftAfter.version }));
 
 
-// ---------- ⑥ 行内编辑落库 ----------
-/** 行内文字编辑：点触发按钮 → 浮层多行框 → 保存。 */
-async function inlineTextSave(rowSelector, ariaLabel, text) {
-  await clickSelector(rowSelector + " button[aria-label=" + Q + ariaLabel + Q + "]");
-  const opened = await waitFor("document.querySelector(" + j("[data-inline-save]") + ")!==null", 6000);
-  if (opened !== true) throw new Error("行内编辑浮层没开：" + ariaLabel);
-  await typeInto("[data-inline-popover] textarea", text);
-  await clickSelector("[data-inline-save]");
-  await sleep(1600);
-}
-/** 行内多选：点触发按钮 → 浮层里点一枚（点选即落值）→ Esc 收层。 */
+// ---------- ⑥ 编辑落库（Push 223：文字 / 图片走干系人同款弹窗，下拉保持行内） ----------
+/** 行内多选（下拉口径保留）：点触发按钮 → 浮层里点一枚（点选即落值）→ Esc 收层。 */
 async function inlineMultiToggle(rowSelector, ariaLabel, optionName) {
   await clickSelector(rowSelector + " button[aria-label=" + Q + ariaLabel + Q + "]");
   await sleep(600);
@@ -469,7 +462,7 @@ async function inlineMultiToggle(rowSelector, ariaLabel, optionName) {
   await pressKey("Escape", "Escape", 27);
   if (picked !== true) throw new Error("行内多选里找不到：" + optionName);
 }
-/** 行内单选（问题状态）：点触发按钮 → 点一枚 option。 */
+/** 行内单选（问题状态 · 下拉口径保留）：点触发按钮 → 点一枚 option。 */
 async function inlineOptionPick(rowSelector, ariaLabel, labelText) {
   await clickSelector(rowSelector + " button[aria-label=" + Q + ariaLabel + Q + "]");
   await sleep(700);
@@ -477,46 +470,112 @@ async function inlineOptionPick(rowSelector, ariaLabel, labelText) {
   await sleep(1800);
   if (picked !== true) throw new Error("行内单选里找不到：" + labelText);
 }
+/** 弹窗编辑（Push 223 · 与「干系人」同款）：点行尾「编辑」→ 等弹窗 → 依次覆写字段 → 点「保存修改」→ 等窗口消失。 */
+async function modalEditSave(triggerSelector, fields) {
+  await clickSelector(triggerSelector);
+  const opened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
+  if (opened !== true) throw new Error("编辑弹窗没开：" + triggerSelector);
+  for (const field of fields) {
+    await typeInto("[data-record-field=" + Q + field.key + Q + "]", field.text);
+  }
+  await clickSelector("[data-record-edit-submit]");
+  const closed = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")===null", 8000);
+  await sleep(1200);
+  if (closed !== true) throw new Error("编辑弹窗没关（保存失败？）：" + triggerSelector);
+}
+/** 打开的编辑弹窗快照（断言用）：字段钩子 / 贴图区 / 图瓦片 / 行内编辑件计数。 */
+const modalScopeExpr = "(function(){var m=document.querySelector(" + j("[data-record-edit-modal]") + ");if(m===null){return null;}var out=[];var fs=m.querySelectorAll(" + j("[data-record-field]") + ");for(var i=0;i<fs.length;i++){out.push(fs[i].getAttribute(\"data-record-field\"));}return {fields:out,pasteZones:m.querySelectorAll(" + j("[data-paste-zone]") + ").length,attachments:m.querySelectorAll(" + j("[data-attachment]") + ").length,inlineSave:m.querySelectorAll(" + j("[data-inline-save]") + ").length,multiOptions:m.querySelectorAll(" + j("[data-multi-option]") + ").length,options:m.querySelectorAll(" + j("[role=option]") + ").length};})()";
 
 await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
 await sleep(900);
 const rowSel1 = "[data-report-row=" + Q + rep1.id + Q + "]";
 const rep1AfterIssue = (await reportsOf()).items.filter((row) => row.id === rep1.id)[0];
-await inlineTextSave(rowSel1, "修改当日完成工作（" + todayIso + "）", "回放·完成工作-A1改" + LF + "回放·完成工作-A2改");
+// Push 223 口径（干系人同款「编辑是点编辑按钮才是编辑」）：表格里点行体（文字 / 图片）不再进入任何编辑。
+await clickSelector(rowSel1 + " [data-report-done]");
+await sleep(600);
+const bodyClickState = await ev("(function(){return {modal:document.querySelector(" + j("[data-record-edit-modal]") + ")!==null,inline:document.querySelector(" + j("[data-inline-popover]") + ")!==null};})()");
+check("⑥a 点行体（文字单元格）不进入编辑：无弹窗 · 无行内浮层", bodyClickState !== null && bodyClickState.modal === false && bodyClickState.inline === false, JSON.stringify(bodyClickState));
+// 文字：行尾「编辑」→ 弹窗（当日完成工作）
+await modalEditSave(rowSel1 + " [data-report-edit-slot] button", [{ key: "doneWork", text: "回放·完成工作-A1改" + LF + "回放·完成工作-A2改" }]);
 const rep1Edited = (await reportsOf()).items.filter((row) => row.id === rep1.id)[0];
-check("⑥a 日报「当日完成工作」行内编辑落库（自动序号重排 + version 递增 + 日期不动）", rep1Edited.doneWork === "1: 回放·完成工作-A1改" + LF + "2: 回放·完成工作-A2改" && rep1Edited.version > rep1AfterIssue.version && rep1Edited.date === rep1.date, JSON.stringify({ doneWork: rep1Edited.doneWork, version: rep1Edited.version }));
-await inlineTextSave(rowSel1, "修改明日计划（" + todayIso + "）", "回放·计划-A1改");
+check("⑥b 日报「当日完成工作」弹窗保存落库（自动序号重排 + version 递增 + 日期不动）", rep1Edited.doneWork === "1: 回放·完成工作-A1改" + LF + "2: 回放·完成工作-A2改" && rep1Edited.version > rep1AfterIssue.version && rep1Edited.date === rep1.date, JSON.stringify({ doneWork: rep1Edited.doneWork, version: rep1Edited.version }));
+// 文字：弹窗重开（预填最新值）→ 只改明日计划
+await modalEditSave(rowSel1 + " [data-report-edit-slot] button", [{ key: "plan", text: "回放·计划-A1改" }]);
 const rep1Edited2 = (await reportsOf()).items.filter((row) => row.id === rep1.id)[0];
-check("⑥b 日报「明日计划」行内编辑落库", rep1Edited2.plan === "1: 回放·计划-A1改" && rep1Edited2.version > rep1Edited.version, JSON.stringify({ plan: rep1Edited2.plan, version: rep1Edited2.version }));
-await inlineMultiToggle(rowSel1, "修改关联阶段（" + todayIso + "）", "验收");
+check("⑥c 日报「明日计划」弹窗保存落库（只提交改动键：完成工作不被带回覆盖）", rep1Edited2.plan === "1: 回放·计划-A1改" && rep1Edited2.version > rep1Edited.version && rep1Edited2.doneWork === rep1Edited.doneWork, JSON.stringify({ plan: rep1Edited2.plan, version: rep1Edited2.version }));
+// 图片：弹窗内 AttachmentPicker 删图 + 保存落库
+await clickSelector(rowSel1 + " [data-report-edit-slot] button");
+const photoModalOpened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
+const photoModalScope = await ev(modalScopeExpr);
+check("⑥d 日报编辑弹窗 = 文字两列 + 图片一区（关联阶段不在弹窗里 —— 下拉保持行内）", photoModalOpened === true && photoModalScope !== null && photoModalScope.fields.join(",") === "doneWork,plan" && photoModalScope.pasteZones === 1 && photoModalScope.attachments === 1 && photoModalScope.inlineSave === 0 && photoModalScope.multiOptions === 0, JSON.stringify(photoModalScope));
+await clickSelector("[data-record-edit-modal] [data-action=remove-attachment]");
+await clickSelector("[data-record-edit-submit]");
+const photoModalClosed = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")===null", 8000);
+await sleep(1200);
 const rep1Edited3 = (await reportsOf()).items.filter((row) => row.id === rep1.id)[0];
-const stageSet = rep1Edited3.stageKeys.slice().sort().join(",");
-check("⑥c 日报「关联阶段」行内多选落库（加一枚「验收」→ acceptance；不改动原有两枚）", stageSet === "acceptance,install,trial" && rep1Edited3.version > rep1Edited2.version, JSON.stringify({ stageKeys: rep1Edited3.stageKeys, version: rep1Edited3.version }));
+const dbRep1Links = (await db.query("select object_type, kind from file_links where object_id = $1", [rep1.id])).rows;
+check("⑥e 日报「现场工作附图」弹窗内删图 + 保存落库（photos 归零 · file_links(report) 清空 · version 递增）", photoModalClosed === true && rep1Edited3.photos.length === 0 && dbRep1Links.length === 0 && rep1Edited3.version > rep1Edited2.version, JSON.stringify({ photos: rep1Edited3.photos.length, links: dbRep1Links.length, version: rep1Edited3.version }));
+// 下拉口径保持原来的行内编辑：关联阶段仍是行内多选
+await inlineMultiToggle(rowSel1, "修改关联阶段（" + todayIso + "）", "验收");
+const rep1Edited4 = (await reportsOf()).items.filter((row) => row.id === rep1.id)[0];
+const stageSet = rep1Edited4.stageKeys.slice().sort().join(",");
+check("⑥f 日报「关联阶段」保持行内多选落库（加一枚「验收」→ acceptance；不改动原有两枚）", stageSet === "acceptance,install,trial" && rep1Edited4.version > rep1Edited3.version, JSON.stringify({ stageKeys: rep1Edited4.stageKeys, version: rep1Edited4.version }));
 const dbRep1b = (await db.query("select done_work, plan, stage_keys, version from daily_reports where id = $1", [rep1.id])).rows[0];
-check("⑥d 库内三次 PATCH 都对得上（读面 = 库面）", dbRep1b.done_work === rep1Edited3.doneWork && dbRep1b.plan === rep1Edited3.plan && Number(dbRep1b.version) === rep1Edited3.version, JSON.stringify({ version: dbRep1b.version, done_work: dbRep1b.done_work }));
+check("⑥g 库内三次 PATCH（完成工作 / 明日计划 / 阶段）都对得上（读面 = 库面）", dbRep1b.done_work === rep1Edited4.doneWork && dbRep1b.plan === rep1Edited4.plan && Number(dbRep1b.version) === rep1Edited4.version, JSON.stringify({ version: dbRep1b.version, done_work: dbRep1b.done_work }));
 
 await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
 await sleep(1100);
 const issueRowSel = "[data-issue-row=" + Q + iss1.id + Q + "]";
-await inlineTextSave(issueRowSel, "修改问题描述（" + todayIso + "）", "回放·钢结构偏差（已复测）");
+// 文字：行尾「编辑」→ 弹窗（描述 + 解决方案一次保存）
+await clickSelector(issueRowSel + " [data-issue-edit-slot] button");
+const issueModalOpened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
+const issueModalScope = await ev(modalScopeExpr);
+check("⑥h 问题编辑弹窗 = 文字两列 + 图片一区（归类 / 状态不在弹窗里 —— 下拉保持行内）", issueModalOpened === true && issueModalScope !== null && issueModalScope.fields.join(",") === "title,solution" && issueModalScope.pasteZones === 1 && issueModalScope.attachments === 1 && issueModalScope.inlineSave === 0 && issueModalScope.multiOptions === 0 && issueModalScope.options === 0, JSON.stringify(issueModalScope));
+await typeInto("[data-record-field=title]", "回放·钢结构偏差（已复测）");
+await typeInto("[data-record-field=solution]", "回放·解决方案-复测通过");
+await clickSelector("[data-record-edit-submit]");
+const issueModalClosed = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")===null", 8000);
+await sleep(1200);
 const iss1Edited = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
-check("⑥e 问题「描述」行内编辑落库（version 递增）", iss1Edited.title === "1: 回放·钢结构偏差（已复测）" && iss1Edited.version > iss1.version, JSON.stringify({ title: iss1Edited.title, version: iss1Edited.version }));
+check("⑥i 问题「描述 + 解决方案」弹窗一次保存同时落库（version 递增）", issueModalClosed === true && iss1Edited.title === "1: 回放·钢结构偏差（已复测）" && iss1Edited.solution === "1: 回放·解决方案-复测通过" && iss1Edited.version > iss1.version, JSON.stringify({ title: iss1Edited.title, solution: iss1Edited.solution, version: iss1Edited.version }));
+// 下拉口径保持原来的行内编辑：归类 / 状态
 await inlineMultiToggle(issueRowSel, "修改问题归类（" + todayIso + "）", "机械部");
 const iss1Edited2 = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
-check("⑥f 问题「归类」行内多选落库（加一枚「机械部」→ 3 项）", iss1Edited2.categories.length === 3 && iss1Edited2.categories.indexOf("机械部") >= 0 && iss1Edited2.version > iss1Edited.version, JSON.stringify({ categories: iss1Edited2.categories, version: iss1Edited2.version }));
+check("⑥j 问题「归类」保持行内多选落库（加一枚「机械部」→ 3 项）", iss1Edited2.categories.length === 3 && iss1Edited2.categories.indexOf("机械部") >= 0 && iss1Edited2.version > iss1Edited.version, JSON.stringify({ categories: iss1Edited2.categories, version: iss1Edited2.version }));
 await inlineOptionPick(issueRowSel, "修改问题状态（" + todayIso + "）", "处理中");
 const iss1State1 = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
-check("⑥g 问题状态 open → in_progress（三态·行内下拉落库）", iss1State1.state === "in_progress", JSON.stringify({ state: iss1State1.state, version: iss1State1.version }));
+check("⑥k 问题状态 open → in_progress（三态·行内下拉落库）", iss1State1.state === "in_progress", JSON.stringify({ state: iss1State1.state, version: iss1State1.version }));
 await inlineOptionPick(issueRowSel, "修改问题状态（" + todayIso + "）", "已完成");
 const iss1State2 = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
 const dbClosed = (await db.query("select state, closed_at, closed_by, version from issues where id = $1", [iss1.id])).rows[0];
-check("⑥h 问题状态 → done：closed_at / closed_by 成对置位（库侧 ck_issues_closed_pairs 口径）", iss1State2.state === "done" && dbClosed.state === "done" && dbClosed.closed_at !== null && dbClosed.closed_by !== null, JSON.stringify({ state: dbClosed.state, closed_at: String(dbClosed.closed_at), closed_by: dbClosed.closed_by === null ? null : "set" }));
+check("⑥l 问题状态 → done：closed_at / closed_by 成对置位（库侧 ck_issues_closed_pairs 口径）", iss1State2.state === "done" && dbClosed.state === "done" && dbClosed.closed_at !== null && dbClosed.closed_by !== null, JSON.stringify({ state: dbClosed.state, closed_at: String(dbClosed.closed_at), closed_by: dbClosed.closed_by === null ? null : "set" }));
 await inlineOptionPick(issueRowSel, "修改问题状态（" + todayIso + "）", "未解决");
 const iss1State3 = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
 const dbReopen = (await db.query("select state, closed_at from issues where id = $1", [iss1.id])).rows[0];
-check("⑥i 状态允许回退：done → open（closed_at 归零）", iss1State3.state === "open" && dbReopen.state === "open" && dbReopen.closed_at === null, JSON.stringify({ state: dbReopen.state, closed_at: String(dbReopen.closed_at) }));
-const issueUiRow = await ev("(function(){var r=document.querySelector(" + j("[data-issue-row]") + ");if(r===null){return null;}return {columns:r.querySelectorAll(\"td\").length,text:r.innerText.split(String.fromCharCode(10)).join(\" | \")};})()");
-check("⑥j 问题追踪表 = 六列口径（+ 行尾动作列 = 7 格）且三态色签在位", issueUiRow !== null && issueUiRow.columns === 7 && issueUiRow.text.indexOf("未解决") >= 0 && issueUiRow.text.indexOf("提出人") >= 0, issueUiRow === null ? "-" : String(issueUiRow.text).slice(0, 240));
+check("⑥m 状态允许回退：done → open（closed_at 归零）", iss1State3.state === "open" && dbReopen.state === "open" && dbReopen.closed_at === null, JSON.stringify({ state: dbReopen.state, closed_at: String(dbReopen.closed_at) }));
+const issueUiRow = await ev("(function(){var r=document.querySelector(" + j("[data-issue-row]") + ");if(r===null){return null;}return {columns:r.querySelectorAll(\"td\").length,editButtons:r.querySelectorAll(" + j("[data-issue-edit-slot] button") + ").length,deleteButtons:r.querySelectorAll(" + j("[data-issue-delete-slot] button") + ").length,text:r.innerText.split(String.fromCharCode(10)).join(\" | \")};})()");
+check("⑥n 问题追踪表 = 六列口径（+ 行尾动作列 = 7 格）、行尾「编辑 + 删除」两枚在位、三态色签在位", issueUiRow !== null && issueUiRow.columns === 7 && issueUiRow.editButtons === 1 && issueUiRow.deleteButtons === 1 && issueUiRow.text.indexOf("未解决") >= 0 && issueUiRow.text.indexOf("提出人") >= 0, issueUiRow === null ? "-" : String(issueUiRow.text).slice(0, 240));
+
+
+// 抽屉口径（Push 224 续 · 业务口径「移除图片要加二次确认」——只改抽屉）：点看板卡开抽屉 → × 只出确认条（不落库）→ 确认才摘。
+await clickSelector("[data-subnav-item=" + Q + "问题看板" + Q + "]");
+await sleep(1100);
+await clickSelector("[data-issue-card=" + Q + iss1.id + Q + "]");
+const drawerOpened = await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")!==null", 6000);
+const drawerStrip = "[data-issue-drawer] [data-attachment-strip=issuePhotos]";
+await waitFor("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s!==null && s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length===1;})()", 8000);
+await clickSelector(drawerStrip + " [data-action=remove-attachment]");
+const drawerConfirmShown = await waitFor("document.querySelector(" + j("[data-remove-attachment-confirm-strip]") + ")!==null", 5000);
+await sleep(500);
+const drawerThumbsBefore = await ev("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s===null?null:s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;})()");
+await clickSelector("[data-remove-attachment-confirm]");
+await sleep(2000);
+const iss1Drawer = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
+const drawerThumbsAfter = await ev("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s===null?0:s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;})()");
+check("⑥o 抽屉「移除图片」要二次确认（第一下 × 只出确认条 · 图还在；第二下「移除」才真摘并落库）", drawerOpened === true && drawerConfirmShown === true && drawerThumbsBefore === 1 && iss1Drawer.photos.length === 0 && drawerThumbsAfter === 0 && iss1Drawer.version > iss1State3.version, JSON.stringify({ opened: drawerOpened, strip: drawerConfirmShown, before: drawerThumbsBefore, after: drawerThumbsAfter, version: iss1Drawer.version }));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")==null", 4000);
+await sleep(600);
 
 // ---------- ⑦ 成对删除（删日报连问题 / 删问题连日报） ----------
 await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");

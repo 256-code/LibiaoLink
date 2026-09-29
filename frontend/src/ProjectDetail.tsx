@@ -4,6 +4,7 @@ import { ColumnPicker } from "./components/ColumnPicker";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
+import { StakeholderPanel } from "./components/StakeholderPanel";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
@@ -64,7 +65,8 @@ function stageRankOf(stage: string): number {
  * Push 142：「项目总览」之后再加「甘特图」（口径见 components/GanttChart.tsx）；
  * Push 154：当前标签走地址 `?view=`，刷新 / 收藏 / 分享都停在同一块标签。
  */
-const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题"] as const;
+/** Push 221：再往后加第六个视图「干系人」（排最右侧；A27 台账前端接线，口径见 components/StakeholderPanel.tsx）。 */
+const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题", "干系人"] as const;
 type ViewTab = (typeof VIEW_TABS)[number];
 
 /** 顶部标签 ↔ 地址参数（`?view=`）：缺省「项目总览」（overview）不落参数。 */
@@ -74,6 +76,7 @@ const VIEW_KEYS: Record<ViewTab, ProjectView> = {
   "人员任务分配": "owners",
   "任务进展": "progress",
   "日报及问题": "daily",
+  "干系人": "stakeholders",
 };
 
 
@@ -98,9 +101,11 @@ type ProjectDetailProps = {
   focusMode?: boolean | null;
   /** 保存醒目模式（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。 */
   onFocusModeChange?: (value: boolean) => Promise<string | null>;
+  /** 干系人写入口（Push 221 · A27）：= stakeholder.manage（画像未到时乐观放行，服务端逐请求仍是最终裁决）。 */
+  canManageStakeholders: boolean;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange, canManageStakeholders }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
@@ -739,6 +744,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 207 同批追加：醒目模式值透传给「问题追踪」做表格呈现（开关本体在标签栏最右侧，见上）；失败提示沿用同一条 toolError
             <ReportIssuePanel key={project.id} project={project} me={me} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+          ) : activeView === "干系人" ? (
+            // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
+            <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}
@@ -759,7 +767,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
           )}
         </div>
 
-        {activeView === "项目总览" ? (
+        {/* 底部滑块（Push 221 起）：项目总览与干系人两个表格共用同一枚 —— 两视图互斥，scrollRef / 溢出态复用；
+            滚动容器 id 由 controlsId 按当前视图切换（task-board-scroll / stakeholder-board-scroll）。 */}
+        {activeView === "项目总览" || activeView === "干系人" ? (
         <div
           id="table-scrollbar-bar"
           className={
@@ -767,7 +777,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             (tableOverflow ? "mt-4 border-t border-zinc-200 bg-white/95 py-2.5 backdrop-blur" : "h-0 overflow-hidden")
           }
         >
-          <TableScrollbar scrollRef={tableScrollRef} onOverflowChange={setTableOverflow} />
+          <TableScrollbar scrollRef={tableScrollRef} onOverflowChange={setTableOverflow} controlsId={activeView === "干系人" ? "stakeholder-board-scroll" : "task-board-scroll"} />
         </div>
         ) : null}
       </main>
