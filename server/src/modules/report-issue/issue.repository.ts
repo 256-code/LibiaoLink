@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
+import { and, arrayOverlaps, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -15,14 +15,13 @@ export interface IssueRow {
   taskId: string | null;
   sourceReportId: string | null;
   title: string;
-  category: string;
+  categories: string[];
   state: string;
   reporterId: string;
   reporterName: string | null;
   ownerDepartment: string | null;
   ownerId: string | null;
   ownerName: string | null;
-  dueAt: Date | null;
   raisedAt: string;
   solution: string | null;
   closedBy: string | null;
@@ -50,21 +49,21 @@ export interface IssueInsertInput {
   taskId: string | null;
   sourceReportId: string | null;
   title: string;
-  category: string;
+  categories: string[];
   state: string;
   reporterId: string;
   ownerDepartment: string | null;
   ownerId: string | null;
-  dueAt: Date | null;
   raisedAt: string;
 }
 
 export interface IssuePatch {
   state?: string;
+  title?: string;
+  categories?: string[];
   solution?: string | null;
   ownerDepartment?: string | null;
   ownerId?: string | null;
-  dueAt?: Date | null;
   closedBy?: string | null;
   closedAt?: Date | null;
 }
@@ -85,14 +84,13 @@ const ISSUE_COLUMNS = {
   taskId: issues.taskId,
   sourceReportId: issues.sourceReportId,
   title: issues.title,
-  category: issues.category,
+  categories: issues.categories,
   state: issues.state,
   reporterId: issues.reporterId,
   reporterName: users.displayName,
   ownerDepartment: issues.ownerDepartment,
   ownerId: issues.ownerId,
   ownerName: ISSUE_OWNER.displayName,
-  dueAt: issues.dueAt,
   raisedAt: issues.raisedAt,
   solution: issues.solution,
   closedBy: issues.closedBy,
@@ -142,6 +140,18 @@ export class IssueRepository {
     return (rows[0] ?? null) as IssueRow | null;
   }
 
+  /** 按来源日报反查自动生成的问题（A3-09 幂等 / 附图转挂目标；无 = null）。 */
+  async findBySourceReport(reportId: string, client: DbClient = this.database.db): Promise<IssueRow | null> {
+    const rows = await client
+      .select(ISSUE_COLUMNS)
+      .from(issues)
+      .leftJoin(users, eq(users.id, issues.reporterId))
+      .leftJoin(ISSUE_OWNER, eq(ISSUE_OWNER.id, issues.ownerId))
+      .where(eq(issues.sourceReportId, reportId))
+      .limit(1);
+    return (rows[0] ?? null) as IssueRow | null;
+  }
+
   /** 自动生成（A3-09）：source_report_id 冲突 = 已生成过，返回 null（不重复写事件）。 */
   async insert(input: IssueInsertInput, at: Date, client: DbClient): Promise<IssueRow | null> {
     const inserted = await client
@@ -151,12 +161,11 @@ export class IssueRepository {
         taskId: input.taskId,
         sourceReportId: input.sourceReportId,
         title: input.title,
-        category: input.category,
+        categories: input.categories,
         state: input.state,
         reporterId: input.reporterId,
         ownerDepartment: input.ownerDepartment,
         ownerId: input.ownerId,
-        dueAt: input.dueAt,
         raisedAt: input.raisedAt,
         createdAt: at,
         updatedAt: at,
@@ -223,7 +232,7 @@ export class IssueRepository {
   private buildWhere(projectId: string, filter: IssueFilter) {
     const conditions = [eq(issues.projectId, projectId)];
     if (filter.states !== null) conditions.push(inArray(issues.state, filter.states));
-    if (filter.categories !== null) conditions.push(inArray(issues.category, filter.categories));
+    if (filter.categories !== null) conditions.push(arrayOverlaps(issues.categories, filter.categories));
     if (filter.taskId !== null) conditions.push(eq(issues.taskId, filter.taskId));
     if (filter.reportId !== null) conditions.push(eq(issues.sourceReportId, filter.reportId));
     if (filter.keyword !== null) conditions.push(ilike(issues.title, "%" + filter.keyword + "%"));

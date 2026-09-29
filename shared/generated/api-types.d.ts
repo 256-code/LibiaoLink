@@ -5354,7 +5354,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 新建日报（A3-01 / A3-02 · M6-01）：一人一项目一天一条（重复 409 REPORT_ALREADY_EXISTS）；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等） */
+        /** 新建日报（A3-01 / A3-02 · M6-01）：同人同项目同日可多条；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等） */
         post: {
             parameters: {
                 query?: never;
@@ -5391,15 +5391,6 @@ export interface paths {
                 };
                 /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
                 404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
-                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -5579,10 +5570,44 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** 删除日报（成对删除：删日报 = 连它派生的全部问题 + 两侧附图关联；写审计与 outbox） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    reportId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（cascadedIssueIds 为连带删除的问题） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReportDeleteResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
-        /** 编辑 / 提交日报（A3-02 草稿提交 · A3-08 回写关联任务「项目进展描述」）：乐观锁 version；date 不可改；已提交行不允许退回草稿 */
+        /** 编辑 / 提交日报（A3-02 草稿提交）：乐观锁 version；date 不可改；已提交行不允许退回草稿 */
         patch: {
             parameters: {
                 query?: never;
@@ -5652,9 +5677,9 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 状态多值逗号分隔：unassigned / open / in_progress / done */
+                    /** @description 状态多值逗号分隔：open / in_progress / done */
                     "filter[state]"?: string;
-                    /** @description 归类多值逗号分隔（C9 十项） */
+                    /** @description 归类筛选（C9 十项；命中任一归类即入选） */
                     "filter[category]"?: string;
                     /** @description 所属任务 */
                     "filter[taskId]"?: components["schemas"]["Uuid"] & unknown;
@@ -5755,10 +5780,44 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** 删除问题（成对删除：删问题 = 连它来源的那篇日报及其全部问题；写审计与 outbox） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    issueId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（cascadedReportId 为连带删除的来源日报） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IssueDeleteResponse"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
-        /** 问题更新（A3-10 四态流转 / A3-12 分派 / A3-13 解决方案）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at） */
+        /** 问题更新（A3-10 三态流转 / A3-12 分派 / A3-13 解决方案 / 描述与归类行内编辑 / 附图）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at） */
         patch: {
             parameters: {
                 query?: never;
@@ -6919,19 +6978,24 @@ export interface components {
             state: components["schemas"]["DailyReportState"];
             /** @description 今日施工人数（A3-03 默认带上次填报值，可修改） */
             headcount: number | null;
-            /** @description 当日完成工作（A3-04 必填；关联任务后回写任务「项目进展描述」，A3-08） */
+            /** @description 当日完成工作（A3-04 必填；原「回写关联任务进展」（A3-08）随关联单位改阶段停用 —— Push 215） */
             doneWork: string;
             /** @description 明日计划 */
             plan: string | null;
             /** @description 现场发现问题（非空 → 提交时自动生成问题，A3-09 幂等） */
             foundIssue: string | null;
-            issueCategory: components["schemas"]["IssueCategory"];
+            /** @description 问题归类（多值，C9 十项；「现场发现问题」非空时 ≥1 项，A3-04） */
+            issueCategories: components["schemas"]["IssueCategory"][];
             /** @description 解决方案或建议 */
             suggestion: string | null;
-            /** @description 关联任务（A3-03 多选；用于回写任务进展） */
-            taskIds: components["schemas"]["Uuid"][];
-            /** @description 关联任务标题（与 taskIds 同下标） */
-            taskTitles: string[];
+            /** @description 关联阶段（A3-03 多选，九阶段字典；原「关联任务」Push 198 改口径，A3-08 回写停用） */
+            stageKeys: components["schemas"]["StageKey"][];
+            /** @description 关联阶段名（与 stageKeys 同下标，查 STAGE_NAMES 展示） */
+            stageNames: string[];
+            /** @description 现场工作附图（file_links(object_type=report, kind=onsite)）；可增删 */
+            photos: components["schemas"]["FilePhotoRef"][];
+            /** @description 当前问题附图（file_links(object_type=report, kind=issue)）；提交生成问题时转挂到问题（file_links(object_type=issue)），转挂后此处为空 */
+            issuePhotos: components["schemas"]["FilePhotoRef"][];
             submittedAt: components["schemas"]["DateTime"] & (string | null);
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
@@ -6949,11 +7013,24 @@ export interface components {
             plan?: string;
             /** @description 现场发现问题（非空时问题归类必填；提交时自动生成问题，A3-09） */
             foundIssue?: string;
-            issueCategory?: components["schemas"]["IssueCategory"] & unknown;
+            /** @description 问题归类（多值，C9 十项；「现场发现问题」非空时必填 ≥1 项） */
+            issueCategories?: components["schemas"]["IssueCategory"][];
             /** @description 解决方案或建议 */
             suggestion?: string;
-            /** @description 关联任务（A3-03 多选；须属本项目） */
-            taskIds?: components["schemas"]["Uuid"][];
+            /** @description 关联阶段（A3-03 多选，九阶段字典；须为合法阶段键） */
+            stageKeys?: components["schemas"]["StageKey"][];
+            /** @description 现场工作附图（文件 id 整体替换；须为本项目已上传文件，上限 30 张） */
+            photoFileIds?: components["schemas"]["Uuid"][];
+            /** @description 当前问题附图（文件 id 整体替换；提交生成问题时转挂到问题） */
+            issuePhotoFileIds?: components["schemas"]["Uuid"][];
+        };
+        /** @description 日报删除（成对删除派生问题） */
+        DailyReportDeleteResponse: {
+            id: components["schemas"]["Uuid"];
+            /** @enum {boolean} */
+            deleted: true;
+            /** @description 连带删除的问题（删日报 = 连它派生的全部问题） */
+            cascadedIssueIds: components["schemas"]["Uuid"][];
         };
         /** @description 日报列表（项目内成员可见） */
         DailyReportListResponse: {
@@ -7014,7 +7091,7 @@ export interface components {
             headcountTotal: number;
             /** @description 「现场发现问题」非空的条目数 */
             issueCount: number;
-            /** @description 已提交条目（提交时间升序，同刻按作者 id 兜底） */
+            /** @description 已提交条目（提交时间升序，同刻按创建时间、作者 id 兜底；同日多条逐条列出） */
             entries: components["schemas"]["DailyReport"][];
         };
         /** @description 编辑日报（乐观锁 version；date 不可改） */
@@ -7028,10 +7105,15 @@ export interface components {
             plan?: string | null;
             /** @description 现场发现问题（null = 清空；已生成问题不随清空撤回） */
             foundIssue?: string | null;
-            issueCategory?: components["schemas"]["IssueCategory"] & unknown;
+            /** @description 问题归类整体替换（多值；null / 空数组 = 清空 —— 「现场发现问题」非空时不可清空） */
+            issueCategories?: components["schemas"]["IssueCategory"][] | null;
             suggestion?: string | null;
-            /** @description 关联任务整体替换（缺省 = 不改） */
-            taskIds?: components["schemas"]["Uuid"][];
+            /** @description 关联阶段整体替换（缺省 = 不改） */
+            stageKeys?: components["schemas"]["StageKey"][];
+            /** @description 现场工作附图整体替换（缺省 = 不改；空数组 = 清空） */
+            photoFileIds?: components["schemas"]["Uuid"][];
+            /** @description 当前问题附图整体替换（缺省 = 不改；空数组 = 清空）；该日报已生成问题时转挂目标 = 该问题 */
+            issuePhotoFileIds?: components["schemas"]["Uuid"][];
         };
         /**
          * @description draft 暂存 / submitted 提交（缺省 submitted）
@@ -7194,6 +7276,12 @@ export interface components {
             limit: number;
             total: number;
         };
+        /** @description 图片附件引用（多态关联读面；不做匿名直链，预览经预览接口换短时签名） */
+        FilePhotoRef: {
+            fileId: components["schemas"]["Uuid"];
+            /** @description 原文件名（缩略图角标 / 无障碍文案） */
+            name: string;
+        };
         /** @description 文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed） */
         FilePreviewResponse: {
             fileId: components["schemas"]["Uuid"];
@@ -7340,9 +7428,9 @@ export interface components {
             projectId: components["schemas"]["Uuid"];
             taskId: components["schemas"]["Uuid"] & (string | null);
             sourceReportId: components["schemas"]["Uuid"] & (string | null);
-            /** @description 问题描述（自动生成 = 日报「现场发现问题」原文） */
+            /** @description 问题描述（自动生成 = 日报「现场发现问题」原文；超 500 字截短落库） */
             title: string;
-            category: components["schemas"]["IssueCategory"] & unknown;
+            categories: components["schemas"]["IssueCategoryList"];
             state: components["schemas"]["IssueState"];
             reporterId: components["schemas"]["Uuid"];
             /** @description 提出人显示名（= 来源日报提交人） */
@@ -7351,10 +7439,11 @@ export interface components {
             ownerDepartment: string | null;
             ownerId: components["schemas"]["Uuid"] & (string | null);
             ownerName: string | null;
-            dueAt: components["schemas"]["DateTime"] & (string | null);
             raisedAt: components["schemas"]["DateOnly"] & unknown;
             /** @description 解决方案 / 回复（A3-13） */
             solution: string | null;
+            /** @description 问题附图（file_links(object_type=issue)）：来源 = 日报问题图提交转入，可在问题侧独立增删 */
+            photos: components["schemas"]["FilePhotoRef"][];
             closedBy: components["schemas"]["Uuid"] & (string | null);
             closedAt: components["schemas"]["DateTime"] & (string | null);
             createdAt: components["schemas"]["DateTime"];
@@ -7362,10 +7451,21 @@ export interface components {
             version: components["schemas"]["Version"];
         };
         /**
-         * @description 问题归类（C9 十项；「现场发现问题」非空时必填，A3-04）
-         * @enum {string|null}
+         * @description 问题归类（A3-11 · C9 字典十项）；一期为契约固定枚举，字典可维护随后
+         * @enum {string}
          */
-        IssueCategory: "机械部" | "采购部" | "规划部" | "项目部" | "物流原因" | "供应商原因" | "客户原因" | "客观原因" | "生产原因" | "其它原因" | null;
+        IssueCategory: "机械部" | "采购部" | "规划部" | "项目部" | "物流原因" | "供应商原因" | "客户原因" | "客观原因" | "生产原因" | "其它原因";
+        /** @description 问题归类（多值，≥1 项；C9 字典十项） */
+        IssueCategoryList: components["schemas"]["IssueCategory"][];
+        /** @description 问题删除（成对删除来源日报） */
+        IssueDeleteResponse: {
+            id: components["schemas"]["Uuid"];
+            /** @enum {boolean} */
+            deleted: true;
+            cascadedReportId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 连带删除的其它问题（删问题 = 连它来源日报派生的其它问题；不含自身） */
+            cascadedIssueIds: components["schemas"]["Uuid"][];
+        };
         /** @description 问题详情 = 问题 + 处理过程留痕 */
         IssueDetail: components["schemas"]["Issue"] & {
             /** @description 处理过程留痕（时间正序） */
@@ -7388,7 +7488,7 @@ export interface components {
          * @enum {string}
          */
         IssueEventType: "created" | "state_change" | "solution" | "assignment";
-        /** @description 问题列表（问题追踪表 / 问题看板共用；看板按四态分组由前端渲染） */
+        /** @description 问题列表（问题追踪表 / 问题看板共用；看板按三态分组由前端渲染） */
         IssueListResponse: {
             items: components["schemas"]["Issue"][];
             page: number;
@@ -7396,14 +7496,17 @@ export interface components {
             total: number;
         };
         /**
-         * @description 问题四态（A3-10）：unassigned 未分组 / open 未解决 / in_progress 处理中 / done 已完成；允许回退且留痕
+         * @description 问题三态（A3-10）：open 未解决 / in_progress 处理中 / done 已完成；允许回退且留痕
          * @enum {string}
          */
-        IssueState: "unassigned" | "open" | "in_progress" | "done";
-        /** @description 问题更新（状态流转 / 解决方案 / 分派 / 时限；一次请求写一条事件） */
+        IssueState: "open" | "in_progress" | "done";
+        /** @description 问题更新（状态流转 / 描述 / 归类 / 解决方案 / 分派 / 附图；前五类变化写一条事件） */
         IssueUpdateBody: {
             version: components["schemas"]["Version"];
             state?: components["schemas"]["IssueState"] & unknown;
+            /** @description 问题描述（行内编辑 / 抽屉编辑，Push 208 / 212） */
+            title?: string;
+            categories?: components["schemas"]["IssueCategoryList"] & unknown;
             /** @description 解决方案 / 回复（null = 清空） */
             solution?: string | null;
             /** @description 责任部门（null = 取消分派部门） */
@@ -7413,13 +7516,10 @@ export interface components {
              * @description 责任人（null = 取消责任人）
              */
             ownerId?: string | null;
-            /**
-             * Format: date-time
-             * @description 处理时限（null = 清空）
-             */
-            dueAt?: string | null;
             /** @description 本次处理的备注（A3-13 留痕） */
             note?: string;
+            /** @description 问题附图整体替换（file_links(object_type=issue)；缺省 = 不改；空数组 = 清空） */
+            photoFileIds?: components["schemas"]["Uuid"][];
         };
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
         MeResponse: {
@@ -7683,7 +7783,6 @@ export interface components {
             issues: {
                 total: number;
                 byState: {
-                    unassigned: number;
                     open: number;
                     in_progress: number;
                     done: number;
@@ -8626,14 +8725,13 @@ export interface components {
             projectName: string;
             taskId: components["schemas"]["Uuid"] & (string | null);
             title: string;
-            category: components["schemas"]["IssueCategory"] & unknown;
+            categories: components["schemas"]["IssueCategoryList"];
             state: components["schemas"]["IssueState"];
             reporterId: components["schemas"]["Uuid"];
             reporterName: string | null;
             ownerDepartment: string | null;
             ownerId: components["schemas"]["Uuid"] & (string | null);
             ownerName: string | null;
-            dueAt: components["schemas"]["DateTime"] & (string | null);
             raisedAt: components["schemas"]["DateOnly"] & unknown;
             updatedAt: components["schemas"]["DateTime"];
             version: components["schemas"]["Version"];

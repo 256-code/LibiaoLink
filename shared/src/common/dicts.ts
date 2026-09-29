@@ -101,8 +101,8 @@ export const BlueprintStatusSchema = z.enum(["draft", "published"]).openapi("Blu
   description: "蓝图状态：发布产生新版本，不自动影响已生成项目（快照）",
 });
 
-export const ISSUE_STATUS_VALUES = ["ungrouped", "open", "in_progress", "done"] as const;
+export const ISSUE_STATUS_VALUES = ["open", "in_progress", "done"] as const;
 
 export const IssueStatusSchema = z.enum(ISSUE_STATUS_VALUES).openapi("IssueStatus", {
-  description: "问题四态：未分组 / 未解决 / 处理中 / 已完成",
+  description: "问题三态：未解决 / 处理中 / 已完成（Push 215 起「未分组」并入「未解决」；与 issues 契约 ISSUE_STATES 同序同值）",
 });

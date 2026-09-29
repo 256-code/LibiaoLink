@@ -5,12 +5,12 @@ import { z } from "../zod.ts";
  * 口径来源：系统功能书 C2-01 ~ C2-12、技术设计v0.2 §6.1（规则模型：参数化 + 启停，不做可视化编排）/
  *   §6.2（执行保证：幂等执行键 / 调度 / 投递 / 合并免打扰 / 留痕 / 可测试）、
  *   docs/rules/R01-R07-内置规则文案.md（R 系列逐字文案基准）、
- *   docs/rules/A01-A03-A14-扩展规则文案.md（A 系列建议稿 + 待确认清单）、ADR-028（时区固定 Asia/Shanghai）。
+ *   docs/rules/A01-A03-A14-扩展规则文案.md（A 系列建议稿 + 待确认清单；A03 随处理时限删除下线 · Push 215）、ADR-028（时区固定 Asia/Shanghai）。
  * 边界：本切片交付「规则模型 + 求值口径 + 回放基准」；规则管理端点（M5-06）、调度 / 补发（M5-02）、
  *   企微与站内信投递（M5-03 / M5-04）由 lan 线接手 —— 端点入契约时以本文件枚举与 schema 为准扩 paths。
  */
 
-/** 规则编码：七条内置（R01~R07）+ A 系列一期四条（A01 应填未填 / A02 日报汇总 / A03 问题 SLA 升级 / A14 自定义待办）。 */
+/** 规则编码：七条内置（R01~R07）+ A 系列一期三条（A01 应填未填 / A02 日报汇总 / A14 自定义待办）；A03 问题 SLA 升级随处理时限（due_at）删除下线（Push 215）。 */
 export const AUTOMATION_RULE_CODES = [
   "R01",
   "R02",
@@ -21,12 +21,11 @@ export const AUTOMATION_RULE_CODES = [
   "R07",
   "A01",
   "A02",
-  "A03",
   "A14",
 ] as const;
 export const AutomationRuleCodeSchema = z.enum(AUTOMATION_RULE_CODES).openapi("AutomationRuleCode", {
   description:
-    "规则编码：R01~R07 为内置规则（逐字文案基准见 docs/rules/R01-R07-内置规则文案.md）；A01 日报应填未填 / A02 每日 19:00 日报汇总 / A03 问题 SLA 升级 / A14 自定义待办提醒（一期四条）",
+    "规则编码：R01~R07 为内置规则（逐字文案基准见 docs/rules/R01-R07-内置规则文案.md）；A01 日报应填未填 / A02 每日 19:00 日报汇总 / A14 自定义待办提醒（一期三条；A03 问题 SLA 随处理时限删除下线 · Push 215）",
 });
 export type AutomationRuleCode = z.infer<typeof AutomationRuleCodeSchema>;
 
@@ -57,7 +56,7 @@ export type RuleEventTopic = z.infer<typeof RuleEventTopicSchema>;
 export const RULE_SCHEDULE_WINDOWS = ["T_MINUS_1", "SAME_DAY", "T_PLUS_1", "T_PLUS_3", "WEEKLY"] as const;
 export const RuleScheduleWindowSchema = z.enum(RULE_SCHEDULE_WINDOWS).openapi("RuleScheduleWindow", {
   description:
-    "调度窗口：T_MINUS_1 基准日前 1 天（R03）/ SAME_DAY 基准日当天（R04 / A01 / A02 / A14）/ T_PLUS_1 基准日后 1 天（R05 / A03 提醒）/ T_PLUS_3 基准日后 3 天（A03 升级）/ WEEKLY 周窗口（R07，键 = ISO 周）",
+    "调度窗口：T_MINUS_1 基准日前 1 天（R03）/ SAME_DAY 基准日当天（R04 / A01 / A02 / A14）/ T_PLUS_1 基准日后 1 天（R05）/ T_PLUS_3 基准日后 3 天（窗口能力保留；A03 随处理时限删除下线 · Push 215）/ WEEKLY 周窗口（R07，键 = ISO 周）",
 });
 export type RuleScheduleWindow = z.infer<typeof RuleScheduleWindowSchema>;
 
@@ -103,13 +102,12 @@ export const RULE_RECIPIENTS = [
   "task.owner_or_project_manager",
   "project.manager",
   "project.group",
-  "issue.owner",
   "rule.members",
   "report.member",
 ] as const;
 export const RuleRecipientSchema = z.enum(RULE_RECIPIENTS).openapi("RuleRecipient", {
   description:
-    "收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理（R02）/ project.manager 项目经理（A03 升级）/ project.group 项目群（R03 / R04 / R05 / R06 / A02）/ issue.owner 问题责任人（A03 提醒）/ rule.members 规则显式成员（A14 自定义待办）/ report.member 日报名册成员（A01 应填未填）",
+    "收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理（R02）/ project.manager 项目经理（任务主体解析）/ project.group 项目群（R03 / R04 / R05 / R06 / A02）/ rule.members 规则显式成员（A14 自定义待办）/ report.member 日报名册成员（A01 应填未填）；issue.owner 随 A03 处理时限删除下线（Push 215）",
 });
 export type RuleRecipient = z.infer<typeof RuleRecipientSchema>;
 
@@ -164,7 +162,7 @@ export type AutomationAction = z.infer<typeof AutomationActionSchema>;
 /** 规则文档（C2-01：参数化 + 启停；不做可视化编排）。 */
 export const AutomationRuleSchema = z
   .object({
-    code: z.string().min(2).max(32).openapi({ example: "R03", description: "规则编码（内置 R01~R07 / A01 / A02 / A03 / A14；自定义规则自定码）" }),
+    code: z.string().min(2).max(32).openapi({ example: "R03", description: "规则编码（内置 R01~R07 / A01 / A02 / A14；自定义规则自定码）" }),
     name: z.string().min(1).max(80).openapi({ example: "任务即将延期提醒" }),
     enabled: z.boolean().openapi({ description: "启停开关（C2-01 / C2-02：内置规则亦可启停）" }),
     trigger: AutomationTriggerSchema,

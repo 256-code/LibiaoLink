@@ -37,7 +37,6 @@ import type { WindowSubjectBundle } from "./automation-subjects.js";
 const NOTIFICATION_TYPE_BY_RULE: Readonly<Record<string, "reminder" | "approval" | "broadcast" | "system">> = {
   R02: "reminder",
   A01: "reminder",
-  A03: "reminder",
 };
 
 /** 接线层日志（Nest Logger 结构兼容；单测注入替身）。 */
@@ -90,15 +89,14 @@ interface ProduceContext {
   scope: string;
 }
 
-/** 规则码 → 关联对象（refType / refId 成对；report_slot / project_day / todo 暂无单一对象 → 空）。 */
+/** 规则码 → 关联对象（refType / refId 成对；主体仅任务映射实体，其余暂无单一对象 → 空）。 */
 function referenceOf(ruleCode: string, entityId: string): { refType: string | null; refId: string | null } {
   const kind = subjectKindOf(ruleCode);
   if (kind === "task") return { refType: "task", refId: entityId };
-  if (kind === "issue") return { refType: "issue", refId: entityId };
   return { refType: null, refId: null };
 }
 
-/** 模板码回溯（排障用）：规则码 + 规则名（A03 两窗口同码）+ 渠道 → 动作模板。 */
+/** 模板码回溯（排障用）：规则码 + 规则名 + 渠道 → 动作模板。 */
 function templateCodeOf(rules: readonly AutomationRule[], message: ReplayMessage): string | null {
   const rule = rules.find((item) => item.code === message.ruleCode && item.name === message.ruleName);
   if (rule === undefined) return null;
