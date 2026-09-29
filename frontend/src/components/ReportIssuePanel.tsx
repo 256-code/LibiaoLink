@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
-import { InlineCell, InlineMultiOptionCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
+import { InlineCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
 import {
@@ -113,7 +114,7 @@ import type { MeResponse, Project } from "../types";
  *      「处理时限不需要 所属任务也不需要」；三个字段仍在数据模型里，只是不展示）；「提出人」并进问题描述列的灰字小行
  *      （图五没有该列，信息不丢）；「问题描述 / 解决方案或建议」按行换行（whitespace-pre-line —— 承接 Push 206 自动序号）；
  *   ② 行样式 = 业务样「图六」（项目总览任务表）：白卡 + 圆角边框 + 列头 `bg-zinc-50 text-xs font-medium text-zinc-400`
- *      + 行 `px-5 py-2.5` + `divide-zinc-100` 细分割线 + 行悬停 `hover:bg-zinc-50/80`；
+ *      + 行 `px-5 py-2.5` + `divide-zinc-100` 细分割线 + 行悬停 `hover:bg-zinc-50/80`（Push 217 整表比例对齐「日报记录」—— 内边距 px-4 / py-4 / 表头 py-3.5 / 动作列 w-20，见本文件头 Push 217 条）；
  *   ③ 状态三态（业务样「图二」·「状态改成图二的三种」）：未分组并入未解决 —— `ISSUE_STATES` = 未解决 / 处理中 / 已完成；
  *      色签 = 项目总览「任务状态」同款（同批业务口径「这个问题的状态想要和项目总览里面的状态样式同款」）：
  *      未解决 = 待开始 `bg-sky-100 text-sky-700` / 处理中 = 进行中 `bg-amber-100 text-amber-800` /
@@ -172,12 +173,34 @@ import type { MeResponse, Project } from "../types";
  *   槽位是**预留**的：展开只在槽内长大，列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」）。
  *   删除语义 = **按「同一篇日报」整组删**：删日报 = 连它派生的全部问题；删问题 = 连它来源的那篇日报；
  *   无派生问题的日报 / 无来源日报的问题只删自己（纯前端内存态，服务端 DELETE 契约挂 wmj 线）。
+ *
+ * - Push 217（业务口径 2026-09-29「问题追踪的卡片比例也要和日报记录的相同」+「现场工作附图放在明日计划填写下面」）：
+ *   ① 「问题追踪」整表**比例对齐「日报记录」**（Push 206 放大后的同一套行列尺寸）—— 列内边距 px-5 → px-4、
+ *      单元格 py-2.5 → py-4（表头 px-4 py-3.5）、表头字号 xs → sm（text-zinc-500）、行补 align-top、
+ *      行尾动作列 w-[88px] → w-20（px-4×2 + 48 = 80，同「日报记录」槽位）；**「问题附图」列同批改大图瓦片**
+ *      （md 40×40 → lg 约 128×96、列 min-w 130 → 440 —— 业务口径「这比例完全不一样啊 包括图片」）；列口径 / 交互不变；
+ *   ② 「日报填写」表单**「现场工作附图」整块移到「明日计划」正下方**（原排「解决方案或建议」之后）——
+ *      字段集 / 必填口径 / 自动序号 / 前置开关等交互不变，只调块序；
+ *   ③ 表格间距收口（业务口径「问题归类去左侧一些这个间距不协调」+「这个在表格里面始终居中」）：
+ *      「问题描述」列 min-w-[320px] → min-w-[240px]（描述与「问题归类」之间的空档收窄，归类列及其后各列随之前移）、
+ *      「问题是否处理」列单元格 text-center（状态色签在列内**始终水平居中**，三态 / 醒目模式 / 行内改后同款）；
+ *   ④ 「问题归类」色签不裁剪（业务口径「会出现截断的问题」）：行内编辑壳 `InlineCell` 加 `wrapContent` 档 ——
+ *      「问题追踪」表与问题详情抽屉的归类单元格撤包裹层 `truncate` 裁剪（窄窗 / 列被挤到最小时色签不再被裁掉一角），
+ *      色签折行与触发器内衬等其余表现不变；
+ *   ⑤ **图片预览层修复**（业务口径「抽屉中点击图片也要居中显示」+「从看板里面点了图片 再从抽屉点图片怎么是这样的 bug」）：
+ *      预览层 portal 到 body、图幅上限 min(90vw, calc(100vw - 3rem))、预览层与缩略图的 click / pointerdown 止冒泡、
+ *      Esc 捕获阶段只关预览层（根因与口径逐条见 PhotoPreview 头注）；
+ *   ⑥ 问题详情抽屉「施工人数」**空值出杠 + 行内可编辑**（业务口径「空用杠来表示 和之前项目总览的抽屉一样」+
+ *      「施工人数抽屉也要可以编辑」）：`headcount` 为 null 时不再渲染字面量「null」，与「项目总览」任务详情抽屉同款出
+ *      text-zinc-300 的 —；并接 `InlineNumberCell`（项目总览任务表同款：点开浮层 / 0 以上的整数 / 带「人」后缀 /
+ *      落值即收浮层），落值走 `PATCH …/reports/{id}` 的 headcount（null = 清空）。
  */
 
 /** 行内编辑能改的日报字段（Push 208 · 业务口径「日报记录同理」+ 追加「这个也要可以编辑筛选选择」）：
  *  文字两列 + 关联阶段多选 —— 时间 / 填写者不动（「编辑后时间不变」）。
- *  Push 212 续（业务口径「图片也要可以增删」）：追加**现场工作附图**（photos）—— 抽屉里与两列文字共用同一份 patchReport 内存态。 */
-export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stageNames" | "photos">>;
+ *  Push 212 续（业务口径「图片也要可以增删」）：追加**现场工作附图**（photos）—— 抽屉里与两列文字共用同一份 patchReport 内存态。
+ *  Push 217 续⑥（业务口径「施工人数抽屉也要可以编辑」）：追加**施工人数**（headcount，契约 number | null，null = 清空）。 */
+export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stageNames" | "photos" | "headcount">>;
 
 /** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。
  *  Push 212 续：追加**问题附图**（photos）。 */
@@ -617,6 +640,11 @@ function reportUpdateBody(current: DailyReport, patch: ReportPatch): ReportUpdat
   if (patch.photos !== undefined) {
     body.photoFileIds = readyFileIds(patch.photos);
   }
+  if (patch.headcount !== undefined) {
+    // Push 217 续⑥（业务口径「施工人数抽屉也要可以编辑」）：施工人数 —— 明确带 null（＝清空）；
+    // 与 plan 的「空串转 null」不同，这里本来就是 number | null，原样透传。
+    body.headcount = patch.headcount;
+  }
   return body;
 }
 
@@ -752,30 +780,49 @@ function PasteIcon({ className = "h-5 w-5" }: { className?: string }) {
     </svg>
   );
 }
-/** 图片预览层（业务口径「图片要可以预览」）：点缩略图放大看；点任意处 / Esc 关。 */
+/** 图片预览层（业务口径「图片要可以预览」）：点缩略图放大看；点任意处 / Esc 关。
+ *  Push 217 续④（业务口径「抽屉中点击图片也要居中显示」+「从看板里面点了图片 再从抽屉点图片怎么是这样的 bug」）：
+ *  1) 预览层改 **portal 到 body** —— 抽屉壳 .drawer-panel 带 ll-drawer-in 入场动画（animation-fill-mode: both），
+ *     动画结束后它的 computed transform 仍是 matrix(1,0,0,1,0,0)（≠ none）⇒ 它就是 fixed 后代的 containing block：
+ *     预览层的 fixed inset-0 会退化成「只盖抽屉面板（460px）」而不是整个视口，大图因此贴面板顶 / 溢出到面板外、
+ *     和看板入口的正常预览层叠成两层。portal 到 body 后 containing block 回到视口，两处入口同一居中口径。
+ *  2) 图幅上限 90vw → min(90vw, calc(100vw - 3rem))：保留 90vw 留白，同时不超过预览层内容宽（减去 p-6 的 48px），
+ *     极窄窗口下大图也不会溢出预览层。
+ *  3) 预览层自带 stopPropagation（click / pointerdown）—— React 的 portal 事件沿 **React 树**继续冒泡：
+ *     看板卡片的整卡 onClick / onPointerDown 会把「点预览层关掉」当成「点卡片」，预览一关抽屉就被带着打开
+ *     （业务截图里「看板预览 + 抽屉预览」两层同屏的另一半原因）。同 InlineEdit 浮层的 portal 口径。
+ *  4) Esc 改**捕获阶段**监听并止住传播：预览层在最上层时 Esc 只关预览层（再按一次才轮到抽屉自己的 Esc）。 */
 function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.stopPropagation();
         onClose();
       }
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
-  return (
+  return createPortal(
     <div
       data-photo-preview=""
       role="dialog"
       aria-label={"预览 " + name}
-      onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/60 p-6"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
     >
       <figure className="flex max-h-full max-w-full flex-col items-center">
-        <img src={url} alt={name} className="max-h-[80vh] max-w-[90vw] rounded-xl bg-white p-1 shadow-2xl" />
+        <img src={url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
         <figcaption className="mt-2 text-center text-xs text-white/80">{name}</figcaption>
       </figure>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -813,7 +860,12 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
           type="button"
           data-attachment-thumb=""
           aria-label={"预览 " + item.name}
-          onClick={() => onPreview(url, item.name)}
+          onClick={(event) => {
+            // Push 217 续④：看板卡片整卡可点（开抽屉），缩略图的预览点击若冒泡 = 「预览层 + 抽屉」同时打开、
+            // 两层预览叠着（业务截图）；这里止住冒泡，点图只出预览层。
+            event.stopPropagation();
+            onPreview(url, item.name);
+          }}
           className="shrink-0 rounded-md transition hover:opacity-80"
         >
           <img
@@ -904,7 +956,8 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
 /** 附图清单：图片出**缩略图**（点开预览层看大图）、非图片出文件名胶囊；表单里再带 × 可逐个移除。
  *  Push 206 加 size 档位：sm（默认 —— 表单贴图区：32×32 小缩略图 + 文件名胶囊）/ lg（「日报记录」列表用：
  *  约 128×96 大图瓦片、多张自动折行、只出图不带文件名 —— 业务样 = 图 2；名字放 title 提示）。
- *  Push 207 再加 md（「问题追踪 → 问题附图」列用：40×40 紧凑缩略图、只出图不带文件名 —— 业务样 = 图五）。 */
+ *  Push 207 再加 md（40×40 紧凑缩略图、只出图不带文件名 —— 业务样 = 图五；Push 217 起「问题追踪」表改用 lg，
+ *  现用于「问题看板」卡片与问题详情抽屉的贴图区）。 */
 function PhotoStrip({ items, onRemove, onRename, strip, size = "sm" }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg" }) {
   const isLarge = size === "lg";
   /** 列表里的紧凑缩略图档（40×40、名字进 title）。 */
@@ -1644,31 +1697,42 @@ function IssueBoard({ issues, onPatch, onOpen }: {
  *  信息不丢）；「问题描述 / 解决方案或建议」按行换行（whitespace-pre-line —— 承接 Push 206 自动序号）。
  *  行样式 = 业务样「图六」（项目总览任务表）：白卡 + 圆角边框 + 列头 bg-zinc-50 小字 + 行 px-5 py-2.5 /
  *  divide-zinc-100 细分割线 / hover:bg-zinc-50/80。
+ *  Push 217（业务口径 2026-09-29「问题追踪的卡片比例也要和日报记录的相同」+ 同批追加「这比例完全不一样啊 包括图片」）：
+ *  整表**比例对齐「日报记录」** —— 列内边距 px-5 → px-4、单元格 py-2.5 → py-4（表头 px-4 py-3.5）、
+ *  表头字号 xs → sm（text-zinc-500）、行补 align-top、行尾动作列 w-[88px] → w-20（px-4×2 + 48 = 80，与「日报记录」同槽位）；
+ *  「问题附图」列图幅 md（40×40）→ **lg 大图瓦片**（约 128×96、多张折行 —— 与「日报记录 → 现场工作附图」同一档）、
+ *  列宽 min-w-[130px] → 440；列口径 / 交互不变。
+ *  Push 217 续（业务口径「问题归类去左侧一些这个间距不协调」+「这个在表格里面始终居中」）：
+ *  「问题描述」列 min-w-[320px] → min-w-[240px] —— 收窄描述与「问题归类」之间的空档，归类列（及其后各列）随之前移；
+ *  「问题是否处理」列单元格补 text-center —— 状态色签（InlineOptionCell 触发器 = 行内级盒）在列内**始终水平居中**；
+ *  另（业务口径「会出现截断的问题」）：归类单元格改 `wrapContent` —— 包裹层撤 `truncate` 裁剪，窄窗 / 列被挤到最小时色签不再被裁掉一角。
  *  Push 207 同批追加「增加项目总览 同款醒目模式在问题追踪里面」：`focus` = 醒目模式开 —— 整行铺该问题状态的
  *  底色（ISSUE_ROW_CLASS · 6% / 悬停 12%，与项目总览任务表同一套口径），状态列只留深色字；关 = 原样。 */
 function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Issue[]; focus: boolean; onPatch: (id: string, patch: IssuePatch) => void; onDelete: (issue: Issue) => void }) {
   return (
     <div data-issue-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
-        <thead className="bg-zinc-50 text-xs font-medium text-zinc-400">
+        <thead className="bg-zinc-50 text-zinc-500">
           <tr>
             {ISSUE_TABLE_COLUMNS.map((column) => (
-              <th key={column.key} data-issue-head={column.key} className="whitespace-nowrap border-b border-zinc-200 px-5 py-2.5 font-medium">
+              <th key={column.key} data-issue-head={column.key} className="whitespace-nowrap border-b border-zinc-200 px-4 py-3.5 font-medium">
                 {column.label}
               </th>
             ))}
             {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
                 与「日报记录」/ 任务表同一个 48px 槽位与同款 RowDeleteButton；删问题 = 连它来源的那篇日报一起删（同一篇日报整组）。 */}
-            <th className="w-[88px] border-b border-zinc-200 px-5 py-2.5 font-medium">
+            <th className="w-20 border-b border-zinc-200 px-4 py-3.5 font-medium">
               <span className="sr-only">操作</span>
             </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => (
-            <tr key={issue.id} data-issue-row={issue.id} className={"group transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
-              <td className="whitespace-nowrap px-5 py-2.5 text-zinc-700">{cnDateOf(issue.raisedAt)}</td>
-              <td className="min-w-[320px] px-5 py-2.5">
+            <tr key={issue.id} data-issue-row={issue.id} className={"group align-top transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
+              <td className="whitespace-nowrap px-4 py-4 text-zinc-700">{cnDateOf(issue.raisedAt)}</td>
+              <td className="min-w-[240px] px-4 py-4">
+                {/* Push 217 续（业务口径「问题归类去左侧一些这个间距不协调」）：min-w 320 → 240 —— 收窄本列与
+                    「问题归类」之间的空档，归类列（及其后各列）随之前移；描述 / 「提出人」小行仍按行换行，不截断。 */}
                 {/* Push 208：问题描述行内可改 —— 文字修改需要点击保存，日期列（提出日期）不动 */}
                 <InlineTextCell
                   bare
@@ -1683,10 +1747,13 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
                 />
                 <p className="mt-1 text-[11px] leading-4 text-zinc-400">提出人：{issue.reporter}</p>
               </td>
-              <td className="whitespace-nowrap px-5 py-2.5">
+              <td className="whitespace-nowrap px-4 py-4">
                 {/* Push 208：问题归类行内可改 —— 浮层 = 表单侧同款多选（绿勾 · 点选不收浮层），落值按「、」连接 */}
+                {/* Push 217 续③（业务口径「会出现截断的问题」）：wrapContent —— 撤包裹层 truncate 裁剪：窄窗 / 列被挤到
+                    最小时色签不再被裁掉一角（色签折行 / 触发器内衬等其他表现不变，壳档位见 InlineCell）。 */}
                 <InlineMultiOptionCell
                   bare
+                  wrapContent
                   values={issue.categories}
                   options={ISSUE_CATEGORIES}
                   ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
@@ -1698,7 +1765,7 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
                   }}
                 />
               </td>
-              <td className="min-w-[280px] px-5 py-2.5">
+              <td className="min-w-[280px] px-4 py-4">
                 {/* Push 208：解决方案或建议行内可改（文字列同款：点「保存」才落值） */}
                 <InlineTextCell
                   bare
@@ -1712,11 +1779,15 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
                   }}
                 />
               </td>
-              <td className="min-w-[130px] px-5 py-2.5">
-                {/* 只读展示：附图增删在「日报填写」表单与问题详情抽屉里做（业务口径「太丑了 取消修改」）。 */}
-                {issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="md" />}
+              <td className="min-w-[440px] px-4 py-4">
+                {/* 只读展示：附图增删在「日报填写」表单与问题详情抽屉里做（业务口径「太丑了 取消修改」）。
+                    Push 217 续（业务口径「这比例完全不一样啊 包括图片」）：图幅 md（40×40）→ lg（约 128×96 大图瓦片、
+                    多张自动折行、只出图不带文件名 —— 与「日报记录 → 现场工作附图」同一档），列宽同口径 min-w-[440px]。 */}
+                {issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="lg" />}
               </td>
-              <td className="whitespace-nowrap px-5 py-2.5">
+              <td className="whitespace-nowrap px-4 py-4 text-center">
+                {/* Push 217 续（业务口径「这个在表格里面始终居中」）：text-center —— 触发器是行内级盒（inline-flex），
+                    状态色签在列内**始终水平居中**（三态 / 醒目模式 / 行内改后同款；列宽再变也不贴左沿）。 */}
                 {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚），色签壳直接复用 IssueStateTag */}
                 <InlineOptionCell
                   bare
@@ -1730,9 +1801,9 @@ function IssueTable({ issues, focus, onPatch, onDelete }: { issues: readonly Iss
                   }}
                 />
               </td>
-              <td className="w-[88px] px-5 py-2.5" data-issue-delete-cell="">
+              <td className="w-20 px-4 py-4" data-issue-delete-cell="">
                 {/* 同上：预留 48px 动作槽位，幽灵态 24px → 悬停 48px 只在槽内长大，不推挤左侧列
-                    （业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。px-5(20×2) + 48 = 88 = w-[88px]。 */}
+                    （业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。px-4(16×2) + 48 = 80 = w-20（Push 217 与「日报记录」同槽位）。 */}
                 <span data-issue-delete-slot="" className="flex h-6 w-12 shrink-0 items-center">
                   <RowDeleteButton
                     label={"删除问题（" + issue.raisedAt + "）—— 会连同来源日报一起删除"}
@@ -1802,7 +1873,9 @@ function StageChecklist({
 /** 「日报填写」表单（字段按 A3-01；校验口径 A3-04 + Push 205：日期 + 当日完成工作 + 明日计划必填；
  *  「现场发现问题」= 前置开关 —— 非空时问题归类必填，且「问题归类 / 当前问题附图 / 解决方案或建议」三项才可填；
  *  Push 206 续：「当日完成工作 / 明日计划」自动序号 —— 聚焦预置 1: 、回车补下一行序号、失焦 / 提交前重排；
- *  四个多行框均走自动下扩（换行多时随内容长高 ——「换行很多时要自动下扩」）。 */
+ *  四个多行框均走自动下扩（换行多时随内容长高 ——「换行很多时要自动下扩」）。
+ *  Push 217（业务口径 2026-09-29「现场工作附图放在明日计划填写下面」）：块序调整 —— 「现场工作附图」移到
+ *  「明日计划」正下方（原排「解决方案或建议」之后）；字段集 / 必填 / 交互口径不变。 */
 function ReportFillForm({
   project,
   author,
@@ -1982,6 +2055,15 @@ function ReportFillForm({
         />
       </label>
 
+      {/* Push 217（业务口径 2026-09-29「现场工作附图放在明日计划填写下面」）：整块移到「明日计划」正下方
+          （原排「解决方案或建议」之后）；字段集 / 交互不变。 */}
+      <div>
+        <span className={FORM_LABEL}>现场工作附图</span>
+        <div className="mt-1">
+          <AttachmentPicker projectId={project.id} field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
+        </div>
+      </div>
+
       {/* Push 202：撤掉「现场发现问题」的琥珀色特殊底与琥珀字色（业务口径「这个也不用搞特殊 样式和别的保持一致」）——
           标签走 FORM_LABEL、说明走灰色小字，与其它字段同一套 */}
       <div>
@@ -2069,13 +2151,6 @@ function ReportFillForm({
           className={FORM_INPUT + " mt-1 resize-y disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400"}
         />
       </label>
-
-      <div>
-        <span className={FORM_LABEL}>现场工作附图</span>
-        <div className="mt-1">
-          <AttachmentPicker projectId={project.id} field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
-        </div>
-      </div>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-zinc-100 pt-4">
         <button type="submit" data-action="submit" disabled={missing.length > 0 || submitting} className={BTN_PRIMARY}>
@@ -2165,6 +2240,7 @@ function IssueDrawer({ projectId, issue, report, onPatchIssue, onPatchReport, on
       value: (
         <InlineMultiOptionCell
           bare
+          wrapContent
           values={issue.categories}
           options={ISSUE_CATEGORIES}
           ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
@@ -2301,7 +2377,26 @@ function IssueDrawer({ projectId, issue, report, onPatchIssue, onPatchReport, on
               />
             ),
           },
-          { key: "headcount", label: "施工人数", value: String(report.headcount) },
+          {
+            key: "headcount",
+            label: "施工人数",
+            // Push 217 续⑤（业务口径「空用杠来表示 和之前项目总览的抽屉一样」）：headcount 是 number | null，
+            // 没填（null）时直接 String() 会渲染出字面量「null」；空值改出灰杠 —— 与「项目总览」任务详情抽屉
+            // 里同一字段的空态同一个样式（text-zinc-300 的 —）。
+            // Push 217 续⑥（业务口径「施工人数抽屉也要可以编辑」）：接行内数字编辑 —— 与「项目总览」任务表 /
+            // 任务抽屉同一套口径（InlineNumberCell：点开浮层、0 以上的整数、空 / 0 = 未填出杠、带「人」后缀）；
+            // 落值走 PATCH .../reports/{id} 的 headcount（契约 number | null，null = 清空）。
+            value: (
+              <InlineNumberCell
+                value={report.headcount ?? 0}
+                ariaLabel={"修改施工人数（" + report.date + "）"}
+                display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + " 人"}
+                onSave={(value) => {
+                  onPatchReport(report.id, { headcount: value === 0 ? null : value });
+                }}
+              />
+            ),
+          },
         ];
   /** 中间区：只留「关联阶段」一行、常显（Push 212 · 业务口径「只保留关联阶段 且不需要隐藏」——
    *  原「已隐藏 · N」折叠区与其余五枚次要字段整块撤除）；同批接行内多选（与「日报记录」表同款九阶段清单）。 */
