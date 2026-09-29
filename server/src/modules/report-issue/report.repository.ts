@@ -5,8 +5,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
 import { projects } from "../../db/schema/projects.js";
 import { dailyReports } from "../../db/schema/reports.js";
-import { taskEvents, tasks } from "../../db/schema/tasks.js";
-import { progressMarker, type DailyReportFilter } from "./report-issue.rules.js";
+import type { DailyReportFilter } from "./report-issue.rules.js";
 
 /** 日报行（含提交人显示名）。 */
 export interface DailyReportRow {
@@ -20,9 +19,9 @@ export interface DailyReportRow {
   doneWork: string;
   plan: string | null;
   foundIssue: string | null;
-  issueCategory: string | null;
+  issueCategories: string[];
   suggestion: string | null;
-  taskIds: string[];
+  stageKeys: string[];
   submittedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -38,9 +37,9 @@ export interface DailyReportInsertInput {
   doneWork: string;
   plan: string | null;
   foundIssue: string | null;
-  issueCategory: string | null;
+  issueCategories: string[];
   suggestion: string | null;
-  taskIds: string[];
+  stageKeys: string[];
   submittedAt: Date | null;
 }
 
@@ -50,9 +49,9 @@ export interface DailyReportPatch {
   doneWork?: string;
   plan?: string | null;
   foundIssue?: string | null;
-  issueCategory?: string | null;
+  issueCategories?: string[];
   suggestion?: string | null;
-  taskIds?: string[];
+  stageKeys?: string[];
   submittedAt?: Date | null;
 }
 
@@ -67,9 +66,9 @@ const REPORT_COLUMNS = {
   doneWork: dailyReports.doneWork,
   plan: dailyReports.plan,
   foundIssue: dailyReports.foundIssue,
-  issueCategory: dailyReports.issueCategory,
+  issueCategories: dailyReports.issueCategories,
   suggestion: dailyReports.suggestion,
-  taskIds: dailyReports.taskIds,
+  stageKeys: dailyReports.stageKeys,
   submittedAt: dailyReports.submittedAt,
   createdAt: dailyReports.createdAt,
   updatedAt: dailyReports.updatedAt,
@@ -77,7 +76,7 @@ const REPORT_COLUMNS = {
 };
 
 /**
- * 日报数据访问（M6-01 / M6-02）：列表 / 详情 / 唯一键判重 / 乐观锁更新。
+ * 日报数据访问（M6-01 / M6-02 · Push 215）：列表 / 详情 / 乐观锁更新（同日多条 —— 原唯一键判重删除）。
  * 权限与可见性由调用方解析（项目上下文已由 ProjectAccessGuard 落地），本层不做记录级判定。
  */
 @Injectable()
@@ -115,23 +114,6 @@ export class ReportRepository {
     return (rows[0] ?? null) as DailyReportRow | null;
   }
 
-  /** 一人一项目一天一条（uq_daily_reports_author_date）：判重走唯一键，重复由服务层转 409 REPORT_ALREADY_EXISTS。 */
-  async findByAuthorDate(projectId: string, authorId: string, reportDate: string, client: DbClient = this.database.db): Promise<DailyReportRow | null> {
-    const rows = await client
-      .select(REPORT_COLUMNS)
-      .from(dailyReports)
-      .leftJoin(users, eq(users.id, dailyReports.authorId))
-      .where(
-        and(
-          eq(dailyReports.projectId, projectId),
-          eq(dailyReports.authorId, authorId),
-          eq(dailyReports.reportDate, reportDate),
-        ),
-      )
-      .limit(1);
-    return (rows[0] ?? null) as DailyReportRow | null;
-  }
-
   /** 当日全量行（A7-01 汇总 / A7-05 应填未填）：项目 × 日期单日；提交时刻升序（草稿 submittedAt 为空，PG 默认排最后）。 */
   async listByDate(
     projectId: string,
@@ -158,9 +140,9 @@ export class ReportRepository {
         doneWork: input.doneWork,
         plan: input.plan,
         foundIssue: input.foundIssue,
-        issueCategory: input.issueCategory,
+        issueCategories: input.issueCategories,
         suggestion: input.suggestion,
-        taskIds: input.taskIds,
+        stageKeys: input.stageKeys,
         submittedAt: input.submittedAt,
         createdAt: at,
         updatedAt: at,
@@ -181,56 +163,6 @@ export class ReportRepository {
       .where(and(eq(dailyReports.id, reportId), eq(dailyReports.version, expectedVersion)))
       .returning({ id: dailyReports.id });
     return rows.length > 0;
-  }
-
-  /** 关联任务标题（A3-03 展示）：只取本项目未软删任务；缺项由服务层转 400（关联任务必须属于本项目）。 */
-  async taskTitles(projectId: string, taskIds: readonly string[], client: DbClient = this.database.db): Promise<Map<string, string>> {
-    if (taskIds.length === 0) return new Map();
-    const rows = await client
-      .select({ id: tasks.id, title: tasks.title })
-      .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), inArray(tasks.id, [...taskIds]), isNull(tasks.deletedAt)));
-    return new Map(rows.map((row) => [row.id, row.title]));
-  }
-
-  /**
-   * A3-08 回写：把日报「当日完成工作」追加到关联任务的「项目进展描述」（tasks.note，技术设计v0.2 §2.3）+ 写一条
-   * task_events（note_change）留痕，标注来源日报。幂等键 = 「【日报 <日期>】」标记 —— 同一任务同一天只追加一次，
-   * 日报重编辑不重复追加。
-   * 口径（差异登记）：与变更记录 R01 一致 —— 只动 note、不动任务乐观锁版本（不打断正在编辑任务的人）。
-   * 跨域说明：本方法直接写任务侧两表，是「日报 → 任务」单向回写的唯一落点（M6-02）；返回 false = 未追加（任务不存在 / 已追加过）。
-   */
-  async appendTaskProgress(
-    projectId: string,
-    taskId: string,
-    reportDate: string,
-    text: string,
-    actorId: string,
-    at: Date,
-    client: DbClient,
-  ): Promise<boolean> {
-    const rows = await client
-      .select({ note: tasks.note })
-      .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
-      .for("update");
-    const current = rows[0];
-    if (current === undefined) return false;
-    const marker = progressMarker(reportDate);
-    const before = current.note ?? "";
-    if (before.includes(marker)) return false;
-    const head = before.trim().length === 0 ? "" : before.replace(/\s+$/, "") + "\n";
-    const after = head + marker + text;
-    await client.update(tasks).set({ note: after }).where(eq(tasks.id, taskId));
-    await client.insert(taskEvents).values({
-      taskId,
-      eventType: "note_change",
-      beforeValue: before.length === 0 ? null : before,
-      afterValue: after,
-      actorId,
-      createdAt: at,
-    });
-    return true;
   }
 
   /** 项目上下文（写路径用）：软删 / 不存在 = null（记录级 404）；status 供归档写保护判定（ADR-027）。 */

@@ -66,11 +66,11 @@
     },
     {
       "name": "reports",
-      "description": "日报（A3-01 / A3-02 / A3-08 / A3-09；M6-01 / M6-02）"
+      "description": "日报（A3-01 / A3-02 / A3-09；M6-01 / M6-02）"
     },
     {
       "name": "issues",
-      "description": "问题闭环（A3-09~A3-13；四态流转 / 分派 / 留痕，M6-02 / M6-03）"
+      "description": "问题闭环（A3-09~A3-13；三态流转 / 分派 / 留痕，M6-02 / M6-03）"
     },
     {
       "name": "workspace",
@@ -1307,7 +1307,7 @@
           },
           "doneWork": {
             "type": "string",
-            "description": "当日完成工作（A3-04 必填；关联任务后回写任务「项目进展描述」，A3-08）"
+            "description": "当日完成工作（A3-04 必填；原「回写关联任务进展」（A3-08）随关联单位改阶段停用 —— Push 215）"
           },
           "plan": {
             "type": [
@@ -1323,8 +1323,12 @@
             ],
             "description": "现场发现问题（非空 → 提交时自动生成问题，A3-09 幂等）"
           },
-          "issueCategory": {
-            "$ref": "#/components/schemas/IssueCategory"
+          "issueCategories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueCategory"
+            },
+            "description": "问题归类（多值，C9 十项；「现场发现问题」非空时 ≥1 项，A3-04）"
           },
           "suggestion": {
             "type": [
@@ -1333,19 +1337,34 @@
             ],
             "description": "解决方案或建议"
           },
-          "taskIds": {
+          "stageKeys": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Uuid"
+              "$ref": "#/components/schemas/StageKey"
             },
-            "description": "关联任务（A3-03 多选；用于回写任务进展）"
+            "maxItems": 9,
+            "description": "关联阶段（A3-03 多选，九阶段字典；原「关联任务」Push 198 改口径，A3-08 回写停用）"
           },
-          "taskTitles": {
+          "stageNames": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "关联任务标题（与 taskIds 同下标）"
+            "description": "关联阶段名（与 stageKeys 同下标，查 STAGE_NAMES 展示）"
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilePhotoRef"
+            },
+            "description": "现场工作附图（file_links(object_type=report, kind=onsite)）；可增删"
+          },
+          "issuePhotos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilePhotoRef"
+            },
+            "description": "当前问题附图（file_links(object_type=report, kind=issue)）；提交生成问题时转挂到问题（file_links(object_type=issue)），转挂后此处为空"
           },
           "submittedAt": {
             "allOf": [
@@ -1382,10 +1401,12 @@
           "doneWork",
           "plan",
           "foundIssue",
-          "issueCategory",
+          "issueCategories",
           "suggestion",
-          "taskIds",
-          "taskTitles",
+          "stageKeys",
+          "stageNames",
+          "photos",
+          "issuePhotos",
           "submittedAt",
           "createdAt",
           "updatedAt",
@@ -1433,15 +1454,14 @@
             "maxLength": 2000,
             "description": "现场发现问题（非空时问题归类必填；提交时自动生成问题，A3-09）"
           },
-          "issueCategory": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/IssueCategory"
-              },
-              {
-                "description": "问题归类（C9 十项）"
-              }
-            ]
+          "issueCategories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueCategory"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "问题归类（多值，C9 十项；「现场发现问题」非空时必填 ≥1 项）"
           },
           "suggestion": {
             "type": "string",
@@ -1449,13 +1469,29 @@
             "maxLength": 2000,
             "description": "解决方案或建议"
           },
-          "taskIds": {
+          "stageKeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StageKey"
+            },
+            "maxItems": 9,
+            "description": "关联阶段（A3-03 多选，九阶段字典；须为合法阶段键）"
+          },
+          "photoFileIds": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Uuid"
             },
-            "maxItems": 200,
-            "description": "关联任务（A3-03 多选；须属本项目）"
+            "maxItems": 30,
+            "description": "现场工作附图（文件 id 整体替换；须为本项目已上传文件，上限 30 张）"
+          },
+          "issuePhotoFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "当前问题附图（文件 id 整体替换；提交生成问题时转挂到问题）"
           }
         },
         "required": [
@@ -1463,6 +1499,33 @@
           "doneWork"
         ],
         "description": "新报一天日报（草稿 / 提交）；补填由服务端按日期推导"
+      },
+      "DailyReportDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "cascadedIssueIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "连带删除的问题（删日报 = 连它派生的全部问题）"
+          }
+        },
+        "required": [
+          "id",
+          "deleted",
+          "cascadedIssueIds"
+        ],
+        "description": "日报删除（成对删除派生问题）"
       },
       "DailyReportListResponse": {
         "type": "object",
@@ -1603,7 +1666,7 @@
                   "string",
                   "null"
                 ],
-                "description": "当日日报 id；未填报为 null"
+                "description": "当日日报 id（同日多条：有已提交取已提交，否则取一条草稿）；未填报为 null"
               }
             ]
           },
@@ -1617,7 +1680,7 @@
                   "string",
                   "null"
                 ],
-                "description": "当日日报状态；null = 未填报（draft 草稿未提交，仍计「应填未填」）"
+                "description": "当日日报状态；null = 未填报（draft 草稿未提交，仍计「应填未填」；同日多条取提交优先）"
               }
             ]
           },
@@ -1706,7 +1769,7 @@
             "items": {
               "$ref": "#/components/schemas/DailyReport"
             },
-            "description": "已提交条目（提交时间升序，同刻按作者 id 兜底）"
+            "description": "已提交条目（提交时间升序，同刻按创建时间、作者 id 兜底；同日多条逐条列出）"
           }
         },
         "required": [
@@ -1770,15 +1833,16 @@
             "maxLength": 2000,
             "description": "现场发现问题（null = 清空；已生成问题不随清空撤回）"
           },
-          "issueCategory": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/IssueCategory"
-              },
-              {
-                "description": "问题归类（A3-11 · C9 字典十项）；一期为契约固定枚举，字典可维护随后"
-              }
-            ]
+          "issueCategories": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/IssueCategory"
+            },
+            "maxItems": 10,
+            "description": "问题归类整体替换（多值；null / 空数组 = 清空 —— 「现场发现问题」非空时不可清空）"
           },
           "suggestion": {
             "type": [
@@ -1788,13 +1852,29 @@
             "minLength": 1,
             "maxLength": 2000
           },
-          "taskIds": {
+          "stageKeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StageKey"
+            },
+            "maxItems": 9,
+            "description": "关联阶段整体替换（缺省 = 不改）"
+          },
+          "photoFileIds": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Uuid"
             },
-            "maxItems": 200,
-            "description": "关联任务整体替换（缺省 = 不改）"
+            "maxItems": 30,
+            "description": "现场工作附图整体替换（缺省 = 不改；空数组 = 清空）"
+          },
+          "issuePhotoFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "当前问题附图整体替换（缺省 = 不改；空数组 = 清空）；该日报已生成问题时转挂目标 = 该问题"
           }
         },
         "required": [
@@ -2349,6 +2429,23 @@
           "limit",
           "total"
         ]
+      },
+      "FilePhotoRef": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "原文件名（缩略图角标 / 无障碍文案）"
+          }
+        },
+        "required": [
+          "fileId",
+          "name"
+        ],
+        "description": "图片附件引用（多态关联读面；不做匿名直链，预览经预览接口换短时签名）"
       },
       "FilePreviewResponse": {
         "type": "object",
@@ -2931,17 +3028,12 @@
           },
           "title": {
             "type": "string",
-            "description": "问题描述（自动生成 = 日报「现场发现问题」原文）"
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "问题描述（自动生成 = 日报「现场发现问题」原文；超 500 字截短落库）"
           },
-          "category": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/IssueCategory"
-              },
-              {
-                "description": "问题归类（A3-11 · C9 字典十项）；一期为契约固定枚举，字典可维护随后"
-              }
-            ]
+          "categories": {
+            "$ref": "#/components/schemas/IssueCategoryList"
           },
           "state": {
             "$ref": "#/components/schemas/IssueState"
@@ -2983,20 +3075,6 @@
               "null"
             ]
           },
-          "dueAt": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DateTime"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "处理时限（ADR-026 SLA；一期仅落库）"
-              }
-            ]
-          },
           "raisedAt": {
             "allOf": [
               {
@@ -3013,6 +3091,13 @@
               "null"
             ],
             "description": "解决方案 / 回复（A3-13）"
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilePhotoRef"
+            },
+            "description": "问题附图（file_links(object_type=issue)）：来源 = 日报问题图提交转入，可在问题侧独立增删"
           },
           "closedBy": {
             "allOf": [
@@ -3057,16 +3142,16 @@
           "taskId",
           "sourceReportId",
           "title",
-          "category",
+          "categories",
           "state",
           "reporterId",
           "reporterName",
           "ownerDepartment",
           "ownerId",
           "ownerName",
-          "dueAt",
           "raisedAt",
           "solution",
+          "photos",
           "closedBy",
           "closedAt",
           "createdAt",
@@ -3076,10 +3161,7 @@
         "description": "一条问题记录（由日报自动生成或手工创建）"
       },
       "IssueCategory": {
-        "type": [
-          "string",
-          "null"
-        ],
+        "type": "string",
         "enum": [
           "机械部",
           "采购部",
@@ -3090,10 +3172,60 @@
           "客户原因",
           "客观原因",
           "生产原因",
-          "其它原因",
-          null
+          "其它原因"
         ],
-        "description": "问题归类（C9 十项；「现场发现问题」非空时必填，A3-04）"
+        "description": "问题归类（A3-11 · C9 字典十项）；一期为契约固定枚举，字典可维护随后"
+      },
+      "IssueCategoryList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/IssueCategory"
+        },
+        "minItems": 1,
+        "maxItems": 10,
+        "description": "问题归类（多值，≥1 项；C9 字典十项）"
+      },
+      "IssueDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "cascadedReportId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "连带删除的来源日报（删问题 = 连它来源的那篇日报；null = 无来源日报）"
+              }
+            ]
+          },
+          "cascadedIssueIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "连带删除的其它问题（删问题 = 连它来源日报派生的其它问题；不含自身）"
+          }
+        },
+        "required": [
+          "id",
+          "deleted",
+          "cascadedReportId",
+          "cascadedIssueIds"
+        ],
+        "description": "问题删除（成对删除来源日报）"
       },
       "IssueDetail": {
         "allOf": [
@@ -3226,17 +3358,16 @@
           "limit",
           "total"
         ],
-        "description": "问题列表（问题追踪表 / 问题看板共用；看板按四态分组由前端渲染）"
+        "description": "问题列表（问题追踪表 / 问题看板共用；看板按三态分组由前端渲染）"
       },
       "IssueState": {
         "type": "string",
         "enum": [
-          "unassigned",
           "open",
           "in_progress",
           "done"
         ],
-        "description": "问题四态（A3-10）：unassigned 未分组 / open 未解决 / in_progress 处理中 / done 已完成；允许回退且留痕"
+        "description": "问题三态（A3-10）：open 未解决 / in_progress 处理中 / done 已完成；允许回退且留痕"
       },
       "IssueUpdateBody": {
         "type": "object",
@@ -3250,7 +3381,23 @@
                 "$ref": "#/components/schemas/IssueState"
               },
               {
-                "description": "目标状态（A3-10 四态；允许回退且留痕）"
+                "description": "目标状态（A3-10 三态；允许回退且留痕）"
+              }
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "问题描述（行内编辑 / 抽屉编辑，Push 208 / 212）"
+          },
+          "categories": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IssueCategoryList"
+              },
+              {
+                "description": "问题归类整体替换（多值 ≥1 项）"
               }
             ]
           },
@@ -3280,25 +3427,25 @@
             "format": "uuid",
             "description": "责任人（null = 取消责任人）"
           },
-          "dueAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "处理时限（null = 清空）"
-          },
           "note": {
             "type": "string",
             "minLength": 1,
             "maxLength": 2000,
             "description": "本次处理的备注（A3-13 留痕）"
+          },
+          "photoFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "问题附图整体替换（file_links(object_type=issue)；缺省 = 不改；空数组 = 清空）"
           }
         },
         "required": [
           "version"
         ],
-        "description": "问题更新（状态流转 / 解决方案 / 分派 / 时限；一次请求写一条事件）"
+        "description": "问题更新（状态流转 / 描述 / 归类 / 解决方案 / 分派 / 附图；前五类变化写一条事件）"
       },
       "MeResponse": {
         "type": "object",
@@ -4248,10 +4395,6 @@
               "byState": {
                 "type": "object",
                 "properties": {
-                  "unassigned": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
                   "open": {
                     "type": "integer",
                     "minimum": 0
@@ -4266,7 +4409,6 @@
                   }
                 },
                 "required": [
-                  "unassigned",
                   "open",
                   "in_progress",
                   "done"
@@ -7889,15 +8031,8 @@
           "title": {
             "type": "string"
           },
-          "category": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/IssueCategory"
-              },
-              {
-                "description": "问题归类（A3-11 · C9 字典十项）；一期为契约固定枚举，字典可维护随后"
-              }
-            ]
+          "categories": {
+            "$ref": "#/components/schemas/IssueCategoryList"
           },
           "state": {
             "$ref": "#/components/schemas/IssueState"
@@ -7936,20 +8071,6 @@
               "null"
             ]
           },
-          "dueAt": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DateTime"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "处理时限（ADR-026 SLA）"
-              }
-            ]
-          },
           "raisedAt": {
             "allOf": [
               {
@@ -7974,14 +8095,13 @@
           "projectName",
           "taskId",
           "title",
-          "category",
+          "categories",
           "state",
           "reporterId",
           "reporterName",
           "ownerDepartment",
           "ownerId",
           "ownerName",
-          "dueAt",
           "raisedAt",
           "updatedAt",
           "version"
@@ -14516,7 +14636,7 @@
         "tags": [
           "reports"
         ],
-        "summary": "新建日报（A3-01 / A3-02 · M6-01）：一人一项目一天一条（重复 409 REPORT_ALREADY_EXISTS）；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等）",
+        "summary": "新建日报（A3-01 / A3-02 · M6-01）：同人同项目同日可多条；对过去日期提交 = 补填；现场发现问题非空且提交 = 自动生成问题（A3-09 幂等）",
         "parameters": [
           {
             "schema": {
@@ -14560,16 +14680,6 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {
@@ -14768,7 +14878,7 @@
         "tags": [
           "reports"
         ],
-        "summary": "编辑 / 提交日报（A3-02 草稿提交 · A3-08 回写关联任务「项目进展描述」）：乐观锁 version；date 不可改；已提交行不允许退回草稿",
+        "summary": "编辑 / 提交日报（A3-02 草稿提交）：乐观锁 version；date 不可改；已提交行不允许退回草稿",
         "parameters": [
           {
             "schema": {
@@ -14840,6 +14950,54 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "删除日报（成对删除：删日报 = 连它派生的全部问题 + 两侧附图关联；写审计与 outbox）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "reportId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除结果（cascadedIssueIds 为连带删除的问题）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyReportDeleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/projects/{id}/issues": {
@@ -14861,20 +15019,20 @@
           {
             "schema": {
               "type": "string",
-              "description": "状态多值逗号分隔：unassigned / open / in_progress / done"
+              "description": "状态多值逗号分隔：open / in_progress / done"
             },
             "required": false,
-            "description": "状态多值逗号分隔：unassigned / open / in_progress / done",
+            "description": "状态多值逗号分隔：open / in_progress / done",
             "name": "filter[state]",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "归类多值逗号分隔（C9 十项）"
+              "description": "归类筛选（C9 十项；命中任一归类即入选）"
             },
             "required": false,
-            "description": "归类多值逗号分隔（C9 十项）",
+            "description": "归类筛选（C9 十项；命中任一归类即入选）",
             "name": "filter[category]",
             "in": "query"
           },
@@ -15029,7 +15187,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "问题更新（A3-10 四态流转 / A3-12 分派 / A3-13 解决方案）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at）",
+        "summary": "问题更新（A3-10 三态流转 / A3-12 分派 / A3-13 解决方案 / 描述与归类行内编辑 / 附图）：乐观锁 version；允许回退且留痕（done → 其它态一并清 closed_at）",
         "parameters": [
           {
             "schema": {
@@ -15092,6 +15250,54 @@
           },
           "409": {
             "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "删除问题（成对删除：删问题 = 连它来源的那篇日报及其全部问题；写审计与 outbox）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "issueId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除结果（cascadedReportId 为连带删除的来源日报）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueDeleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {

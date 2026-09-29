@@ -3,7 +3,7 @@
  * 口径来源：技术设计v0.2 §6.2（幂等执行键 / 可测试：时钟注入 + 规则回放 + 金标文案逐字比对）、
  *   docs/rules/R01-R07-内置规则文案.md（R 系列）、docs/rules/A01-A03-A14-扩展规则文案.md（A 系列）、
  *   技术设计v0.3 §3.6 M5 出口标准（金标回放全绿）。
- * 主体口径：任务（R02 ~ R07）与 A 系列四类主体（A01 日报名册槽位 / A02 项目日报 / A03 问题 / A14 待办）——
+ * 主体口径：任务（R02 ~ R07）与 A 系列三类主体（A01 日报名册槽位 / A02 项目日报 / A14 待办；A03 问题随处理时限删除下线 · Push 215）——
  *   规则码 → 主体类型见 builtin-rules 的 subjectKindOf；字段与收件人由唤醒层按实体快照注入。
  * 边界：本文件只算「应发给谁、发什么、幂等键是什么」；真正投递（企微 / 站内信 / 重试 / 死信）由 M5-02 ~ M5-04 承担。
  */
@@ -57,7 +57,7 @@ export interface ReplaySubjectRecipient {
 
 /**
  * 通用回放主体（A 系列）：fields = 条件求值与模板变量取数口径；recipients = 收件人解析表（键 = RuleRecipient）。
- * 触发窗口基准字段（trigger.baseField，如 report.date / issue.due_at / todo.remind_date）从 fields 取日期串。
+ * 触发窗口基准字段（trigger.baseField，如 report.date / todo.remind_date）从 fields 取日期串（issue.due_at 随处理时限下线 · Push 215）。
  */
 export interface ReplaySubject {
   kind: ReplaySubjectKind;
@@ -73,20 +73,20 @@ export interface ReplayInput {
   businessDate: string;
   /** 任务数据集（R02 ~ R07）；与 subjects 合并参与回放。 */
   tasks?: readonly ReplayTask[];
-  /** 通用主体数据集（A01 / A02 / A03 / A14）。 */
+  /** 通用主体数据集（A01 / A02 / A14；A03 随处理时限删除下线）。 */
   subjects?: readonly ReplaySubject[];
   calendar: CalendarWindow;
   shiftEnabled?: boolean;
   shiftDirection?: CalendarShiftDirection;
   /** 已发送（或已入队）的幂等键：命中即跳过，跨天 / 重启补跑不重复发送。 */
   sentKeys?: readonly string[];
-  /** 规则集（缺省 = 内置 R02 ~ R07 + A01 / A02 / A03 / A14；回放指定规则便于金标逐条比对）。 */
+  /** 规则集（缺省 = 内置 R02 ~ R07 + A01 / A02 / A14；回放指定规则便于金标逐条比对）。 */
   rules?: readonly AutomationRule[];
 }
 
 export interface ReplayMessage {
   ruleCode: string;
-  /** 规则名（同 code 两窗口的规则 —— A03 T+1 / T+3 —— 靠它区分）。 */
+  /** 规则名（消息与明细随行 —— 规则可解释；A03 同 code 两窗口随处理时限删除下线）。 */
   ruleName: string;
   entityId: string;
   windowKey: string;

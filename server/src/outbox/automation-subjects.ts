@@ -2,12 +2,11 @@
  * automation 规则接线（S7-4 · M5-02 接线段）主体读取层：领域快照（只读）→ 回放主体（ReplaySubject）。
  *
  * 口径来源：docs/rules/A01-A03-A14-扩展规则文案.md「回放主体字段口径」表（字段 / 收件人唯一口径）+
- *   docs/rules/R01-R07-内置规则文案.md（任务类条件与模板变量）；映射器（toTaskSubject / toIssueSubject /
+ *   docs/rules/R01-R07-内置规则文案.md（任务类条件与模板变量）；映射器（toTaskSubject /
  *   toReportMemberSubject）在 automation 模块内（wmj 线）—— 本层只负责读库与快照组装，不算「应发给谁」。
  *
  * 读面（全部只读；接线层不写业务表）：
  *   - 任务类（R02 ~ R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）；
- *   - 问题（A03）：issues + projects（经理）+ users（责任人）；
  *   - 日报名册槽位（A01）：projects（在办）× project_members（名册）× daily_reports（当日提交）× 工作日历。
  *
  * 口径与差异（README / PR 同步登记）：
@@ -16,7 +15,6 @@
  *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 供 R06；
  *   - task.urgency：直接透传 tasks.priority（三档「高 / 中 / 低」）；R07 条件仍是旧四象限值（待 wmj 定案）；
  *   - task.file_count：与任务详情「文件摘要」同口径（draft / final / changed / archived，排除回收站）；
- *   - 缺处理时限（due_at 为空）的问题不产主体：窗口形态不触发（无从折算 T+N），事件形态主体不可解析；
  *   - A02（群渠道未落地）与 A14（todos 表未落）本层不产主体 —— 登记差异，随 M5-03 / 待办表落地补。
  *
  * 边界：窗口主体池排除软删项目 / 任务与归档项目（归档 = 冻结，不再提醒）；事件形态按事件载荷的实体 id 直读
@@ -24,16 +22,15 @@
  */
 import { Injectable } from "@nestjs/common";
 import type { RuleEventTopic } from "@libiaolink/contracts";
-import { and, count, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { DbClient } from "../db/db-client.js";
 import { DatabaseService } from "../db/database.service.js";
 import { files } from "../db/schema/files.js";
 import { users } from "../db/schema/identity.js";
 import { projectMembers, projects } from "../db/schema/projects.js";
-import { dailyReports, issues } from "../db/schema/reports.js";
+import { dailyReports } from "../db/schema/reports.js";
 import { tasks } from "../db/schema/tasks.js";
 import {
-  toIssueSubject,
   toReportMemberSubject,
   toTaskSubject,
   type ReplaySubject,
@@ -96,16 +93,6 @@ interface TaskSubjectRow {
   projectId: string;
 }
 
-/** issues 行（问题主体所需列）。 */
-interface IssueSubjectRow {
-  id: string;
-  projectId: string;
-  title: string;
-  state: string;
-  ownerId: string | null;
-  dueAt: Date | null;
-}
-
 /** tasks 主体列（与 TaskSubjectRow 同口径）。 */
 const TASK_SUBJECT_COLUMNS = {
   id: tasks.id,
@@ -123,16 +110,6 @@ const TASK_SUBJECT_COLUMNS = {
   projectId: tasks.projectId,
 } as const;
 
-/** issues 主体列（与 IssueSubjectRow 同口径）。 */
-const ISSUE_SUBJECT_COLUMNS = {
-  id: issues.id,
-  projectId: issues.projectId,
-  title: issues.title,
-  state: issues.state,
-  ownerId: issues.ownerId,
-  dueAt: issues.dueAt,
-} as const;
-
 @Injectable()
 export class AutomationSubjectReader {
   constructor(
@@ -141,8 +118,9 @@ export class AutomationSubjectReader {
   ) {}
 
   /**
-   * 事件主体：task.* → 任务主体（payload.taskId）；issue.updated → 问题主体（payload.issueId）。
-   * 其余规则主题（change.applied / node.completed / report.submitted）暂无事件型规则与主体映射 → null
+   * 事件主体：task.* → 任务主体（payload.taskId）。
+   * 其余规则主题（change.applied / node.completed / report.submitted / issue.updated —— issue 事件无订阅规则）
+   * 暂无事件型规则与主体映射 → null
    * （消费侧对「无规则订阅」直接消费完成；新增订阅时在此补映射）。
    */
   async eventSubject(
@@ -158,20 +136,13 @@ export class AutomationSubjectReader {
       const subjects = await this.buildTaskSubjects(rows, at, client);
       return subjects.get(taskId) ?? null;
     }
-    if (topic === "issue.updated") {
-      const issueId = stringField(payload, "issueId");
-      if (issueId === null) return null;
-      const rows = await client.select(ISSUE_SUBJECT_COLUMNS).from(issues).where(eq(issues.id, issueId)).limit(1);
-      const subjects = await this.buildIssueSubjects(rows, client);
-      return subjects.get(issueId) ?? null;
-    }
     return null;
   }
 
   /**
-   * 窗口主体包（调度形态）：任务池 + 问题池 + 窗口内每个业务日的日报名册槽位 + 工作日历窗口。
+   * 窗口主体包（调度形态）：任务池 + 窗口内每个业务日的日报名册槽位 + 工作日历窗口。
    * 说明：planWindowMessages 逐业务日求值，槽位需覆盖窗口内每个业务日（A01 的 report.date 基准）；
-   *   任务 / 问题主体为「当前快照」，触发日由各自基准字段折算出窗口命中（fireAtWithin 过滤）。
+   *   任务主体为「当前快照」，触发日由基准字段折算出窗口命中（fireAtWithin 过滤）。
    */
   async loadWindow(
     window: { from: Date; to: Date },
@@ -183,7 +154,6 @@ export class AutomationSubjectReader {
     const calendar = await this.calendarWindowFor(firstDate, lastDate, client);
     const subjects: ReplaySubject[] = [
       ...(await this.allTaskSubjects(at, client)),
-      ...(await this.allIssueSubjects(client)),
       ...(await this.reportSlotSubjects(datesBetween(firstDate, lastDate), calendar, client)),
     ];
     return { subjects, calendar };
@@ -203,14 +173,6 @@ export class AutomationSubjectReader {
     return [...(await this.buildTaskSubjects(rows, at, client)).values()];
   }
 
-  /** 问题主体池（窗口形态）：未闭环且有时限的问题（state=done 不参与 SLA；状态回退后重新纳入）。 */
-  private async allIssueSubjects(client: DbClient): Promise<ReplaySubject[]> {
-    const rows = await client
-      .select(ISSUE_SUBJECT_COLUMNS)
-      .from(issues)
-      .where(and(ne(issues.state, "done"), isNotNull(issues.dueAt)));
-    return [...(await this.buildIssueSubjects(rows, client)).values()];
-  }
   /** 日报名册槽位池（A01）：在办项目（未软删 / 未归档）× 名册 × 窗口内每个业务日。 */
   private async reportSlotSubjects(
     dates: readonly string[],
@@ -328,48 +290,6 @@ export class AutomationSubjectReader {
     return result;
   }
 
-  /** 问题快照 → 主体（缺处理时限的问题不产主体：窗口无从折算 T+N，事件形态按不可解析收口）。 */
-  private async buildIssueSubjects(
-    rows: readonly IssueSubjectRow[],
-    client: DbClient,
-  ): Promise<Map<string, ReplaySubject>> {
-    const result = new Map<string, ReplaySubject>();
-    const usable = rows.filter((row) => row.dueAt !== null);
-    if (usable.length === 0) return result;
-    const projectIds = [...new Set(usable.map((row) => row.projectId))];
-    const projectRows = await client
-      .select({ id: projects.id, managerIds: projects.managerIds })
-      .from(projects)
-      .where(inArray(projects.id, projectIds));
-    const managerByProject = new Map(projectRows.map((row) => [row.id, row.managerIds[0] ?? null]));
-    const nameIds = new Set<string>();
-    for (const row of usable) {
-      if (row.ownerId !== null) nameIds.add(row.ownerId);
-    }
-    for (const managerId of managerByProject.values()) {
-      if (managerId !== null) nameIds.add(managerId);
-    }
-    const nameById = await this.userNames([...nameIds], client);
-    for (const row of usable) {
-      const dueAt = row.dueAt;
-      if (dueAt === null) continue;
-      const managerId = managerByProject.get(row.projectId) ?? null;
-      result.set(
-        row.id,
-        toIssueSubject({
-          issueId: row.id,
-          title: row.title,
-          state: row.state,
-          dueAt: businessDateOf(dueAt),
-          ownerId: row.ownerId,
-          ownerName: row.ownerId === null ? null : (nameById.get(row.ownerId) ?? null),
-          managerId,
-          managerName: managerId === null ? null : (nameById.get(managerId) ?? null),
-        }),
-      );
-    }
-    return result;
-  }
   /** 项目完成度（R06 的 project.progress）：未删任务 status=done 占比四舍五入取整；无任务 = 0。 */
   private async projectProgress(projectIds: readonly string[], client: DbClient): Promise<Map<string, number>> {
     const result = new Map<string, number>();

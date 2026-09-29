@@ -3,7 +3,7 @@ export { ReportIssueModule } from "./report-issue.module.js";
 export { ReportService } from "./report.service.js";
 export { ReportSummaryService } from "./report-summary.service.js";
 export { IssueService } from "./issue.service.js";
-export { departmentOfCategory, progressMarker, resolveReportState } from "./report-issue.rules.js";
+export { departmentOfCategories, resolveReportState } from "./report-issue.rules.js";
 export type { DailyReportFilter, DailyReportListQuery, IssueFilter, IssueListQuery } from "./report-issue.rules.js";
 export type { DailyReportPatch, DailyReportRow } from "./report.repository.js";
 export type { IssueEventRow, IssuePatch, IssueRow } from "./issue.repository.js";

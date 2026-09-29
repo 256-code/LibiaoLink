@@ -10,8 +10,9 @@ import { AppError } from "../../common/errors/app-error.js";
 
 /**
  * 日报 / 问题纯规则（M6-01 ~ M6-03 · A3）。
- * 口径来源：系统功能书.md A3-02（草稿 / 提交 / 补填）、A3-04（提交校验）、A3-08（回写任务进展）、
- * A3-09（问题自动生成幂等）、A3-10（四态与回退）、A3-11（归类十项）、A3-12（按归类自动分派责任部门）。
+ * 口径来源：系统功能书.md A3-02（草稿 / 提交 / 补填 / 同日多条）、A3-04（提交校验）、A3-09（问题自动生成幂等）、
+ * A3-10（三态与回退）、A3-11（归类十项多值）、A3-12（按归类自动分派责任部门）。
+ * Push 215：A3-08 回写停用（progressMarker 删除）；A3-14 处理时限删除；归类单值 → 多值。
  */
 
 export type DailyReportState = "draft" | "submitted" | "supplement";
@@ -25,8 +26,13 @@ const DEPARTMENT_BY_CATEGORY: Record<string, string> = {
   项目部: "项目部",
 };
 
-export function departmentOfCategory(category: string): string | null {
-  return DEPARTMENT_BY_CATEGORY[category] ?? null;
+/** 多值归类 → 责任部门（A3-12 一期口径）：取第一个能映射到部门的归类；一个都映射不上 = 待分派（null）。 */
+export function departmentOfCategories(categories: readonly string[]): string | null {
+  for (const category of categories) {
+    const department = DEPARTMENT_BY_CATEGORY[category];
+    if (department !== undefined) return department;
+  }
+  return null;
 }
 
 /** 写入状态 + 日期 → 落库状态（A3-02）：草稿恒 draft；提交当天 = submitted；提交过去日期 = supplement（补填）。 */
@@ -110,6 +116,7 @@ export interface IssueFilter {
 export function parseIssueFilter(query: IssueListQuery): IssueFilter {
   return {
     states: assertEnum(splitMulti(query["filter[state]"]), ISSUE_STATES, "filter[state]"),
+    // 多值归类筛选：命中任一即入选（数组重叠 &&），单值输入等价于「包含该值」。
     categories: assertEnum(splitMulti(query["filter[category]"]), ISSUE_CATEGORIES, "filter[category]"),
     taskId: query["filter[taskId]"] ?? null,
     reportId: query["filter[reportId]"] ?? null,
@@ -117,7 +124,3 @@ export function parseIssueFilter(query: IssueListQuery): IssueFilter {
   };
 }
 
-/** 回写标记（A3-08 幂等）：以日报日期为幂等键 —— 同一任务同一天只追加一次，日报重编辑不重复追加。 */
-export function progressMarker(reportDate: string): string {
-  return "【日报 " + reportDate + "】";
-}

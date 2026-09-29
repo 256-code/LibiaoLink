@@ -13,7 +13,6 @@ import type { OutboxEventInput } from "../src/db/outbox.js";
 import {
   AUTOMATION_SCHEDULE_JOB_KIND,
   BUILTIN_RULES,
-  toIssueSubject,
   toTaskSubject,
   toReportMemberSubject,
   type ReplaySubject,
@@ -28,7 +27,7 @@ import {
   type AutomationWiringDeps,
 } from "../src/outbox/automation-wiring.js";
 
-/** 固定时钟：上海 2026-09-24 09:30（A03 T+1 触发时刻 = 09-24 09:00，已过）。 */
+/** 固定时钟：上海 2026-09-24 09:30（事件形态求值与冷启动判据基准）。 */
 const NOW = new Date(atShanghaiTime("2026-09-24", "09:30"));
 const CALENDAR = calendarWindow("2026-09-01", "2026-09-30", []);
 const DB = { marker: "db" } as unknown as DbClient;
@@ -112,7 +111,7 @@ function row(topic: OutboxTopic, payload: Record<string, unknown>, overrides: Pa
     id: 7,
     topic,
     payload,
-    dedupeKey: topic + ":" + String(payload.taskId ?? payload.issueId ?? "-"),
+    dedupeKey: topic + ":" + String(payload.taskId ?? "-"),
     attempts: 0,
     availableAt: NOW,
     lockedAt: NOW,
@@ -211,60 +210,23 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
   const FROM = new Date(atShanghaiTime("2026-09-23", "09:00"));
   const TO = new Date(atShanghaiTime("2026-09-24", "09:15"));
 
-  it("A03 T+1 命中：产出 notify.message 且落在 JobRunContext.tx", async () => {
-    const rules = BUILTIN_RULES.filter((rule) => rule.code === "A03" && rule.name.includes("T+1"));
-    const h = makeHarness({ rules: async () => [...rules] });
-    h.subjects.windowSubjects = [
-      toIssueSubject({
-        issueId: "i-1",
-        title: "现场漏水",
-        state: "open",
-        dueAt: "2026-09-23",
-        ownerId: "u-1",
-        ownerName: "张三",
-        managerId: "u-9",
-        managerName: "李四",
-      }),
-    ];
-
-    const result = await createAutomationScheduleHandler(h.deps).run(jobContext(FROM, TO));
-
-    expect(result?.produced).toBe(1);
-    expect(h.appended).toHaveLength(1);
-    expect(h.appended[0]?.client).toBe(TX);
-    expect(h.appended[0]?.event.dedupeKey).toBe("A03:i-1:2026-09-24");
-    const payload = h.appended[0]?.event.payload as Record<string, unknown>;
-    expect(payload.refType).toBe("issue");
-    expect(payload.refId).toBe("i-1");
-    expect(payload.templateCode).toBe("A03_T1_INBOX");
-    expect(payload.recipientId).toBe("u-1");
-    expect(String(payload.body)).toContain("现场漏水");
-  });
-
   it("同窗口重放：幂等键稳定（outbox 唯一约束兜底不重发）", async () => {
-    const rules = BUILTIN_RULES.filter((rule) => rule.code === "A03" && rule.name.includes("T+1"));
-    const h = makeHarness({ rules: async () => [...rules] });
+    const rules = BUILTIN_RULES.filter((rule) => rule.code === "A01");
+    const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
+    const h = makeHarness({ rules: async () => [...rules], now: () => late });
     h.subjects.windowSubjects = [
-      toIssueSubject({
-        issueId: "i-1",
-        title: "现场漏水",
-        state: "open",
-        dueAt: "2026-09-23",
-        ownerId: "u-1",
-        ownerName: "张三",
-        managerId: "u-9",
-        managerName: "李四",
-      }),
+      toReportMemberSubject({ date: "2026-09-24", isWorkday: true, submitted: false, userId: "u-1", userName: "张三", projectId: "p-1", projectName: "临港数据中心" }),
     ];
     const handler = createAutomationScheduleHandler(h.deps);
+    const window = jobContext(new Date(atShanghaiTime("2026-09-24", "19:00")), new Date(atShanghaiTime("2026-09-24", "19:40")));
 
-    await handler.run(jobContext(FROM, TO));
-    await handler.run(jobContext(FROM, TO));
+    await handler.run(window);
+    await handler.run(window);
 
     expect(h.appended).toHaveLength(2);
     expect(h.appended[0]?.event.dedupeKey).toBe(h.appended[1]?.event.dedupeKey);
+    expect(h.appended[0]?.event.dedupeKey).toBe("A01:u-1:2026-09-24");
   });
-
   it("A01 站内信合并：同一人多项目合并一条（收件人粒度幂等键 + 项目清单）", async () => {
     const rules = BUILTIN_RULES.filter((rule) => rule.code === "A01");
     const late = new Date(atShanghaiTime("2026-09-24", "19:45"));

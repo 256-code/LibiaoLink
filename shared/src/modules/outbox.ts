@@ -56,13 +56,15 @@ export const OUTBOX_TOPICS = [
   "preview.job",
   "change.applied",
   "report.submitted",
+  "report.deleted",
   "issue.created",
   "issue.updated",
+  "issue.deleted",
   "notify.message",
 ] as const;
 export const OutboxTopicSchema = z.enum(OUTBOX_TOPICS).openapi("OutboxTopic", {
   description:
-    "事件主题：task.created 任务创建 / task.updated 任务更新 / task.progress_changed 进度变化 / task.completed 任务完成 / task.deleted 任务软删 / task.locked_fields_adjusted 锁定字段例外调整 / task.draft_doc_reminded 缺件提醒 / task.gate_rejected 完成门禁拒绝 / node.added 节点新增 / node.completed 节点完成 / node.deleted 节点删除 / node.gate_rejected 节点完成门禁拒绝 / stage.advanced 阶段推进 / stage.gate_rejected 阶段门禁拒绝 / stage.rolled_back 阶段回退 / project.created 项目创建 / file.version.created 文件新版本 / file.finalized 文件定档 / preview.job 预览转换任务 / change.applied 变更生效 / report.submitted 日报提交 / issue.created 问题生成 / issue.updated 问题更新 / notify.message 通知投递（预留 · S7-4：站内信 / 企微 / 邮件；合并 / 免打扰 / 限速在投递层）；规则可订阅的主题见 automation 的 RuleEventTopic（本表的子集）",
+    "事件主题：task.created 任务创建 / task.updated 任务更新 / task.progress_changed 进度变化 / task.completed 任务完成 / task.deleted 任务软删 / task.locked_fields_adjusted 锁定字段例外调整 / task.draft_doc_reminded 缺件提醒 / task.gate_rejected 完成门禁拒绝 / node.added 节点新增 / node.completed 节点完成 / node.deleted 节点删除 / node.gate_rejected 节点完成门禁拒绝 / stage.advanced 阶段推进 / stage.gate_rejected 阶段门禁拒绝 / stage.rolled_back 阶段回退 / project.created 项目创建 / file.version.created 文件新版本 / file.finalized 文件定档 / preview.job 预览转换任务 / change.applied 变更生效 / report.submitted 日报提交 / report.deleted 日报删除（成对删派生问题，Push 215）/ issue.created 问题生成 / issue.updated 问题更新 / issue.deleted 问题删除（成对删来源日报，Push 215）/ notify.message 通知投递（预留 · S7-4：站内信 / 企微 / 邮件；合并 / 免打扰 / 限速在投递层）；规则可订阅的主题见 automation 的 RuleEventTopic（本表的子集）",
 });
 export type OutboxTopic = z.infer<typeof OutboxTopicSchema>;
 

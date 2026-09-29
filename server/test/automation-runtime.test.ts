@@ -8,7 +8,6 @@ import {
   listEnabledRules,
   planWindowMessages,
   replayRules,
-  toIssueSubject,
   toProjectDaySubject,
   toReportMemberSubject,
   toTaskSubject,
@@ -18,7 +17,7 @@ import {
   type ReplayTask,
 } from "../src/modules/automation/index.js";
 
-/** 金标基准日：2026-09-24（周四）；A03 用 due_at = 2026-09-23 → T+1 = 09-24 / T+3 = 09-26。 */
+/** 金标基准日：2026-09-24（周四）；A14 待办提醒日 = 2026-09-25（窗口内命中）。A03 随处理时限下线 · Push 215。 */
 const BUSINESS_DAY = "2026-09-24";
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
   { date: "2026-10-01", dayType: "holiday", name: "国庆节", note: null },
@@ -62,7 +61,7 @@ function slot(input: { userId: string; name: string; projectId: string; project:
   });
 }
 
-/** A02 项目日报 / A03 问题 / A14 待办（窗口形态用；日期按用例覆写）。 */
+/** A02 项目日报 / A14 待办（窗口形态用；日期按用例覆写）。 */
 function projectDay(date: string): ReplaySubject {
   return toProjectDaySubject({
     projectId: "p-1",
@@ -73,19 +72,6 @@ function projectDay(date: string): ReplaySubject {
     issueCount: 1,
     summaryText: "张三：安装摄像头 3 台；李四：现场勘查完毕。",
     groupId: "g-1",
-  });
-}
-
-function issue(dueAt: string): ReplaySubject {
-  return toIssueSubject({
-    issueId: "issue-1",
-    title: "配电柜到货延迟",
-    state: "in_progress",
-    dueAt,
-    ownerId: "u-1",
-    ownerName: "张三",
-    managerId: "u-9",
-    managerName: "李四",
   });
 }
 
@@ -157,7 +143,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
     const noTopic = evaluateEventMessages({ topic: "report.submitted", rules: BUILTIN_RULES, subject, at: AT });
     expect(noTopic.messages).toEqual([]);
     expect(noTopic.skipped).toEqual([]);
-    const mismatch = evaluateEventMessages({ topic: "task.completed", rules: BUILTIN_RULES, subject: issue("2026-09-23"), at: AT });
+    const mismatch = evaluateEventMessages({ topic: "task.completed", rules: BUILTIN_RULES, subject: todo("2026-09-25"), at: AT });
     expect(mismatch.messages).toEqual([]);
     expect(mismatch.skipped.map((item) => item.reason)).toEqual(["subject_mismatch", "subject_mismatch"]);
     expect(mismatch.skipped.map((item) => item.ruleCode)).toEqual(["R02", "R06"]);
@@ -165,14 +151,13 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
 });
 
 describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
-  it("A01 / A02 / A03 / A14 跨日窗口 = 逐日回放并集（逐字段一致）", () => {
+  it("A01 / A02 / A14 跨日窗口 = 逐日回放并集（逐字段一致）", () => {
     const subjects: ReplaySubject[] = [
       slot({ userId: "u-1", name: "张三", projectId: "p-1", project: "临港数据中心" }),
       slot({ userId: "u-1", name: "张三", projectId: "p-2", project: "浦东机场" }),
       slot({ userId: "u-2", name: "王五", projectId: "p-1", project: "临港数据中心", submitted: true }),
       slot({ userId: "u-1", name: "张三", projectId: "p-1", project: "临港数据中心", date: "2026-09-25" }),
       projectDay("2026-09-24"),
-      issue("2026-09-23"),
       todo("2026-09-25"),
     ];
     const window = {
@@ -185,19 +170,15 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
       union.push(...replayRules({ businessDate: date, subjects, calendar: CALENDAR, shiftEnabled: false }).messages);
     }
     expect(plan.messages).toEqual([...union].sort((left, right) => sortKey(left).localeCompare(sortKey(right))));
-    expect(plan.messages).toHaveLength(11);
+    expect(plan.messages).toHaveLength(7);
     expect(plan.messages.map((message) => message.ruleCode)).toEqual([
-      "A01", "A01", "A01", "A01", "A02", "A03", "A03", "A03", "A03", "A14", "A14",
+      "A01", "A01", "A01", "A01", "A02", "A14", "A14",
     ]);
     // A01 按人合并（跨项目清单）：u-1 当日两个项目；幂等键 = 规则 + 收件人 + 窗口。
     const mergedA01 = plan.messages.find((message) => message.ruleCode === "A01" && message.windowKey === "2026-09-24" && message.channel === "inbox");
     expect(mergedA01?.body).toBe("你今天还有日报未提交：临港数据中心、浦东机场请尽快填写，辛苦啦！");
     expect(mergedA01?.mergedFrom).toEqual(["p-1|u-1", "p-2|u-1"]);
     expect(mergedA01?.dedupeKey).toBe("A01:u-1:2026-09-24");
-    // A03 T+3 升级项目经理（@recipient = 李四），窗口键 = 应触发日。
-    const escalation = plan.messages.find((message) => message.ruleCode === "A03" && message.recipientName === "李四");
-    expect(escalation?.body).toBe("李四，问题「配电柜到货延迟」超期 3 天仍未闭环，已升级给你，请关注并推动处理！");
-    expect(escalation?.windowKey).toBe("2026-09-26");
     // skipped 只登记「窗口内已触发但未产出」：u-2 已提交 → not_matched；其余（未触发窗口 / 主体类型不符）不入 skipped。
     expect(plan.skipped).toEqual([{ reason: "not_matched", ruleCode: "A01", entityId: "p-1|u-2" }]);
   });
@@ -279,26 +260,6 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
     expect(unbound.recipients?.["project.group"]).toBeNull();
   });
 
-  it("toIssueSubject：责任人 / 项目经理双收件人（未分派 → null）", () => {
-    expect(issue("2026-09-23")).toEqual({
-      kind: "issue",
-      id: "issue-1",
-      fields: {
-        "issue.title": "配电柜到货延迟",
-        "issue.state": "in_progress",
-        "issue.owner_name": "张三",
-        "issue.due_at": "2026-09-23",
-      },
-      recipients: {
-        "issue.owner": { id: "u-1", name: "张三" },
-        "project.manager": { id: "u-9", name: "李四" },
-      },
-    });
-    const unassigned = toIssueSubject({ issueId: "issue-2", title: "t", state: "open", dueAt: "2026-09-23", ownerId: null, ownerName: null, managerId: null, managerName: null });
-    expect(unassigned.recipients?.["issue.owner"]).toBeNull();
-    expect(unassigned.recipients?.["project.manager"]).toBeNull();
-  });
-
   it("toTodoSubject：收件人 = rule.members；entityId 可覆盖（多提醒对象按成员展开）", () => {
     expect(todo("2026-09-25")).toEqual({
       kind: "todo",
@@ -320,9 +281,9 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
 describe("规则来源 listEnabledRules（一期 = 内置集）", () => {
   it("返回启用中的内置规则（异步签名，M5-06 换读表实现不变）", async () => {
     const rules = await listEnabledRules();
-    expect(rules).toHaveLength(11);
+    expect(rules).toHaveLength(9);
     expect(rules.every((rule) => rule.enabled)).toBe(true);
-    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R04", "R05", "R06", "R07", "A01", "A02", "A03", "A03", "A14"]);
+    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R04", "R05", "R06", "R07", "A01", "A02", "A14"]);
   });
 });
 

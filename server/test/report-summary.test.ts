@@ -3,12 +3,20 @@
  * 非工作日整列为空（不催报）；缺省日期 = 今天（Asia/Shanghai）；未来日期 400；汇总只算已提交条目、未填人数按 0 计。
  * 真机口径见 server/README.md「M6-01 收口」与 server/src/modules/report-issue/README.md。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { STAGE_NAMES } from "@libiaolink/contracts";
+import { photoStore } from "./fakes/report-issue-links.fake.js";
 import type { CalendarService } from "../src/modules/calendar/index.js";
+import type { DatabaseService } from "../src/db/database.service.js";
 import type { ProjectMemberListResult, ProjectMemberService, ProjectMemberView } from "../src/modules/project/index.js";
 import type { DailyReportRow, ReportRepository } from "../src/modules/report-issue/report.repository.js";
 import { ReportSummaryService } from "../src/modules/report-issue/report-summary.service.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
+
+vi.mock("../src/modules/report-issue/report-issue.links.js", async () => {
+  const { createReportIssueLinksFake } = await import("./fakes/report-issue-links.fake.js");
+  return createReportIssueLinksFake();
+});
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "99999999-9999-4999-8999-999999999999";
@@ -16,7 +24,7 @@ const ALICE = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const BOB = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2";
 const CAROL = "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3";
 const DAVE = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4";
-const TASK_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const FILE_A = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
 const PAST_DATE = "2026-01-05";
 const FUTURE_DATE = "2099-01-01";
 const AT_EARLY = new Date("2026-09-22T01:00:00Z");
@@ -33,19 +41,9 @@ interface CalendarDayStub {
 
 class FakeReportRepository {
   rows: DailyReportRow[] = [];
-  titles = new Map<string, string>([[TASK_A, "安装设备"]]);
 
   async listByDate(projectId: string, reportDate: string): Promise<DailyReportRow[]> {
     return this.rows.filter((row) => row.projectId === projectId && row.reportDate === reportDate);
-  }
-
-  async taskTitles(_projectId: string, taskIds: readonly string[]): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
-    for (const taskId of taskIds) {
-      const title = this.titles.get(taskId);
-      if (title !== undefined) result.set(taskId, title);
-    }
-    return result;
   }
 }
 
@@ -94,9 +92,9 @@ function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyR
     doneWork: "完成设备安装",
     plan: null,
     foundIssue: null,
-    issueCategory: null,
+    issueCategories: [],
     suggestion: null,
-    taskIds: [],
+    stageKeys: [],
     submittedAt: AT_EARLY,
     createdAt: AT_EARLY,
     updatedAt: AT_EARLY,
@@ -107,6 +105,7 @@ function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyR
 
 function makeService(reports: FakeReportRepository, calendar: FakeCalendarService, members: FakeProjectMemberService): ReportSummaryService {
   return new ReportSummaryService(
+    {} as unknown as DatabaseService,
     reports as unknown as ReportRepository,
     calendar as unknown as CalendarService,
     members as unknown as ProjectMemberService,
@@ -153,11 +152,16 @@ describe("当日汇总（M6-01 收口 · A7-01）", () => {
     expect(result.entries.map((entry) => entry.id)).toEqual(["r-early-a", "r-early-b", "r-late"]);
   });
 
-  it("entries 为契约形态：关联任务标题与 taskIds 同下标（缺项补空串）", async () => {
+  it("entries 为契约形态：阶段 stageKeys / stageNames 同下标（查字典）；附图随行下发（Push 215）", async () => {
     const reports = new FakeReportRepository();
-    reports.rows = [makeReport("r1", { taskIds: [TASK_A, "ffffffff-ffff-4fff-8fff-ffffffffffff"] })];
+    photoStore.seedFile(FILE_A, "现场.jpg", PROJECT);
+    photoStore.links.push({ fileId: FILE_A, objectType: "report", objectId: "r1", kind: "onsite" });
+    reports.rows = [makeReport("r1", { stageKeys: ["install"], issueCategories: ["机械部"] })];
     const result = await makeService(reports, new FakeCalendarService(), new FakeProjectMemberService()).summary(PROJECT, { date: PAST_DATE });
-    expect(result.entries[0]?.taskTitles).toEqual(["安装设备", ""]);
+    expect(result.entries[0]?.stageKeys).toEqual(["install"]);
+    expect(result.entries[0]?.stageNames).toEqual([STAGE_NAMES.install]);
+    expect(result.entries[0]?.issueCategories).toEqual(["机械部"]);
+    expect(result.entries[0]?.photos).toEqual([{ fileId: FILE_A, name: "现场.jpg" }]);
     expect(result.entries[0]?.state).toBe("submitted");
     expect(result.entries[0]?.submittedAt).toBe(AT_EARLY.toISOString());
   });

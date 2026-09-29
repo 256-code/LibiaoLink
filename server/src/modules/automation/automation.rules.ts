@@ -1,8 +1,8 @@
 /**
  * 自动化规则求值内核（纯函数：不连库、不取系统时间）：条件求值 / 模板渲染 / 触发窗口与幂等执行键。
  * 口径来源：技术设计v0.2 §6.1（规则模型）/ §6.2（幂等执行键 = ruleId + entityId + 触发窗口；时钟注入）、
- *   docs/rules/R01-R07-内置规则文案.md（R 系列逐字文案与金标）、docs/rules/A01-A03-A14-扩展规则文案.md（A 系列）、
- *   ADR-026（A03 T+1 提醒 / T+3 升级）、ADR-028（Asia/Shanghai）、
+ *   docs/rules/R01-R07-内置规则文案.md（R 系列逐字文案与金标）、docs/rules/A01-A03-A14-扩展规则文案.md（A 系列；A03 随处理时限删除下线）、
+ *   ADR-026（已作废 —— 处理时限 due_at 随 Push 215 删除）、ADR-028（Asia/Shanghai）、
  *   契约 shared/src/modules/automation.ts（枚举与规则文档 schema）。
  */
 import type { AutomationCondition, AutomationRule, RuleConditionOperator, RuleScheduleWindow } from "@libiaolink/contracts";
@@ -19,9 +19,10 @@ import {
 export type RuleFieldValue = string | number | boolean | readonly string[] | readonly number[] | null;
 export type RuleContext = Readonly<Record<string, RuleFieldValue | undefined>>;
 
-/** 回放主体类型（规则作用对象；M5-05 余项：A 系列不再限于任务）：task 任务（R02 ~ R07）/ issue 问题（A03）/
- * report_slot 日报名册槽位 = 人员 × 项目 × 日期（A01）/ project_day 项目日报 = 项目 × 日期（A02）/ todo 自定义待办（A14）。 */
-export const REPLAY_SUBJECT_KINDS = ["task", "issue", "report_slot", "project_day", "todo"] as const;
+/** 回放主体类型（规则作用对象；M5-05 余项：A 系列不再限于任务）：task 任务（R02 ~ R07）/
+ * report_slot 日报名册槽位 = 人员 × 项目 × 日期（A01）/ project_day 项目日报 = 项目 × 日期（A02）/ todo 自定义待办（A14）；
+ * issue 问题主体随处理时限（due_at）删除下线（Push 215）。 */
+export const REPLAY_SUBJECT_KINDS = ["task", "report_slot", "project_day", "todo"] as const;
 export type ReplaySubjectKind = (typeof REPLAY_SUBJECT_KINDS)[number];
 
 /** 求值选项：业务日（Asia/Shanghai）—— eqOffsetDays 的基准日，禁止取系统时间（v0.2 §6.2 可测试）。 */
@@ -164,7 +165,7 @@ export interface ScheduleFireInput {
   businessDate: string;
   /** 窗口基准字段值（task.planned_end / task.planned_start 一类；WEEKLY 忽略）。 */
   baseDate: string | null;
-  /** 业务时刻 HH:mm（R03 / R05 = 08:00，R04 = 10:00，R07 = 09:30，A02 = 19:00，A01 = 19:30，A03 / A14 = 09:00）。 */
+  /** 业务时刻 HH:mm（R03 / R05 = 08:00，R04 = 10:00，R07 = 09:30，A02 = 19:00，A01 = 19:30，A14 = 09:00）。 */
   time: string;
   /** 节假日顺延（R03 / R05 可配置；R04 按关闭）。 */
   shiftEnabled: boolean;
