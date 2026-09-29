@@ -522,6 +522,12 @@ check("⑥j 问题追踪表 = 六列口径（+ 行尾动作列 = 7 格）且三�
 await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
 await sleep(900);
 await clickSelector(rowSel1 + " [data-report-delete-slot] button");
+// Push 218「删除要二次提示」：第一下只出底部确认条、不落删除；第二下点确认条上的「删除」才真删。
+const repConfirmShown = await waitFor("document.querySelector(" + j("[data-delete-confirm-strip]") + ") !== null", 5000);
+await sleep(400);
+const repStillThere = await ev("document.querySelector(" + j(rowSel1) + ") !== null");
+check("⑦a-1 删日报第一下（行尾垃圾桶）= 只出底部确认条、不真删（二次提示）", repConfirmShown === true && repStillThere === true, JSON.stringify({ strip: repConfirmShown, row: repStillThere }));
+await clickSelector("[data-delete-confirm]");
 const repGone = await waitFor("(function(){var t=document.querySelector(" + j("[data-report-table]") + ");return t===null || t.querySelector(" + j("[data-report-row=" + Q + rep1.id + Q + "]") + ")===null;})()", 12000);
 await sleep(1200);
 const afterDelReport = await reportsOf();
@@ -541,6 +547,11 @@ if (issD === undefined) { await bail("夹具日报 D 没派生问题"); }
 await openDaily("issues");
 await sleep(1200);
 await clickSelector("[data-issue-row=" + Q + issD.id + Q + "] [data-issue-delete-slot] button");
+const issDConfirmShown = await waitFor("document.querySelector(" + j("[data-delete-confirm-strip]") + ") !== null", 5000);
+await sleep(400);
+const issDStillThere = await ev("document.querySelector(" + j("[data-issue-row=" + Q + issD.id + Q + "]") + ") !== null");
+check("⑦d-1 删问题第一下（行尾垃圾桶）= 只出底部确认条、不真删（二次提示）", issDConfirmShown === true && issDStillThere === true, JSON.stringify({ strip: issDConfirmShown, row: issDStillThere }));
+await clickSelector("[data-delete-confirm]");
 const issDGone = await waitFor("(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");return t===null || t.querySelector(" + j("[data-issue-row=" + Q + issD.id + Q + "]") + ")===null;})()", 12000);
 await sleep(1200);
 const afterDelIssue = await reportsOf();

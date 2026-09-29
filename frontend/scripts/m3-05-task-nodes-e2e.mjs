@@ -15,7 +15,7 @@
  *   ③ 同阶段同名 → 就地提示（409 NODE_ALREADY_EXISTS，不重复落库）；
  *   ④ 「项目总览 → 添加任务」卡片的「任务节点」标签同源（能看到刚建的节点）→ 点一条 → 任务落库；
  *   ⑤ 卡片上的红胶囊删除 → 底部确认条 → 物理删行 + 审计留痕，且**已生成的项目任务不受影响**；
- *   ⑥ 卡片上的铅笔编辑 → 表单预填 → PATCH 改名（乐观锁 version 0→1 + 审计 action=update）。
+ *   ⑥ 卡片上的铅笔编辑 → 表单**就地插在这张卡片下面**（不再滚回列头）→ 预填 → PATCH 改名（乐观锁 version 0→1 + 审计 action=update）。
  * 证据：docs/m3-05-回放证据(节点库增删改·前端).md
  */
 
@@ -134,6 +134,16 @@ const INPUT_QUERY = (label) => "document.querySelector(" + JSON.stringify(INPUT_
 const FILL_INPUT = (label, value) => "(function(){var el=" + INPUT_QUERY(label) + ";if(el===null){return false;}var setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype," + q("value") + ").set;setter.call(el," + JSON.stringify(value) + ");el.dispatchEvent(new Event(" + q("input") + ",{bubbles:true}));return true;})()";
 const CLICK_FORM_BUTTON = (label) => "(function(){var f=document.querySelector(" + q("form") + ");if(f===null){return false;}var bs=f.querySelectorAll(" + q("button") + ");for(var i=0;i<bs.length;i++){if((bs[i].textContent||" + q("") + ").trim()===" + q(label) + "){bs[i].click();return true;}}return false;})()";
 const LEFT_EDIT_BUTTONS = "(function(){var s=" + LEFT_SECTION + ";if(s===null){return -1;}var bs=s.querySelectorAll(" + q("button") + ");var n=0;for(var i=0;i<bs.length;i++){var a=bs[i].getAttribute(" + q("aria-label") + ")||" + q("") + ";if(a.indexOf(" + q("编辑节点 ") + ")===0){n++;}}return n;})()";
+/** 编辑表单是不是就地在被编辑卡片下面（Push 219）：卡片的下一个兄弟节点 = form，且里面写着「编辑节点」。 */
+const FORM_AFTER_CARD = (title) =>
+  "(function(){var s=" + LEFT_SECTION + ";if(s===null){return null;}" +
+  "var es=s.querySelectorAll(" + q("article") + ");" +
+  "for(var i=0;i<es.length;i++){var t=es[i].getAttribute(" + q("title") + ")||" + q("") + ";" +
+  "if(t.indexOf(" + JSON.stringify(title) + ")===0){" +
+  "var n=es[i].nextElementSibling;" +
+  "if(n===null||String(n.tagName||" + q("") + ")!==" + q("FORM") + "){return false;}" +
+  "return ((n.innerText||" + q("") + ").indexOf(" + q("编辑节点") + ")>=0);}}" +
+  "return null;})()";
 const CLICK_EDIT_NODE = (title) => "(function(){var bs=document.querySelectorAll(" + q("button") + ");for(var i=0;i<bs.length;i++){var a=bs[i].getAttribute(" + q("aria-label") + ")||" + q("") + ";if(a===" + JSON.stringify("编辑节点 " + title) + "){bs[i].click();return true;}}return false;})()";
 const CLICK_DELETE_NODE = (title) => "(function(){var bs=document.querySelectorAll(" + q("button") + ");for(var i=0;i<bs.length;i++){var a=bs[i].getAttribute(" + q("aria-label") + ")||" + q("") + ";if(a===" + JSON.stringify("删除节点 " + title) + "){bs[i].click();return true;}}return false;})()";
 const INPUT_VALUE = (label) => "(function(){var el=" + INPUT_QUERY(label) + ";return el===null?null:el.value;})()";
@@ -251,6 +261,8 @@ try {
   await sleep(600);
   const editFormText = flat(await ev(FORM_TEXT));
   check("编辑表单出现且标题是「编辑节点」（当前板块）", editFormText.indexOf("编辑节点") >= 0 && editFormText.indexOf("售前规划") >= 0, editFormText.slice(0, 140));
+  const formNearCard = await ev(FORM_AFTER_CARD(nodeTitle));
+  check("编辑表单就地插在被编辑卡片下面（不在列头 · Push 219 业务口径）", formNearCard === true, String(formNearCard));
   check("表单预填当前中 / 英文名", (await ev(INPUT_VALUE("节点名称"))) === nodeTitle && (await ev(INPUT_VALUE("节点英文名"))) === nodeTitleEn, JSON.stringify(await ev(INPUT_VALUE("节点名称"))));
   check("填新中文名 / 新英文名", (await ev(FILL_INPUT("节点名称", nodeEditedTitle))) === true && (await ev(FILL_INPUT("节点英文名", nodeEditedTitleEn))) === true);
   check("点「保存」提交编辑", (await ev(CLICK_FORM_BUTTON("保存"))) === true);
