@@ -1,10 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import {
   DailyReportCreateBodySchema,
+  DailyReportDeleteResponseSchema,
   DailyReportListQuerySchema,
   DailyReportListResponseSchema,
   DailyReportSchema,
   DailyReportUpdateBodySchema,
+  STAGE_NAMES,
   z,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
@@ -16,14 +18,25 @@ import { shanghaiToday } from "../task/index.js";
 import { IssueRepository, type IssueRow } from "./issue.repository.js";
 import { ReportRepository, type DailyReportPatch, type DailyReportRow } from "./report.repository.js";
 import {
+  assertPhotoFilesInProject,
+  insertReportPhotos,
+  loadReportPhotos,
+  moveIssuePhotosToIssue,
+  purgeReportCascade,
+  replaceIssuePhotos,
+  replaceReportPhotos,
+  type FilePhotoRefRow,
+} from "./report-issue.links.js";
+import {
   assertReportStateWrite,
-  departmentOfCategory,
+  departmentOfCategories,
   isFutureDate,
   parseReportFilter,
   resolveReportState,
 } from "./report-issue.rules.js";
 
 type DailyReport = z.infer<typeof DailyReportSchema>;
+type DailyReportDeleteResponse = z.infer<typeof DailyReportDeleteResponseSchema>;
 type DailyReportListQuery = z.infer<typeof DailyReportListQuerySchema>;
 type DailyReportListResponse = z.infer<typeof DailyReportListResponseSchema>;
 type DailyReportCreateBody = z.infer<typeof DailyReportCreateBodySchema>;
@@ -38,9 +51,9 @@ function reportSnapshot(row: DailyReportRow): Record<string, unknown> {
     doneWork: row.doneWork,
     plan: row.plan,
     foundIssue: row.foundIssue,
-    issueCategory: row.issueCategory,
+    issueCategories: row.issueCategories,
     suggestion: row.suggestion,
-    taskIds: row.taskIds,
+    stageKeys: row.stageKeys,
   };
 }
 
@@ -48,7 +61,7 @@ function reportSnapshot(row: DailyReportRow): Record<string, unknown> {
 function issueSnapshot(row: IssueRow): Record<string, unknown> {
   return {
     title: row.title,
-    category: row.category,
+    categories: row.categories,
     state: row.state,
     taskId: row.taskId,
     sourceReportId: row.sourceReportId,
@@ -60,8 +73,9 @@ function issueSnapshot(row: IssueRow): Record<string, unknown> {
 /** 问题描述上限（issues.title CHECK 1~500）：日报原文超长时截短落库，原文仍在日报行。 */
 const ISSUE_TITLE_MAX = 500;
 
-/** 行 → 契约（taskTitles 与 taskIds 同下标；缺项由 assertTasksInProject 提前拦截，正常不会出现空串）。 */
-export function toDailyReportView(row: DailyReportRow, titles: Map<string, string>): DailyReport {
+/** 行 → 契约（stageNames 查 STAGE_NAMES；photos / issuePhotos 由调用方批量装载后传入）。 */
+export function toDailyReportView(row: DailyReportRow, photos: { onsite: FilePhotoRefRow[]; issue: FilePhotoRefRow[] }): DailyReport {
+  const stageNameByKey = STAGE_NAMES as Record<string, string>;
   return {
     id: row.id,
     projectId: row.projectId,
@@ -73,10 +87,12 @@ export function toDailyReportView(row: DailyReportRow, titles: Map<string, strin
     doneWork: row.doneWork,
     plan: row.plan,
     foundIssue: row.foundIssue,
-    issueCategory: row.issueCategory as DailyReport["issueCategory"],
+    issueCategories: row.issueCategories as DailyReport["issueCategories"],
     suggestion: row.suggestion,
-    taskIds: row.taskIds,
-    taskTitles: row.taskIds.map((taskId) => titles.get(taskId) ?? ""),
+    stageKeys: row.stageKeys as DailyReport["stageKeys"],
+    stageNames: row.stageKeys.map((key) => stageNameByKey[key] ?? key),
+    photos: photos.onsite,
+    issuePhotos: photos.issue,
     submittedAt: row.submittedAt === null ? null : row.submittedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -85,11 +101,13 @@ export function toDailyReportView(row: DailyReportRow, titles: Map<string, strin
 }
 
 /**
- * 日报用例（M6-01 / M6-02 · A3-01 ~ A3-04 / A3-08 / A3-09）。
- * 1) 一人一项目一天一条：重复填报 409 REPORT_ALREADY_EXISTS（服务层先判、唯一键兜底）；
+ * 日报用例（M6-01 / M6-02 · A3-01 ~ A3-04 / A3-09 · Push 215）。
+ * 1) 同人同项目同日可多条（原「一人一天一条」与 409 REPORT_ALREADY_EXISTS 随批删除）；
  * 2) 状态：draft / submitted / supplement（对过去日期首次提交 = 补填，服务端推导，不接受客户端指定）；
- * 3) 提交后两件副作用（同事务、均幂等）：A3-09 生成问题（source_report_id 唯一兜底）、A3-08 回写关联任务进展；
- * 4) 留痕：审计（对象 daily_report）+ outbox report.submitted；归档项目写保护 409 PROJECT_ARCHIVED。
+ * 3) 提交后副作用（同事务、幂等）：A3-09 生成问题（source_report_id 唯一兜底），并把问题图从日报转挂到问题；
+ * 4) 附图（方案一）：现场图 / 问题图都挂 file_links(report, kind=onsite|issue)，整体替换语义；
+ * 5) 删除为成对删除：删日报 = 连它派生的全部问题 + 两侧附图关联（DELETE）；
+ * 6) 留痕：审计（对象 daily_report + 连带问题）+ outbox report.submitted / report.deleted；归档项目写保护 409 PROJECT_ARCHIVED。
  * 权限：读 = 项目可见（成员平权）；写 = report.fill（成员平权，见 permission.rules 平权例外）。
  */
 @Injectable()
@@ -105,9 +123,9 @@ export class ReportService {
   async list(projectId: string, query: DailyReportListQuery): Promise<DailyReportListResponse> {
     const filter = parseReportFilter(query);
     const { rows, total } = await this.reports.list(projectId, filter, query.page, query.limit);
-    const titles = await this.reports.taskTitles(projectId, rows.flatMap((row) => row.taskIds));
+    const photos = await loadReportPhotos(rows.map((row) => row.id), this.database.db);
     return {
-      items: rows.map((row) => toDailyReportView(row, titles)),
+      items: rows.map((row) => toDailyReportView(row, photos.get(row.id) ?? { onsite: [], issue: [] })),
       page: query.page,
       limit: query.limit,
       total,
@@ -117,11 +135,11 @@ export class ReportService {
   /** GET /api/v1/projects/{id}/reports/{reportId}：不属本项目 / 不存在统一 404。 */
   async detail(projectId: string, reportId: string): Promise<DailyReport> {
     const row = await this.requireReport(projectId, reportId, this.database.db);
-    const titles = await this.reports.taskTitles(projectId, row.taskIds);
-    return toDailyReportView(row, titles);
+    const photos = await loadReportPhotos([reportId], this.database.db);
+    return toDailyReportView(row, photos.get(reportId) ?? { onsite: [], issue: [] });
   }
 
-  /** POST /api/v1/projects/{id}/reports：新报一天（草稿 / 提交）；提交即触发 A3-08 / A3-09。 */
+  /** POST /api/v1/projects/{id}/reports：新报一天（草稿 / 提交）；同日多条可重复新建（Push 215）；提交即触发 A3-09。 */
   async create(projectId: string, body: DailyReportCreateBody, actorId: string): Promise<DailyReport> {
     await this.loadProjectForWrite(projectId);
     const at = new Date();
@@ -132,16 +150,16 @@ export class ReportService {
       ]);
     }
     const state = resolveReportState(body.state, body.date, today);
+    const stageKeys = [...new Set(body.stageKeys ?? [])];
+    const foundIssueText = body.foundIssue === undefined ? "" : body.foundIssue.trim();
+    const issueCategories = foundIssueText.length === 0 ? [] : (body.issueCategories ?? []);
+    const photoFileIds = body.photoFileIds ?? [];
+    const issuePhotoFileIds = body.issuePhotoFileIds ?? [];
+    if (photoFileIds.length > 0 || issuePhotoFileIds.length > 0) {
+      await assertPhotoFilesInProject(projectId, [...photoFileIds, ...issuePhotoFileIds], this.database.db);
+    }
     let createdId = "";
     await this.database.db.transaction(async (tx) => {
-      const existing = await this.reports.findByAuthorDate(projectId, actorId, body.date, tx);
-      if (existing !== null) {
-        throw new AppError("REPORT_ALREADY_EXISTS", "当天日报已存在，请改用编辑（一人一项目一天一条）", [
-          { code: "duplicate_report", message: "已存在日报：" + existing.id, path: "date", meta: { reportId: existing.id } },
-        ]);
-      }
-      const taskIds = body.taskIds ?? [];
-      await this.assertTasksInProject(projectId, taskIds, tx);
       const row = await this.reports.insert(
         {
           projectId,
@@ -152,15 +170,17 @@ export class ReportService {
           doneWork: body.doneWork,
           plan: body.plan ?? null,
           foundIssue: body.foundIssue ?? null,
-          issueCategory: body.issueCategory ?? null,
+          issueCategories,
           suggestion: body.suggestion ?? null,
-          taskIds,
+          stageKeys,
           submittedAt: state === "draft" ? null : at,
         },
         at,
         tx,
       );
       createdId = row.id;
+      await insertReportPhotos(row.id, "onsite", photoFileIds, actorId, at, tx);
+      await insertReportPhotos(row.id, "issue", issuePhotoFileIds, actorId, at, tx);
       await this.audit.record(tx, {
         actorId,
         action: "create",
@@ -169,7 +189,7 @@ export class ReportService {
         projectId,
         summary: "填报日报：" + row.reportDate,
         changes: diffRecords({}, reportSnapshot(row)),
-        metadata: { state: row.state, taskIds: row.taskIds },
+        metadata: { state: row.state, stageKeys: row.stageKeys },
       });
       await appendOutbox(tx, {
         topic: "report.submitted",
@@ -181,20 +201,24 @@ export class ReportService {
     return this.detail(projectId, createdId);
   }
 
-  /** PATCH /api/v1/projects/{id}/reports/{reportId}：乐观锁编辑 / 草稿提交；date 不可改（唯一键组成）。 */
+  /** PATCH /api/v1/projects/{id}/reports/{reportId}：乐观锁编辑 / 草稿提交；date 不可改；附图整体替换（Push 215）。 */
   async update(projectId: string, reportId: string, body: DailyReportUpdateBody, actorId: string): Promise<DailyReport> {
     await this.loadProjectForWrite(projectId);
     const at = new Date();
     const today = shanghaiToday(at);
+    const photoFileIds = body.photoFileIds;
+    const issuePhotoFileIds = body.issuePhotoFileIds;
+    if (photoFileIds !== undefined || issuePhotoFileIds !== undefined) {
+      await assertPhotoFilesInProject(projectId, [...(photoFileIds ?? []), ...(issuePhotoFileIds ?? [])], this.database.db);
+    }
     await this.database.db.transaction(async (tx) => {
       const before = await this.requireReport(projectId, reportId, tx);
       assertReportStateWrite(before.state, body.state);
-      if (body.taskIds !== undefined) await this.assertTasksInProject(projectId, body.taskIds, tx);
       const foundIssue = body.foundIssue === undefined ? before.foundIssue : body.foundIssue;
-      const issueCategory = body.issueCategory === undefined ? before.issueCategory : body.issueCategory;
-      if (foundIssue !== null && foundIssue.trim().length > 0 && issueCategory === null) {
+      const issueCategories = body.issueCategories === undefined ? before.issueCategories : (body.issueCategories ?? []);
+      if (foundIssue !== null && foundIssue.trim().length > 0 && issueCategories.length === 0) {
         throw new AppError("VALIDATION_FAILED", "「现场发现问题」非空时问题归类必填（A3-04）", [
-          { code: "issue_category_required", message: "请选择问题归类（C9 十项）", path: "issueCategory" },
+          { code: "issue_category_required", message: "请选择问题归类（C9 十项）", path: "issueCategories" },
         ]);
       }
       const patch: DailyReportPatch = {};
@@ -202,9 +226,9 @@ export class ReportService {
       if (body.doneWork !== undefined) patch.doneWork = body.doneWork;
       if (body.plan !== undefined) patch.plan = body.plan;
       if (body.foundIssue !== undefined) patch.foundIssue = body.foundIssue;
-      if (body.issueCategory !== undefined) patch.issueCategory = body.issueCategory;
+      if (body.issueCategories !== undefined) patch.issueCategories = issueCategories;
       if (body.suggestion !== undefined) patch.suggestion = body.suggestion;
-      if (body.taskIds !== undefined) patch.taskIds = body.taskIds;
+      if (body.stageKeys !== undefined) patch.stageKeys = [...new Set(body.stageKeys)];
       if (body.state === "submitted") {
         patch.state = before.state === "draft" ? resolveReportState("submitted", before.reportDate, today) : before.state;
         patch.submittedAt = before.submittedAt ?? at;
@@ -216,6 +240,14 @@ export class ReportService {
         ]);
       }
       const after = await this.requireReport(projectId, reportId, tx);
+      if (photoFileIds !== undefined) {
+        await replaceReportPhotos(reportId, "onsite", photoFileIds, actorId, at, tx);
+      }
+      if (issuePhotoFileIds !== undefined) {
+        const generated = await this.issues.findBySourceReport(reportId, tx);
+        if (generated === null) await replaceReportPhotos(reportId, "issue", issuePhotoFileIds, actorId, at, tx);
+        else await replaceIssuePhotos(generated.id, issuePhotoFileIds, actorId, at, tx);
+      }
       await this.audit.record(tx, {
         actorId,
         action: "update",
@@ -239,57 +271,52 @@ export class ReportService {
   }
 
   /**
-   * 提交后副作用（A3-08 回写任务进展 / A3-09 问题自动生成）：两件都幂等，可安全重放。
-   * ① 问题：source_report_id 唯一约束兜底 —— 已生成过则 insert 返回 null（不重复写事件与留痕）；
-   * ② 回写：以「【日报 <日期>】」标记判重 —— 同一任务同一天只追加一次，日报重编辑不重复追加。
+   * 提交后副作用（A3-09 问题自动生成 · Push 215 幂等可重放）：source_report_id 唯一约束兜底 ——
+   * 已生成过则 insert 返回 null（不重复写事件与留痕）；新生成时把日报「当前问题附图」转挂到问题（file_links(issue)）。
+   * A3-08 回写关联任务进展随「关联任务改关联阶段」停用（Push 215）。
    */
   private async afterSubmit(tx: DbClient, row: DailyReportRow, actorId: string, at: Date): Promise<void> {
     const foundIssue = row.foundIssue === null ? "" : row.foundIssue.trim();
-    if (foundIssue.length > 0 && row.issueCategory !== null) {
-      const issue = await this.issues.insert(
-        {
-          projectId: row.projectId,
-          taskId: row.taskIds.length === 1 ? (row.taskIds[0] ?? null) : null,
-          sourceReportId: row.id,
-          title: foundIssue.length > ISSUE_TITLE_MAX ? foundIssue.slice(0, ISSUE_TITLE_MAX) : foundIssue,
-          category: row.issueCategory,
-          state: "unassigned",
-          reporterId: row.authorId,
-          ownerDepartment: departmentOfCategory(row.issueCategory),
-          ownerId: null,
-          dueAt: null,
-          raisedAt: row.reportDate,
-        },
-        at,
-        tx,
-      );
-      if (issue !== null) {
-        await this.issues.insertEvent(
-          { issueId: issue.id, eventType: "created", fromState: null, toState: "unassigned", note: null },
-          actorId,
-          at,
-          tx,
-        );
-        await this.audit.record(tx, {
-          actorId,
-          action: "create",
-          objectType: "issue",
-          objectId: issue.id,
-          projectId: row.projectId,
-          summary: "日报自动生成问题：" + issue.title,
-          changes: diffRecords({}, issueSnapshot(issue)),
-          metadata: { sourceReportId: row.id, category: issue.category, state: issue.state },
-        });
-        await appendOutbox(tx, {
-          topic: "issue.created",
-          dedupeKey: "issue.created:" + issue.id,
-          payload: { projectId: row.projectId, issueId: issue.id, sourceReportId: row.id, category: issue.category, at: at.toISOString() },
-        });
-      }
-    }
-    for (const taskId of row.taskIds) {
-      await this.reports.appendTaskProgress(row.projectId, taskId, row.reportDate, row.doneWork, actorId, at, tx);
-    }
+    if (foundIssue.length === 0 || row.issueCategories.length === 0) return;
+    const issue = await this.issues.insert(
+      {
+        projectId: row.projectId,
+        taskId: null,
+        sourceReportId: row.id,
+        title: foundIssue.length > ISSUE_TITLE_MAX ? foundIssue.slice(0, ISSUE_TITLE_MAX) : foundIssue,
+        categories: row.issueCategories,
+        state: "open",
+        reporterId: row.authorId,
+        ownerDepartment: departmentOfCategories(row.issueCategories),
+        ownerId: null,
+        raisedAt: row.reportDate,
+      },
+      at,
+      tx,
+    );
+    if (issue === null) return;
+    await moveIssuePhotosToIssue(row.id, issue.id, actorId, at, tx);
+    await this.issues.insertEvent(
+      { issueId: issue.id, eventType: "created", fromState: null, toState: "open", note: null },
+      actorId,
+      at,
+      tx,
+    );
+    await this.audit.record(tx, {
+      actorId,
+      action: "create",
+      objectType: "issue",
+      objectId: issue.id,
+      projectId: row.projectId,
+      summary: "日报自动生成问题：" + issue.title,
+      changes: diffRecords({}, issueSnapshot(issue)),
+      metadata: { sourceReportId: row.id, categories: issue.categories, state: issue.state },
+    });
+    await appendOutbox(tx, {
+      topic: "issue.created",
+      dedupeKey: "issue.created:" + issue.id,
+      payload: { projectId: row.projectId, issueId: issue.id, sourceReportId: row.id, categories: issue.categories, at: at.toISOString() },
+    });
   }
 
   private async requireReport(projectId: string, reportId: string, client: DbClient): Promise<DailyReportRow> {
@@ -298,18 +325,41 @@ export class ReportService {
     return row;
   }
 
-  /** 关联任务必须属于本项目且未软删（A3-03）；否则 400（不是 404 —— 请求体里的引用不成立）。 */
-  private async assertTasksInProject(projectId: string, taskIds: readonly string[], client: DbClient): Promise<void> {
-    if (taskIds.length === 0) return;
-    const titles = await this.reports.taskTitles(projectId, taskIds, client);
-    const missing = taskIds.filter((taskId) => !titles.has(taskId));
-    if (missing.length > 0) {
-      throw new AppError(
-        "VALIDATION_FAILED",
-        "关联任务不属于本项目或已删除",
-        missing.map((taskId) => ({ code: "unknown_task", message: "任务：" + taskId, path: "taskIds" })),
-      );
-    }
+  /** DELETE /api/v1/projects/{id}/reports/{reportId}：成对删除（删日报 = 连它派生的全部问题 + 两侧附图关联）。 */
+  async remove(projectId: string, reportId: string, actorId: string): Promise<DailyReportDeleteResponse> {
+    await this.loadProjectForWrite(projectId);
+    const at = new Date();
+    let cascadedIssueIds: string[] = [];
+    await this.database.db.transaction(async (tx) => {
+      const row = await this.requireReport(projectId, reportId, tx);
+      cascadedIssueIds = await purgeReportCascade(reportId, tx);
+      for (const issueId of cascadedIssueIds) {
+        await this.audit.record(tx, {
+          actorId,
+          action: "delete",
+          objectType: "issue",
+          objectId: issueId,
+          projectId,
+          summary: "连带删除日报派生问题",
+          metadata: { sourceReportId: reportId },
+        });
+      }
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "daily_report",
+        objectId: reportId,
+        projectId,
+        summary: "删除日报：" + row.reportDate,
+        metadata: { cascadedIssueIds },
+      });
+      await appendOutbox(tx, {
+        topic: "report.deleted",
+        dedupeKey: "report.deleted:" + reportId,
+        payload: { projectId, reportId, cascadedIssueIds, at: at.toISOString() },
+      });
+    });
+    return { id: reportId, deleted: true, cascadedIssueIds };
   }
 
   /** 日报写入口：归档项目一律 409 PROJECT_ARCHIVED（ADR-027）。 */

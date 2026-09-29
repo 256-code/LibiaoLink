@@ -3,21 +3,22 @@
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
-| 职责 | 日报填报与闭环（M6-01 / M6-02）、问题四态与处理留痕（M6-02 / M6-03） |
+| 职责 | 日报填报与闭环（M6-01 / M6-02）、问题三态（Push 215）与处理留痕（M6-02 / M6-03） |
 | 主责 | wmj（团队分工.md §2） |
 | 对外出口 | `ReportService`、`IssueService`、`ReportSummaryService`（跨模块只允许 import 本目录 `index.ts`） |
 | 依赖 | identity（会话/用户）、permission（项目上下文与权限位）、admin（审计）+ calendar（工作日判定，横切出口）+ project（项目名册出口 `ProjectMemberService` —— A7-05 的应填范围）；不反向依赖 task / node 等其它领域模块（`shanghaiToday` 走 task 纯规则出口，无 DI） |
-| 契约 | `shared/src/modules/reports.ts` / `issues.ts`；表口径 `database/migrations/0023_daily_reports_issues.sql` |
+| 契约 | `shared/src/modules/reports.ts` / `issues.ts`（Push 215 修订：同日多条 / 关联阶段 / 归类多值 / 三态 / 附图 / 删 dueAt）；表口径 `0023` + 修订迁移 `0041_reports_issues_revision.sql` |
 
 ## 结构
 
 ```text
 report-issue/
-├── report-issue.controller.ts  ReportController（:id/reports 四端点）+ IssueController（:id/issues 三端点）
-├── report.service.ts           日报用例：填报 / 编辑 / 提交 / 补填 + A3-08 回写 + A3-09 问题生成
+├── report-issue.controller.ts  ReportController（:id/reports 四路径七操作）+ IssueController（:id/issues 两路径四操作）
+├── report.service.ts           日报用例：填报 / 编辑 / 提交 / 补填 + A3-09 问题生成与问题图转挂 + 成对删除
 ├── report-summary.service.ts   当日读用例：A7-01 当日汇总 + A7-05 应填未填（名册 × 日历 × 当日状态）
-├── report.repository.ts        日报数据访问（列表 / 唯一键判重 / 乐观锁）+ 任务进展回写（A3-08）
-├── issue.service.ts            问题用例：四态流转 / 解决方案 / 分派 / 时限 + 留痕
+├── report.repository.ts        日报数据访问（列表 / 乐观锁 / 删除级联）
+├── report-issue.links.ts       附图链（file_links）：项目内校验 / 读写 / 整体替换 / 问题图转挂 / 级联清理
+├── issue.service.ts            问题用例：三态流转 / 解决方案 / 分派 / 描述与归类编辑 + 留痕
 ├── issue.repository.ts         问题数据访问（列表 / 详情 / 乐观锁 + issue_events）
 ├── report-issue.rules.ts       纯规则（状态推导 / 归类→部门 / 筛选解析 / 幂等标记）
 ├── report-issue.module.ts      NestJS 模块装配
@@ -29,33 +30,37 @@ report-issue/
 | 方法 | 路径 | 权限位 | 说明 |
 |---|---|---|---|
 | GET | `/api/v1/projects/{id}/reports` | `report.view` | 列表（日期区间 / 状态 / 提交人 + 分页，日期倒序） |
-| POST | `/api/v1/projects/{id}/reports` | `report.fill` | 新报一天（草稿 / 提交）；重复 409 `REPORT_ALREADY_EXISTS` |
+| POST | `/api/v1/projects/{id}/reports` | `report.fill` | 新报一天（草稿写库 / 提交）；**同日多条** —— 原 409 `REPORT_ALREADY_EXISTS` 判重随 Push 215 删除 |
 | GET | `/api/v1/projects/{id}/reports/summary` | `report.view` | **当日汇总（A7-01）**：只算已提交条目（草稿只计数）+ 人数合计 / 问题计数 + 工作日信息 |
 | GET | `/api/v1/projects/{id}/reports/missing` | `report.view` | **应填未填（A7-05）**：名册 × 工作日历 × 当日未提交（非工作日整列为空） |
-| GET | `/api/v1/projects/{id}/reports/{reportId}` | `report.view` | 详情（A3-01 全字段 + 关联任务标题） |
-| PATCH | `/api/v1/projects/{id}/reports/{reportId}` | `report.fill` | 编辑 / 提交（乐观锁；`date` 不可改；已提交不允许退回草稿） |
-| GET | `/api/v1/projects/{id}/issues` | `issue.view` | 列表（状态 / 归类 / 任务 / 来源日报 + 关键字 + 分页） |
+| GET | `/api/v1/projects/{id}/reports/{reportId}` | `report.view` | 详情（A3-01 全字段 + 关联阶段 `stageKeys` / `stageNames` 同下标 + 现场 / 问题两栏附图） |
+| PATCH | `/api/v1/projects/{id}/reports/{reportId}` | `report.fill` | 编辑 / 提交（乐观锁；`date` 不可改；已提交不允许退回草稿；附图整体替换 —— 已生成问题时问题图改挂问题侧） |
+| DELETE | `/api/v1/projects/{id}/reports/{reportId}` | `report.fill` | **成对删除（Push 215）**：删日报 = 连它派生的全部问题 + 两侧附图链（响应回 `cascadedIssueIds`） |
+| GET | `/api/v1/projects/{id}/issues` | `issue.view` | 列表（三态 / 多值归类（命中任一即入选）/ 任务 / 来源日报 + 关键字 + 分页） |
 | GET | `/api/v1/projects/{id}/issues/{issueId}` | `issue.view` | 详情（问题 + 处理过程留痕，时间正序） |
-| PATCH | `/api/v1/projects/{id}/issues/{issueId}` | `issue.manage` | 状态流转 / 解决方案 / 分派 / 时限；每次写一条事件 |
+| PATCH | `/api/v1/projects/{id}/issues/{issueId}` | `issue.manage` | 状态流转 / 解决方案 / 分派 / 描述 / 归类（Push 208 / 212 扩项）；每次**实际变化**写一条事件 |
+| DELETE | `/api/v1/projects/{id}/issues/{issueId}` | `issue.manage` | **成对删除（Push 215）**：无来源日报 = 只删自己；有来源日报 = 连来源日报及其全部问题（响应回 `cascadedReportId`） |
 
 ## 口径（差异登记一并列出）
 
-- **一人一项目一天一条**（`uq_daily_reports_author_date`）：草稿 / 提交 / 补填**共用同一行**；重复填报 409 `REPORT_ALREADY_EXISTS`（提示改用编辑）。一期不做日报版本历史 —— 「补填保留原始提交记录」以状态 `supplement` + `submittedAt` 表达（差异登记）。
+- **同人同项目同日可多条（Push 215）**：原「一人一天一条」唯一约束 `uq_daily_reports_author_date` 与重复 409 `REPORT_ALREADY_EXISTS` 随批删除 —— 同日多条按创建时间区分；**草稿写库**（`state=draft` 落行、`submitted_at` 为空，可 PATCH 到提交 / 补填）。一期不做日报版本历史 —— 「补填保留原始提交记录」以状态 `supplement` + `submittedAt` 表达（差异登记）。
 - **补填由服务端推导**：`state` 只接受 `draft` / `submitted`；提交过去日期 → `supplement`，提交当天 → `submitted`；未来日期 400（A3-04）。已提交 / 补填行不允许退回草稿。
-- **A3-09 问题生成幂等**：提交且 `foundIssue` 非空 → 生成一条 `state=unassigned` 的问题（`source_report_id` 唯一约束兜底；冲突即已生成过，返回空、不重复写事件与审计）；标题超 500 字截短（原文仍在日报行）。
-- **A3-12 自动分派（一期口径）**：归类为「机械部 / 采购部 / 规划部 / 项目部」时自动落 `owner_department`；其余归类（原因类）不自动分派 → 归「未分组」兜底（映射在 C9 可维护属二期，差异登记）。
-- **A3-08 回写任务进展**：提交后把「当日完成工作」追加到关联任务的「项目进展描述」（`tasks.note`）+ 写 `task_events`（`note_change`）留痕，**幂等标记 = `【日报 <日期>】`**（同一任务同一天只追加一次）；跨域写在 `report.repository.appendTaskProgress` 单点收口，与变更记录 R01 同口径 —— **只动 `note`、不动任务乐观锁版本**。
-- **问题四态允许回退**（A3-10）：不设流转白名单，只要求每次变更写一条 `issue_events`（`state_change` / `solution` / `assignment`）；`done → 其它态` 一并清 `closed_at` / `closed_by`（`ck_issues_closed_pairs`）；关闭 = `state=done` 且写 `closed_at` / `closed_by`，审计 `action=complete`。
+- **A3-09 问题生成幂等**：提交且 `foundIssue` 非空 → 生成一条 `state=open` 的问题（`source_report_id` 唯一约束兜底；冲突即已生成过，返回空、不重复写事件与审计）；标题超 500 字截短（原文仍在日报行）。**附图转挂（Push 215 · 方案一）**：提交时问题图从日报侧链（`file_links(object_type=report, kind=issue)`）转挂到问题侧（`object_type=issue, kind=''`），日报侧只剩现场图；问题侧此后可独立增删。
+- **A3-12 自动分派（一期口径）**：归类为「机械部 / 采购部 / 规划部 / 项目部」时自动落 `owner_department`；其余归类（原因类）不自动分派 → `owner_department = null`（展示层「待分派」；原「未分组」随三态修订并入「未解决」）。多值归类命中任一部门名即落该部门（映射在 C9 可维护属二期，差异登记）。
+- **A3-08 回写随 Push 215 停用**（「关联任务 → 关联阶段」连带）：提交日报不再回写 `tasks.note`、不写 `task_events(note_change)`；`appendTaskProgress` 与「`【日报 <日期>】`」幂等标记一并删除（真机回放 T1 反证：note 空 / note_change=0）。
+- **问题三态允许回退（A3-10 · Push 215）**：`open` 未解决 / `in_progress` 处理中 / `done` 已完成（原 `unassigned` 并入 `open`；存量行与 `issue_events` 随迁移 0041 同步）；不设流转白名单，只要求每次**实际变化**写一条 `issue_events`（`state_change` / `solution` / `assignment`）；`done → 其它态` 一并清 `closed_at` / `closed_by`（`ck_issues_closed_pairs`）；关闭 = `state=done` 且写 `closed_at` / `closed_by`，审计 `action=complete`；描述 / 归类编辑走审计、不写事件（Push 208 / 212 扩项）。
+- **处理时限删除（Push 215）**：`issues.due_at` 列随批删除（A3-14 / 规则 A03 两条内置规则 / ADR-026 一并作废）—— PATCH 不再接受 `dueAt`，契约与库侧 CHECK 同步移除。
+- **成对删除（Push 215）**：删日报 = 删其派生问题 + 两侧 `file_links`（`issue_events` 无级联外键，按序先删）；删问题：无来源日报只删自己，有来源日报 = 连来源日报及其全部问题；重复删除 404。
 - **空更新 400**：问题更新必须至少一个实际变化（防刷留痕）；日报编辑同理走契约校验（`doneWork` 等最小长度）。
 - **A7-01 当日汇总（Push 162）**：`GET :id/reports/summary?date=` —— 只聚合**已提交**（`submitted` / `supplement`）条目（草稿只进 `draftCount`，不进正文、不计人数）；`headcountTotal` 未填按 0 计；`issueCount` = 「现场发现问题」非空（空白串不算）；`entries` 按 `submittedAt` 升序、同刻按作者 id 兜底；工作日信息随行（`isWorkday` / `dayKind` / `dayName`）。
 - **A7-05 应填未填（Push 162）**：`GET :id/reports/missing?date=` —— **名册即应填范围**（`project_members`，项目经理在前；顺序由名册出口保证），逐人下发 `reportId` / `state` / `submittedAt`；**草稿未提交仍计未填**、已提交（submitted / supplement）不进 `missingUserIds`；`missingCount = 名册 − 已提交`（工作日），**非工作日整列为空（不催报）**；名册外的人当日提交不扩大应填范围（也不因此进名单）。
 - **当日读接口共用口径（Push 162）**：`date` 缺省 = 今天（Asia/Shanghai），**未来日期 400 `VALIDATION_FAILED`**（与 A3-04 填报同口径，`details[].path = date`）；静态段 `summary` / `missing` 路由注册在 `:reportId` **之前**（Nest 按声明顺序匹配）；数据面一次 `listByDate` 取当日全量行，不落分页。
 - **归档项目 409 `PROJECT_ARCHIVED`**（ADR-027）；不可见 / 跨项目 / 不存在统一 404（记录级，h6）。
-- **留痕**：审计对象 `daily_report` / `issue`（字段级 changes + metadata）+ outbox `report.submitted` / `issue.created` / `issue.updated`（dedupeKey 带版本或 id）。
+- **留痕**：审计对象 `daily_report` / `issue`（字段级 changes + metadata）+ outbox `report.submitted` / `issue.created` / `issue.updated`（dedupeKey 带版本或 id）；Push 215 扩 `report.deleted` / `issue.deleted`。
 
 ## 测试与门禁
 
-- `server/test/report-issue.test.ts`：**27 例**（日报 18 + 问题 9）—— 日报：创建 / 提交当天 / 草稿 / 重复 409 `REPORT_ALREADY_EXISTS` / 补填推导 / 未来日期 400 / 任务归属 400 / 问题生成与自动分派 / 原因类不分派 / A3-09 幂等 / A3-08 回写与幂等 / 草稿 → 提交 / 已提交不可退回 / 编辑后缺归类 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 列表筛选；问题：状态流转事件 / 回退清关闭字段 / 分派与时限 / 空更新 400 / 乐观锁 409 / 归档 409 / 404 / 详情留痕正序 / 列表同源。另 `server/test/task-remove.test.ts` 12 例覆盖删除引用守卫（`report_ref` / `issue_ref`）。
-- `server/test/report-summary.test.ts`（**Push 162 · 14 例**）：当日汇总 7（只算已提交 / 人数合计与问题计数（空白串不算）/ 提交时刻升序 + 同刻作者兜底 / 契约形态 taskTitles / 缺省日期 = 今天 / 只取当日 / 未来日期 400 且不读库）+ 应填未填 7（草稿未提交仍计未填 / 逐行状态与 reportId / missingUserIds 顺序同名册 / 非工作日整列为空 / 名册为空 / 名册外提交不扩大应填范围 / 未来日期 400）—— 日历 / 名册 / 仓储全用替身，不连库。全量：**Push 162 后 546 例 / 36 文件**。
+- `server/test/report-issue.test.ts`：**32 例**（日报 20 + 问题 12 · Push 215 整文件重写）—— 日报：创建与提交 / **草稿写库** / **同日多条（无 409 判重）** / 补填推导 / 未来日期 400 / 问题生成与自动分派 / 原因类不分派 / A3-09 幂等 / **附图校验与整体替换 + 转挂** / 草稿 → 提交 / 已提交不可退回 / 编辑后缺归类 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 列表筛选 / **成对删除**；问题：状态流转事件 / 三态回退清关闭字段 / 分派 / **描述与多值归类 PATCH** / **附图整体替换** / 空更新 400 / 乐观锁 409 / 归档 409 / 404 / 详情留痕正序 / 列表同源 / **成对删除**。另 `server/test/task-remove.test.ts` 11 例覆盖删除引用守卫（Push 215 起仅 `issue_ref`；`report_ref` 随关联阶段删除）。
+- `server/test/report-summary.test.ts`（**Push 162 · 14 例**；Push 215 注入 DatabaseService + 附图替身）：当日汇总 7（只算已提交 / 人数合计与问题计数（空白串不算）/ 提交时刻升序 + 同刻作者兜底 / 契约形态 stageKeys / stageNames 同下标 + 附图随行（Push 215）/ 缺省日期 = 今天 / 只取当日 / 未来日期 400 且不读库）+ 应填未填 7（草稿未提交仍计未填 / 逐行状态与 reportId / missingUserIds 顺序同名册 / 非工作日整列为空 / 名册为空 / 名册外提交不扩大应填范围 / 未来日期 400）—— 日历 / 名册 / 仓储全用替身，不连库。全量：**Push 215 后 53 文件 / 743 例全绿**。
 - 随 `npm test` 常跑；`check:boundaries` 覆盖跨模块 import（本模块只进口对端 `index.ts`；新增 calendar / project 两条出口依赖）。
-- 真机回放（真 PG + 真 api）随 M3-06 压测 / 联调卡；M6 回放脚本已补 A7-01 / A7-05 断言（`server/scripts/m6-replay.mjs` 证据五 S0 ~ S6），由 CI `database` job 真机执行 —— **本片已执行（CI run `35946672352`）S0 ~ S6 全 PASS**。
+- 真机回放（真 PG + 真 api）随 M3-06 压测 / 联调卡；M6 回放脚本已补 A7-01 / A7-05 断言（`server/scripts/m6-replay.mjs` 证据五 S0 ~ S6），由 CI `database` job 真机执行 —— **本片已执行（CI run `35946672352`）S0 ~ S6 全 PASS**。**Push 215 整文件重写脚本并本机真机重跑：57 项断言全 PASS（P / R / I / T / E / G / S / W / A 全链）—— 证据 `docs/m6-回放证据(日报与问题+工作台).md`（+ 同名 .json）**。

@@ -1,10 +1,13 @@
 /**
- * M6-01 ~ M6-03 日报 / 问题回归（A3）：一人一项目一天一条（重复 409 REPORT_ALREADY_EXISTS）、草稿 / 提交 / 补填（A3-02）、
- * 未来日期 400（A3-04）、提交自动生成问题 + 回写任务进展（A3-08 / A3-09，均幂等）、问题四态允许回退且留痕（A3-10 / A3-13）、
+ * M6-01 ~ M6-03 日报 / 问题回归（A3 · Push 215 口径）：
+ * 同日多条（原「一人一天一条」重复 409 REPORT_ALREADY_EXISTS 随批删除）、草稿写库（A3-02）、未来日期 400（A3-04）、
+ * 提交自动生成问题（A3-09 幂等 + 问题图转挂）、问题三态允许回退且留痕（A3-10 / A3-13）、
+ * 附图（方案一：file_links kind 区分 onsite 现场图 / issue 问题图）、成对删除（删日报 / 删问题）、
  * 乐观锁 409、归档项目 409、跨项目 / 不存在 404、空更新 400。
+ * 附图与成对删除的 SQL 边界（report-issue.links）在单测里以内存替身承接（vi.mock）—— 替身只镜像链路语义，
  * 真机口径见 server/README.md「M6-01 ~ M6-03」与 server/src/modules/report-issue/README.md。
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
@@ -14,16 +17,23 @@ import type { DailyReportRow, ReportRepository } from "../src/modules/report-iss
 import { ReportService } from "../src/modules/report-issue/report.service.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 
+import { photoStore } from "./fakes/report-issue-links.fake.js";
+
+vi.mock("../src/modules/report-issue/report-issue.links.js", async () => {
+  const { createReportIssueLinksFake } = await import("./fakes/report-issue-links.fake.js");
+  return createReportIssueLinksFake();
+});
+
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "99999999-9999-4999-8999-999999999999";
 const ACTOR = "44444444-4444-4444-8444-444444444444";
 const OTHER_ACTOR = "66666666-6666-4666-8666-666666666666";
-const TASK_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const TASK_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const REPORT_1 = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1";
 const REPORT_2 = "c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2";
 const ISSUE_1 = "d1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1";
 const ISSUE_2 = "d2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2";
+const FILE_A = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
+const FILE_B = "e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2";
 const PAST_DATE = "2026-01-05";
 const FUTURE_DATE = "2099-01-01";
 const AT = new Date("2026-09-22T08:00:00Z");
@@ -78,9 +88,9 @@ function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyR
     doneWork: "完成设备安装",
     plan: null,
     foundIssue: null,
-    issueCategory: null,
+    issueCategories: [],
     suggestion: null,
-    taskIds: [],
+    stageKeys: [],
     submittedAt: AT,
     createdAt: AT,
     updatedAt: AT,
@@ -96,14 +106,13 @@ function makeIssue(id: string, overrides: Partial<IssueRow> = {}): IssueRow {
     taskId: null,
     sourceReportId: null,
     title: "现场发现问题",
-    category: "机械部",
-    state: "unassigned",
+    categories: ["机械部"],
+    state: "open",
     reporterId: ACTOR,
     reporterName: "填报人",
     ownerDepartment: "机械部",
     ownerId: null,
     ownerName: null,
-    dueAt: null,
     raisedAt: PAST_DATE,
     solution: null,
     closedBy: null,
@@ -114,18 +123,15 @@ function makeIssue(id: string, overrides: Partial<IssueRow> = {}): IssueRow {
     ...overrides,
   };
 }
-/** 日报仓储替身：镜像真仓储的读面过滤（项目 + 筛选）、唯一键判重、乐观锁与 A3-08 回写幂等（标记判重）。 */
+
+/** 日报仓储替身：镜像真仓储的读面过滤（项目 + 筛选）、插入与乐观锁（同日多条 —— 无唯一键判重）。 */
 class FakeReportRepository {
   project: { id: string; status: string } | null = { id: PROJECT, status: "active" };
   reports = new Map<string, DailyReportRow>();
-  tasks = new Map<string, string>([
-    [TASK_A, "安装设备"],
-    [TASK_B, "调试产线"],
-  ]);
-  taskNotes = new Map<string, string>();
-  taskEvents: { taskId: string; eventType: string; afterValue: string | null }[] = [];
   inserted: DailyReportRow[] = [];
-  nextReportId = REPORT_2;
+  reportIds = [REPORT_1, REPORT_2, "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3", "c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4"];
+  issuedReports = 0;
+  updateCalls = 0;
 
   async list(
     projectId: string,
@@ -146,65 +152,38 @@ class FakeReportRepository {
     return row !== undefined && row.projectId === projectId ? row : null;
   }
 
-  async findByAuthorDate(projectId: string, authorId: string, reportDate: string): Promise<DailyReportRow | null> {
-    return (
-      [...this.reports.values()].find(
-        (row) => row.projectId === projectId && row.authorId === authorId && row.reportDate === reportDate,
-      ) ?? null
-    );
-  }
-
-  async insert(input: Omit<DailyReportRow, "id" | "authorName" | "version" | "createdAt" | "updatedAt">, at: Date): Promise<DailyReportRow> {
-    const row = makeReport(this.nextReportId, { ...input, version: 1, createdAt: at, updatedAt: at });
+  async insert(
+    input: Omit<DailyReportRow, "id" | "authorName" | "version" | "createdAt" | "updatedAt">,
+    at: Date,
+  ): Promise<DailyReportRow> {
+    const id = this.reportIds[this.issuedReports] ?? REPORT_2 + "-" + String(this.issuedReports);
+    this.issuedReports += 1;
+    const row = makeReport(id, { ...input, version: 1, createdAt: at, updatedAt: at });
     this.inserted.push(row);
     this.reports.set(row.id, row);
     return row;
   }
 
-  async updateWithVersion(
-    reportId: string,
-    expectedVersion: number,
-    patch: Partial<DailyReportRow>,
-    at: Date,
-  ): Promise<boolean> {
+  async updateWithVersion(reportId: string, expectedVersion: number, patch: Partial<DailyReportRow>, at: Date): Promise<boolean> {
+    this.updateCalls += 1;
     const row = this.reports.get(reportId);
     if (row === undefined || row.version !== expectedVersion) return false;
     this.reports.set(reportId, { ...row, ...patch, version: row.version + 1, updatedAt: at });
     return true;
   }
 
-  async taskTitles(_projectId: string, taskIds: readonly string[]): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
-    for (const taskId of taskIds) {
-      const title = this.tasks.get(taskId);
-      if (title !== undefined) result.set(taskId, title);
-    }
-    return result;
-  }
-
   async findProject(projectId: string): Promise<{ id: string; status: string } | null> {
     return this.project !== null && this.project.id === projectId ? this.project : null;
   }
-
-  /** A3-08 回写替身：与真仓储同形 —— 标记判重（同任务同日期只追加一次），返回是否真的追加。 */
-  async appendTaskProgress(_projectId: string, taskId: string, reportDate: string, text: string): Promise<boolean> {
-    if (!this.tasks.has(taskId)) return false;
-    const before = this.taskNotes.get(taskId) ?? "";
-    const marker = "【日报 " + reportDate + "】";
-    if (before.includes(marker)) return false;
-    const after = (before.length === 0 ? "" : before + String.fromCharCode(10)) + marker + text;
-    this.taskNotes.set(taskId, after);
-    this.taskEvents.push({ taskId, eventType: "note_change", afterValue: after });
-    return true;
-  }
 }
 
-/** 问题仓储替身：镜像 source_report_id 唯一（幂等）、乐观锁与事件表。 */
+/** 问题仓储替身：镜像 source_report_id 唯一（A3-09 幂等）、乐观锁与事件表。 */
 class FakeIssueRepository {
   project: { id: string; status: string } | null = { id: PROJECT, status: "active" };
   issues = new Map<string, IssueRow>();
   events: { id: string; issueId: string; eventType: string; fromState: string | null; toState: string | null; actorId: string; actorName: string | null; note: string | null; createdAt: Date }[] = [];
-  nextIssueId = ISSUE_1;
+  issueIds = [ISSUE_2, "d3d3d3d3-d3d3-4d3d-8d3d-d3d3d3d3d3d3", "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4"];
+  issuedIssues = 0;
 
   async list(projectId: string): Promise<{ rows: IssueRow[]; total: number }> {
     const rows = [...this.issues.values()].filter((row) => row.projectId === projectId);
@@ -216,22 +195,26 @@ class FakeIssueRepository {
     return row !== undefined && row.projectId === projectId ? row : null;
   }
 
-  async insert(input: Omit<IssueRow, "id" | "reporterName" | "ownerName" | "version" | "createdAt" | "updatedAt">, at: Date): Promise<IssueRow | null> {
+  async findBySourceReport(reportId: string): Promise<IssueRow | null> {
+    return [...this.issues.values()].find((row) => row.sourceReportId === reportId) ?? null;
+  }
+
+  async insert(
+    input: Omit<IssueRow, "id" | "reporterName" | "ownerName" | "version" | "createdAt" | "updatedAt">,
+    at: Date,
+  ): Promise<IssueRow | null> {
     if (input.sourceReportId !== null) {
       const conflict = [...this.issues.values()].some((row) => row.sourceReportId === input.sourceReportId);
       if (conflict) return null;
     }
-    const row = makeIssue(this.nextIssueId, { ...input, version: 1, createdAt: at, updatedAt: at });
+    const id = this.issueIds[this.issuedIssues] ?? ISSUE_2 + "-" + String(this.issuedIssues);
+    this.issuedIssues += 1;
+    const row = makeIssue(id, { ...input, version: 1, createdAt: at, updatedAt: at });
     this.issues.set(row.id, row);
     return row;
   }
 
-  async updateWithVersion(
-    issueId: string,
-    expectedVersion: number,
-    patch: Partial<IssueRow>,
-    at: Date,
-  ): Promise<boolean> {
+  async updateWithVersion(issueId: string, expectedVersion: number, patch: Partial<IssueRow>, at: Date): Promise<boolean> {
     const row = this.issues.get(issueId);
     if (row === undefined || row.version !== expectedVersion) return false;
     this.issues.set(issueId, { ...row, ...patch, version: row.version + 1, updatedAt: at });
@@ -283,16 +266,38 @@ function makeIssueService(db: FakeDatabase, issues: FakeIssueRepository, audit: 
   return new IssueService(db as unknown as DatabaseService, issues as unknown as IssueRepository, audit as unknown as AuditService);
 }
 
+/** 把附图替身的成对删除钩子接到假仓储上（保持「删日报 = 连派生问题」「删问题 = 连来源日报」语义一致）。 */
+function wireLinks(reports: FakeReportRepository, issues: FakeIssueRepository): void {
+  photoStore.hooks.issueIdsByReport = (reportId) =>
+    [...issues.issues.values()].filter((row) => row.sourceReportId === reportId).map((row) => row.id);
+  photoStore.hooks.onIssuesPurged = (issueIds) => {
+    for (const id of issueIds) issues.issues.delete(id);
+    issues.events = issues.events.filter((event) => !issueIds.includes(event.issueId));
+  };
+  photoStore.hooks.onReportPurged = (reportId) => {
+    reports.reports.delete(reportId);
+  };
+}
+
+beforeEach(() => {
+  photoStore.reset();
+});
+
 /** 当天（Asia/Shanghai，与 service 同口径）：用真实 now 求值，避免用例随日期推移失真。 */
 const NOW_DAY = shanghaiToday(new Date());
 
 describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
-  it("提交当天日报：state=submitted；写审计 create + outbox report.submitted；无现场问题不生成问题", async () => {
+  function seed() {
     const db = new FakeDatabase();
     const reports = new FakeReportRepository();
     const issues = new FakeIssueRepository();
     const audit = new FakeAuditService();
-    const service = makeReportService(db, reports, issues, audit);
+    wireLinks(reports, issues);
+    return { db, reports, issues, audit, service: makeReportService(db, reports, issues, audit) };
+  }
+
+  it("提交当天日报：state=submitted；submittedAt 落库；审计 create + outbox report.submitted；无现场问题不生成问题", async () => {
+    const { db, issues, audit, service } = seed();
     const created = await service.create(
       PROJECT,
       { date: NOW_DAY, state: "submitted", doneWork: "完成设备安装", headcount: 3 },
@@ -301,119 +306,95 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
     expect(created.state).toBe("submitted");
     expect(created.authorId).toBe(ACTOR);
     expect(created.submittedAt).not.toBeNull();
+    expect(created.stageKeys).toEqual([]);
+    expect(created.photos).toEqual([]);
+    expect(created.issuePhotos).toEqual([]);
     expect(audit.entries).toHaveLength(1);
     expect(audit.entries[0]).toMatchObject({ action: "create", objectType: "daily_report", projectId: PROJECT });
     expect(db.outbox.map((row) => row.topic)).toEqual(["report.submitted"]);
     expect(issues.issues.size).toBe(0);
   });
 
-  it("当天暂存草稿：state=draft；submittedAt 为空；不生成问题（A3-02）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+  it("草稿写库（Push 215）：state=draft 落行；submittedAt 为空；不生成问题（A3-02）", async () => {
+    const { reports, issues, service } = seed();
     const created = await service.create(PROJECT, { date: NOW_DAY, state: "draft", doneWork: "草稿内容" }, ACTOR);
     expect(created.state).toBe("draft");
     expect(created.submittedAt).toBeNull();
+    expect([...reports.reports.values()].map((row) => row.state)).toEqual(["draft"]);
     expect(issues.issues.size).toBe(0);
   });
 
-  it("一人一项目一天一条：重复填报 409 REPORT_ALREADY_EXISTS（明细带已存在日报 id，不插入第二行）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
-    reports.reports.set(REPORT_1, makeReport(REPORT_1, { reportDate: NOW_DAY }));
-    const rejected = await service
-      .create(PROJECT, { date: NOW_DAY, state: "submitted", doneWork: "重复" }, ACTOR)
-      .catch((error: unknown) => error);
-    expect(rejected).toMatchObject({ code: "REPORT_ALREADY_EXISTS", httpStatus: 409 });
-    expect((rejected as { details: { meta?: Record<string, unknown> }[] }).details[0]?.meta?.["reportId"]).toBe(REPORT_1);
-    expect(reports.inserted).toEqual([]);
+  it("同人同项目同日可多条（Push 215）：两次提交各落一行，无 409 判重", async () => {
+    const { reports, service } = seed();
+    const first = await service.create(PROJECT, { date: NOW_DAY, state: "submitted", doneWork: "上午完成" }, ACTOR);
+    const second = await service.create(PROJECT, { date: NOW_DAY, state: "submitted", doneWork: "下午完成" }, ACTOR);
+    expect(first.id).not.toBe(second.id);
+    expect(reports.inserted.map((row) => row.id)).toEqual([first.id, second.id]);
   });
 
   it("补填：对过去日期首次提交 = state=supplement（服务端推导，客户端不可指定，A3-02）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { service } = seed();
     const created = await service.create(PROJECT, { date: PAST_DATE, state: "submitted", doneWork: "补填内容" }, ACTOR);
     expect(created.state).toBe("supplement");
     expect(created.date).toBe(PAST_DATE);
   });
 
   it("未来日期：400 VALIDATION_FAILED（A3-04 只允许当天或补填过去日期）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { reports, service } = seed();
     await expect(
       service.create(PROJECT, { date: FUTURE_DATE, state: "submitted", doneWork: "未来" }, ACTOR),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
     expect(reports.inserted).toEqual([]);
   });
 
-  it("关联任务必须属于本项目：跨项目 / 未知任务 400 VALIDATION_FAILED", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
-    await expect(
-      service.create(PROJECT, { date: NOW_DAY, state: "submitted", doneWork: "带任务", taskIds: ["ffffffff-ffff-4fff-8fff-ffffffffffff"] }, ACTOR),
-    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
-    expect(reports.inserted).toEqual([]);
-  });
-
-  it("现场发现问题：提交时自动生成问题（未分组 + 按归类自动分派责任部门 + created 事件 + 审计 + outbox）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const audit = new FakeAuditService();
-    const service = makeReportService(db, reports, issues, audit);
+  it("现场发现问题：提交时自动生成问题（open + 多值归类 + 按归类自动分派 + created 事件 + 审计 + outbox）", async () => {
+    const { db, issues, audit, service } = seed();
     await service.create(
       PROJECT,
-      { date: PAST_DATE, state: "submitted", doneWork: "安装完成", foundIssue: "液压泵渗油", issueCategory: "机械部", taskIds: [TASK_A] },
+      {
+        date: PAST_DATE,
+        state: "submitted",
+        doneWork: "安装完成",
+        foundIssue: "液压泵渗油",
+        issueCategories: ["机械部", "供应商原因"],
+        stageKeys: ["install", "install"],
+      },
       ACTOR,
     );
     const generated = [...issues.issues.values()];
     expect(generated).toHaveLength(1);
     expect(generated[0]).toMatchObject({
-      state: "unassigned",
-      category: "机械部",
+      state: "open",
+      categories: ["机械部", "供应商原因"],
       ownerDepartment: "机械部",
-      sourceReportId: REPORT_2,
+      sourceReportId: REPORT_1,
       reporterId: ACTOR,
-      taskId: TASK_A,
+      taskId: null,
       raisedAt: PAST_DATE,
     });
     expect(issues.events.map((event) => event.eventType)).toEqual(["created"]);
+    expect(issues.events[0]).toMatchObject({ fromState: null, toState: "open" });
     expect(audit.entries.map((entry) => entry.objectType)).toEqual(["daily_report", "issue"]);
     expect(db.outbox.map((row) => row.topic)).toContain("issue.created");
   });
 
-  it("A3-12 无匹配归类：不自动分派（ownerDepartment 为空）—— 归「未分组」兜底", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+  it("A3-12 无匹配归类：不自动分派（ownerDepartment 为空）—— 原因类归「待分派」", async () => {
+    const { issues, service } = seed();
     await service.create(
       PROJECT,
-      { date: PAST_DATE, state: "submitted", doneWork: "观察中", foundIssue: "客户改期", issueCategory: "客户原因" },
+      { date: PAST_DATE, state: "submitted", doneWork: "观察中", foundIssue: "客户改期", issueCategories: ["客户原因"] },
       ACTOR,
     );
     const generated = [...issues.issues.values()];
     expect(generated[0]?.ownerDepartment).toBeNull();
-    expect(generated[0]?.state).toBe("unassigned");
+    expect(generated[0]?.state).toBe("open");
   });
 
   it("A3-09 幂等：重编辑重复提交不重复生成问题（source_report_id 唯一兜底，事件不重复）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { issues, service } = seed();
     const created = await service.create(
       PROJECT,
-      { date: PAST_DATE, state: "submitted", doneWork: "安装完成", foundIssue: "液压泵渗油", issueCategory: "机械部" },
+      { date: PAST_DATE, state: "submitted", doneWork: "安装完成", foundIssue: "液压泵渗油", issueCategories: ["机械部"] },
       ACTOR,
     );
     expect(issues.issues.size).toBe(1);
@@ -427,29 +408,59 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
     expect(issues.events).toHaveLength(1);
   });
 
-  it("A3-08 回写：提交后任务「项目进展描述」追加【日报 日期】标记 + note_change 事件；重复提交不重复追加", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+  it("附图（方案一）：日报两张图都挂 file_links(report)（kind 区分）；提交生成问题时问题图转挂到问题侧", async () => {
+    const { issues, service } = seed();
+    photoStore.seedFile(FILE_A, "现场.jpg", PROJECT);
+    photoStore.seedFile(FILE_B, "渗油.jpg", PROJECT);
     const created = await service.create(
       PROJECT,
-      { date: PAST_DATE, state: "submitted", doneWork: "完成设备安装", taskIds: [TASK_A, TASK_B] },
+      {
+        date: PAST_DATE,
+        state: "submitted",
+        doneWork: "安装完成",
+        foundIssue: "液压泵渗油",
+        issueCategories: ["机械部"],
+        photoFileIds: [FILE_A],
+        issuePhotoFileIds: [FILE_B],
+      },
       ACTOR,
     );
-    expect(reports.taskNotes.get(TASK_A)).toBe("【日报 " + PAST_DATE + "】完成设备安装");
-    expect(reports.taskEvents.map((event) => event.taskId)).toEqual([TASK_A, TASK_B]);
-    await service.update(PROJECT, created.id, { version: created.version, state: "submitted", doneWork: "完成设备安装" }, ACTOR);
-    expect(reports.taskEvents).toHaveLength(2);
-    expect(created.taskTitles).toEqual(["安装设备", "调试产线"]);
+    const issueId = [...issues.issues.values()][0]?.id ?? "";
+    expect(created.photos).toEqual([{ fileId: FILE_A, name: "现场.jpg" }]);
+    expect(created.issuePhotos).toEqual([]);
+    expect(photoStore.refs("report", created.id, "onsite")).toEqual([{ fileId: FILE_A, name: "现场.jpg" }]);
+    expect(photoStore.refs("report", created.id, "issue")).toEqual([]);
+    expect(photoStore.refs("issue", issueId)).toEqual([{ fileId: FILE_B, name: "渗油.jpg" }]);
+  });
+
+  it("附图校验：文件不属于本项目 / 不存在 = 400 VALIDATION_FAILED（不落行）", async () => {
+    const { reports, service } = seed();
+    photoStore.seedFile(FILE_A, "别家的.jpg", OTHER_PROJECT);
+    await expect(
+      service.create(PROJECT, { date: NOW_DAY, state: "submitted", doneWork: "带图", photoFileIds: [FILE_A] }, ACTOR),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    expect(reports.inserted).toEqual([]);
+  });
+
+  it("附图编辑（PATCH）：现场图整体替换；已生成问题时问题图改挂问题侧", async () => {
+    const { issues, service } = seed();
+    photoStore.seedFile(FILE_A, "问题.jpg", PROJECT);
+    photoStore.seedFile(FILE_B, "问题-新.jpg", PROJECT);
+    const created = await service.create(
+      PROJECT,
+      { date: PAST_DATE, state: "submitted", doneWork: "安装", foundIssue: "渗油", issueCategories: ["机械部"], issuePhotoFileIds: [FILE_A] },
+      ACTOR,
+    );
+    const issueId = [...issues.issues.values()][0]?.id ?? "";
+    expect(photoStore.refs("issue", issueId)).toEqual([{ fileId: FILE_A, name: "问题.jpg" }]);
+    const updated = await service.update(PROJECT, created.id, { version: created.version, issuePhotoFileIds: [FILE_B] }, ACTOR);
+    expect(updated.issuePhotos).toEqual([]);
+    expect(photoStore.refs("report", created.id, "issue")).toEqual([]);
+    expect(photoStore.refs("issue", issueId)).toEqual([{ fileId: FILE_B, name: "问题-新.jpg" }]);
   });
 
   it("草稿 → 提交（PATCH）：state 变 submitted 且 submittedAt 落库；审计 update 一条", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const audit = new FakeAuditService();
-    const service = makeReportService(db, reports, issues, audit);
+    const { audit, service } = seed();
     const created = await service.create(PROJECT, { date: NOW_DAY, state: "draft", doneWork: "草稿" }, ACTOR);
     const submitted = await service.update(PROJECT, created.id, { version: created.version, state: "submitted" }, ACTOR);
     expect(submitted.state).toBe("submitted");
@@ -459,33 +470,25 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
   });
 
   it("已提交行不允许退回草稿：400 VALIDATION_FAILED（A3-02）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { reports, service } = seed();
     reports.reports.set(REPORT_1, makeReport(REPORT_1));
-    await expect(
-      service.update(PROJECT, REPORT_1, { version: 1, state: "draft" }, ACTOR),
-    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    await expect(service.update(PROJECT, REPORT_1, { version: 1, state: "draft" }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
   });
 
   it("编辑时改出「现场发现问题」但未给归类：400 VALIDATION_FAILED（合并后校验，A3-04）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { reports, service } = seed();
     reports.reports.set(REPORT_1, makeReport(REPORT_1));
-    await expect(
-      service.update(PROJECT, REPORT_1, { version: 1, foundIssue: "新问题" }, ACTOR),
-    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    await expect(service.update(PROJECT, REPORT_1, { version: 1, foundIssue: "新问题" }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
   });
 
   it("乐观锁：version 不匹配 409 VERSION_CONFLICT（不写审计）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const audit = new FakeAuditService();
-    const service = makeReportService(db, reports, issues, audit);
+    const { reports, audit, service } = seed();
     reports.reports.set(REPORT_1, makeReport(REPORT_1, { version: 2 }));
     await expect(service.update(PROJECT, REPORT_1, { version: 1, doneWork: "改" }, ACTOR)).rejects.toMatchObject({
       code: "VERSION_CONFLICT",
@@ -494,11 +497,38 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
     expect(audit.entries).toEqual([]);
   });
 
+  it("成对删除（DELETE）：删日报 = 连它派生的全部问题 + 两侧附图链；审计 delete + outbox report.deleted", async () => {
+    const { db, reports, issues, audit, service } = seed();
+    photoStore.seedFile(FILE_A, "现场.jpg", PROJECT);
+    photoStore.seedFile(FILE_B, "渗油.jpg", PROJECT);
+    const created = await service.create(
+      PROJECT,
+      {
+        date: PAST_DATE,
+        state: "submitted",
+        doneWork: "安装",
+        foundIssue: "渗油",
+        issueCategories: ["机械部"],
+        photoFileIds: [FILE_A],
+        issuePhotoFileIds: [FILE_B],
+      },
+      ACTOR,
+    );
+    const issueId = [...issues.issues.values()][0]?.id ?? "";
+    const removed = await service.remove(PROJECT, created.id, ACTOR);
+    expect(removed).toEqual({ id: created.id, deleted: true, cascadedIssueIds: [issueId] });
+    expect(issues.issues.size).toBe(0);
+    expect(reports.reports.has(created.id)).toBe(false);
+    expect(photoStore.links).toEqual([]);
+    expect(audit.entries.filter((entry) => entry.action === "delete").map((entry) => entry.objectType)).toEqual([
+      "issue",
+      "daily_report",
+    ]);
+    expect(db.outbox.map((row) => row.topic)).toContain("report.deleted");
+  });
+
   it("归档项目：写入口一律 409 PROJECT_ARCHIVED（ADR-027）", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { reports, issues, service } = seed();
     reports.project = { id: PROJECT, status: "archived" };
     issues.project = { id: PROJECT, status: "archived" };
     await expect(
@@ -509,26 +539,28 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
       code: "PROJECT_ARCHIVED",
       httpStatus: 409,
     });
+    await expect(service.remove(PROJECT, REPORT_1, ACTOR)).rejects.toMatchObject({
+      code: "PROJECT_ARCHIVED",
+      httpStatus: 409,
+    });
   });
 
   it("跨项目 / 不存在：日报详情统一 404 NOT_FOUND", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { reports, service } = seed();
     reports.reports.set(REPORT_1, makeReport(REPORT_1));
     await expect(service.detail(PROJECT, "ffffffff-ffff-4fff-8fff-ffffffffffff")).rejects.toMatchObject({
       code: "NOT_FOUND",
       httpStatus: 404,
     });
     await expect(service.detail(OTHER_PROJECT, REPORT_1)).rejects.toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
+    await expect(service.remove(PROJECT, "ffffffff-ffff-4fff-8fff-ffffffffffff", ACTOR)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      httpStatus: 404,
+    });
   });
 
   it("列表：日期区间与状态筛选 + 日期倒序；dateFrom > dateTo 400", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { reports, service } = seed();
     reports.reports.set(REPORT_1, makeReport(REPORT_1, { reportDate: "2026-03-02", state: "supplement" }));
     reports.reports.set(REPORT_2, makeReport(REPORT_2, { reportDate: "2026-03-05", state: "submitted" }));
     const listed = await service.list(PROJECT, { "filter[dateFrom]": "2026-03-01", "filter[dateTo]": "2026-03-03", page: 1, limit: 20 });
@@ -542,10 +574,7 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
   });
 
   it("日报状态筛选取值非法：400 VALIDATION_FAILED", async () => {
-    const db = new FakeDatabase();
-    const reports = new FakeReportRepository();
-    const issues = new FakeIssueRepository();
-    const service = makeReportService(db, reports, issues, new FakeAuditService());
+    const { service } = seed();
     await expect(service.list(PROJECT, { "filter[state]": "closed", page: 1, limit: 20 })).rejects.toMatchObject({
       code: "VALIDATION_FAILED",
       httpStatus: 400,
@@ -554,11 +583,12 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
 });
 
 describe("问题（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16）", () => {
-  function seed(): { db: FakeDatabase; reports: FakeReportRepository; issues: FakeIssueRepository; audit: FakeAuditService; service: IssueService } {
+  function seed() {
     const db = new FakeDatabase();
     const reports = new FakeReportRepository();
     const issues = new FakeIssueRepository();
     const audit = new FakeAuditService();
+    wireLinks(reports, issues);
     issues.issues.set(ISSUE_1, makeIssue(ISSUE_1));
     return { db, reports, issues, audit, service: makeIssueService(db, issues, audit) };
   }
@@ -569,12 +599,12 @@ describe("问题（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16）", () => {
     expect(updated.state).toBe("in_progress");
     expect(updated.version).toBe(2);
     expect(issues.events).toEqual([
-      expect.objectContaining({ eventType: "state_change", fromState: "unassigned", toState: "in_progress", note: "已联系厂家" }),
+      expect.objectContaining({ eventType: "state_change", fromState: "open", toState: "in_progress", note: "已联系厂家" }),
     ]);
     expect(audit.entries[0]).toMatchObject({ action: "update", objectType: "issue", objectId: ISSUE_1, projectId: PROJECT });
   });
 
-  it("四态允许回退且留痕：done → open 清空 closed_at / closed_by；审计 action=complete 记在关闭那一次", async () => {
+  it("三态允许回退且留痕：done → open 清空 closed_at / closed_by；审计 action=complete 记在关闭那一次", async () => {
     const { issues, service, audit } = seed();
     const done = await service.update(PROJECT, ISSUE_1, { version: 1, state: "done", solution: "已更换密封件" }, ACTOR);
     expect(done.state).toBe("done");
@@ -590,21 +620,48 @@ describe("问题（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16）", () => {
     expect(issues.events[2]).toMatchObject({ eventType: "state_change", fromState: "done", toState: "open" });
   });
 
-  it("分派与时限：ownerId / ownerDepartment / dueAt 变化写 assignment 事件（A3-12 / A3-13）", async () => {
+  it("分派：ownerId / ownerDepartment 变化写 assignment 事件（A3-12 / A3-13）；处理时限 dueAt 已随批删除", async () => {
     const { issues, service } = seed();
-    const dueAt = "2026-10-01T00:00:00.000Z";
     const assigned = await service.update(
       PROJECT,
       ISSUE_1,
-      { version: 1, ownerId: OTHER_ACTOR, ownerDepartment: "机械部", dueAt, note: "转机械部" },
+      { version: 1, ownerId: OTHER_ACTOR, ownerDepartment: "采购部", note: "转采购部" },
       ACTOR,
     );
     expect(assigned.ownerId).toBe(OTHER_ACTOR);
-    expect(assigned.dueAt).toBe(dueAt);
+    expect(assigned.ownerDepartment).toBe("采购部");
+    expect("dueAt" in assigned).toBe(false);
     expect(issues.events.map((event) => event.eventType)).toEqual(["assignment"]);
   });
 
-  it("空更新防护：四个可改字段全缺省 = 400 VALIDATION_FAILED（防刷留痕）", async () => {
+  it("描述与归类可改（PATCH 扩项）：title / categories 多值整体替换，走审计不写事件", async () => {
+    const { issues, audit, service } = seed();
+    const updated = await service.update(
+      PROJECT,
+      ISSUE_1,
+      { version: 1, title: "液压泵渗油（复测）", categories: ["机械部", "供应商原因"] },
+      ACTOR,
+    );
+    expect(updated.title).toBe("液压泵渗油（复测）");
+    expect(updated.categories).toEqual(["机械部", "供应商原因"]);
+    expect(issues.events).toEqual([]);
+    expect(audit.entries[0]).toMatchObject({ action: "update", objectType: "issue" });
+  });
+
+  it("问题附图：整体替换（空数组 = 清空）；文件不属于本项目 = 400", async () => {
+    const { service } = seed();
+    photoStore.seedFile(FILE_A, "证据.jpg", PROJECT);
+    const attached = await service.update(PROJECT, ISSUE_1, { version: 1, photoFileIds: [FILE_A] }, ACTOR);
+    expect(attached.photos).toEqual([{ fileId: FILE_A, name: "证据.jpg" }]);
+    const cleared = await service.update(PROJECT, ISSUE_1, { version: attached.version, photoFileIds: [] }, ACTOR);
+    expect(cleared.photos).toEqual([]);
+    photoStore.seedFile(FILE_B, "别家.jpg", OTHER_PROJECT);
+    await expect(
+      service.update(PROJECT, ISSUE_1, { version: cleared.version, photoFileIds: [FILE_B] }, ACTOR),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+  });
+
+  it("空更新防护：可改字段全缺省 = 400 VALIDATION_FAILED（防刷留痕）", async () => {
     const { issues, audit, service } = seed();
     await expect(service.update(PROJECT, ISSUE_1, { version: 1 }, ACTOR)).rejects.toMatchObject({
       code: "VALIDATION_FAILED",
@@ -616,7 +673,7 @@ describe("问题（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16）", () => {
 
   it("乐观锁：version 不匹配 409 VERSION_CONFLICT（不写事件）", async () => {
     const { issues, service } = seed();
-    await expect(service.update(PROJECT, ISSUE_1, { version: 9, state: "open" }, ACTOR)).rejects.toMatchObject({
+    await expect(service.update(PROJECT, ISSUE_1, { version: 9, state: "done" }, ACTOR)).rejects.toMatchObject({
       code: "VERSION_CONFLICT",
       httpStatus: 409,
     });
@@ -626,7 +683,7 @@ describe("问题（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16）", () => {
   it("归档项目：问题写入口 409 PROJECT_ARCHIVED", async () => {
     const { issues, service } = seed();
     issues.project = { id: PROJECT, status: "archived" };
-    await expect(service.update(PROJECT, ISSUE_1, { version: 1, state: "open" }, ACTOR)).rejects.toMatchObject({
+    await expect(service.update(PROJECT, ISSUE_1, { version: 1, state: "done" }, ACTOR)).rejects.toMatchObject({
       code: "PROJECT_ARCHIVED",
       httpStatus: 409,
     });
@@ -636,24 +693,44 @@ describe("问题（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16）", () => {
     const { service } = seed();
     await expect(service.detail(OTHER_PROJECT, ISSUE_1)).rejects.toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
     await expect(
-      service.update(PROJECT, "ffffffff-ffff-4fff-8fff-ffffffffffff", { version: 1, state: "open" }, ACTOR),
+      service.update(PROJECT, "ffffffff-ffff-4fff-8fff-ffffffffffff", { version: 1, state: "done" }, ACTOR),
     ).rejects.toMatchObject({ code: "NOT_FOUND", httpStatus: 404 });
   });
 
   it("详情：问题本体 + 处理过程留痕按写入顺序返回（时间正序）", async () => {
     const { service } = seed();
-    const first = await service.update(PROJECT, ISSUE_1, { version: 1, state: "open" }, ACTOR);
+    const first = await service.update(PROJECT, ISSUE_1, { version: 1, state: "in_progress" }, ACTOR);
     await service.update(PROJECT, ISSUE_1, { version: first.version, solution: "已修复", note: "复验通过" }, ACTOR);
     const detail = await service.detail(PROJECT, ISSUE_1);
     expect(detail.events.map((event) => event.eventType)).toEqual(["state_change", "solution"]);
     expect(detail.events[1]).toMatchObject({ actorId: ACTOR, note: "复验通过" });
   });
 
-  it("列表：按项目返回（状态筛选由仓储承担）；问题看板与问题追踪同源", async () => {
+  it("列表：按项目返回（状态 / 归类筛选由仓储承担）；问题看板与问题追踪同源", async () => {
     const { service } = seed();
     const listed = await service.list(PROJECT, { page: 1, limit: 20 });
     expect(listed.total).toBe(1);
     expect(listed.items[0]?.id).toBe(ISSUE_1);
-    expect(listed.items[0]?.category).toBe("机械部");
+    expect(listed.items[0]?.categories).toEqual(["机械部"]);
+    await expect(service.list(PROJECT, { "filter[category]": "不存在的归类", page: 1, limit: 20 })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+  });
+
+  it("成对删除（DELETE）：删问题带来源日报 = 连它来源的日报及其全部问题；无来源日报 = 只删自己", async () => {
+    const { db, reports, issues, audit, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1));
+    issues.issues.set(ISSUE_2, makeIssue(ISSUE_2, { sourceReportId: REPORT_1 }));
+    const removed = await service.remove(PROJECT, ISSUE_2, ACTOR);
+    expect(removed).toEqual({ id: ISSUE_2, deleted: true, cascadedReportId: REPORT_1, cascadedIssueIds: [] });
+    expect(reports.reports.has(REPORT_1)).toBe(false);
+    expect(issues.issues.has(ISSUE_1)).toBe(true);
+    expect(issues.issues.has(ISSUE_2)).toBe(false);
+    expect(db.outbox.map((row) => row.topic)).toContain("issue.deleted");
+    const single = await service.remove(PROJECT, ISSUE_1, ACTOR);
+    expect(single).toEqual({ id: ISSUE_1, deleted: true, cascadedReportId: null, cascadedIssueIds: [] });
+    expect(issues.issues.has(ISSUE_1)).toBe(false);
+    expect(audit.entries.filter((entry) => entry.action === "delete")).toHaveLength(3);
   });
 });

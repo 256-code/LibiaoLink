@@ -10,7 +10,7 @@
  *     冷启动保护 = at - eventAt 超阈值 → 逐规则登记 skipped.reason = event_too_old（不评估主体）。
  *   - 调度形态 planWindowMessages：schedule 型规则 × 主体 × 窗口（触发时刻 ∈ (from, to]）→ 应发送清单。
  *   - 规则来源 listEnabledRules()：一期 = 内置集过滤 enabled；表 automation_rules 与读表实现随 M5-06（异步签名不变）。
- *   - 主体映射器：report_slot / project_day / issue / todo 四类（输入 = 领域快照；读库在接线层）。
+ *   - 主体映射器：report_slot / project_day / todo 三类（输入 = 领域快照；读库在接线层；issue 随处理时限删除下线 · Push 215）。
  * 边界：本文件只算「本事件 / 本窗口应发给谁、发什么、幂等键是什么」；投递 / 重试 / 死信由 M5-02 ~ M5-04（lan）承担。
  */
 import type { AutomationRule, RuleEventTopic } from "@libiaolink/contracts";
@@ -253,41 +253,6 @@ export function toProjectDaySubject(snapshot: ProjectDaySnapshot): ReplaySubject
     },
   };
 }
-/** A03 问题快照（issues 表 + due_at；T+1 提醒责任人 / T+3 升级项目经理 · ADR-026）。 */
-export interface IssueSnapshot {
-  issueId: string;
-  /** 问题标题（模板 {问题标题}）。 */
-  title: string;
-  /** 问题状态（done = 闭环；非 done 参与 SLA 求值）。 */
-  state: string;
-  /** 处理时限（业务日；trigger.baseField = issue.due_at）。 */
-  dueAt: string;
-  /** 责任人（未分派 → null：T+1 不发、T+3 仍升级项目经理）。 */
-  ownerId: string | null;
-  ownerName: string | null;
-  /** 项目经理（T+3 升级收件人；未指派 → null = recipient_missing）。 */
-  managerId: string | null;
-  managerName: string | null;
-}
-
-/** 主体映射器（A03）：问题快照 → 回放主体（收件人 = issue.owner（T+1）/ project.manager（T+3））。 */
-export function toIssueSubject(snapshot: IssueSnapshot): ReplaySubject {
-  return {
-    kind: "issue",
-    id: snapshot.issueId,
-    fields: {
-      "issue.title": snapshot.title,
-      "issue.state": snapshot.state,
-      "issue.owner_name": snapshot.ownerName,
-      "issue.due_at": snapshot.dueAt,
-    },
-    recipients: {
-      "issue.owner": snapshot.ownerId === null ? null : { id: snapshot.ownerId, name: snapshot.ownerName },
-      "project.manager": snapshot.managerId === null ? null : { id: snapshot.managerId, name: snapshot.managerName },
-    },
-  };
-}
-
 /** A14 自定义待办快照（todos 表未落 —— 数据面随 M5-06 / M8；重复规则由待办模块展开为逐次提醒日）。 */
 export interface TodoSnapshot {
   todoId: string;

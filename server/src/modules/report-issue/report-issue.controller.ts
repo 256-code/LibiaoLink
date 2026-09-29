@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   DailyReportCreateBodySchema,
+  DailyReportDeleteResponseSchema,
   DailyReportDayQuerySchema,
   DailyReportListQuerySchema,
   DailyReportListResponseSchema,
@@ -8,6 +9,7 @@ import {
   DailyReportSchema,
   DailyReportSummaryResponseSchema,
   DailyReportUpdateBodySchema,
+  IssueDeleteResponseSchema,
   IssueDetailSchema,
   IssueListQuerySchema,
   IssueListResponseSchema,
@@ -24,12 +26,14 @@ import { ReportSummaryService } from "./report-summary.service.js";
 
 type DailyReport = z.infer<typeof DailyReportSchema>;
 type DailyReportCreateBody = z.infer<typeof DailyReportCreateBodySchema>;
+type DailyReportDeleteResponse = z.infer<typeof DailyReportDeleteResponseSchema>;
 type DailyReportDayQuery = z.infer<typeof DailyReportDayQuerySchema>;
 type DailyReportListQuery = z.infer<typeof DailyReportListQuerySchema>;
 type DailyReportListResponse = z.infer<typeof DailyReportListResponseSchema>;
 type DailyReportMissing = z.infer<typeof DailyReportMissingResponseSchema>;
 type DailyReportSummary = z.infer<typeof DailyReportSummaryResponseSchema>;
 type DailyReportUpdateBody = z.infer<typeof DailyReportUpdateBodySchema>;
+type IssueDeleteResponse = z.infer<typeof IssueDeleteResponseSchema>;
 type IssueListQuery = z.infer<typeof IssueListQuerySchema>;
 type IssueListResponse = z.infer<typeof IssueListResponseSchema>;
 type IssueDetail = z.infer<typeof IssueDetailSchema>;
@@ -81,7 +85,7 @@ export class ReportController {
     return this.summaries.missing(id, query);
   }
 
-  /** 新报一天（草稿 / 提交）：重复 409 REPORT_ALREADY_EXISTS；提交触发 A3-08 回写与 A3-09 问题生成。 */
+  /** 新报一天（草稿 / 提交）：同日多条可重复新建（Push 215）；提交触发 A3-09 问题生成。 */
   @Post(":id/reports")
   @RequirePermission("report.fill")
   create(
@@ -92,7 +96,7 @@ export class ReportController {
     return this.reports.create(id, body, actorId);
   }
 
-  /** 日报详情（A3-01 全字段 + 关联任务标题）。 */
+  /** 日报详情（A3-01 全字段 + 关联阶段名与附图）。 */
   @Get(":id/reports/:reportId")
   @RequirePermission("report.view")
   detail(
@@ -113,11 +117,22 @@ export class ReportController {
   ): Promise<DailyReport> {
     return this.reports.update(id, reportId, body, actorId);
   }
+
+  /** 删除日报（成对删除：删日报 = 连它派生的全部问题 + 两侧附图关联；Push 213 / 215 口径）。 */
+  @Delete(":id/reports/:reportId")
+  @RequirePermission("report.fill")
+  remove(
+    @Param("id", uuidParam) id: string,
+    @Param("reportId", uuidParam) reportId: string,
+    @CurrentActorId() actorId: string,
+  ): Promise<DailyReportDeleteResponse> {
+    return this.reports.remove(id, reportId, actorId);
+  }
 }
 
 /**
  * 问题接口（M6-02 / M6-03 · A3-10 ~ A3-13）：契约 shared/src/modules/issues.ts。
- * 路径同为项目嵌套；读 issue.view、写 issue.manage（成员平权）；四态允许回退且留痕，一次更新写一条事件。
+ * 路径同为项目嵌套；读 issue.view、写 issue.manage（成员平权）；三态（Push 215）允许回退且留痕，一次更新写一条事件。
  */
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
@@ -144,7 +159,7 @@ export class IssueController {
     return this.issues.detail(id, issueId);
   }
 
-  /** 问题更新（状态流转 / 解决方案 / 分派 / 时限）：乐观锁 version；允许回退且留痕。 */
+  /** 问题更新（状态流转 / 描述 / 归类 / 解决方案 / 分派 / 附图）：乐观锁 version；允许回退且留痕。 */
   @Patch(":id/issues/:issueId")
   @RequirePermission("issue.manage")
   update(
@@ -154,5 +169,16 @@ export class IssueController {
     @CurrentActorId() actorId: string,
   ): Promise<IssueDetail> {
     return this.issues.update(id, issueId, body, actorId);
+  }
+
+  /** 删除问题（成对删除：删问题 = 连它来源的那篇日报及其全部问题；手工问题无来源日报则单删）。 */
+  @Delete(":id/issues/:issueId")
+  @RequirePermission("issue.manage")
+  remove(
+    @Param("id", uuidParam) id: string,
+    @Param("issueId", uuidParam) issueId: string,
+    @CurrentActorId() actorId: string,
+  ): Promise<IssueDeleteResponse> {
+    return this.issues.remove(id, issueId, actorId);
   }
 }

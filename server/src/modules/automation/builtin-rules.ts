@@ -1,12 +1,11 @@
 /**
  * 内置规则定义与逐字文案模板（M5-01 内核切片 + M5-05 余项 · A 系列 · Push 163）。
  * 逐字基准：docs/rules/R01-R07-内置规则文案.md（R01 ~ R07，需求说明书原文逐字）、
- *   docs/rules/A01-A03-A14-扩展规则文案.md（A01 / A02 / A03 / A14 —— 原文未给逐字文案：该文档为建议稿 + 待确认清单）。
- * 口径来源：系统功能书 C2-02 / C2-04 / C2-11 / A3-14 / A6-05 / A7-03 / A7-05、技术设计v0.2 §6.1、
- *   ADR-026（A03：T+1 提醒责任人 / T+3 升级项目经理）、ADR-028（时区）。
+ *   docs/rules/A01-A03-A14-扩展规则文案.md（A01 / A02 / A14 —— 原文未给逐字文案：该文档为建议稿 + 待确认清单）。
+ * 口径来源：系统功能书 C2-02 / C2-04 / C2-11 / A6-05 / A7-03 / A7-05、技术设计v0.2 §6.1、ADR-028（时区）。
  * 说明：R01 无通知动作（落点 = 变更生效事务内同事务回写 tasks.change_refs，见 M4-04），故不在引擎规则集内；
- *   其余十条为引擎可执行规则：R02 / R06 事件型（主体 = 任务），R03 / R04 / R05 / R07 任务调度型，
- *   A01 / A02 / A03 / A14 主体调度型（主体类型见 BUILTIN_RULE_SUBJECT_KINDS）。
+ *   其余规则为引擎可执行规则：R02 / R06 事件型（主体 = 任务），R03 / R04 / R05 / R07 任务调度型，
+ *   A01 / A02 / A14 主体调度型（主体类型见 BUILTIN_RULE_SUBJECT_KINDS）；A03 随处理时限（due_at）删除下线（Push 215 / A3-14）。
  */
 import type { AutomationMessageTemplate, AutomationRule } from "@libiaolink/contracts";
 import type { ReplaySubjectKind } from "./automation.rules.js";
@@ -73,26 +72,6 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
     body: "今日 {提交人数} 人已提交（应填 {应填人数} 人），发现问题 {问题数} 条。{汇总正文}",
   },
   {
-    code: "A03_T1_INBOX",
-    title: "问题处理超时提醒",
-    body: "{责任人}，你的问题「{问题标题}」已超过处理时限 1 天，请尽快处理并更新进展！",
-  },
-  {
-    code: "A03_T1_APP",
-    title: "问题处理超时提醒",
-    body: "{责任人}，你的问题「{问题标题}」已超过处理时限 1 天，请尽快处理并更新进展！",
-  },
-  {
-    code: "A03_T3_INBOX",
-    title: "问题超期升级",
-    body: "{项目经理}，问题「{问题标题}」超期 3 天仍未闭环，已升级给你，请关注并推动处理！",
-  },
-  {
-    code: "A03_T3_APP",
-    title: "问题超期升级",
-    body: "{项目经理}，问题「{问题标题}」超期 3 天仍未闭环，已升级给你，请关注并推动处理！",
-  },
-  {
     code: "A14_INBOX",
     title: "待办提醒：{待办标题}",
     body: "{提醒对象}，你的待办「{待办标题}」已到提醒时间。{待办内容}",
@@ -103,7 +82,7 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
     body: "{提醒对象}，你的待办「{待办标题}」已到提醒时间。{待办内容}",
   },
 ];
-/** 引擎可执行的内置规则（R02 ~ R07 任务类；A01 / A02 / A03 / A14 主体类）。 */
+/** 引擎可执行的内置规则（R02 ~ R07 任务类；A01 / A02 / A14 主体类；A03 随处理时限删除下线 · Push 215）。 */
 export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "R02",
@@ -176,8 +155,6 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     ],
     version: 1,
   },
-  // A03 = 一条业务规则、两个触发窗口（ADR-026）：T+1 提醒责任人 / T+3 升级项目经理 ——
-  // 规则集内同 code 两行（幂等键 = 规则 + 实体 + 窗口，两窗口互不冲突）；落库形态随 M5-06（lan）接线时定。
   {
     code: "A01",
     name: "日报应填未填提醒",
@@ -203,30 +180,6 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     version: 1,
   },
   {
-    code: "A03",
-    name: "问题超期提醒（T+1 责任人）",
-    enabled: true,
-    trigger: { kind: "schedule", cron: "0 9 * * *", window: "T_PLUS_1", baseField: "issue.due_at" },
-    conditions: [{ field: "issue.state", op: "ne", value: "done" }],
-    actions: [
-      { kind: "notification", channel: "inbox", recipient: "issue.owner", template: "A03_T1_INBOX" },
-      { kind: "notify", channel: "wecom_app", recipient: "issue.owner", template: "A03_T1_APP" },
-    ],
-    version: 1,
-  },
-  {
-    code: "A03",
-    name: "问题超期升级（T+3 项目经理）",
-    enabled: true,
-    trigger: { kind: "schedule", cron: "0 9 * * *", window: "T_PLUS_3", baseField: "issue.due_at" },
-    conditions: [{ field: "issue.state", op: "ne", value: "done" }],
-    actions: [
-      { kind: "notification", channel: "inbox", recipient: "project.manager", template: "A03_T3_INBOX" },
-      { kind: "notify", channel: "wecom_app", recipient: "project.manager", template: "A03_T3_APP" },
-    ],
-    version: 1,
-  },
-  {
     code: "A14",
     name: "自定义待办提醒",
     enabled: true,
@@ -240,7 +193,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   },
 ];
 
-/** 规则码 → 回放主体类型（缺省 task）：A01 日报名册槽位 / A02 项目日报 / A03 问题 / A14 待办。 */
+/** 规则码 → 回放主体类型（缺省 task）：A01 日报名册槽位 / A02 项目日报 / A14 待办（A03 问题随处理时限下线 · Push 215）。 */
 export const BUILTIN_RULE_SUBJECT_KINDS: Readonly<Record<string, ReplaySubjectKind>> = {
   R02: "task",
   R03: "task",
@@ -250,7 +203,6 @@ export const BUILTIN_RULE_SUBJECT_KINDS: Readonly<Record<string, ReplaySubjectKi
   R07: "task",
   A01: "report_slot",
   A02: "project_day",
-  A03: "issue",
   A14: "todo",
 };
 
@@ -261,7 +213,7 @@ export function subjectKindOf(ruleCode: string): ReplaySubjectKind {
 
 /**
  * 模板变量取数口径（变量名 → 字段名候选链，取第一个非空）：
- *   - "@recipient" = 本次实际解析出的收件人名称（A03 升级消息的「项目经理」/ A14 的「提醒对象」）；
+ *   - "@recipient" = 本次实际解析出的收件人名称（A14 的「提醒对象」）；
  *   - 其余 = 主体字段（点分命名空间，由唤醒层注入的实体快照提供）。
  * 候选链全空 = 渲染空串；模板里出现的变量名必须登记在此（见 test/automation-a-series.test.ts 的模板一致性用例）。
  */
@@ -271,11 +223,6 @@ export const SUBJECT_TEMPLATE_VARIABLES: Readonly<
   task: {
     "任务描述": ["task.title"],
     "任务负责人": ["task.owner_name", "task.manager_name"],
-  },
-  issue: {
-    "问题标题": ["issue.title"],
-    "责任人": ["issue.owner_name"],
-    "项目经理": ["@recipient"],
   },
   report_slot: {
     "项目名": ["project.name"],

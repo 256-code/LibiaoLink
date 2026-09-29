@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { IssueDetailSchema, IssueListQuerySchema, IssueListResponseSchema, IssueUpdateBodySchema, z } from "@libiaolink/contracts";
+import { IssueDeleteResponseSchema, IssueDetailSchema, IssueListQuerySchema, IssueListResponseSchema, IssueUpdateBodySchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
@@ -7,34 +7,43 @@ import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
 import { IssueRepository, type IssueEventInput, type IssueEventRow, type IssuePatch, type IssueRow } from "./issue.repository.js";
 import { parseIssueFilter } from "./report-issue.rules.js";
+import {
+  assertPhotoFilesInProject,
+  loadIssuePhotos,
+  purgeIssues,
+  purgeReportCascade,
+  replaceIssuePhotos,
+  type FilePhotoRefRow,
+} from "./report-issue.links.js";
 
+type IssueDeleteResponse = z.infer<typeof IssueDeleteResponseSchema>;
 type IssueDetail = z.infer<typeof IssueDetailSchema>;
 type IssueListQuery = z.infer<typeof IssueListQuerySchema>;
 type IssueListResponse = z.infer<typeof IssueListResponseSchema>;
 type IssueUpdateBody = z.infer<typeof IssueUpdateBodySchema>;
 
-/** 问题快照（字段级留痕口径：状态 / 解决方案 / 分派 / 时限四类可改）。 */
+/** 问题快照（字段级留痕口径：描述 / 归类 / 状态 / 分派 / 解决方案可改）。 */
 function issueSnapshot(row: IssueRow): Record<string, unknown> {
   return {
     title: row.title,
-    category: row.category,
+    categories: row.categories,
     state: row.state,
     taskId: row.taskId,
     sourceReportId: row.sourceReportId,
     ownerDepartment: row.ownerDepartment,
     ownerId: row.ownerId,
-    dueAt: row.dueAt === null ? null : row.dueAt.toISOString(),
     solution: row.solution,
     closedAt: row.closedAt === null ? null : row.closedAt.toISOString(),
   };
 }
 
 /**
- * 问题用例（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16）。
- * 1) 四态（未分组 / 未解决 / 处理中 / 已完成）允许回退且留痕（A3-10）—— 不设流转白名单，只要求写事件；
- * 2) 每次写一条 issue_events：状态流转 / 解决方案 / 分派各自成行（A3-13 留痕，note 记本次备注）；
+ * 问题用例（M6-02 / M6-03 · A3-10 ~ A3-13 / A3-16 · Push 215）。
+ * 1) 三态（未解决 / 处理中 / 已完成）允许回退且留痕（A3-10）—— 不设流转白名单，只要求写事件；
+ * 2) 每次写一条 issue_events：状态流转 / 解决方案 / 分派各自成行（A3-13 留痕，note 记本次备注）；描述 / 归类 / 附图不写事件（走审计）；
  * 3) 关闭 = state=done 且 closed_at / closed_by 同写；回退（done → 其它态）一并清空（ck_issues_closed_pairs）；
- * 4) 空更新（无任何字段变化）= 400，防刷留痕；乐观锁 version 冲突 409；归档项目 409 PROJECT_ARCHIVED。
+ * 4) 空更新（无任何字段变化）= 400，防刷留痕；乐观锁 version 冲突 409；归档项目 409 PROJECT_ARCHIVED；
+ * 5) 附图（file_links(object_type=issue)）整体替换；删除为成对删除（删问题 = 连它来源的那篇日报及其全部问题）。
  * 权限：读 = issue.view（成员平权）；写 = issue.manage（成员平权，见 permission.rules 平权例外）。
  */
 @Injectable()
@@ -49,8 +58,12 @@ export class IssueService {
   async list(projectId: string, query: IssueListQuery): Promise<IssueListResponse> {
     const filter = parseIssueFilter(query);
     const { rows, total } = await this.issues.list(projectId, filter, query.page, query.limit);
+    const photos = await loadIssuePhotos(
+      rows.map((row) => row.id),
+      this.database.db,
+    );
     return {
-      items: rows.map((row) => this.toIssue(row)),
+      items: rows.map((row) => this.toIssue(row, photos.get(row.id) ?? [])),
       page: query.page,
       limit: query.limit,
       total,
@@ -61,13 +74,17 @@ export class IssueService {
   async detail(projectId: string, issueId: string): Promise<IssueDetail> {
     const row = await this.requireIssue(projectId, issueId, this.database.db);
     const events = await this.issues.listEvents(issueId);
-    return { ...this.toIssue(row), events: events.map((event) => this.toEvent(event)) };
+    const photos = await loadIssuePhotos([issueId], this.database.db);
+    return { ...this.toIssue(row, photos.get(issueId) ?? []), events: events.map((event) => this.toEvent(event)) };
   }
 
-  /** PATCH /api/v1/projects/{id}/issues/{issueId}：状态流转 / 解决方案 / 分派 / 时限，一次请求写一条事件。 */
+  /** PATCH /api/v1/projects/{id}/issues/{issueId}：状态 / 描述 / 归类 / 解决方案 / 分派 / 附图，一次请求写一条事件。 */
   async update(projectId: string, issueId: string, body: IssueUpdateBody, actorId: string): Promise<IssueDetail> {
     await this.loadProjectForWrite(projectId);
     const at = new Date();
+    if (body.photoFileIds !== undefined && body.photoFileIds.length > 0) {
+      await assertPhotoFilesInProject(projectId, body.photoFileIds, this.database.db);
+    }
     await this.database.db.transaction(async (tx) => {
       const before = await this.requireIssue(projectId, issueId, tx);
       const patch: IssuePatch = {};
@@ -81,13 +98,20 @@ export class IssueService {
           patch.closedAt = null;
         }
       }
+      if (body.title !== undefined && body.title !== before.title) patch.title = body.title;
+      if (body.categories !== undefined && JSON.stringify(body.categories) !== JSON.stringify(before.categories)) {
+        patch.categories = [...body.categories];
+      }
       if (body.solution !== undefined) patch.solution = body.solution;
       if (body.ownerDepartment !== undefined) patch.ownerDepartment = body.ownerDepartment;
       if (body.ownerId !== undefined) patch.ownerId = body.ownerId;
-      if (body.dueAt !== undefined) patch.dueAt = body.dueAt === null ? null : new Date(body.dueAt);
-      if (Object.keys(patch).length === 0) {
-        throw new AppError("VALIDATION_FAILED", "问题更新至少需要一个实际变化（状态 / 解决方案 / 分派 / 时限）", [
-          { code: "empty_update", message: "四个可改字段都为缺省值", path: "state" },
+      const currentPhotos = body.photoFileIds === undefined ? [] : ((await loadIssuePhotos([issueId], tx)).get(issueId) ?? []);
+      const photosChanged =
+        body.photoFileIds !== undefined &&
+        (body.photoFileIds.length !== currentPhotos.length || body.photoFileIds.some((fileId, index) => fileId !== currentPhotos[index]?.fileId));
+      if (Object.keys(patch).length === 0 && !photosChanged) {
+        throw new AppError("VALIDATION_FAILED", "问题更新至少需要一个实际变化（状态 / 描述 / 归类 / 解决方案 / 分派 / 附图）", [
+          { code: "empty_update", message: "可改字段都为缺省值或与原值相同", path: "state" },
         ]);
       }
       const updated = await this.issues.updateWithVersion(issueId, body.version, patch, at, tx);
@@ -95,6 +119,9 @@ export class IssueService {
         throw new AppError("VERSION_CONFLICT", "问题已被他人修改，请刷新后重试", [
           { code: "version_conflict", message: "期望 version = " + body.version, path: "version" },
         ]);
+      }
+      if (photosChanged) {
+        await replaceIssuePhotos(issueId, body.photoFileIds ?? [], actorId, at, tx);
       }
       const after = await this.requireIssue(projectId, issueId, tx);
       const eventInputs: IssueEventInput[] = [];
@@ -105,8 +132,7 @@ export class IssueService {
         eventInputs.push({ issueId, eventType: "solution", fromState: null, toState: null, note: body.note ?? null });
       }
       const assignedChanged = after.ownerDepartment !== before.ownerDepartment || after.ownerId !== before.ownerId;
-      const dueChanged = String(before.dueAt) !== String(after.dueAt);
-      if (assignedChanged || dueChanged) {
+      if (assignedChanged) {
         eventInputs.push({ issueId, eventType: "assignment", fromState: null, toState: null, note: body.note ?? null });
       }
       for (const event of eventInputs) await this.issues.insertEvent(event, actorId, at, tx);
@@ -129,29 +155,91 @@ export class IssueService {
     return this.detail(projectId, issueId);
   }
 
+  /** DELETE /api/v1/projects/{id}/issues/{issueId}：成对删除（有来源日报 = 连它来源的那篇日报及其全部问题）。 */
+  async remove(projectId: string, issueId: string, actorId: string): Promise<IssueDeleteResponse> {
+    await this.loadProjectForWrite(projectId);
+    const at = new Date();
+    let cascadedReportId: string | null = null;
+    let cascadedIssueIds: string[] = [];
+    await this.database.db.transaction(async (tx) => {
+      const row = await this.requireIssue(projectId, issueId, tx);
+      if (row.sourceReportId === null) {
+        await purgeIssues([issueId], tx);
+        await this.audit.record(tx, {
+          actorId,
+          action: "delete",
+          objectType: "issue",
+          objectId: issueId,
+          projectId,
+          summary: "删除问题：" + row.title,
+          metadata: { sourceReportId: null },
+        });
+      } else {
+        cascadedReportId = row.sourceReportId;
+        const deletedIssueIds = await purgeReportCascade(row.sourceReportId, tx);
+        cascadedIssueIds = deletedIssueIds.filter((id) => id !== issueId);
+        for (const id of cascadedIssueIds) {
+          await this.audit.record(tx, {
+            actorId,
+            action: "delete",
+            objectType: "issue",
+            objectId: id,
+            projectId,
+            summary: "连带删除日报派生问题",
+            metadata: { sourceReportId: row.sourceReportId },
+          });
+        }
+        await this.audit.record(tx, {
+          actorId,
+          action: "delete",
+          objectType: "daily_report",
+          objectId: row.sourceReportId,
+          projectId,
+          summary: "删除问题连带删除来源日报",
+          metadata: { cascadedIssueIds },
+        });
+        await this.audit.record(tx, {
+          actorId,
+          action: "delete",
+          objectType: "issue",
+          objectId: issueId,
+          projectId,
+          summary: "删除问题：" + row.title,
+          metadata: { cascadedReportId: row.sourceReportId },
+        });
+      }
+      await appendOutbox(tx, {
+        topic: "issue.deleted",
+        dedupeKey: "issue.deleted:" + issueId,
+        payload: { projectId, issueId, cascadedReportId, cascadedIssueIds, at: at.toISOString() },
+      });
+    });
+    return { id: issueId, deleted: true, cascadedReportId, cascadedIssueIds };
+  }
+
   private async requireIssue(projectId: string, issueId: string, client: DbClient): Promise<IssueRow> {
     const row = await this.issues.findById(projectId, issueId, client);
     if (row === null) throw new AppError("NOT_FOUND", "问题不存在：" + issueId);
     return row;
   }
 
-  private toIssue(row: IssueRow): Omit<IssueDetail, "events"> {
+  private toIssue(row: IssueRow, photos: FilePhotoRefRow[]): Omit<IssueDetail, "events"> {
     return {
       id: row.id,
       projectId: row.projectId,
       taskId: row.taskId,
       sourceReportId: row.sourceReportId,
       title: row.title,
-      category: row.category as IssueDetail["category"],
+      categories: row.categories as IssueDetail["categories"],
       state: row.state as IssueDetail["state"],
       reporterId: row.reporterId,
       reporterName: row.reporterName,
       ownerDepartment: row.ownerDepartment,
       ownerId: row.ownerId,
       ownerName: row.ownerName,
-      dueAt: row.dueAt === null ? null : row.dueAt.toISOString(),
       raisedAt: row.raisedAt,
       solution: row.solution,
+      photos,
       closedBy: row.closedBy,
       closedAt: row.closedAt === null ? null : row.closedAt.toISOString(),
       createdAt: row.createdAt.toISOString(),

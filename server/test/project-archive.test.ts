@@ -68,7 +68,7 @@ class FakeArchiveRepository {
   fileRows: { id: string; name: string; docType: string | null; status: string; nodeId: string | null; versionCount: number; latestSeq: number | null; latestUploadedAt: Date | null }[] = [];
   changeRows: { id: string; reason: string; stageKey: string | null; appliedAt: Date }[] = [];
   reportCounts: Record<string, number> = { draft: 0, submitted: 2, supplement: 0 };
-  issueCounts: Record<string, number> = { unassigned: 0, open: 0, in_progress: 1, done: 0 };
+  issueCounts: Record<string, number> = { open: 0, in_progress: 1, done: 0 };
   inserted: ArchiveInserted | null = null;
   aborted = 0;
   record: ArchiveViewRow | null = null;
@@ -278,7 +278,7 @@ describe("项目归档（M7-04 · ADR-027）", () => {
         projectId: PROJECT_ID,
         archivedAt: AT,
         archivedBy: ACTOR,
-        snapshot: { stage: { stageKey: "acceptance", status: "done", advancedAt: AT.toISOString() }, tasks: { total: 0, byStatus: { pending: 0, active: 0, done: 0 } }, files: { total: 0, items: [] }, changes: { total: 0, items: [] }, reports: { total: 0, byState: { draft: 0, submitted: 0, supplement: 0 } }, issues: { total: 0, byState: { unassigned: 0, open: 0, in_progress: 0, done: 0 } } },
+        snapshot: { stage: { stageKey: "acceptance", status: "done", advancedAt: AT.toISOString() }, tasks: { total: 0, byStatus: { pending: 0, active: 0, done: 0 } }, files: { total: 0, items: [] }, changes: { total: 0, items: [] }, reports: { total: 0, byState: { draft: 0, submitted: 0, supplement: 0 } }, issues: { total: 0, byState: { open: 0, in_progress: 0, done: 0 } } },
         acknowledgedMissing: [],
       },
       archivedByName: "张工",

@@ -136,7 +136,7 @@ export const uploadSessions = pgTable(
   ],
 );
 
-/** file_links（多态关联：project / task / node / report / issue / change；M4-03）。 */
+/** file_links（多态关联：project / task / node / report / issue / change；M4-03）。kind（Push 215）：日报附图区分 onsite 现场图 / issue 问题图，其余关联恒为空串。 */
 export const fileLinks = pgTable(
   "file_links",
   {
@@ -146,15 +146,17 @@ export const fileLinks = pgTable(
       .references(() => files.id, { onDelete: "cascade" }),
     objectType: text("object_type").notNull(),
     objectId: uuid("object_id").notNull(),
+    kind: text("kind").notNull().default(""),
     createdBy: uuid("created_by").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("uq_file_links_file_object").on(table.fileId, table.objectType, table.objectId),
+    unique("uq_file_links_file_object").on(table.fileId, table.objectType, table.objectId, table.kind),
     index("ix_file_links_object").on(table.objectType, table.objectId),
     check(
       "ck_file_links_object_type",
       sql`${table.objectType} in ${sql.raw(sqlValueList(["project", "task", "node", "report", "issue", "change"]))}`,
     ),
+    check("ck_file_links_kind", sql`${table.kind} in ${sql.raw(sqlValueList(["", "onsite", "issue"]))}`),
   ],
 );
