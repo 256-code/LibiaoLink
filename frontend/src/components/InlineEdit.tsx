@@ -26,6 +26,9 @@ type InlineCellProps = {
   triggerClassName?: string;
   /** 裸框模式（Push 134）：撤掉「液态玻璃」小框的底 / 边 / 模糊，底色 / 字色 / 内边距由 triggerClassName 给。 */
   bare?: boolean;
+  /** 内容不裁剪（Push 217 续③ · 业务口径「会出现截断的问题」）：默认包裹层走 `truncate`（单行省略、超出即裁），
+   *  true = 撤裁剪 —— 供「问题归类」这类**多枚色签折行**的单元格用：窄窗 / 列被挤到最小时色签不再被裁掉一角。 */
+  wrapContent?: boolean;
   /** 浮层内容；`close` 用于选完即关。 */
   render: (close: () => void) => ReactNode;
 };
@@ -34,7 +37,7 @@ type InlineCellProps = {
  * 表格行内编辑的通用外壳（Push 64）：单元格本身是按钮，点击在被点的位置弹出浮层（portal 到 body，
  * 不被表格横向滚动裁掉），点浮层外 / Esc 关闭；浮层里的控件不冒泡到行（不会触发行选中的抽屉）。
  */
-export function InlineCell({ ariaLabel, title = "点击编辑", display, width, height, triggerClassName, bare = false, render }: InlineCellProps) {
+export function InlineCell({ ariaLabel, title = "点击编辑", display, width, height, triggerClassName, bare = false, wrapContent = false, render }: InlineCellProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(width, height);
 
   return (
@@ -78,7 +81,7 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
           (triggerClassName === undefined ? "" : " " + triggerClassName)
         }
       >
-        <span className="min-w-0 truncate">{display}</span>
+        <span className={wrapContent ? "min-w-0" : "min-w-0 truncate"}>{display}</span>
       </button>
       {open && position !== null
         ? createPortal(
@@ -193,11 +196,13 @@ type InlineMultiOptionCellProps = {
   bare?: boolean;
   /** 触发器附加类名（表格里给「悬停才现」的淡色可点提示）。 */
   triggerClassName?: string;
+  /** 内容不裁剪（Push 217 续③）：转交 InlineCell —— 多枚色签折行的单元格用（窄窗 / 列被挤到最小时不被裁掉一角）。 */
+  wrapContent?: boolean;
 };
 
 /** 行内多选单元格（Push 208 · 业务口径「问题归类都要可以修改」）：浮层 = 与「问题归类」表单侧同款的
  *  MultiOptionList（绿勾选中项、点选不收浮层、再点取消）；点浮层外 / Esc 收起。 */
-export function InlineMultiOptionCell({ values, options, ariaLabel, onChange, display, renderLabel, bare = false, triggerClassName }: InlineMultiOptionCellProps) {
+export function InlineMultiOptionCell({ values, options, ariaLabel, onChange, display, renderLabel, bare = false, triggerClassName, wrapContent = false }: InlineMultiOptionCellProps) {
   return (
     <InlineCell
       ariaLabel={ariaLabel}
@@ -205,6 +210,7 @@ export function InlineMultiOptionCell({ values, options, ariaLabel, onChange, di
       width={180}
       height={options.length * 34 + 12}
       bare={bare}
+      wrapContent={wrapContent}
       triggerClassName={triggerClassName}
       display={display}
       render={() => (
@@ -352,7 +358,8 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
   );
 }
 
-/** 行内数字单元格（预计所需施工人数）。 */
+/** 行内数字单元格（预计所需施工人数；Push 217 续⑥起「问题详情」抽屉的「施工人数」共用）。
+ *  「点「保存」才落值、落值即收浮层」（与 InlineTextCell 同一口径）；取消 / Esc / 点浮层外收起 = 原值不动。 */
 export function InlineNumberCell({
   value,
   display,
@@ -374,7 +381,15 @@ export function InlineNumberCell({
       height={124}
       display={display}
       render={(close) => (
-        <NumberEditor value={value} suffix={suffix} onSave={onSave} onCancel={close} />
+        <NumberEditor
+          value={value}
+          suffix={suffix}
+          onSave={(next) => {
+            onSave(next);
+            close();
+          }}
+          onCancel={close}
+        />
       )}
     />
   );
