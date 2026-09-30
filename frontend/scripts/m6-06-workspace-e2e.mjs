@@ -4,7 +4,8 @@
  *
  * 业务口径（2026-09-30）：「改成 我提出的问题」「同样做标签导航栏 我的任务 我提出的问题先做这两个」
  *   「我的任务 是折叠面板 未展开是项目名称和编号 下拉是具体我的任务」「我提出的问题就参考日报的问题追踪即可
- *   也是折叠面板」「开始做前端」「表格内容要全」「直接把这个搬到我的任务不就好了」（任务表行口径照项目页任务表搬）。
+ *   也是折叠面板」「开始做前端」「表格内容要全」「直接把这个搬到我的任务不就好了」（任务表行口径照项目页任务表搬）→
+ *   「这些字段一个不能少懂吗」（Push 231：任务表列补齐项目页任务表全 15 列，「预计所需天数」窄列也在）。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -20,8 +21,10 @@
  *   ① 接口先行对账（夹具落库后 GET /api/v1/workspace）：跨项目三组任务 + 「我提出的」不含他人提的问题；
  *   ② 页面骨架：两枚下划线标签（我的任务 / 我提出的问题；文字 + 选中下划线）+ 默认选中「我的任务」+ 地址不带 `?tab=`；
  *   ③ 「我的任务」折叠面板：收起 = 项目名称 + 编号（最急的项目在最上）+ 摘要签；展开 = 该项目下的任务表；
- *   ④ 任务表口径（行口径照项目页任务表搬 ——「直接把这个搬到我的任务不就好了」）：任务描述 + 四格进度点 /
- *      负责人 / 状态 / 紧急重要度 / 逾期未交付 / 开始·预计·实际日期；
+ *   ④ 任务表口径（Push 231 扩列：列口径照项目页任务表全 15 列 ——「直接把这个搬到我的任务不就好了」+
+ *      「这些字段一个不能少懂吗」）：任务描述 + 四格进度点（不含分组签 —— 业务口径「这个不要展示」，
+ *      组序由行序体现）/ 项目经理 / 负责人 / 状态 / 紧急重要度 /
+ *      逾期未交付 / 输出成果文件 / 文件 / 进展描述 / 开始·实际日期 / 天数 / 人数 / 变更关联；
  *      他人任务、已完成、7 天外、未排期都不进；
  *   ⑤ 切标签：真实鼠标点「我提出的问题」→ 地址写回 `?tab=raised`、aria-current 转移；
  *   ⑥ 「我提出的问题」折叠面板：照「问题追踪」的完整六列（日期 / 问题描述 / 问题归类 /
@@ -29,7 +32,7 @@
  *      行尾「在项目中查看」；未关闭在前、不是我提的不进；
  *   ⑦ 深链：`#/my-tasks?tab=raised` 直接打开仍停在该标签；`?tab=` 不认识的值落回「我的任务」；
  *   ⑧ 收尾：删两个临时项目（物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
- * 证据：docs/m6-回放证据(工作台我的任务·前端).md
+ * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列小节）
  */
 
 import { spawn } from "node:child_process";
@@ -114,6 +117,9 @@ const TODAY = isoOf(new Date());
 const DUE_OVERDUE = shiftIso(TODAY, -2);
 const DUE_UPCOMING = shiftIso(TODAY, 3);
 const DUE_FAR = shiftIso(TODAY, 20);
+/** Push 231 扩列夹具：开始日期（逾期任务 -4 天 → 与预计完成日含首尾 5 天；今日任务 -2 天 → 推算 3 天）。 */
+const START_OVERDUE = shiftIso(DUE_OVERDUE, -4);
+const START_TODAY = shiftIso(TODAY, -2);
 
 // ---------- 清场：上一轮崩在中途留下的同名临时项目 ----------
 /** 清项目里的文件（回收 → 彻底删除）：项目物理删的顺序里没有先清 files.current_version_id，
@@ -161,8 +167,9 @@ async function addTask(projectId, body) {
   return res.json;
 }
 // A：逾期 / 今日 / 即将 三条（我的）+ 四条反例（他人 / 已完成 / 7 天外 / 未排期）
-const tOverdue = await addTask(projectA, { stageKey: "design", title: "回放·逾期任务", titleEn: "Replay overdue", ownerIds: [me.id], plannedEnd: DUE_OVERDUE, priority: "高" });
-const tToday = await addTask(projectA, { stageKey: "design", title: "回放·今日任务", ownerIds: [me.id], plannedEnd: TODAY, priority: "中" });
+// Push 231 扩列：逾期 / 今日两条在创建时补齐任务表扩展列（成果文件只能建时给；开始日期 / 天数 / 人数 / 进展描述随行落库）
+const tOverdue = await addTask(projectA, { stageKey: "design", title: "回放·逾期任务", titleEn: "Replay overdue", ownerIds: [me.id], plannedStart: START_OVERDUE, plannedEnd: DUE_OVERDUE, priority: "高", estimatedDays: 5, headcount: 6, deliverableTypes: ["CAD图纸", "合同"], note: "回放·进展描述：图纸已出，等待评审" });
+const tToday = await addTask(projectA, { stageKey: "design", title: "回放·今日任务", ownerIds: [me.id], plannedStart: START_TODAY, plannedEnd: TODAY, priority: "中", headcount: 3, deliverableTypes: ["验收单"] });
 const tUpcoming = await addTask(projectA, { stageKey: null, title: "回放·即将任务", ownerIds: [me.id], plannedEnd: DUE_UPCOMING, priority: "低" });
 const tOtherOwner = await addTask(projectA, { stageKey: "design", title: "回放·他人任务", ownerIds: [other.id], plannedEnd: TODAY });
 const tDone = await addTask(projectA, { stageKey: "design", title: "回放·已完成任务", ownerIds: [me.id], plannedEnd: TODAY });
@@ -174,6 +181,28 @@ const progressRes = await api("/api/v1/projects/" + projectA + "/tasks/" + tUpco
 check("夹具：即将任务改进度到 50%（PATCH progress）", progressRes.status === 200, String(progressRes.status));
 const doneRes = await api("/api/v1/projects/" + projectA + "/tasks/" + tDone.id, "PATCH", { status: "done", version: tDone.version });
 check("夹具：反例任务置「已完成」（PATCH status=done）", doneRes.status === 200, String(doneRes.status) + " " + doneRes.text.slice(0, 140));
+// Push 231 扩列夹具 ①：「变更关联」列 —— change_requests 只追加 + 任务 change_refs 回写（页面读面走真实任务列表接口；
+// 这里落库等价于「变更生效 R01 回写」后的状态，收尾时随项目物理删一起清）
+const changeRow = (await db.query(
+  "insert into change_requests (project_id, stage_key, reason, status, applied_by) values ($1, $2, $3, 'applied', $4) returning id",
+  [projectA, "design", "回放·变更原因：设计调整", me.id],
+)).rows[0];
+const changeId = changeRow === undefined ? "" : changeRow.id;
+const changeRefsRes = changeId === "" ? { rowCount: 0 } : await db.query("update tasks set change_refs = array[$2]::uuid[] where id = $1", [tToday.id, changeId]);
+check("夹具：今日任务挂 1 条变更关联（change_requests + tasks.change_refs）", changeId !== "" && changeRefsRes.rowCount === 1, changeId);
+// Push 231 扩列夹具 ②：「文件」列 —— 任务文件走真实直传链路（draft 关联本任务 → fileSummary 1 份 / 未定档 1）
+const taskFileName = "回放-任务文件.txt";
+const taskFileBytes = Buffer.from("LibiaoLink 回放任务文件（Push 231 扩列）", "utf8");
+const taskFileHash = sha256(taskFileBytes);
+const tfInit = await api("/api/v1/files/uploads", "POST", { projectId: projectA, taskId: tOverdue.id, name: taskFileName, sizeBytes: taskFileBytes.length, mime: "text/plain", contentHash: taskFileHash, intent: "version" });
+const tfFileId = tfInit.json === null ? "" : tfInit.json.file.id;
+const tfSession = tfInit.json === null ? "" : tfInit.json.upload.id;
+check("夹具：任务文件发起直传（201，taskId 挂到逾期任务）", tfInit.status === 201 && tfFileId !== "" && tfSession !== "", String(tfInit.status) + " " + tfInit.text.slice(0, 140));
+const tfSigned = await api("/api/v1/files/" + tfFileId + "/uploads/" + tfSession + "/parts", "POST", { partNumbers: [1] });
+const tfUrl = tfSigned.json === null ? "" : tfSigned.json.parts[0].url;
+const tfPut = tfUrl === "" ? { ok: false, status: 0 } : await fetch(tfUrl, { method: "PUT", body: taskFileBytes });
+const tfDone = tfPut.ok ? await api("/api/v1/files/" + tfFileId + "/uploads/" + tfSession + "/complete", "POST", { contentHash: taskFileHash }) : { status: 0 };
+check("夹具：任务文件直传完成（PUT 200 → complete 200 落 draft 版本）", tfPut.status === 200 && tfDone.status === 200, String(tfPut.status) + " / " + String(tfDone.status));
 
 async function addIssue(projectId, session, title, categories, dueLabel) {
   const report = await sessionApi(session)("/api/v1/projects/" + projectId + "/reports", "POST", {
@@ -330,8 +359,11 @@ async function clickSelector(selector) {
 const headExpr = () => "(function(){var tabs=document.querySelectorAll(" + j("[data-workspace-tab]") + ");var out=[];for(var i=0;i<tabs.length;i+=1){out.push({key:String(tabs[i].getAttribute(" + j("data-workspace-tab") + ")),text:tabs[i].textContent.trim(),current:tabs[i].getAttribute(" + j("aria-current") + ")});}var headerNode=document.querySelector(" + j("header") + ");return {page:document.querySelector(" + j("[data-workspace-page]") + ")!==null,tabs:out,hash:window.location.hash,header:headerNode===null?" + j("") + ":headerNode.textContent.trim()};})()";
 /** 折叠面板读数（顺序即 DOM 顺序）。 */
 const panelsExpr = () => "(function(){var root=document.querySelector(" + j("[data-workspace-page]") + ");if(root===null){return null;}var ps=root.querySelectorAll(" + j("[data-workspace-panel]") + ");var out=[];for(var i=0;i<ps.length;i+=1){var p=ps[i];var t=p.querySelector(" + j("[data-workspace-panel-toggle]") + ");out.push({id:String(p.getAttribute(" + j("data-workspace-panel") + ")),open:String(p.getAttribute(" + j("data-open") + ")),expanded:t===null?null:t.getAttribute(" + j("aria-expanded") + "),text:t===null?String(" + j("") + ") :t.textContent.trim(),rows:p.querySelectorAll(" + j("[data-workspace-task],[data-workspace-issue]") + ").length});}return out;})()";
-/** 任务表读数（按项目面板）。 */
-const taskRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var dotsNode=rows[i].querySelector(" + j("[data-workspace-task-dots]") + ");out.push({id:String(rows[i].getAttribute(" + j("data-workspace-task") + ")),title:cells[0].textContent.trim(),group:cells[1].textContent.trim(),owners:cells[2].textContent.trim(),status:cells[3].textContent.trim(),statusKey:String((rows[i].querySelector(" + j("[data-workspace-task-status]") + ")||{getAttribute:function(){return " + j("") + ";}}).getAttribute(" + j("data-workspace-task-status") + ")),priority:cells[4].textContent.trim(),onTime:cells[5].textContent.trim(),start:cells[6].textContent.trim(),due:cells[7].textContent.trim(),actual:cells[8].textContent.trim(),dots:dotsNode===null?" + j("") + ":String(dotsNode.getAttribute(" + j("data-workspace-task-dots") + "))});}return {table:true,rows:out};})()";
+/** 项目页任务表 15 列（TaskBoard.TABLE_COLUMNS 同序；「预计所需天数」窄列表头为空）——Push 231 扩列对账口径。 */
+const TASK_HEAD_EXPECTED = ["任务描述", "项目经理", "任务负责人", "任务状态", "紧急重要度", "是否按时交付", "输出成果文件", "文件", "项目进展描述", "开始日期", "", "预计完成日期", "预计所需施工人数", "实际完成日期", "变更关联"];
+/** 任务表读数（按项目面板）：表头（15 列）+ 每行按 data-column 列名取数（不按下标，列序调整不再连坐）。 */
+const taskRowsExpr = (projectId) =>
+  "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("[data-workspace-task-head] [data-column]") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<rows.length;i+=1){var row=rows[i];var cell=function(key){var node=row.querySelector('[data-column=' + JSON.stringify(key) + ']');return node===null?'':node.textContent.trim();};var attr=function(name){var node=row.querySelector('[' + name + ']');return node===null?'':String(node.getAttribute(name));};var titleNode=row.querySelector(" + j("[data-workspace-task-title]") + ");var groupNode=row.querySelector(" + j("[data-workspace-task-group]") + ");out.push({id:String(row.getAttribute(" + j("data-workspace-task") + ")),title:cell(" + j("title") + "),titleText:titleNode===null?'':titleNode.textContent.trim(),group:attr(" + j("data-workspace-task-group") + "),groupText:groupNode===null?'':groupNode.textContent.trim(),manager:cell(" + j("manager") + "),owners:cell(" + j("owner") + "),status:cell(" + j("status") + "),statusKey:attr(" + j("data-workspace-task-status") + "),priority:cell(" + j("priority") + "),onTime:cell(" + j("onTime") + "),deliverable:cell(" + j("deliverable") + "),files:cell(" + j("files") + "),note:cell(" + j("note") + "),start:cell(" + j("start") + "),days:cell(" + j("days") + "),due:cell(" + j("due") + "),headcount:cell(" + j("headcount") + "),doneDate:cell(" + j("doneDate") + "),change:cell(" + j("change") + "),changeCount:attr(" + j("data-workspace-task-change") + "),dots:attr(" + j("data-workspace-task-dots") + ")});}return {table:true,heads:headTexts,rows:out};})()";
 /** 问题表读数（按项目面板）。 */
 const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var link=rows[i].querySelector(" + j("a") + ");var photoNodes=rows[i].querySelectorAll(" + j("[data-issue-photo]") + ");var photoNames=[];for(var p=0;p<photoNodes.length;p+=1){photoNames.push(String(photoNodes[p].getAttribute(" + j("data-issue-photo") + ")));}out.push({id:String(rows[i].getAttribute(" + j("data-workspace-issue") + ")),date:cells[0].textContent.trim(),title:cells[1].textContent.trim(),categories:cells[2].textContent.trim(),solution:cells[3].textContent.trim(),photosText:cells[4].textContent.trim(),photos:photoNodes.length,photoNames:photoNames,state:cells[5].textContent.trim(),href:link===null?" + j("") + ":link.getAttribute(" + j("href") + ")});}return {table:true,heads:headTexts,rows:out};})()";
 /** 空态 / 汇总行读数。 */
@@ -353,22 +385,38 @@ check("③b 最急的项目在最上（A 有逾期任务 → 排第一；B 第�
 check("③c 收起态 = 项目名称 + 编号（+ 摘要），且未展开时表体不在 DOM", panels0 !== null && panels0[0].open === "false" && panels0[0].expanded === "false" && panels0[0].rows === 0 && panels0[0].text.indexOf("回放·工作台A") >= 0 && panels0[0].text.indexOf(codeA) >= 0 && panels0[0].text.indexOf("共 3 项") >= 0 && panels0[0].text.indexOf("已逾期 1") >= 0 && panels0[0].text.indexOf("今日 1") >= 0, panels0 === null ? "null" : JSON.stringify(panels0[0]));
 check("③d B 面板收起态：项目名 + 编号 + 共 1 项", panels0 !== null && panels0[1].text.indexOf("回放·工作台B") >= 0 && panels0[1].text.indexOf(codeB) >= 0 && panels0[1].text.indexOf("共 1 项") >= 0, panels0 === null ? "null" : JSON.stringify(panels0[1]));
 
-// ---------- ④ 展开 A：任务表口径 ----------
+// ---------- ④ 展开 A：任务表口径（Push 231：项目页任务表全 15 列） ----------
 await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
 const expanded = await ev(panelsExpr());
 check("④a 点一下面板头 = 展开（data-open=true / aria-expanded=true / 表体出现）", expanded !== null && expanded[0].open === "true" && expanded[0].expanded === "true" && expanded[0].rows === 3, expanded === null ? "null" : JSON.stringify(expanded[0]));
+const fullReady = await waitFor("(function(){var node=document.querySelector(" + j('[data-workspace-task-table][data-workspace-task-full="true"]') + ");return node!==null;})()", 25000);
+check("④a1 扩列回填完成（data-workspace-task-full=true；15 列数据源全部就绪）", fullReady === true, String(fullReady));
 const rowsA = await ev(taskRowsExpr(projectA));
 const expectedOrder = [tOverdue.id, tToday.id, tUpcoming.id].join(",");
 check("④b 任务表 3 行、顺序 = 已逾期 → 今日 → 即将（最急在前）", rowsA !== null && rowsA.table === true && rowsA.rows.map((item) => item.id).join(",") === expectedOrder, rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
-check("④c 分组签 = 已逾期 / 今日待办 / 即将到期", rowsA !== null && rowsA.rows.map((item) => item.group).join("|") === "已逾期|今日待办|即将到期", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.group)));
+check("④c 分组签不展示（业务口径「这个不要展示」：行里不再挂已逾期 / 今日待办 / 即将到期色签；组序改由行序体现）", rowsA !== null && rowsA.rows.every((item) => item.group === "" && item.groupText === "" && item.title.indexOf("已逾期") < 0 && item.title.indexOf("今日待办") < 0 && item.title.indexOf("即将到期") < 0), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.group, item.groupText])));
 check("④d 状态签 = 项目页同款胶囊（服务端展示态：已延期 / 待开始 / 进行中）", rowsA !== null && rowsA.rows[0].status === "已延期" && rowsA.rows[0].statusKey === "overdue" && rowsA.rows[1].status === "待开始" && rowsA.rows[1].statusKey === "pending" && rowsA.rows[2].status === "进行中" && rowsA.rows[2].statusKey === "active", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.status, item.statusKey])));
-check("④e 日期三列 = 项目页同款短日期胶囊（逾期 -2 天 / 今天 / +3 天；开始 / 实际为空落「—」）", rowsA !== null && rowsA.rows.map((item) => item.due).join("|") === [DUE_OVERDUE, TODAY, DUE_UPCOMING].map(mdDate).join("|") && rowsA.rows.every((item) => item.start === "—" && item.actual === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.start, item.due, item.actual])));
+check("④e 日期三列 = 项目页同款短日期胶囊（开始 / 预计 / 实际；空值落「—」）", rowsA !== null && rowsA.rows.map((item) => item.start).join("|") === [mdDate(START_OVERDUE), mdDate(START_TODAY), "—"].join("|") && rowsA.rows.map((item) => item.due).join("|") === [DUE_OVERDUE, TODAY, DUE_UPCOMING].map(mdDate).join("|") && rowsA.rows.every((item) => item.doneDate === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.start, item.due, item.doneDate])));
 check("④f 四格进度点 = 项目页同款（0 / 0 / 0.5 —— 即将任务 50% 档）", rowsA !== null && rowsA.rows[0].dots === "0" && rowsA.rows[1].dots === "0" && rowsA.rows[2].dots === "0.5", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.dots)));
 check("④g 紧急重要度列 = 高 / 中 / 低", rowsA !== null && rowsA.rows.map((item) => item.priority).join("|") === "高|中|低", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.priority)));
-check("④h 任务主列 = 名称 + 阶段 / 英文名小行（B 项目面板块段落不串行）", rowsA !== null && rowsA.rows[0].title.indexOf("回放·逾期任务") >= 0 && rowsA.rows[0].title.indexOf("设计开发") >= 0 && rowsA.rows[2].title.indexOf("临时任务") >= 0, rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.title.slice(0, 40))));
+check("④h 任务主列 = 名称 + 阶段 / 英文名小行（B 项目面板块段落不串行）", rowsA !== null && rowsA.rows[0].titleText === "回放·逾期任务" && rowsA.rows[0].title.indexOf("设计开发") >= 0 && rowsA.rows[2].title.indexOf("临时任务") >= 0, rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.titleText)));
 check("④j 任务负责人列 = 「潘兴」（项目页同款玻璃小胶囊）", rowsA !== null && rowsA.rows.every((item) => item.owners === "潘兴"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.owners)));
 check("④k 「是否按时交付」列 = 逾期未交付 / — / —（displayStatus=overdue 的红签）", rowsA !== null && rowsA.rows.map((item) => item.onTime).join("|") === "逾期未交付|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.onTime)));
 check("④i 反例不出现：他人任务 / 已完成 / 7 天外 / 未排期（服务端已过滤，页面直接照单渲染）", rowsA !== null && [tOtherOwner.id, tDone.id, tFar.id, tUnscheduled.id].every((id) => rowsA.rows.every((item) => item.id !== id)), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
+// —— Push 231 扩列（业务口径「这些字段一个不能少」）：表头 15 列与项目页 TABLE_COLUMNS 全对齐 + 新列逐列对账
+check("④l 表头 = 项目页任务表全 15 列（同序；「预计所需天数」窄列表头为空）", rowsA !== null && rowsA.heads.join("|") === TASK_HEAD_EXPECTED.join("|"), rowsA === null ? "null" : JSON.stringify(rowsA.heads));
+check("④m 项目经理列 = 项目主数据责任人（A 项目 = 潘兴）", rowsA !== null && rowsA.rows.every((item) => item.manager === "潘兴"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.manager)));
+check("④n 输出成果文件列 = 首枚名 + 「+N」（CAD图纸+1 / 验收单 / —）", rowsA !== null && rowsA.rows.map((item) => item.deliverable).join("|") === "CAD图纸+1|验收单|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.deliverable)));
+check("④o 文件列 = 「N 份 + 未定档 N」（逾期任务直传 1 份 draft；无文件落「—」）", rowsA !== null && rowsA.rows[0].files.indexOf("1 份") >= 0 && rowsA.rows[0].files.indexOf("未定档 1") >= 0 && rowsA.rows[1].files === "—" && rowsA.rows[2].files === "—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.files)));
+check("④p 项目进展描述列 = note 原文 / 「—」", rowsA !== null && rowsA.rows[0].note === "回放·进展描述：图纸已出，等待评审" && rowsA.rows[1].note === "—" && rowsA.rows[2].note === "—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.note)));
+check("④q 预计所需天数窄列 = 显式 5 / 推算 3（含首尾）/ 无开始日期落 0（项目页同口径）", rowsA !== null && rowsA.rows.map((item) => item.days).join("|") === "5|3|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.days)));
+check("④r 预计所需施工人数列 = 6 人 / 3 人 / —", rowsA !== null && rowsA.rows.map((item) => item.headcount).join("|") === "6 人|3 人|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.headcount)));
+check("④s 变更关联列 = 空单元格 / 「变更」琥珀签（今日任务挂 1 条）/ 空", rowsA !== null && rowsA.rows[0].change === "" && rowsA.rows[0].changeCount === "0" && rowsA.rows[1].change === "变更" && rowsA.rows[1].changeCount === "1" && rowsA.rows[2].change === "" && rowsA.rows[2].changeCount === "0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.change, item.changeCount])));
+check("④t 扩列降级横幅不出现（两个项目的源接口都取到）", (await ev("document.querySelector(" + j("[data-workspace-task-partial]") + ") !== null")) === false, "partial=false");
+await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
+const rowsB = await ev(taskRowsExpr(projectB));
+check("④u 跨项目 B：1 行、项目经理 = 潘兴、吴孟杰（多值「、」连接）、其余扩列落「—」", rowsB !== null && rowsB.table === true && rowsB.rows.length === 1 && rowsB.rows[0].id === tB.id && rowsB.rows[0].manager === "潘兴、吴孟杰" && rowsB.rows[0].deliverable === "—" && rowsB.rows[0].files === "—" && rowsB.rows[0].note === "—" && rowsB.rows[0].headcount === "—" && rowsB.rows[0].changeCount === "0", rowsB === null ? "null" : JSON.stringify(rowsB.rows));
+await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 
 // ---------- ⑤ 切标签 ----------
 await clickSelector('[data-workspace-tab="raised"]');

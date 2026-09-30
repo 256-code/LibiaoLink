@@ -1,17 +1,22 @@
 /**
- * 工作台「我的任务」页（系统功能书 A6-01 / A6-03；M6-06 前端接线 · Push 230）。
+ * 工作台「我的任务」页（系统功能书 A6-01 / A6-03；M6-06 前端接线 · Push 230；任务表扩列 · Push 231）。
  *
  * 业务口径（2026-09-30）：「同样做标签导航栏 我的任务 我提出的问题先做这两个」→「是这个页面导航栏」（指任务模板页
  * 的下划线标签栏，本页照同一套材质 —— 文字 + 选中下划线、无图标）→「我的任务 是折叠面板 未展开是项目名称和编号
  * 下拉是具体我的任务」→「我提出的问题就参考日报的问题追踪即可 也是折叠面板」→「表格内容要全」（问题表照
  * 「问题追踪」的完整六列：日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理）→「直接把这个搬到
- * 我的任务不就好了」（任务表行口径照项目页任务表：四格进度点 / 负责人 / 状态 / 紧急重要度 / 逾期未交付 /
- * 开始·预计·实际日期；**只读** —— 工作台读面不带任务 version，不挂项目页那套点开编辑）。
+ * 我的任务不就好了」（任务表行口径照项目页任务表）→「这些字段一个不能少懂吗」（Push 231：任务表 = 项目页任务表
+ * 全 15 列 —— 任务描述 / 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 / 输出成果文件 / 文件 /
+ * 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 / 预计所需施工人数 / 实际完成日期 / 变更关联）。
+ * 表仍是**只读** —— 工作台读面不带任务 version，不挂项目页那套点开编辑。
  *
  * 数据：
  * - 读面 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）—— 跨项目个人读面，仅会话、无项目路径参数。
  *   三组任务并进本页「按项目」折叠面板：项目顺序 = 组序（已逾期 → 今日待办 → 即将到期）里的首次出现顺序
  *   （最急的在最上），组内保持服务端 plannedEnd 升序；分组 / 排序全由服务端给定，本页不做任何本地日期推导。
+ * - 任务表 15 列里聚合读面只带 9 列：项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 按时交付（onTime）/
+ *   变更关联**不在 A31 第一刀里** —— 按项目向源接口（GET /projects/{id}/tasks + GET /projects/{id}）回填，
+ *   按任务 / 项目 id 对齐（任务表要全，见 useTaskFull）。
  * - 「我提出的问题」四列（日期 / 描述 / 归类 / 状态）来自聚合读面；**「解决方案或建议 / 问题附图」不在 A31 第一刀里** ——
  *   按项目向源接口（GET /api/v1/projects/{id}/issues）回填，按问题 id 对齐（问题表要全，见 useIssueFull）。
  *
@@ -24,12 +29,14 @@ import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ISSUE_CATEGORY_CLASS, ISSUE_TAG_CLASS } from "./components/ReportIssuePanel";
-import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS } from "./components/TaskBoard";
+import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, resolveColumns, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
 import { TrackerDots } from "./components/Tracker";
+import { dateOnlyText, daysBetweenInclusive } from "./data/tasks";
 import type { ReportPhoto } from "./data/reports";
 import { usePhotoUrl } from "./fileApi";
+import { fetchProject } from "./projectApi";
 import { fetchProjectIssues, ISSUE_STATE_NAMES } from "./reportApi";
-import { displayStatusLabel, stageNameOf } from "./taskApi";
+import { displayStatusLabel, fetchProjectTasks, stageNameOf, type ApiTaskListItem } from "./taskApi";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
 import { projectViewHref, type WorkspaceTab } from "./useHashRoute";
 import type { MeResponse } from "./types";
@@ -48,8 +55,6 @@ type WorkspaceState = { kind: "loading" } | { kind: "error" } | { kind: "ready";
 /** 任务三组：本页展示顺序 = 最急的「已逾期」在最前（键名与契约 WorkspaceTasks 同源）。 */
 const TASK_GROUPS = ["overdue", "today", "upcoming"] as const;
 type TaskGroupKey = (typeof TASK_GROUPS)[number];
-
-const TASK_GROUP_LABEL: Record<TaskGroupKey, string> = { overdue: "已逾期", today: "今日待办", upcoming: "即将到期" };
 
 /** 任务分组色签（与项目总览状态色系同一张表：红 = 已逾期、琥珀 = 今天、天蓝 = 7 天内）。 */
 const TASK_GROUP_CHIP: Record<TaskGroupKey, string> = {
@@ -100,6 +105,19 @@ function issueStateOf(state: string): { label: string; className: string } {
     return { label: ISSUE_STATE_NAMES[state], className: ISSUE_TAG_CLASS[state] };
   }
   return { label: state, className: "bg-zinc-100 text-zinc-600" };
+}
+
+/** 「是否按时交付」列的逾期标注（与项目页任务表 lateDeliveryLabel 同口径；工作台不引项目页的 ProjectTask
+ *  模型，直接用聚合读面的 displayStatus + 回填行的 onTime）：展示态 = 已延期 → 「逾期未交付」；
+ *  已完成（done / early_done）但 onTime = false → 「逾期已交付」；其余走「按时交付 / —」。 */
+function lateDeliveryOf(displayStatus: string, onTime: boolean | null): "逾期未交付" | "逾期已交付" | null {
+  if (displayStatus === "overdue") {
+    return "逾期未交付";
+  }
+  if ((displayStatus === "done" || displayStatus === "early_done") && onTime === false) {
+    return "逾期已交付";
+  }
+  return null;
 }
 
 type ProjectTasks = {
@@ -196,6 +214,75 @@ function useIssueFull(issues: readonly ApiWorkspaceIssue[]): { full: Map<string,
   return { full, partial };
 }
 
+/** 「我的任务」任务表扩列（Push 231 · 业务口径「这些字段一个不能少」）：项目页任务表 15 列里，
+ *  工作台聚合读面（A31 第一刀）只带 9 列 —— 项目经理 / 输出成果文件 / 文件 / 项目进展描述 / 预计所需天数 /
+ *  预计所需施工人数 / 是否按时交付（onTime）/ 变更关联不在那里。按项目向源接口回填
+ *  （GET /projects/{id}/tasks 一次取满 + GET /projects/{id} 取项目经理名），按任务 id / 项目 id 对齐；
+ *  单个项目取不到不挡全页：对应列落「—」，标题行给 partial 提示（与 useIssueFull 同一套降级口径）。 */
+type TaskFull = {
+  /** 任务 id → 列表行（含 ownerNames / fileSummary / deliverableTypes / note / estimatedDays / headcount / onTime / changeLinks）。 */
+  detail: Map<string, ApiTaskListItem>;
+  /** 项目 id → 项目经理名数组（展示时「、」连接；未取到 = 无该键）。 */
+  managers: Map<string, string[]>;
+};
+
+function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; ready: boolean } {
+  const [full, setFull] = useState<TaskFull>(() => ({ detail: new Map(), managers: new Map() }));
+  const [partial, setPartial] = useState(false);
+  /** 回填是否跑完（成功 / 失败都算跑完）：e2e 的等待锚点；跑完前对应列先按「—」渲染。 */
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming];
+    if (all.length === 0) {
+      setFull({ detail: new Map(), managers: new Map() });
+      setPartial(false);
+      setReady(true);
+      return;
+    }
+    let cancelled = false;
+    setReady(false);
+    void (async () => {
+      const projectIds = Array.from(new Set(all.map((task) => task.projectId)));
+      const results = await Promise.all(
+        projectIds.map(async (projectId) => {
+          const [taskList, managerNames] = await Promise.all([
+            fetchProjectTasks(projectId).then((result) => result.items).catch(() => null),
+            fetchProject(projectId).then((project) => project.managerNames).catch(() => null),
+          ]);
+          return { projectId, taskList, managerNames };
+        }),
+      );
+      if (cancelled) {
+        return;
+      }
+      const detail = new Map<string, ApiTaskListItem>();
+      const managers = new Map<string, string[]>();
+      let failed = 0;
+      for (const result of results) {
+        if (result.taskList === null) {
+          failed += 1;
+        } else {
+          for (const item of result.taskList) {
+            detail.set(item.id, item);
+          }
+        }
+        if (result.managerNames === null) {
+          failed += 1;
+        } else {
+          managers.set(result.projectId, result.managerNames.filter((name): name is string => name !== null && name !== ""));
+        }
+      }
+      setFull({ detail, managers });
+      setPartial(failed > 0);
+      setReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+  return { full, partial, ready };
+}
+
 /** 折叠面板（业务口径「未展开是项目名称和编号 下拉是具体我的任务」「也是折叠面板」）：
  *  收起 = 项目名称 + 编号（+ 右侧摘要）；展开 = 该项目下的内容（任务表 / 问题表）。
  *  展开态是本页本地状态（不进地址）；面板壳 = 白卡 + 圆角描边 + 行悬停（与站内表格壳同一套材质）。 */
@@ -248,83 +335,197 @@ function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
   );
 }
 
-/** 展开区 ① 我的任务表：行口径直接照项目页任务表搬（业务口径「直接把这个搬到我的任务不就好了」）——
- *  任务描述 + 四格进度点 / 分组 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 / 开始日期 / 预计完成日期 /
- *  实际完成日期。只读形态（工作台读面不带 version）：状态 / 紧急 / 负责人 / 日期借项目页的形，不挂点开编辑；
- *  项目页有、本项目读面没有的列（项目经理 / 成果文件 / 文件 / 进展描述 / 变更关联）不画空列，随读面扩列再接。 */
-function TaskTable({ items }: { items: ProjectTasks["items"] }) {
+/** 展开区 ① 我的任务表：列口径 = 项目页任务表全列（Push 231 · 业务口径「这些字段一个不能少」）——
+ *  表头 / 列壳直接复用项目页的 TABLE_COLUMNS（同序 / 同宽 / 同 min，列宽用 grid 模板还原），15 列一个不少：
+ *  任务描述（+ 四格进度点；原「已逾期 / 今日待办 / 即将到期」分组签按业务口径「这个不要展示」已下线，
+ *  组序仍由服务端给定、由行序体现）/ 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 /
+ *  输出成果文件 / 文件 / 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 /
+ *  预计所需施工人数 / 实际完成日期 / 变更关联。只读形态（工作台读面不带 version）：借项目页的形
+ *  （色签 / 玻璃胶囊 / 空值「—」），不挂点开编辑；数据 = 聚合读面的 9 列 + useTaskFull 回填的扩展字段。 */
+const TASK_COLUMNS: ColumnDef[] = resolveColumns({});
+
+function TaskTable({ projectId, items, full, ready }: {
+  projectId: string;
+  items: ProjectTasks["items"];
+  /** 回填的扩展字段（useTaskFull）。 */
+  full: TaskFull;
+  /** 回填是否跑完（data-workspace-task-full 锚点；跑完前对应列先按「—」渲染）。 */
+  ready: boolean;
+}) {
+  const gridTemplate = TASK_COLUMNS.map((column) => column.width).join(" ");
+  const minWidth = TASK_COLUMNS.reduce((total, column) => total + column.min, 0);
+  const managerText = (full.managers.get(projectId) ?? []).join("、");
   return (
-    <div data-workspace-task-table="" className="overflow-x-auto rounded-lg border border-zinc-200">
-      <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
-        <thead className="bg-zinc-50 text-zinc-500">
-          <tr>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">任务描述</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">分组</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">任务负责人</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">任务状态</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">紧急重要度</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">是否按时交付</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">开始日期</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">预计完成日期</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">实际完成日期</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100">
-          {items.map(({ group, task }) => {
-            const status = displayStatusLabel(task.displayStatus);
-            const stage = stageNameOf(task.stageKey);
-            const subtitle = (stage === "" ? "临时任务" : stage) + (task.titleEn === null || task.titleEn === "" ? "" : " · " + task.titleEn);
-            const ownerText = task.ownerNames.map((name) => name ?? "").filter((name) => name !== "").join("、");
-            const priorityClass =
-              task.priority === null ? "" : ((PRIORITY_CAPSULE_CLASS as Record<string, string | undefined>)[task.priority] ?? "bg-zinc-100 text-zinc-500");
-            return (
-              <tr key={task.id} data-workspace-task={task.id} className="align-middle transition-colors hover:bg-zinc-50/80">
-                <td className="min-w-[300px] px-4 py-3">
-                  <span className="flex min-w-0 items-center gap-4">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === null ? "" : " / " + task.titleEn)}>{task.title}</span>
-                      {subtitle === "" ? null : <span className="mt-0.5 block max-w-[280px] truncate text-[11px] leading-4 text-zinc-400">{subtitle}</span>}
-                    </span>
-                    <span data-workspace-task-dots={String(task.progress)} className="shrink-0">
-                      <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读展示：不接悬停预览 */ }} />
-                    </span>
-                  </span>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP[group]}>{TASK_GROUP_LABEL[group]}</span>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  {task.ownerIds.length === 0 ? (
+    <div data-workspace-task-table="" data-workspace-task-full={ready ? "true" : "false"} className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+      <div className="overflow-x-auto">
+        <div style={{ minWidth: minWidth }}>
+          <div
+            data-workspace-task-head=""
+            className="grid items-center border-b border-zinc-200 bg-zinc-50 px-5 py-2.5 text-xs font-medium text-zinc-400"
+            style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
+          >
+            {TASK_COLUMNS.map((column) =>
+              column.key === "title" ? (
+                <span key={column.key} data-column={column.key} className="truncate">{column.label}</span>
+              ) : (
+                <span key={column.key} data-column={column.key} title={column.label === "" ? undefined : column.label} className={"truncate text-center " + (column.headerClass ?? "")}>
+                  {column.header ?? column.label}
+                </span>
+              ),
+            )}
+          </div>
+          <div className="divide-y divide-zinc-100">
+            {items.map(({ task }) => {
+              const detail = full.detail.get(task.id);
+              const status = displayStatusLabel(task.displayStatus);
+              const stage = stageNameOf(task.stageKey);
+              const subtitle = (stage === "" ? "临时任务" : stage) + (task.titleEn === null || task.titleEn === "" ? "" : " · " + task.titleEn);
+              const ownerText = task.ownerNames.map((name) => name ?? "").filter((name) => name !== "").join("、");
+              const priorityClass =
+                task.priority === null ? "" : ((PRIORITY_CAPSULE_CLASS as Record<string, string | undefined>)[task.priority] ?? "bg-zinc-100 text-zinc-500");
+              const onTime = detail === undefined ? null : detail.onTime;
+              const late = lateDeliveryOf(task.displayStatus, onTime);
+              const deliverableTypes = detail === undefined ? [] : detail.deliverableTypes;
+              const fileSummary = detail === undefined ? null : detail.fileSummary;
+              const note = detail === undefined ? null : detail.note;
+              const derivedDays = task.plannedStart !== null && task.plannedEnd !== null ? daysBetweenInclusive(task.plannedStart, task.plannedEnd) : 0;
+              const days = (detail === undefined ? null : detail.estimatedDays) ?? derivedDays;
+              const headcount = detail === undefined ? null : detail.headcount;
+              const changes = detail === undefined ? [] : detail.changeLinks;
+              const changeTitle =
+                changes.length === 0
+                  ? undefined
+                  : changes.map((change) => "变更 " + dateOnlyText(change.appliedAt) + (change.reason === null || change.reason === "" ? "" : "（" + change.reason + "）")).join("；");
+              const cells: Record<Exclude<ColumnKey, "title">, ReactNode> = {
+                manager:
+                  managerText === "" ? (
+                    <span className="text-xs text-zinc-300">—</span>
+                  ) : (
+                    <span className="truncate text-xs text-zinc-600" title={managerText}>{managerText}</span>
+                  ),
+                owner:
+                  task.ownerIds.length === 0 ? (
                     <span className="text-xs text-zinc-300">待分配</span>
                   ) : (
-                    <span className={GLASS_FRAME + " text-zinc-600"} title={ownerText}>{ownerText}</span>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  <span data-workspace-task-status={task.displayStatus} className={"inline-block rounded-lg px-3 py-1.5 text-[11px] font-medium " + STATUS_CAPSULE_CLASS[status]}>{status}</span>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  {task.priority === null ? (
+                    <span className={GLASS_FRAME + " min-w-0 text-zinc-600"} title={ownerText}>
+                      <span className="min-w-0 truncate">{ownerText}</span>
+                    </span>
+                  ),
+                status: (
+                  <span data-workspace-task-status={task.displayStatus} className={"inline-block rounded-lg px-3 py-1.5 text-[11px] font-medium " + STATUS_CAPSULE_CLASS[status]}>
+                    {status}
+                  </span>
+                ),
+                priority:
+                  task.priority === null ? (
                     <span className="text-xs text-zinc-300">—</span>
                   ) : (
                     <span className={"inline-block rounded-lg px-3 py-1.5 text-[11px] font-medium " + priorityClass}>{task.priority}</span>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  {task.displayStatus === "overdue" ? (
-                    <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
-                  ) : (
+                  ),
+                onTime: (
+                  <span>
+                    {late === "逾期未交付" ? (
+                      <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
+                    ) : late === "逾期已交付" ? (
+                      <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
+                    ) : onTime === null ? (
+                      <span className="text-xs text-zinc-300">—</span>
+                    ) : (
+                      <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">按时交付</span>
+                    )}
+                  </span>
+                ),
+                deliverable: (
+                  <span className="flex min-w-0 items-center gap-1">
+                    {deliverableTypes.length === 0 ? (
+                      <span className="text-xs text-zinc-300">—</span>
+                    ) : (
+                      <>
+                        <span className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600" title={deliverableTypes.join("、")}>
+                          {deliverableTypes[0]}
+                        </span>
+                        {deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{deliverableTypes.length - 1}</span> : null}
+                      </>
+                    )}
+                  </span>
+                ),
+                files:
+                  fileSummary === null || fileSummary.total === 0 ? (
                     <span className="text-xs text-zinc-300">—</span>
+                  ) : (
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span
+                        className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600"
+                        title={"共 " + String(fileSummary.total) + " 份（未定档 " + String(fileSummary.draft) + " / 已定档 " + String(fileSummary.final) + "）"}
+                      >
+                        {fileSummary.total} 份
+                      </span>
+                      {fileSummary.draft > 0 ? <span className="text-[10px] text-amber-600">未定档 {fileSummary.draft}</span> : null}
+                    </span>
+                  ),
+                note:
+                  note === null || note === "" ? (
+                    <span className="text-xs text-zinc-300">—</span>
+                  ) : (
+                    <span className="block min-w-0 truncate text-xs text-zinc-600" title={note}>{note}</span>
+                  ),
+                start: <DatePill iso={task.plannedStart} />,
+                days: (
+                  <span data-workspace-task-days={String(days)} className="relative flex items-center justify-center self-stretch">
+                    <span className="h-px w-10 bg-zinc-300" />
+                    <span className="absolute inset-x-0 bottom-1/2 mb-1 text-center text-[11px] leading-none tabular-nums text-zinc-500">{days}</span>
+                  </span>
+                ),
+                due: <DatePill iso={task.plannedEnd} />,
+                headcount: (
+                  <span className="text-xs tabular-nums text-zinc-600">
+                    {headcount !== null && headcount > 0 ? headcount + " 人" : <span className="text-zinc-300">—</span>}
+                  </span>
+                ),
+                doneDate: <DatePill iso={task.actualEnd} />,
+                change: (
+                  <span data-workspace-task-change={String(changes.length)} className="flex items-center gap-1" title={changeTitle}>
+                    {changes.length === 0 ? null : (
+                      <>
+                        <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">变更</span>
+                        {changes.length > 1 ? <span className="text-[10px] text-zinc-400">+{changes.length - 1}</span> : null}
+                      </>
+                    )}
+                  </span>
+                ),
+              };
+              return (
+                <div
+                  key={task.id}
+                  data-workspace-task={task.id}
+                  className="grid items-center px-5 py-2.5 transition-colors hover:bg-zinc-50/80"
+                  style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
+                >
+                  {TASK_COLUMNS.map((column) =>
+                    column.key === "title" ? (
+                      <div key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-4 self-stretch">
+                        <div className="min-w-0 flex-1">
+                          <p data-workspace-task-title="" className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === null ? "" : " / " + task.titleEn)}>
+                            {task.title}
+                          </p>
+                          {subtitle === "" ? null : <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subtitle}>{subtitle}</p>}
+                        </div>
+                        <span data-workspace-task-dots={String(task.progress)} className="shrink-0">
+                          <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读展示：不接悬停预览 */ }} />
+                        </span>
+                      </div>
+                    ) : (
+                      <div key={column.key} data-column={column.key} className="flex min-w-0 items-center justify-center self-stretch">
+                        {cells[column.key]}
+                      </div>
+                    ),
                   )}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3"><DatePill iso={task.plannedStart} /></td>
-                <td className="whitespace-nowrap px-4 py-3"><DatePill iso={task.plannedEnd} /></td>
-                <td className="whitespace-nowrap px-4 py-3"><DatePill iso={task.actualEnd} /></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -501,10 +702,11 @@ const TABS: ReadonlyArray<{ key: WorkspaceTab; label: string }> = [
   { key: "raised", label: "我提出的问题" },
 ];
 
-/** 标签 ① 我的任务：按项目的折叠面板 + 三组任务表。 */
+/** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。 */
 function MyTasksView({ data }: { data: ApiWorkspace }) {
   const projects = groupTasksByProject(data);
   const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length;
+  const { full, partial, ready } = useTaskFull(data);
   return (
     <section data-workspace-tasks="" className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -512,6 +714,11 @@ function MyTasksView({ data }: { data: ApiWorkspace }) {
         <span data-workspace-task-total="" className="text-xs text-zinc-400">
           {"共 " + String(total) + " 项 · 跨 " + String(projects.length) + " 个项目 · 基准日 " + cnDateFull(data.today)}
         </span>
+        {partial ? (
+          <span data-workspace-task-partial="" className="text-xs text-amber-600">
+            有项目的任务全列（项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 变更关联）没取到（那几列显示「—」）—— 刷新重试。
+          </span>
+        ) : null}
       </div>
       {projects.length === 0 ? (
         <EmptyCard text="当前没有需要推进的任务。" hint="口径：任务负责人含我、未完成、预计完成日期在今天起 7 天内（含已逾期）；未排期与更远的任务不进这里。" />
@@ -525,7 +732,7 @@ function MyTasksView({ data }: { data: ApiWorkspace }) {
               projectName={project.projectName}
               summary={<TaskPanelSummary items={project.items} />}
             >
-              <TaskTable items={project.items} />
+              <TaskTable projectId={project.projectId} items={project.items} full={full} ready={ready} />
             </ProjectPanel>
           ))}
         </div>
