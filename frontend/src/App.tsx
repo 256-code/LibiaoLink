@@ -3,6 +3,7 @@ import Hub from "./Hub";
 import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
+import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
@@ -22,7 +23,7 @@ import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./dir
 import { createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
-import { useHashRoute } from "./useHashRoute";
+import { replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
 
 type ViewState =
@@ -530,11 +531,11 @@ export default function App() {
   }
 
   if (route.kind === "workspace") {
-    // 路由已转正式（Push 229）；「我的任务」页面（我的任务三组 + 我负责的问题两栏，GET /api/v1/workspace）
-    // 随接线那一刀替换本临时占位（接口已封：frontend/src/workspaceApi.ts）。
+    // 工作台「我的任务」页（Push 230 起正式落地）：两个标签（我的任务 / 我提出的问题）+ 按项目的折叠面板，
+    // 数据 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）；标签走地址（?tab=，见 useHashRoute）。
     return (
       <>
-        <PlaceholderPage me={state.me} page="my-tasks" section={null} canManageBlueprint={canManageBlueprint} />
+        <WorkspacePage me={state.me} tab={route.tab} onChangeTab={replaceWorkspaceTab} />
         {bottomBars}
       </>
     );
