@@ -92,6 +92,14 @@ type TaskWriteRequest = Pick<
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
 const CHANGE_SUMMARY_MAX = 40;
 
+/**
+ * 任务完成「必交成果文件」门禁总开关（业务口径 2026-09-30：暂时不要这个约束功能）：
+ * false = 任务完成不再校验必交成果文件缺件（单条编辑 / 批量 / 进度 / 完成提交四条写入路径同口径），预检恒放行（missing 恒空）；
+ * draft 成果文件的放行提醒（R02）不受影响；节点完成 / 阶段推进 / 归档的同类门禁不随本开关。
+ * 恢复门禁：把本常量改回 true 即可（判定与留痕逻辑原样保留，无需改其它代码）。
+ */
+const TASK_COMPLETION_DOC_GATE_ENABLED: boolean = false;
+
 /** 门禁拒绝的内部信号（事务回滚后补写留痕，再转 422 契约错误）—— 与 FlowService 同模式。 */
 class GateRejectedSignal extends Error {
   constructor(
@@ -843,6 +851,7 @@ export class TaskService {
   /**
    * GET /projects/{id}/tasks/{taskId}/can-complete：完成任务预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。
    * 门禁口径（ADR-024 / A4-20）：有节点任务按所属节点 node_requirements 判定；无节点任务按自身 deliverable_types 兜底（每类 ≥ 1 份）。
+   * 【暂时下线 · 2026-09-30】缺件不拦截（见 TASK_COMPLETION_DOC_GATE_ENABLED）：预检随缺件恒空而恒放行（missing 恒空）；draft 提醒保留。
    */
   async canComplete(projectId: string, taskId: string): Promise<TaskCanCompleteResponse> {
     await this.loadProjectOrFail(projectId);
@@ -858,6 +867,7 @@ export class TaskService {
   /**
    * POST /projects/{id}/tasks/{taskId}/complete：任务完成提交（M3-03 · PoC 9 后半）。
    * 事务内乐观锁 + 门禁强校验；缺件 422 TASK_REQUIRED_DOC_MISSING（拒绝也留痕）；存在 draft 成果文件放行 + warning 并触发 R02。
+   * 【暂时下线 · 2026-09-30】缺件不再 422（见 TASK_COMPLETION_DOC_GATE_ENABLED）；draft 放行 + warning（R02）保留。
    */
   async complete(projectId: string, taskId: string, body: TaskCompleteBody, actorId: string): Promise<TaskCompleteResponse> {
     await this.loadProjectForWrite(projectId);
@@ -939,16 +949,22 @@ export class TaskService {
   /**
    * 门禁判定（ADR-024 / A4-20）：有节点任务按所属节点 node_requirements 逐类统计；无节点任务按自身 deliverable_types 兜底（每类 ≥ 1 份）。
    * 定档口径：files.status ∈ (final, changed) 且 current_version_id 非空；draft 单独计数作放行提示（R02）。
+   * 【暂时下线 · 2026-09-30】缺件判定整体短路（恒空清单 = 放行，见 TASK_COMPLETION_DOC_GATE_ENABLED）；draft 放行提示（R02）保留；恢复 = 常量改回 true。
    */
   private async evaluateGate(
     client: DbClient,
     task: TaskCompletionTargetRow,
   ): Promise<{ missing: TaskGateMissing[]; warnings: TaskGateWarning[] }> {
+    const scope: TaskGateScope = task.nodeId !== null ? { nodeId: task.nodeId } : { taskId: task.id };
+    // 门禁暂时下线（业务口径 2026-09-30，见 TASK_COMPLETION_DOC_GATE_ENABLED）：缺件恒放行 —— 要求 / 定档计数两处查询整体跳过；
+    // draft 放行提示（R02）照旧。恢复门禁 = 常量改回 true，下面的判定逻辑原样保留、无需改动。
+    if (!TASK_COMPLETION_DOC_GATE_ENABLED) {
+      return { missing: [], warnings: buildDraftWarnings(await this.gate.countDraftFiles(client, scope)) };
+    }
     const requirements: { docType: string; minCount: number }[] =
       task.nodeId !== null
         ? await this.gate.listNodeDocRequirements(client, task.nodeId)
         : normalizeDocTypes(task.deliverableTypes).map((docType) => ({ docType, minCount: 1 }));
-    const scope: TaskGateScope = task.nodeId !== null ? { nodeId: task.nodeId } : { taskId: task.id };
     const presentByType = new Map((await this.gate.countFinalFiles(client, scope)).map((row) => [row.docType, row.present]));
     const missing: TaskGateMissing[] = [];
     for (const requirement of requirements) {
@@ -967,7 +983,7 @@ export class TaskService {
     return { missing, warnings };
   }
 
-  /** 事务内门禁强校验：缺件 → GateRejectedSignal（422 + missing）；通过 → 放行提示（R02）。拒绝留痕由调用方在事务外补写。 */
+  /** 事务内门禁强校验：缺件 → GateRejectedSignal（422 + missing）；通过 → 放行提示（R02）。拒绝留痕由调用方在事务外补写。【暂时下线 · 2026-09-30】evaluateGate 缺件恒空 → 本方法实际只剩放行提示；拒绝分支保留备恢复（见 TASK_COMPLETION_DOC_GATE_ENABLED）。 */
   private async assertCompletionGate(client: DbClient, task: TaskRow, at: Date, actorId: string): Promise<TaskGateWarning[]> {
     const gate = await this.evaluateGate(client, task);
     if (gate.missing.length > 0) {

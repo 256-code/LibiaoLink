@@ -34,6 +34,8 @@
 
 ## 完成门禁（M3-03 · Push 143）
 
+> 【暂时下线 · 2026-09-30】业务口径「暂时不要这个约束功能」：缺件不再拦截完成（单条 / 批量 / 进度 / 完成提交四条写入路径同口径），预检 `can-complete` 恒放行（`missing` 恒空）；draft 放行提示（R02）保留；节点完成 / 阶段推进 / 归档的同类门禁不随本开关。开关 = `task.service.ts` 常量 `TASK_COMPLETION_DOC_GATE_ENABLED`（恢复改回 true）；本节以下描述为门禁恢复后的口径。
+
 > 口径来源：系统功能书 A4-20 / A2-10、ADR-024（成果文件多选与门禁）、技术设计v0.3 §3.4。
 
 - 契约：`GET /projects/{id}/tasks/{taskId}/can-complete`（预检：`canComplete` + `missing[]` + `warnings[]`）、`POST …/complete`（提交：`{ task, warnings }`）；错误码新增 422 `TASK_REQUIRED_DOC_MISSING`（缺件）与 409 `TASK_ALREADY_DONE`（重复提交）；`Task.deliverableTypes: DocType[]`（数组、服务端去重、空数组 = 不要求）。
