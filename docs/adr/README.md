@@ -40,7 +40,7 @@
 | ADR-027 | 项目归档 | 冻结状态位（archived 写保护）+ 引用式归档清单；不做全库快照表；导出包属二期 C4-04 | 需要归档版本化或跨系统交付导出包 | 草案 |
 | ADR-028 | 时区口径 | 业务统一 Asia/Shanghai；日界在应用层计算 + ClockService 注入；cron 同口径；存储仍 timestamptz | 海外项目需按项目时区解释「今天 / 逾期」 | 草案 |
 | ADR-029 | 搜索分词 | 一期 pg_trgm 双字切分（零部署）；zhparser 仅作 M7 前 PoC 备选（可修订，复审 = M7 开工前） | 召回 / 精度不达标，或需要同义词 / 纠错 | 草案 |
-| ADR-030 | Office 在线预览改由 ONLYOFFICE 承接 | 查看器形态（mode=view · 只读 · 服务端锁死不做编辑）；只替换 Office 预览链（PDF / 图片 / CAD / 下载链不动）；预览拉取链无预签名（受控端点 + outbox Bearer JWT） | 编辑需求重启（A4-19 / D2-09）须新增 ADR；S3 受控端点不可行回计划重开 N2 | 草案（Proposed） |
+| ADR-030 | Office 在线预览改由 ONLYOFFICE 承接 | 查看器形态（mode=view · 只读 · 服务端锁死不做编辑）；只替换 Office 预览链（PDF / 图片 / CAD / 下载链不动）；预览拉取链无预签名（受控端点 + outbox Bearer JWT） | 编辑需求重启（A4-19 / D2-09）须新增 ADR；S3 受控端点不可行回计划重开 N2 | 已采纳（Accepted · 2026-09-30：随 PR #247 / Push 238 合并 main） |
 
 ## 模板与编写规则
 

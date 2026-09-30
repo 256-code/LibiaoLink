@@ -48,6 +48,10 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
         aria-label={ariaLabel}
         aria-expanded={open}
         title={title}
+        data-inline-cell={
+          // 测试钩子（Push 226）：回放脚本据 [data-inline-cell=editor] 取「同款」参照；bare（裸框）模式另标。
+          bare ? "bare" : "editor"
+        }
         onClick={(event) => {
           event.stopPropagation();
           setOpen((previous) => !previous);

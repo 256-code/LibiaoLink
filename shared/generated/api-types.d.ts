@@ -3403,7 +3403,55 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** 文件改名（只改元数据名称；乐观锁 version 必传） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileRenameBody"];
+                };
+            };
+            responses: {
+                /** @description 改名后的文件 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["File"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/api/v1/files/{id}/versions": {
@@ -7310,6 +7358,15 @@ export interface components {
         FileRecycleBody: {
             version: components["schemas"]["Version"];
             reason?: string;
+        };
+        /** @description 文件改名（Push 226 续：文件名可修改；乐观锁 version 必传；回收站中的文件不可改名） */
+        FileRenameBody: {
+            /**
+             * @description 新文件名（原文件名的元数据改名：不动内容 / 版本链 / 定档状态）
+             * @example 机械设计图纸-v3.docx
+             */
+            name: string;
+            version: components["schemas"]["Version"];
         };
         FileRestoreBody: {
             version: components["schemas"]["Version"];
