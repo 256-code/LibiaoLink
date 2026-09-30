@@ -6,13 +6,26 @@ import { DatabaseService } from "../../db/database.service.js";
 import { appendOutboxIfAbsent } from "../../db/outbox.js";
 import { ObjectStorage } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
+import { UserService } from "../identity/index.js";
 import { PermissionService } from "../permission/index.js";
 import { FileRepository, type FileRow, type FileVersionRow } from "./file.repository.js";
+import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
-import { previewTargetsFor } from "./preview.targets.js";
+import { previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
+
+/** 查看器权限段（固定只读；S8-2 契约 / 首关 PoC 口径 —— download=false 只约束查看器自身，防直取依赖受控端点鉴权）。 */
+const VIEWER_PERMISSIONS = {
+  edit: false,
+  download: false,
+  print: false,
+  comment: false,
+  chat: false,
+  fillForms: false,
+  protect: true,
+};
 
 /**
  * 预览读 API（M4-05 读面 · `GET /files/{id}/preview` · 契约 shared/src/modules/files.ts）。
@@ -27,6 +40,9 @@ type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
  * - 文件尚无版本（未完成过上传）：`failed` + 「尚无版本」；
  * - 判不出渲染通道（如 `.zip`）：`failed` + 「暂不支持在线预览」。
  * 两者都返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
+ *
+ * 查看器通道（S3 · ADR-030）：Office / 文本族 ready 为「无转换产物」形态 —— `viewer` 非空、`target` / `url` 空，
+ * 与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置 + 审计。
  *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
  * 版本 404：`versionId` 给定但不属于该文件 / 不存在（A4-06「任意历史版本可预览」，缺省 = 当前版本）。
@@ -43,6 +59,7 @@ export class PreviewReadService {
     private readonly previews: PreviewRepository,
     private readonly storage: ObjectStorage,
     private readonly permission: PermissionService,
+    private readonly users: UserService,
     private readonly audit: AuditService,
     private readonly config: AppConfig,
   ) {}
@@ -57,6 +74,11 @@ export class PreviewReadService {
 
     const targets = previewTargetsFor({ fileName: file.name, mime: version.mime });
     if (targets.length === 0) {
+      // S3（ADR-030）：Office / 文本族 → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
+      const viewerChannel = viewerChannelFor({ fileName: file.name, mime: version.mime });
+      if (viewerChannel !== null) {
+        return this.serveViewer(file, version, viewerChannel, actorId);
+      }
       return this.degrade(file.id, version.id, "该文件类型暂不支持在线预览，请下载查看");
     }
 
@@ -169,6 +191,89 @@ export class PreviewReadService {
       reason: null,
       generatedAt: row.generatedAt === null ? null : row.generatedAt.toISOString(),
     };
+  }
+
+  /**
+   * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token）+ 写**一条** `action = preview`
+   * 审计（D2-07 语义不变 —— 审计记在签发时点，端点拉取是服务间行为不落用户审计）。与产物通道互斥：
+   * `target` / `url` / `expiresAt` / `pipelineVersion` / `generatedAt` 全空（查看器不产产物、不占缓存三元组）；
+   * `document.url` = 受控端点绝对 URL（C1：与校验侧同源生成、不信任 Host 头；不含任何存储凭证）；
+   * `document.key` = 内容哈希（同内容同 key —— DocServer 侧会话 / 缓存复用）。
+   */
+  private async serveViewer(
+    file: FileRow,
+    version: FileVersionRow,
+    channel: ViewerChannel,
+    actorId: string,
+  ): Promise<FilePreviewResponse> {
+    const secret = this.config.env.ONLYOFFICE_JWT_SECRET;
+    if (secret === "") {
+      // 安全定稿 §3.6：缺密钥 fail closed —— 不签发无签名配置（查看器打不开，胜过形同虚设的 token）。
+      throw new AppError("INTERNAL", "ONLYOFFICE_JWT_SECRET 未配置，无法签发查看器配置（fail closed）");
+    }
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const document = {
+      title: file.name,
+      url: buildPreviewContentUrl(this.config.env.ONLYOFFICE_DOCSERVER_API_BASE_URL, file.id, version.id),
+      fileType: channel.fileType,
+      key: version.contentHash,
+    };
+    const editorConfig = {
+      mode: "view" as const,
+      lang: "zh-CN",
+      user: { id: actorId, name: await this.displayNameOf(actorId) },
+    };
+    // token 载荷 = 四段逐字签发（S8-2）+ iat / exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS，契约不含该字段）。
+    const token = signHs256Jwt(
+      {
+        documentType: channel.documentType,
+        document,
+        editorConfig,
+        permissions: { ...VIEWER_PERMISSIONS },
+        iat: issuedAt,
+        exp: issuedAt + this.config.env.ONLYOFFICE_JWT_TTL_SECONDS,
+      },
+      secret,
+    );
+    await this.audit.record(this.database.db, {
+      actorId,
+      action: "preview",
+      objectType: "file",
+      objectId: file.id,
+      projectId: file.projectId,
+      summary: "预览文件：" + file.name + "（版本 v" + version.seq + " · ONLYOFFICE 查看器）",
+      metadata: { versionId: version.id, viewerKind: "onlyoffice", documentType: channel.documentType },
+    });
+    return {
+      fileId: file.id,
+      versionId: version.id,
+      status: "ready",
+      target: null,
+      viewer: {
+        kind: "onlyoffice",
+        docServerUrl: this.config.env.ONLYOFFICE_DOCSERVER_URL,
+        documentType: channel.documentType,
+        document,
+        editorConfig,
+        permissions: { ...VIEWER_PERMISSIONS },
+        token,
+      },
+      url: null,
+      expiresAt: null,
+      pipelineVersion: null,
+      reason: null,
+      generatedAt: null,
+    };
+  }
+
+  /** 查看器会话展示名：取不到（账号已删 / 未同步）退化 actorId —— 展示用，不参与鉴权。 */
+  private async displayNameOf(actorId: string): Promise<string> {
+    try {
+      const user = await this.users.getUser(actorId);
+      return user.displayName === "" ? actorId : user.displayName;
+    } catch {
+      return actorId;
+    }
   }
 
   /**

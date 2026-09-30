@@ -3577,7 +3577,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 原文件字节流（Content-Type = 版本 mime；Content-Disposition: inline；Cache-Control: no-store） */
+                /** @description 原文件字节流（Content-Type = 版本 mime；Content-Length；Content-Disposition: inline；Cache-Control: no-store；X-Content-Type-Options: nosniff；禁止 302 到预签名 —— 无重定向、不回退预签名） */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -3606,6 +3606,15 @@ export interface paths {
                 };
                 /** @description 仅接受 GET（其余方法显式 405，不进业务逻辑） */
                 405: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 存储返回异常响应（fail-closed：不重定向、不回退预签名） */
+                502: {
                     headers: {
                         [name: string]: unknown;
                     };

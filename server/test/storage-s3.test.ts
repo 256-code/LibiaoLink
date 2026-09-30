@@ -326,7 +326,9 @@ describe("环境变量契约（对象存储）", () => {
   it("生产环境必须配置访问密钥", () => {
     const base = { NODE_ENV: "production", DATABASE_URL: "postgres://x/y", CASDOOR_CLIENT_ID: "a", CASDOOR_CLIENT_SECRET: "b", CASDOOR_ORG_NAME: "c", INTERNAL_SYNC_TOKEN: "d" };
     expect(() => loadEnv(base)).toThrow(/S3_ACCESS_KEY/);
-    expect(loadEnv({ ...base, S3_ACCESS_KEY: "k", S3_SECRET_KEY: "s" }).S3_BUCKET).toBe("libiaolink");
+    expect(
+      loadEnv({ ...base, S3_ACCESS_KEY: "k", S3_SECRET_KEY: "s", ONLYOFFICE_JWT_SECRET: "shared-secret" }).S3_BUCKET,
+    ).toBe("libiaolink");
   });
 
   it("上传上限必须挡在单次复制上限（5 GiB）以内", () => {
