@@ -46,6 +46,7 @@ import { fetchProject } from "./projectApi";
 import { fetchProjectIssues, ISSUE_STATE_NAMES } from "./reportApi";
 import { displayStatusLabel, fetchProjectTasks, stageNameOf, type ApiTaskListItem } from "./taskApi";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
+import type { WorkspaceOpenProjects } from "./preferencesApi";
 import { projectViewHref, type WorkspaceTab } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
@@ -59,6 +60,10 @@ type WorkspacePageProps = {
   focusMode?: boolean | null;
   /** 保存醒目模式（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。不传 = 开关只读（偏好落库仍走服务端）。 */
   onFocusModeChange?: (value: boolean) => Promise<string | null>;
+  /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；null / 缺省 = 偏好尚未取到（按全收起渲染，不回写）。 */
+  workspaceOpenProjects?: WorkspaceOpenProjects | null;
+  /** 保存展开态（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。不传 = 不做服务端记忆（展开态仅本页内存）。 */
+  onWorkspaceOpenProjectsChange?: (value: WorkspaceOpenProjects) => Promise<string | null>;
 };
 
 /** 工作台三态（首屏加载 / 失败 / 就绪）—— 与「日报及问题」三个列表子视图同一套口径。 */
@@ -299,16 +304,20 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
 /** 折叠面板（业务口径「未展开是项目名称和编号 下拉是具体我的任务」「也是折叠面板」）：
  *  收起 = 项目名称 + 编号（+ 右侧摘要 + 「进入项目」按钮）；展开 = 该项目下的内容（任务表 / 问题表）。
  *  「进入项目」是面板头里的独立锚点（Push 232）：点它跳 `#/project/{id}` 总览，不切换展开态。
- *  展开态是本页本地状态（不进地址）；面板壳 = 白卡 + 圆角描边 + 行悬停（与站内表格壳同一套材质）。 */
-function ProjectPanel({ projectId, projectCode, projectName, summary, children }: {
+ *  展开态 Push 233 起受控 + 按账号记忆（业务口径「这个下拉要有记忆」）：由 App 层偏好 workspaceOpenProjects 按标签分记
+ *  已展开的项目 id（刷新 / 同账号换设备保持；不进地址）；面板壳 = 白卡 + 圆角描边 + 行悬停（与站内表格壳同一套材质）。 */
+function ProjectPanel({ projectId, projectCode, projectName, summary, open, onToggle, children }: {
   projectId: string;
   projectCode: string;
   projectName: string;
   /** 收起态右侧摘要（计数 / 逾期小签）。 */
   summary: ReactNode;
+  /** 展开态（Push 233 起受控：由账号偏好按项目 id 记忆 —— 见 WorkspacePage 的 openProjects / openIds）。 */
+  open: boolean;
+  /** 切换展开态（点面板头触发；「进入项目」是独立锚点、不触发）。 */
+  onToggle: () => void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
   return (
     <section data-workspace-panel={projectId} data-open={open ? "true" : "false"} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
       <div className="flex items-center gap-3 py-3 pl-4 pr-3 transition hover:bg-zinc-50">
@@ -316,9 +325,7 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, children }
           type="button"
           data-workspace-panel-toggle=""
           aria-expanded={open}
-          onClick={() => {
-            setOpen((previous) => !previous);
-          }}
+          onClick={onToggle}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={"h-4 w-4 shrink-0 text-zinc-400 transition-transform " + (open ? "rotate-90" : "")}>
@@ -748,7 +755,7 @@ const TABS: ReadonlyArray<{ key: WorkspaceTab; label: string }> = [
 ];
 
 /** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。 */
-function MyTasksView({ data, focus }: { data: ApiWorkspace; focus: boolean }) {
+function MyTasksView({ data, focus, openIds, onToggleProject }: { data: ApiWorkspace; focus: boolean; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void }) {
   const projects = groupTasksByProject(data);
   const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length;
   const { full, partial, ready } = useTaskFull(data);
@@ -776,6 +783,10 @@ function MyTasksView({ data, focus }: { data: ApiWorkspace; focus: boolean }) {
               projectCode={project.projectCode}
               projectName={project.projectName}
               summary={<TaskPanelSummary items={project.items} />}
+              open={openIds.has(project.projectId)}
+              onToggle={() => {
+                onToggleProject(project.projectId);
+              }}
             >
               <TaskTable projectId={project.projectId} items={project.items} full={full} ready={ready} focus={focus} />
             </ProjectPanel>
@@ -787,7 +798,7 @@ function MyTasksView({ data, focus }: { data: ApiWorkspace; focus: boolean }) {
 }
 
 /** 标签 ② 我提出的问题：按项目的折叠面板 + 照「问题追踪」六列的问题表。 */
-function RaisedIssuesView({ issues, focus }: { issues: readonly ApiWorkspaceIssue[]; focus: boolean }) {
+function RaisedIssuesView({ issues, focus, openIds, onToggleProject }: { issues: readonly ApiWorkspaceIssue[]; focus: boolean; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void }) {
   const projects = groupIssuesByProject(issues);
   const { full, partial } = useIssueFull(issues);
   return (
@@ -814,6 +825,10 @@ function RaisedIssuesView({ issues, focus }: { issues: readonly ApiWorkspaceIssu
               projectCode={project.projectCode}
               projectName={project.projectName}
               summary={<span className="text-xs font-normal text-zinc-400">{"共 " + String(project.issues.length) + " 条"}</span>}
+              open={openIds.has(project.projectId)}
+              onToggle={() => {
+                onToggleProject(project.projectId);
+              }}
             >
               <IssueTable issues={project.issues} full={full} focus={focus} />
             </ProjectPanel>
@@ -824,8 +839,9 @@ function RaisedIssuesView({ issues, focus }: { issues: readonly ApiWorkspaceIssu
   );
 }
 
-/** 工作台「我的任务」页：两个标签（我的任务 / 我提出的问题）共用一份 GET /api/v1/workspace 聚合数据。 */
-export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocusModeChange }: WorkspacePageProps) {
+/** 工作台「我的任务」页：两个标签（我的任务 / 我提出的问题）共用一份 GET /api/v1/workspace 聚合数据。
+ *  Push 233：折叠面板展开态接账号偏好（workspaceOpenProjects，按标签各记一组项目 id）——「这个下拉要有记忆」。 */
+export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocusModeChange, workspaceOpenProjects, onWorkspaceOpenProjectsChange }: WorkspacePageProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: "loading" });
   /** 重新加载令牌：bump 一次重新取数（错误态的「重新加载」用）。 */
   const [reloadToken, setReloadToken] = useState(0);
@@ -837,6 +853,28 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
   const handleToggleFocusMode = async (checked: boolean): Promise<void> => {
     setFocusError((await onFocusModeChange?.(checked)) ?? null);
   };
+
+  /** 展开态（Push 233 · 业务口径「这个下拉要有记忆」）：偏好由 App 层持有并单键 PATCH；null / 缺省 = 偏好尚未取到 → 按全收起渲染。
+   *  未接 onWorkspaceOpenProjectsChange 时退回本页内存态（面板仍可展开 / 收起，只是不跨刷新）。 */
+  const [localOpenProjects, setLocalOpenProjects] = useState<WorkspaceOpenProjects>({ tasks: [], raised: [] });
+  const openProjects = workspaceOpenProjects ?? localOpenProjects;
+  /** 展开态保存失败文案（null = 无提示）：乐观更新 + 失败回滚在 App 层，本页只出提示条。 */
+  const [panelError, setPanelError] = useState<string | null>(null);
+  /** 切换某个项目面板：按标签各自去重增删（不按顺序消费），整个对象单键 PATCH。 */
+  const handleToggleProject = (which: WorkspaceTab, projectId: string): void => {
+    const currentIds = which === "raised" ? openProjects.raised : openProjects.tasks;
+    const nextIds = currentIds.includes(projectId) ? currentIds.filter((id) => id !== projectId) : currentIds.concat(projectId);
+    const next: WorkspaceOpenProjects = which === "raised" ? { ...openProjects, raised: nextIds } : { ...openProjects, tasks: nextIds };
+    if (onWorkspaceOpenProjectsChange === undefined) {
+      setLocalOpenProjects(next);
+      return;
+    }
+    void (async () => {
+      setPanelError((await onWorkspaceOpenProjectsChange(next)) ?? null);
+    })();
+  };
+  const taskOpenIds = new Set(openProjects.tasks);
+  const raisedOpenIds = new Set(openProjects.raised);
 
   useEffect(() => {
     let cancelled = false;
@@ -906,6 +944,12 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
             </p>
           )}
 
+          {panelError === null ? null : (
+            <p role="alert" data-workspace-panel-error="" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              {panelError}
+            </p>
+          )}
+
           {state.kind === "loading" ? (
             <EmptyCard text="加载中…" hint="正在拉取工作台聚合数据（GET /api/v1/workspace）。" />
           ) : state.kind === "error" ? (
@@ -923,9 +967,23 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
               </button>
             </div>
           ) : tab === "raised" ? (
-            <RaisedIssuesView issues={state.data.myIssues.raised} focus={focus} />
+            <RaisedIssuesView
+              issues={state.data.myIssues.raised}
+              focus={focus}
+              openIds={raisedOpenIds}
+              onToggleProject={(projectId) => {
+                handleToggleProject("raised", projectId);
+              }}
+            />
           ) : (
-            <MyTasksView data={state.data} focus={focus} />
+            <MyTasksView
+              data={state.data}
+              focus={focus}
+              openIds={taskOpenIds}
+              onToggleProject={(projectId) => {
+                handleToggleProject("tasks", projectId);
+              }}
+            />
           )}
         </div>
       </main>

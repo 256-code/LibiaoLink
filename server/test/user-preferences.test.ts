@@ -1,18 +1,20 @@
 /**
- * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
+ * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
  * 未声明键保留）、读侧规范化（jsonb 是自由对象，脏数据一律收敛不抛错）、契约上限（≤ 20 组 / 名称 ≤ 20 字）、
- * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）。
+ * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛。
  * 不连库：仓储用内存替身（与 admin-audit.test.ts 同口径）；契约 schema 直接解析校验。
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema } from "@libiaolink/contracts";
+import { SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema, WORKSPACE_OPEN_PROJECTS_LIMIT } from "@libiaolink/contracts";
 import type { SavedHomeFilter } from "@libiaolink/contracts";
 import { UserPreferenceService } from "../src/modules/identity/user-preference.service.js";
 import type { UserPreferenceRepository, UserPreferenceRow } from "../src/modules/identity/user-preference.repository.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
+const PROJECT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const PROJECT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const AT = new Date("2026-09-23T04:00:00.000Z");
 
 class FakePreferenceRepository {
@@ -68,7 +70,7 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
@@ -108,6 +110,7 @@ describe("用户偏好（A4 / A24）", () => {
           null,
           { id: "sf-2", name: "坏日期", regions: [], projectTypes: [], managerIds: [], timeFrom: "2026/1/1", timeTo: "2026-09-30" },
         ],
+        workspaceOpenProjects: { tasks: [PROJECT_A, 7, PROJECT_A, "", PROJECT_B], raised: "坏形状" },
       },
       updatedAt: AT,
     } as unknown as UserPreferenceRow);
@@ -118,6 +121,7 @@ describe("用户偏好（A4 / A24）", () => {
     expect(prefs.homeSavedFilters[0]?.name).toBe("名称超长超长超长超长超长超长超长超长超长超".slice(0, 20));
     expect(prefs.homeSavedFilters[1]?.timeFrom).toBeNull();
     expect(prefs.homeSavedFilters[1]?.timeTo).toBe("2026-09-30");
+    expect(prefs.workspaceOpenProjects).toEqual({ tasks: [PROJECT_A, PROJECT_B], raised: [] });
     expect(prefs.updatedAt).toBe(AT.toISOString());
   });
 
@@ -141,6 +145,23 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: false }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: "yes" }).success).toBe(false);
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: 1 }).success).toBe(false);
+  });
+
+  it("工作台展开态（A31 · Push 233）：只传 workspaceOpenProjects 落库、整体替换；两标签各自独立", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { workspaceOpenProjects: { tasks: [PROJECT_A], raised: [] } }, AT);
+    expect((await service.get(USER_ID)).workspaceOpenProjects).toEqual({ tasks: [PROJECT_A], raised: [] });
+    const after = await service.update(USER_ID, { workspaceOpenProjects: { tasks: [], raised: [PROJECT_B] } }, AT);
+    expect(after.workspaceOpenProjects).toEqual({ tasks: [], raised: [PROJECT_B] });
+    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ workspaceOpenProjects: { tasks: [], raised: [PROJECT_B] } });
+  });
+
+  it("工作台展开态契约：{ tasks, raised }（uuid 数组）通过；缺键 / 非 uuid / 超上限 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ workspaceOpenProjects: { tasks: [PROJECT_A], raised: [] } }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ workspaceOpenProjects: { tasks: [] } }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ workspaceOpenProjects: { tasks: ["不是-uuid"], raised: [] } }).success).toBe(false);
+    const many = Array.from({ length: WORKSPACE_OPEN_PROJECTS_LIMIT + 1 }, () => PROJECT_A);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ workspaceOpenProjects: { tasks: many, raised: [] } }).success).toBe(false);
   });
 
   it("契约上限：第 21 组 / 名称 21 字由 schema 拒绝（服务端 400）", () => {

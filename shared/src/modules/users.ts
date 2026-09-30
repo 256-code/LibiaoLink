@@ -77,10 +77,34 @@ export const TaskTableColumnKeySchema = z
   .enum(TASK_TABLE_COLUMN_KEYS)
   .openapi("TaskTableColumnKey", { description: "任务表列 key（白名单；「任务描述」常显，不在其中）" });
 
+/** 工作台折叠面板展开态上限（A31 · Push 233）：按标签各记 ≤ 200 个项目 id（现实项目数远小于此，留足余量）。 */
+export const WORKSPACE_OPEN_PROJECTS_LIMIT = 200;
+
+/**
+ * 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：两个标签（我的任务 / 我提出的问题）
+ * 各记一组**已展开的项目 id**（整体替换语义，不按顺序消费）；默认两个空数组 = 全部收起。
+ * 按账号存 user_preferences.prefs（与 taskTableHiddenColumns / focusMode 同一条偏好通道）——
+ * 刷新 / 同账号换设备都保持展开记忆；读侧坏形状（非对象 / 数组里非字符串项）一律收敛为空数组，不抛错。
+ */
+export const WorkspaceOpenProjectsSchema = z
+  .object({
+    tasks: z
+      .array(UuidSchema)
+      .max(WORKSPACE_OPEN_PROJECTS_LIMIT)
+      .openapi({ description: "「我的任务」标签已展开的项目 id 列表（整体替换语义）" }),
+    raised: z
+      .array(UuidSchema)
+      .max(WORKSPACE_OPEN_PROJECTS_LIMIT)
+      .openapi({ description: "「我提出的问题」标签已展开的项目 id 列表（整体替换语义）" }),
+  })
+  .openapi("WorkspaceOpenProjects", {
+    description: "工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；默认两空数组 = 全部收起；读侧坏形状收敛为空数组（整体替换语义）",
+  });
+
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）；
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）；
  * 未声明键按 `.catchall` 原样保存（前向兼容），但不回读 —— 新增偏好键必须同时补这里与 service 的 toContract。
  */
 export const UserPreferencesSchema = z
@@ -99,6 +123,7 @@ export const UserPreferencesSchema = z
         description:
           "醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false",
       }),
+    workspaceOpenProjects: WorkspaceOpenProjectsSchema,
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
   .openapi("UserPreferences", { description: "用户偏好（全量；GET 返回当前值）" });
@@ -109,6 +134,7 @@ export const UserPreferencesUpdateBodySchema = z
     taskTableHiddenColumns: z.array(TaskTableColumnKeySchema).max(30).optional(),
     homeSavedFilters: z.array(SavedHomeFilterSchema).max(SAVED_HOME_FILTER_LIMIT).optional(),
     focusMode: z.boolean().optional(),
+    workspaceOpenProjects: WorkspaceOpenProjectsSchema.optional(),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
@@ -119,5 +145,6 @@ export const UserPreferencesUpdateBodySchema = z
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */
 export type TaskTableColumnKey = z.infer<typeof TaskTableColumnKeySchema>;
 export type SavedHomeFilter = z.infer<typeof SavedHomeFilterSchema>;
+export type WorkspaceOpenProjects = z.infer<typeof WorkspaceOpenProjectsSchema>;
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 export type UserPreferencesUpdateBody = z.infer<typeof UserPreferencesUpdateBodySchema>;

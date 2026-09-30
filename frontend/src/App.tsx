@@ -21,7 +21,7 @@ import {
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
+import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
@@ -77,6 +77,8 @@ export default function App() {
   const [taskTableHiddenColumns, setTaskTableHiddenColumns] = useState<string[] | null>(null);
   // 醒目模式（A4 · §6.13 · Push 171）：同样按账号存服务端；null = 偏好尚未取到（页面按默认「关」渲染，不回写）
   const [focusMode, setFocusMode] = useState<boolean | null>(null);
+  /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；null = 偏好尚未取到（按全收起渲染，不回写）。 */
+  const [workspaceOpenProjects, setWorkspaceOpenProjects] = useState<WorkspaceOpenProjects | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
@@ -132,6 +134,7 @@ export default function App() {
           setSavedFilters(prefsResult.value.homeSavedFilters);
           setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
           setFocusMode(prefsResult.value.focusMode);
+          setWorkspaceOpenProjects(prefsResult.value.workspaceOpenProjects);
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -311,6 +314,24 @@ export default function App() {
     } catch (error: unknown) {
       setFocusMode((current) => (current === value ? previous : current));
       return errorMessageOf(error, "醒目模式保存失败");
+    }
+  };
+
+  /**
+   * 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：点一下即生效 + 单键 PATCH ——
+   * 与醒目模式同一套乐观更新 + 失败回滚（对象整体替换，用引用比较判断有没有被更新的操作覆盖）；
+   * 返回文案交给 WorkspacePage 的提示条（服务端没落库，界面不能停在假状态）。
+   */
+  const handleSaveWorkspaceOpenProjects = async (value: WorkspaceOpenProjects): Promise<string | null> => {
+    const previous = workspaceOpenProjects;
+    setWorkspaceOpenProjects(value);
+    try {
+      const prefs = await saveWorkspaceOpenProjects(value);
+      setWorkspaceOpenProjects(prefs.workspaceOpenProjects);
+      return null;
+    } catch (error: unknown) {
+      setWorkspaceOpenProjects((current) => (current === value ? previous : current));
+      return errorMessageOf(error, "面板展开态保存失败");
     }
   };
 
@@ -536,7 +557,15 @@ export default function App() {
     return (
       <>
         {/* 醒目模式（Push 232）：与项目详情同一个账号偏好（App 层持有 / 单键 PATCH），工作台只吃值 + 回显保存失败文案 */}
-        <WorkspacePage me={state.me} tab={route.tab} onChangeTab={replaceWorkspaceTab} focusMode={focusMode} onFocusModeChange={handleSaveFocusMode} />
+        <WorkspacePage
+          me={state.me}
+          tab={route.tab}
+          onChangeTab={replaceWorkspaceTab}
+          focusMode={focusMode}
+          onFocusModeChange={handleSaveFocusMode}
+          workspaceOpenProjects={workspaceOpenProjects}
+          onWorkspaceOpenProjectsChange={handleSaveWorkspaceOpenProjects}
+        />
         {bottomBars}
       </>
     );
