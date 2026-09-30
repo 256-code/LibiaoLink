@@ -793,7 +793,11 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
       <div className="min-h-screen">
         <AppHeader me={me} title={title} />
         <main className="w-full px-6 pb-10 pt-3">
-          <div className="flex items-center gap-3 border-b border-zinc-200">
+          {/* 板块标签栏吸顶（Push 235 业务口径「任务模版和我的任务都要做吸顶效果」）：与项目详情主标签栏同一套口径 ——
+              滚动时停在应用顶栏（h-16 = 64px）正下方，站灰底 + 毛玻璃兜住滚动内容；
+              -mx-6 / -mt-3 + 同值内衬抵消：横幅铺满行宽、标签位置与原来一致。自身高 59px（pt-3 12 + 标签 46 + 底边 1）——
+              左列「任务节点」的吸顶位随之顺延（top = 64 + 59 − 1 = 122px，多叠 1px 防缝）。 */}
+          <div data-template-tabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 flex items-center gap-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
               {TEMPLATE_SECTIONS.map((stage) => {
                 const active = stage === activeSection;
@@ -844,9 +848,9 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
               </div>
             </div>
 
-            {/* 左列「任务节点」固定不动（宽屏滚动时钉住），右侧模板面板一行放不下就换到下一行 */}
+            {/* 左列「任务节点」固定不动（宽屏滚动时钉住；Push 235 起叠在吸顶的板块标签栏下面：top = 122px = 顶栏 64 + 标签栏 59 − 1px 防缝），右侧模板面板一行放不下就换到下一行 */}
             <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-start">
-              <section className="flex w-full flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 lg:sticky lg:top-[81px] lg:w-[370px] lg:shrink-0 lg:self-start">
+              <section className="flex w-full flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 lg:sticky lg:top-[122px] lg:w-[370px] lg:shrink-0 lg:self-start">
                 {/* 列头行（Push 181）：左边板块标题、右边计数 + 「＋ 添加节点」——业务口径「在图二任务节点的位置加一个添加节点的按钮」 */}
                 <div className="mb-2 flex items-center justify-between gap-2 text-sm">
                   <span className="shrink-0 font-semibold text-zinc-800">任务节点</span>
