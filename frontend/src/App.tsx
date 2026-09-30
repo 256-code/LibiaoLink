@@ -529,6 +529,17 @@ export default function App() {
     );
   }
 
+  if (route.kind === "workspace") {
+    // 路由已转正式（Push 229）；「我的任务」页面（我的任务三组 + 我负责的问题两栏，GET /api/v1/workspace）
+    // 随接线那一刀替换本临时占位（接口已封：frontend/src/workspaceApi.ts）。
+    return (
+      <>
+        <PlaceholderPage me={state.me} page="my-tasks" section={null} canManageBlueprint={canManageBlueprint} />
+        {bottomBars}
+      </>
+    );
+  }
+
   if (route.kind === "placeholder") {
     return (
       <>

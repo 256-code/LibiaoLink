@@ -18,7 +18,7 @@ export default function Hub({ me }: { me: MeResponse }) {
   const entries = [
     { label: "项目空间", href: projectsHref() },
     { label: "任务模板", href: "#/templates" },
-    { label: "文件库", href: "#/files" },
+    { label: "我的任务", href: "#/my-tasks" },
   ];
 
   const [distribution, setDistribution] = useState<HubMapDistribution | null>(null);
