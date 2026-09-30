@@ -5,7 +5,8 @@
  * 业务口径（2026-09-30）：「改成 我提出的问题」「同样做标签导航栏 我的任务 我提出的问题先做这两个」
  *   「我的任务 是折叠面板 未展开是项目名称和编号 下拉是具体我的任务」「我提出的问题就参考日报的问题追踪即可
  *   也是折叠面板」「开始做前端」「表格内容要全」「直接把这个搬到我的任务不就好了」（任务表行口径照项目页任务表搬）→
- *   「这些字段一个不能少懂吗」（Push 231：任务表列补齐项目页任务表全 15 列，「预计所需天数」窄列也在）。
+ *   「这些字段一个不能少懂吗」（Push 231：任务表列补齐项目页任务表全 15 列，「预计所需天数」窄列也在）→
+ *   「增加进入项目按钮」（Push 232：折叠面板头常驻「进入项目」深链 → 项目详情缺省标签「项目总览」）。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -20,7 +21,7 @@
  * （PX-M6WS-*；跑完物理删、零残留）在真机浏览器里跑一遍工作台接线后的读写口径 ——
  *   ① 接口先行对账（夹具落库后 GET /api/v1/workspace）：跨项目三组任务 + 「我提出的」不含他人提的问题；
  *   ② 页面骨架：两枚下划线标签（我的任务 / 我提出的问题；文字 + 选中下划线）+ 默认选中「我的任务」+ 地址不带 `?tab=`；
- *   ③ 「我的任务」折叠面板：收起 = 项目名称 + 编号（最急的项目在最上）+ 摘要签；展开 = 该项目下的任务表；
+ *   ③ 「我的任务」折叠面板：收起 = 项目名称 + 编号（最急的项目在最上）+ 摘要签 + 「进入项目」按钮；展开 = 该项目下的任务表；
  *   ④ 任务表口径（Push 231 扩列：列口径照项目页任务表全 15 列 ——「直接把这个搬到我的任务不就好了」+
  *      「这些字段一个不能少懂吗」）：任务描述 + 四格进度点（不含分组签 —— 业务口径「这个不要展示」，
  *      组序由行序体现）/ 项目经理 / 负责人 / 状态 / 紧急重要度 /
@@ -31,8 +32,11 @@
  *      解决方案或建议 / 问题附图 / 问题是否处理；后两列按项目向源接口回填，真 PNG 直传夹具保证有值）+
  *      行尾「在项目中查看」；未关闭在前、不是我提的不进；
  *   ⑦ 深链：`#/my-tasks?tab=raised` 直接打开仍停在该标签；`?tab=` 不认识的值落回「我的任务」；
+ *      「进入项目」按钮点开 = 项目详情总览、浏览器后退回工作台（Push 232）；
+ *   ⑨ 醒目模式（Push 232 ·「同样增加醒目模式」）：开关在标签导航栏最右侧、值 = 账号偏好；开 = 任务 / 问题整行铺
+ *      状态底色 + 状态签收口成深色字，关 = 恢复白底（跑完把账号偏好恢复原值，不留痕）；
  *   ⑧ 收尾：删两个临时项目（物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
- * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列小节）
+ * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」小节）
  */
 
 import { spawn } from "node:child_process";
@@ -358,14 +362,14 @@ async function clickSelector(selector) {
 /** 页头 + 标签栏读数。 */
 const headExpr = () => "(function(){var tabs=document.querySelectorAll(" + j("[data-workspace-tab]") + ");var out=[];for(var i=0;i<tabs.length;i+=1){out.push({key:String(tabs[i].getAttribute(" + j("data-workspace-tab") + ")),text:tabs[i].textContent.trim(),current:tabs[i].getAttribute(" + j("aria-current") + ")});}var headerNode=document.querySelector(" + j("header") + ");return {page:document.querySelector(" + j("[data-workspace-page]") + ")!==null,tabs:out,hash:window.location.hash,header:headerNode===null?" + j("") + ":headerNode.textContent.trim()};})()";
 /** 折叠面板读数（顺序即 DOM 顺序）。 */
-const panelsExpr = () => "(function(){var root=document.querySelector(" + j("[data-workspace-page]") + ");if(root===null){return null;}var ps=root.querySelectorAll(" + j("[data-workspace-panel]") + ");var out=[];for(var i=0;i<ps.length;i+=1){var p=ps[i];var t=p.querySelector(" + j("[data-workspace-panel-toggle]") + ");out.push({id:String(p.getAttribute(" + j("data-workspace-panel") + ")),open:String(p.getAttribute(" + j("data-open") + ")),expanded:t===null?null:t.getAttribute(" + j("aria-expanded") + "),text:t===null?String(" + j("") + ") :t.textContent.trim(),rows:p.querySelectorAll(" + j("[data-workspace-task],[data-workspace-issue]") + ").length});}return out;})()";
+const panelsExpr = () => "(function(){var root=document.querySelector(" + j("[data-workspace-page]") + ");if(root===null){return null;}var ps=root.querySelectorAll(" + j("[data-workspace-panel]") + ");var out=[];for(var i=0;i<ps.length;i+=1){var p=ps[i];var t=p.querySelector(" + j("[data-workspace-panel-toggle]") + ");out.push({id:String(p.getAttribute(" + j("data-workspace-panel") + ")),open:String(p.getAttribute(" + j("data-open") + ")),expanded:t===null?null:t.getAttribute(" + j("aria-expanded") + "),text:t===null?String(" + j("") + ") :t.textContent.trim(),rows:p.querySelectorAll(" + j("[data-workspace-task],[data-workspace-issue]") + ").length,link:(function(){var a=p.querySelector(" + j("[data-workspace-project-link]") + ");return a===null?null:String(a.getAttribute(" + j("href") + "));})(),linkText:(function(){var a=p.querySelector(" + j("[data-workspace-project-link]") + ");return a===null?String(" + j("") + ") :a.textContent.trim();})(),linkInToggle:p.querySelector(" + j("[data-workspace-panel-toggle] [data-workspace-project-link]") + ")!==null});}return out;})()";
 /** 项目页任务表 15 列（TaskBoard.TABLE_COLUMNS 同序；「预计所需天数」窄列表头为空）——Push 231 扩列对账口径。 */
 const TASK_HEAD_EXPECTED = ["任务描述", "项目经理", "任务负责人", "任务状态", "紧急重要度", "是否按时交付", "输出成果文件", "文件", "项目进展描述", "开始日期", "", "预计完成日期", "预计所需施工人数", "实际完成日期", "变更关联"];
 /** 任务表读数（按项目面板）：表头（15 列）+ 每行按 data-column 列名取数（不按下标，列序调整不再连坐）。 */
 const taskRowsExpr = (projectId) =>
-  "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("[data-workspace-task-head] [data-column]") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<rows.length;i+=1){var row=rows[i];var cell=function(key){var node=row.querySelector('[data-column=' + JSON.stringify(key) + ']');return node===null?'':node.textContent.trim();};var attr=function(name){var node=row.querySelector('[' + name + ']');return node===null?'':String(node.getAttribute(name));};var titleNode=row.querySelector(" + j("[data-workspace-task-title]") + ");var groupNode=row.querySelector(" + j("[data-workspace-task-group]") + ");out.push({id:String(row.getAttribute(" + j("data-workspace-task") + ")),title:cell(" + j("title") + "),titleText:titleNode===null?'':titleNode.textContent.trim(),group:attr(" + j("data-workspace-task-group") + "),groupText:groupNode===null?'':groupNode.textContent.trim(),manager:cell(" + j("manager") + "),owners:cell(" + j("owner") + "),status:cell(" + j("status") + "),statusKey:attr(" + j("data-workspace-task-status") + "),priority:cell(" + j("priority") + "),onTime:cell(" + j("onTime") + "),deliverable:cell(" + j("deliverable") + "),files:cell(" + j("files") + "),note:cell(" + j("note") + "),start:cell(" + j("start") + "),days:cell(" + j("days") + "),due:cell(" + j("due") + "),headcount:cell(" + j("headcount") + "),doneDate:cell(" + j("doneDate") + "),change:cell(" + j("change") + "),changeCount:attr(" + j("data-workspace-task-change") + "),dots:attr(" + j("data-workspace-task-dots") + ")});}return {table:true,heads:headTexts,rows:out};})()";
+  "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("[data-workspace-task-head] [data-column]") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<rows.length;i+=1){var row=rows[i];var cell=function(key){var node=row.querySelector('[data-column=' + JSON.stringify(key) + ']');return node===null?'':node.textContent.trim();};var attr=function(name){var node=row.querySelector('[' + name + ']');return node===null?'':String(node.getAttribute(name));};var titleNode=row.querySelector(" + j("[data-workspace-task-title]") + ");var groupNode=row.querySelector(" + j("[data-workspace-task-group]") + ");out.push({id:String(row.getAttribute(" + j("data-workspace-task") + ")),title:cell(" + j("title") + "),titleText:titleNode===null?'':titleNode.textContent.trim(),group:attr(" + j("data-workspace-task-group") + "),groupText:groupNode===null?'':groupNode.textContent.trim(),manager:cell(" + j("manager") + "),owners:cell(" + j("owner") + "),status:cell(" + j("status") + "),statusKey:attr(" + j("data-workspace-task-status") + "),priority:cell(" + j("priority") + "),onTime:cell(" + j("onTime") + "),deliverable:cell(" + j("deliverable") + "),files:cell(" + j("files") + "),note:cell(" + j("note") + "),start:cell(" + j("start") + "),days:cell(" + j("days") + "),due:cell(" + j("due") + "),headcount:cell(" + j("headcount") + "),doneDate:cell(" + j("doneDate") + "),change:cell(" + j("change") + "),changeCount:attr(" + j("data-workspace-task-change") + "),dots:attr(" + j("data-workspace-task-dots") + "),rowClass:String(row.getAttribute(" + j("class") + ")),statusClass:(function(){var n=row.querySelector(" + j("[data-workspace-task-status]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
 /** 问题表读数（按项目面板）。 */
-const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var link=rows[i].querySelector(" + j("a") + ");var photoNodes=rows[i].querySelectorAll(" + j("[data-issue-photo]") + ");var photoNames=[];for(var p=0;p<photoNodes.length;p+=1){photoNames.push(String(photoNodes[p].getAttribute(" + j("data-issue-photo") + ")));}out.push({id:String(rows[i].getAttribute(" + j("data-workspace-issue") + ")),date:cells[0].textContent.trim(),title:cells[1].textContent.trim(),categories:cells[2].textContent.trim(),solution:cells[3].textContent.trim(),photosText:cells[4].textContent.trim(),photos:photoNodes.length,photoNames:photoNames,state:cells[5].textContent.trim(),href:link===null?" + j("") + ":link.getAttribute(" + j("href") + ")});}return {table:true,heads:headTexts,rows:out};})()";
+const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var link=rows[i].querySelector(" + j("a") + ");var photoNodes=rows[i].querySelectorAll(" + j("[data-issue-photo]") + ");var photoNames=[];for(var p=0;p<photoNodes.length;p+=1){photoNames.push(String(photoNodes[p].getAttribute(" + j("data-issue-photo") + ")));}out.push({id:String(rows[i].getAttribute(" + j("data-workspace-issue") + ")),date:cells[0].textContent.trim(),title:cells[1].textContent.trim(),categories:cells[2].textContent.trim(),solution:cells[3].textContent.trim(),photosText:cells[4].textContent.trim(),photos:photoNodes.length,photoNames:photoNames,state:cells[5].textContent.trim(),href:link===null?" + j("") + ":link.getAttribute(" + j("href") + "),rowClass:String(rows[i].getAttribute(" + j("class") + ")),stateClass:(function(){var n=rows[i].querySelector(" + j("[data-issue-state]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
 /** 空态 / 汇总行读数。 */
 const totalExpr = () => "(function(){var node=document.querySelector(" + j("[data-workspace-task-total]") + ");return node===null?null:node.textContent.trim();})()";
 
@@ -384,6 +388,8 @@ check("③a 折叠面板 = 2 块（每个项目一块）", panels0 !== null && p
 check("③b 最急的项目在最上（A 有逾期任务 → 排第一；B 第二）", panels0 !== null && panels0[0].id === projectA && panels0[1].id === projectB, panels0 === null ? "null" : JSON.stringify(panels0.map((item) => item.id)));
 check("③c 收起态 = 项目名称 + 编号（+ 摘要），且未展开时表体不在 DOM", panels0 !== null && panels0[0].open === "false" && panels0[0].expanded === "false" && panels0[0].rows === 0 && panels0[0].text.indexOf("回放·工作台A") >= 0 && panels0[0].text.indexOf(codeA) >= 0 && panels0[0].text.indexOf("共 3 项") >= 0 && panels0[0].text.indexOf("已逾期 1") >= 0 && panels0[0].text.indexOf("今日 1") >= 0, panels0 === null ? "null" : JSON.stringify(panels0[0]));
 check("③d B 面板收起态：项目名 + 编号 + 共 1 项", panels0 !== null && panels0[1].text.indexOf("回放·工作台B") >= 0 && panels0[1].text.indexOf(codeB) >= 0 && panels0[1].text.indexOf("共 1 项") >= 0, panels0 === null ? "null" : JSON.stringify(panels0[1]));
+
+check("③e 面板头常驻「进入项目」按钮（Push 232 · 业务口径「增加进入项目按钮」）：两面板各一枚、href = #/project/{id}、不在展开收起的子节点里", panels0 !== null && panels0[0].link === "#/project/" + projectA && panels0[1].link === "#/project/" + projectB && panels0[0].linkText === "进入项目" && panels0[1].linkText === "进入项目" && panels0[0].linkInToggle === false && panels0[1].linkInToggle === false, panels0 === null ? "null" : JSON.stringify(panels0.map((item) => [item.link, item.linkText, item.linkInToggle])));
 
 // ---------- ④ 展开 A：任务表口径（Push 231：项目页任务表全 15 列） ----------
 await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
@@ -459,6 +465,69 @@ await open("#/my-tasks", "[data-workspace-page]");
 await clickSelector('[data-workspace-tab="tasks"]');
 const head4 = await ev(headExpr());
 check("⑦c 从「我提出的问题」点回「我的任务」→ 地址回到不带参数的 #/my-tasks", head4 !== null && head4.hash === "#/my-tasks" && head4.tabs[0].current === "page", head4 === null ? "null" : String(head4.hash));
+
+// —— Push 232：「进入项目」按钮（面板头深链 → 项目详情「项目总览」）
+const linkHref = await ev("(function(){var a=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-project-link]') + ");return a===null?null:String(a.getAttribute(" + j("href") + "));})()");
+check("⑦d 「进入项目」href = 该项目详情「项目总览」深链（#/project/{id}，缺省标签不落参数）", linkHref === "#/project/" + projectA, String(linkHref));
+await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-project-link]');
+const enteredDetail = await waitFor("window.location.hash === " + j("#/project/" + projectA) + " && document.querySelector(" + j("[data-maintabs]") + ") !== null", 25000);
+check("⑦e 点「进入项目」= 打开项目详情（地址 #/project/{id}、顶部标签栏出现）", enteredDetail === true, String(enteredDetail));
+await ev("window.history.back()");
+const backToWorkspace = await waitFor("document.querySelector(" + j("[data-workspace-page]") + ") !== null && window.location.hash === " + j("#/my-tasks"), 25000);
+check("⑦f 浏览器后退回工作台（#/my-tasks 原样恢复、页面还在）", backToWorkspace === true, String(backToWorkspace));
+
+// ---------- ⑨ 醒目模式（Push 232 · 业务口径「同样增加醒目模式」） ----------
+const focusCheckedExpr = "(function(){var wrap=document.querySelector(" + j("[data-workspace-focus-toggle]") + ");if(wrap===null){return null;}var box=wrap.querySelector(" + j("input") + ");return box===null?null:box.checked;})()";
+const focusWrapExpr = "(function(){var wrap=document.querySelector(" + j("[data-workspace-focus-toggle]") + ");if(wrap===null){return null;}return {inNav:wrap.closest(" + j("[data-workspace-tabs]") + ")!==null,checked:(function(){var box=wrap.querySelector(" + j("input") + ");return box===null?null:box.checked;})()};})()";
+const prefStartRes = await api("/api/v1/users/me/preferences");
+const prefStart = prefStartRes.status === 200 && prefStartRes.json !== null && typeof prefStartRes.json.focusMode === "boolean" ? prefStartRes.json.focusMode : null;
+const focus0 = await ev(focusWrapExpr);
+check("⑨a 标签导航栏最右侧有「醒目模式」开关（同项目总览 / 问题追踪一枚；初值 = 账号偏好 focusMode）", focus0 !== null && focus0.inNav === true && prefStart !== null && focus0.checked === prefStart, focus0 === null ? "null" : JSON.stringify([focus0, prefStart]));
+// 归一化到「关」（原值为开先点掉；本节最后恢复原值）
+if (prefStart === true) {
+  await clickSelector("[data-workspace-focus-toggle]");
+  await waitFor(focusCheckedExpr + " === false", 15000);
+}
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]') + ") !== null", 25000);
+await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
+const focusOffRows = await ev(taskRowsExpr(projectA));
+check("⑨b 关：任务表 = 白底行（hover 档）+ 状态胶囊照旧", focusOffRows !== null && focusOffRows.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && focusOffRows.rows[0].statusClass.indexOf("bg-rose-100") >= 0, focusOffRows === null ? "null" : JSON.stringify([focusOffRows.rows[0].rowClass, focusOffRows.rows[0].statusClass]));
+await clickSelector("[data-workspace-focus-toggle]");
+const focusOnAttr = await waitFor("(function(){var t=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task-table]') + ");return t!==null&&t.getAttribute(" + j("data-workspace-task-focus") + ")===" + j("true") + ";})()", 20000);
+const focusOnRows = await ev(taskRowsExpr(projectA));
+check("⑨c 开：任务表整行铺状态底色（逾期 rose / 今日 sky / 即将 amber · 6% 档）+ 状态胶囊收口成深色字", focusOnAttr === true && focusOnRows !== null && focusOnRows.rows[0].rowClass.indexOf("bg-rose-500/[0.06]") >= 0 && focusOnRows.rows[1].rowClass.indexOf("bg-sky-500/[0.06]") >= 0 && focusOnRows.rows[2].rowClass.indexOf("bg-amber-500/[0.06]") >= 0 && focusOnRows.rows[0].statusClass.indexOf("text-rose-700") >= 0 && focusOnRows.rows[0].statusClass.indexOf("bg-rose-100") < 0, focusOnRows === null ? "null" : JSON.stringify([focusOnRows.rows.map((item) => item.rowClass), focusOnRows.rows.map((item) => item.statusClass)]));
+let prefOn = null;
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  prefOn = await api("/api/v1/users/me/preferences");
+  if (prefOn.status === 200 && prefOn.json !== null && prefOn.json.focusMode === true) break;
+  await sleep(300);
+}
+check("⑨d 偏好落库：单键 PATCH 后 GET /users/me/preferences 的 focusMode = true（按账号跨设备记忆）", prefOn !== null && prefOn.status === 200 && prefOn.json !== null && prefOn.json.focusMode === true, prefOn === null ? "null" : JSON.stringify(prefOn.json === null ? prefOn.status : prefOn.json.focusMode));
+await clickSelector('[data-workspace-tab="raised"]');
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]') + ") !== null", 25000);
+await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-issue]') + ") !== null", 25000);
+const focusIssueRows = await ev(issueRowsExpr(projectA));
+check("⑨e 切「我提出的问题」同款：未解决行 sky / 已完成行 emerald（6% 档）+ 状态签收口成深色字", focusIssueRows !== null && focusIssueRows.rows[0].rowClass.indexOf("bg-sky-500/[0.06]") >= 0 && focusIssueRows.rows[1].rowClass.indexOf("bg-emerald-500/[0.06]") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("text-sky-700") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("bg-sky-100") < 0, focusIssueRows === null ? "null" : JSON.stringify([focusIssueRows.rows.map((item) => item.rowClass), focusIssueRows.rows.map((item) => item.stateClass)]));
+await clickSelector("[data-workspace-focus-toggle]");
+const focusOffAttr = await waitFor("(function(){var t=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-issue-table]') + ");return t!==null&&t.getAttribute(" + j("data-workspace-issue-focus") + ")===" + j("false") + ";})()", 20000);
+const focusOffRows2 = await ev(issueRowsExpr(projectA));
+check("⑨f 关：问题表回到白底行 + 状态签原样", focusOffAttr === true && focusOffRows2 !== null && focusOffRows2.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && focusOffRows2.rows[0].stateClass.indexOf("bg-sky-100") >= 0, focusOffRows2 === null ? "null" : JSON.stringify([focusOffRows2.rows[0].rowClass, focusOffRows2.rows[0].stateClass]));
+// 恢复账号偏好原值（回放不留痕）
+if (prefStart === true) {
+  await clickSelector("[data-workspace-focus-toggle]");
+  await waitFor(focusCheckedExpr + " === true", 15000);
+  let prefBack = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    prefBack = await api("/api/v1/users/me/preferences");
+    if (prefBack.status === 200 && prefBack.json !== null && prefBack.json.focusMode === true) break;
+    await sleep(300);
+  }
+  check("⑨g 回放收尾：账号偏好 focusMode 恢复原值 true（不留痕）", prefBack !== null && prefBack.status === 200 && prefBack.json !== null && prefBack.json.focusMode === true, prefBack === null ? "null" : JSON.stringify(prefBack.json === null ? prefBack.status : prefBack.json.focusMode));
+} else {
+  check("⑨g 回放收尾：账号偏好 focusMode 原值即 false，无需恢复", true, "false");
+}
 
 // ---------- ⑧ 收尾：清理 + 控制台 ----------
 const consoleLines = page.events.filter((line) => line.indexOf("EVT Runtime.exceptionThrown") >= 0 || line.indexOf("EVT Log.entryAdded") >= 0);

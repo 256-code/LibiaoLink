@@ -142,9 +142,10 @@ export const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
 
 /**
  * 醒目模式（Push 134）的整行底色：业务口径「保留整行浅色，但大幅降低透明度」——
+ * Push 232：导出给工作台「我的任务」表复用（同款醒目模式口径，避免两处色表漂移）。
  * 同一个状态色（图一色系）压到 **6% 不透明**（马卡龙级极淡，只隐约区分），悬停再抬一档到 12% 留住「这一行可点」的手感。
  */
-const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
+export const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
   已延期: "bg-rose-500/[0.06] hover:bg-rose-500/[0.12]",
   进行中: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
   已完成: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
@@ -165,9 +166,10 @@ export const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
 };
 
 /**
+ * Push 232：导出给工作台「我的任务」表复用（状态胶囊在醒目模式下收口成这一档）。
  * 醒目模式下的状态字色（Push 134）：整行已经有状态色了，状态列不再套白底小框 / 色签底色，只留这一档深色字。
  */
-const STATUS_TAG_TEXT_CLASS: Record<TaskStatus, string> = {
+export const STATUS_TAG_TEXT_CLASS: Record<TaskStatus, string> = {
   已延期: "text-rose-700",
   进行中: "text-amber-800",
   已完成: "text-emerald-700",

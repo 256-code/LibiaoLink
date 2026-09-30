@@ -535,7 +535,8 @@ export default function App() {
     // 数据 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）；标签走地址（?tab=，见 useHashRoute）。
     return (
       <>
-        <WorkspacePage me={state.me} tab={route.tab} onChangeTab={replaceWorkspaceTab} />
+        {/* 醒目模式（Push 232）：与项目详情同一个账号偏好（App 层持有 / 单键 PATCH），工作台只吃值 + 回显保存失败文案 */}
+        <WorkspacePage me={state.me} tab={route.tab} onChangeTab={replaceWorkspaceTab} focusMode={focusMode} onFocusModeChange={handleSaveFocusMode} />
         {bottomBars}
       </>
     );

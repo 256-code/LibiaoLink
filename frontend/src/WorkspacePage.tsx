@@ -1,5 +1,5 @@
 /**
- * 工作台「我的任务」页（系统功能书 A6-01 / A6-03；M6-06 前端接线 · Push 230；任务表扩列 · Push 231）。
+ * 工作台「我的任务」页（系统功能书 A6-01 / A6-03；M6-06 前端接线 · Push 230；任务表扩列 · Push 231；面板头「进入项目」深链 + 醒目模式 · Push 232）。
  *
  * 业务口径（2026-09-30）：「同样做标签导航栏 我的任务 我提出的问题先做这两个」→「是这个页面导航栏」（指任务模板页
  * 的下划线标签栏，本页照同一套材质 —— 文字 + 选中下划线、无图标）→「我的任务 是折叠面板 未展开是项目名称和编号
@@ -8,7 +8,14 @@
  * 我的任务不就好了」（任务表行口径照项目页任务表）→「这些字段一个不能少懂吗」（Push 231：任务表 = 项目页任务表
  * 全 15 列 —— 任务描述 / 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 / 输出成果文件 / 文件 /
  * 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 / 预计所需施工人数 / 实际完成日期 / 变更关联）。
- * 表仍是**只读** —— 工作台读面不带任务 version，不挂项目页那套点开编辑。
+ * 表仍是**只读** —— 工作台读面不带任务 version，不挂项目页那套点开编辑。折叠面板头常驻**「进入项目」**按钮
+ * （Push 232 · 业务口径「增加进入项目按钮」）→ 项目详情缺省标签「项目总览」`#/project/{id}`（与问题表「在项目中
+ * 查看」同一套深链口径，只是落点 = 总览；按钮在面板头右侧、不参与展开收起）。
+ *
+ * 醒目模式（Push 232 · 业务口径「同样增加醒目模式」）：开关本体在**标签导航栏最右侧**（同项目总览 / 问题追踪口径
+ * 「醒目模式放在标签导航栏的最右侧」），吃的是同一个账号偏好 `focusMode`（App 层持有 / 单键 PATCH、跨设备记忆；
+ * 本页只读值、失败走页内提示条）。开 = 任务表整行铺该任务状态底色 + 状态胶囊收口成深色字（TaskBoard 同款两张色表
+ * `STATUS_ROW_CLASS` / `STATUS_TAG_TEXT_CLASS`）；切到「我提出的问题」同款（`ISSUE_ROW_CLASS` / `ISSUE_TAG_TEXT_CLASS`）。
  *
  * 数据：
  * - 读面 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）—— 跨项目个人读面，仅会话、无项目路径参数。
@@ -28,8 +35,9 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { AppHeader } from "./components/AppHeader";
-import { ISSUE_CATEGORY_CLASS, ISSUE_TAG_CLASS } from "./components/ReportIssuePanel";
-import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, resolveColumns, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
+import { FocusModeToggle } from "./components/FocusModeToggle";
+import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS } from "./components/ReportIssuePanel";
+import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
 import { TrackerDots } from "./components/Tracker";
 import { dateOnlyText, daysBetweenInclusive } from "./data/tasks";
 import type { ReportPhoto } from "./data/reports";
@@ -47,6 +55,10 @@ type WorkspacePageProps = {
   tab: WorkspaceTab;
   /** 切标签：同步渲染并写回地址（replace，不新增历史条目）。 */
   onChangeTab: (tab: WorkspaceTab) => void;
+  /** 醒目模式（Push 232 · 业务口径「同样增加醒目模式」）：与项目总览 / 问题追踪同一个账号偏好；null / 缺省 = 偏好尚未取到（按默认「关」渲染，不回写）。 */
+  focusMode?: boolean | null;
+  /** 保存醒目模式（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。不传 = 开关只读（偏好落库仍走服务端）。 */
+  onFocusModeChange?: (value: boolean) => Promise<string | null>;
 };
 
 /** 工作台三态（首屏加载 / 失败 / 就绪）—— 与「日报及问题」三个列表子视图同一套口径。 */
@@ -99,12 +111,13 @@ function cnDateFull(iso: string): string {
 }
 
 /** 契约三态（open / in_progress / done）→ 中文 + 色签；与「问题追踪」同源（ISSUE_STATE_NAMES / ISSUE_TAG_CLASS）。
+ *  Push 232 起同源补醒目模式两张色表（ISSUE_ROW_CLASS 行底色 / ISSUE_TAG_TEXT_CLASS 状态字色）；
  *  未知值原样兜底（契约受控，兜底只为不炸）。 */
-function issueStateOf(state: string): { label: string; className: string } {
+function issueStateOf(state: string): { label: string; className: string; focusRowClass: string; focusTagClass: string } {
   if (state === "open" || state === "in_progress" || state === "done") {
-    return { label: ISSUE_STATE_NAMES[state], className: ISSUE_TAG_CLASS[state] };
+    return { label: ISSUE_STATE_NAMES[state], className: ISSUE_TAG_CLASS[state], focusRowClass: ISSUE_ROW_CLASS[state], focusTagClass: ISSUE_TAG_TEXT_CLASS[state] };
   }
-  return { label: state, className: "bg-zinc-100 text-zinc-600" };
+  return { label: state, className: "bg-zinc-100 text-zinc-600", focusRowClass: "hover:bg-zinc-50/80", focusTagClass: "text-zinc-600" };
 }
 
 /** 「是否按时交付」列的逾期标注（与项目页任务表 lateDeliveryLabel 同口径；工作台不引项目页的 ProjectTask
@@ -284,7 +297,8 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
 }
 
 /** 折叠面板（业务口径「未展开是项目名称和编号 下拉是具体我的任务」「也是折叠面板」）：
- *  收起 = 项目名称 + 编号（+ 右侧摘要）；展开 = 该项目下的内容（任务表 / 问题表）。
+ *  收起 = 项目名称 + 编号（+ 右侧摘要 + 「进入项目」按钮）；展开 = 该项目下的内容（任务表 / 问题表）。
+ *  「进入项目」是面板头里的独立锚点（Push 232）：点它跳 `#/project/{id}` 总览，不切换展开态。
  *  展开态是本页本地状态（不进地址）；面板壳 = 白卡 + 圆角描边 + 行悬停（与站内表格壳同一套材质）。 */
 function ProjectPanel({ projectId, projectCode, projectName, summary, children }: {
   projectId: string;
@@ -297,22 +311,35 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, children }
   const [open, setOpen] = useState(false);
   return (
     <section data-workspace-panel={projectId} data-open={open ? "true" : "false"} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-      <button
-        type="button"
-        data-workspace-panel-toggle=""
-        aria-expanded={open}
-        onClick={() => {
-          setOpen((previous) => !previous);
-        }}
-        className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition hover:bg-zinc-50"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={"h-4 w-4 shrink-0 text-zinc-400 transition-transform " + (open ? "rotate-90" : "")}>
-          <path d="M9.5 5.5 16 12l-6.5 6.5" />
-        </svg>
-        <span className="min-w-0 truncate text-sm font-semibold text-zinc-900">{projectName}</span>
-        <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-zinc-600">{projectCode}</span>
-        <span className="ml-auto flex shrink-0 items-center gap-2">{summary}</span>
-      </button>
+      <div className="flex items-center gap-3 py-3 pl-4 pr-3 transition hover:bg-zinc-50">
+        <button
+          type="button"
+          data-workspace-panel-toggle=""
+          aria-expanded={open}
+          onClick={() => {
+            setOpen((previous) => !previous);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={"h-4 w-4 shrink-0 text-zinc-400 transition-transform " + (open ? "rotate-90" : "")}>
+            <path d="M9.5 5.5 16 12l-6.5 6.5" />
+          </svg>
+          <span className="min-w-0 truncate text-sm font-semibold text-zinc-900">{projectName}</span>
+          <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-zinc-600">{projectCode}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-2">{summary}</span>
+        </button>
+        <a
+          href={projectViewHref(projectId, "overview")}
+          data-workspace-project-link={projectId}
+          title={"进入项目：" + projectName + "（" + projectCode + "）"}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+        >
+          进入项目
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-3 w-3">
+            <path d="M9.5 5.5 16 12l-6.5 6.5" />
+          </svg>
+        </a>
+      </div>
       {open ? <div className="border-t border-zinc-100 px-4 pb-4 pt-3">{children}</div> : null}
     </section>
   );
@@ -344,19 +371,21 @@ function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
  *  （色签 / 玻璃胶囊 / 空值「—」），不挂点开编辑；数据 = 聚合读面的 9 列 + useTaskFull 回填的扩展字段。 */
 const TASK_COLUMNS: ColumnDef[] = resolveColumns({});
 
-function TaskTable({ projectId, items, full, ready }: {
+function TaskTable({ projectId, items, full, ready, focus }: {
   projectId: string;
   items: ProjectTasks["items"];
   /** 回填的扩展字段（useTaskFull）。 */
   full: TaskFull;
   /** 回填是否跑完（data-workspace-task-full 锚点；跑完前对应列先按「—」渲染）。 */
   ready: boolean;
+  /** 醒目模式（Push 232）：整行铺任务状态底色 + 状态胶囊收口成深色字（口径 = 项目页 TaskBoard）。 */
+  focus: boolean;
 }) {
   const gridTemplate = TASK_COLUMNS.map((column) => column.width).join(" ");
   const minWidth = TASK_COLUMNS.reduce((total, column) => total + column.min, 0);
   const managerText = (full.managers.get(projectId) ?? []).join("、");
   return (
-    <div data-workspace-task-table="" data-workspace-task-full={ready ? "true" : "false"} className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+    <div data-workspace-task-table="" data-workspace-task-full={ready ? "true" : "false"} data-workspace-task-focus={focus ? "true" : "false"} className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
       <div className="overflow-x-auto">
         <div style={{ minWidth: minWidth }}>
           <div
@@ -412,7 +441,15 @@ function TaskTable({ projectId, items, full, ready }: {
                     </span>
                   ),
                 status: (
-                  <span data-workspace-task-status={task.displayStatus} className={"inline-block rounded-lg px-3 py-1.5 text-[11px] font-medium " + STATUS_CAPSULE_CLASS[status]}>
+                  <span
+                    data-workspace-task-status={task.displayStatus}
+                    className={
+                      "inline-block " +
+                      (focus
+                        ? "px-1.5 py-[3px] text-xs font-semibold " + STATUS_TAG_TEXT_CLASS[status]
+                        : "rounded-lg px-3 py-1.5 text-[11px] font-medium " + STATUS_CAPSULE_CLASS[status])
+                    }
+                  >
                     {status}
                   </span>
                 ),
@@ -498,7 +535,7 @@ function TaskTable({ projectId, items, full, ready }: {
                 <div
                   key={task.id}
                   data-workspace-task={task.id}
-                  className="grid items-center px-5 py-2.5 transition-colors hover:bg-zinc-50/80"
+                  className={"grid items-center px-5 py-2.5 transition-colors " + (focus ? STATUS_ROW_CLASS[status] : "hover:bg-zinc-50/80")}
                   style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
                 >
                   {TASK_COLUMNS.map((column) =>
@@ -627,9 +664,9 @@ function IssuePhotos({ photos }: { photos: readonly ReportPhoto[] }) {
 
 /** 展开区 ② 我提出的问题表（列口径照「问题追踪」完整六列）：日期 / 问题描述 / 问题归类 / 解决方案或建议 /
  *  问题附图 / 问题是否处理 + 行尾「在项目中查看」（窄屏横向滚动）。 */
-function IssueTable({ issues, full }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull> }) {
+function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; focus: boolean }) {
   return (
-    <div data-workspace-issue-table="" className="overflow-x-auto rounded-lg border border-zinc-200">
+    <div data-workspace-issue-table="" data-workspace-issue-focus={focus ? "true" : "false"} className="overflow-x-auto rounded-lg border border-zinc-200">
       <table className="w-full min-w-[1280px] border-collapse text-left text-sm">
         <thead className="bg-zinc-50 text-zinc-500">
           <tr>
@@ -649,7 +686,7 @@ function IssueTable({ issues, full }: { issues: readonly ApiWorkspaceIssue[]; fu
             const state = issueStateOf(issue.state);
             const detail = full.get(issue.id);
             return (
-              <tr key={issue.id} data-workspace-issue={issue.id} className="align-top transition-colors hover:bg-zinc-50/80">
+              <tr key={issue.id} data-workspace-issue={issue.id} className={"align-top transition-colors " + (focus ? state.focusRowClass : "hover:bg-zinc-50/80")}>
                 <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{cnDateFull(issue.raisedAt)}</td>
                 <td className="min-w-[240px] px-4 py-3">
                   <span className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>
@@ -666,7 +703,15 @@ function IssueTable({ issues, full }: { issues: readonly ApiWorkspaceIssue[]; fu
                   <IssuePhotos photos={detail === undefined ? [] : detail.photos} />
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-center">
-                  <span data-issue-state={issue.state} className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + state.className}>{state.label}</span>
+                  <span
+                    data-issue-state={issue.state}
+                    className={
+                      "inline-block " +
+                      (focus ? "text-xs font-semibold " + state.focusTagClass : "rounded px-1.5 py-0.5 text-[11px] font-medium " + state.className)
+                    }
+                  >
+                    {state.label}
+                  </span>
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   <a
@@ -703,7 +748,7 @@ const TABS: ReadonlyArray<{ key: WorkspaceTab; label: string }> = [
 ];
 
 /** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。 */
-function MyTasksView({ data }: { data: ApiWorkspace }) {
+function MyTasksView({ data, focus }: { data: ApiWorkspace; focus: boolean }) {
   const projects = groupTasksByProject(data);
   const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length;
   const { full, partial, ready } = useTaskFull(data);
@@ -732,7 +777,7 @@ function MyTasksView({ data }: { data: ApiWorkspace }) {
               projectName={project.projectName}
               summary={<TaskPanelSummary items={project.items} />}
             >
-              <TaskTable projectId={project.projectId} items={project.items} full={full} ready={ready} />
+              <TaskTable projectId={project.projectId} items={project.items} full={full} ready={ready} focus={focus} />
             </ProjectPanel>
           ))}
         </div>
@@ -742,7 +787,7 @@ function MyTasksView({ data }: { data: ApiWorkspace }) {
 }
 
 /** 标签 ② 我提出的问题：按项目的折叠面板 + 照「问题追踪」六列的问题表。 */
-function RaisedIssuesView({ issues }: { issues: readonly ApiWorkspaceIssue[] }) {
+function RaisedIssuesView({ issues, focus }: { issues: readonly ApiWorkspaceIssue[]; focus: boolean }) {
   const projects = groupIssuesByProject(issues);
   const { full, partial } = useIssueFull(issues);
   return (
@@ -770,7 +815,7 @@ function RaisedIssuesView({ issues }: { issues: readonly ApiWorkspaceIssue[] }) 
               projectName={project.projectName}
               summary={<span className="text-xs font-normal text-zinc-400">{"共 " + String(project.issues.length) + " 条"}</span>}
             >
-              <IssueTable issues={project.issues} full={full} />
+              <IssueTable issues={project.issues} full={full} focus={focus} />
             </ProjectPanel>
           ))}
         </div>
@@ -780,10 +825,18 @@ function RaisedIssuesView({ issues }: { issues: readonly ApiWorkspaceIssue[] }) 
 }
 
 /** 工作台「我的任务」页：两个标签（我的任务 / 我提出的问题）共用一份 GET /api/v1/workspace 聚合数据。 */
-export default function WorkspacePage({ me, tab, onChangeTab }: WorkspacePageProps) {
+export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocusModeChange }: WorkspacePageProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: "loading" });
   /** 重新加载令牌：bump 一次重新取数（错误态的「重新加载」用）。 */
   const [reloadToken, setReloadToken] = useState(0);
+  /** 醒目模式（Push 232）：值由 App 层按账号偏好给；null / 缺省 = 偏好尚未取到 → 按默认「关」渲染。 */
+  const focus = focusMode === true;
+  /** 醒目模式保存失败文案（null = 无提示）：乐观更新 + 失败回滚在 App 层，本页只出提示条。 */
+  const [focusError, setFocusError] = useState<string | null>(null);
+  /** 醒目模式改动（Push 232）：点一下即生效（App 层乐观更新）+ 单键 PATCH；失败回滚并在页内提示条出文案。 */
+  const handleToggleFocusMode = async (checked: boolean): Promise<void> => {
+    setFocusError((await onFocusModeChange?.(checked)) ?? null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -835,7 +888,23 @@ export default function WorkspacePage({ me, tab, onChangeTab }: WorkspacePagePro
                 );
               })}
             </div>
+            {/* 醒目模式（Push 232 · 业务口径「同样增加醒目模式」）：开关落在标签导航栏最右侧
+                （同项目总览 / 问题追踪口径「醒目模式放在标签导航栏的最右侧」） */}
+            <span data-workspace-focus-toggle="" className="shrink-0">
+              <FocusModeToggle
+                checked={focus}
+                onToggle={(checked) => {
+                  void handleToggleFocusMode(checked);
+                }}
+              />
+            </span>
           </nav>
+
+          {focusError === null ? null : (
+            <p role="alert" data-workspace-focus-error="" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              {focusError}
+            </p>
+          )}
 
           {state.kind === "loading" ? (
             <EmptyCard text="加载中…" hint="正在拉取工作台聚合数据（GET /api/v1/workspace）。" />
@@ -854,9 +923,9 @@ export default function WorkspacePage({ me, tab, onChangeTab }: WorkspacePagePro
               </button>
             </div>
           ) : tab === "raised" ? (
-            <RaisedIssuesView issues={state.data.myIssues.raised} />
+            <RaisedIssuesView issues={state.data.myIssues.raised} focus={focus} />
           ) : (
-            <MyTasksView data={state.data} />
+            <MyTasksView data={state.data} focus={focus} />
           )}
         </div>
       </main>
