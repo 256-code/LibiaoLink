@@ -1,0 +1,46 @@
+{
+  "generatedAt": "2026-09-30",
+  "generator": "make_n1_samples.py",
+  "samples": [
+    {
+      "file": "n1-01-fee-summary.xlsx",
+      "bytes": 12965,
+      "sha256": "e632473c9add592e7ed124c286a84f93e9bc927412811b8f46ad42477b9c8ece",
+      "sheets": [
+        "汇总",
+        "明细",
+        "图表"
+      ],
+      "features": "多Sheet/跨表公式/柱状图/折线图/色阶/数据条/单元格规则/冻结/数据验证/合并单元格"
+    },
+    {
+      "file": "n1-02-project-ledger.xlsx",
+      "bytes": 103224,
+      "sha256": "2b2ed5c284142bf5e8bfa79ee75b444776c9db5e1bdcb336158b1852492fd03c",
+      "sheets": [
+        "台账",
+        "统计"
+      ],
+      "rows": 1200,
+      "features": "1200行/RANK/嵌套IF/SUMIFS/图标集/Top10/数据条/自动筛选/千分位"
+    },
+    {
+      "file": "n1-03-weekly-report.docx",
+      "bytes": 57166,
+      "sha256": "ab4a5f95d0c738e0427b33f7ba8cecc36f5f64992eb53b38776ec401236a437a",
+      "features": "多级标题/项目符号+编号列表/合并单元格表格/页眉页脚+页码域/内嵌插图/超链接/中英混排"
+    },
+    {
+      "file": "n1-04-management-policy.docx",
+      "bytes": 41925,
+      "sha256": "55a0bd6b4634e040c3a6db25408feb5e18085965f1d9d159c9d7bdb8fe60ee60",
+      "features": "长文档分页/跨页长表（重复表头46行）/章条结构/引用标注/超链接/页脚页码域"
+    },
+    {
+      "file": "n1-05-official-notice.docx",
+      "bytes": 47591,
+      "sha256": "e5f04ad317785c9a330bc791f64cb6959606594cf852fd25a9d33647567f4f60",
+      "features": "红头/文号/红色分隔线/仿宋正文/首行缩进/落款右对齐/电子印章插图/版记"
+    }
+  ]
+}

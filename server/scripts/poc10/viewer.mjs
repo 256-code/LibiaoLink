@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // PoC-10 查看器驱动：无头 Edge（Chromium）+ 裸 CDP，零新增依赖
 // 用法：
-//   node viewer.mjs single [--file docx|xlsx] [--label a1] [--shot]
+//   node viewer.mjs single [--file docx|xlsx|n1-01..n1-05] [--label a1] [--shot]
 //   node viewer.mjs burst  --n 20 [--file mix|docx|xlsx] [--hold 0] [--label a2] [--shot-every 10] [--timeout 420]
 //   node viewer.mjs tamper [--cases b1,b2,b3a,b3b,b4,b5,b6,b7] [--label b]
+//   node viewer.mjs fidelity --files n1-01,n1-02,... [--label n1a] [--probe] [--word-steps page2,page2] [--timeout 240]
+//     次关 N1 保真度抽查：逐份样本截屏（xlsx 逐个 Sheet 点击切换；docx 用 PageDown 翻页），
+//     结果 JSON 见 logs/<label>.json，截图见 shots/<label>-<file>-<step>.png。
 // 依赖环境：POC10_JWT_SECRET（查看器 JWT 密钥，本地生成不入库）；S3_* 来自 server/.env；
 //   端点可用 POC10_ROOT / POC10_DOCSRV / POC10_INTERNAL_S3 / POC10_HTTP_PORT / EDGE_PATH 覆盖。
 import { spawn, execFile } from "node:child_process";
@@ -41,6 +44,11 @@ const FIX = {
   docx: { objectKey: "poc10/fixtures/poc10-doc-a.docx", fileType: "docx", docType: "word", title: "poc10-doc-a.docx" },
   docxB: { objectKey: "poc10/fixtures/poc10-doc-a2.docx", fileType: "docx", docType: "word", title: "poc10-doc-a2.docx" },
   xlsx: { objectKey: "poc10/fixtures/poc10-book-b.xlsx", fileType: "xlsx", docType: "cell", title: "poc10-book-b.xlsx" },
+  "n1-01": { objectKey: "poc10/fixtures/n1-01-fee-summary.xlsx", fileType: "xlsx", docType: "cell", title: "N1-01 部门费用汇总（2026-08）.xlsx", sheets: ["汇总", "明细", "图表"] },
+  "n1-02": { objectKey: "poc10/fixtures/n1-02-project-ledger.xlsx", fileType: "xlsx", docType: "cell", title: "N1-02 项目台账（1200 行）.xlsx", sheets: ["台账", "统计"] },
+  "n1-03": { objectKey: "poc10/fixtures/n1-03-weekly-report.docx", fileType: "docx", docType: "word", title: "N1-03 项目周报.docx", wordSteps: "page1,page1,page1,page1" },
+  "n1-04": { objectKey: "poc10/fixtures/n1-04-management-policy.docx", fileType: "docx", docType: "word", title: "N1-04 管理制度（长文档）.docx", wordSteps: "page2,page2,page2,page2" },
+  "n1-05": { objectKey: "poc10/fixtures/n1-05-official-notice.docx", fileType: "docx", docType: "word", title: "N1-05 红头通知.docx", wordSteps: "page1,page1" },
 };
 
 const cases = new Map();
@@ -60,8 +68,9 @@ function withToken(cfg, o = {}) {
 function pageHtml(id) {
   const jsonId = JSON.stringify(id);
   return [
-    "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>poc10-" + id.replace(/[<>&"]/g, "") + "</title></head>",
-    "<body style=\"margin:0\"><div id=\"placeholder\" style=\"height:100vh\"></div>",
+    "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><link rel=\"icon\" href=\"data:,\"><title>poc10-" + id.replace(/[<>&"]/g, "") + "</title>",
+    "<style>html,body{height:100%;margin:0}#placeholder{width:100%;height:100%}</style></head>",
+    "<body><div id=\"placeholder\"></div>",
     "<script>",
     "window.__poc10 = { caseId: " + jsonId + ", status: \"loading\", t0: performance.now(), errors: [] };",
     "window.addEventListener('error', function (e) { window.__poc10.errors.push('window.error: ' + (e.message || '')); });",
@@ -270,7 +279,7 @@ async function openCase(b, id, { timeoutMs = 180000, shot = false, closeAfter = 
 async function runSingle() {
   const label = String(opt("label", "single-" + stamp()));
   const file = String(opt("file", "docx"));
-  const f = file === "xlsx" ? FIX.xlsx : file === "docxB" ? FIX.docxB : FIX.docx;
+  const f = FIX[file] ?? FIX.docx;
   const rawUrl = opt("url", null);
   const url = rawUrl && rawUrl !== true ? String(rawUrl) : await presignGet(f.objectKey, 900, INTERNAL_S3);
   const id = label + "-view";
@@ -409,8 +418,263 @@ async function runTamper() {
   await new Promise((resolve) => server.close(resolve));
 }
 
+
+const PROBE_JS = `(() => {
+  const names = ${JSON.stringify(["汇总", "明细", "图表", "台账", "统计"])};
+  const res = { canvases: [], bottom: [], matches: {} };
+  document.querySelectorAll("canvas").forEach((c) => { const r = c.getBoundingClientRect(); res.canvases.push({ cls: String(c.className).slice(0, 60), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }); });
+  const vh = window.innerHeight;
+  document.querySelectorAll("div,span,li,button,a").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.height > 0 && r.y > vh - 150 && r.width > 0) {
+      res.bottom.push({ tag: el.tagName, cls: String(el.className).slice(0, 70), text: (el.textContent || "").trim().slice(0, 30), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), kids: el.children.length });
+    }
+  });
+  res.bottom = res.bottom.slice(0, 80);
+  res.scrollables = [];
+  document.querySelectorAll("*").forEach((el) => {
+    if (el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 200) {
+      const r = el.getBoundingClientRect();
+      res.scrollables.push({ tag: el.tagName, id: el.id, cls: String(el.className).slice(0, 80), sh: el.scrollHeight, ch: el.clientHeight, st: el.scrollTop, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) });
+    }
+  });
+  res.scrollables.sort((a, b) => b.sh - a.sh);
+  res.scrollables = res.scrollables.slice(0, 12);
+  res.dialogs = [];
+  document.querySelectorAll("[class*=tooltip],[class*=tip],[class*=notification],[class*=dialog]").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) res.dialogs.push({ cls: String(el.className).slice(0, 60), text: (el.textContent || "").trim().slice(0, 60), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) });
+  });
+  res.dialogs = res.dialogs.slice(0, 10);
+  for (const n of names) {
+    const hits = [];
+    document.querySelectorAll("*").forEach((el) => { if ((el.textContent || "").trim() === n) { const r = el.getBoundingClientRect(); hits.push({ tag: el.tagName, cls: String(el.className).slice(0, 70), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), kids: el.children.length }); } });
+    if (hits.length) res.matches[n] = hits.slice(0, 8);
+  }
+  return JSON.stringify(res);
+})()`;
+
+async function evalInFrame(page, expression) {
+  const tree = await page.send("Page.getFrameTree");
+  const frames = [];
+  const walk = (t) => { const f = t.frame; frames.push({ frameId: f.id, url: f.url }); (t.childFrames ?? []).forEach(walk); };
+  walk(tree.frameTree);
+  const mainUrl = frames[0]?.url ?? "";
+  const target = frames.find((f) => /web-apps|documentserver|apps\//.test(f.url))
+    ?? frames.find((f) => f.url && f.url !== mainUrl && f.url.startsWith("http"));
+  if (!target) return { ok: false, err: "frame not found", frames: frames.map((f) => f.url) };
+  const w = await page.send("Page.createIsolatedWorld", { frameId: target.frameId, grantUniveralAccess: true });
+  const r = await page.send("Runtime.evaluate", { expression, returnByValue: true, contextId: w.executionContextId }, 20000);
+  return { ok: true, frameUrl: target.url, frames: frames.map((f) => f.url), value: r?.result?.value ?? null };
+}
+
+async function clickByText(page, text) {
+  const expr = `(() => {
+    const t = ${JSON.stringify(text)};
+    const out = [];
+    for (const el of document.querySelectorAll("*")) {
+      if ((el.textContent || "").trim() !== t) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      out.push({ x: r.x + r.width / 2, y: r.y + r.height / 2, tag: el.tagName, cls: String(el.className || "").slice(0, 100), area: Math.round(r.width * r.height) });
+    }
+    out.sort((a, b) => a.area - b.area);
+    return JSON.stringify(out.slice(0, 8));
+  })()`;
+  const fr = await evalInFrame(page, expr);
+  let cands = [];
+  try { cands = JSON.parse(fr?.value ?? "[]"); } catch {}
+  if (!cands.length) return { text, found: false, where: fr?.ok ? "frame" : "frame-error" };
+  const c = cands[0];
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: c.x, y: c.y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: c.x, y: c.y, button: "left", clickCount: 1 });
+  return { text, found: true, where: "frame", x: Math.round(c.x), y: Math.round(c.y), tag: c.tag, cls: c.cls, candidates: cands.length };
+}
+
+async function openFidelityCase(b, id, { timeoutMs = 240000, steps = [] } = {}) {
+  const t0 = Date.now();
+  const url = "http://127.0.0.1:" + PORT_HTTP + "/v/" + encodeURIComponent(id);
+  const { targetId } = await b.browser.send("Target.createTarget", { url });
+  let pageWs = null;
+  for (let i = 0; i < 40 && !pageWs; i++) {
+    try {
+      const list = await (await fetch("http://127.0.0.1:" + b.port + "/json/list")).json();
+      const t = list.find((x) => x.id === targetId);
+      if (t && t.webSocketDebuggerUrl) pageWs = t.webSocketDebuggerUrl;
+    } catch {}
+    if (!pageWs) await sleep(250);
+  }
+  if (!pageWs) throw new Error("找不到页面调试通道: " + id);
+  const page = await CDP.connect(pageWs);
+  const consoleErrors = [];
+  const pushErr = (s) => { if (consoleErrors.length < 200) consoleErrors.push(String(s).slice(0, 600)); };
+  const rel = () => ((Date.now() - t0) / 1000).toFixed(1) + "s ";
+  const reqUrls = new Map();
+  page.on("Runtime.exceptionThrown", (m) => pushErr(rel() + "exception: " + String(m.params?.exceptionDetails?.exception?.description ?? JSON.stringify(m.params))));
+  page.on("Runtime.consoleAPICalled", (m) => { const t = m.params?.type; if (t === "error" || t === "warning") pushErr(rel() + t + ": " + (m.params.args ?? []).map((a) => a.value ?? a.description ?? "").join(" ")); });
+  page.on("Log.entryAdded", (m) => { if (m.params?.entry?.level === "error") pushErr(rel() + "log: " + String(m.params.entry.text)); });
+  page.on("Network.requestWillBeSent", (m) => { const u = String(m.params?.request?.url ?? ""); if (u.startsWith(DOCSRV)) { reqUrls.set(m.params.requestId, u); if (reqUrls.size > 3000) reqUrls.delete(reqUrls.keys().next().value); } });
+  page.on("Network.loadingFailed", (m) => { const u = reqUrls.get(m.params?.requestId); reqUrls.delete(m.params?.requestId); if (u) pushErr(rel() + "netfail: " + String(m.params?.errorText ?? "?") + (m.params?.blockedReason ? " blocked=" + m.params.blockedReason : "") + " " + u.slice(-140)); });
+  page.on("Network.responseReceived", (m) => { const s = Number(m.params?.response?.status); if (s >= 400) pushErr(rel() + "http" + s + ": " + String(m.params?.response?.url ?? "").slice(-140)); });
+  await page.send("Runtime.enable");
+  await page.send("Log.enable");
+  await page.send("Network.enable");
+  await page.send("Page.enable");
+  const dsSince = new Date().toISOString();
+  let last = null, cdpErr = null, sendFails = 0;
+  const deadline = t0 + timeoutMs;
+  while (Date.now() < deadline) {
+    let v = null;
+    try {
+      const r = await page.send("Runtime.evaluate", { expression: "JSON.stringify(window.__poc10 || null)", returnByValue: true }, 15000);
+      sendFails = 0;
+      v = r?.result?.value ? JSON.parse(r.result.value) : null;
+    } catch (e) {
+      cdpErr = String(e?.message ?? e);
+      if (++sendFails >= 3) break;
+    }
+    if (v) { last = v; if (["ready", "error", "timeout", "loaded"].includes(v.status)) break; }
+    await sleep(1500);
+  }
+  await sleep(3000);
+  const shots = [];
+  const cap = async (name) => {
+    const s = await page.send("Page.captureScreenshot", { format: "png" });
+    const p = SHOT_DIR + "/" + sanitize(id + "-" + name) + ".png";
+    writeFileSync(p, Buffer.from(s.data, "base64"));
+    shots.push({ name, path: p });
+    return p;
+  };
+  await cap("00-default");
+  for (const st of steps) {
+    const info = { name: st.name };
+    if (st.scroll) {
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 640, y: 460 });
+      await page.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 640, y: 460, deltaX: 0, deltaY: st.scroll });
+      await sleep(st.wait ?? 1600);
+      info.scroll = st.scroll;
+    }
+    if (st.keys) {
+      await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: 640, y: 420, button: "left", clickCount: 1 });
+      await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 640, y: 420, button: "left", clickCount: 1 });
+      await sleep(400);
+      for (let k = 0; k < st.keys; k++) {
+        for (const type of ["rawKeyDown", "keyUp"]) {
+          await page.send("Input.dispatchKeyEvent", { type, windowsVirtualKeyCode: 34, nativeVirtualKeyCode: 34, key: "PageDown", code: "PageDown" });
+        }
+        await sleep(350);
+      }
+      await sleep(1300);
+      info.keys = st.keys;
+    }
+    if (st.wheelMany) {
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 640, y: 420 });
+      for (let k = 0; k < st.wheelMany; k++) {
+        await page.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 640, y: 420, deltaX: 0, deltaY: st.wheelDelta ?? 600 });
+        await sleep(st.wheelInterval ?? 140);
+      }
+      await sleep(1400);
+      info.wheel = { times: st.wheelMany, delta: st.wheelDelta ?? 600 };
+    }
+    if (st.setScrollFrac !== undefined) {
+      const expr = `(() => {
+        let el = document.getElementById("id_main_view");
+        if (!el) { let best = null; document.querySelectorAll("*").forEach((e) => { if (e.scrollHeight > e.clientHeight + 40 && e.clientHeight > 200 && (!best || e.scrollHeight > best.scrollHeight)) best = e; }); el = best; }
+        if (!el) return JSON.stringify({ ok: false });
+        el.scrollTop = Math.round(${st.setScrollFrac} * (el.scrollHeight - el.clientHeight));
+        return JSON.stringify({ ok: true, id: el.id, cls: String(el.className).slice(0, 60), st: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight });
+      })()`;
+      const fr = await evalInFrame(page, expr);
+      info.scroll = fr?.value ?? null;
+      await sleep(st.wait ?? 1400);
+    }
+    if (st.clickText) {
+      info.click = await clickByText(page, st.clickText);
+      await sleep(st.wait ?? 2000);
+    }
+    if (st.probe) {
+      try {
+        const ifr = await page.send("Runtime.evaluate", { expression: 'JSON.stringify(Array.from(document.querySelectorAll("iframe")).map(f=>{const r=f.getBoundingClientRect();return{src:String(f.src).slice(0,110),x:Math.round(r.x),y:Math.round(r.y),w:Math.round(r.width),h:Math.round(r.height)}}))', returnByValue: true }, 20000);
+        const fr = await evalInFrame(page, st.probe);
+        info.probe = JSON.stringify({ parentIframes: JSON.parse(ifr?.result?.value ?? "[]"), frameOk: fr?.ok ?? false, frameUrl: fr?.frameUrl ?? null, frameList: fr?.frames ?? [], data: fr?.value ?? null });
+      } catch (e) { info.probe = "ERR " + e.message; }
+    }
+    await cap(st.name);
+    shots.push; // no-op to keep structure explicit
+    Object.assign(shots[shots.length - 1], info);
+  }
+  const dsUntil = new Date().toISOString();
+  const dslogPath = LOG_DIR + "/" + sanitize(id) + ".dslog.txt";
+  writeFileSync(dslogPath, await dockerLogs(dsSince, dsUntil), "utf8");
+  try { await b.browser.send("Target.closeTarget", { targetId }); } catch {}
+  page.close();
+  const term = last && ["ready", "error", "timeout", "loaded"].includes(last.status) ? last.status : null;
+  const status = term ?? (cdpErr ? "cdp-broken" : (last?.status ?? "no-status"));
+  if (cdpErr) consoleErrors.push("cdp: " + cdpErr);
+  return {
+    id, status,
+    readyMs: last && last.readyAt ? Math.round(last.readyAt - last.t0) : null,
+    durationMs: Date.now() - t0,
+    docKey: last?.docKey ?? null,
+    errors: [...(last?.errors ?? []), ...consoleErrors].slice(0, 40),
+    dslogPath, shots,
+  };
+}
+
+async function runFidelity() {
+  const label = String(opt("label", "n1-" + stamp()));
+  const files = String(opt("files", "n1-01,n1-02,n1-03,n1-04,n1-05")).split(",");
+  const timeoutSec = Number(opt("timeout", 240));
+  const b = await startBrowser(9442);
+  const results = [];
+  for (const name of files) {
+    const f = FIX[name];
+    if (!f) { results.push({ file: name, status: "unknown-fixture" }); continue; }
+    const id = label + "-" + name;
+    const url = await presignGet(f.objectKey, 1800, INTERNAL_S3);
+    cases.set(id, { config: withToken(buildConfigWith({ f, url, key: "poc10-" + id + "-" + stamp() })), meta: {} });
+    const steps = [];
+    if (Boolean(opt("probe", false))) steps.push({ name: "00b-probe", probe: PROBE_JS });
+    if (f.docType === "cell") {
+      (f.sheets ?? []).forEach((sh, i) => steps.push({ name: "sheet-" + (i + 1), clickText: sh, wait: 2400 }));
+    } else {
+      steps.push({ name: "tip-dismiss", clickText: "知道了", wait: 900 });
+      const spec = opt("word-steps", "");
+      if (spec && spec !== true) {
+        String(spec).split(",").forEach((tok, i) => {
+          const m = /^([a-z]+)(\d+)$/.exec(tok.trim());
+          if (!m) return;
+          const how = m[1], num = Number(m[2]);
+          if (how === "page") steps.push({ name: "step-" + (i + 1), keys: num, wait: 1500 });
+          else steps.push({ name: "step-" + (i + 1), wheelMany: num, wheelDelta: 620, wheelInterval: 120, wait: 1500 });
+        });
+      } else if (f.wordSteps) {
+        f.wordSteps.split(",").forEach((tok, i) => { steps.push({ name: "page-" + (i + 1), keys: Number(tok.replace(/\D/g, "")) || 1, wait: 1500 }); });
+      } else {
+        const n = f.scrolls ?? 3;
+        for (let i = 1; i <= n; i++) steps.push({ name: "scroll-" + i, wheelMany: 8, wheelDelta: 620, wheelInterval: 140, wait: 1400 });
+      }
+    }
+    let r;
+    try {
+      r = await openFidelityCase(b, id, { timeoutMs: timeoutSec * 1000, steps });
+    } catch (e) {
+      r = { id, status: "harness-error", readyMs: null, durationMs: null, docKey: null, errors: [String(e?.message ?? e)], dslogPath: null, shots: [] };
+    }
+    r.file = name;
+    results.push(r);
+    try { appendFileSync(LOG_DIR + "/" + sanitize(label) + ".results.jsonl", JSON.stringify({ at: new Date().toISOString(), ...r }) + "\n"); } catch {}
+    console.log("[" + r.status + "] " + name + " readyMs=" + r.readyMs + " shots=" + r.shots.length + (r.errors[0] ? " err0=" + String(r.errors[0]).slice(0, 130) : ""));
+  }
+  const summary = { label, mode: "fidelity", at: new Date().toISOString(), results };
+  writeFileSync(LOG_DIR + "/" + sanitize(label) + ".json", JSON.stringify(summary, null, 2));
+  b.browser.close(); try { b.proc.kill(); } catch {} cleanupProfile(b.profile);
+  await new Promise((resolve) => server.close(resolve));
+}
+
 if (MODE === "single") await runSingle();
 else if (MODE === "burst") await runBurst();
 else if (MODE === "tamper") await runTamper();
-else { console.log("用法: node viewer.mjs single|burst|tamper ..."); process.exit(2); }
+else if (MODE === "fidelity") await runFidelity();
+else { console.log("用法: node viewer.mjs single|burst|tamper|fidelity ..."); process.exit(2); }
 process.exit(0);
