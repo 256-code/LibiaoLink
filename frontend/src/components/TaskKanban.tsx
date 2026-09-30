@@ -252,6 +252,16 @@ type TaskKanbanProps = {
   onReorderTask?: (taskId: string, beforeTaskId: string | null, afterTaskId: string | null) => void;
   /** 抽屉里点四格进度条（Push 98；与任务表 §6.4 同一套联动口径）。 */
   onSetProgress?: (taskId: string, progress: number) => void;
+  /** 任务文件上传（Push 226 · 抽屉「文件」行）：透传给 TaskDrawer；不传 = 抽屉文件行只读。 */
+  onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>;
+  /** 任务详情接口所需（抽屉里的文件清单按它取详情）；不传 = 抽屉不拉清单。 */
+  /**
+   * 任务文件删除（Push 226 续）：透传给任务详情抽屉 —— 清单里「删除」= 移入回收站，由调用方执行。
+   */
+  onDeleteFile?: (fileId: string) => Promise<void>;
+  /** 任务文件改名（Push 226 续二）：透传给任务详情抽屉 —— 清单里点名字编辑提交，由调用方执行。 */
+  onRenameFile?: (fileId: string, name: string) => Promise<void>;
+  projectId?: string;
 };
 
 type KanbanGroup = {
@@ -770,7 +780,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, projectId }: TaskKanbanProps) {
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
    * 新建的临时任务等列表刷新回来即自动打开详情，不依赖点击那一刻的快照。
@@ -1172,6 +1182,10 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
         onProgress={onSetProgress}
         onSetStatus={onSetStatus}
         onSetActualEnd={onSetActualEnd}
+        onUploadFiles={onUploadFiles}
+        onDeleteFile={onDeleteFile}
+        onRenameFile={onRenameFile}
+        projectId={projectId}
         onClose={() => {
           setSelectedTaskId(null);
         }}

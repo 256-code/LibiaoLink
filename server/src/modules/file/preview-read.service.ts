@@ -19,7 +19,7 @@ type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
  *
  * 三态语义（D2-05，未就绪 / 失败都是 200）：
  * - `ready`：三元组命中产物 → 签发**短时签名地址**（D2-04：对象存储禁匿名读取）+ 写**一条** `action = preview` 审计；
- * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组，`dead` 会被唤醒）→ 前端轮询；
+ * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组，`dead` / 产物行缺失时的 `done` 都会被唤醒）→ 前端轮询；
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
  *   （缓存态：管线修复靠 `PREVIEW_PIPELINE_VERSION` 递增失效）。
  *
@@ -174,6 +174,9 @@ export class PreviewReadService {
    * - 无行：先登记 `not_ready`（读面首次请求即登记，定档未预生成的通道靠这里补上）；
    * - `failed` 行：跳过（缓存态失败不原地重试，等管线版本递增）；
    * - `ready` 行：不会走到这里（上游已返回）。
+   * 补投唤醒（Push 226 续）：补投一律连 `done` 的历史投递一并唤醒 —— 走到这里 = 产物行 `not_ready`：
+   * 若同三元组的投递记录已 done，要么产物行是删除后重新登记（缓存无从复用），要么旧投递被源缺失跳过，
+   * 都说明「done 的记录背后没有可复用产物」，必须重新转一次；重投后记录转 pending / processing，后续读取不再重复投。
    */
   private async dispatch(
     file: FileRow,
@@ -191,18 +194,24 @@ export class PreviewReadService {
         if (existing === null) {
           await this.previews.ensureRequested({ fileId: file.id, versionId: version.id, ...key }, tx);
         }
-        await appendOutboxIfAbsent(tx, {
-          topic: PREVIEW_JOB_TOPIC,
-          dedupeKey: previewJobDedupeKey(key),
-          payload: buildPreviewJobPayload({
-            projectId: file.projectId,
-            fileId: file.id,
-            versionId: version.id,
-            contentHash: version.contentHash,
-            target: key.target,
-            trigger: "read",
-          }),
-        });
+        await appendOutboxIfAbsent(
+          tx,
+          {
+            topic: PREVIEW_JOB_TOPIC,
+            dedupeKey: previewJobDedupeKey(key),
+            payload: buildPreviewJobPayload({
+              projectId: file.projectId,
+              fileId: file.id,
+              versionId: version.id,
+              contentHash: version.contentHash,
+              target: key.target,
+              trigger: "read",
+            }),
+          },
+          // 补投一律唤醒 done（Push 226 续）：产物 not_ready + 历史投递 done = 没有可复用产物
+          // （产物行被彻底删除后同内容重传 / 旧投递被源缺失跳过）—— 不唤醒会永远停在 not_ready。
+          { reviveDone: true },
+        );
       }
     });
     this.logger.log(

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   FileDetailSchema,
   FileDownloadUrlResponseSchema,
@@ -8,6 +8,7 @@ import {
   FilePreviewResponseSchema,
   FilePurgeResponseSchema,
   FileRecycleBodySchema,
+  FileRenameBodySchema,
   FileRestoreBodySchema,
   FileRollbackBodySchema,
   FileRollbackResponseSchema,
@@ -45,6 +46,7 @@ type FileFinalizeBody = z.infer<typeof FileFinalizeBodySchema>;
 type FileRollbackBody = z.infer<typeof FileRollbackBodySchema>;
 type FileRollbackResponse = z.infer<typeof FileRollbackResponseSchema>;
 type FileRecycleBody = z.infer<typeof FileRecycleBodySchema>;
+type FileRenameBody = z.infer<typeof FileRenameBodySchema>;
 type FileRestoreBody = z.infer<typeof FileRestoreBodySchema>;
 type FilePurgeBody = z.infer<typeof FilePurgeBodySchema>;
 type FilePurgeResponse = z.infer<typeof FilePurgeResponseSchema>;
@@ -194,6 +196,17 @@ export class FileController {
     @CurrentActorId() actorId: string,
   ): Promise<FileView> {
     return this.files.recycleFile(id, body, actorId);
+  }
+
+  /** 文件改名（Push 226 续 · 文件名可修改）：只改元数据名称，乐观锁 version 必传；回收站文件 409。契约响应码 = 200。 */
+  @Patch(":id")
+  @HttpCode(200)
+  rename(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(FileRenameBodySchema)) body: FileRenameBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<FileView> {
+    return this.files.renameFile(id, body, actorId);
   }
 
   /** 从回收站恢复（回到进入前状态）。契约响应码 = 200。 */

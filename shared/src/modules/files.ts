@@ -278,6 +278,14 @@ export const FileRecycleBodySchema = z
 
 export const FileRestoreBodySchema = z.object({ version: VersionSchema }).openapi("FileRestoreBody");
 
+/** 文件改名（Push 226 续）：只改元数据 name（不动内容 / 版本链 / 定档状态）；乐观锁 version 必传。 */
+export const FileRenameBodySchema = z
+  .object({
+    name: z.string().min(1).max(255).openapi({ example: "机械设计图纸-v3.docx", description: "新文件名（原文件名的元数据改名：不动内容 / 版本链 / 定档状态）" }),
+    version: VersionSchema,
+  })
+  .openapi("FileRenameBody", { description: "文件改名（Push 226 续：文件名可修改；乐观锁 version 必传；回收站中的文件不可改名）" });
+
 export const FilePurgeBodySchema = z
   .object({
     version: VersionSchema,

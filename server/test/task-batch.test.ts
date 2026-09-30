@@ -1,6 +1,7 @@
 /**
  * M3-04 任务批量操作回归（A1-08 · Push 150）：同一组变更逐条独立事务（成功项照常生效 + 部分失败清单）、
  * ids 去重 / 空 changes 400 / 归档项目 409、批量完成走同一完成门禁（缺件进 failures.gate_not_passed + 拒绝留痕）、
+ * 【暂时下线 · 2026-09-30】业务口径「暂时不要这个约束功能」：缺件不再拦截批量完成（无 gate_not_passed / 无拒绝留痕）；恢复门禁时把本文件断言与常量一起还原（原断言见 git 历史）。
  * 已完成条目 already_done、审计标注批量入口（entry=batch + 同批 batchId）。
  * 真机口径见 server/README.md「M3-04」；门禁判定与单条写入共用同一内核（见 test/task-gate.test.ts）。
  */
@@ -296,26 +297,19 @@ describe("M3-04 · 任务批量操作（A1-08）", () => {
     expect(repo.events.some((event) => event.eventType === "status_change")).toBe(true);
   });
 
-  it("批量完成缺件：该条 gate_not_passed + missing 明细（不生效），同批其它条目照常完成", async () => {
+  it("批量完成缺件（门禁暂时下线 2026-09-30）：两条都放行 —— 无 gate_not_passed、无拒绝留痕", async () => {
     const repo = new FakeTaskRepository();
     repo.tasks.set(TASK_A, makeRow(TASK_A, { nodeId: null, deliverableTypes: ["合同"] }));
     const gate = new FakeTaskGateRepository();
     const { service, db, audit } = makeService(repo, gate);
     const result = await service.batch(PROJECT, { ids: [TASK_A, TASK_B], changes: { status: "done" } }, ACTOR);
-    expect(result.succeededCount).toBe(1);
-    expect(result.failedCount).toBe(1);
-    expect(result.failures[0]).toMatchObject({ id: TASK_A, code: "gate_not_passed" });
-    expect(result.failures[0]?.missing).toEqual([{ docType: "合同", required: 1, present: 0 }]);
-    expect(repo.tasks.get(TASK_A)?.status).toBe("pending");
+    // 恢复门禁时还原：TASK_A gate_not_passed + missing 明细 + task.gate_rejected 留痕 + batch 元数据审计
+    expect(result.succeededCount).toBe(2);
+    expect(result.failedCount).toBe(0);
+    expect(repo.tasks.get(TASK_A)?.status).toBe("done");
     expect(repo.tasks.get(TASK_B)?.status).toBe("done");
-    const rejected = db.outbox.find((row) => row.topic === "task.gate_rejected");
-    expect(rejected?.payload["taskId"]).toBe(TASK_A);
-    const failed = audit.entries.find((entry) => entry.result === "failed");
-    expect(failed?.objectType).toBe("task");
-    const metadata = failed?.metadata as Record<string, unknown>;
-    expect(metadata["entry"]).toBe("batch");
-    expect(typeof metadata["batchId"]).toBe("string");
-    expect((failed?.summary as string).startsWith("批量任务完成被门禁拒绝：")).toBe(true);
+    expect(db.outbox.some((row) => row.topic === "task.gate_rejected")).toBe(false);
+    expect(audit.entries.some((entry) => entry.result === "failed")).toBe(false);
   });
 
   it("批量完成遇已完成：该条 already_done（不重复写），同批其它条目照常完成", async () => {
