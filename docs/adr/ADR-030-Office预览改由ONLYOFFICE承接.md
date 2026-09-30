@@ -58,4 +58,5 @@
 - docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md
 - docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md
 - docs/PoC-10-安全定稿(R1-R2·受控下载端点).md（含附条件 C1~C6 / D1~D4）
+- docs/PoC-10-部署前置定稿(F1-R3·R6).md（N3 产出：`blockPrivateIP` / `outbox` 固化键、升级回归五项、R6 断言）
 - 系统功能书.md A4-19 / D2-09；技术设计v0.1-选型分析.md §4.7；团队分工.md §6 第 10~11 项
