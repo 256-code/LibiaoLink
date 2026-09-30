@@ -5,7 +5,7 @@
  */
 import { apiRequest } from "./api";
 
-/** 契约 WorkspaceTaskItem：工作台任务项（跨项目；带项目编号 / 名称；三组内 plannedEnd 必非空）。 */
+/** 契约 WorkspaceTaskItem：工作台任务项（跨项目；带项目编号 / 名称；未排期组 plannedEnd 为空，其余三组非空）。 */
 export type ApiWorkspaceTask = {
   id: string;
   projectId: string;
@@ -44,13 +44,14 @@ export type ApiWorkspaceIssue = {
   version: number;
 };
 
-/** 契约 WorkspaceResponse：分组基准日（Asia/Shanghai 今天）+ 我的任务三组 + 我的问题两栏。 */
+/** 契约 WorkspaceResponse：分组基准日（Asia/Shanghai 今天）+ 我的任务四组 + 我的问题两栏。 */
 export type ApiWorkspace = {
   today: string;
   myTasks: {
     today: ApiWorkspaceTask[];
     upcoming: ApiWorkspaceTask[];
     overdue: ApiWorkspaceTask[];
+    unscheduled: ApiWorkspaceTask[];
   };
   myIssues: {
     handling: ApiWorkspaceIssue[];
@@ -60,7 +61,8 @@ export type ApiWorkspace = {
 
 /**
  * GET /api/v1/workspace：工作台聚合读面。
- * 口径（第一刀）：任务 = 任务负责人名单内含我 + 未完成 + 预计完成日期在「今天起 7 天」窗口（含已逾期）；
+ * 口径（2026-09-30 复评）：任务 = 未完成，且「任务负责人含我」或「项目项目经理含我」；预计完成日期不设天数窗口
+ * （已逾期 / 今天 / 远期分别落 overdue / today / upcoming，未排期落 unscheduled）；
  * 问题 = 我处理（ownerId 我）与我提出的（reporterId 我）两栏，同一问题两边都命中时两栏都出现；
  * 归档 / 软删项目整项目不进；排序由服务端给定（任务按 plannedEnd 升序、问题未关闭在前）。
  */

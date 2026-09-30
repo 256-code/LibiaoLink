@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * M6 真机回放（S6·report-issue 日报 / 问题 + M6-01 收口 + M6-05 第一刀 · 工作台 A6-01 / A6-03 · Push 215 口径）：
+ * M6 真机回放（S6·report-issue 日报 / 问题 + M6-01 收口 + M6-05 · 工作台 A6-01 / A6-03（2026-09-30 复评：四组 / 不限窗口 / 项目经理含我）· Push 215 口径）：
  *   证据一（A3-02 / A3-04 · 日报填报）：新报今天（今天 = submitted，过去日期 = 补填 supplement）、
  *           同人同项目同日可多条（Push 215：原「一人一天一条」409 REPORT_ALREADY_EXISTS 删除）、未来日期 400、
  *           草稿写库（state=draft 落行）+ 提交；关联阶段（stageKeys / stageNames 同下标）；附图校验（未知文件 400）。
@@ -17,14 +17,15 @@
  *   证据五（M6-01 收口 · A7-01 当日汇总 / A7-05 应填未填）：当日汇总只算已提交条目（submitted / supplement）
  *           （entryCount / headcountTotal / issueCount + 工作日信息）；应填未填 = 名册 × 工作日历 × 当日未提交
  *           （草稿未提交仍计未填）；非工作日整列为空（不催报）；缺省日期 = 今天；未来日期 400。
- *   证据六（工作台 · M6-05 第一刀 · A6-01 / A6-03）：靶子任务贯穿三组 —— 负责人含我（A23 多值任一位）+ 未完成 +
- *           预计完成日期在「今天起 7 天」窗口（昨天 → overdue、今天 → today、明天 → upcoming）；
- *           显式置空负责人（待分配）后三组均不进；我的问题两栏（我处理 ownerId / 我提出的 reporterId）双命中双列。
+ *   证据六（工作台 · M6-05 · A6-01 / A6-03 · 2026-09-30 口径复评）：靶子任务贯穿四组 —— 命中口径 = 任务负责人含我
+ *           或 项目项目经理含我（本回放项目 managerIds = admin）+ 未完成、不限完成日期窗口：默认待分配（无日期）→ unscheduled；
+ *           指派我 + 昨天 → overdue、今天 → today、明天与今天 + 400 天 → upcoming（原 7 天窗口取消）；
+ *           清空负责人（待分配）+ 无日期仍命中未排期（项目经理口径）。我的问题两栏（我处理 ownerId / 我提出的 reporterId）双命中双列。
  *   证据七（归档 · M7-04 · C4-02 / C4-03 · ADR-027）：验收完成硬前置 → 首次归档 422 ARCHIVE_GATE_NOT_PASSED（缺项明细
  *           + 失败留痕 + 不置位）→ confirm=true 确认越过 200（置 archived + 引用式清单 + 成功留痕）→ 清单读面 GET /archive
  *           → PATCH 不再接受 archived（400，契约收紧）→ 归档检索 filter[archivedYear] 命中。
  *   证据八（归档写保护 · ADR-027）：归档项目写保护（G4：日报填报 / 问题处理 / 任务删除均 409 PROJECT_ARCHIVED）
- *           + 归档后工作台整项目剔除（W7：任务三组 / 问题两栏零残留）—— 项目由证据七真实归档端点置位。
+ *           + 归档后工作台整项目剔除（W7：任务四组 / 问题两栏零残留）—— 项目由证据七真实归档端点置位。
  *
  * 前置：真 PG（DATABASE_URL，迁移器角色 —— 断言与收尾要跨表读删）+ 真 api（BASE_URL）。本脚本只在本地沙箱 / 联调库跑：
  *       铸一个管理员临时会话（跑完撤销）、建 M6RPL- 回放项目与任务（跑完硬删项目及其日报 / 问题 / 事件 / 任务 / 审计 / outbox / 会话）。
@@ -171,6 +172,7 @@ try {
   const yesterday = shanghaiDate(-1);
   const beforeYesterday = shanghaiDate(-2);
   const tomorrow = shanghaiDate(1);
+  const farFuture = shanghaiDate(400);
 
   // ---------- 证据一：日报填报（A3-02 / A3-04 · 同日多条 · 关联阶段 · 附图校验） ----------
   const API = "/api/v1/projects/" + cleanup.projectId;
@@ -366,11 +368,14 @@ try {
     check("S6", "A7-05 非工作日整列为空（" + restDay + " / " + String(missingRest.body?.dayKind ?? "-") + " / " + String(missingRest.body?.dayName ?? "无例外名") + "）", "200 missingCount=0 missingUserIds=[]", missingRest.status + " " + short({ isWorkday: missingRest.body?.isWorkday, dayKind: missingRest.body?.dayKind, dayName: missingRest.body?.dayName, missingCount: missingRest.body?.missingCount, members: missingRest.body?.members?.length ?? null }, 200), restOk);
   }
 
-  // ---------- 证据六：工作台（M6-05 第一刀 · A6-01 我的任务三组 / A6-03 我的问题两栏） ----------
-  // 靶子任务贯穿三组：负责人含我（A23 多值任一位）+ 未完成 + plannedEnd 在「今天起 7 天」窗口；未排期 / 窗口外 / 待分配不进。
-  const bench = await call("POST", API + "/tasks", { title: "M6RPL-工作台靶子（三组 / 两栏）" });
+  // ---------- 证据六：工作台（M6-05 · A6-01 我的任务四组 / A6-03 我的问题两栏 · 2026-09-30 口径复评） ----------
+  // 命中口径 = 任务负责人含我 或 项目项目经理含我（本回放项目 managerIds=[adminId]，本项目未完成任务均可见）+ 未完成；
+  // 分组不限窗口：plannedEnd 昨天 → overdue / 今天 → today / 远期 → upcoming / 空 → unscheduled（新增组）。
+  const bench = await call("POST", API + "/tasks", { title: "M6RPL-工作台靶子（四组 / 两栏）" });
   let benchTask = bench.body ?? null;
-  check("W0", "工作台前置：建靶子任务（缺省「待分配」）", "201 / ownerIds=[]", bench.status + " " + short({ id: benchTask?.id ?? null, ownerIds: benchTask?.ownerIds ?? null }, 160), bench.status === 201 && Array.isArray(benchTask?.ownerIds) && benchTask.ownerIds.length === 0);
+  const workspaceNew = await call("GET", "/api/v1/workspace");
+  const newHit = (workspaceNew.body?.myTasks?.unscheduled ?? []).find((item) => item.id === benchTask?.id) ?? null;
+  check("W0", "工作台前置：建靶子任务（缺省待分配 + 无日期）→ 项目经理口径直接命中「未排期」组", "201 / ownerIds=[] / unscheduled 含靶子", bench.status + " " + short({ id: benchTask?.id ?? null, ownerIds: benchTask?.ownerIds ?? null, unscheduledHit: newHit !== null }, 220), bench.status === 201 && Array.isArray(benchTask?.ownerIds) && benchTask.ownerIds.length === 0 && workspaceNew.status === 200 && newHit !== null && newHit.plannedEnd === null);
 
   const setOverdue = await call("PATCH", API + "/tasks/" + benchTask.id, { version: benchTask.version, ownerIds: [adminId], plannedEnd: yesterday });
   benchTask = setOverdue.body ?? benchTask;
@@ -382,26 +387,27 @@ try {
   benchTask = setToday.body ?? benchTask;
   const workspaceToday = await call("GET", "/api/v1/workspace");
   const todayHit = (workspaceToday.body?.myTasks?.today ?? []).find((item) => item.id === benchTask.id) ?? null;
-  const todayLeak = ["upcoming", "overdue"].filter((key) => (workspaceToday.body?.myTasks?.[key] ?? []).some((item) => item.id === benchTask.id));
+  const todayLeak = ["upcoming", "overdue", "unscheduled"].filter((key) => (workspaceToday.body?.myTasks?.[key] ?? []).some((item) => item.id === benchTask.id));
   check("W2", "A6-01 今日待办组：plannedEnd = 今天 → today（不落他组）", "200 / today 含靶子 / 他组无", workspaceToday.status + " " + short({ patch: setToday.status, hit: todayHit !== null, leak: todayLeak }, 200), setToday.status === 200 && workspaceToday.status === 200 && todayHit !== null && todayHit.plannedEnd === today && todayLeak.length === 0);
 
   const setTomorrow = await call("PATCH", API + "/tasks/" + benchTask.id, { version: benchTask.version, plannedEnd: tomorrow });
   benchTask = setTomorrow.body ?? benchTask;
   const workspaceUpcoming = await call("GET", "/api/v1/workspace");
   const upcomingHit = (workspaceUpcoming.body?.myTasks?.upcoming ?? []).find((item) => item.id === benchTask.id) ?? null;
-  check("W3", "A6-01 即将到期组：plannedEnd = 明天（今天起 7 天窗口内）→ upcoming", "200 / upcoming 含靶子", workspaceUpcoming.status + " " + short({ patch: setTomorrow.status, hit: upcomingHit !== null, plannedEnd: upcomingHit?.plannedEnd ?? null }, 200), setTomorrow.status === 200 && workspaceUpcoming.status === 200 && upcomingHit !== null && upcomingHit.plannedEnd === tomorrow);
+  check("W3", "A6-01 即将到期组：plannedEnd = 明天（> 今天）→ upcoming", "200 / upcoming 含靶子", workspaceUpcoming.status + " " + short({ patch: setTomorrow.status, hit: upcomingHit !== null, plannedEnd: upcomingHit?.plannedEnd ?? null }, 200), setTomorrow.status === 200 && workspaceUpcoming.status === 200 && upcomingHit !== null && upcomingHit.plannedEnd === tomorrow);
 
-  const setUnassigned = await call("PATCH", API + "/tasks/" + benchTask.id, { version: benchTask.version, ownerIds: [] });
+  const setFar = await call("PATCH", API + "/tasks/" + benchTask.id, { version: benchTask.version, plannedEnd: farFuture });
+  benchTask = setFar.body ?? benchTask;
+  const workspaceFar = await call("GET", "/api/v1/workspace");
+  const farHit = (workspaceFar.body?.myTasks?.upcoming ?? []).find((item) => item.id === benchTask.id) ?? null;
+  check("W4", "A6-01 不限窗口（复评）：plannedEnd = 今天 + 400 天仍进 upcoming（原 7 天窗口已取消）", "200 / upcoming 含靶子（plannedEnd=" + farFuture + "）", workspaceFar.status + " " + short({ patch: setFar.status, hit: farHit !== null, plannedEnd: farHit?.plannedEnd ?? null }, 220), setFar.status === 200 && workspaceFar.status === 200 && farHit !== null && farHit.plannedEnd === farFuture);
+
+  const setUnassigned = await call("PATCH", API + "/tasks/" + benchTask.id, { version: benchTask.version, ownerIds: [], plannedEnd: null });
   benchTask = setUnassigned.body ?? benchTask;
   const workspaceUnassigned = await call("GET", "/api/v1/workspace");
+  const unassignedHit = (workspaceUnassigned.body?.myTasks?.unscheduled ?? []).find((item) => item.id === benchTask?.id) ?? null;
   const unassignedLeak = ["today", "upcoming", "overdue"].filter((key) => (workspaceUnassigned.body?.myTasks?.[key] ?? []).some((item) => item.id === benchTask.id));
-  check("W4", "A6-01 待分配不进：显式 ownerIds=[] 后三组均不含靶子", "200 / 三组全无", workspaceUnassigned.status + " " + short({ patch: setUnassigned.status, ownerIds: benchTask?.ownerIds ?? null, leak: unassignedLeak }, 200), setUnassigned.status === 200 && (benchTask?.ownerIds ?? []).length === 0 && workspaceUnassigned.status === 200 && unassignedLeak.length === 0);
-
-  const setBack = await call("PATCH", API + "/tasks/" + benchTask.id, { version: benchTask.version, ownerIds: [adminId], plannedEnd: tomorrow });
-  benchTask = setBack.body ?? benchTask;
-  const workspaceBack = await call("GET", "/api/v1/workspace");
-  const backHit = (workspaceBack.body?.myTasks?.upcoming ?? []).find((item) => item.id === benchTask.id) ?? null;
-  check("W5", "工作台靶子复位：重新指派后回 upcoming（供归档剔除 W7 反证）", "200 / upcoming 含靶子", workspaceBack.status + " " + short({ patch: setBack.status, hit: backHit !== null }, 180), setBack.status === 200 && workspaceBack.status === 200 && backHit !== null);
+  check("W5", "A6-01 项目经理口径：清空负责人（ownerIds=[]）+ 清空日期 → 仍命中「未排期」组（原「待分配不进」反例随复评失效，供 W7 反证）", "200 / unscheduled 含靶子 / 他组无", workspaceUnassigned.status + " " + short({ patch: setUnassigned.status, ownerIds: benchTask?.ownerIds ?? null, hit: unassignedHit !== null }, 240), setUnassigned.status === 200 && (benchTask?.ownerIds ?? []).length === 0 && workspaceUnassigned.status === 200 && unassignedHit !== null && unassignedHit.plannedEnd === null && unassignedLeak.length === 0);
 
   const workspaceIssues = await call("GET", "/api/v1/workspace");
   const handlingHit = (workspaceIssues.body?.myIssues?.handling ?? []).find((item) => item.id === survivingIssueId) ?? null;
@@ -454,9 +460,9 @@ try {
   check("G4b", "归档写保护（ADR-027）：日报填报 / 问题处理 / 任务删除均 409 PROJECT_ARCHIVED", "409 PROJECT_ARCHIVED x 3", short({ report: archivedReport.status + ":" + (archivedReport.body?.code ?? "-"), issue: archivedIssueWrite.status + ":" + (archivedIssueWrite.body?.code ?? "-"), task: archivedTaskWrite.status + ":" + (archivedTaskWrite.body?.code ?? "-") }, 220), protectedOk === true);
 
   const workspaceArchived = await call("GET", "/api/v1/workspace");
-  const archivedTaskLeak = ["today", "upcoming", "overdue"].filter((key) => (workspaceArchived.body?.myTasks?.[key] ?? []).some((item) => item.projectId === cleanup.projectId));
+  const archivedTaskLeak = ["today", "upcoming", "overdue", "unscheduled"].filter((key) => (workspaceArchived.body?.myTasks?.[key] ?? []).some((item) => item.projectId === cleanup.projectId));
   const archivedIssueLeak = ["handling", "raised"].filter((key) => (workspaceArchived.body?.myIssues?.[key] ?? []).some((item) => item.projectId === cleanup.projectId));
-  check("W7", "工作台 × 归档（ADR-027）：归档项目整项目剔除（任务三组 / 问题两栏零残留）", "200 / 该项目条目零残留", workspaceArchived.status + " " + short({ tasks: archivedTaskLeak, issues: archivedIssueLeak }, 160), workspaceArchived.status === 200 && archivedTaskLeak.length === 0 && archivedIssueLeak.length === 0);
+  check("W7", "工作台 × 归档（ADR-027）：归档项目整项目剔除（任务四组 / 问题两栏零残留）", "200 / 该项目条目零残留", workspaceArchived.status + " " + short({ tasks: archivedTaskLeak, issues: archivedIssueLeak }, 160), workspaceArchived.status === 200 && archivedTaskLeak.length === 0 && archivedIssueLeak.length === 0);
 } catch (error) {
   failures += 1;
   report.push("| FAIL | 中断：" + (error instanceof Error ? error.message : String(error)) + " |");
@@ -500,7 +506,7 @@ try {
 const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: serverRoot }).toString().trim();
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: serverRoot }).toString().trim() !== "";
 const lines = [];
-lines.push("# M6 / M7 回放证据（S6·report-issue：日报 / 问题 + M6-01 收口 A7-01 / A7-05 + M6-05 第一刀 · 工作台 A6-01 / A6-03 + M7-04 归档 C4-02 / C4-03 · Push 215 口径）");
+lines.push("# M6 / M7 回放证据（S6·report-issue：日报 / 问题 + M6-01 收口 A7-01 / A7-05 + M6-05 · 工作台 A6-01 / A6-03（2026-09-30 复评：四组 / 不限窗口 / 项目经理含我）+ M7-04 归档 C4-02 / C4-03 · Push 215 口径）");
 lines.push("");
 lines.push("> 卡片：M6-01 ~ M6-03「日报填报 / 同日多条 / 补填 + 问题自动生成 + 问题三态与留痕 + 成对删除」（主责 wmj，评审 lan）｜口径来源：系统功能书 A3-02 / A3-04 / A3-09 / A3-10 / A3-11 / A3-12 / A3-13、A7-01、A7-05、A2-01（删除引用守卫）、A6-01、A6-03、C4-02、C4-03；Push 215 契约修订（草稿写库 / 同日多条 / 处理时限删除 / 附图方案一）。");
 lines.push("");
@@ -519,9 +525,9 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：日报填报（A3-02 / A3-04 · 同日多条）+ 提交副作用幂等与附图转挂（A3-09）+ A3-08 停用 + 三态与留痕（A3-10 / A3-13）+ 成对删除 + 引用守卫（A2-01）+ 当日汇总与应填未填（A7-01 / A7-05）+ 工作台三组两栏（A6-01 / A6-03）+ 归档门禁 / 确认越过 / 清单 / 检索（M7-04 · C4-02 / C4-03）+ 归档写保护。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：日报填报（A3-02 / A3-04 · 同日多条）+ 提交副作用幂等与附图转挂（A3-09）+ A3-08 停用 + 三态与留痕（A3-10 / A3-13）+ 成对删除 + 引用守卫（A2-01）+ 当日汇总与应填未填（A7-01 / A7-05）+ 工作台四组两栏（A6-01 / A6-03 · 2026-09-30 复评口径）+ 归档门禁 / 确认越过 / 清单 / 检索（M7-04 · C4-02 / C4-03）+ 归档写保护。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
-lines.push("## 验收对照（M6-01 ~ M6-03 + M6-01 收口 + M6-05 第一刀 + M7-04 · Push 215）");
+lines.push("## 验收对照（M6-01 ~ M6-03 + M6-01 收口 + M6-05（2026-09-30 口径复评）+ M7-04 · Push 215）");
 lines.push("");
 lines.push("- A3-02 / A3-04（日报填报）= R1 ~ R9：新报（submitted）/ 同日多条（无 409 判重）/ 未来日期 400 / 补填（supplement）/ 草稿写库 + 提交 / 列表日期倒序 / 详情回读（stageKeys / stageNames 同下标、现场附图）/ 未知文件 400。");
 lines.push("- A3-08（回写任务进展，Push 215 停用）= T1：提交日报不再改任务 note、不再写 task_events(note_change)。");
@@ -534,9 +540,9 @@ lines.push("- A7-01（当日汇总）= S1 / S2：只算已提交条目（草稿�
 lines.push("- A7-05（应填未填）= S4 ~ S6：名册即应填范围；已提交（submitted / supplement）不进名单、草稿未提交仍计未填；同一人多条取首条已提交；非工作日整列为空（不催报）；未来日期 400。");
 lines.push("- M7-04 归档（C4-02 / C4-03 · ADR-027）= A1 ~ A7：验收完成硬前置；缺项首次 422 ARCHIVE_GATE_NOT_PASSED（明细 + 失败留痕 + 不置位）；confirm=true 确认越过 200（置 archived + 引用式清单（问题三态快照）+ 成功留痕）；清单读面 GET /archive；PATCH 不再接受 archived（契约收紧）；filter[archivedYear] 归档检索。");
 lines.push("- 归档写保护（ADR-027）= G4b：归档项目上日报填报 / 问题处理 / 任务删除均 409 PROJECT_ARCHIVED（项目由 A4 真实归档端点置位）。");
-lines.push("- A6-01（我的任务三组）= W0 ~ W5：负责人含我 + 未完成 + plannedEnd 在「今天起 7 天」窗口 —— 昨天 → overdue / 今天 → today / 明天 → upcoming；显式 []（待分配）三组均不进（W5 复位供 W7 反证）。");
+lines.push("- A6-01（我的任务四组 · 2026-09-30 复评）= W0 ~ W5：任务负责人含我 或 项目项目经理含我（本回放项目 managerIds = admin）+ 未完成、不限完成日期窗口 —— 默认待分配无日期 → unscheduled；指派我 + 昨天 → overdue / 今天 → today / 明天与今天 + 400 天 → upcoming（无窗口上限）；清空负责人 + 无日期仍命中「未排期」（原「待分配不进」反例失效，供 W7 反证）。");
 lines.push("- A6-03（我的问题两栏）= W6：我处理（ownerId = 我）与我提出的（reporterId = 我）双命中两边都出现（本回放命中 open 未关闭条目，多值归类随行）。");
-lines.push("- 工作台 × 归档（M6-05 第一刀 + ADR-027）= W7：归档项目整项目剔除 —— 任务三组 / 问题两栏零残留。");
+lines.push("- 工作台 × 归档（M6-05 + ADR-027）= W7：归档项目整项目剔除 —— 任务四组 / 问题两栏零残留。");
 lines.push("- 单测回归（不连库）：server/test/report-issue.test.ts 32 例（日报 20 + 问题 12，含附图替身与成对删除）+ server/test/report-summary.test.ts 14 例 + server/test/task-remove.test.ts 引用守卫 + server/test/workspace.test.ts 9 例，随 npm test 常跑。");
 lines.push("- 复跑：cd server && M6_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node scripts/m6-replay.mjs --out ../docs/m6-回放证据(日报与问题+工作台).md");
 lines.push("");
