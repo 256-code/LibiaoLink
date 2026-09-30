@@ -3552,6 +3552,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/{id}/versions/{versionId}/preview-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 受控预览内容端点（服务间 · DocServer outbox Bearer JWT；预览链无预签名、无重定向）
+         * @description S1 契约切片（ONLYOFFICE 查看器 · 安全定稿 §3.2）：语义 = 交给在线查看器拉取的原文件字节流（不是用户下载口）；鉴权 = 服务间 Bearer JWT（HS256 共享密钥 / payload.url 逐字绑定 / exp ≤ 300s + 容差），缺 token 或不匹配统一 401 且不区分原因；仅 GET（其余方法 405）；不参与用户会话（忽略 Cookie）、不向浏览器来源开 CORS；网关不暴露（仅 DocServer 网段可达）。
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 原文件字节流（Content-Type = 版本 mime；Content-Disposition: inline；Cache-Control: no-store） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description 服务间鉴权未通过（缺 / 签名错 / 过期 / URL 绑定不匹配 —— 统一文案不区分原因） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 仅接受 GET（其余方法显式 405，不进业务逻辑） */
+                405: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 存储 / 依赖故障（fail-closed：不重定向、不回退预签名） */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/files/{id}/uploads/{uploadId}/parts": {
         parameters: {
             query?: never;
@@ -7330,12 +7410,13 @@ export interface components {
             /** @description 原文件名（缩略图角标 / 无障碍文案） */
             name: string;
         };
-        /** @description 文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed） */
+        /** @description 文件预览状态与短时签名地址 / 查看器配置（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed；ONLYOFFICE 查看器通道（S1 契约 / S3 起签发）：ready + viewer 非空、url 为空） */
         FilePreviewResponse: {
             fileId: components["schemas"]["Uuid"];
             versionId: components["schemas"]["Uuid"] & (string | null);
             status: components["schemas"]["PreviewStatus"];
             target: components["schemas"]["PreviewTarget"];
+            viewer: components["schemas"]["PreviewViewer"];
             /** @description 短时签名预览地址（仅 ready；未就绪 / 失败为空；对象存储禁止匿名读取） */
             url: string | null;
             expiresAt: components["schemas"]["DateTime"] & (string | null);
@@ -7722,10 +7803,65 @@ export interface components {
          */
         PreviewStatus: "ready" | "not_ready" | "failed";
         /**
-         * @description 已就绪产物的目标（渲染通道）；未就绪 / 失败为空
+         * @description 已就绪转换产物的目标（渲染通道）；查看器通道 / 未就绪 / 失败为空 —— 查看器就绪以 viewer 判定
          * @enum {string|null}
          */
         PreviewTarget: "pdf" | "image" | "structured" | null;
+        /** @description 在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发） */
+        PreviewViewer: {
+            kind: components["schemas"]["PreviewViewerKind"];
+            /** @description DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发） */
+            docServerUrl: string;
+            documentType: components["schemas"]["PreviewViewerDocumentType"];
+            document: components["schemas"]["PreviewViewerDocument"];
+            editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
+            permissions: components["schemas"]["PreviewViewerPermissions"];
+            /** @description 查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
+            token: string;
+        } | null;
+        PreviewViewerDocument: {
+            /** @description 文档标题（展示用；取文件名） */
+            title: string;
+            /** @description 受控预览内容端点绝对 URL（DocServer 视角；无存储凭证；浏览器直取 401、外网入口 404） */
+            url: string;
+            /** @description 文件类型（扩展名小写，如 docx / xlsx / pptx） */
+            fileType: string;
+            /** @description 文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效） */
+            key: string;
+        };
+        /**
+         * @description 文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）
+         * @enum {string}
+         */
+        PreviewViewerDocumentType: "word" | "cell" | "slide";
+        PreviewViewerEditorConfig: {
+            /**
+             * @description 固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）
+             * @enum {string}
+             */
+            mode: "view";
+            /** @description 界面语言（如 zh-CN） */
+            lang: string;
+            /** @description 会话标识（展示用；查看会话不落用户审计 —— 审计在签发查看器配置时点） */
+            user: {
+                id: string;
+                name: string;
+            };
+        };
+        /**
+         * @description 在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）
+         * @enum {string}
+         */
+        PreviewViewerKind: "onlyoffice";
+        PreviewViewerPermissions: {
+            edit: boolean;
+            download: boolean;
+            print: boolean;
+            comment: boolean;
+            chat: boolean;
+            fillForms: boolean;
+            protect: boolean;
+        };
         /**
          * @description 紧急重要度三档字典（高 / 中 / 低）；2026-09-24 定案「与页面口径一致」—— 四象限口径作废，存量值由迁移 0031 折算（有损：中 = 重要不紧急 / 紧急但不重要）
          * @enum {string|null}
