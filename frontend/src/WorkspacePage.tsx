@@ -922,8 +922,10 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
       <AppHeader me={me} title="我的任务" />
       <main className="w-full px-6 pb-10 pt-3">
         <div data-workspace-page="" className="w-full space-y-5">
-          {/* 标签导航栏（Push 230：与任务模板页的下划线标签栏同一套材质 —— 文字 + 选中下划线） */}
-          <nav data-workspace-tabs="" aria-label="工作台标签" className="flex items-center gap-3 border-b border-zinc-200">
+          {/* 标签导航栏（Push 230：与任务模板页的下划线标签栏同一套材质 —— 文字 + 选中下划线）。
+              Push 235 吸顶（业务口径「任务模版和我的任务都要做吸顶效果」）：滚动时停在应用顶栏（h-16 = 64px）正下方，
+              站灰底 + 毛玻璃兜住滚动内容；-mx-6 -mt-3 + 同值内衬抵消：横幅铺满行宽、三枚标签与醒目模式开关位置与原来一致。 */}
+          <nav data-workspace-tabs="" aria-label="工作台标签" className="sticky top-16 z-20 -mx-6 -mt-3 flex items-center gap-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
               {TABS.map((item) => {
                 const active = item.key === tab;

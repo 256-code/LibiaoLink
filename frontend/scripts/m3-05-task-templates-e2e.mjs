@@ -170,6 +170,12 @@ const CLICK_STAGE_PILL = (stage) => "(function(){var ps=document.querySelectorAl
 /** 卡片里「节点 N 个 · 模板 M 块」那一行。 */
 const CARD_COUNTS = "(function(){var ps=document.querySelectorAll(" + q("p") + ");for(var i=0;i<ps.length;i++){var t=(ps[i].textContent||" + q("") + ").trim();if(t.indexOf(" + q("模板") + ")>=0&&t.indexOf(" + q("块") + ")>=0){return t;}}return null;})()";
 
+/** Push 235 吸顶断言：元素几何 / 样式读数（不存在 = null）。 */
+const RECT_OF = (selector) => "(function(){var el=document.querySelector(" + JSON.stringify(selector) + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=getComputedStyle(el);return {top:Math.round(r.top*100)/100,left:Math.round(r.left*100)/100,right:Math.round(r.right*100)/100,height:Math.round(r.height*100)/100,position:cs.position,zIndex:cs.zIndex,bg:String(cs.backgroundColor),blur:String(cs.backdropFilter||cs.webkitBackdropFilter)};})()";
+const TABS_RECT = RECT_OF("[data-template-tabs]");
+const LEFT_SECTION_RECT = "(function(){var ss=document.querySelectorAll(" + q("section") + ");for(var i=0;i<ss.length;i++){if((ss[i].innerText||" + q("") + ").indexOf(" + q("任务节点") + ")===0){var cs=getComputedStyle(ss[i]);var r=ss[i].getBoundingClientRect();var p=ss[i].parentElement;var pz=p===null?null:getComputedStyle(p).zIndex;return {position:cs.position,cssTop:cs.top,top:Math.round(r.top*100)/100,height:Math.round(r.height*100)/100,parentZ:pz};}}return null;})()";
+const BAR_BUTTONS = "(function(){var bs=document.querySelectorAll(" + q("[data-template-tabs] button") + ");var out=[];for(var i=0;i<bs.length;i++){out.push((bs[i].textContent||" + q("") + ").trim());}return out;})()";
+const BAR_HIT = "(function(){var bs=document.querySelectorAll(" + q("[data-template-tabs] button") + ");for(var i=0;i<bs.length;i++){if(bs[i].getAttribute(" + q("aria-current") + ")===" + q("page") + "){var r=bs[i].getBoundingClientRect();var el=document.elementFromPoint(Math.round(r.left+r.width/2),Math.round(r.top+r.height/2));return el!==null&&(el===bs[i]||bs[i].contains(el));}}return null;})()";
 const target = await waitTarget();
 const page = new Cdp(target.webSocketDebuggerUrl);
 await page.ready;
@@ -355,6 +361,29 @@ try {
   check("引用行保留（软删只打标、不连带清子表：task_template_nodes 仍 1 条，读面靠 deleted_at 过滤）", linksAfterDelete.rows[0].c === 1, String(linksAfterDelete.rows[0].c));
   const auditDelete = templateId === "" ? { rows: [] } : await db.query("select action, changes from audit_logs where object_type = $1 and object_id = $2 order by id", ["task_template", templateId]);
   check("审计：删模板再记一条 action=delete（快照含节点名）", auditDelete.rows.length === 3 && auditDelete.rows[2].action === "delete" && JSON.stringify(auditDelete.rows[2].changes).indexOf(nodeTitle) >= 0, auditDelete.rows.map((row) => row.action).join(" / "));
+  // ---------- ⑨ 板块标签栏吸顶（Push 235 · 业务口径「任务模版和我的任务都要做吸顶效果」） ----------
+  // 口径（同项目详情主标签栏 Push 201 一套）：滚动时停在应用顶栏（h-16 = 64px）正下方；左列「任务节点」的吸顶位顺延到它下面（122 = 64 + 59 − 1 防缝）。
+  await page.send("Page.navigate", { url: TEMPLATES_URL });
+  await sleep(4500);
+  const tabsSlot0 = await ev(TABS_RECT);
+  check("⑨a 板块标签栏 = sticky / z 20 / 站灰底（α 0.95）+ 毛玻璃 / 自然位在顶栏下沿（top 64~65.5，滚动后钉到 64）", tabsSlot0 !== null && tabsSlot0.position === "sticky" && tabsSlot0.top >= 64 && tabsSlot0.top <= 65.5 && tabsSlot0.zIndex === "20" && tabsSlot0.bg.indexOf("0.95") >= 0 && tabsSlot0.blur.indexOf("blur") >= 0, tabsSlot0 === null ? "null" : JSON.stringify(tabsSlot0));
+  const room235 = await ev("(function(){return Math.round((document.documentElement.scrollHeight - window.innerHeight)*100)/100;})()");
+  check("⑨b 页面可滚动量足够（≥ 400px —— 吸顶要真滚起来才验得到）", typeof room235 === "number" && room235 >= 400, String(room235));
+  await ev("window.scrollTo(0, 420)");
+  await sleep(400);
+  const scrolled235 = await ev("window.scrollY");
+  check("⑨c 滚动实际发生（scrollY ≥ 400）", scrolled235 >= 400, String(scrolled235));
+  const tabsSlot1 = await ev(TABS_RECT);
+  check("⑨d 滚动后标签栏钉在顶栏正下方（top = 64；栏高 = 59 = pt-3 12 + 标签 46 + 底边 1）", tabsSlot1 !== null && Math.abs(tabsSlot1.top - 64) <= 0.5 && Math.abs(tabsSlot1.height - 59) <= 1, tabsSlot1 === null ? "null" : JSON.stringify([tabsSlot1.top, tabsSlot1.height]));
+  const clientW = await ev("document.documentElement.clientWidth");
+  check("⑨e 横幅铺满行宽（-mx-6 抵消后 left = 0 / right = 视口可用宽 clientWidth，扣纵向滚动条；页面不因此横向滚动）", tabsSlot1 !== null && Math.abs(tabsSlot1.left) <= 0.5 && Math.abs(tabsSlot1.right - clientW) <= 0.5 && (await ev("document.documentElement.scrollWidth")) <= clientW + 1, tabsSlot1 === null ? "null" : JSON.stringify([tabsSlot1.left, tabsSlot1.right, clientW]));
+  const leftCol1 = await ev(LEFT_SECTION_RECT);
+  check("⑨f 左列「任务节点」吸顶位顺延到标签栏下沿（position=sticky、CSS top = 122px = 64 + 59 − 1 防缝）", leftCol1 !== null && leftCol1.position === "sticky" && leftCol1.cssTop === "122px", leftCol1 === null ? "null" : JSON.stringify(leftCol1));
+  check("⑨g 层级：标签栏 z 20 > 左列容器 z 10（左列滚动时从栏下滑过、不盖住栏；真机内容里左列与右侧模板区等高、钉住位移趋近 0，口径为右侧更高时生效）", leftCol1 !== null && leftCol1.parentZ === "10" && tabsSlot1 !== null && Number(tabsSlot1.zIndex) > Number(leftCol1.parentZ), leftCol1 === null ? "null" : JSON.stringify([tabsSlot1 === null ? null : tabsSlot1.zIndex, leftCol1.parentZ]));
+  const barButtons = await ev(BAR_BUTTONS);
+  check("⑨h 滚动后栏内九枚板块 + 「＋ 新建模板」都在（10 枚按钮、无吞字）", barButtons !== null && barButtons.length === 10 && barButtons[0] === "售前规划" && barButtons[9].indexOf("新建模板") >= 0, barButtons === null ? "null" : JSON.stringify(barButtons));
+  const barHit = await ev(BAR_HIT);
+  check("⑨i 滚动后选中标签仍是命中元素（可点，不被任何浮层盖住）", barHit === true, String(barHit));
 } catch (error) {
   console.log("回放异常：" + String(error && error.stack ? error.stack : error).slice(0, 600));
   checks.push(false);
