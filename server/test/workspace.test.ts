@@ -1,6 +1,7 @@
 /**
- * 工作台回归（M6-05 第一刀 · A6-01 / A6-03）：分组边界（今天 / 7 天窗口 / 未排期）、展示态派生、
- * 进度与优先级归一化、问题两栏拆分（双命中两边都出现）、可见性口径与基准日 / 截止日透传。
+ * 工作台回归（M6-05 · A6-01 / A6-03）：分组边界（逾期 / 今天 / 即将不限窗口 / 未排期）、展示态派生、
+ * 进度与优先级归一化、问题两栏拆分（双命中两边都出现）、可见性口径与基准日透传。
+ * 2026-09-30 口径复评：取消 7 天窗口（远期进 upcoming）、未排期单列 unscheduled（不再丢弃）。
  * 真机口径见 server/src/modules/workspace/README.md 与 server/scripts/m6-replay.mjs 证据六。
  */
 import { describe, expect, it } from "vitest";
@@ -22,11 +23,11 @@ const TODAY = shanghaiToday(new Date());
 class FakeWorkspaceRepository {
   taskRows: WorkspaceTaskRow[] = [];
   issueRows: WorkspaceIssueRow[] = [];
-  lastTaskArgs: { actorId: string; scope: ProjectScopeFilter; until: string } | null = null;
+  lastTaskArgs: { actorId: string; scope: ProjectScopeFilter } | null = null;
   lastIssueArgs: { actorId: string; scope: ProjectScopeFilter } | null = null;
 
-  async listMyTasks(actorId: string, scope: ProjectScopeFilter, until: string): Promise<WorkspaceTaskRow[]> {
-    this.lastTaskArgs = { actorId, scope, until };
+  async listMyTasks(actorId: string, scope: ProjectScopeFilter): Promise<WorkspaceTaskRow[]> {
+    this.lastTaskArgs = { actorId, scope };
     return this.taskRows;
   }
 
@@ -100,18 +101,19 @@ describe("工作台分组口径（纯函数）", () => {
     expect(addDays("2026-09-28", -1)).toBe("2026-09-27");
   });
 
-  it("taskGroupOf：今天 / 7 天窗口边界（第 7 天含、第 8 天不含）", () => {
+  it("taskGroupOf：逾期 / 今天 / 即将（不限窗口，+365 仍 upcoming）/ 未排期（null）", () => {
     expect(taskGroupOf(addDays(TODAY, -1), TODAY)).toBe("overdue");
     expect(taskGroupOf(TODAY, TODAY)).toBe("today");
     expect(taskGroupOf(addDays(TODAY, 1), TODAY)).toBe("upcoming");
     expect(taskGroupOf(addDays(TODAY, 7), TODAY)).toBe("upcoming");
-    expect(taskGroupOf(addDays(TODAY, 8), TODAY)).toBeNull();
-    expect(taskGroupOf(null, TODAY)).toBeNull();
+    expect(taskGroupOf(addDays(TODAY, 8), TODAY)).toBe("upcoming");
+    expect(taskGroupOf(addDays(TODAY, 365), TODAY)).toBe("upcoming");
+    expect(taskGroupOf(null, TODAY)).toBe("unscheduled");
   });
 });
 
-describe("工作台服务（M6-05 第一刀）", () => {
-  it("三组落位：已逾期 / 今日待办 / 即将到期；未排期与 7 天外丢弃", async () => {
+describe("工作台服务（M6-05）", () => {
+  it("四组落位：已逾期 / 今日待办 / 即将到期（含远期）/ 未排期", async () => {
     const repo = new FakeWorkspaceRepository();
     repo.taskRows = [
       makeTask({ id: TASK_A, plannedEnd: addDays(TODAY, -3) }),
@@ -123,7 +125,11 @@ describe("工作台服务（M6-05 第一刀）", () => {
     const response = await makeService(repo, new FakePermissionService()).get(ME);
     expect(response.myTasks.overdue.map((item) => item.id)).toEqual([TASK_A]);
     expect(response.myTasks.today.map((item) => item.id)).toEqual([TASK_B]);
-    expect(response.myTasks.upcoming.map((item) => item.id)).toEqual(["eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"]);
+    expect(response.myTasks.upcoming.map((item) => item.id)).toEqual([
+      "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    ]);
+    expect(response.myTasks.unscheduled.map((item) => item.id)).toEqual(["99999999-9999-4999-8999-999999999999"]);
   });
 
   it("组内保序：沿用仓储顺序（plannedEnd 升序 → id 升序），服务不重排", async () => {
@@ -178,15 +184,15 @@ describe("工作台服务（M6-05 第一刀）", () => {
     expect(response.myIssues.handling[0]?.updatedAt).toBe("2026-09-25T01:00:00.000Z");
   });
 
-  it("透传：基准日 = 上海今天、截止日 = 今天 + 7、可见性口径原样下传；空集可见 = 空结果", async () => {
+  it("透传：基准日 = 上海今天、可见性口径原样下传；空集可见 = 四组空结果", async () => {
     const repo = new FakeWorkspaceRepository();
     const permission = new FakePermissionService();
     permission.scope = { kind: "ids", ids: [PROJECT] };
     const response = await makeService(repo, permission).get(ME);
     expect(response.today).toBe(TODAY);
-    expect(repo.lastTaskArgs).toEqual({ actorId: ME, scope: { kind: "ids", ids: [PROJECT] }, until: addDays(TODAY, 7) });
+    expect(repo.lastTaskArgs).toEqual({ actorId: ME, scope: { kind: "ids", ids: [PROJECT] } });
     expect(repo.lastIssueArgs).toEqual({ actorId: ME, scope: { kind: "ids", ids: [PROJECT] } });
-    expect(response.myTasks).toEqual({ today: [], upcoming: [], overdue: [] });
+    expect(response.myTasks).toEqual({ today: [], upcoming: [], overdue: [], unscheduled: [] });
     expect(response.myIssues).toEqual({ handling: [], raised: [] });
   });
 });

@@ -1541,12 +1541,12 @@ export function buildOpenApiDocument() {
       404: commonErrors[404],
     },
   });
-  // ---- 工作台（M6-05 第一刀 · A6-01 / A6-03：我的任务 / 我负责的问题 · wmj 线）----
+  // ---- 工作台（M6-05 · A6-01 / A6-03：我的任务四组 / 我负责的问题 · wmj 线；2026-09-30 复评：取消 7 天窗口 / 项目经理含我 / 未排期单列）----
   registry.registerPath({
     method: "get",
     path: "/api/v1/workspace",
     tags: ["workspace"],
-    summary: "工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的）",
+    summary: "工作台（M6-05）：我的任务四组（今日待办 / 即将到期 / 已逾期 / 未排期）+ 我的问题（我处理 / 我提出的）",
     responses: {
       200: { description: "工作台聚合（按会话用户；记录级可见性过滤后）", ...json(WorkspaceResponseSchema) },
       401: commonErrors[401],

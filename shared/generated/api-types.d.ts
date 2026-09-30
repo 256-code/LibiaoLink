@@ -5883,7 +5883,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的） */
+        /** 工作台（M6-05）：我的任务四组（今日待办 / 即将到期 / 已逾期 / 未排期）+ 我的问题（我处理 / 我提出的） */
         get: {
             parameters: {
                 query?: never;
@@ -8757,13 +8757,13 @@ export interface components {
             /** @description 「我提出的问题」标签已展开的项目 id 列表（整体替换语义） */
             raised: components["schemas"]["Uuid"][];
         };
-        /** @description 工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏 */
+        /** @description 工作台聚合：我的任务四组 + 我的问题两栏 */
         WorkspaceResponse: {
             today: components["schemas"]["DateOnly"] & unknown;
             myTasks: components["schemas"]["WorkspaceTasks"];
             myIssues: components["schemas"]["WorkspaceIssues"];
         };
-        /** @description 工作台任务项（跨项目；按预计完成日期落入三组之一） */
+        /** @description 工作台任务项（跨项目；按预计完成日期落入四组之一） */
         WorkspaceTaskItem: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
@@ -8778,20 +8778,22 @@ export interface components {
             plannedStart: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd: components["schemas"]["DateOnly"] & (string | null);
             actualEnd: components["schemas"]["DateOnly"] & (string | null);
-            /** @description 任务负责人（多值；本组内必含会话用户） */
+            /** @description 任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评） */
             ownerIds: components["schemas"]["Uuid"][];
             /** @description 负责人姓名（与 ownerIds 同下标；缺失为 null） */
             ownerNames: (string | null)[];
             priority: components["schemas"]["Priority"];
         };
-        /** @description 我的任务三组（A6-01；组内按 plannedEnd 升序、id 升序） */
+        /** @description 我的任务四组（A6-01；组内按 plannedEnd 升序、id 升序，未排期置末） */
         WorkspaceTasks: {
             /** @description 今日待办：plannedEnd = 今天且未完成 */
             today: components["schemas"]["WorkspaceTaskItem"][];
-            /** @description 即将到期：今天 < plannedEnd ≤ 今天 + 7 天且未完成 */
+            /** @description 即将到期：plannedEnd > 今天且未完成（2026-09-30 复评起不设天数窗口，远期照收） */
             upcoming: components["schemas"]["WorkspaceTaskItem"][];
             /** @description 已逾期：plannedEnd < 今天且未完成 */
             overdue: components["schemas"]["WorkspaceTaskItem"][];
+            /** @description 未排期：plannedEnd 为空且未完成（组内排末） */
+            unscheduled: components["schemas"]["WorkspaceTaskItem"][];
         };
     };
     responses: never;
