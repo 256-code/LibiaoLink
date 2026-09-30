@@ -35,7 +35,7 @@ PY'
 docker exec <容器> supervisorctl restart ds:docservice   # 只重启进程，不重启容器
 ```
 
-（容器 `restart`/重建会把 outbox 重置回 true，随即 S3 预签名拉取报 MinIO 400；生产部署清单须固化该步骤，或按次关 N2 采纳「受控下载端点」后不再依赖预签名。）
+（容器 `restart`/重建会把 outbox 重置回 true，随即 S3 预签名拉取报 MinIO 400；**N2 定稿（2026-09-30）已采纳受控下载端点：生产 outbox 常开为期望态、预览链一律不预签名，见 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md`。**）
 
 ## 用法
 
