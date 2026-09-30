@@ -53,6 +53,8 @@ export async function presignGet(objectKey, ttlSeconds, endpointOverride) {
 
 export function buildConfig({ key, url, fileType, docType, title }) {
   return {
+    width: "100%",
+    height: "100%",
     documentType: docType,
     document: { title, url, fileType, key },
     editorConfig: {
