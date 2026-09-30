@@ -40,6 +40,7 @@ export type DailySubView = "form" | "records" | "issues" | "board";
 
 export type Route =
   | { kind: "hub" }
+  | { kind: "workspace" }
   | { kind: "list"; filters: ListQueryState }
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null };
@@ -348,7 +349,10 @@ export function parseHash(hash: string): Route {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
   }
   if (path === "/my-tasks") {
-    return { kind: "placeholder", page: "my-tasks", section: null };
+    // 工作台（系统功能书 A6 我的工作台第一刀 · A6-01 / A6-03）：路由已转正式（Push 229），
+    // 页面（我的任务三组 + 我负责的问题两栏）随接线那一刀替换 App.tsx 里的临时占位；
+    // 接口已封 frontend/src/workspaceApi.ts（GET /api/v1/workspace）。
+    return { kind: "workspace" };
   }
   const match = PROJECT_PATH.exec(path);
   if (match) {

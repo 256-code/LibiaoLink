@@ -24,6 +24,7 @@ import type { MeResponse } from "./types";
 
 const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
   templates: { title: "任务模板", note: "左侧「任务节点」= 节点库接口（Push 181：`GET /api/v1/task-nodes`，可新增 / 编辑 / 删除）；右侧模板面板 = 模板接口（Push 182：`GET/POST/PATCH/DELETE /api/v1/task-templates`，改名 / 拖入拖出 / 排序改完点「保存」落库，删模板走同款红胶囊 + 底部确认条）。写 = 系统管理员（blueprint.manage）。把左侧节点拖进模板 = 定这份模板的节点顺序。" },
+  // 临时占位：路由已转正式（Push 229，useHashRoute 的 kind: "workspace"）；工作台页面接线后本键与 App.tsx 的分支一起替换。
   "my-tasks": { title: "我的任务", note: "我的任务还没开工：先把入口与路由占好，后续按需求填充。" },
 };
 
