@@ -6,6 +6,8 @@
  *   证据二（附件投递）：GET 签名地址 → 200 + 字节与源文件**逐字节一致** + `Content-Disposition: attachment`（原名 URL 编码回写）。
  *   证据三（审计）：一条 `action = download` 审计（object_type = file、metadata 记 versionId）；**不写 preview 行**（一次下载一条）。
  *   证据四（A4-06 版本路由）：v1 / v2 各签各自的对象键与体积 —— 下载内容不串版本。
+ *   证据四·B（Office 夹具 round-trip）：真实 .docx（PK/ZIP）上传 → 下载字节与夹具**逐字节一致**（非 PDF 转换件）；
+ *             并在 `previews/{hash}/{pipelineVersion}/pdf` 自造占位产物，证下载只签 `projects/` 原对象（与预览链不串）。
  *   证据五（404 与禁匿名）：版本不属于该文件 / 文件不存在 → 404（同形，防 IDOR）；无会话 → 401（D2-04 禁匿名）。
  *   证据六（权限双态 · 按运行形态自适应）：非名册成员（sales 角色）——**默认态**（`PERMISSION_ENFORCED=false`，一期不判权限）
  *             画像为等效管理员 → 下载 200（记录级不裁剪，与「一期不判权限」口径一致）；**判权限态**（`true`）→ 项目不可见 → 404
@@ -45,6 +47,29 @@ const SAMPLE_V2 = Buffer.concat([
   Buffer.from("%PDF-1.7\n1 0 obj\n<< /Title (M4-05f 下载切片回放 v2) >>\n", "utf8"),
   randomBytes(384 * 1024),
 ]);
+
+/**
+ * Office 夹具：最小可打开的 .docx（OOXML 包 3 部件：`[Content_Types].xml` / `_rels/.rels` / `word/document.xml`，PK/ZIP 容器）。
+ * 用途：预览通道对 Office 必转 PDF，下载字节与夹具一致 ⇔ 下载的不是转换件（PDF / 图片夹具是原样直通，证不了这一点）。
+ */
+const SAMPLE_DOCX = Buffer.from(
+  "UEsDBBQAAAAIAEdUPl15bjPX8gAAAK0BAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbHyQy07DMBBFf8XyFsUOLBBCcbrgsQQW5QMse5JYtWcsjxvS" +
+  "v0dpSxeosL6Pc3W7zZKimKFwIDTyVrVSADryAUcjP7evzYMUXC16GwnByAOw3PTd9pCBxZIispFTrflRa3YTJMuKMuCS4kAl2cqKyqizdTs7gr5r" +
+  "23vtCCtgberaIfvuGQa7j1W8LBXwtKNAZCmeTsaVZaTNOQZnayDUM/pflOZMUAXi0cNTyHyzpCj1VcKq/A04595nKCV4EB+21DebwEj9RcVrT26f" +
+  "AKv6v+bKThqG4OCSX9tyIQfMAccU1UVJNuDPfn28u/8GAAD//wMAUEsDBBQAAAAIAEdUPl2b/TfqtwAAACkBAAALAAAAX3JlbHMvLnJlbHOMz8Fq" +
+  "wzAQBNBfEXuv5eQQQrDsSwjkWtwPENLaFpV2hVZNnb/PJYc49NDrMLxhumFNUd2wSGAysGtaUEiOfaDZwNd4+TiCkmrJ28iEBu4oMPTdJ0ZbA5Ms" +
+  "IYtaUyQxsNSaT1qLWzBZaTgjrSlOXJKt0nCZdbbu286o92170OXVgK2prt5AufodqPGe8T82T1NweGb3k5DqHxNvDVCjLTNWA79cvPbPuFlTBN13" +
+  "enOxfwAAAP//AwBQSwMEFAAAAAgAR1Q+XbJtG+XrAAAABwEAABEAAAB3b3JkL2RvY3VtZW50LnhtbETPMU7DMBgF4KtY3hsHBAhFSboxFbHAAVzH" +
+  "SS3s/7dsQ9IDIBWxoi5ISEhwhlKp4TQkYusVkMvA8r3tPb182hlN7qXzCqGgR0lKiQSBlYKmoDfXF5NzSnzgUHGNIAu6lJ5Oy7zNKhR3RkIgndHg" +
+  "s7agixBsxpgXC2m4T9BK6Iyu0RkefIKuYS26yjoU0nsFjdHsOE3PmOEKaKycY7WMaSMuEsqZmiuOMwW35PJkkp7W5Pvz6afvh5fX8fmLXNW1EpIM" +
+  "79vhYbPfrcZ1P2w+xvV2fFvtd485ix1Rd9Ae/Nth/x/KXwAAAP//AwBQSwECFAAUAAAACABHVD5deW4z1/IAAACtAQAAEwAAAAAAAAAAAAAAAAAA" +
+  "AAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUABQAAAAIAEdUPl2b/TfqtwAAACkBAAALAAAAAAAAAAAAAAAAACMBAABfcmVscy8ucmVsc1BLAQIU" +
+  "ABQAAAAIAEdUPl2ybRvl6wAAAAcBAAARAAAAAAAAAAAAAAAAAAMCAAB3b3JkL2RvY3VtZW50LnhtbFBLBQYAAAAAAwADALkAAAAdAwAAAAA=",
+  "base64",
+);
+
+/** 自造"预览产物占位"（模拟 `previews/…/pdf`）：只为断言下载链不指向预览前缀；真实转换件不串链由 M4-05d 预览回放覆盖。 */
+const DECOY_PDF = Buffer.from("%PDF-1.7\n% M4-05f replay decoy（非真实转换件）\n1 0 obj\n<< /Title (decoy) >>\nendobj\ntrailer\n<<>>\n%%EOF\n", "utf8");
 
 function parseArgs(argv) {
   const out = {};
@@ -197,20 +222,23 @@ let adminId;
 let storage;
 let rawClient;
 let s3Module;
+let storageModule;
 let project;
 let downloadTtlSeconds = 300;
 let previewTtlSeconds = 300;
+let previewPipelineVersion = "1.0.0";
 let permissionEnforced = false;
-const cleanup = { projectIds: [], sessions: [], userIds: [] };
+const cleanup = { projectIds: [], sessions: [], userIds: [], previewPrefixes: [] };
 
 try {
   try {
     const envModule = await import(pathToFileURL(join(serverRoot, "dist", "config", "env.js")).href);
-    const storageModule = await import(pathToFileURL(join(serverRoot, "dist", "storage", "index.js")).href);
+    storageModule = await import(pathToFileURL(join(serverRoot, "dist", "storage", "index.js")).href);
     s3Module = await import("@aws-sdk/client-s3");
     const env = envModule.loadEnv(process.env);
     downloadTtlSeconds = env.S3_DOWNLOAD_URL_TTL_SECONDS;
     previewTtlSeconds = env.PREVIEW_URL_TTL_SECONDS;
+    previewPipelineVersion = env.PREVIEW_PIPELINE_VERSION;
     permissionEnforced = env.PERMISSION_ENFORCED === "true";
     storage = storageModule.createS3ObjectStorage(env);
     rawClient = storageModule.createS3Client(env);
@@ -332,6 +360,75 @@ try {
     downloadsAfterV2.length === 2,
   );
 
+  // ---------- 证据四·B：Office 夹具 round-trip（下载 = 原 .docx；previews/ 产物在链外） ----------
+  // 背景：既有夹具是 PDF / 图片（预览通道原样直通），"下载字节与夹具一致"在旧缺陷路径下也成立（产物 == 原件）。
+  // 本组用真实 .docx（PK/ZIP 容器：预览产物必为 PDF、字节必然不同）+ 自造 previews/ 占位产物，
+  // 不跑 converter 即可断言：下载只签版本原对象（projects/…docx），与预览产物前缀不串链。
+  const office = await uploadFile({ projectId: project, name: "下载回放-施工方案.docx", bytes: SAMPLE_DOCX, docType: "评审单" });
+  const officeVersionId = office.completed.body?.version?.id;
+  const officeKeyRow = await db.query("select object_key from file_versions where id = $1", [officeVersionId]);
+  const officeObjectKey = officeKeyRow.rows[0]?.object_key;
+  check(
+    "F3",
+    "上传 Office 夹具（真实上传管道 · .docx）：版本对象键（file_versions.object_key） = projects/…/v1/{hash}.docx",
+    "200 + seq=1 + 对象键 projects/" + project + "/files/…/v1/" + sha256(SAMPLE_DOCX).slice(0, 12) + "….docx",
+    short({ status: office.completed.status, seq: office.completed.body?.version?.seq, objectKey: officeObjectKey }, 280),
+    office.completed.status === 200 &&
+      office.completed.body?.version?.seq === 1 &&
+      officeObjectKey === "projects/" + project + "/files/" + office.fileId + "/v1/" + sha256(SAMPLE_DOCX) + ".docx",
+  );
+
+  const decoyObjectKey = storageModule.buildPreviewArtifactKey({ contentHash: office.contentHash, pipelineVersion: previewPipelineVersion, target: "pdf" });
+  await storage.putObject({ objectKey: decoyObjectKey, body: DECOY_PDF, contentType: "application/pdf", metadata: { "preview-replay-decoy": "1" } });
+  cleanup.previewPrefixes.push("previews/" + office.contentHash + "/");
+  const decoyHead = await storage.headObject(decoyObjectKey);
+
+  const officeSigned = await downloadUrl(office.fileId, officeVersionId);
+  check(
+    "D5b",
+    "占位预览产物就位（previews/{hash}/{pipelineVersion}/pdf）→ 下载签名仍指向版本原对象（projects/…docx），不含产物键",
+    "200 + fileName=下载回放-施工方案.docx + sizeBytes=" + SAMPLE_DOCX.length + " + url 含原对象键、不含产物键",
+    short({ decoyExists: decoyHead !== null, status: officeSigned.status, fileName: officeSigned.body?.fileName, sizeBytes: officeSigned.body?.sizeBytes, urlHasOriginal: String(officeSigned.body?.url).includes(officeObjectKey), urlHasDecoy: String(officeSigned.body?.url).includes(decoyObjectKey) }, 420),
+    decoyHead !== null &&
+      officeSigned.status === 200 &&
+      officeSigned.body?.fileName === "下载回放-施工方案.docx" &&
+      officeSigned.body?.sizeBytes === SAMPLE_DOCX.length &&
+      String(officeSigned.body?.url).includes(officeObjectKey) &&
+      !String(officeSigned.body?.url).includes(decoyObjectKey),
+  );
+
+  const officeFetched = await fetchSigned(officeSigned.body.url);
+  const officeMagic = officeFetched.bytes.subarray(0, 2).toString("latin1");
+  check(
+    "D5c",
+    "GET 签名地址 → 200 + 字节与上传 .docx **逐字节一致**（PK/ZIP 容器、非 %PDF、≠ 预览占位产物）+ `Content-Disposition: attachment`（原名）",
+    "status=200 + sha256=" + sha256(SAMPLE_DOCX).slice(0, 12) + "… + magic=PK + disposition 含 attachment 与 UTF-8 原名",
+    short({ status: officeFetched.status, hash: officeFetched.hash.slice(0, 12) + "…", magic: officeMagic, isPdf: officeFetched.bytes.subarray(0, 5).toString("latin1") === "%PDF-", decoyHash: sha256(DECOY_PDF).slice(0, 12) + "…", disposition: officeFetched.disposition }, 420),
+    officeFetched.status === 200 &&
+      officeFetched.hash === sha256(SAMPLE_DOCX) &&
+      officeMagic === "PK" &&
+      officeFetched.bytes.subarray(0, 5).toString("latin1") !== "%PDF-" &&
+      officeFetched.hash !== sha256(DECOY_PDF) &&
+      String(officeFetched.disposition).startsWith("attachment") &&
+      String(officeFetched.disposition).includes("UTF-8''%E4%B8%8B%E8%BD%BD%E5%9B%9E%E6%94%BE"),
+  );
+
+  const previewAuditsAfterOffice = await auditOf(project, "preview");
+  const downloadsAfterOffice = await auditOf(project, "download");
+  const officeAudit = downloadsAfterOffice.find((row) => row.metadata?.versionId === officeVersionId);
+  check(
+    "D5d",
+    "Office 夹具下载 → download 审计一条一次（metadata.versionId = 该版本）；占位产物不写审计（preview 仍 0 条）",
+    "download 3 条（新增 1 条且 versionId = " + officeVersionId + "）+ preview 0 条",
+    short({ downloads: downloadsAfterOffice.length, matched: officeAudit !== undefined, summary: officeAudit?.summary, previews: previewAuditsAfterOffice.length }, 400),
+    downloadsAfterOffice.length === 3 &&
+      officeAudit !== undefined &&
+      officeAudit.object_type === "file" &&
+      officeAudit.object_id === office.fileId &&
+      String(officeAudit.summary).includes("下载回放-施工方案.docx") &&
+      previewAuditsAfterOffice.length === 0,
+  );
+
   // ---------- 证据五：404 与禁匿名 ----------
   const other = await uploadFile({ projectId: project, name: "下载回放-另一个文件.pdf", bytes: SAMPLE_V1.subarray(0, 128 * 1024), docType: "合同" });
   const otherVersionId = other.completed.body?.version?.id;
@@ -417,6 +514,9 @@ try {
           for (const projectId of cleanup.projectIds) {
             await purgePrefix("projects/" + projectId + "/").catch(() => undefined);
           }
+          for (const prefix of cleanup.previewPrefixes) {
+            await purgePrefix(prefix).catch(() => undefined);
+          }
         }
         for (const userId of cleanup.userIds) {
           await db.query("delete from user_roles where user_id = $1", [userId]);
@@ -460,12 +560,13 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：签名四字段与独立窗口 / 附件投递（字节逐字节一致 + Content-Disposition 原名）/ download 审计一条一次 / v1·v2 版本路由 / 跨文件版本 404 / 文件不存在 404 / 禁匿名 401 / 权限形态（" + (permissionEnforced ? "判权限 → 非成员 404、不写审计" : "一期不判权限 → 全员可下载") + "）。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：签名四字段与独立窗口 / 附件投递（字节逐字节一致 + Content-Disposition 原名）/ Office 夹具 round-trip（.docx 字节一致 + PK 容器 + ≠ previews/ 占位产物）/ download 审计一条一次 / v1·v2 版本路由 / 跨文件版本 404 / 文件不存在 404 / 禁匿名 401 / 权限形态（" + (permissionEnforced ? "判权限 → 非成员 404、不写审计" : "一期不判权限 → 全员可下载") + "）。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 未覆盖 / 风险登记");
 lines.push("");
 lines.push("- **运行形态（两态各跑一次）**：默认态（`PERMISSION_ENFORCED=false`）证「一期不判权限 → 全员可下载」；判权限态（`true`）证「非成员不可见 → 404、不写审计」——脚本按声明形态自适应断言，两态分别产出证据。");
 lines.push("- **403（可见但缺 `file.download`）真机不可达**：`file.download` 在项目成员 / 项目经理的**隐含权限位**内（`permission.rules.ts`），而可见性本身来自名册 / 主数据责任人 —— 一期六角色矩阵下「可见但无权下载」构造不出来；该分支由单测覆盖（`test/file-download.test.ts`：缺权限 403 且不签名不审计）。二期角色矩阵（更细粒度授权）落地后可在真机复验。");
+lines.push("- **Office 夹具的「预览产物」为回放自造占位**：本脚本不跑 converter，占位对象只用于断言「下载不指向 `previews/` 前缀」（同一 contentHash 下 .docx 与 PDF 字节必然不同）；真实转换件与下载原文件的不串链由 M4-05d 预览回放 + 本组共同覆盖。");
 lines.push("- **压测未做**：并发 2~4、200MB 级长跑内存曲线不在本脚本范围（属 M4-05 压测 / M8 容量验证）。");
 lines.push("- **签名地址的生命周期由对象存储保证**：脚本只证「签发后可取回」；过期后 403 由 S3 侧拒绝（`S3_DOWNLOAD_URL_TTL_SECONDS` 窗口外），未在本脚本做等待过期的慢断言。");
 lines.push("");
