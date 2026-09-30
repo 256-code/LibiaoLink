@@ -15,6 +15,7 @@ import type { DownloadUrlInput, ObjectStorage, SignedUrl } from "../src/storage/
  * ② A4-06 —— 任意历史版本可下载（按该版本对象键与体积）；
  * ③ 权限 —— 项目可见（404）之上再判 `file.download`（403）；不可见优先 404（不因缺权限暴露存在性）；
  * ④ 先签名后审计 —— 签名失败不写审计；404 / 403 一律不签名不审计。
+ * ⑤ Office 夹具 —— 签版本原对象（`projects/…docx`），与 `previews/` 转换产物不串链（下载链 / 预览链分开）。
  */
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -27,6 +28,10 @@ const HASH_HISTORY = "b".repeat(64);
 const NOW = new Date("2026-09-24T02:00:00Z");
 const OBJECT_KEY = "projects/" + PROJECT + "/files/" + FILE + "/v2/" + HASH + ".pdf";
 const OBJECT_KEY_HISTORY = "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH_HISTORY + ".pdf";
+const OBJECT_KEY_DOCX = "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + ".docx";
+/** 预览产物键（ADR-007：`previews/{contentHash}/{pipelineVersion}/{target}`）—— 只服务内联预览，下载不得签它。 */
+const PREVIEW_KEY_DOCX = "previews/" + HASH + "/1.0.0/pdf";
+const MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 const ENV = { S3_DOWNLOAD_URL_TTL_SECONDS: 300 } as unknown as Env;
 
@@ -202,6 +207,20 @@ describe("FileDownloadService.getDownloadUrl（M4-05f 下载切片）", () => {
     expect(h.storage.signed[0]).toMatchObject({ objectKey: OBJECT_KEY_HISTORY });
     expect(result).toMatchObject({ sizeBytes: 3 * 1024 * 1024 });
     expect(h.audit.entries[0]).toMatchObject({ metadata: { versionId: HISTORY } });
+  });
+
+  it("Office 夹具：签名指向该版本原对象（projects/…docx），不是 previews/… 转换产物（两条链分开）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "施工方案.docx" });
+    h.repo.versions.set(VERSION, makeVersionRow({ objectKey: OBJECT_KEY_DOCX, mime: MIME_DOCX, sizeBytes: 2 * 1024 * 1024 }));
+
+    const result = await h.service.getDownloadUrl(FILE, VERSION, ACTOR);
+
+    expect(h.storage.signed).toEqual([{ objectKey: OBJECT_KEY_DOCX, fileName: "施工方案.docx", expiresInSeconds: 300 }]);
+    expect(h.storage.signed[0]!.objectKey).not.toBe(PREVIEW_KEY_DOCX);
+    expect(h.storage.signed[0]!.objectKey.startsWith("previews/")).toBe(false);
+    expect(result.fileName).toBe("施工方案.docx");
+    expect(result.url).toContain(OBJECT_KEY_DOCX);
   });
 
   it("先签名后审计：签名失败上抛且不写审计（地址没签发就不算一次下载）", async () => {
