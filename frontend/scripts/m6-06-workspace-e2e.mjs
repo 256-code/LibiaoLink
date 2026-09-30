@@ -6,7 +6,8 @@
  *   「我的任务 是折叠面板 未展开是项目名称和编号 下拉是具体我的任务」「我提出的问题就参考日报的问题追踪即可
  *   也是折叠面板」「开始做前端」「表格内容要全」「直接把这个搬到我的任务不就好了」（任务表行口径照项目页任务表搬）→
  *   「这些字段一个不能少懂吗」（Push 231：任务表列补齐项目页任务表全 15 列，「预计所需天数」窄列也在）→
- *   「增加进入项目按钮」（Push 232：折叠面板头常驻「进入项目」深链 → 项目详情缺省标签「项目总览」）。
+ *   「增加进入项目按钮」（Push 232：折叠面板头常驻「进入项目」深链 → 项目详情缺省标签「项目总览」）→
+ *   「这个下拉要有记忆」（Push 233：折叠面板展开态按账号存偏好 workspaceOpenProjects，刷新 / 换标签保持）。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -35,8 +36,11 @@
  *      「进入项目」按钮点开 = 项目详情总览、浏览器后退回工作台（Push 232）；
  *   ⑨ 醒目模式（Push 232 ·「同样增加醒目模式」）：开关在标签导航栏最右侧、值 = 账号偏好；开 = 任务 / 问题整行铺
  *      状态底色 + 状态签收口成深色字，关 = 恢复白底（跑完把账号偏好恢复原值，不留痕）；
+ *   ⑩ 折叠面板展开态记忆（Push 233 ·「这个下拉要有记忆」）：偏好归零 = 全收起 → 展开 A → 刷新仍展开 / B 仍收起 →
+ *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
+ *      收起 A → 刷新仍全收起 → GET preferences 逐段落库核对 → 收尾恢复账号偏好原值（不留痕）；
  *   ⑧ 收尾：删两个临时项目（物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
- * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」小节）
+ * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆小节）
  */
 
 import { spawn } from "node:child_process";
@@ -257,6 +261,39 @@ const issueOther = await addIssue(projectB, other, "回放问题·他人提出�
 const otherRead = await api("/api/v1/projects/" + projectB + "/issues/" + issueOther.issue.id);
 check("夹具：B 的反例问题可读（wmj 提出；本刀只做「我提出的」栏，不作断言依据）", otherRead.status === 200, String(otherRead.status));
 
+// ---------- ⓪b 展开态偏好（A31 · Push 233）：先记原值 → 归零 ----------
+// Push 233 起折叠面板展开态按账号存服务端（「这个下拉要有记忆」）—— 本脚本的「页面打开 = 全收起 / 点一下 = 展开」口径
+// 依赖起点归零；跑完由 ⑩ 恢复原值（不留痕）。原值先记，早于任何页面交互。
+const prefBeforeMemory = await api("/api/v1/users/me/preferences");
+const memoryOriginal = prefBeforeMemory.status === 200 && prefBeforeMemory.json !== null && typeof prefBeforeMemory.json.workspaceOpenProjects === "object" && prefBeforeMemory.json.workspaceOpenProjects !== null
+  ? prefBeforeMemory.json.workspaceOpenProjects
+  : { tasks: [], raised: [] };
+/** 等展开态落库回读（服务端收敛后与期望值一致才算落库；最多 ~6s）。 */
+async function waitOpenProjects(value) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const now = await api("/api/v1/users/me/preferences");
+    if (now.status === 200 && now.json !== null && JSON.stringify(now.json.workspaceOpenProjects) === JSON.stringify(value)) {
+      return now;
+    }
+    await sleep(300);
+  }
+  return null;
+}
+async function patchOpenProjects(value) {
+  await api("/api/v1/users/me/preferences", "PATCH", { workspaceOpenProjects: value });
+  return await waitOpenProjects(value);
+}
+/** 面板读数：data-open（字符串 "true" / "false"）+ 面板内表格行数（展开才 > 0）。 */
+const panelOpenOf = (projectId) => "(function(){var p=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");return p===null?null:{open:String(p.getAttribute(" + j("data-open") + ")),rows:p.querySelectorAll(" + j("[data-workspace-task],[data-workspace-issue]") + ").length};})()";
+/** 确保某面板为指定展开态（展开态按账号记忆后，点面板头前必须先对齐状态，回放才与运行顺序无关）。 */
+async function ensurePanelOpen(projectId, wantOpen) {
+  const current = await ev(panelOpenOf(projectId));
+  if (current === null) throw new Error("面板不存在：" + projectId);
+  if (current.open === String(wantOpen)) return;
+  await clickSelector('[data-workspace-panel="' + projectId + '"] [data-workspace-panel-toggle]');
+  await waitFor(panelOpenOf(projectId) + ".open === " + j(String(wantOpen)), 25000);
+}
+
 // ---------- ① 接口先行对账（页面口径的服务端真相） ----------
 const wsRes = await api("/api/v1/workspace");
 check("①a GET /api/v1/workspace 200（仅会话、跨项目）", wsRes.status === 200 && wsRes.json !== null, String(wsRes.status));
@@ -373,6 +410,9 @@ const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelect
 /** 空态 / 汇总行读数。 */
 const totalExpr = () => "(function(){var node=document.querySelector(" + j("[data-workspace-task-total]") + ");return node===null?null:node.textContent.trim();})()";
 
+// 浏览器辅助函数就绪后、首次开页前：把展开态偏好归零（保证 ③ 的「页面打开 = 全收起」口径成立）
+const memoryResetAtStart = await patchOpenProjects({ tasks: [], raised: [] });
+console.log("前置：展开态偏好归零 → " + (memoryResetAtStart === null ? "失败（后续断言会暴露）" : JSON.stringify(memoryResetAtStart.json.workspaceOpenProjects)));
 // ---------- ② 页面骨架 ----------
 await open("#/my-tasks", "[data-workspace-page]");
 const head0 = await ev(headExpr());
@@ -489,7 +529,7 @@ if (prefStart === true) {
   await waitFor(focusCheckedExpr + " === false", 15000);
 }
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]') + ") !== null", 25000);
-await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
+await ensurePanelOpen(projectA, true);
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
 const focusOffRows = await ev(taskRowsExpr(projectA));
 check("⑨b 关：任务表 = 白底行（hover 档）+ 状态胶囊照旧", focusOffRows !== null && focusOffRows.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && focusOffRows.rows[0].statusClass.indexOf("bg-rose-100") >= 0, focusOffRows === null ? "null" : JSON.stringify([focusOffRows.rows[0].rowClass, focusOffRows.rows[0].statusClass]));
@@ -506,7 +546,7 @@ for (let attempt = 0; attempt < 20; attempt += 1) {
 check("⑨d 偏好落库：单键 PATCH 后 GET /users/me/preferences 的 focusMode = true（按账号跨设备记忆）", prefOn !== null && prefOn.status === 200 && prefOn.json !== null && prefOn.json.focusMode === true, prefOn === null ? "null" : JSON.stringify(prefOn.json === null ? prefOn.status : prefOn.json.focusMode));
 await clickSelector('[data-workspace-tab="raised"]');
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]') + ") !== null", 25000);
-await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
+await ensurePanelOpen(projectA, true);
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-issue]') + ") !== null", 25000);
 const focusIssueRows = await ev(issueRowsExpr(projectA));
 check("⑨e 切「我提出的问题」同款：未解决行 sky / 已完成行 emerald（6% 档）+ 状态签收口成深色字", focusIssueRows !== null && focusIssueRows.rows[0].rowClass.indexOf("bg-sky-500/[0.06]") >= 0 && focusIssueRows.rows[1].rowClass.indexOf("bg-emerald-500/[0.06]") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("text-sky-700") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("bg-sky-100") < 0, focusIssueRows === null ? "null" : JSON.stringify([focusIssueRows.rows.map((item) => item.rowClass), focusIssueRows.rows.map((item) => item.stateClass)]));
@@ -528,6 +568,52 @@ if (prefStart === true) {
 } else {
   check("⑨g 回放收尾：账号偏好 focusMode 原值即 false，无需恢复", true, "false");
 }
+
+// ---------- ⑩ 折叠面板展开态记忆（Push 233 · 业务口径「这个下拉要有记忆」） ----------
+const resetMemory = await patchOpenProjects({ tasks: [], raised: [] });
+check("⑩a 前置：展开态偏好归零（GET 回读两个空数组）", resetMemory !== null && resetMemory.json.workspaceOpenProjects.tasks.length === 0 && resetMemory.json.workspaceOpenProjects.raised.length === 0, resetMemory === null ? "null" : JSON.stringify(resetMemory.json.workspaceOpenProjects));
+await open("#/my-tasks", "[data-workspace-page]");
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"]') + ") !== null", 25000);
+const memory0A = await ev(panelOpenOf(projectA));
+const memory0B = await ev(panelOpenOf(projectB));
+check("⑩b 偏好为空：两个折叠面板默认全收起（data-open=false、无表格行）", memory0A !== null && memory0A.open === "false" && memory0A.rows === 0 && memory0B !== null && memory0B.open === "false" && memory0B.rows === 0, JSON.stringify([memory0A, memory0B]));
+await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
+const memory1A = await ev(panelOpenOf(projectA));
+const memory1B = await ev(panelOpenOf(projectB));
+check("⑩c 点开 A：A 展开（任务行出现）、B 仍收起", memory1A !== null && memory1A.open === "true" && memory1A.rows === 3 && memory1B !== null && memory1B.open === "false" && memory1B.rows === 0, JSON.stringify([memory1A, memory1B]));
+const savedTasks = await waitOpenProjects({ tasks: [projectA], raised: [] });
+check("⑩d 展开即单键 PATCH 落库：workspaceOpenProjects.tasks = [A]、raised 仍空（按账号跨设备记忆）", savedTasks !== null && savedTasks.json.workspaceOpenProjects.tasks.length === 1 && savedTasks.json.workspaceOpenProjects.tasks[0] === projectA && savedTasks.json.workspaceOpenProjects.raised.length === 0, savedTasks === null ? "null" : JSON.stringify(savedTasks.json.workspaceOpenProjects));
+await open("#/my-tasks", "[data-workspace-page]");
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
+const memory2A = await ev(panelOpenOf(projectA));
+const memory2B = await ev(panelOpenOf(projectB));
+check("⑩e 刷新（about:blank 后整页重开）后记忆生效：A 仍展开、B 仍收起", memory2A !== null && memory2A.open === "true" && memory2A.rows === 3 && memory2B !== null && memory2B.open === "false" && memory2B.rows === 0, JSON.stringify([memory2A, memory2B]));
+await clickSelector('[data-workspace-tab="raised"]');
+await waitFor("document.querySelector(" + j("[data-workspace-issues]") + ") !== null", 25000);
+const memory3A = await ev(panelOpenOf(projectA));
+const memory3B = await ev(panelOpenOf(projectB));
+check("⑩f 切「我提出的问题」：两面板全收起（tasks 的展开不串到 raised —— 两标签各自独立记忆）", memory3A !== null && memory3A.open === "false" && memory3A.rows === 0 && memory3B !== null && memory3B.open === "false" && memory3B.rows === 0, JSON.stringify([memory3A, memory3B]));
+await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectB + '"] [data-workspace-issue]') + ") !== null", 25000);
+const savedRaised = await waitOpenProjects({ tasks: [projectA], raised: [projectB] });
+check("⑩g 展开 raised 的 B：落库 tasks 仍 [A]、raised = [B]（同一对象两键互不覆盖）", savedRaised !== null && JSON.stringify(savedRaised.json.workspaceOpenProjects) === JSON.stringify({ tasks: [projectA], raised: [projectB] }), savedRaised === null ? "null" : JSON.stringify(savedRaised.json.workspaceOpenProjects));
+await clickSelector('[data-workspace-tab="tasks"]');
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
+const memory4B = await ev(panelOpenOf(projectB));
+check("⑩h 切回「我的任务」：A 仍展开（记忆未丢）、B 仍收起（raised 的展开不串台）", memory4B !== null && memory4B.open === "false" && memory4B.rows === 0, JSON.stringify(memory4B));
+await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
+await waitFor(panelOpenOf(projectA) + ".open === " + j("false"), 20000);
+const memory5A = await ev(panelOpenOf(projectA));
+const collapsedSaved = await waitOpenProjects({ tasks: [], raised: [projectB] });
+check("⑩i 收起 A：界面立即收起 + 落库 tasks 清空、raised 仍保留 [B]（「收起」也被记住）", memory5A !== null && memory5A.open === "false" && memory5A.rows === 0 && collapsedSaved !== null && JSON.stringify(collapsedSaved.json.workspaceOpenProjects) === JSON.stringify({ tasks: [], raised: [projectB] }), JSON.stringify([memory5A, collapsedSaved === null ? "null" : collapsedSaved.json.workspaceOpenProjects]));
+await open("#/my-tasks", "[data-workspace-page]");
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"]') + ") !== null", 25000);
+const memory6A = await ev(panelOpenOf(projectA));
+const memory6B = await ev(panelOpenOf(projectB));
+check("⑩j 收起后刷新：两面板保持全收起（空数组 = 全收起，不是「无记录 = 默认展开」）", memory6A !== null && memory6A.open === "false" && memory6A.rows === 0 && memory6B !== null && memory6B.open === "false" && memory6B.rows === 0, JSON.stringify([memory6A, memory6B]));
+const memoryRestored = await patchOpenProjects(memoryOriginal);
+check("⑩k 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（不留痕）", memoryRestored !== null && JSON.stringify(memoryRestored.json.workspaceOpenProjects) === JSON.stringify(memoryOriginal), memoryRestored === null ? "null" : JSON.stringify([memoryRestored.json.workspaceOpenProjects, memoryOriginal]));
 
 // ---------- ⑧ 收尾：清理 + 控制台 ----------
 const consoleLines = page.events.filter((line) => line.indexOf("EVT Runtime.exceptionThrown") >= 0 || line.indexOf("EVT Log.entryAdded") >= 0);

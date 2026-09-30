@@ -7728,6 +7728,9 @@
             "type": "boolean",
             "description": "醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false"
           },
+          "workspaceOpenProjects": {
+            "$ref": "#/components/schemas/WorkspaceOpenProjects"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -7747,6 +7750,7 @@
           "taskTableHiddenColumns",
           "homeSavedFilters",
           "focusMode",
+          "workspaceOpenProjects",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -7770,6 +7774,9 @@
           },
           "focusMode": {
             "type": "boolean"
+          },
+          "workspaceOpenProjects": {
+            "$ref": "#/components/schemas/WorkspaceOpenProjects"
           }
         },
         "additionalProperties": {},
@@ -8152,6 +8159,32 @@
           "raised"
         ],
         "description": "我的问题两栏（A6-03）；同一问题两边都命中时两个清单都出现；未关闭在前、已完成后置"
+      },
+      "WorkspaceOpenProjects": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 200,
+            "description": "「我的任务」标签已展开的项目 id 列表（整体替换语义）"
+          },
+          "raised": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 200,
+            "description": "「我提出的问题」标签已展开的项目 id 列表（整体替换语义）"
+          }
+        },
+        "required": [
+          "tasks",
+          "raised"
+        ],
+        "description": "工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；默认两空数组 = 全部收起；读侧坏形状收敛为空数组（整体替换语义）"
       },
       "WorkspaceResponse": {
         "type": "object",
@@ -10668,7 +10701,7 @@
         "tags": [
           "users"
         ],
-        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式）",
+        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态）",
         "responses": {
           "200": {
             "description": "偏好全量",
@@ -10696,7 +10729,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400）",
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400）",
         "requestBody": {
           "content": {
             "application/json": {
