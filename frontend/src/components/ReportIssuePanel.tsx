@@ -28,6 +28,7 @@ import type { DailySubView } from "../useHashRoute";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { RowEditButton } from "./RowEditButton";
 import { ScrollArea } from "./ScrollArea";
+import { SearchInput } from "./SearchInput";
 import type { MeResponse, Project } from "../types";
 
 /**
@@ -2875,6 +2876,10 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
   /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
    *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
+  /** 页内搜索（业务口径 2026-09-30「给日报记录 / 问题追踪增加搜索功能，搜索的组件和项目空间右上角的相同」）：
+   *  两枚关键词各管一张表（客户端过滤 —— 列表一次取满 limit 200，无需回服务端）；换项目随组件 key 复位。 */
+  const [recordKeyword, setRecordKeyword] = useState("");
+  const [issueKeyword, setIssueKeyword] = useState("");
 
   /** 编辑弹窗（Push 223 · 业务口径「这个编辑也要和干系人同款」）：存打开行的 id —— 渲染时现找该行
    *  （行内下拉改过之后，弹窗里也始终是最新值）；编辑只走行尾「编辑」按钮，点行体不进入编辑。 */
@@ -3166,6 +3171,22 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
       });
   };
 
+  /** 搜索命中（与项目空间同口径：不区分大小写的子串匹配；空关键词 = 全部命中）。 */
+  const searchHit = (keyword: string, fields: readonly (string | number)[]): boolean => {
+    const needle = keyword.trim().toLowerCase();
+    return needle === "" || fields.some((field) => String(field).toLowerCase().includes(needle));
+  };
+
+  /** 「日报记录」过滤：覆盖表里可见的文字列（时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划）。 */
+  const visibleReports = reports.filter((report) =>
+    searchHit(recordKeyword, [report.date, report.author, report.stageNames.join("、"), report.doneWork, report.plan]),
+  );
+
+  /** 「问题追踪」过滤：覆盖表里可见的文字列（日期 / 问题描述（含并入的提出人）/ 问题归类 / 解决方案或建议 / 问题是否处理）。 */
+  const visibleIssues = issues.filter((issue) =>
+    searchHit(issueKeyword, [issue.raisedAt, issue.reporter, issue.title, issue.categories.join("、"), issue.solution, ISSUE_STATE_NAMES[issue.state]]),
+  );
+
   const tabButton = (tab: SubTab) => {
     const active = tab === subTab;
     return (
@@ -3247,21 +3268,49 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
         </div>
       ) : subTab === "日报记录" ? (
         <section className="space-y-3">
-          <SectionHeader title="日报记录" hint={"共 " + String(reports.length) + " 篇 · 按日期倒序（新 → 旧）；「现场发现问题」非空会自动生成问题记录"} />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <SectionHeader
+              title="日报记录"
+              hint={
+                recordKeyword.trim() === ""
+                  ? "共 " + String(reports.length) + " 篇 · 按日期倒序（新 → 旧）；「现场发现问题」非空会自动生成问题记录"
+                  : "找到 " + String(visibleReports.length) + " 篇 · 共 " + String(reports.length) + " 篇 · 按日期倒序（新 → 旧）"
+              }
+            />
+            <div data-report-search="" className="w-full sm:ml-auto sm:w-72">
+              <SearchInput value={recordKeyword} onChange={setRecordKeyword} placeholder="搜索日期、填写者、阶段或日报内容" className="w-full" />
+            </div>
+          </div>
           {reports.length === 0 ? (
             <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
+          ) : visibleReports.length === 0 ? (
+            <EmptyCard text={"没有匹配「" + recordKeyword.trim() + "」的日报。"} hint="换个关键词试试，或点搜索框右侧的 × 清空。" />
           ) : (
-            <ReportList reports={reports} onEdit={(report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={patchReport} onDelete={requestDeleteReport} />
+            <ReportList reports={visibleReports} onEdit={(report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={patchReport} onDelete={requestDeleteReport} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
         <section className="space-y-3">
           {/* 醒目模式开关不在这里：按业务口径「醒目模式放在标签导航栏的最右侧」由 ProjectDetail 渲染在主标签栏右侧工具区 */}
-          <SectionHeader title="问题追踪" hint={"共 " + String(issues.length) + " 条 · 由日报「现场发现问题」自动生成，按提出日期倒序"} />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <SectionHeader
+              title="问题追踪"
+              hint={
+                issueKeyword.trim() === ""
+                  ? "共 " + String(issues.length) + " 条 · 由日报「现场发现问题」自动生成，按提出日期倒序"
+                  : "找到 " + String(visibleIssues.length) + " 条 · 共 " + String(issues.length) + " 条 · 按提出日期倒序"
+              }
+            />
+            <div data-issue-search="" className="w-full sm:ml-auto sm:w-72">
+              <SearchInput value={issueKeyword} onChange={setIssueKeyword} placeholder="搜索日期、问题描述、归类或解决方案" className="w-full" />
+            </div>
+          </div>
           {issues.length === 0 ? (
             <EmptyCard text="还没有问题记录。" hint="日报里填了「现场发现问题」并提交，这里就会自动落一条。" />
+          ) : visibleIssues.length === 0 ? (
+            <EmptyCard text={"没有匹配「" + issueKeyword.trim() + "」的问题。"} hint="换个关键词试试，或点搜索框右侧的 × 清空。" />
           ) : (
-            <IssueTable issues={issues} focus={focus} onEdit={(issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={patchIssue} onDelete={requestDeleteIssue} />
+            <IssueTable issues={visibleIssues} focus={focus} onEdit={(issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={patchIssue} onDelete={requestDeleteIssue} />
           )}
         </section>
       ) : (
