@@ -3,7 +3,7 @@
 > **唯一执行口径**：本文件是「Office 文档预览改由 ONLYOFFICE 承接」的唯一执行口径（2026-09-30 由 lan 指定）；后续执行过程中的任何变动**直接修改本文件**并登记「变更记录」，不另开会话口径、不另立清单。
 > 卡片：主责 lan；协办 wmj（契约 / ADR）、px（部署 / 前端 / 交付）；业务口：样本与验收。
 > 计划内审核（2026-09-30 起）：本计划（仅限本计划范围）由 lan 全权负责 —— 计划内审核与变更由 lan 执行并登记；跨线实现仍按分工路由。
-> 关联：首关证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md`；保真度证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md`；安全定稿 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md`；部署前置定稿 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；治理件 `docs/adr/ADR-030-在线预览-ONLYOFFICE查看器.md`（已立）；分工卡 `团队分工.md` §6 第 10~11 项。
+> 关联：首关证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md`；保真度证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md`；安全定稿 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md`；部署前置定稿 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；治理件 `docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`（wmj 线 Push 238 / PR #247 先入 `main`）；分工卡 `团队分工.md` §6 第 10~11 项。
 
 ## 0. 已定决策（冻结，勿再翻）
 
@@ -50,9 +50,9 @@
 - **主责**：lan；**计划内审核完成（2026-09-30）** —— 契约草案（新增受控端点路由 + `FilePreviewResponse` 查看配置 / JWT 改造）与残余风险接受均通过（附条件 C1~C6 / D1~D4，见定稿 §7）；S1/S3 按实施切片落地。
 
 ### N3 实施前置定稿 —— ✅ 已完成（2026-09-30）
-- **F1/R3 定稿**：固化键 `services.CoAuthoring.externalRequest.action.blockPrivateIP=false`（决定键）+ `request-filtering-agent.allowPrivateIPAddress=true`；落地方式 = 镜像构建期模板 / 挂载 + **启动后自检**（不得依赖手工改容器）；`token.enable.request.outbox=true` 为期望态（沙箱「保持 false」口径不再沿用）；中文字体生成入构建；**升级 / 重建回归清单五项**（① blockPrivateIP 生效 ② outbox=true ③ 中文字体 ④ 受控端点 401 基线 ⑤ 示例 app 关闭）。
+- **F1/R3 定稿**：固化键 `services.CoAuthoring.externalRequest.action.blockPrivateIP=false`（决定键）+ `request-filtering-agent.allowPrivateIPAddress=true`；落地方式 = 镜像构建期模板 / 挂载 + **启动后自检**（不得依赖手工改容器）；`token.enable.request.outbox=true` 为期望态（沙箱「保持 false」口径不再沿用）；中文字体生成入构建；**升级 / 重建回归清单五项**（① blockPrivateIP 生效 ② outbox=true ③ 中文字体 ④ 受控端点 401 基线 ⑤ 示例 app 关闭）；ADR-030 所列「升级回归三项」为本清单安全子集，以定稿 §1.3 为准。
 - **R6 定稿**：示例 app 保持默认关闭 + 网关不暴露 `/example/`；S5 验收断言（网关侧 `GET /example/` 非 200 且无示例页面；直连容器 502 为合规）。
-- **产出**：`docs/PoC-10-部署前置定稿(F1-R3·R6).md`（并入路径 S2 / S5）；**ADR-030 已立**（`docs/adr/ADR-030-在线预览-ONLYOFFICE查看器.md`；ADR-007 → Superseded；ADR-013 / ADR-017 修订指向；`系统功能书.md` D2-01 同步登记为跨线待办）。
+- **产出**：`docs/PoC-10-部署前置定稿(F1-R3·R6).md`（并入路径 S2 / S5）；**ADR-030 已立**（`docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`，wmj 线 Push 238 / PR #247 先入 `main` —— 本线原起草重复稿按「先入 main 者为准」撤销、引用改指；ADR-007 → Superseded；ADR-013 / ADR-017 修订随件；`系统功能书.md` D2-01 同步登记为跨线待办）。
 - **次关出口**：N1 达标 + N2/N3 定稿随 ADR-030 合入 `main` → 解锁实施（待本刀合入即达成）。
 
 ## 4. 实施切片（次关通过后执行；R4/R5 在此归位）
@@ -85,4 +85,5 @@
 | v1.1 | 2026-09-30 | N1 完成（✅）：样本来源变更（业务无法提供真实样本 → 实施方自建 5 份确定性构造样本，2026-09-30 授权）；5/5 达标、无内容性失真；差异 D1~D5 与夹具修正 FIX-1~3 登记；保真度证据文档入库；预留「真实样本追加抽样」口径；次关状态更新为「进行中（N1 ✅ / N2·N3 待执行）」 | lan |
 | v1.2 | 2026-09-30 | N2 完成（✅）：R1 定稿受控下载端点（a；备选 b 不再采用）、R2 定稿（冻结约束 + 设计归位 + outbox 常开）；离线 JWT 验证 3/3（HS256 / `payload.url` 逐字绑定 / TTL 300s）；定稿文档 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md` 入库；次关状态更新为「进行中（N1 ✅ / N2 ✅ / N3 待执行）」 | lan |
 | v1.3 | 2026-09-30 | **计划内审核**（lan 全权负责范围内）：N2 契约草案 + 残余风险接受均通过（附条件 C1~C6 / D1~D4）；新增证据 E5（鉴权判别矩阵 6/6）；计划头补「计划内审核」口径；N2 主责行注记同步（定稿 §7） | lan |
-| v1.4 | 2026-09-30 | N3 完成（✅）：F1/R3 定稿（固化键 / 落地方式 / outbox 期望态 / 字体 / 升级·重建回归五项）、R6 定稿（默认关闭 + 网关不暴露 + S5 验收断言），产出 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；**ADR-030 立**（ADR-007 → Superseded；ADR-013 / ADR-017 修订指向；`系统功能书.md` D2-01 跨线待办登记）；次关状态更新为「进行中（N1 ✅ / N2 ✅ / N3 ✅ 2026-09-30；待合入 `main` 达成出口）」 | lan |
+| v1.4 | 2026-09-30 | N3 完成（✅）：F1/R3 定稿（固化键 / 落地方式 / outbox 期望态 / 字体 / 升级·重建回归五项）、R6 定稿（默认关闭 + 网关不暴露 + S5 验收断言），产出 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；ADR-030 立（wmj 线 Push 238 先入 `main`，见 v1.5 收口）；次关状态更新为「进行中（N1 ✅ / N2 ✅ / N3 ✅ 2026-09-30；待合入 `main` 达成出口）」 | lan |
+| v1.5 | 2026-09-30 | **并入 `main` 收口（二次并）**：ADR-030 认 wmj 线稿（`docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`，px 代起草 · Push 238 / PR #247 先入 `main`；按「先入 main 者为准」），本线重复件撤销、关联行 / N3 段引用改指；一致性核对 = 决策内容（D1~D5 / 边界 / 不变量 / 切换条件）与 wmj 线稿一致、无决策性缺失；升级回归口径 = ADR 三项为定稿五项之安全子集；ADR-030 状态转「已采纳」按 ADR 线惯例（本线不代改） | lan |
