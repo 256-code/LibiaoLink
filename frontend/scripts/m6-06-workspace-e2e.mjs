@@ -401,6 +401,8 @@ async function clickSelector(selector) {
   await sleep(700);
 }
 
+/** Push 235 吸顶断言：元素几何 / 样式读数（不存在 = null）。 */
+const stickyRect = (selector) => "(function(){var el=document.querySelector(" + j(selector) + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=getComputedStyle(el);return {top:Math.round(r.top*100)/100,left:Math.round(r.left*100)/100,right:Math.round(r.right*100)/100,height:Math.round(r.height*100)/100,position:cs.position,zIndex:cs.zIndex,bg:String(cs.backgroundColor),blur:String(cs.backdropFilter||cs.webkitBackdropFilter)};})()";
 /** 页头 + 标签栏读数。 */
 const headExpr = () => "(function(){var tabs=document.querySelectorAll(" + j("[data-workspace-tab]") + ");var out=[];for(var i=0;i<tabs.length;i+=1){out.push({key:String(tabs[i].getAttribute(" + j("data-workspace-tab") + ")),text:tabs[i].textContent.trim(),current:tabs[i].getAttribute(" + j("aria-current") + ")});}var headerNode=document.querySelector(" + j("header") + ");return {page:document.querySelector(" + j("[data-workspace-page]") + ")!==null,tabs:out,hash:window.location.hash,header:headerNode===null?" + j("") + ":headerNode.textContent.trim()};})()";
 /** 折叠面板读数（顺序即 DOM 顺序）。 */
@@ -638,6 +640,53 @@ await clickSelector('[data-workspace-tab="tasks"]');
 const headPlan3 = await ev(headExpr());
 check("⑪e 点回「我的任务」→ 地址回到不带参数的 #/my-tasks（原两标签口径不变）", headPlan3 !== null && headPlan3.hash === "#/my-tasks" && headPlan3.tabs[0].current === "page", headPlan3 === null ? "null" : JSON.stringify([headPlan3.hash, headPlan3.tabs.map((item) => item.current)]));
 
+// ---------- ⑫ 标签导航栏吸顶（Push 235 · 业务口径「任务模版和我的任务都要做吸顶效果」） ----------
+// 工作台默认内容不足一屏、吸顶滚不起来 —— 先补 16 条「今日」任务把 A 面板撑高，再把视口压到 560 当滚动空间；
+// 收尾 ⑧ 照旧逐条软删任务、随项目物理删清零（本段不留痕：展开态偏好跑完再恢复原值）。
+for (let index = 1; index <= 16; index += 1) {
+  await addTask(projectA, { stageKey: "design", title: "回放·吸顶撑高-" + String(index), ownerIds: [me.id], plannedEnd: TODAY, priority: "低" });
+}
+const wsSticky = await api("/api/v1/workspace");
+const stickyToday = wsSticky.json === null ? -1 : wsSticky.json.myTasks.today.length;
+check("⑫a 夹具：16 条「今日」任务进工作台读面（今日组 2 + 16 = 18）", stickyToday === 18, String(stickyToday));
+await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 560, deviceScaleFactor: 1, mobile: false });
+await open("#/my-tasks", "[data-workspace-page]");
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"]') + ") !== null", 25000);
+await ensurePanelOpen(projectA, true);
+const navSlot0 = await ev(stickyRect("[data-workspace-tabs]"));
+check("⑫b 标签导航栏 = sticky / z 20 / 站灰底（α 0.95）+ 毛玻璃 / 自然位在顶栏下沿（top 64~65.5，滚动后钉到 64）", navSlot0 !== null && navSlot0.position === "sticky" && navSlot0.top >= 64 && navSlot0.top <= 65.5 && navSlot0.zIndex === "20" && navSlot0.bg.indexOf("0.95") >= 0 && navSlot0.blur.indexOf("blur") >= 0, navSlot0 === null ? "null" : JSON.stringify(navSlot0));
+const room235 = await ev("(function(){return Math.round((document.documentElement.scrollHeight - window.innerHeight)*100)/100;})()");
+check("⑫c 页面可滚动量足够（≥ 400px —— 吸顶要真滚起来才验得到）", typeof room235 === "number" && room235 >= 400, String(room235));
+await ev("window.scrollTo(0, 420)");
+await sleep(400);
+const scrolled235 = await ev("window.scrollY");
+check("⑫d 滚动实际发生（scrollY ≥ 400）", scrolled235 >= 400, String(scrolled235));
+const navSlot1 = await ev(stickyRect("[data-workspace-tabs]"));
+check("⑫e 滚动后导航栏钉在顶栏正下方（top = 64；栏高 = 59 = pt-3 12 + 标签 46 + 底边 1）", navSlot1 !== null && Math.abs(navSlot1.top - 64) <= 0.5 && Math.abs(navSlot1.height - 59) <= 1, navSlot1 === null ? "null" : JSON.stringify([navSlot1.top, navSlot1.height]));
+const clientW235 = await ev("document.documentElement.clientWidth");
+check("⑫f 横幅铺满行宽（-mx-6 抵消后 left = 0 / right = 视口可用宽 clientWidth，扣纵向滚动条；页面不因此横向滚动）", navSlot1 !== null && Math.abs(navSlot1.left) <= 0.5 && Math.abs(navSlot1.right - clientW235) <= 0.5 && (await ev("document.documentElement.scrollWidth")) <= clientW235 + 1, navSlot1 === null ? "null" : JSON.stringify([navSlot1.left, navSlot1.right, clientW235]));
+const inBar = await ev("(function(){var nav=document.querySelector(" + j("[data-workspace-tabs]") + ");if(nav===null){return null;}var r=nav.getBoundingClientRect();var tabs=nav.querySelectorAll(" + j("[data-workspace-tab]") + ");var focus=nav.querySelector(" + j("[data-workspace-focus-toggle]") + ");var ok=true;for(var i=0;i<tabs.length;i+=1){var b=tabs[i].getBoundingClientRect();if(b.height<=0||b.top<r.top-0.5||b.bottom>r.bottom+0.5){ok=false;}}var fb=focus===null?null:focus.getBoundingClientRect();return {ok:ok,tabs:tabs.length,focusIn:fb!==null&&fb.height>0&&fb.top>=r.top-0.5&&fb.bottom<=r.bottom+0.5};})()");
+check("⑫g 滚动后三枚标签 + 醒目模式开关都还在栏内（栏高兜得住、不吞字）", inBar !== null && inBar.ok === true && inBar.tabs === 3 && inBar.focusIn === true, JSON.stringify(inBar));
+const hit235 = await ev("(function(){var tabs=document.querySelectorAll(" + j("[data-workspace-tab]") + ");for(var i=0;i<tabs.length;i+=1){if(tabs[i].getAttribute(" + j("aria-current") + ")===" + j("page") + "){var r=tabs[i].getBoundingClientRect();var el=document.elementFromPoint(Math.round(r.left+r.width/2),Math.round(r.top+r.height/2));return el!==null&&(el===tabs[i]||tabs[i].contains(el));}}return null;})()");
+check("⑫h 吸顶状态下选中标签仍是命中元素（可点、不被浮层盖住）", hit235 === true, String(hit235));
+await clickSelector('[data-workspace-tab="raised"]');
+await waitFor("window.location.hash === " + j("#/my-tasks?tab=raised"), 15000);
+check("⑫i 吸顶状态下点「我提出的问题」→ 路由照常写回（点击穿透到按钮本体）", (await ev("window.location.hash")) === "#/my-tasks?tab=raised", String(await ev("window.location.hash")));
+await clickSelector('[data-workspace-tab="tasks"]');
+await waitFor("window.location.hash === " + j("#/my-tasks"), 15000);
+await waitFor("(function(){return document.documentElement.scrollHeight - window.innerHeight >= 400;})()", 20000);
+await ev("window.scrollTo(0, 420)");
+await sleep(400);
+const scrolledBack = await ev("window.scrollY");
+const navSlot3 = await ev(stickyRect("[data-workspace-tabs]"));
+check("⑫j 切回「我的任务」再滚动：导航栏重新钉在 64（切标签不破坏吸顶）", scrolledBack >= 300 && navSlot3 !== null && Math.abs(navSlot3.top - 64) <= 0.5, JSON.stringify([scrolledBack, navSlot3 === null ? null : navSlot3.top]));
+await ev("window.scrollTo(0, 0)");
+await sleep(300);
+const navSlot4 = await ev(stickyRect("[data-workspace-tabs]"));
+check("⑫k 滚回顶部：导航栏回到自然位（top 64~65.5，滚动全程零跳变 / 零接缝）", navSlot4 !== null && navSlot4.top >= 64 && navSlot4.top <= 65.5, navSlot4 === null ? "null" : JSON.stringify(navSlot4.top));
+await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
+const restored235 = await patchOpenProjects(memoryOriginal);
+check("⑫l 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（⑫ 的展开操作不留痕）", restored235 !== null && JSON.stringify(restored235.json.workspaceOpenProjects) === JSON.stringify(memoryOriginal), restored235 === null ? "null" : JSON.stringify(restored235.json.workspaceOpenProjects));
 // ---------- ⑧ 收尾：清理 + 控制台 ----------
 const consoleLines = page.events.filter((line) => line.indexOf("EVT Runtime.exceptionThrown") >= 0 || line.indexOf("EVT Log.entryAdded") >= 0);
 check("⑧a 页面控制台 / 未捕获异常 0 条", consoleLines.length === 0, consoleLines.length === 0 ? "0" : JSON.stringify(consoleLines.slice(0, 3)));
