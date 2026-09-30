@@ -359,8 +359,8 @@ const restPanelShadow = String(await ev("getComputedStyle(document.querySelector
 const pageInfo = await ev("(function(){return {scroll:document.documentElement.scrollHeight,inner:window.innerHeight};})()");
 const baseShot = await shot("hub-base");
 
-check("入口页渲染出三个入口胶囊（项目空间 / 任务模板 / 文件库）", Array.isArray(pills) && pills.length === 3 && pills.map((item) => item.text).join("|") === "项目空间|任务模板|文件库", JSON.stringify(pills));
-check("三个胶囊的落点分别是 项目空间 / 任务模板 / 文件库", Array.isArray(pills) && pills.length === 3 && pills[0].href.indexOf("#/projects") === 0 && pills[1].href === "#/templates" && pills[2].href === "#/files", Array.isArray(pills) ? pills.map((item) => item.href).join(" | ") : "null");
+check("入口页渲染出三个入口胶囊（项目空间 / 任务模板 / 我的任务）", Array.isArray(pills) && pills.length === 3 && pills.map((item) => item.text).join("|") === "项目空间|任务模板|我的任务", JSON.stringify(pills));
+check("三个胶囊的落点分别是 项目空间 / 任务模板 / 我的任务", Array.isArray(pills) && pills.length === 3 && pills[0].href.indexOf("#/projects") === 0 && pills[1].href === "#/templates" && pills[2].href === "#/my-tasks", Array.isArray(pills) ? pills.map((item) => item.href).join(" | ") : "null");
 const stacked = Array.isArray(pills) && pills.length === 3 ? (Math.abs((pills[0].x + pills[0].w / 2) - (pills[1].x + pills[1].w / 2)) <= 2 && Math.abs((pills[1].x + pills[1].w / 2) - (pills[2].x + pills[2].w / 2)) <= 2 && pills[0].y < pills[1].y && pills[1].y < pills[2].y && pills[1].y - pills[0].y > 8) : false;
 check("三个胶囊是竖排（x 中心对齐、y 依次递增）", stacked, Array.isArray(pills) ? JSON.stringify(pills.map((item) => [item.x, item.y])) : "null");
 check("胶囊整体落在最左侧（右缘 < 视口宽 40%）", Array.isArray(pills) && pills.length === 3 && pills[0].x + pills[0].w < vw * 0.4, Array.isArray(pills) ? "右缘 " + String(pills[0].x + pills[0].w) + " / " + String(Math.round(vw * 0.4)) : "null");

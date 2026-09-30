@@ -26,7 +26,7 @@ export const EMPTY_LIST_QUERY: ListQueryState = {
   sortDesc: true,
 };
 
-export type PlaceholderPage = "templates" | "files";
+export type PlaceholderPage = "templates" | "my-tasks";
 
 /** 项目详情页顶部标签（6 视图，Push 82 / 128 / 145 / 221）在地址里的取值：`#/project/{id}?view=`。缺省「项目总览」不落参数（默认值不进 URL，与列表筛选态同一口径）。 */
 export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily" | "stakeholders";
@@ -347,8 +347,8 @@ export function parseHash(hash: string): Route {
   if (path === "/templates") {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
   }
-  if (path === "/files") {
-    return { kind: "placeholder", page: "files", section: null };
+  if (path === "/my-tasks") {
+    return { kind: "placeholder", page: "my-tasks", section: null };
   }
   const match = PROJECT_PATH.exec(path);
   if (match) {

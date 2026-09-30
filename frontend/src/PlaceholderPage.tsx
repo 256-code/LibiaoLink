@@ -24,7 +24,7 @@ import type { MeResponse } from "./types";
 
 const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
   templates: { title: "任务模板", note: "左侧「任务节点」= 节点库接口（Push 181：`GET /api/v1/task-nodes`，可新增 / 编辑 / 删除）；右侧模板面板 = 模板接口（Push 182：`GET/POST/PATCH/DELETE /api/v1/task-templates`，改名 / 拖入拖出 / 排序改完点「保存」落库，删模板走同款红胶囊 + 底部确认条）。写 = 系统管理员（blueprint.manage）。把左侧节点拖进模板 = 定这份模板的节点顺序。" },
-  files: { title: "文件库", note: "文件库还没开工：先把入口与路由占好，后续按需求填充。" },
+  "my-tasks": { title: "我的任务", note: "我的任务还没开工：先把入口与路由占好，后续按需求填充。" },
 };
 
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
