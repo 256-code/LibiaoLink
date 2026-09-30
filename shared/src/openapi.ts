@@ -1004,12 +1004,15 @@ export function buildOpenApiDocument() {
     request: { params: versionParams },
     responses: {
       200: {
-        description: "原文件字节流（Content-Type = 版本 mime；Content-Disposition: inline；Cache-Control: no-store）",
+        description:
+          "原文件字节流（Content-Type = 版本 mime；Content-Length；Content-Disposition: inline；Cache-Control: no-store；" +
+          "X-Content-Type-Options: nosniff；禁止 302 到预签名 —— 无重定向、不回退预签名）",
         content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
       },
       401: errorResponse("服务间鉴权未通过（缺 / 签名错 / 过期 / URL 绑定不匹配 —— 统一文案不区分原因）"),
       404: commonErrors[404],
       405: errorResponse("仅接受 GET（其余方法显式 405，不进业务逻辑）"),
+      502: errorResponse("存储返回异常响应（fail-closed：不重定向、不回退预签名）"),
       503: errorResponse("存储 / 依赖故障（fail-closed：不重定向、不回退预签名）"),
     },
   });
