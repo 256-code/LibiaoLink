@@ -299,7 +299,7 @@ function autoScrollIssueDrag(root: HTMLElement | null, point: { x: number; y: nu
  *  bg-amber-100 text-amber-800 / 已完成 = emerald 绿 bg-emerald-100 text-emerald-700）；
  *  原四态色签（未分组灰 / 未解决红 / 处理中琥珀 / 已完成绿）随「取消未分组 未分组就是未解决」改版下架，
  *  首版实色三态（#ade4ff / #feca04 / #dcdfe4）随本口径下架。 */
-const ISSUE_TAG_CLASS: Record<IssueState, string> = {
+export const ISSUE_TAG_CLASS: Record<IssueState, string> = {
   open: "bg-sky-100 text-sky-700",
   in_progress: "bg-amber-100 text-amber-800",
   done: "bg-emerald-100 text-emerald-700",
@@ -325,7 +325,7 @@ const ISSUE_TAG_TEXT_CLASS: Record<IssueState, string> = {
  *  色值取自业务样 —— 机械部 #adcbff / 采购部 · 项目部 #ade4ff / 规划部 #ace2c5 / 物流原因 #dcdfe4 /
  *  供应商原因 #ffea99 / 客户原因 #ffb5b3 / 客观原因 #e7b4ff / 生产原因 #ffb3dc / 其它原因 #ffcea3；
  *  未收录 / 空值回落浅灰。多选值（「、」连接）按分类拆开逐枚出签。 */
-const ISSUE_CATEGORY_CLASS: Record<string, string> = {
+export const ISSUE_CATEGORY_CLASS: Record<string, string> = {
   机械部: "bg-[#adcbff]",
   采购部: "bg-[#ade4ff]",
   规划部: "bg-[#ace2c5]",

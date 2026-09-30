@@ -22,10 +22,10 @@ import {
 import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
-const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
-  templates: { title: "任务模板", note: "左侧「任务节点」= 节点库接口（Push 181：`GET /api/v1/task-nodes`，可新增 / 编辑 / 删除）；右侧模板面板 = 模板接口（Push 182：`GET/POST/PATCH/DELETE /api/v1/task-templates`，改名 / 拖入拖出 / 排序改完点「保存」落库，删模板走同款红胶囊 + 底部确认条）。写 = 系统管理员（blueprint.manage）。把左侧节点拖进模板 = 定这份模板的节点顺序。" },
-  // 临时占位：路由已转正式（Push 229，useHashRoute 的 kind: "workspace"）；工作台页面接线后本键与 App.tsx 的分支一起替换。
-  "my-tasks": { title: "我的任务", note: "我的任务还没开工：先把入口与路由占好，后续按需求填充。" },
+/** 占位页字典（Push 230 起只剩「任务模板」：「我的任务」已转正式页面 frontend/src/WorkspacePage.tsx，
+ *  原来的占位卡（PlaceholderCard）随之撤下，页面主体见本文件下方的模板板块标签栏）。 */
+const PAGES: Record<PlaceholderPageKey, { title: string }> = {
+  templates: { title: "任务模板" },
 };
 
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
@@ -100,19 +100,6 @@ type PlaceholderPageProps = {
   canManageBlueprint: boolean;
 };
 
-/** 占位卡：页面主体内容未定稿前统一用它撑住版面。 */
-function PlaceholderCard({ title, note }: { title: string; note: string }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-8 py-20 text-center">
-      <p className="text-base font-semibold text-zinc-800">{title}</p>
-      <p className="mt-2 text-sm text-zinc-500">{note}</p>
-      <a href="#/" className="mt-6 inline-block text-sm font-medium text-zinc-700 underline underline-offset-4">
-        返回入口页
-      </a>
-    </div>
-  );
-}
-
 /** 占位页：入口页的按钮先各自落地，页面内容后续迭代；任务模板先出阶段板块标签栏 + 左侧任务节点卡片区。 */
 /**
  * 拖动（Push 116，业务口径「这里拖动卡片也要可以滑动鼠标」）：改成**指针拖动** —— 原生 HTML5 拖拽在拖动期间会把 `wheel` 吞掉,
@@ -138,7 +125,7 @@ function InsertLine({ className }: { className: string }) {
 }
 
 export default function PlaceholderPage({ me, page, section, canManageBlueprint }: PlaceholderPageProps) {
-  const { title, note } = PAGES[page];
+  const { title } = PAGES[page];
   /** 当前板块：URL 是唯一来源（点标签栏 = 换地址；`?section=` 取 ASCII slug，兼容旧链接的中文板块名），缺省 / 不认识的值回落到第一个板块。 */
   const activeSection = templateSectionFromParam(section) ?? TEMPLATE_SECTIONS[0] ?? "";
 
@@ -1245,14 +1232,5 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
         )}
       </div>
     );
-  }  return (
-    <div className="min-h-screen">
-      <AppHeader me={me} title={title} />
-      <main className="w-full px-6 py-10">
-        <div className="mx-auto max-w-2xl">
-          <PlaceholderCard title={title} note={note} />
-        </div>
-      </main>
-    </div>
-  );
+  }
 }
