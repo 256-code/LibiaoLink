@@ -1,0 +1,60 @@
+# ============================================================
+# LibiaoLink ONLYOFFICE 文档服务器（S2 · dev 沙箱形态）
+# ------------------------------------------------------------
+# 用法（dev 沙箱）：
+#   cp .env.example .env    # 填 OO_JWT_SECRET（生成见 .env.example）
+#   docker compose build
+#   docker compose up -d
+#   docker compose logs docs | tail -n 40          # 入口包装 + 自检输出
+#   docker compose exec -T docs /usr/local/bin/libiaolink-selfcheck.sh
+#
+# dev 沙箱接线（让 DocServer 能按容器名拉内网对象存储；生产由部署环境决定）：
+#   docker network connect libiaolink-onlyoffice-internal libiaolink-s3
+#
+# 形态说明：
+#   - pin：onlyoffice/documentserver:9.4.0.1（digest 在 Dockerfile FROM 固化，D2）；
+#   - F1/R3：入口包装启动后固化 local.json（blockPrivateIP=false /
+#     allowPrivateIPAddress=true / request.outbox=true）并只重启 ds:docservice，
+#     容器重启 / 重建 / 升级后自动恢复 —— 不得手工改容器；
+#   - R6：示例 app 默认关闭；网关（生产）不得暴露 /example/；
+#   - 端口只发布到 127.0.0.1（dev）；生产 = 网关内网入口 + 受控端点不进外网。
+# ============================================================
+name: libiaolink-onlyoffice
+
+services:
+  docs:
+    image: "${OO_IMAGE:-libiaolink/onlyoffice-docs}:${OO_TAG:-9.4.0.1}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: libiaolink-onlyoffice-docs
+    restart: unless-stopped
+    init: true
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: "${OO_JWT_SECRET:?OO_JWT_SECRET 未设置（见 .env.example）}"
+      JWT_HEADER: "Authorization"
+      GENERATE_FONTS: "false"
+      EXAMPLE_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${OO_PORT:-8001}:80"
+    mem_limit: ${OO_MEM_LIMIT:-4g}
+    cpus: ${OO_CPUS:-2}
+    tmpfs:
+      - /tmp:size=${OO_TMPFS:-512m},mode=1777
+    networks: [onlyoffice-internal]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/libiaolink-selfcheck.sh"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 240s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  onlyoffice-internal:
+    name: libiaolink-onlyoffice-internal
