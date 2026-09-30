@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：入口页改版（左侧竖排三胶囊 + 右侧平面世界地图 + 鼠标触碰动画）
+ * LibiaoLink 前端 · 回放：入口页（平面世界地图占满内容区 + 鼠标触碰动画；左侧三胶囊 2026-09-30 下架）
  *
  * 业务口径（2026-09-24）：「在首页做一个地图 把首页三个胶囊放到最左侧上下排列 右侧部分则建一个平面地图 如图所示
  *   但是鼠标触碰有动画效果」；追订：「参考图的蓝点不需要」「我想要各个国家都可以展现」。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP，真实鼠标坐标）验：
- *   ① 三个入口胶囊在最左侧竖排（x 中心对齐、y 递增、整体落在视口左侧）；
- *   ② 右侧是地图面板（面板在胶囊右边，内含 .hub-map，viewBox 与生成物一致）；
+ *   ① 入口胶囊已下架（业务口径 2026-09-30「这三个按钮删除吧」）：左列不再占位，地图面板占满内容区；
+ *   ② 地图面板内含 .hub-map，viewBox 与生成物一致；
  *   ③ 底图 = 172 个国家路径（逐国带国名）＋ 29 个微国符号（110m 精度画不出的主权小国，含新加坡）；装饰性点位 / 文字 / 图片仍然没有；
  *   ④ 鼠标触碰某国：只有该国命中 hover、填充变深、左上角徽标报出国名；换一国则随之切换；
  *   ⑤ 鼠标触碰面板空白处：hover 归零、徽标收起、面板投影加深（不再整图缩放）；
- *   ⑥ 窄屏回落：胶囊改横排在上、地图在下；
+ *   ⑥ 窄屏：地图面板仍占满宽度（不再有胶囊行）；
  *   ⑦ 项目联动（方案 E：静止不上柱、触碰才出柱）：有项目的国家 / 微国按项目数上蓝色底色
  *      （七追订「这个颜色深浅不能按照固定的数据来 到时候所有地区大于3个不就是同一个颜色了吗」→ 档位随数据
  *      自适应、最多 5 档，项目越多颜色越深 —— 脚本复刻同一个分档算法再逐国对账）；
@@ -359,12 +359,8 @@ const restPanelShadow = String(await ev("getComputedStyle(document.querySelector
 const pageInfo = await ev("(function(){return {scroll:document.documentElement.scrollHeight,inner:window.innerHeight};})()");
 const baseShot = await shot("hub-base");
 
-check("入口页渲染出三个入口胶囊（项目空间 / 任务模板 / 我的任务）", Array.isArray(pills) && pills.length === 3 && pills.map((item) => item.text).join("|") === "项目空间|任务模板|我的任务", JSON.stringify(pills));
-check("三个胶囊的落点分别是 项目空间 / 任务模板 / 我的任务", Array.isArray(pills) && pills.length === 3 && pills[0].href.indexOf("#/projects") === 0 && pills[1].href === "#/templates" && pills[2].href === "#/my-tasks", Array.isArray(pills) ? pills.map((item) => item.href).join(" | ") : "null");
-const stacked = Array.isArray(pills) && pills.length === 3 ? (Math.abs((pills[0].x + pills[0].w / 2) - (pills[1].x + pills[1].w / 2)) <= 2 && Math.abs((pills[1].x + pills[1].w / 2) - (pills[2].x + pills[2].w / 2)) <= 2 && pills[0].y < pills[1].y && pills[1].y < pills[2].y && pills[1].y - pills[0].y > 8) : false;
-check("三个胶囊是竖排（x 中心对齐、y 依次递增）", stacked, Array.isArray(pills) ? JSON.stringify(pills.map((item) => [item.x, item.y])) : "null");
-check("胶囊整体落在最左侧（右缘 < 视口宽 40%）", Array.isArray(pills) && pills.length === 3 && pills[0].x + pills[0].w < vw * 0.4, Array.isArray(pills) ? "右缘 " + String(pills[0].x + pills[0].w) + " / " + String(Math.round(vw * 0.4)) : "null");
-check("右侧是地图面板（面板在胶囊右边、有宽度）", panel !== null && Array.isArray(pills) && panel.x > pills[0].x + pills[0].w && panel.w > vw * 0.4, JSON.stringify(panel));
+check("入口胶囊已下架（业务口径 2026-09-30「这三个按钮删除吧」）：DOM 里没有入口按钮", Array.isArray(pills) && pills.length === 0, JSON.stringify(pills));
+check("地图面板占满内容区（左侧不再留入口胶囊列）", panel !== null && panel.x < vw * 0.05 && panel.w > vw * 0.85, JSON.stringify(panel));
 check("面板里的地图 viewBox 与生成物一致（" + EXPECTED_VIEWBOX + "）", panel !== null && panel.viewBox === EXPECTED_VIEWBOX, panel === null ? "null" : String(panel.viewBox));
 check("地图是 img 语义（role=img + aria-label）", panel !== null && panel.role === "img" && panel.label.length > 0, panel === null ? "null" : String(panel.role) + " / " + String(panel.label));
 check("底图 = " + String(EXPECTED_COUNTRIES) + " 个国家路径（逐国可交互）", map !== null && map.countries === EXPECTED_COUNTRIES, JSON.stringify(map));
@@ -561,10 +557,14 @@ for (const [region, total] of dbRegionTotal) {
     countMismatch.push(region + " 库内 " + String(total) + " / 图上 " + String(hit.count));
   }
 }
-const missingPillars = [...dbRegionTotal.keys()].filter((region) => pillarNameFor(region) === null);
-check("立柱层：有项目的国家一根柱（库内 " + String(dbRegionTotal.size) + " 个地区 / 图上 " + String(pillarList.length) + " 根）", pillarList.length === dbRegionTotal.size && missingPillars.length === 0, "对不上：" + missingPillars.join(","));
+// 对不上国家的地区（契约缺省「未分类」、字典里的大区名等）不画柱、只进面板脚注 —— 地图侧设计口径见
+// data/mapProjects.ts 顶部（unmatched）；脚本按「图上根数 = 库内地区数 − 未落图地区数」对账。
+const unmatchedRegions = [...dbRegionTotal.keys()].filter((region) => pillarNameFor(region) === null);
+const unmatchedProjects = unmatchedRegions.reduce((sum, region) => sum + (dbRegionTotal.get(region) ?? 0), 0);
+check("立柱层：有项目的国家一根柱（库内 " + String(dbRegionTotal.size) + " 个地区 = 图上 " + String(pillarList.length) + " 根 + 未落图 " + String(unmatchedRegions.length) + " 个）", pillarList.length === dbRegionTotal.size - unmatchedRegions.length, "对不上：" + unmatchedRegions.map((region) => region + "（" + String(dbRegionTotal.get(region)) + "）").join(","));
+check("立柱层：对不上国家的地区不画柱、只进脚注（" + (unmatchedRegions.length === 0 ? "当前没有未落图地区" : "未落到图上：" + unmatchedRegions.map((region) => region + "（" + String(dbRegionTotal.get(region)) + "）").join(" / ")) + "）", unmatchedRegions.every((region) => String(pillarsInfo.legendText).indexOf(region + "（" + String(dbRegionTotal.get(region)) + "）") >= 0), pillarsInfo === null ? "null" : String(pillarsInfo.legendText));
 check("立柱层：每根柱的项目数与库内逐条一致", countMismatch.length === 0, countMismatch.join(" ;; "));
-check("立柱层：立柱项目数合计 = 库内未删项目总数（" + String(dbProjects) + "）", placedProjects === dbProjects, "图上合计 " + String(placedProjects));
+check("立柱层：立柱项目数合计 = 库内未删项目总数 − 未落图项目数（" + String(dbProjects - unmatchedProjects) + "）", placedProjects === dbProjects - unmatchedProjects, "图上合计 " + String(placedProjects) + " / 库内 " + String(dbProjects) + " − 未落图 " + String(unmatchedProjects));
 const labelBad = pillarList.filter((item) => item.label !== String(item.count)).map((item) => item.name + " 标签 " + item.label + " / 项目数 " + String(item.count));
 check("立柱层：每根柱顶上的计数标签 = 该项目数（图上直接读得出条数）", pillarList.length > 0 && labelBad.length === 0, labelBad.join(" ;; "));
 
@@ -834,8 +834,8 @@ await openHub(narrowW, narrowH);
 const narrowPills = await ev(pillsExpr());
 const narrowPanel = await ev(panelExpr());
 const narrowShot = await shot("hub-narrow");
-check("窄屏：三个胶囊改成横排（同一行）", Array.isArray(narrowPills) && narrowPills.length === 3 && Math.abs(narrowPills[0].y - narrowPills[2].y) <= 2 && narrowPills[2].x > narrowPills[0].x, Array.isArray(narrowPills) ? JSON.stringify(narrowPills.map((item) => [item.x, item.y])) : "null");
-check("窄屏：地图面板落在胶囊下方、占满宽度", narrowPanel !== null && Array.isArray(narrowPills) && narrowPanel.y > narrowPills[0].y + narrowPills[0].h && narrowPanel.w > narrowW * 0.8, JSON.stringify(narrowPanel));
+check("窄屏：入口胶囊也没有了（只剩地图）", Array.isArray(narrowPills) && narrowPills.length === 0, JSON.stringify(narrowPills));
+check("窄屏：地图面板占满宽度", narrowPanel !== null && narrowPanel.w > narrowW * 0.8, JSON.stringify(narrowPanel));
 
 check("控制台零报错 / 零警告", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" ;; "));
 
