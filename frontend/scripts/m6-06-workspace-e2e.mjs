@@ -11,6 +11,10 @@
  *   「增加一个我的计划页面」+「你只要把导航栏设计好 后续详细设计再说」（Push 234：导航栏第三枚标签「我的计划」+
  *   路由 `?tab=plan` 就位；页面内容待详细设计，暂落登记卡 —— 数据面 / 契约本刀不动）。
  *
+ * 口径复评（2026-09-30 · 业务：「明明有四个 为什么只显示了两个」→「不能有 7 天内时间限制」→「时间不限制 另外
+ *   项目经理是我也要算在我的任务」）：我的任务 = 任务负责人含我 或 项目项目经理含我 + 未完成、不限完成日期窗口；
+ *   未排期（无预计完成日期）单列一组 —— 本脚本 ① 对账 / ②④ 任务表 / ⑩ 记忆段的行数断言随新口径重算（四组 / 6 项）。
+ *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -20,16 +24,16 @@
  * 用法：node scripts/m6-06-workspace-e2e.mjs
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
  *
- * 它做什么：用**两条临时会话**（panxing = 我；wmj = 反例提出人；跑完撤销）+ **两个临时项目**
+ * 它做什么：用**两条临时会话**（panxing = 我；wmj = 反例提出人；跑完撤销）+ **三个临时项目**
  * （PX-M6WS-*；跑完物理删、零残留）在真机浏览器里跑一遍工作台接线后的读写口径 ——
- *   ① 接口先行对账（夹具落库后 GET /api/v1/workspace）：跨项目三组任务 + 「我提出的」不含他人提的问题；
+ *   ① 接口先行对账（夹具落库后 GET /api/v1/workspace）：跨项目四组任务 + 「我提出的」不含他人提的问题；
  *   ② 页面骨架：两枚下划线标签（我的任务 / 我提出的问题；文字 + 选中下划线）+ 默认选中「我的任务」+ 地址不带 `?tab=`；
  *   ③ 「我的任务」折叠面板：收起 = 项目名称 + 编号（最急的项目在最上）+ 摘要签 + 「进入项目」按钮；展开 = 该项目下的任务表；
  *   ④ 任务表口径（Push 231 扩列：列口径照项目页任务表全 15 列 ——「直接把这个搬到我的任务不就好了」+
  *      「这些字段一个不能少懂吗」）：任务描述 + 四格进度点（不含分组签 —— 业务口径「这个不要展示」，
  *      组序由行序体现）/ 项目经理 / 负责人 / 状态 / 紧急重要度 /
  *      逾期未交付 / 输出成果文件 / 文件 / 进展描述 / 开始·实际日期 / 天数 / 人数 / 变更关联；
- *      他人任务、已完成、7 天外、未排期都不进；
+ *      命中口径 = 负责人含我 或 项目经理含我、不限完成日期（远期照收 + 未排期单列）；他人项目（我既非负责人也非项目经理）与已完成不进；
  *   ⑤ 切标签：真实鼠标点「我提出的问题」→ 地址写回 `?tab=raised`、aria-current 转移；
  *   ⑥ 「我提出的问题」折叠面板：照「问题追踪」的完整六列（日期 / 问题描述 / 问题归类 /
  *      解决方案或建议 / 问题附图 / 问题是否处理；后两列按项目向源接口回填，真 PNG 直传夹具保证有值）+
@@ -44,7 +48,7 @@
  *   ⑪ 「我的计划」标签（Push 234）：第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 登记卡
  *      （导航栏 / 路由已就位、内容待详细设计；无任务 / 问题表）→ 深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 →
  *      点回「我的任务」地址回到不带参数的原口径；
- *   ⑧ 收尾：删两个临时项目（物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
+ *   ⑧ 收尾：删三个临时项目（A / B / C，物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
  * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆小节）
  */
 
@@ -170,24 +174,29 @@ const projectA = projA.json === null ? "" : projA.json.id;
 const projB = await api("/api/v1/projects", "POST", { code: codeB, name: "回放·工作台B", description: "回放·工作台B", managerIds: [me.id, other.id] });
 check("夹具：建临时项目 B（201；成员 = 我 + 反例提出人）", projB.status === 201, String(projB.status) + " " + projB.text.slice(0, 140));
 const projectB = projB.json === null ? "" : projB.json.id;
+const codeC = "PX-M6WS-C" + suffix;
+const projC = await api("/api/v1/projects", "POST", { code: codeC, name: "回放·工作台C（非我管理）", description: "回放·工作台C", managerIds: [other.id] });
+check("夹具：建临时项目 C（201；经理 = 反例提出人 —— 我既非负责人也非项目经理，反例面）", projC.status === 201, String(projC.status) + " " + projC.text.slice(0, 140));
+const projectC = projC.json === null ? "" : projC.json.id;
 
-async function addTask(projectId, body) {
-  const res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", body);
+async function addTask(projectId, body, request = api) {
+  const res = await request("/api/v1/projects/" + projectId + "/tasks", "POST", body);
   if (res.status !== 201 || res.json === null) {
     console.error("建任务失败：" + res.status + " " + res.text.slice(0, 200));
     process.exit(1);
   }
   return res.json;
 }
-// A：逾期 / 今日 / 即将 三条（我的）+ 四条反例（他人 / 已完成 / 7 天外 / 未排期）
+// A：逾期 / 今日 / 即将 三条（我的）+ 远期（负责人是别人 —— 新口径经「项目经理含我」命中）+ 未排期（新组）+ 已完成反例；
+// C：他人项目他人任务（我既非负责人也非项目经理 —— 反例面）；B：跨项目今日一条。
 // Push 231 扩列：逾期 / 今日两条在创建时补齐任务表扩展列（成果文件只能建时给；开始日期 / 天数 / 人数 / 进展描述随行落库）
 const tOverdue = await addTask(projectA, { stageKey: "design", title: "回放·逾期任务", titleEn: "Replay overdue", ownerIds: [me.id], plannedStart: START_OVERDUE, plannedEnd: DUE_OVERDUE, priority: "高", estimatedDays: 5, headcount: 6, deliverableTypes: ["CAD图纸", "合同"], note: "回放·进展描述：图纸已出，等待评审" });
 const tToday = await addTask(projectA, { stageKey: "design", title: "回放·今日任务", ownerIds: [me.id], plannedStart: START_TODAY, plannedEnd: TODAY, priority: "中", headcount: 3, deliverableTypes: ["验收单"] });
 const tUpcoming = await addTask(projectA, { stageKey: null, title: "回放·即将任务", ownerIds: [me.id], plannedEnd: DUE_UPCOMING, priority: "低" });
-const tOtherOwner = await addTask(projectA, { stageKey: "design", title: "回放·他人任务", ownerIds: [other.id], plannedEnd: TODAY });
 const tDone = await addTask(projectA, { stageKey: "design", title: "回放·已完成任务", ownerIds: [me.id], plannedEnd: TODAY });
-const tFar = await addTask(projectA, { stageKey: "design", title: "回放·7天外任务", ownerIds: [me.id], plannedEnd: DUE_FAR });
+const tFar = await addTask(projectA, { stageKey: "design", title: "回放·远期任务", ownerIds: [other.id], plannedEnd: DUE_FAR });
 const tUnscheduled = await addTask(projectA, { stageKey: "design", title: "回放·未排期任务", ownerIds: [me.id], plannedEnd: null });
+const tStranger = await addTask(projectC, { stageKey: "presale", title: "回放·他人项目任务", ownerIds: [other.id], plannedEnd: TODAY }, apiOther);
 // B：今日一条（我的）—— 跨项目聚合的第二块面板
 const tB = await addTask(projectB, { stageKey: "presale", title: "回放·B项目今日任务", ownerIds: [me.id], plannedEnd: TODAY });
 const progressRes = await api("/api/v1/projects/" + projectA + "/tasks/" + tUpcoming.id + "/progress", "PATCH", { progress: 0.5, version: tUpcoming.version });
@@ -302,13 +311,31 @@ async function ensurePanelOpen(projectId, wantOpen) {
 // ---------- ① 接口先行对账（页面口径的服务端真相） ----------
 const wsRes = await api("/api/v1/workspace");
 check("①a GET /api/v1/workspace 200（仅会话、跨项目）", wsRes.status === 200 && wsRes.json !== null, String(wsRes.status));
-const ws = wsRes.json === null ? { myTasks: { today: [], upcoming: [], overdue: [] }, myIssues: { handling: [], raised: [] } } : wsRes.json;
+const ws = wsRes.json === null ? { myTasks: { today: [], upcoming: [], overdue: [], unscheduled: [] }, myIssues: { handling: [], raised: [] } } : wsRes.json;
 const idsOf = (list) => (list === undefined ? [] : list).map((item) => item.id);
+/** 我是项目经理的既有项目（本机库里就有）在办任务也会进读面 —— 夹具断言按测试项目 id 收窄，
+ *  页面级计数（②d / ③a / ⑫a）一律与接口读面逐项对账，别被历史数据带偏。 */
+const TEST_PROJECTS = [projectA, projectB, projectC];
+const inTest = (list) => (list === undefined ? [] : list).filter((item) => TEST_PROJECTS.indexOf(item.projectId) >= 0);
+const todayTest = idsOf(inTest(ws.myTasks.today));
+const upcomingTest = idsOf(inTest(ws.myTasks.upcoming));
+const overdueTest = idsOf(inTest(ws.myTasks.overdue));
+const unscheduledTest = idsOf(inTest(ws.myTasks.unscheduled));
+const ambientTotal = idsOf(ws.myTasks.today).length + idsOf(ws.myTasks.upcoming).length + idsOf(ws.myTasks.overdue).length + idsOf(ws.myTasks.unscheduled).length;
+const expectPanelOrder = [];
+for (const group of ["overdue", "today", "upcoming", "unscheduled"]) {
+  for (const task of ws.myTasks[group]) {
+    if (expectPanelOrder.indexOf(task.projectId) === -1) expectPanelOrder.push(task.projectId);
+  }
+}
+console.log("读面：全量 " + String(ambientTotal) + " 项 / " + String(expectPanelOrder.length) + " 个项目；测试项目收窄后 " + String(todayTest.length + upcomingTest.length + overdueTest.length + unscheduledTest.length) + " 项");
 check("①b 基准日 = Asia/Shanghai 今天（" + TODAY + "）", ws.today === TODAY, String(ws.today));
-check("①c 我的任务三组：今日 2 条（A 的今日 + B 的今日）", idsOf(ws.myTasks.today).length === 2 && idsOf(ws.myTasks.today).indexOf(tToday.id) >= 0 && idsOf(ws.myTasks.today).indexOf(tB.id) >= 0, JSON.stringify(idsOf(ws.myTasks.today)));
-check("①d 我的任务三组：即将 1 条（A 的 +3 天）、已逾期 1 条（A 的 -2 天）", idsOf(ws.myTasks.upcoming).join(",") === tUpcoming.id && idsOf(ws.myTasks.overdue).join(",") === tOverdue.id, JSON.stringify([idsOf(ws.myTasks.upcoming), idsOf(ws.myTasks.overdue)]));
-const myTaskIds = idsOf(ws.myTasks.today).concat(idsOf(ws.myTasks.upcoming), idsOf(ws.myTasks.overdue));
-check("①e 他人任务 / 已完成 / 7 天外 / 未排期都不进工作台", [tOtherOwner.id, tDone.id, tFar.id, tUnscheduled.id].every((id) => myTaskIds.indexOf(id) === -1), JSON.stringify(myTaskIds));
+check("①c 我的任务四组：今日 2 条（A 的今日 + B 的今日；按测试项目收窄）", todayTest.length === 2 && todayTest.indexOf(tToday.id) >= 0 && todayTest.indexOf(tB.id) >= 0, JSON.stringify(todayTest));
+check("①d 我的任务四组：即将 2 条（A 的 +3 天与 +20 天 —— 原 7 天窗口已取消）、已逾期 1 条（A 的 -2 天）", upcomingTest.join(",") === [tUpcoming.id, tFar.id].join(",") && overdueTest.join(",") === tOverdue.id, JSON.stringify([upcomingTest, overdueTest]));
+check("①d1 未排期单列一组：无预计完成日期照收（不再丢弃）", unscheduledTest.join(",") === tUnscheduled.id, JSON.stringify(unscheduledTest));
+check("①d2 项目经理口径：远期那条负责人不是我（" + other.displayName + "）—— 因我是 A 项目项目经理而命中 upcoming", (ws.myTasks.upcoming.find((item) => item.id === tFar.id)?.ownerIds ?? []).indexOf(other.id) >= 0, JSON.stringify(ws.myTasks.upcoming.find((item) => item.id === tFar.id)?.ownerIds ?? null));
+const myTaskIds = idsOf(ws.myTasks.today).concat(idsOf(ws.myTasks.upcoming), idsOf(ws.myTasks.overdue), idsOf(ws.myTasks.unscheduled));
+check("①e 反例不进：他人项目任务（C —— 我既非负责人也非项目经理）与已完成任务都不进工作台", [tStranger.id, tDone.id].every((id) => myTaskIds.indexOf(id) === -1), JSON.stringify(myTaskIds));
 check("①f 「我提出的」= 3 条（A 两条 + B 一条），不含 wmj 提出的那条", idsOf(ws.myIssues.raised).length === 3 && idsOf(ws.myIssues.raised).indexOf(issueOther.issue.id) === -1, JSON.stringify(idsOf(ws.myIssues.raised)));
 check("①g 「我提出的」未关闭在前：A 的未解决排在已完成那条之前", idsOf(ws.myIssues.raised).indexOf(issueA1.issue.id) < idsOf(ws.myIssues.raised).indexOf(issueA2.issue.id), JSON.stringify(idsOf(ws.myIssues.raised)));
 
@@ -427,44 +454,48 @@ check("②a 页面渲染出「我的任务」页（data-workspace-page）+ 顶�
 check("②b 标签导航栏 = 三枚下划线标签（我的任务 / 我提出的问题 / 我的计划；文字，无图标）", head0 !== null && head0.tabs.length === 3 && head0.tabs.map((item) => item.text).join("|") === "我的任务|我提出的问题|我的计划" && head0.tabs.map((item) => item.key).join("|") === "tasks|raised|plan", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.text), head0.tabs.map((item) => item.key)]));
 check("②c 缺省选中「我的任务」、地址不带 ?tab=", head0 !== null && head0.tabs[0].current === "page" && head0.tabs[1].current === null && head0.tabs[2].current === null && head0.hash === "#/my-tasks", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.current), head0.hash]));
 const total0 = await ev(totalExpr());
-check("②d 汇总行「共 4 项 · 跨 2 个项目 · 基准日 …」（三组 3 + B 1，跨项目）", typeof total0 === "string" && total0.indexOf("共 4 项") >= 0 && total0.indexOf("跨 2 个项目") >= 0 && total0.indexOf(cnDate(TODAY)) >= 0, String(total0));
+check("②d 汇总行「共 " + String(ambientTotal) + " 项 · 跨 " + String(expectPanelOrder.length) + " 个项目 · 基准日 …」（N / M 与接口读面逐项对账）", typeof total0 === "string" && total0.indexOf("共 " + String(ambientTotal) + " 项") >= 0 && total0.indexOf("跨 " + String(expectPanelOrder.length) + " 个项目") >= 0 && total0.indexOf(cnDate(TODAY)) >= 0, String(total0));
 
 // ---------- ③ 「我的任务」折叠面板 ----------
 const panels0 = await ev(panelsExpr());
-check("③a 折叠面板 = 2 块（每个项目一块）", panels0 !== null && panels0.length === 2, JSON.stringify(panels0));
-check("③b 最急的项目在最上（A 有逾期任务 → 排第一；B 第二）", panels0 !== null && panels0[0].id === projectA && panels0[1].id === projectB, panels0 === null ? "null" : JSON.stringify(panels0.map((item) => item.id)));
-check("③c 收起态 = 项目名称 + 编号（+ 摘要），且未展开时表体不在 DOM", panels0 !== null && panels0[0].open === "false" && panels0[0].expanded === "false" && panels0[0].rows === 0 && panels0[0].text.indexOf("回放·工作台A") >= 0 && panels0[0].text.indexOf(codeA) >= 0 && panels0[0].text.indexOf("共 3 项") >= 0 && panels0[0].text.indexOf("已逾期 1") >= 0 && panels0[0].text.indexOf("今日 1") >= 0, panels0 === null ? "null" : JSON.stringify(panels0[0]));
-check("③d B 面板收起态：项目名 + 编号 + 共 1 项", panels0 !== null && panels0[1].text.indexOf("回放·工作台B") >= 0 && panels0[1].text.indexOf(codeB) >= 0 && panels0[1].text.indexOf("共 1 项") >= 0, panels0 === null ? "null" : JSON.stringify(panels0[1]));
+const panelsTest = panels0 === null ? null : panels0.filter((item) => TEST_PROJECTS.indexOf(item.id) >= 0);
+const panelA0 = panels0 === null ? null : panels0.find((item) => item.id === projectA);
+const panelB0 = panels0 === null ? null : panels0.find((item) => item.id === projectB);
+check("③a 折叠面板 = 接口读面命中的项目、顺序 = 组序首次出现顺序（全量 " + String(expectPanelOrder.length) + " 块）", panels0 !== null && panels0.map((item) => item.id).join(",") === expectPanelOrder.join(","), panels0 === null ? "null" : JSON.stringify(panels0.map((item) => item.id)));
+check("③b 测试项目 A / B 成块、C 无命中任务不成块", panelsTest !== null && panelsTest.length === 2 && panelsTest.map((item) => item.id).sort().join(",") === [projectA, projectB].sort().join(",") && panels0.every((item) => item.id !== projectC), panelsTest === null ? "null" : JSON.stringify(panelsTest.map((item) => item.id)));
+check("③c 收起态 = 项目名称 + 编号（+ 摘要），且未展开时表体不在 DOM", panelA0 !== null && panelA0.open === "false" && panelA0.expanded === "false" && panelA0.rows === 0 && panelA0.text.indexOf("回放·工作台A") >= 0 && panelA0.text.indexOf(codeA) >= 0 && panelA0.text.indexOf("共 5 项") >= 0 && panelA0.text.indexOf("已逾期 1") >= 0 && panelA0.text.indexOf("今日 1") >= 0 && panelA0.text.indexOf("未排期 1") >= 0, panelA0 === null ? "null" : JSON.stringify(panelA0));
+check("③d B 面板收起态：项目名 + 编号 + 共 1 项", panelB0 !== null && panelB0.text.indexOf("回放·工作台B") >= 0 && panelB0.text.indexOf(codeB) >= 0 && panelB0.text.indexOf("共 1 项") >= 0, panelB0 === null ? "null" : JSON.stringify(panelB0));
 
-check("③e 面板头常驻「进入项目」按钮（Push 232 · 业务口径「增加进入项目按钮」）：两面板各一枚、href = #/project/{id}、不在展开收起的子节点里", panels0 !== null && panels0[0].link === "#/project/" + projectA && panels0[1].link === "#/project/" + projectB && panels0[0].linkText === "进入项目" && panels0[1].linkText === "进入项目" && panels0[0].linkInToggle === false && panels0[1].linkInToggle === false, panels0 === null ? "null" : JSON.stringify(panels0.map((item) => [item.link, item.linkText, item.linkInToggle])));
+check("③e 面板头常驻「进入项目」按钮（Push 232 · 业务口径「增加进入项目按钮」）：A / B 各一枚、href = #/project/{id}、不在展开收起的子节点里", panelA0 !== null && panelB0 !== null && panelA0.link === "#/project/" + projectA && panelB0.link === "#/project/" + projectB && panelA0.linkText === "进入项目" && panelB0.linkText === "进入项目" && panelA0.linkInToggle === false && panelB0.linkInToggle === false, panelA0 === null || panelB0 === null ? "null" : JSON.stringify([panelA0, panelB0].map((item) => [item.link, item.linkText, item.linkInToggle])));
 
 // ---------- ④ 展开 A：任务表口径（Push 231：项目页任务表全 15 列） ----------
 await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
 const expanded = await ev(panelsExpr());
-check("④a 点一下面板头 = 展开（data-open=true / aria-expanded=true / 表体出现）", expanded !== null && expanded[0].open === "true" && expanded[0].expanded === "true" && expanded[0].rows === 3, expanded === null ? "null" : JSON.stringify(expanded[0]));
+const expandedA = expanded === null ? null : expanded.find((item) => item.id === projectA);
+check("④a 点一下面板头 = 展开（data-open=true / aria-expanded=true / 表体出现）", expandedA !== null && expandedA.open === "true" && expandedA.expanded === "true" && expandedA.rows === 5, expandedA === null ? "null" : JSON.stringify(expandedA));
 const fullReady = await waitFor("(function(){var node=document.querySelector(" + j('[data-workspace-task-table][data-workspace-task-full="true"]') + ");return node!==null;})()", 25000);
 check("④a1 扩列回填完成（data-workspace-task-full=true；15 列数据源全部就绪）", fullReady === true, String(fullReady));
 const rowsA = await ev(taskRowsExpr(projectA));
-const expectedOrder = [tOverdue.id, tToday.id, tUpcoming.id].join(",");
-check("④b 任务表 3 行、顺序 = 已逾期 → 今日 → 即将（最急在前）", rowsA !== null && rowsA.table === true && rowsA.rows.map((item) => item.id).join(",") === expectedOrder, rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
+const expectedOrder = [tOverdue.id, tToday.id, tUpcoming.id, tFar.id, tUnscheduled.id].join(",");
+check("④b 任务表 5 行、顺序 = 已逾期 → 今日 → 即将（+3 → +20 远期）→ 未排期（最急在前、未排期收尾）", rowsA !== null && rowsA.table === true && rowsA.rows.map((item) => item.id).join(",") === expectedOrder, rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
 check("④c 分组签不展示（业务口径「这个不要展示」：行里不再挂已逾期 / 今日待办 / 即将到期色签；组序改由行序体现）", rowsA !== null && rowsA.rows.every((item) => item.group === "" && item.groupText === "" && item.title.indexOf("已逾期") < 0 && item.title.indexOf("今日待办") < 0 && item.title.indexOf("即将到期") < 0), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.group, item.groupText])));
-check("④d 状态签 = 项目页同款胶囊（服务端展示态：已延期 / 待开始 / 进行中）", rowsA !== null && rowsA.rows[0].status === "已延期" && rowsA.rows[0].statusKey === "overdue" && rowsA.rows[1].status === "待开始" && rowsA.rows[1].statusKey === "pending" && rowsA.rows[2].status === "进行中" && rowsA.rows[2].statusKey === "active", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.status, item.statusKey])));
-check("④e 日期三列 = 项目页同款短日期胶囊（开始 / 预计 / 实际；空值落「—」）", rowsA !== null && rowsA.rows.map((item) => item.start).join("|") === [mdDate(START_OVERDUE), mdDate(START_TODAY), "—"].join("|") && rowsA.rows.map((item) => item.due).join("|") === [DUE_OVERDUE, TODAY, DUE_UPCOMING].map(mdDate).join("|") && rowsA.rows.every((item) => item.doneDate === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.start, item.due, item.doneDate])));
-check("④f 四格进度点 = 项目页同款（0 / 0 / 0.5 —— 即将任务 50% 档）", rowsA !== null && rowsA.rows[0].dots === "0" && rowsA.rows[1].dots === "0" && rowsA.rows[2].dots === "0.5", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.dots)));
-check("④g 紧急重要度列 = 高 / 中 / 低", rowsA !== null && rowsA.rows.map((item) => item.priority).join("|") === "高|中|低", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.priority)));
-check("④h 任务主列 = 名称 + 阶段 / 英文名小行（B 项目面板块段落不串行）", rowsA !== null && rowsA.rows[0].titleText === "回放·逾期任务" && rowsA.rows[0].title.indexOf("设计开发") >= 0 && rowsA.rows[2].title.indexOf("临时任务") >= 0, rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.titleText)));
-check("④j 任务负责人列 = 「潘兴」（项目页同款玻璃小胶囊）", rowsA !== null && rowsA.rows.every((item) => item.owners === "潘兴"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.owners)));
-check("④k 「是否按时交付」列 = 逾期未交付 / — / —（displayStatus=overdue 的红签）", rowsA !== null && rowsA.rows.map((item) => item.onTime).join("|") === "逾期未交付|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.onTime)));
-check("④i 反例不出现：他人任务 / 已完成 / 7 天外 / 未排期（服务端已过滤，页面直接照单渲染）", rowsA !== null && [tOtherOwner.id, tDone.id, tFar.id, tUnscheduled.id].every((id) => rowsA.rows.every((item) => item.id !== id)), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
+check("④d 状态签 = 项目页同款胶囊（服务端展示态：已延期 / 待开始 / 进行中；远期与未排期 = 待开始）", rowsA !== null && rowsA.rows.map((item) => item.status).join("|") === "已延期|待开始|进行中|待开始|待开始" && rowsA.rows.map((item) => item.statusKey).join("|") === "overdue|pending|active|pending|pending", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.status, item.statusKey])));
+check("④e 日期三列 = 项目页同款短日期胶囊（开始 / 预计 / 实际；空值落「—」）", rowsA !== null && rowsA.rows.map((item) => item.start).join("|") === [mdDate(START_OVERDUE), mdDate(START_TODAY), "—", "—", "—"].join("|") && rowsA.rows.map((item) => item.due).join("|") === [DUE_OVERDUE, TODAY, DUE_UPCOMING, DUE_FAR].map(mdDate).concat("—").join("|") && rowsA.rows.every((item) => item.doneDate === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.start, item.due, item.doneDate])));
+check("④f 四格进度点 = 项目页同款（0 / 0 / 0.5 —— 即将任务 50% 档）", rowsA !== null && rowsA.rows.map((item) => item.dots).join("|") === "0|0|0.5|0|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.dots)));
+check("④g 紧急重要度列 = 高 / 中 / 低", rowsA !== null && rowsA.rows.map((item) => item.priority).join("|") === "高|中|低|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.priority)));
+check("④h 任务主列 = 名称 + 阶段 / 英文名小行（B 项目面板块段落不串行）", rowsA !== null && rowsA.rows[0].titleText === "回放·逾期任务" && rowsA.rows[0].title.indexOf("设计开发") >= 0 && rowsA.rows[2].title.indexOf("临时任务") >= 0 && rowsA.rows[3].titleText === "回放·远期任务" && rowsA.rows[3].title.indexOf("设计开发") >= 0 && rowsA.rows[4].titleText === "回放·未排期任务", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.titleText)));
+check("④j 任务负责人列 = 潘兴（远期那条为项目经理口径带入的 " + other.displayName + "）", rowsA !== null && rowsA.rows.map((item) => item.owners).join("|") === ["潘兴", "潘兴", "潘兴", other.displayName, "潘兴"].join("|"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.owners)));
+check("④k 「是否按时交付」列 = 逾期未交付 / — / —（displayStatus=overdue 的红签）", rowsA !== null && rowsA.rows.map((item) => item.onTime).join("|") === "逾期未交付|—|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.onTime)));
+check("④i 反例不出现：他人项目任务（C）与已完成任务不进；远期 / 未排期按新口径照进（服务端裁决，页面照单渲染）", rowsA !== null && [tStranger.id, tDone.id].every((id) => rowsA.rows.every((item) => item.id !== id)) && rowsA.rows.some((item) => item.id === tFar.id) && rowsA.rows.some((item) => item.id === tUnscheduled.id), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
 // —— Push 231 扩列（业务口径「这些字段一个不能少」）：表头 15 列与项目页 TABLE_COLUMNS 全对齐 + 新列逐列对账
 check("④l 表头 = 项目页任务表全 15 列（同序；「预计所需天数」窄列表头为空）", rowsA !== null && rowsA.heads.join("|") === TASK_HEAD_EXPECTED.join("|"), rowsA === null ? "null" : JSON.stringify(rowsA.heads));
 check("④m 项目经理列 = 项目主数据责任人（A 项目 = 潘兴）", rowsA !== null && rowsA.rows.every((item) => item.manager === "潘兴"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.manager)));
-check("④n 输出成果文件列 = 首枚名 + 「+N」（CAD图纸+1 / 验收单 / —）", rowsA !== null && rowsA.rows.map((item) => item.deliverable).join("|") === "CAD图纸+1|验收单|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.deliverable)));
-check("④o 文件列 = 「N 份 + 未定档 N」（逾期任务直传 1 份 draft；无文件落「—」）", rowsA !== null && rowsA.rows[0].files.indexOf("1 份") >= 0 && rowsA.rows[0].files.indexOf("未定档 1") >= 0 && rowsA.rows[1].files === "—" && rowsA.rows[2].files === "—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.files)));
-check("④p 项目进展描述列 = note 原文 / 「—」", rowsA !== null && rowsA.rows[0].note === "回放·进展描述：图纸已出，等待评审" && rowsA.rows[1].note === "—" && rowsA.rows[2].note === "—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.note)));
-check("④q 预计所需天数窄列 = 显式 5 / 推算 3（含首尾）/ 无开始日期落 0（项目页同口径）", rowsA !== null && rowsA.rows.map((item) => item.days).join("|") === "5|3|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.days)));
-check("④r 预计所需施工人数列 = 6 人 / 3 人 / —", rowsA !== null && rowsA.rows.map((item) => item.headcount).join("|") === "6 人|3 人|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.headcount)));
-check("④s 变更关联列 = 空单元格 / 「变更」琥珀签（今日任务挂 1 条）/ 空", rowsA !== null && rowsA.rows[0].change === "" && rowsA.rows[0].changeCount === "0" && rowsA.rows[1].change === "变更" && rowsA.rows[1].changeCount === "1" && rowsA.rows[2].change === "" && rowsA.rows[2].changeCount === "0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.change, item.changeCount])));
+check("④n 输出成果文件列 = 首枚名 + 「+N」（CAD图纸+1 / 验收单 / —）", rowsA !== null && rowsA.rows.map((item) => item.deliverable).join("|") === "CAD图纸+1|验收单|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.deliverable)));
+check("④o 文件列 = 「N 份 + 未定档 N」（逾期任务直传 1 份 draft；无文件落「—」）", rowsA !== null && rowsA.rows[0].files.indexOf("1 份") >= 0 && rowsA.rows[0].files.indexOf("未定档 1") >= 0 && rowsA.rows.slice(1).every((item) => item.files === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.files)));
+check("④p 项目进展描述列 = note 原文 / 「—」", rowsA !== null && rowsA.rows[0].note === "回放·进展描述：图纸已出，等待评审" && rowsA.rows.slice(1).every((item) => item.note === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.note)));
+check("④q 预计所需天数窄列 = 显式 5 / 推算 3（含首尾）/ 无开始日期落 0（项目页同口径）", rowsA !== null && rowsA.rows.map((item) => item.days).join("|") === "5|3|0|0|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.days)));
+check("④r 预计所需施工人数列 = 6 人 / 3 人 / —", rowsA !== null && rowsA.rows.map((item) => item.headcount).join("|") === "6 人|3 人|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.headcount)));
+check("④s 变更关联列 = 空单元格 / 「变更」琥珀签（今日任务挂 1 条）/ 空", rowsA !== null && rowsA.rows.map((item) => item.change).join("|") === "|变更|||" && rowsA.rows.map((item) => item.changeCount).join("|") === "0|1|0|0|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.change, item.changeCount])));
 check("④t 扩列降级横幅不出现（两个项目的源接口都取到）", (await ev("document.querySelector(" + j("[data-workspace-task-partial]") + ") !== null")) === false, "partial=false");
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 const rowsB = await ev(taskRowsExpr(projectB));
@@ -588,14 +619,14 @@ await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-p
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
 const memory1A = await ev(panelOpenOf(projectA));
 const memory1B = await ev(panelOpenOf(projectB));
-check("⑩c 点开 A：A 展开（任务行出现）、B 仍收起", memory1A !== null && memory1A.open === "true" && memory1A.rows === 3 && memory1B !== null && memory1B.open === "false" && memory1B.rows === 0, JSON.stringify([memory1A, memory1B]));
+check("⑩c 点开 A：A 展开（任务行出现）、B 仍收起", memory1A !== null && memory1A.open === "true" && memory1A.rows === 5 && memory1B !== null && memory1B.open === "false" && memory1B.rows === 0, JSON.stringify([memory1A, memory1B]));
 const savedTasks = await waitOpenProjects({ tasks: [projectA], raised: [] });
 check("⑩d 展开即单键 PATCH 落库：workspaceOpenProjects.tasks = [A]、raised 仍空（按账号跨设备记忆）", savedTasks !== null && savedTasks.json.workspaceOpenProjects.tasks.length === 1 && savedTasks.json.workspaceOpenProjects.tasks[0] === projectA && savedTasks.json.workspaceOpenProjects.raised.length === 0, savedTasks === null ? "null" : JSON.stringify(savedTasks.json.workspaceOpenProjects));
 await open("#/my-tasks", "[data-workspace-page]");
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
 const memory2A = await ev(panelOpenOf(projectA));
 const memory2B = await ev(panelOpenOf(projectB));
-check("⑩e 刷新（about:blank 后整页重开）后记忆生效：A 仍展开、B 仍收起", memory2A !== null && memory2A.open === "true" && memory2A.rows === 3 && memory2B !== null && memory2B.open === "false" && memory2B.rows === 0, JSON.stringify([memory2A, memory2B]));
+check("⑩e 刷新（about:blank 后整页重开）后记忆生效：A 仍展开、B 仍收起", memory2A !== null && memory2A.open === "true" && memory2A.rows === 5 && memory2B !== null && memory2B.open === "false" && memory2B.rows === 0, JSON.stringify([memory2A, memory2B]));
 await clickSelector('[data-workspace-tab="raised"]');
 await waitFor("document.querySelector(" + j("[data-workspace-issues]") + ") !== null", 25000);
 const memory3A = await ev(panelOpenOf(projectA));
@@ -647,8 +678,9 @@ for (let index = 1; index <= 16; index += 1) {
   await addTask(projectA, { stageKey: "design", title: "回放·吸顶撑高-" + String(index), ownerIds: [me.id], plannedEnd: TODAY, priority: "低" });
 }
 const wsSticky = await api("/api/v1/workspace");
-const stickyToday = wsSticky.json === null ? -1 : wsSticky.json.myTasks.today.length;
-check("⑫a 夹具：16 条「今日」任务进工作台读面（今日组 2 + 16 = 18）", stickyToday === 18, String(stickyToday));
+const stickyTodayTest = wsSticky.json === null ? -1 : inTest(wsSticky.json.myTasks.today).length;
+const stickyTodayAll = wsSticky.json === null ? -1 : wsSticky.json.myTasks.today.length;
+check("⑫a 夹具：16 条「今日」任务进工作台读面（测试项目今日组 2 + 16 = 18）", stickyTodayTest === 18, String(stickyTodayTest) + "（全读面今日 " + String(stickyTodayAll) + " 条）");
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 560, deviceScaleFactor: 1, mobile: false });
 await open("#/my-tasks", "[data-workspace-page]");
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"]') + ") !== null", 25000);
@@ -704,12 +736,16 @@ await purgeProjectFiles(projectB);
 const delB = (await db.query("select version from projects where id = $1", [projectB])).rows[0];
 const goneB = delB === undefined ? { status: 0 } : await api("/api/v1/projects/" + projectB, "DELETE", undefined, { "If-Match": String(delB.version) });
 check("⑧c 删临时项目 B（物理删 200）", goneB.status === 200, String(goneB.status));
+await purgeProjectFiles(projectC);
+const delC = (await db.query("select version from projects where id = $1", [projectC])).rows[0];
+const goneC = delC === undefined ? { status: 0 } : await api("/api/v1/projects/" + projectC, "DELETE", undefined, { "If-Match": String(delC.version) });
+check("⑧c2 删临时项目 C（物理删 200）", goneC.status === 200, String(goneC.status));
 const goneRead = await api("/api/v1/projects/" + projectA);
 check("⑧d 删完读面 404（真删，不是软删留档）", goneRead.status === 404, String(goneRead.status));
 await db.query("update sessions set revoked_at = now() where token_hash = any($1) or id_token = $2", [[sha256(me.token), sha256(other.token)], "px-m6-workspace-replay"]);
 const residue = (await db.query(
   "select (select count(*) from projects where code like $1) as projects, (select count(*) from tasks where project_id = any($2)) as tasks, (select count(*) from daily_reports where project_id = any($2)) as reports, (select count(*) from issues where project_id = any($2)) as issues, (select count(*) from sessions where id_token = $3 and revoked_at is null) as sessions",
-  ["PX-M6WS-%", [projectA, projectB], "px-m6-workspace-replay"],
+  ["PX-M6WS-%", [projectA, projectB, projectC], "px-m6-workspace-replay"],
 )).rows[0];
 check("⑧e 库内零残留（项目 / 任务 / 日报 / 问题 / 未撤销会话 全 0）", Number(residue.projects) === 0 && Number(residue.tasks) === 0 && Number(residue.reports) === 0 && Number(residue.issues) === 0 && Number(residue.sessions) === 0, JSON.stringify(residue));
 await db.end();

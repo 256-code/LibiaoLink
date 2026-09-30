@@ -1,5 +1,7 @@
 /**
  * 工作台「我的任务」页（系统功能书 A6-01 / A6-03；M6-06 前端接线 · Push 230；任务表扩列 · Push 231；面板头「进入项目」深链 + 醒目模式 · Push 232）。
+ * 口径复评（2026-09-30 · 业务：「不能有 7 天内时间限制」「时间不限制 另外项目经理是我也要算在我的任务」）：
+ * 「我的任务」= 未完成 且（任务负责人含我 或 项目项目经理含我）、不限完成日期窗口；未排期（无预计完成日期）单列一组。
  *
  * 业务口径（2026-09-30）：「同样做标签导航栏 我的任务 我提出的问题先做这两个」→「是这个页面导航栏」（指任务模板页
  * 的下划线标签栏，本页照同一套材质 —— 文字 + 选中下划线、无图标）→「我的任务 是折叠面板 未展开是项目名称和编号
@@ -22,7 +24,7 @@
  *
  * 数据：
  * - 读面 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）—— 跨项目个人读面，仅会话、无项目路径参数。
- *   三组任务并进本页「按项目」折叠面板：项目顺序 = 组序（已逾期 → 今日待办 → 即将到期）里的首次出现顺序
+ *   四组任务并进本页「按项目」折叠面板：项目顺序 = 组序（已逾期 → 今日待办 → 即将到期 → 未排期）里的首次出现顺序
  *   （最急的在最上），组内保持服务端 plannedEnd 升序；分组 / 排序全由服务端给定，本页不做任何本地日期推导。
  * - 任务表 15 列里聚合读面只带 9 列：项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 按时交付（onTime）/
  *   变更关联**不在 A31 第一刀里** —— 按项目向源接口（GET /projects/{id}/tasks + GET /projects/{id}）回填，
@@ -72,15 +74,16 @@ type WorkspacePageProps = {
 /** 工作台三态（首屏加载 / 失败 / 就绪）—— 与「日报及问题」三个列表子视图同一套口径。 */
 type WorkspaceState = { kind: "loading" } | { kind: "error" } | { kind: "ready"; data: ApiWorkspace };
 
-/** 任务三组：本页展示顺序 = 最急的「已逾期」在最前（键名与契约 WorkspaceTasks 同源）。 */
-const TASK_GROUPS = ["overdue", "today", "upcoming"] as const;
+/** 任务四组：本页展示顺序 = 最急的「已逾期」在最前、未排期（无日期）收尾（键名与契约 WorkspaceTasks 同源）。 */
+const TASK_GROUPS = ["overdue", "today", "upcoming", "unscheduled"] as const;
 type TaskGroupKey = (typeof TASK_GROUPS)[number];
 
-/** 任务分组色签（与项目总览状态色系同一张表：红 = 已逾期、琥珀 = 今天、天蓝 = 7 天内）。 */
+/** 任务分组色签（与项目总览状态色系同一张表：红 = 已逾期、琥珀 = 今天、天蓝 = 即将到期、灰 = 未排期）。 */
 const TASK_GROUP_CHIP: Record<TaskGroupKey, string> = {
   overdue: "bg-rose-100 text-rose-700",
   today: "bg-amber-100 text-amber-800",
   upcoming: "bg-sky-100 text-sky-700",
+  unscheduled: "bg-zinc-100 text-zinc-600",
 };
 
 /** 「液态玻璃」小框的**只读**形态（与 InlineEdit 的 InlineCell 静止态同一档材质）：项目页任务表里
@@ -88,7 +91,7 @@ const TASK_GROUP_CHIP: Record<TaskGroupKey, string> = {
 const GLASS_FRAME =
   "inline-flex max-w-full items-center gap-1 rounded-lg border border-zinc-200/90 bg-white/75 px-1.5 py-[3px] text-xs backdrop-blur-[3px]";
 
-/** ISO（YYYY-MM-DD）→「M月D日」（项目页任务表日期格的短口径；工作台任务都落在 7 天窗口内，不带年份）。 */
+/** ISO（YYYY-MM-DD）→「M月D日」（项目页任务表日期格的短口径，不带年份；未排期空日期由 DatePill 显示「—」）。 */
 function cnDateShort(iso: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (match === null) {
@@ -148,7 +151,7 @@ type ProjectTasks = {
   items: Array<{ group: TaskGroupKey; task: ApiWorkspaceTask }>;
 };
 
-/** 我的任务三组 → 按项目归并（项目顺序 = 组序里的首次出现顺序；组内保持服务端 plannedEnd 升序）。 */
+/** 我的任务四组 → 按项目归并（项目顺序 = 组序里的首次出现顺序；组内保持服务端 plannedEnd 升序、未排期收尾）。 */
 function groupTasksByProject(data: ApiWorkspace): ProjectTasks[] {
   const byProject = new Map<string, ProjectTasks>();
   for (const group of TASK_GROUPS) {
@@ -253,7 +256,7 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
   /** 回填是否跑完（成功 / 失败都算跑完）：e2e 的等待锚点；跑完前对应列先按「—」渲染。 */
   const [ready, setReady] = useState(false);
   useEffect(() => {
-    const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming];
+    const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
     if (all.length === 0) {
       setFull({ detail: new Map(), managers: new Map() });
       setPartial(false);
@@ -355,10 +358,11 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, open, onTo
   );
 }
 
-/** 收起态摘要（我的任务）：共 N 项 + 逾期 / 今日两枚小签（要不要展开一眼能判）。 */
+/** 收起态摘要（我的任务）：共 N 项 + 逾期 / 今日 / 未排期三枚小签（要不要展开一眼能判）。 */
 function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
   const overdue = items.filter((item) => item.group === "overdue").length;
   const today = items.filter((item) => item.group === "today").length;
+  const unscheduled = items.filter((item) => item.group === "unscheduled").length;
   return (
     <>
       <span className="text-xs font-normal text-zinc-400">{"共 " + String(items.length) + " 项"}</span>
@@ -367,6 +371,9 @@ function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
       )}
       {today === 0 ? null : (
         <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.today}>{"今日 " + String(today)}</span>
+      )}
+      {unscheduled === 0 ? null : (
+        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.unscheduled}>{"未排期 " + String(unscheduled)}</span>
       )}
     </>
   );
@@ -761,7 +768,7 @@ const TABS: ReadonlyArray<{ key: WorkspaceTab; label: string }> = [
 /** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。 */
 function MyTasksView({ data, focus, openIds, onToggleProject }: { data: ApiWorkspace; focus: boolean; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void }) {
   const projects = groupTasksByProject(data);
-  const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length;
+  const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length + data.myTasks.unscheduled.length;
   const { full, partial, ready } = useTaskFull(data);
   return (
     <section data-workspace-tasks="" className="space-y-3">
@@ -777,7 +784,7 @@ function MyTasksView({ data, focus, openIds, onToggleProject }: { data: ApiWorks
         ) : null}
       </div>
       {projects.length === 0 ? (
-        <EmptyCard text="当前没有需要推进的任务。" hint="口径：任务负责人含我、未完成、预计完成日期在今天起 7 天内（含已逾期）；未排期与更远的任务不进这里。" />
+        <EmptyCard text="当前没有需要推进的任务。" hint="口径：我是任务负责人或项目项目经理、任务未完成；不限完成日期（已逾期 / 今天 / 远期 / 未排期都收）。" />
       ) : (
         <div className="space-y-2">
           {projects.map((project) => (

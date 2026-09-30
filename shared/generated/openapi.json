@@ -8211,7 +8211,7 @@
           "myTasks",
           "myIssues"
         ],
-        "description": "工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏"
+        "description": "工作台聚合：我的任务四组 + 我的问题两栏"
       },
       "WorkspaceTaskItem": {
         "type": "object",
@@ -8289,7 +8289,7 @@
                   "string",
                   "null"
                 ],
-                "description": "预计完成日期（分组依据；三组内必非空）"
+                "description": "预计完成日期（分组依据；未排期组为空）"
               }
             ]
           },
@@ -8312,7 +8312,7 @@
             "items": {
               "$ref": "#/components/schemas/Uuid"
             },
-            "description": "任务负责人（多值；本组内必含会话用户）"
+            "description": "任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评）"
           },
           "ownerNames": {
             "type": "array",
@@ -8345,7 +8345,7 @@
           "ownerNames",
           "priority"
         ],
-        "description": "工作台任务项（跨项目；按预计完成日期落入三组之一）"
+        "description": "工作台任务项（跨项目；按预计完成日期落入四组之一）"
       },
       "WorkspaceTasks": {
         "type": "object",
@@ -8362,7 +8362,7 @@
             "items": {
               "$ref": "#/components/schemas/WorkspaceTaskItem"
             },
-            "description": "即将到期：今天 < plannedEnd ≤ 今天 + 7 天且未完成"
+            "description": "即将到期：plannedEnd > 今天且未完成（2026-09-30 复评起不设天数窗口，远期照收）"
           },
           "overdue": {
             "type": "array",
@@ -8370,14 +8370,22 @@
               "$ref": "#/components/schemas/WorkspaceTaskItem"
             },
             "description": "已逾期：plannedEnd < 今天且未完成"
+          },
+          "unscheduled": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTaskItem"
+            },
+            "description": "未排期：plannedEnd 为空且未完成（组内排末）"
           }
         },
         "required": [
           "today",
           "upcoming",
-          "overdue"
+          "overdue",
+          "unscheduled"
         ],
-        "description": "我的任务三组（A6-01；组内按 plannedEnd 升序、id 升序）"
+        "description": "我的任务四组（A6-01；组内按 plannedEnd 升序、id 升序，未排期置末）"
       }
     },
     "parameters": {}
@@ -15368,7 +15376,7 @@
         "tags": [
           "workspace"
         ],
-        "summary": "工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的）",
+        "summary": "工作台（M6-05）：我的任务四组（今日待办 / 即将到期 / 已逾期 / 未排期）+ 我的问题（我处理 / 我提出的）",
         "responses": {
           "200": {
             "description": "工作台聚合（按会话用户；记录级可见性过滤后）",
