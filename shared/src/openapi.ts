@@ -991,6 +991,29 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // 受控预览内容端点（S1 契约切片 · ONLYOFFICE 查看器；安全定稿 §3.2 / C1~C6）：服务间拉取口，不是用户下载口。
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/files/{id}/versions/{versionId}/preview-content",
+    tags: ["files"],
+    summary: "受控预览内容端点（服务间 · DocServer outbox Bearer JWT；预览链无预签名、无重定向）",
+    description:
+      "S1 契约切片（ONLYOFFICE 查看器 · 安全定稿 §3.2）：语义 = 交给在线查看器拉取的原文件字节流（不是用户下载口）；" +
+      "鉴权 = 服务间 Bearer JWT（HS256 共享密钥 / payload.url 逐字绑定 / exp ≤ 300s + 容差），缺 token 或不匹配统一 401 且不区分原因；" +
+      "仅 GET（其余方法 405）；不参与用户会话（忽略 Cookie）、不向浏览器来源开 CORS；网关不暴露（仅 DocServer 网段可达）。",
+    request: { params: versionParams },
+    responses: {
+      200: {
+        description: "原文件字节流（Content-Type = 版本 mime；Content-Disposition: inline；Cache-Control: no-store）",
+        content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
+      },
+      401: errorResponse("服务间鉴权未通过（缺 / 签名错 / 过期 / URL 绑定不匹配 —— 统一文案不区分原因）"),
+      404: commonErrors[404],
+      405: errorResponse("仅接受 GET（其余方法显式 405，不进业务逻辑）"),
+      503: errorResponse("存储 / 依赖故障（fail-closed：不重定向、不回退预签名）"),
+    },
+  });
+
   registry.registerPath({
     method: "post",
     path: "/api/v1/files/{id}/uploads/{uploadId}/parts",
