@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
+import { DailySubMenu } from "./components/DailySubMenu";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
@@ -120,6 +121,76 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [dataVersion, setDataVersion] = useState(0);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+
+  /**
+   * 「日报及问题」子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
+   * 四块子视图从页内键帽导航栏搬进主标签栏的下拉子菜单（面板见 components/DailySubMenu.tsx）——
+   * 悬停 / 点击父标签展开；面板左缘对齐父标签（展开时量一次）：标签栏可横向滚动，滚动即收起，避免锚点漂移。
+   */
+  const [submenuOpen, setSubmenuOpen] = useState(false);
+  const [submenuLeft, setSubmenuLeft] = useState(0);
+  const maintabsRef = useRef<HTMLDivElement | null>(null);
+  const dailyTabRef = useRef<HTMLButtonElement | null>(null);
+  const submenuTimer = useRef<number | null>(null);
+
+  const cancelSubmenuClose = () => {
+    if (submenuTimer.current !== null) {
+      window.clearTimeout(submenuTimer.current);
+      submenuTimer.current = null;
+    }
+  };
+
+  const openSubmenu = () => {
+    cancelSubmenuClose();
+    const tab = dailyTabRef.current;
+    const bar = maintabsRef.current;
+    if (tab !== null && bar !== null) {
+      setSubmenuLeft(Math.max(0, Math.round(tab.getBoundingClientRect().left - bar.getBoundingClientRect().left)));
+    }
+    setSubmenuOpen(true);
+  };
+
+  const closeSubmenu = () => {
+    cancelSubmenuClose();
+    setSubmenuOpen(false);
+  };
+
+  /** 鼠标离开父标签 / 面板后延迟收起：给指针从标签移到面板（下移 8px）留一条过道。 */
+  const scheduleSubmenuClose = () => {
+    cancelSubmenuClose();
+    submenuTimer.current = window.setTimeout(() => {
+      submenuTimer.current = null;
+      setSubmenuOpen(false);
+    }, 160);
+  };
+
+  useEffect(() => {
+    if (!submenuOpen) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSubmenu();
+      }
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      if (maintabsRef.current !== null && !maintabsRef.current.contains(event.target as Node)) {
+        closeSubmenu();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [submenuOpen]);
+
+  useEffect(() => () => {
+    if (submenuTimer.current !== null) {
+      window.clearTimeout(submenuTimer.current);
+    }
+  }, []);
 
   /** 整表重取（新建 / 删除 / 排序 / 版本冲突后调用；换项目由下面这个 effect 自动触发）。 */
   const reloadAll = () => {
@@ -659,26 +730,60 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             站灰底 + 毛玻璃兜住滚动内容；-mx-6 / -mt-3 + 同值内衬抵消：横幅铺满行宽、标签位置与原来一致。
             自身高 59px（pt-3 12 + 标签 46 + 底边 1）—— 页面里的其它吸顶元素一律叠在它下面（top = 64 + 59 = 123px）：
             项目总览的任务表头、日报及问题的页内导航栏。 */}
-        <div data-maintabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
+        <div ref={maintabsRef} data-maintabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
           <div className="flex items-center gap-3">
-            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onScroll={submenuOpen ? closeSubmenu : undefined}>
               {VIEW_TABS.map((tab) => {
                 const active = tab === activeView;
+                // 子菜单父项（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
+                // 四块子视图收进这枚标签的下拉面板；悬停即展开；点击时已在该视图 = 切换展开态，否则照旧先切视图。
+                const withSubmenu = tab === "日报及问题";
                 return (
                   <button
                     key={tab}
+                    ref={withSubmenu ? dailyTabRef : undefined}
                     type="button"
                     data-maintabs-item={tab}
-                    onClick={() => replaceProjectView(project.id, VIEW_KEYS[tab])}
+                    data-maintabs-parent={withSubmenu ? "true" : undefined}
+                    onMouseEnter={withSubmenu ? openSubmenu : undefined}
+                    onMouseLeave={withSubmenu ? scheduleSubmenuClose : undefined}
+                    onClick={() => {
+                      if (!withSubmenu) {
+                        closeSubmenu();
+                        replaceProjectView(project.id, VIEW_KEYS[tab]);
+                        return;
+                      }
+                      // 悬停已经展开时点击**保持展开**（不切换成收起：鼠标先到必然先 hover，切换会让「点开」永远点不开）
+                      openSubmenu();
+                      if (!active) {
+                        replaceProjectView(project.id, VIEW_KEYS[tab]);
+                      }
+                    }}
                     aria-current={active ? "page" : undefined}
+                    aria-haspopup={withSubmenu ? "menu" : undefined}
+                    aria-expanded={withSubmenu ? submenuOpen : undefined}
                     className={
-                      "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
+                      "inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
                       (active
                         ? "border-zinc-900 text-zinc-900"
                         : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                     }
                   >
                     {tab}
+                    {withSubmenu ? (
+                      <svg
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                        className={"h-3.5 w-3.5 transition-transform " + (submenuOpen ? "rotate-180" : "")}
+                      >
+                        <path d="M5.5 8l4.5 4.5L14.5 8" />
+                      </svg>
+                    ) : null}
                   </button>
                 );
               })}
@@ -696,6 +801,29 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               </div>
             ) : null}
           </div>
+
+          {/* 「日报及问题」子菜单面板（图一：白色圆角面板 + 分组标题 + 子项）—— 左缘对齐父标签（展开时量一次），
+              面板自己在鼠标进出时续命 / 延迟收起，避免指针过道断开；选完 = 收起面板 + 写回地址 ?view=daily&sub=。 */}
+          {submenuOpen ? (
+            <div
+              data-daily-submenu-anchor="true"
+              className="absolute top-full z-30 mt-2"
+              style={{ left: submenuLeft }}
+              onMouseEnter={cancelSubmenuClose}
+              onMouseLeave={scheduleSubmenuClose}
+            >
+              <DailySubMenu
+                active={dailySub}
+                onSelect={(next) => {
+                  closeSubmenu();
+                  if (activeView !== "日报及问题") {
+                    replaceProjectView(project.id, "daily");
+                  }
+                  replaceProjectSubView(project.id, next);
+                }}
+              />
+            </div>
+          ) : null}
         </div>
 
         {toolError === null ? null : (

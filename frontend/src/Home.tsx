@@ -341,7 +341,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
 
   return (
     <div className="min-h-screen">
-      <AppHeader me={me} title="项目空间" />
+      <AppHeader me={me} />
 
       <CategoryFilterSidebar
         open={filterOpen}

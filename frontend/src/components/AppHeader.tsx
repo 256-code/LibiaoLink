@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
 import { goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { TopNav } from "./TopNav";
 import type { MeResponse, Project } from "../types";
 
 type AppHeaderProps = {
   me: MeResponse;
   project?: Project | null;
-  title?: string;
 };
 
-export function AppHeader({ me, project, title }: AppHeaderProps) {
+export function AppHeader({ me, project }: AppHeaderProps) {
   const user = me.user;
   const displayName = user.displayName ?? user.name ?? "未署名用户";
   const contact = user.email ?? user.name ?? "—";
@@ -62,6 +62,10 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
             <p className="text-xs text-zinc-500">立镖全链路信息平台</p>
           </div>
         </a>
+        {/* 顶部导航栏（业务口径 2026-09-30「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」）：
+            四个纯文字导航项常驻（同日续口径「去除这个液态效果 只保留文字」）；原来的大页名（项目空间 / 任务模板 / 我的任务）
+            由导航的当前项接管，不再重复显示。 */}
+        <TopNav />
         {project ? (
           <div className="mx-1 hidden min-w-0 border-l border-zinc-200 pl-4 lg:block">
             <p className="truncate text-xs text-zinc-500">
@@ -77,10 +81,6 @@ export function AppHeader({ me, project, title }: AppHeaderProps) {
             <p className="mt-0.5 truncate text-xs text-zinc-500">
               {project.description} · 创建于 {project.createdAt}
             </p>
-          </div>
-        ) : title ? (
-          <div className="mx-1 hidden min-w-0 border-l border-zinc-200 pl-4 sm:block">
-            <p className="truncate text-2xl font-bold text-zinc-900">{title}</p>
           </div>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center">

@@ -919,7 +919,7 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
 
   return (
     <div className="min-h-screen">
-      <AppHeader me={me} title="我的任务" />
+      <AppHeader me={me} />
       <main className="w-full px-6 pb-10 pt-3">
         <div data-workspace-page="" className="w-full space-y-5">
           {/* 标签导航栏（Push 230：与任务模板页的下划线标签栏同一套材质 —— 文字 + 选中下划线）。

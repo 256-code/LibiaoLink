@@ -22,12 +22,6 @@ import {
 import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
-/** 占位页字典（Push 230 起只剩「任务模板」：「我的任务」已转正式页面 frontend/src/WorkspacePage.tsx，
- *  原来的占位卡（PlaceholderCard）随之撤下，页面主体见本文件下方的模板板块标签栏）。 */
-const PAGES: Record<PlaceholderPageKey, { title: string }> = {
-  templates: { title: "任务模板" },
-};
-
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
 const TEMPLATE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
@@ -125,7 +119,6 @@ function InsertLine({ className }: { className: string }) {
 }
 
 export default function PlaceholderPage({ me, page, section, canManageBlueprint }: PlaceholderPageProps) {
-  const { title } = PAGES[page];
   /** 当前板块：URL 是唯一来源（点标签栏 = 换地址；`?section=` 取 ASCII slug，兼容旧链接的中文板块名），缺省 / 不认识的值回落到第一个板块。 */
   const activeSection = templateSectionFromParam(section) ?? TEMPLATE_SECTIONS[0] ?? "";
 
@@ -791,7 +784,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
   if (page === "templates") {
     return (
       <div className="min-h-screen">
-        <AppHeader me={me} title={title} />
+        <AppHeader me={me} />
         <main className="w-full px-6 pb-10 pt-3">
           {/* 板块标签栏吸顶（Push 235 业务口径「任务模版和我的任务都要做吸顶效果」）：与项目详情主标签栏同一套口径 ——
               滚动时停在应用顶栏（h-16 = 64px）正下方，站灰底 + 毛玻璃兜住滚动内容；
