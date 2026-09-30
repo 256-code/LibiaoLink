@@ -299,7 +299,7 @@ function autoScrollIssueDrag(root: HTMLElement | null, point: { x: number; y: nu
  *  bg-amber-100 text-amber-800 / 已完成 = emerald 绿 bg-emerald-100 text-emerald-700）；
  *  原四态色签（未分组灰 / 未解决红 / 处理中琥珀 / 已完成绿）随「取消未分组 未分组就是未解决」改版下架，
  *  首版实色三态（#ade4ff / #feca04 / #dcdfe4）随本口径下架。 */
-const ISSUE_TAG_CLASS: Record<IssueState, string> = {
+export const ISSUE_TAG_CLASS: Record<IssueState, string> = {
   open: "bg-sky-100 text-sky-700",
   in_progress: "bg-amber-100 text-amber-800",
   done: "bg-emerald-100 text-emerald-700",
@@ -307,15 +307,17 @@ const ISSUE_TAG_CLASS: Record<IssueState, string> = {
 
 /** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）的整行底色：与项目总览任务表的
  *  STATUS_ROW_CLASS 同一套口径 —— 状态色系压到 **6% 不透明**、行悬停抬到 **12%**；三态色系对照 =
- *  未解决 / sky（项目总览「待开始」）、处理中 / amber（「进行中」）、已完成 / emerald（「已完成」）。 */
-const ISSUE_ROW_CLASS: Record<IssueState, string> = {
+ *  未解决 / sky（项目总览「待开始」）、处理中 / amber（「进行中」）、已完成 / emerald（「已完成」）。
+ *  Push 232：导出给工作台「我提出的问题」表复用（同款醒目模式口径，避免两处色表漂移）。 */
+export const ISSUE_ROW_CLASS: Record<IssueState, string> = {
   open: "bg-sky-500/[0.06] hover:bg-sky-500/[0.12]",
   in_progress: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
   done: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
 };
 
-/** 醒目模式下的状态字色：整行已有状态色，撤色签底只留深色字（同 TaskBoard 的 STATUS_TAG_TEXT_CLASS 口径）。 */
-const ISSUE_TAG_TEXT_CLASS: Record<IssueState, string> = {
+/** 醒目模式下的状态字色：整行已有状态色，撤色签底只留深色字（同 TaskBoard 的 STATUS_TAG_TEXT_CLASS 口径）。
+ *  Push 232：导出给工作台「我提出的问题」表复用。 */
+export const ISSUE_TAG_TEXT_CLASS: Record<IssueState, string> = {
   open: "text-sky-700",
   in_progress: "text-amber-800",
   done: "text-emerald-700",
@@ -325,7 +327,7 @@ const ISSUE_TAG_TEXT_CLASS: Record<IssueState, string> = {
  *  色值取自业务样 —— 机械部 #adcbff / 采购部 · 项目部 #ade4ff / 规划部 #ace2c5 / 物流原因 #dcdfe4 /
  *  供应商原因 #ffea99 / 客户原因 #ffb5b3 / 客观原因 #e7b4ff / 生产原因 #ffb3dc / 其它原因 #ffcea3；
  *  未收录 / 空值回落浅灰。多选值（「、」连接）按分类拆开逐枚出签。 */
-const ISSUE_CATEGORY_CLASS: Record<string, string> = {
+export const ISSUE_CATEGORY_CLASS: Record<string, string> = {
   机械部: "bg-[#adcbff]",
   采购部: "bg-[#ade4ff]",
   规划部: "bg-[#ace2c5]",

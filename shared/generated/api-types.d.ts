@@ -1869,7 +1869,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式） */
+        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态） */
         get: {
             parameters: {
                 query?: never;
@@ -1904,7 +1904,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400） */
         patch: {
             parameters: {
                 query?: never;
@@ -8623,6 +8623,7 @@ export interface components {
             homeSavedFilters: components["schemas"]["SavedHomeFilter"][];
             /** @description 醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false */
             focusMode: boolean;
+            workspaceOpenProjects: components["schemas"]["WorkspaceOpenProjects"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED */
@@ -8630,6 +8631,7 @@ export interface components {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
             focusMode?: boolean;
+            workspaceOpenProjects?: components["schemas"]["WorkspaceOpenProjects"];
         } & {
             [key: string]: unknown;
         };
@@ -8747,6 +8749,13 @@ export interface components {
             handling: components["schemas"]["WorkspaceIssueItem"][];
             /** @description 我提出的（reporterId = 会话用户） */
             raised: components["schemas"]["WorkspaceIssueItem"][];
+        };
+        /** @description 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；默认两空数组 = 全部收起；读侧坏形状收敛为空数组（整体替换语义） */
+        WorkspaceOpenProjects: {
+            /** @description 「我的任务」标签已展开的项目 id 列表（整体替换语义） */
+            tasks: components["schemas"]["Uuid"][];
+            /** @description 「我提出的问题」标签已展开的项目 id 列表（整体替换语义） */
+            raised: components["schemas"]["Uuid"][];
         };
         /** @description 工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏 */
         WorkspaceResponse: {
