@@ -12,7 +12,7 @@
       "id": "P1",
       "title": "建回放项目（为 file 提供 projectId）",
       "expected": "201 + 项目可见",
-      "actual": "201 {\"id\":\"c5a15b4c-b521-41ef-b008-1b38dbdf27d4\"}",
+      "actual": "201 {\"id\":\"a1e63817-8702-4c67-87bf-e70a94b63d91\"}",
       "ok": true,
       "note": ""
     },
@@ -28,7 +28,7 @@
       "id": "A4a",
       "title": "④ 查看器签发形状：Office（.docx）→ ready + viewer 非空、产物字段全空；permissions 只读；document.url = 受控端点（配置基址同源）",
       "expected": "ready + target/url/expiresAt/pipelineVersion/generatedAt = null + viewer.kind=onlyoffice/word/docx + permissions(edit..chat=false, protect=true)",
-      "actual": "{\"status\":\"ready\",\"target\":null,\"url\":null,\"viewer\":{\"kind\":\"onlyoffice\",\"docServerUrl\":\"http://127.0.0.1:8001\",\"documentType\":\"word\",\"document\":{\"title\":\"受控端点回放-周报.docx\",\"url\":\"http://host.docker.internal:3011/api/v1/files/98b47c47-742f-4106-afe3-292d9176eda5/versions/b97435cc-8d12-4e2e-9703-3d69ff1df558/preview-content\",\"fileType\":\"docx\",\"key\":\"ab4a5f95d0c738e0427b33f7ba8cecc36f5f64992eb53b38776ec401236a437a\"},\"mod…",
+      "actual": "{\"status\":\"ready\",\"target\":null,\"url\":null,\"viewer\":{\"kind\":\"onlyoffice\",\"docServerUrl\":\"http://127.0.0.1:8001\",\"documentType\":\"word\",\"document\":{\"title\":\"受控端点回放-周报.docx\",\"url\":\"http://host.docker.internal:3011/api/v1/files/96f7bc84-33ff-435d-b4b6-ac2f5c8b5df9/versions/b523aa86-6318-4fd9-b2b5-51917bec2963/preview-content\",\"fileType\":\"docx\",\"key\":\"ab4a5f95d0c738e0427b33f7ba8cecc36f5f64992eb53b38776ec401236a437a\"},\"mod…",
       "ok": true,
       "note": ""
     },
@@ -36,15 +36,15 @@
       "id": "A4b",
       "title": "④ 配置 token：无 `X-Amz-` 预签名参数 + HMAC 复算一致 + claims 四段 + TTL = ONLYOFFICE_JWT_TTL_SECONDS",
       "expected": "无 X-Amz- + 签名一致 + documentType=word + editorConfig.mode=view + exp - iat = 900",
-      "actual": "{\"noPresign\":true,\"signatureMatch\":true,\"documentType\":\"word\",\"mode\":\"view\",\"documentUrl\":\"http://host.docker.internal:3011/api/v1/files/98b47c47-742f-4106-afe3-292d9176eda5/versions/b97435cc-8d12-4e2e-9703-3d69ff1df558/preview-content\",\"ttl\":900}",
+      "actual": "{\"noPresign\":true,\"signatureMatch\":true,\"documentType\":\"word\",\"mode\":\"view\",\"documentUrl\":\"http://host.docker.internal:3011/api/v1/files/96f7bc84-33ff-435d-b4b6-ac2f5c8b5df9/versions/b523aa86-6318-4fd9-b2b5-51917bec2963/preview-content\",\"ttl\":900}",
       "ok": true,
       "note": ""
     },
     {
       "id": "A4c",
       "title": "④ 预览审计：签发即写一条 `action = preview`（metadata.viewerKind=onlyoffice / documentType=word；产物通道字段不再出现）",
-      "expected": "1 条 + viewerKind=onlyoffice + documentType=word + versionId=b97435cc-8d12-4e2e-9703-3d69ff1df558",
-      "actual": "{\"count\":1,\"metadata\":{\"versionId\":\"b97435cc-8d12-4e2e-9703-3d69ff1df558\",\"viewerKind\":\"onlyoffice\",\"documentType\":\"word\"},\"summary\":\"预览文件：受控端点回放-周报.docx（版本 v1 · ONLYOFFICE 查看器）\"}",
+      "expected": "1 条 + viewerKind=onlyoffice + documentType=word + versionId=b523aa86-6318-4fd9-b2b5-51917bec2963",
+      "actual": "{\"count\":1,\"metadata\":{\"versionId\":\"b523aa86-6318-4fd9-b2b5-51917bec2963\",\"viewerKind\":\"onlyoffice\",\"documentType\":\"word\"},\"summary\":\"预览文件：受控端点回放-周报.docx（版本 v1 · ONLYOFFICE 查看器）\"}",
       "ok": true,
       "note": ""
     },
@@ -76,7 +76,7 @@
       "id": "A1D",
       "title": "①·D 真实 DocServer `/converter`：源 = 受控端点（无预签名）→ outbox Bearer 现场拉取 + 转换产出 PDF",
       "expected": "转换成功 + 输出 200 + magic=%PDF-",
-      "actual": "{\"status\":200,\"error\":null,\"output\":{\"status\":200,\"bytesLength\":314174,\"magic\":\"%PDF-\"},\"ms\":1010}",
+      "actual": "{\"status\":200,\"error\":null,\"output\":{\"status\":200,\"bytesLength\":314174,\"magic\":\"%PDF-\"},\"ms\":1025}",
       "ok": true,
       "note": ""
     },

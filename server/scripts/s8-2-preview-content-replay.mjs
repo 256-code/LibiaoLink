@@ -649,7 +649,8 @@ lines.push('  --out "../docs/s8-2-回放证据(S3·受控预览端点).md" --jso
 lines.push("```");
 lines.push("");
 
+const rendered = lines.map((line) => line.replace(/[ \t]+$/u, ""));
 if (args.json !== undefined) writeFileSync(args.json, JSON.stringify(evidence, null, 2) + "\n", "utf8");
-if (args.out !== undefined) writeFileSync(args.out, lines.join("\n"), "utf8");
-process.stdout.write(lines.join("\n") + "\n");
+if (args.out !== undefined) writeFileSync(args.out, rendered.join("\n"), "utf8");
+process.stdout.write(rendered.join("\n") + "\n");
 process.exit(failures === 0 ? 0 : 1);
