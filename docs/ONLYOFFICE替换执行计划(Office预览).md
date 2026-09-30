@@ -3,7 +3,7 @@
 > **唯一执行口径**：本文件是「Office 文档预览改由 ONLYOFFICE 承接」的唯一执行口径（2026-09-30 由 lan 指定）；后续执行过程中的任何变动**直接修改本文件**并登记「变更记录」，不另开会话口径、不另立清单。
 > 卡片：主责 lan；协办 wmj（契约 / ADR）、px（部署 / 前端 / 交付）；业务口：样本与验收。
 > 计划内审核（2026-09-30 起）：本计划（仅限本计划范围）由 lan 全权负责 —— 计划内审核与变更由 lan 执行并登记；跨线实现仍按分工路由。
-> 关联：首关证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md`；保真度证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md`；安全定稿 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md`；部署前置定稿 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；S1 契约切片草案 `docs/契约切片草案(S8-2-ONLYOFFICE查看器).md`（px 代 wmj 线起草 · Push 241 / PR #251 先入 `main`，待 wmj 定案）；治理件 `docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`（wmj 线 Push 238 / PR #247 先入 `main`）；分工卡 `团队分工.md` §6 第 10~11 项。
+> 关联：首关证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md`；保真度证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md`；安全定稿 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md`；部署前置定稿 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；S1 契约切片 `docs/契约切片草案(S8-2-ONLYOFFICE查看器).md`（px 代 wmj 线起草 · Push 241 / PR #251 先入 `main`；**已定案**（wmj · 2026-09-30 · lan 代行登记））；治理件 `docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`（wmj 线 Push 238 / PR #247 先入 `main`）；分工卡 `团队分工.md` §6 第 10~11 项。
 
 ## 0. 已定决策（冻结，勿再翻）
 
@@ -21,7 +21,7 @@
 |---|---|---|---|
 | **首关** | 三件可能杀方案的事：20/50 并发与资源曲线；JWT 只读不可绕；中文字体与内网拓扑 | ✅ 已完成（2026-09-30，服务端侧通过） | 三项全过（证据归档） |
 | **次关** | N1 保真度抽查；N2 R1/R2 安全定稿；N3 实施前置定稿（F1/R6 + ADR-030） | ✅ 已完成（2026-09-30：N1 ✅ / N2 ✅ / N3 ✅；出口达成 = 随 PR #246 合入 `main`，squash `f8c762c`） | N1 达标 + N2/N3 定稿并入 ADR-030 / 部署清单 |
-| **实施** | S1 契约切片 → S2 `deploy/onlyoffice` → S3 server 改造 → S4 前端文件库 → S5 回归与双轨（含 R4 门禁）→ S6 退役 LibreOffice | 🔄 进行中（S2 已交付 · S1 契约已入 `main` 待 wmj 定案 · 下一刀 S3） | 各切片出口见 §4 |
+| **实施** | S1 契约切片 → S2 `deploy/onlyoffice` → S3 server 改造 → S4 前端文件库 → S5 回归与双轨（含 R4 门禁）→ S6 退役 LibreOffice | 🔄 进行中（S1 ✅ 定案 · S2 ✅ 已交付 · 下一刀 S3） | 各切片出口见 §4 |
 
 > 口径说明（防漂移）：会话历史里曾出现两种旧口径——① 11:20「次关 = 保真度、契约切片、部署改造」（过宽，含实施项）；② 证据文档初版「次关 = outbox / 受控下载端点 / 生产部署态复测」（过窄，只含遗留收口）。**本文件为准**：次关 = 实施前置收口（N1~N3）；契约切片与部署改造归入实施切片（§4）。原 09:48「完整 PoC-10」中的移动端项随 D4 移除。
 
@@ -59,11 +59,11 @@
 
 | # | 切片 | 内容 | 主责 | 出口判据 |
 |---|---|---|---|---|
-| S1 | 契约切片（**S8-2** —— px 代 wmj 线起草；编号由 wmj 线定案） | `FilePreviewResponse` 增查看配置 / JWT；`PreviewTarget` 语义；`preview_artifacts` / `preview.job` 去留；**已合入**：`docs/契约切片草案(S8-2-ONLYOFFICE查看器).md` + `shared/` 契约与生成物（Push 241 / PR #251 / squash `00dbdc3`；待 wmj 定案口径项；lan 线复核意见见 PR #251 评论） | wmj | 契约 + 生成客户端合入 |
+| S1 ✅ | 契约切片（**S8-2** —— 定案编号；px 代 wmj 线起草 → 已定案） | `FilePreviewResponse` 增查看配置 / JWT；`PreviewTarget` 语义；`preview_artifacts` / `preview.job` 去留；**已合入 + 已定案**：`docs/契约切片草案(S8-2-ONLYOFFICE查看器).md` + `shared/` 契约与生成物（Push 241 / PR #251 / squash `00dbdc3`；六项口径 + 3 条补充答复定案见草案 §三 —— wmj · 2026-09-30 · lan 代行登记） | wmj（lan 代行登记） | ✅ 契约 + 生成客户端合入（S8-2 定案登记） |
 | S2 | `deploy/onlyoffice/` | 部署形态（pin digest / 字体 / `blockPrivateIP` / 示例 app / 安全基线：callback 校验、缓存盘清理、CVE 升级路径）；**已交付**：Push 240 / PR #250 / squash `3c74300` | px | 部署清单 + 回滚步骤 + 升级回归项 |
-| S3 | server 预览读改造 | 签发 view-only JWT；受控下载端点（若 N2 采纳） | lan | 单测 + 回放证据 |
+| S3 | server 预览读改造 | 签发 view-only JWT；受控下载端点（N2 采纳）；文本族（txt / csv / html / htm）纳入查看器通道；契约描述补全（响应头 / 错误码，随刀） | lan | 单测 + 回放证据 |
 | S4 | 前端文件库预览页 | 内嵌查看器外壳（**R5**：超时 / 重试 / 文案 + 降级「请下载」） | px | 回放证据 |
-| S5 | 回归与双轨 | 全量回归 + 部署环境复测（**R4 门禁**：50 并发、真实终端、CE 许可行为）+ 灰度 | lan + px | R4 报告达标 |
+| S5 | 回归与双轨 | 全量回归 + 部署环境复测（**R4 门禁**：50 并发、真实终端、CE 许可行为）+ 文本族抽样（1~2 份）+ 灰度 | lan + px | R4 报告达标 |
 | S6 | 退役 LibreOffice | 业务确认后退役 `deploy/preview` | px | 退役评审通过 |
 
 ## 5. 风险归位表（R1~R6）
@@ -89,3 +89,4 @@
 | v1.5 | 2026-09-30 | **并入 `main` 收口（二次并）**：ADR-030 认 wmj 线稿（`docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`，px 代起草 · Push 238 / PR #247 先入 `main`；按「先入 main 者为准」），本线重复件撤销、关联行 / N3 段引用改指；一致性核对 = 决策内容（D1~D5 / 边界 / 不变量 / 切换条件）与 wmj 线稿一致、无决策性缺失；升级回归口径 = ADR 三项为定稿五项之安全子集；ADR-030 状态转「已采纳」按 ADR 线惯例（本线不代改） | lan |
 | v1.6 | 2026-09-30 | **次关出口达成（✅）**：本计划随 PR #246 合入 `main`（squash `f8c762c`；PR CI run 36685367035 / main CI run 36685556447 四 job 全绿）；N1 / N2 / N3 全闭环 → 实施切片 S1~S6 解锁（S1 契约 = wmj 线、S2 部署 = px 线、S3 = lan 线） | lan |
 | v1.7 | 2026-09-30 | **S1 / S2 认稿与对齐（lan 线）**：S2 已交付 —— `deploy/onlyoffice/`（Push 240 / PR #250 / squash `3c74300`；出口 = 部署清单 + 回滚 + 升级回归项）；S1 契约切片由 px 线代 wmj 起草并合入 `main`（Push 241 / PR #251 / squash `00dbdc3`；草案 `docs/契约切片草案(S8-2-ONLYOFFICE查看器).md`；`viewer` 与受控端点路由落 `shared/`，paths 86→87 / schemas 233→239）—— 本线并行起草的 S8-6 草案**撤销（未推送）**，按「先入 `main` 者为准」先例转认稿 + 复核意见（投 PR #251 评论：文本族边界 / 响应头与错误码补全 / 查看器 token TTL）；实施状态转「S1 待 wmj 定案 · S2 已交付」；ADR-030「参考」补 N3 定稿引用（lan 提请，wmj 复核） | lan |
+| v1.8 | 2026-09-30 | **S8-2 定案（wmj · 2026-09-30 · lan 代行登记 —— 经用户与 wmj 协商）**：六项口径全按推荐定案（`preview-content` 不落别名 / `viewer` 必填可空 / `PreviewTarget` 不新增值 / 四段显式 schema + token / `preview_artifacts`·`preview.job` 保留 / token TTL 900s）+ 3 条补充答复（文本族纳入查看器通道 / 响应头与错误码以安全定稿 §3.2 为准 + 契约描述补全随 S3 / TTL 维持 900s）；**S1 出口达成**（契约与生成物已随 PR #251 合入 + 定案登记）；实施状态转「S1 ✅ 定案 · S2 ✅ 已交付 · 下一刀 S3」 | lan |
