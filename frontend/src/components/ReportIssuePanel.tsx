@@ -25,6 +25,7 @@ import { stageKeyOfName } from "../taskApi";
 import { PROJECT_STAGES } from "../data/projects";
 import { lockBodyScroll } from "../scrollLock";
 import type { DailySubView } from "../useHashRoute";
+import { SUB_TAB_KEYS, SUB_TABS } from "./DailySubMenu";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { RowEditButton } from "./RowEditButton";
 import { ScrollArea } from "./ScrollArea";
@@ -33,19 +34,11 @@ import type { MeResponse, Project } from "../types";
 
 /**
  * 项目详情「日报及问题」视图（Push 128）：页内四块子视图 —— 日报填写 / 日报记录 / 问题追踪 / 问题看板。
- * - 顶部**页内导航栏**按业务给定样张（本批第 4 轮：四个**键帽按钮**（keycap），紧贴主标签栏下方一排）实现，替代原来的统计条；
- *   Tailwind 任意值等价还原样张的 styled-components 口径（浅灰面 + 0.5em 圆角 + em 口径的实心堆叠投影（键帽侧壁）+ 末层柔和落影，
- *   按下 translate 0.225em 并把堆叠压扁），尺寸按「大小不用太大」收紧为 13px 字号，**不引入 styled-components 依赖**。
- *   每项 = 16px 图标 + 单行 13px 文字；**Push 199**：「问题看板」项图标按业务给样（SVG Repo 16×16 面性圆环感叹号，
- *   `fill="currentColor"`）换下原两块竖列描边图标；**Push 200**：「问题追踪」项图标同样按业务给样改为「文件 + 警示圈」
- *   首版实心样（业务看后反馈「不好看」→ 改浅版：文件描边 + 同一套「圆环 + 感叹号」小警示章），导航栏整排加**吸顶**
- *   （`sticky top-16` = 顶栏 64px 正下方，站灰底 + 毛玻璃），日报填写 / 日报记录两项照旧描边；
- *   **Push 201**：图标再对调 —— 原「问题看板」的「圆环 + 感叹号」徽章**让给「问题追踪」**，「问题看板」改业务给样「放大镜」
- *   （24 视框 `fill="currentColor"` + evenodd；同样不照搬：去 SVGRepo 外壳、黑填充改 `currentColor`、缩 16px 与其余图标同高）；
- *   吸顶条随主标签栏吸顶改叠位（`top` 16 → 123px = 顶栏 64 + 主标签栏 59），并加下内衬兜住键帽投影（业务反馈「图二吸顶后有bug」）。
- *   **Push 214**（业务口径「这几个页面也要做路由」）：四块子视图进地址 `?view=daily&sub=form|records|issues|board` ——
- *   中文标签 ↔ slug 映射见下方 `SUB_TAB_KEYS`，当前块由 `ProjectDetail` 从地址派生后透传（本组件不再自持子视图状态），
- *   缺省「日报填写」form 不落参数；提交后自动切「日报记录」= 写回 `sub=records`。
+ * - 四块子视图的入口 = **主标签栏「日报及问题」标签的下拉子菜单**（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏
+ *   如图一的效果」；面板与分组见 components/DailySubMenu.tsx，每项 = 16px 图标 + 单行文字）——原来的**页内键帽导航栏**
+ *   （Push 200/201 吸顶那排）随之下架：吸顶位、内衬与 z 层那套修 bug 的口径一并作废。
+ *   **Push 214**（业务口径「这几个页面也要做路由」）：四块子视图进地址 ?view=daily&sub=form|records|issues|board ——
+ *   中文标签 ↔ slug 映射见 components/DailySubMenu.tsx 的 SUB_TAB_KEYS，当前块由 ProjectDetail 从地址派生后透传（本组件不自持子视图状态），
  * - 数据口径承 `系统功能书.md` A3：日报字段 A3-01 / 草稿与补填 A3-02 / 提交校验 A3-04 / 自动生成问题 A3-09 / 问题三态 A3-10（Push 207 业务口径「取消未分组 未分组就是未解决」修订 —— 原四态的四态 → 三态契约修订挂 wmj 线）；处理时限 SLA 见 ADR-026。
  * - 内容列宽：视图整体**全宽**（日报记录 / 问题追踪 / 问题看板 照旧铺满）；只有「日报填写」收成**居中窄栏**
  *   （max-w-3xl = 768px），业务口径「我只要日报填写页面居中然后尺寸舒适一点、像一个表单，其它的不变还是全屏」。
@@ -493,90 +486,6 @@ const BTN_PRIMARY =
  *  背景压到站内次按钮同一档 `hover:bg-zinc-100`、字色转深；禁用态照旧灰字、悬停不再变面。 */
 const BTN_SECONDARY =
   "rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:border-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 active:bg-zinc-200 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:border-zinc-200 disabled:hover:bg-white disabled:hover:text-zinc-300";
-
-/** 页内导航栏的四块子视图（业务口径：第一块日报填写、第二块日报记录、第三块问题追踪、第四块问题看板）。 */
-type SubTab = "日报填写" | "日报记录" | "问题追踪" | "问题看板";
-
-const SUB_TABS: readonly SubTab[] = ["日报填写", "日报记录", "问题追踪", "问题看板"];
-
-/**
- * 中文标签 ↔ 地址 slug（Push 214 · 业务口径「这几个页面也要做路由」）：四块子视图进地址 `?view=daily&sub=`，
- * 与主标签栏 `?view=` 同一套「地址即状态」口径 —— 刷新 / 收藏 / 分享 / 上次后退都能停在原块；
- * 缺省「日报填写」= form 不落参数（旧链接 `?view=daily` 原样打开 = 日报填写）。
- */
-const SUB_TAB_KEYS: Record<SubTab, DailySubView> = {
-  日报填写: "form",
-  日报记录: "records",
-  问题追踪: "issues",
-  问题看板: "board",
-};
-
-/** 导航项图标（按钮内统一 16px 图标 + 单行文字）；「日报填写」「日报记录」描边 1.8px；两个「问题*」项各有一枚徽章：
- *  「问题追踪」= Push 199 业务给的 16×16「圆环 + 感叹号」面性样（`fill="currentColor"`）—— Push 201 由「问题看板」让位而来
- *   （Push 200 那版「文件 + 警示圈」下架：业务口径「把问题看板的svg给问题追溯」）；
- *  「问题看板」= Push 201 业务给样「放大镜」（SVGRepo 24 视框）—— **不照搬**：去外壳、黑填充改 `fill="currentColor"`，
- *   `fillRule/clipRule="evenodd"` 保内孔，缩 16px 与其余图标同高（业务口径「问题看板的svg 改成这个」）。 */
-const SUB_TAB_ICON: Record<SubTab, ReactNode> = {
-  日报填写: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4">
-      <path d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-      <path d="M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6h4.75" />
-    </svg>
-  ),
-  日报记录: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4">
-      <path d="M13.5 3H6.75A1.75 1.75 0 005 4.75v14.5c0 .966.784 1.75 1.75 1.75h10.5A1.75 1.75 0 0019 19.25V8.5L13.5 3z" />
-      <path d="M13.5 3v4.75c0 .414.336.75.75.75H19" />
-      <path d="M8.75 13h6.5M8.75 16.5h6.5" />
-    </svg>
-  ),
-  问题追踪: (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M7.493 0.015C7.442 0.021 7.268 0.039 7.107 0.055C5.234 0.242 3.347 1.208 2.071 2.634C0.66 4.211 -0.057 6.168 0.009 8.253C0.124 11.854 2.599 14.903 6.11 15.771C8.169 16.28 10.433 15.917 12.227 14.791C14.017 13.666 15.27 11.933 15.771 9.887C15.943 9.186 15.983 8.829 15.983 8C15.983 7.171 15.943 6.814 15.771 6.113C14.979 2.878 12.315 0.498 9 0.064C8.716 0.027 7.683 -0.006 7.493 0.015M8.853 1.563C9.967 1.707 11.01 2.136 11.944 2.834C12.273 3.08 12.92 3.727 13.166 4.056C13.727 4.807 14.142 5.69 14.33 6.535C14.544 7.5 14.544 8.5 14.33 9.465C13.916 11.326 12.605 12.978 10.867 13.828C10.239 14.135 9.591 14.336 8.88 14.444C8.456 14.509 7.544 14.509 7.12 14.444C5.172 14.148 3.528 13.085 2.493 11.451C2.279 11.114 1.999 10.526 1.859 10.119C1.618 9.422 1.514 8.781 1.514 8C1.514 6.961 1.715 6.075 2.16 5.16C2.5 4.462 2.846 3.98 3.413 3.413C3.98 2.846 4.462 2.5 5.16 2.16C6.313 1.599 7.567 1.397 8.853 1.563M7.706 4.29C7.482 4.363 7.355 4.491 7.293 4.705C7.257 4.827 7.253 5.106 7.259 6.816C7.267 8.786 7.267 8.787 7.325 8.896C7.398 9.033 7.538 9.157 7.671 9.204C7.803 9.25 8.197 9.25 8.329 9.204C8.462 9.157 8.602 9.033 8.675 8.896C8.733 8.787 8.733 8.786 8.741 6.816C8.749 4.664 8.749 4.662 8.596 4.481C8.472 4.333 8.339 4.284 8.04 4.276C7.893 4.272 7.743 4.278 7.706 4.29M7.786 10.53C7.597 10.592 7.41 10.753 7.319 10.932C7.249 11.072 7.237 11.325 7.294 11.495C7.388 11.78 7.697 12 8 12C8.303 12 8.612 11.78 8.706 11.495C8.763 11.325 8.751 11.072 8.681 10.932C8.616 10.804 8.46 10.646 8.333 10.58C8.217 10.52 7.904 10.491 7.786 10.53Z"
-        fill="currentColor"
-        fillRule="evenodd"
-      />
-    </svg>
-  ),
-  问题看板: (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M9.5 17c1.71 0 3.287-.573 4.55-1.537l4.743 4.744a1 1 0 0 0 1.414-1.414l-4.744-4.744A7.5 7.5 0 1 0 9.5 17zM15 9.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"
-        fill="currentColor"
-      />
-    </svg>
-  ),
-};
-
-/**
- * 页内导航栏按钮材质（本批第 4 轮：按业务新样张换成**键帽按钮**（keycap），等价还原样张的 styled-components 口径，
- * 不引入 styled-components 依赖）：
- * - 面 = **白**（业务口径「灰色的不太好看，我想不点击也是问题看板这个时候的颜色」：静止态一律白面，不再用样张的浅灰
- *   `#f0f0f0`）+ `border-radius: 0.5em` + `text-shadow: 0 0.0625em 0 #fff`（样张 button）；
- * - 立体 = 样张那串**实心堆叠投影**（`0 .0625em #efefef` → `0 .425em #cacaca`，共 7 层当键帽侧壁）+ 末层柔和落影
- *   `0 0.425em 0.5em #cecece`；全部用 em，字号一改整套厚度自动跟着缩；
- * - 按下 = `translate: 0 0.225em` + 堆叠压扁（样本 `button:active`），`transition: 0.15s ease`；
- * - 尺寸按「大小不用太大」收紧：13px 字号（`padding: 0.375em 1em`）+ 16px 图标，不再占满整行；
- * - 当前项与未选项**面一致（都是白）**，靠文字区分：当前项 = 黑字 700、未选项 = 中灰字 600（悬停转深）。
- */
-const SUBNAV_KEY =
-  "relative inline-flex shrink-0 select-none items-center gap-1.5 rounded-[0.5em] px-[1em] py-[0.375em] text-[13px] leading-none transition-all duration-150 ease-out [text-shadow:0_0.0625em_0_#fff] active:translate-y-[0.225em]";
-
-/** 未选中：**白键帽**（业务口径「灰色的不太好看，我想不点击也是问题看板这个时候的颜色」—— 静止态一律白面，
- *   不再用样张的浅灰面）+ 中灰字；悬停面微压暗、字色转深，按下走样张的压扁口径。 */
-const SUBNAV_KEY_IDLE =
-  "bg-white font-semibold text-zinc-600 hover:bg-[#fafafa] hover:text-zinc-900 " +
-  "[box-shadow:inset_0_0.0625em_0_0_#ffffff,0_0.0625em_0_0_#f2f2f2,0_0.125em_0_0_#ededed,0_0.25em_0_0_#e2e2e2,0_0.3125em_0_0_#dedede,0_0.375em_0_0_#dcdcdc,0_0.425em_0_0_#cacaca,0_0.425em_0.5em_0_#cecece] " +
-  "active:[box-shadow:inset_0_0.03em_0_0_#ffffff,0_0.03em_0_0_#f2f2f2,0_0.0625em_0_0_#ededed,0_0.125em_0_0_#e2e2e2,0_0.125em_0_0_#dedede,0_0.2em_0_0_#dcdcdc,0_0.225em_0_0_#cacaca,0_0.225em_0.375em_0_#cecece]";
-
-/** 选中（当前子视图）：同样是白键帽，靠**黑字加粗（字重 700）** 区分（面与未选项一致）。 */
-const SUBNAV_KEY_CURRENT =
-  "bg-white text-zinc-900 [font-weight:700] " +
-  "[box-shadow:inset_0_0.0625em_0_0_#ffffff,0_0.0625em_0_0_#f2f2f2,0_0.125em_0_0_#ededed,0_0.25em_0_0_#e2e2e2,0_0.3125em_0_0_#dedede,0_0.375em_0_0_#dcdcdc,0_0.425em_0_0_#cacaca,0_0.425em_0.5em_0_#cecece] " +
-  "active:[box-shadow:inset_0_0.03em_0_0_#ffffff,0_0.03em_0_0_#f2f2f2,0_0.0625em_0_0_#ededed,0_0.125em_0_0_#e2e2e2,0_0.125em_0_0_#dedede,0_0.2em_0_0_#dcdcdc,0_0.225em_0_0_#cacaca,0_0.225em_0.375em_0_#cecece]";
 
 /** 日报填写的表单草稿（字段按 A3-01；改子视图不清空；Push 202 起「暂存草稿」= 保留内容不清空，只有提交后复位）。 */
 type ReportDraft = {
@@ -3189,48 +3098,12 @@ export function ReportIssuePanel({ project, me, focusMode, sub, onChangeSub }: {
     searchHit(issueKeyword, [issue.raisedAt, issue.reporter, issue.title, issue.categories.join("、"), issue.solution, ISSUE_STATE_NAMES[issue.state]]),
   );
 
-  const tabButton = (tab: SubTab) => {
-    const active = tab === subTab;
-    return (
-      <button
-        key={tab}
-        type="button"
-        data-subnav-item={tab}
-        aria-current={active ? "page" : undefined}
-        onClick={() => {
-          onChangeSub(SUB_TAB_KEYS[tab]);
-          setNotice("");
-          setPendingDelete(null);
-        }}
-        className={SUBNAV_KEY + " " + (active ? SUBNAV_KEY_CURRENT : SUBNAV_KEY_IDLE)}
-      >
-        {SUB_TAB_ICON[tab]}
-        <span>{tab}</span>
-      </button>
-    );
-  };
 
   return (
     // 列宽（业务口径「我只要日报填写页面居中然后尺寸舒适一点、像一个表单，其它的不变还是全屏」）：
     // 整块视图**全宽**（不封顶、不居中）—— 日报记录 / 问题追踪 / 问题看板 照旧铺满；
     // 只有「日报填写」那一块在下面单独收成居中窄栏。
     <div className="w-full space-y-5">
-      {/* 页内导航栏（业务样张：四个键帽按钮，紧贴主标签栏下方一排，尺寸收紧）；
-          Push 200 吸顶（业务口径「做吸顶效果」）；Push 201 修吸顶三处 bug（业务口径「图二吸顶后有bug」+「这里的字被吞掉了」
-          +「这个中间有条缝可以有办法解决一下吗」）：滚动时叠在**主标签栏**下面 —— top = 122px（设计位 123 = 顶栏 64 + 主标签栏 59，
-          **向上多叠 1px**）：吸顶条下边框在带缩放的屏上（Windows 150% 等）被按设备像素吸附成 0.67px，栏高 59 → 58.67、
-          下沿实际落在 122.67 —— 钉 123 会露 0.33px 缝、滚动内容从缝里闪过；多叠的 1px 正好藏进主标签栏下边框（1x 下视觉不变）；
-          站灰底 + 毛玻璃兜住滚动内容；
-          下内衬 8 → 16px：原来装不下键帽的立体堆叠投影（最深 0.425em ≈ 5.5px + 落影 blur 0.5em ≈ 6.5px ≈ 12px），
-          投影尾巴会糊到下方「日报记录」标题上、标题还被横幅下沿齐刷刷切一刀；
-          **mb 用 +4px 而不是负值**：本面板是 space-y-5（Tailwind v4 的 space-y 走 margin-bottom，写在元素自身上）——
-          负 mb 会把下面第一块内容拽进横幅里（上一版 -mb-4 = 下方内容被横幅盖住 16px，区块标题只剩几像素的「被吞」残影）；
-          现在 底内衬 16 + mb 4 = 20px，正好是 space-y-5 的节奏：键帽、横幅、下方内容三者位置都回到设计值；
-          -mx-6 / -mt-2 + 同值内衬抵消：横幅铺满行宽、键帽位置与原来一致；
-          z-10（低于主标签栏 z-20）：往上滚时本条从主标签栏下面滑过去，不会反压住它。 */}
-      <nav data-subnav="true" className="sticky top-[122px] z-10 -mx-6 -mt-2 mb-1 flex flex-wrap items-center gap-2 bg-[#f5f6f8]/95 px-6 pt-2 pb-4 backdrop-blur">
-        {SUB_TABS.map((tab) => tabButton(tab))}
-      </nav>
 
       {notice === "" ? null : (
         <p data-subnav-notice className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800">

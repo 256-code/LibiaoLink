@@ -15,7 +15,8 @@
  *
  * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完硬删、零残留）在真机浏览器里跑一遍
  * 日报及问题接真后的读写口径 ——
- *   ① 首屏：四块子视图键帽齐 + 「日报填写」表单（日期默认今天 / 提交人 = 当前用户 / 「现场发现问题」前置开关禁用三件）；
+ *   ① 首屏：主标签栏「日报及问题」下拉子菜单四项齐（Push 236：原页内键帽导航栏下架，入口收进主标签栏）
+ *      + 「日报填写」表单（日期默认今天 / 提交人 = 当前用户 / 「现场发现问题」前置开关禁用三件）；
  *   ② 附图真粘贴：真实剪贴板 + 真 Ctrl+V → 文件库分片直传 → fileId 回填（现场工作附图 + 当前问题附图两区各自上传完）；
  *   ③ 提交落库：日报 submitted + 服务端按「现场发现问题」自动生成问题（open）+ 问题图**转挂**问题侧（日报侧 issuePhotos 归零）；
  *   ④ 同日多条：同一天第二篇照样落库（无唯一约束），列表两行；
@@ -228,6 +229,30 @@ async function clickSelector(selector) {
   await clickAt(point);
   return point;
 }
+/** 悬停到元素中心（触发 hover 展开；不点击）。 */
+async function hoverSelector(selector) {
+  const point = await rectOf(selector);
+  if (point === null || point === undefined) throw new Error("悬停不到（元素不存在或不可见）：" + selector);
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
+}
+/**
+ * 展开「日报及问题」的下拉子菜单（Push 236 · 业务口径「日报及问题页面的导航栏按钮集成到页面导航栏」）：
+ * 四块子视图从页内键帽导航栏搬进主标签栏子菜单 —— 悬停 / 点击父标签展开，选完自动收起。
+ * 已经开着就不再动鼠标，避免把面板晃掉。
+ */
+async function openDailySubmenu() {
+  if ((await ev("document.querySelector(" + j("[data-daily-submenu]") + ") !== null")) === true) return;
+  await hoverSelector("[data-maintabs-item=" + Q + "日报及问题" + Q + "]");
+  const opened = await waitFor("document.querySelector(" + j("[data-daily-submenu]") + ") !== null", 8000);
+  if (opened !== true) throw new Error("「日报及问题」子菜单打不开");
+  await sleep(200);
+}
+/** 选一块子视图：先展开子菜单，再点子项。 */
+async function pickDailySub(name) {
+  await openDailySubmenu();
+  await clickSelector("[data-subnav-item=" + Q + name + Q + "]");
+  await sleep(500);
+}
 async function pressKey(key, code, vk, modifiers = 0) {
   await page.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
   await page.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
@@ -319,12 +344,11 @@ async function bail(message) {
   + "var zones={};var zs=f.querySelectorAll(" + j("[data-paste-zone]") + ");for(var i=0;i<zs.length;i++){var z=zs[i];var h=z.querySelector(" + j("[data-paste-hint]") + ");zones[z.getAttribute(\"data-paste-zone\")]=h===null?\"-\":h.getAttribute(\"data-paste-hint\");}"
   + "var box=f.querySelector(" + j("[data-field=stages]") + ");var picked=[];if(box!==null){var cs=box.querySelectorAll(\"input\");for(var k=0;k<cs.length;k++){if(cs[k].checked){picked.push(k);}}}"
 const FORM_PROBE = "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");"
-  + "var tabs=document.querySelectorAll(" + j("[data-subnav-item]") + ");var names=[];for(var i=0;i<tabs.length;i++){names.push(tabs[i].textContent.trim());}"
-  + "if(f===null){return {hasForm:false,tabs:names.join(\"/\")};}"
+  + "if(f===null){return {hasForm:false};}"
   + "var dateBtn=f.querySelector(" + j("[data-field=date] button") + ");var authorEl=f.querySelector(" + j("[data-field=author]") + ");"
   + "var catBtn=f.querySelector(" + j("[data-field=issueCategory] button") + ");var ipp=f.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");"
   + "var sug=f.querySelector(" + j("[data-field=suggestion]") + ");var submit=f.querySelector(" + j("[data-action=submit]") + ");var hint=f.querySelector(" + j("[data-fill-hint]") + ");"
-  + "return {hasForm:true,tabs:names.join(\"/\"),date:dateBtn===null?\"\":dateBtn.textContent.trim(),author:authorEl===null?\"\":authorEl.textContent.trim(),"
+  + "return {hasForm:true,date:dateBtn===null?\"\":dateBtn.textContent.trim(),author:authorEl===null?\"\":authorEl.textContent.trim(),"
   + "catDisabled:catBtn===null?null:catBtn.disabled,issuePhotosDisabled:ipp===null?null:ipp.getAttribute(\"data-paste-disabled\"),"
   + "suggestionDisabled:sug===null?null:sug.disabled,submitDisabled:submit===null?null:submit.disabled,hint:hint===null?\"\":hint.textContent.trim()};})()";
 
@@ -353,7 +377,13 @@ await openDaily();
 const form0 = await ev(FORM_PROBE);
 const todayIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const todayCn = todayIso.slice(0, 4) + "/" + todayIso.slice(5, 7) + "/" + todayIso.slice(8, 10);
-check("①a 四块子视图键帽齐（日报填写 / 日报记录 / 问题追踪 / 问题看板）", form0 !== null && form0.tabs === "日报填写/日报记录/问题追踪/问题看板", form0 === null ? "-" : String(form0.tabs));
+// Push 236：入口从页内键帽导航栏搬进主标签栏「日报及问题」下拉子菜单 —— 先展开，再断四项 + 两段分组。
+await openDailySubmenu();
+const submenu0 = await ev("(function(){var p=document.querySelector(" + j("[data-daily-submenu]") + ");if(p===null){return null;}"
+  + "var items=p.querySelectorAll(" + j("[data-subnav-item]") + ");var names=[];for(var i=0;i<items.length;i++){names.push(items[i].textContent.trim());}"
+  + "var gs=p.querySelectorAll(" + j("p") + ");var groups=[];for(var k=0;k<gs.length;k++){groups.push(gs[k].textContent.trim());}"
+  + "return {items:names.join(String.fromCharCode(47)),groups:groups.join(String.fromCharCode(47))};})()");
+check("①a 子菜单四项齐（日报填写 / 日报记录 / 问题追踪 / 问题看板）+ 两段分组（日报 / 问题）", submenu0 !== null && submenu0.items === "日报填写/日报记录/问题追踪/问题看板" && submenu0.groups === "日报/问题", submenu0 === null ? "-" : JSON.stringify(submenu0));
 check("①b 「日报填写」表单在（缺省子视图）+ 时间默认今天（" + todayCn + "，站内日期选择器展示口径）", form0 !== null && form0.hasForm === true && form0.date === todayCn, form0 === null ? "-" : JSON.stringify({ date: form0.date }));
 check("①c 提交人 = 当前登录用户（" + userRow.display_name + "）", form0 !== null && form0.author.indexOf(userRow.display_name) >= 0, form0 === null ? "-" : String(form0.author));
 check("①d 空表单提交按钮禁用 + 提示「还差：当日完成工作、明日计划」", form0 !== null && form0.submitDisabled === true && form0.hint.indexOf("还差") >= 0 && form0.hint.indexOf("当日完成工作") >= 0 && form0.hint.indexOf("明日计划") >= 0, form0 === null ? "-" : JSON.stringify({ submitDisabled: form0.submitDisabled, hint: form0.hint }));
@@ -417,7 +447,7 @@ const preview1 = await api("/api/v1/files/" + rep1.photos[0].fileId + "/preview"
 check("③k 附图缩略图在列表出图（服务端预览签名，非本地 blob）—— file_links 文件走预览通道", thumb1 === true && preview1.status === 200 && preview1.json !== null && preview1.json.status === "ready" && preview1.json.url !== null, JSON.stringify({ thumb: thumb1, preview: preview1.json === null ? preview1.text.slice(0, 120) : preview1.json.status }));
 
 // ---------- ④ 同日多条（无唯一约束） ----------
-await clickSelector("[data-subnav-item=" + Q + "日报填写" + Q + "]");
+await pickDailySub("日报填写");
 await sleep(600);
 await typeInto("[data-field=doneWork]", "回放·完成工作-B1");
 await typeInto("[data-field=plan]", "回放·明日计划-B1");
@@ -429,7 +459,7 @@ const dbSameDay = (await db.query("select count(*)::int as n from daily_reports 
 check("④b 库内同日两行并存（唯一约束已删）", Number(dbSameDay.n) === 2, JSON.stringify(dbSameDay));
 
 // ---------- ⑤ 草稿写库 + 再提交（不新增行） ----------
-await clickSelector("[data-subnav-item=" + Q + "日报填写" + Q + "]");
+await pickDailySub("日报填写");
 await sleep(600);
 await typeInto("[data-field=doneWork]", "回放·草稿-C1");
 await typeInto("[data-field=plan]", "回放·草稿计划-C1");
@@ -441,11 +471,11 @@ if (draftRow === undefined) { await bail("暂存后没找到 state=draft 的行�
 check("⑤a 暂存草稿 = 真写库（total 3 · 有一条 state=draft · 内容 = 表单值）", list3.total === 3 && draftRow !== undefined && draftRow.doneWork === "1: 回放·草稿-C1" && draftRow.plan === "1: 回放·草稿计划-C1", JSON.stringify({ total: list3.total, draft: draftRow === undefined ? "-" : { state: draftRow.state, doneWork: draftRow.doneWork } }));
 const dbDraft = (await db.query("select state, submitted_at, version from daily_reports where id = $1", [draftRow.id])).rows[0];
 check("⑤b 库内草稿行 state=draft、submitted_at 仍为空", dbDraft.state === "draft" && dbDraft.submitted_at === null, JSON.stringify({ state: dbDraft.state, submitted_at: String(dbDraft.submitted_at) }));
-await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
+await pickDailySub("日报记录");
 await sleep(900);
 const draftBadge = await ev("(function(){var b=document.querySelector(" + j("[data-report-state]") + ");if(b===null){return null;}return {state:b.getAttribute(\"data-report-state\"),text:b.textContent.trim()};})()");
 check("⑤c 「日报记录」里草稿行挂「草稿」签", draftBadge !== null && draftBadge.state === "draft" && draftBadge.text === "草稿", JSON.stringify(draftBadge));
-await clickSelector("[data-subnav-item=" + Q + "日报填写" + Q + "]");
+await pickDailySub("日报填写");
 await sleep(700);
 await clickSelector("[data-action=submit]");
 await sleep(3000);
@@ -488,7 +518,7 @@ async function modalEditSave(triggerSelector, fields) {
 /** 打开的编辑弹窗快照（断言用）：字段钩子 / 贴图区 / 图瓦片 / 行内编辑件计数。 */
 const modalScopeExpr = "(function(){var m=document.querySelector(" + j("[data-record-edit-modal]") + ");if(m===null){return null;}var out=[];var fs=m.querySelectorAll(" + j("[data-record-field]") + ");for(var i=0;i<fs.length;i++){out.push(fs[i].getAttribute(\"data-record-field\"));}return {fields:out,pasteZones:m.querySelectorAll(" + j("[data-paste-zone]") + ").length,attachments:m.querySelectorAll(" + j("[data-attachment]") + ").length,inlineSave:m.querySelectorAll(" + j("[data-inline-save]") + ").length,multiOptions:m.querySelectorAll(" + j("[data-multi-option]") + ").length,options:m.querySelectorAll(" + j("[role=option]") + ").length};})()";
 
-await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
+await pickDailySub("日报记录");
 await sleep(900);
 const rowSel1 = "[data-report-row=" + Q + rep1.id + Q + "]";
 const rep1AfterIssue = (await reportsOf()).items.filter((row) => row.id === rep1.id)[0];
@@ -525,7 +555,7 @@ check("⑥f 日报「关联阶段」保持行内多选落库（加一枚「验�
 const dbRep1b = (await db.query("select done_work, plan, stage_keys, version from daily_reports where id = $1", [rep1.id])).rows[0];
 check("⑥g 库内三次 PATCH（完成工作 / 明日计划 / 阶段）都对得上（读面 = 库面）", dbRep1b.done_work === rep1Edited4.doneWork && dbRep1b.plan === rep1Edited4.plan && Number(dbRep1b.version) === rep1Edited4.version, JSON.stringify({ version: dbRep1b.version, done_work: dbRep1b.done_work }));
 
-await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await pickDailySub("问题追踪");
 await sleep(1100);
 const issueRowSel = "[data-issue-row=" + Q + iss1.id + Q + "]";
 // 文字：行尾「编辑」→ 弹窗（描述 + 解决方案一次保存）
@@ -560,7 +590,7 @@ check("⑥n 问题追踪表 = 六列口径（+ 行尾动作列 = 7 格）、行�
 
 
 // 抽屉口径（Push 224 续 · 业务口径「移除图片要加二次确认」——只改抽屉）：点看板卡开抽屉 → × 只出确认条（不落库）→ 确认才摘。
-await clickSelector("[data-subnav-item=" + Q + "问题看板" + Q + "]");
+await pickDailySub("问题看板");
 await sleep(1100);
 await clickSelector("[data-issue-card=" + Q + iss1.id + Q + "]");
 const drawerOpened = await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")!==null", 6000);
@@ -580,7 +610,7 @@ await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")==null", 
 await sleep(600);
 
 // ---------- ⑥p 页内搜索（日报记录 / 问题追踪各一枚 · 与项目空间右上角同款 SearchInput） ----------
-await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
+await pickDailySub("日报记录");
 await sleep(900);
 /** 搜索区快照：搜索框（占位符 / 右上角与表格右缘对齐）+ 命中行数 + 计数文案。 */
 const searchProbe = (kind) => "(function(){var box=document.querySelector(" + j("[data-" + kind + "-search]") + ");var table=document.querySelector(" + j("[data-" + kind + "-table]") + ");"
@@ -604,7 +634,7 @@ await sleep(700);
 const search2 = await ev(searchProbe("report"));
 check("⑥p-4 「日报记录」点 × 清空：3 篇全回来（计数文案还原）", search2 !== null && search2.rows === 3 && String(search2.hint).indexOf("共 3 篇") >= 0, JSON.stringify(search2));
 
-await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await pickDailySub("问题追踪");
 await sleep(900);
 const searchIssue0 = await ev(searchProbe("issue"));
 check("⑥p-5 「问题追踪」右上角搜索框在位（同款 + 占位符「搜索日期、问题描述、归类或解决方案」）", searchIssue0 !== null && searchIssue0.placeholder === "搜索日期、问题描述、归类或解决方案" && searchIssue0.icon === true && searchIssue0.rightAligned === true && searchIssue0.rows === 1, JSON.stringify(searchIssue0));
@@ -620,7 +650,7 @@ const searchIssue2 = await ev(searchProbe("issue"));
 check("⑥p-8 「问题追踪」点 × 清空：命中行还原（共 1 条）", searchIssue2 !== null && searchIssue2.rows === 1 && String(searchIssue2.hint).indexOf("共 1 条") >= 0, JSON.stringify(searchIssue2));
 
 // ---------- ⑦ 成对删除（删日报连问题 / 删问题连日报） ----------
-await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
+await pickDailySub("日报记录");
 await sleep(900);
 await clickSelector(rowSel1 + " [data-report-delete-slot] button");
 // Push 218「删除要二次提示」：第一下只出底部确认条、不落删除；第二下点确认条上的「删除」才真删。
