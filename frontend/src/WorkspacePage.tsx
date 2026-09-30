@@ -12,6 +12,9 @@
  * （Push 232 · 业务口径「增加进入项目按钮」）→ 项目详情缺省标签「项目总览」`#/project/{id}`（与问题表「在项目中
  * 查看」同一套深链口径，只是落点 = 总览；按钮在面板头右侧、不参与展开收起）。
  *
+ * 「我的计划」标签（Push 234 · 业务口径「增加一个我的计划页面」→「你只要把导航栏设计好 后续详细设计再说」）：
+ * 导航栏第三枚标签 + 路由 `?tab=plan` 本刀就位；页面内容（数据口径 / 布局）随后续详细设计再做 —— 本刀只落登记卡。
+ *
  * 醒目模式（Push 232 · 业务口径「同样增加醒目模式」）：开关本体在**标签导航栏最右侧**（同项目总览 / 问题追踪口径
  * 「醒目模式放在标签导航栏的最右侧」），吃的是同一个账号偏好 `focusMode`（App 层持有 / 单键 PATCH、跨设备记忆；
  * 本页只读值、失败走页内提示条）。开 = 任务表整行铺该任务状态底色 + 状态胶囊收口成深色字（TaskBoard 同款两张色表
@@ -748,10 +751,11 @@ function EmptyCard({ text, hint }: { text: string; hint: string }) {
   );
 }
 
-/** 两个标签（业务口径「我的任务 我提出的问题先做这两个」；样式 = 任务模板页的下划线标签栏，文字 + 选中下划线）。 */
+/** 三枚标签（业务口径「我的任务 我提出的问题先做这两个」→ Push 234「增加一个我的计划页面」；样式 = 任务模板页的下划线标签栏，文字 + 选中下划线）。 */
 const TABS: ReadonlyArray<{ key: WorkspaceTab; label: string }> = [
   { key: "tasks", label: "我的任务" },
   { key: "raised", label: "我提出的问题" },
+  { key: "plan", label: "我的计划" },
 ];
 
 /** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。 */
@@ -839,8 +843,24 @@ function RaisedIssuesView({ issues, focus, openIds, onToggleProject }: { issues:
   );
 }
 
-/** 工作台「我的任务」页：两个标签（我的任务 / 我提出的问题）共用一份 GET /api/v1/workspace 聚合数据。
- *  Push 233：折叠面板展开态接账号偏好（workspaceOpenProjects，按标签各记一组项目 id）——「这个下拉要有记忆」。 */
+/** 标签 ③ 我的计划（Push 234 · 业务口径「增加一个我的计划页面」→「你只要把导航栏设计好 后续详细设计再说」）：
+ *  导航栏（第三枚标签）与路由（`?tab=plan`）本刀就位；页面内容（数据口径 / 布局）随后续详细设计再做 —— 本刀只落登记卡。
+ *  锚点 data-workspace-plan 供回放断言「切到该标签」用。 */
+function MyPlanView() {
+  return (
+    <section data-workspace-plan="" className="space-y-3">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-zinc-900">我的计划</h2>
+        <span className="text-xs text-zinc-400">导航栏与路由已就位 · 页面内容待详细设计</span>
+      </div>
+      <EmptyCard text="「我的计划」页面还没开工。" hint="本刀只落导航栏与路由（#/my-tasks?tab=plan）；数据口径与布局随后续详细设计再做。" />
+    </section>
+  );
+}
+
+/** 工作台「我的任务」页：三枚标签（我的任务 / 我提出的问题 / 我的计划）共用一份 GET /api/v1/workspace 聚合数据。
+ *  Push 233：折叠面板展开态接账号偏好（workspaceOpenProjects，按标签各记一组项目 id）——「这个下拉要有记忆」。
+ *  Push 234：第三枚标签「我的计划」就位（页面内容待详细设计）。 */
 export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocusModeChange, workspaceOpenProjects, onWorkspaceOpenProjectsChange }: WorkspacePageProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: "loading" });
   /** 重新加载令牌：bump 一次重新取数（错误态的「重新加载」用）。 */
@@ -861,7 +881,7 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
   /** 展开态保存失败文案（null = 无提示）：乐观更新 + 失败回滚在 App 层，本页只出提示条。 */
   const [panelError, setPanelError] = useState<string | null>(null);
   /** 切换某个项目面板：按标签各自去重增删（不按顺序消费），整个对象单键 PATCH。 */
-  const handleToggleProject = (which: WorkspaceTab, projectId: string): void => {
+  const handleToggleProject = (which: "tasks" | "raised", projectId: string): void => {
     const currentIds = which === "raised" ? openProjects.raised : openProjects.tasks;
     const nextIds = currentIds.includes(projectId) ? currentIds.filter((id) => id !== projectId) : currentIds.concat(projectId);
     const next: WorkspaceOpenProjects = which === "raised" ? { ...openProjects, raised: nextIds } : { ...openProjects, tasks: nextIds };
@@ -975,6 +995,8 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
                 handleToggleProject("raised", projectId);
               }}
             />
+          ) : tab === "plan" ? (
+            <MyPlanView />
           ) : (
             <MyTasksView
               data={state.data}

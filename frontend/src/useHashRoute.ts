@@ -40,10 +40,10 @@ export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily"
 export type DailySubView = "form" | "records" | "issues" | "board";
 
 /**
- * 工作台「我的任务」页的两个标签（Push 230）在地址里的取值：`#/my-tasks?tab=`。
- * 取值 = tasks（我的任务，缺省，不落参数）/ raised（我提出的问题）；缺省不落参数与顶部标签 / 列表筛选态同一口径。
+ * 工作台「我的任务」页的标签（Push 230 两枚 / Push 234 增加「我的计划」）在地址里的取值：`#/my-tasks?tab=`。
+ * 取值 = tasks（我的任务，缺省，不落参数）/ raised（我提出的问题）/ plan（我的计划）；缺省不落参数与顶部标签 / 列表筛选态同一口径。
  */
-export type WorkspaceTab = "tasks" | "raised";
+export type WorkspaceTab = "tasks" | "raised" | "plan";
 
 export type Route =
   | { kind: "hub" }
@@ -208,7 +208,7 @@ function parseProjectSub(search: string): DailySubView {
 }
 
 /** 工作台标签的合法取值（顺序与标签栏一致）。 */
-const WORKSPACE_TAB_KEYS: readonly WorkspaceTab[] = ["tasks", "raised"];
+const WORKSPACE_TAB_KEYS: readonly WorkspaceTab[] = ["tasks", "raised", "plan"];
 
 /**
  * 工作台标签参数（`?tab=`）：只认 `WORKSPACE_TAB_KEYS` 里的 ASCII slug，不认识的取值 / 重复键一律落回缺省「我的任务」
@@ -326,9 +326,9 @@ export function replaceProjectSubView(id: string, sub: DailySubView): void {
   }
 }
 
-/** 工作台标签地址（缺省「我的任务」不落参数）—— 与 `projectViewHref` 同一口径。 */
+/** 工作台标签地址（缺省「我的任务」不落参数；其余标签按 `?tab=` 取值）—— 与 `projectViewHref` 同一口径。 */
 export function workspaceHref(tab: WorkspaceTab): string {
-  return tab === "raised" ? WORKSPACE_BASE_HASH + "?tab=raised" : WORKSPACE_BASE_HASH;
+  return tab === "tasks" ? WORKSPACE_BASE_HASH : WORKSPACE_BASE_HASH + "?tab=" + tab;
 }
 
 /** 切工作台标签（Push 230）：同步渲染并写回地址（replace，不新增历史条目）—— 刷新 / 收藏 / 分享都停在同一块标签。 */
@@ -402,7 +402,7 @@ export function parseHash(hash: string): Route {
   }
   if (path === "/my-tasks") {
     // 工作台（系统功能书 A6 我的工作台 · A6-01 / A6-03）：Push 230 起页面正式落地（frontend/src/WorkspacePage.tsx），
-    // 标签走地址（`?tab=raised` = 我提出的问题；缺省「我的任务」不落参数）；数据面 = GET /api/v1/workspace（workspaceApi.ts）。
+    // 标签走地址（`?tab=raised` = 我提出的问题 / `?tab=plan` = 我的计划；缺省「我的任务」不落参数）；数据面 = GET /api/v1/workspace（workspaceApi.ts）。
     return { kind: "workspace", tab: parseWorkspaceTab(search) };
   }
   const match = PROJECT_PATH.exec(path);

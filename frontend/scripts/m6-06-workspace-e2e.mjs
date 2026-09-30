@@ -7,7 +7,9 @@
  *   也是折叠面板」「开始做前端」「表格内容要全」「直接把这个搬到我的任务不就好了」（任务表行口径照项目页任务表搬）→
  *   「这些字段一个不能少懂吗」（Push 231：任务表列补齐项目页任务表全 15 列，「预计所需天数」窄列也在）→
  *   「增加进入项目按钮」（Push 232：折叠面板头常驻「进入项目」深链 → 项目详情缺省标签「项目总览」）→
- *   「这个下拉要有记忆」（Push 233：折叠面板展开态按账号存偏好 workspaceOpenProjects，刷新 / 换标签保持）。
+ *   「这个下拉要有记忆」（Push 233：折叠面板展开态按账号存偏好 workspaceOpenProjects，刷新 / 换标签保持）→
+ *   「增加一个我的计划页面」+「你只要把导航栏设计好 后续详细设计再说」（Push 234：导航栏第三枚标签「我的计划」+
+ *   路由 `?tab=plan` 就位；页面内容待详细设计，暂落登记卡 —— 数据面 / 契约本刀不动）。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -39,6 +41,9 @@
  *   ⑩ 折叠面板展开态记忆（Push 233 ·「这个下拉要有记忆」）：偏好归零 = 全收起 → 展开 A → 刷新仍展开 / B 仍收起 →
  *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
  *      收起 A → 刷新仍全收起 → GET preferences 逐段落库核对 → 收尾恢复账号偏好原值（不留痕）；
+ *   ⑪ 「我的计划」标签（Push 234）：第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 登记卡
+ *      （导航栏 / 路由已就位、内容待详细设计；无任务 / 问题表）→ 深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 →
+ *      点回「我的任务」地址回到不带参数的原口径；
  *   ⑧ 收尾：删两个临时项目（物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
  * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆小节）
  */
@@ -417,8 +422,8 @@ console.log("前置：展开态偏好归零 → " + (memoryResetAtStart === null
 await open("#/my-tasks", "[data-workspace-page]");
 const head0 = await ev(headExpr());
 check("②a 页面渲染出「我的任务」页（data-workspace-page）+ 顶栏页名", head0 !== null && head0.page === true && head0.header.indexOf("我的任务") >= 0, head0 === null ? "null" : JSON.stringify(head0.header.slice(0, 60)));
-check("②b 标签导航栏 = 两枚下划线标签（我的任务 / 我提出的问题；文字，无图标）", head0 !== null && head0.tabs.length === 2 && head0.tabs.map((item) => item.text).join("|") === "我的任务|我提出的问题", head0 === null ? "null" : JSON.stringify(head0.tabs.map((item) => item.text)));
-check("②c 缺省选中「我的任务」、地址不带 ?tab=", head0 !== null && head0.tabs[0].current === "page" && head0.tabs[1].current === null && head0.hash === "#/my-tasks", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.current), head0.hash]));
+check("②b 标签导航栏 = 三枚下划线标签（我的任务 / 我提出的问题 / 我的计划；文字，无图标）", head0 !== null && head0.tabs.length === 3 && head0.tabs.map((item) => item.text).join("|") === "我的任务|我提出的问题|我的计划" && head0.tabs.map((item) => item.key).join("|") === "tasks|raised|plan", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.text), head0.tabs.map((item) => item.key)]));
+check("②c 缺省选中「我的任务」、地址不带 ?tab=", head0 !== null && head0.tabs[0].current === "page" && head0.tabs[1].current === null && head0.tabs[2].current === null && head0.hash === "#/my-tasks", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.current), head0.hash]));
 const total0 = await ev(totalExpr());
 check("②d 汇总行「共 4 项 · 跨 2 个项目 · 基准日 …」（三组 3 + B 1，跨项目）", typeof total0 === "string" && total0.indexOf("共 4 项") >= 0 && total0.indexOf("跨 2 个项目") >= 0 && total0.indexOf(cnDate(TODAY)) >= 0, String(total0));
 
@@ -500,7 +505,7 @@ const head2 = await ev(headExpr());
 check("⑦a 深链 #/my-tasks?tab=raised 直接打开 = 「我提出的问题」选中（刷新 / 收藏 / 分享同款）", head2 !== null && head2.tabs[1].current === "page" && head2.hash === "#/my-tasks?tab=raised", head2 === null ? "null" : JSON.stringify([head2.tabs.map((item) => item.current), head2.hash]));
 await open("#/my-tasks?tab=zzz", "[data-workspace-page]");
 const head3 = await ev(headExpr());
-check("⑦b ?tab= 不认识的值落回缺省「我的任务」（地址不纠正，与 ?view= 同口径）", head3 !== null && head3.tabs[0].current === "page" && head3.tabs[1].current === null, head3 === null ? "null" : JSON.stringify(head3.tabs.map((item) => item.current)));
+check("⑦b ?tab= 不认识的值落回缺省「我的任务」（地址不纠正，与 ?view= 同口径）", head3 !== null && head3.tabs[0].current === "page" && head3.tabs[1].current === null && head3.tabs[2].current === null, head3 === null ? "null" : JSON.stringify(head3.tabs.map((item) => item.current)));
 await open("#/my-tasks", "[data-workspace-page]");
 await clickSelector('[data-workspace-tab="tasks"]');
 const head4 = await ev(headExpr());
@@ -614,6 +619,24 @@ const memory6B = await ev(panelOpenOf(projectB));
 check("⑩j 收起后刷新：两面板保持全收起（空数组 = 全收起，不是「无记录 = 默认展开」）", memory6A !== null && memory6A.open === "false" && memory6A.rows === 0 && memory6B !== null && memory6B.open === "false" && memory6B.rows === 0, JSON.stringify([memory6A, memory6B]));
 const memoryRestored = await patchOpenProjects(memoryOriginal);
 check("⑩k 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（不留痕）", memoryRestored !== null && JSON.stringify(memoryRestored.json.workspaceOpenProjects) === JSON.stringify(memoryOriginal), memoryRestored === null ? "null" : JSON.stringify([memoryRestored.json.workspaceOpenProjects, memoryOriginal]));
+
+// ---------- ⑪ 「我的计划」标签：导航栏 + 路由就位（Push 234 · 业务口径「增加一个我的计划页面」→「你只要把导航栏设计好 后续详细设计再说」） ----------
+// 本刀只验三件：第三枚标签在导航栏、点击 / 深链走 `?tab=plan`、页内 = 登记卡（内容待详细设计，数据面 / 契约本刀不动）。
+await open("#/my-tasks", "[data-workspace-page]");
+await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"]') + ") !== null", 25000);
+const headPlan0 = await ev(headExpr());
+check("⑪a 「我的计划」是第三枚标签（三枚都在：我的任务 / 我提出的问题 / 我的计划；无图标）", headPlan0 !== null && headPlan0.tabs.length === 3 && headPlan0.tabs[2].key === "plan" && headPlan0.tabs[2].text === "我的计划", headPlan0 === null ? "null" : JSON.stringify([headPlan0.tabs.length, headPlan0.tabs[2]?.text ?? null]));
+await clickSelector('[data-workspace-tab="plan"]');
+const headPlan1 = await ev(headExpr());
+check("⑪b 点「我的计划」→ 地址写回 ?tab=plan + 选中态转移（replace、可刷新 / 可分享）", headPlan1 !== null && headPlan1.hash === "#/my-tasks?tab=plan" && headPlan1.tabs[2].current === "page" && headPlan1.tabs[0].current === null && headPlan1.tabs[1].current === null, headPlan1 === null ? "null" : JSON.stringify([headPlan1.hash, headPlan1.tabs.map((item) => item.current)]));
+const planCard = await ev("(function(){var n=document.querySelector(" + j("[data-workspace-plan]") + ");if(n===null){return null;}return {text:n.textContent.trim(),tables:n.querySelectorAll(" + j("[data-workspace-task-table],[data-workspace-issue-table]") + ").length};})()");
+check("⑪c 「我的计划」页 = 登记卡（「还没开工 / 待详细设计」；无任务 / 问题表 —— 详细设计后放）", planCard !== null && planCard.text.indexOf("还没开工") >= 0 && planCard.text.indexOf("详细设计") >= 0 && planCard.tables === 0, planCard === null ? "null" : JSON.stringify(planCard));
+await open("#/my-tasks?tab=plan", "[data-workspace-plan]");
+const headPlan2 = await ev(headExpr());
+check("⑪d 深链 #/my-tasks?tab=plan 直接打开 = 「我的计划」选中（刷新 / 收藏 / 分享同款）", headPlan2 !== null && headPlan2.tabs[2].current === "page" && headPlan2.hash === "#/my-tasks?tab=plan", headPlan2 === null ? "null" : JSON.stringify([headPlan2.tabs.map((item) => item.current), headPlan2.hash]));
+await clickSelector('[data-workspace-tab="tasks"]');
+const headPlan3 = await ev(headExpr());
+check("⑪e 点回「我的任务」→ 地址回到不带参数的 #/my-tasks（原两标签口径不变）", headPlan3 !== null && headPlan3.hash === "#/my-tasks" && headPlan3.tabs[0].current === "page", headPlan3 === null ? "null" : JSON.stringify([headPlan3.hash, headPlan3.tabs.map((item) => item.current)]));
 
 // ---------- ⑧ 收尾：清理 + 控制台 ----------
 const consoleLines = page.events.filter((line) => line.indexOf("EVT Runtime.exceptionThrown") >= 0 || line.indexOf("EVT Log.entryAdded") >= 0);
