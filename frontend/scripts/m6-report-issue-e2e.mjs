@@ -23,6 +23,8 @@
  *   ⑥ 编辑落库（Push 223 起：文字 / 图片走干系人同款弹窗、下拉保持行内）：日报（完成工作 / 明日计划 / 现场工作附图 / 关联阶段）
  *      与问题（描述 / 解决方案 / 问题附图 / 归类 / 状态三态）PATCH 回包替换该行、version 递增；
  *      Push 224 续：问题详情抽屉里「移除图片」要二次确认（第一下 × 只出确认条、第二下「移除」才落库）；
+ *   ⑥p 页内搜索（日报记录 / 问题追踪各一枚 · 与项目空间右上角同款 SearchInput）：在 ⑥ 的表上验证输入即过滤
+ *      （行数 / 计数文案 / 空态 / × 清空还原），两枚关键词各管一表；
  *   ⑦ 成对删除：删问题连来源日报、删日报连派生问题（两侧读面同时归零）；
  *   ⑧ 收尾：删临时项目（物理删）→ 读面 404；撤销临时会话；库内零残留。
  * 证据：docs/m6-回放证据(日报及问题接真·前端).md
@@ -576,6 +578,46 @@ check("⑥o 抽屉「移除图片」要二次确认（第一下 × 只出确认�
 await pressKey("Escape", "Escape", 27);
 await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")==null", 4000);
 await sleep(600);
+
+// ---------- ⑥p 页内搜索（日报记录 / 问题追踪各一枚 · 与项目空间右上角同款 SearchInput） ----------
+await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");
+await sleep(900);
+/** 搜索区快照：搜索框（占位符 / 右上角与表格右缘对齐）+ 命中行数 + 计数文案。 */
+const searchProbe = (kind) => "(function(){var box=document.querySelector(" + j("[data-" + kind + "-search]") + ");var table=document.querySelector(" + j("[data-" + kind + "-table]") + ");"
+  + "if(box===null||table===null){return null;}var input=box.querySelector(" + j("input") + ");"
+  + "var head=null;var hs=document.querySelectorAll(" + j("h2") + ");for(var i=0;i<hs.length;i++){if(hs[i].textContent.trim()===" + j(kind === "report" ? "日报记录" : "问题追踪") + "){head=hs[i];break;}}"
+  + "var hint=head===null?null:head.parentElement.querySelector(" + j("span") + ");var br=box.getBoundingClientRect();var tr=table.getBoundingClientRect();"
+  + "return {placeholder:input===null?null:input.getAttribute(" + j("placeholder") + "),icon:box.querySelector(" + j("svg") + ")!==null,"
+  + "rows:table.querySelectorAll(" + j("[data-" + kind + "-row]") + ").length,hint:hint===null?null:hint.textContent.trim(),"
+  + "rightAligned:Math.abs(br.right-tr.right)<8&&br.width>=200};})()";
+const searchRowCount = (kind) => "document.querySelectorAll(" + j("[data-" + kind + "-row]") + ").length";
+const search0 = await ev(searchProbe("report"));
+check("⑥p-1 「日报记录」右上角搜索框在位（同款：放大镜 + 占位符 + 与表格右缘对齐）", search0 !== null && search0.placeholder === "搜索日期、填写者、阶段或日报内容" && search0.icon === true && search0.rightAligned === true && search0.rows === 3, JSON.stringify(search0));
+await typeInto("[data-report-search] input", "A1改");
+const search1 = await ev(searchProbe("report"));
+check("⑥p-2 「日报记录」输入即过滤：3 篇只剩命中「A1改」的 1 篇 + 计数文案「找到 1 篇 · 共 3 篇」", search1 !== null && search1.rows === 1 && String(search1.hint).indexOf("找到 1 篇") >= 0 && String(search1.hint).indexOf("共 3 篇") >= 0, JSON.stringify(search1));
+await typeInto("[data-report-search] input", "zzzz");
+const searchEmpty = await ev("(function(){return {empty:document.body.innerText.indexOf(" + j("没有匹配「zzzz」的日报。") + ")>=0,rows:" + searchRowCount("report") + "};})()");
+check("⑥p-3 「日报记录」无命中：出空态「没有匹配…」+ 表体零行", searchEmpty.empty === true && searchEmpty.rows === 0, JSON.stringify(searchEmpty));
+await clickSelector("[data-report-search] button[aria-label=" + Q + "清空搜索" + Q + "]");
+await sleep(700);
+const search2 = await ev(searchProbe("report"));
+check("⑥p-4 「日报记录」点 × 清空：3 篇全回来（计数文案还原）", search2 !== null && search2.rows === 3 && String(search2.hint).indexOf("共 3 篇") >= 0, JSON.stringify(search2));
+
+await clickSelector("[data-subnav-item=" + Q + "问题追踪" + Q + "]");
+await sleep(900);
+const searchIssue0 = await ev(searchProbe("issue"));
+check("⑥p-5 「问题追踪」右上角搜索框在位（同款 + 占位符「搜索日期、问题描述、归类或解决方案」）", searchIssue0 !== null && searchIssue0.placeholder === "搜索日期、问题描述、归类或解决方案" && searchIssue0.icon === true && searchIssue0.rightAligned === true && searchIssue0.rows === 1, JSON.stringify(searchIssue0));
+await typeInto("[data-issue-search] input", "复测");
+const searchIssue1 = await ev(searchProbe("issue"));
+check("⑥p-6 「问题追踪」输入即过滤：命中「复测」（问题描述 / 解决方案任一处）+ 计数「找到 1 条」", searchIssue1 !== null && searchIssue1.rows === 1 && String(searchIssue1.hint).indexOf("找到 1 条") >= 0 && String(searchIssue1.hint).indexOf("共 1 条") >= 0, JSON.stringify(searchIssue1));
+await typeInto("[data-issue-search] input", "zzzz");
+const searchIssueEmpty = await ev("(function(){return {empty:document.body.innerText.indexOf(" + j("没有匹配「zzzz」的问题。") + ")>=0,rows:" + searchRowCount("issue") + "};})()");
+check("⑥p-7 「问题追踪」无命中：出空态 + 表体零行", searchIssueEmpty.empty === true && searchIssueEmpty.rows === 0, JSON.stringify(searchIssueEmpty));
+await clickSelector("[data-issue-search] button[aria-label=" + Q + "清空搜索" + Q + "]");
+await sleep(700);
+const searchIssue2 = await ev(searchProbe("issue"));
+check("⑥p-8 「问题追踪」点 × 清空：命中行还原（共 1 条）", searchIssue2 !== null && searchIssue2.rows === 1 && String(searchIssue2.hint).indexOf("共 1 条") >= 0, JSON.stringify(searchIssue2));
 
 // ---------- ⑦ 成对删除（删日报连问题 / 删问题连日报） ----------
 await clickSelector("[data-subnav-item=" + Q + "日报记录" + Q + "]");

@@ -26,7 +26,7 @@ export const EMPTY_LIST_QUERY: ListQueryState = {
   sortDesc: true,
 };
 
-export type PlaceholderPage = "templates" | "files";
+export type PlaceholderPage = "templates" | "my-tasks";
 
 /** 项目详情页顶部标签（6 视图，Push 82 / 128 / 145 / 221）在地址里的取值：`#/project/{id}?view=`。缺省「项目总览」不落参数（默认值不进 URL，与列表筛选态同一口径）。 */
 export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily" | "stakeholders";
@@ -40,6 +40,7 @@ export type DailySubView = "form" | "records" | "issues" | "board";
 
 export type Route =
   | { kind: "hub" }
+  | { kind: "workspace" }
   | { kind: "list"; filters: ListQueryState }
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null };
@@ -347,8 +348,11 @@ export function parseHash(hash: string): Route {
   if (path === "/templates") {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
   }
-  if (path === "/files") {
-    return { kind: "placeholder", page: "files", section: null };
+  if (path === "/my-tasks") {
+    // 工作台（系统功能书 A6 我的工作台第一刀 · A6-01 / A6-03）：路由已转正式（Push 229），
+    // 页面（我的任务三组 + 我负责的问题两栏）随接线那一刀替换 App.tsx 里的临时占位；
+    // 接口已封 frontend/src/workspaceApi.ts（GET /api/v1/workspace）。
+    return { kind: "workspace" };
   }
   const match = PROJECT_PATH.exec(path);
   if (match) {
