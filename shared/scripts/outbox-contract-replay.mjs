@@ -1,7 +1,7 @@
 /*
  * Outbox 消费与调度契约回放（M5-02 草案 · Push 165 · wmj）：契约内不变式 + 键形态与再生窗口（Zod 层，无 DB / 无 HTTP）。
  * 运行：shared/ 下 node scripts/outbox-contract-replay.mjs；退出码 0 = 全过。
- * 口径：主题白名单（规则可订阅事件为其子集 + 写入端 ⊆ 白名单）/ 状态与库侧 CHECK 同值 / 幂等执行键 scope:entityId:window（含状态版本再生）。
+ * 口径：主题白名单（规则可订阅事件为其子集 + 写入端 ⊆ 白名单；Push 182 起预留清单为空 —— notify.message 已转写入端）/ 状态与库侧 CHECK 同值 / 幂等执行键 scope:entityId:window（含状态版本再生）。
  * 说明：库侧权威门禁在 server 的 test/schema-literals-parity.test.ts（lan 线，本脚本只做静态旁证）。
  */
 import { readdirSync, readFileSync } from "node:fs";
@@ -29,7 +29,8 @@ check("RULE_EVENT_TOPICS 是 OUTBOX_TOPICS 的子集", missing.length === 0, mis
 // 1b) 写入端 ↔ 白名单零漂移（静态旁证：扫 server/src 的主题字面量与主题常量；不连库）。
 const SERVER_SRC_URL = new URL("../../server/src/", import.meta.url);
 const TOPIC_CONSTANTS = { PREVIEW_JOB_TOPIC: "preview.job", NOTIFY_MESSAGE_TOPIC: "notify.message" };
-const RESERVED_TOPICS = ["notify.message"];
+// 定案口径 = 已写入闭集 ∪ 已定案预留主题；当前预留清单为空 —— notify.message 随 S7-4 规则接线转为写入端（Push 182 口径订正）。
+const RESERVED_TOPICS = [];
 function listTsFiles(dirUrl) {
   const files = [];
   for (const entry of readdirSync(dirUrl, { withFileTypes: true })) {
@@ -60,7 +61,7 @@ const unknownWrites = [...writtenTopics].filter((topic) => !OUTBOX_TOPICS.includ
 check("写入端主题 ⊆ 白名单（扫 server/src 字面量）", unknownWrites.length === 0, unknownWrites.length ? "未登记：" + unknownWrites.join(", ") : writtenTopics.size + " 个写入主题全部在册");
 check("主题常量均已在扫描表登记", unresolvedConstants.size === 0, unresolvedConstants.size ? "未登记常量：" + [...unresolvedConstants].join(", ") : Object.keys(TOPIC_CONSTANTS).length + " 个常量已登记");
 const deadTopics = OUTBOX_TOPICS.filter((topic) => !writtenTopics.has(topic) && !RESERVED_TOPICS.includes(topic));
-check("白名单无死条目（未写入者均在预留清单）", deadTopics.length === 0, deadTopics.length ? "死条目：" + deadTopics.join(", ") : "预留 " + RESERVED_TOPICS.length + " 项：" + RESERVED_TOPICS.join(", "));
+check("白名单无死条目（未写入者均在预留清单）", deadTopics.length === 0, deadTopics.length ? "死条目：" + deadTopics.join(", ") : RESERVED_TOPICS.length === 0 ? "全部 " + OUTBOX_TOPICS.length + " 项均有写入端（预留清单空）" : "预留 " + RESERVED_TOPICS.length + " 项：" + RESERVED_TOPICS.join(", "));
 
 
 // 2) 状态四值与库侧 CHECK ck_outbox_status 同值（读 0001 迁移文本，静态旁证）。
