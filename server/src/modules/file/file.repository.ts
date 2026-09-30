@@ -153,6 +153,7 @@ export interface FileCompletePatch {
  * 成对字段（finalized_ 两列、recycled_ 三列 + purge_after）由服务层保证同写同清（库侧有 CHECK）。
  */
 export interface FileStatePatch {
+  name?: string;
   status?: string;
   currentVersionId?: string | null;
   version?: number;

@@ -9,6 +9,7 @@ import {
   FilePurgeBodySchema,
   FilePurgeResponseSchema,
   FileRecycleBodySchema,
+  FileRenameBodySchema,
   FileRestoreBodySchema,
   FileRollbackBodySchema,
   FileRollbackResponseSchema,
@@ -70,6 +71,7 @@ type FileFinalizeBody = z.infer<typeof FileFinalizeBodySchema>;
 type FileRollbackBody = z.infer<typeof FileRollbackBodySchema>;
 type FileRollbackResponse = z.infer<typeof FileRollbackResponseSchema>;
 type FileRecycleBody = z.infer<typeof FileRecycleBodySchema>;
+type FileRenameBody = z.infer<typeof FileRenameBodySchema>;
 type FileRestoreBody = z.infer<typeof FileRestoreBodySchema>;
 type FilePurgeBody = z.infer<typeof FilePurgeBodySchema>;
 type FilePurgeResponse = z.infer<typeof FilePurgeResponseSchema>;
@@ -1064,6 +1066,45 @@ export class FileService {
     const offset = (query.page - 1) * query.limit;
     const { items, total } = await this.repository.listProjectFiles(projectId, filter, sorts, query.limit, offset);
     return { items: items.map(toFileView), page: query.page, limit: query.limit, total };
+  }
+
+  /**
+   * PATCH /files/{id}：文件改名（Push 226 续 · 业务口径「名称要可以修改」）。
+   * 只改元数据 `name`（不动内容 / 版本链 / 定档状态）；乐观锁 `version` 不匹配 → 409 VERSION_CONFLICT；
+   * 回收站中的文件不可改名（请先恢复）；提交名与现状相同 = 幂等无操作（不写审计、不升 version）。
+   */
+  async renameFile(fileId: string, body: FileRenameBody, actorId: string): Promise<FileView> {
+    const file = await this.loadFileForWrite(fileId, actorId);
+    const at = this.clock.now();
+    const name = body.name.trim();
+    if (name === "") {
+      throw new AppError("VALIDATION_FAILED", "文件名不能为空", [{ code: "required", message: "文件名不能为空", path: "name" }]);
+    }
+    return this.database.db.transaction(async (tx) => {
+      const locked = await this.lockFileOr404(tx, fileId);
+      this.assertOptimisticVersion(body.version, locked.version);
+      if (locked.status === "recycled") {
+        throw new AppError("FILE_STATE_INVALID", "文件已在回收站，不能改名；请先恢复");
+      }
+      if (name === locked.name) {
+        return toFileView(locked);
+      }
+      const updated = await this.repository.updateFileState(
+        fileId,
+        { name, version: locked.version + 1, updatedAt: at },
+        tx,
+      );
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "file",
+        objectId: fileId,
+        projectId: file.projectId,
+        summary: "文件改名：" + locked.name + " → " + name,
+        changes: [{ field: "name", from: locked.name, to: name }],
+      });
+      return toFileView(updated);
+    });
   }
 
   /**

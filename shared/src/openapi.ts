@@ -161,6 +161,7 @@ import {
   FilePurgeBodySchema,
   FilePurgeResponseSchema,
   FileRecycleBodySchema,
+  FileRenameBodySchema,
   FileRestoreBodySchema,
   FileRollbackBodySchema,
   FileRollbackResponseSchema,
@@ -1079,6 +1080,19 @@ export function buildOpenApiDocument() {
     request: { params: idParams, headers: idempotencyHeader, body: json(FileRecycleBodySchema) },
     responses: {
       200: { description: "已回收的文件", ...json(FileSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/files/{id}",
+    tags: ["files"],
+    summary: "文件改名（只改元数据名称；乐观锁 version 必传）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(FileRenameBodySchema) },
+    responses: {
+      200: { description: "改名后的文件", ...json(FileSchema) },
       404: commonErrors[404],
       409: commonErrors[409],
     },
