@@ -4076,9 +4076,10 @@
         "enum": [
           "word",
           "cell",
-          "slide"
+          "slide",
+          "pdf"
         ],
-        "description": "文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）"
+        "description": "文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）"
       },
       "PreviewViewerEditorConfig": {
         "type": "object",

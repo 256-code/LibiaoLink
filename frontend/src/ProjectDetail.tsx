@@ -15,7 +15,7 @@ import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
 import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
-import { fetchTaskFileNames, recycleFile, renameFile, uploadFiles } from "./fileApi";
+import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
@@ -117,9 +117,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 原「五层内存覆盖」（进度 / 字段编辑 / 看板顺序 / 行内删除 / 新增任务）随接线整体下线 —— 写成功即回读。
    */
   const [rawTasks, setRawTasks] = useState<ProjectTask[]>([]);
-  /** 任务 → 文件名数组（Push 226 续二）：「文件」列显示文件名 / 「+N」用 —— 随整表重取一起刷新
-   *  （列表接口不带文件名，这里按项目走文件库列表一次拉全量，见 fileApi.fetchTaskFileNames）。 */
-  const [taskFileNames, setTaskFileNames] = useState<Map<string, string[]>>(new Map());
+  /** 任务 → 文件引用数组（Push 226 续二；Push 246 起携 id——「文件」列下拉预览 / 删除用）：随整表重取一起刷新
+   *  （列表接口不带文件名，这里按项目走文件库列表一次拉全量，见 fileApi.fetchTaskFiles）。 */
+  const [taskFiles, setTaskFiles] = useState<Map<string, TaskFileRef[]>>(new Map());
   const [summary, setSummary] = useState<ApiProjectSummary | null>(null);
   /** 取数版本号：换项目、或新建 / 删除 / 排序 / 版本冲突后需要整表重取时 +1。 */
   const [dataVersion, setDataVersion] = useState(0);
@@ -205,25 +205,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (projectId === null) {
       setRawTasks([]);
       setSummary(null);
-      setTaskFileNames(new Map());
+      setTaskFiles(new Map());
       return undefined;
     }
     let alive = true;
     setDataLoading(true);
     void (async () => {
       try {
-        const [list, card, names] = await Promise.all([
+        const [list, card, files] = await Promise.all([
           fetchProjectTasks(projectId),
           fetchProjectSummary(projectId),
-          // 文件名映射是次要信息：取不到就退回「N 份」计数展示，不打断整表
-          fetchTaskFileNames(projectId).catch(() => new Map<string, string[]>()),
+          // 文件映射是次要信息：取不到就退回「N 份」计数展示，不打断整表
+          fetchTaskFiles(projectId).catch(() => new Map<string, TaskFileRef[]>()),
         ]);
         if (!alive) {
           return;
         }
         setRawTasks(list.items.map((item) => toUiTask(item)));
         setSummary(card);
-        setTaskFileNames(names);
+        setTaskFiles(files);
         setDataError(null);
         // 列表一次取满（契约 limit 上限 200）：超了先提示，按需分页随搜索那一刀接线
         if (list.total > list.items.length) {
@@ -922,7 +922,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} fileNames={taskFileNames} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径

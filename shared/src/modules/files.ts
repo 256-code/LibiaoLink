@@ -379,8 +379,8 @@ export const PreviewViewerSchema = z
   .object({
     kind: PreviewViewerKindSchema,
     docServerUrl: z.string().openapi({ description: "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）" }),
-    documentType: z.enum(["word", "cell", "slide"]).openapi("PreviewViewerDocumentType", {
-      description: "文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）",
+    documentType: z.enum(["word", "cell", "slide", "pdf"]).openapi("PreviewViewerDocumentType", {
+      description: "文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）",
     }),
     document: PreviewViewerDocumentSchema,
     editorConfig: PreviewViewerEditorConfigSchema,

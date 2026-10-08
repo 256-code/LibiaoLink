@@ -2,12 +2,13 @@
  * 文件库客户端（Push 216 · 日报 / 问题附图上传与预览接线；Push 226 · 任务「文件」列 / 抽屉上传接线）。
  * Push 226 续：任务文件删除（recycleFile —— 先读 version 再移入回收站）与图片点击预览（isImageFileName + ensurePreviewUrl）。
  * Push 226 续二：文件改名（renameFile —— PATCH /files/{id}，先读 version 再写）与列表「文件」列
- *   显示文件名所需的项目文件名单（fetchTaskFileNames —— 列表接口不带文件名，这里按项目一次拉全量，免 N+1）。
+ *   显示文件名所需的项目文件名单（fetchTaskFiles —— 列表接口不带文件名，这里按项目一次拉全量，免 N+1；Push 246 起携 id 供「文件」列下拉预览 / 删除）。
  * Push 226 续三：PDF / Office / 文本点击预览（previewKindOf —— 与 server preview.targets.ts 同口径）。
  * Push 226 续四：原文件下载（fetchDownloadUrl + triggerDownload —— 版本短时签名 attachment + 原文件名；
  *   与预览浮层区分：下载始终拿原文件、写 download 审计）。
  * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
  *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
+ * 2026-10-08：PDF 并入查看器通道（业务口径「统一用onlyoffice」）—— 服务端返回 viewer，本文件按响应裁决、无分支。
  * 上传链路（D2 分片直传，契约 shared/src/modules/files.ts；参考实现 server/scripts/m4-upload-replay.mjs）：
  *   POST /api/v1/files/uploads（intent=version，contentHash = SHA-256）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/parts 取预签名分片 URL
@@ -194,30 +195,34 @@ export function triggerDownload(url: string, fileName: string): void {
   anchor.remove();
 }
 
-/** 项目文件库名单（列表「文件」列显示文件名用）：按项目分页取满（契约 limit 上限 200、默认排除 recycled），
- *  返回 taskId → 文件名数组（服务端默认序 = 最新在前）；列表接口不带文件名，逐行反查会 N+1，这里一次拉全量。 */
-export async function fetchTaskFileNames(projectId: string): Promise<Map<string, string[]>> {
-  const names = new Map<string, string[]>();
+/** 任务文件引用（Push 246）：任务列表「文件」列下拉与单元格展示共用 —— id 供预览 / 删除，name 供展示。 */
+export type TaskFileRef = { id: string; name: string };
+
+/** 项目文件库名单（任务「文件」列下拉 / 单元格文件名用 · Push 246 起携 id）：按项目分页取满（契约 limit 上限 200、默认排除 recycled），
+ *  返回 taskId → 文件引用数组（服务端默认序 = 最新在前）；列表接口不带文件名，逐行反查会 N+1，这里一次拉全量；
+ *  Push 246 起带 id（下拉里点击文件名 = 预览、行尾「删除」= 移入回收站）。 */
+export async function fetchTaskFiles(projectId: string): Promise<Map<string, TaskFileRef[]>> {
+  const files = new Map<string, TaskFileRef[]>();
   for (let page = 1; page <= 20; page += 1) {
-    const list = await apiRequest<{ items: Array<{ name: string; taskId: string | null }>; total: number }>(
+    const list = await apiRequest<{ items: Array<{ id: string; name: string; taskId: string | null }>; total: number }>(
       "/api/v1/projects/" + encodeURIComponent(projectId) + "/files?limit=200&page=" + String(page),
     );
     for (const file of list.items) {
       if (file.taskId === null) {
         continue;
       }
-      const current = names.get(file.taskId);
+      const current = files.get(file.taskId);
       if (current === undefined) {
-        names.set(file.taskId, [file.name]);
+        files.set(file.taskId, [{ id: file.id, name: file.name }]);
       } else {
-        current.push(file.name);
+        current.push({ id: file.id, name: file.name });
       }
     }
     if (list.items.length === 0 || page * 200 >= list.total) {
       break;
     }
   }
-  return names;
+  return files;
 }
 
 /** fileId → 已就绪的预览签名（无 = 还没取到 / 取不到）。 */
