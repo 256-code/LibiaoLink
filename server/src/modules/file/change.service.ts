@@ -5,6 +5,7 @@ import {
   ChangeRequestSchema,
   z,
 } from "@libiaolink/contracts";
+import { AuditService } from "../admin/index.js";
 import { AppError } from "../../common/errors/app-error.js";
 import { PermissionService } from "../permission/index.js";
 import { parseChangeListFilter, parseChangeListSort, type ChangeRequestListQueryInput } from "./change.query.js";
@@ -29,6 +30,7 @@ export class ChangeService {
   constructor(
     private readonly repository: FileRepository,
     private readonly permission: PermissionService,
+    private readonly audit: AuditService,
   ) {}
 
   /** GET /projects/{id}/change-requests：变更记录列表（阶段 / 节点 / 文件 / 申请人筛选 + 关键字 + 排序 + 分页）。 */
@@ -50,7 +52,28 @@ export class ChangeService {
     if (file === null || version === null) {
       throw new AppError("INTERNAL", "变更记录的变更后文件 / 版本缺失（数据不一致）");
     }
-    return { ...toChangeListView(row), file: toFileView(file), version: toVersionView(version) };
+    return {
+      ...toChangeListView(row),
+      file: toFileView(file),
+      version: toVersionView(version),
+      filePreviousName: await this.previousFileName(changeRequestId),
+    };
+  }
+
+  /** 「变更前文件名称」（Push 256 · 业务口径「变更后文件的名字后后缀要用变更选择的」）：变更完成时若更名，
+   *  审计（objectType=change / objectId=本次变更）的 changes 记有 { field: "name", from, to } —— 读面按需回捞 from。
+   *  未更名 / 无审计（历史数据）= null；不新增 DDL（变更更名不落 change_requests 列）。 */
+  private async previousFileName(changeRequestId: string): Promise<string | null> {
+    const page = await this.audit.list({ objectType: "change", objectId: changeRequestId, action: "create", page: 1, limit: 10 });
+    for (const item of page.items) {
+      const entries = item.changes ?? [];
+      for (const entry of entries) {
+        if (entry.field === "name" && typeof entry.from === "string" && entry.from !== "") {
+          return entry.from;
+        }
+      }
+    }
+    return null;
   }
 }
 

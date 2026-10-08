@@ -3,7 +3,7 @@ import { FileDownloadUrlResponseSchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
-import { ObjectStorage } from "../../storage/index.js";
+import { ObjectStorage, versionFileName } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import { PermissionService } from "../permission/index.js";
 import { FileRepository } from "./file.repository.js";
@@ -55,9 +55,12 @@ export class FileDownloadService {
     if (version === null) {
       throw new AppError("NOT_FOUND", "版本不存在或不属于该文件");
     }
+    // Push 256：下载文件名按**该版本**对象键的扩展名（变更更名 / 改名后，历史版本仍以正确扩展名落盘 ——
+    // 与预览通道判定同口径 versionFileName）；主名取当前文件名。
+    const downloadName = versionFileName(file.name, version.objectKey);
     const signed = await this.storage.signDownloadUrl({
       objectKey: version.objectKey,
-      fileName: file.name,
+      fileName: downloadName,
       expiresInSeconds: this.config.env.S3_DOWNLOAD_URL_TTL_SECONDS,
     });
     await this.audit.record(this.database.db, {
@@ -71,7 +74,7 @@ export class FileDownloadService {
     });
     return {
       url: signed.url,
-      fileName: file.name,
+      fileName: downloadName,
       sizeBytes: version.sizeBytes,
       expiresAt: signed.expiresAt.toISOString(),
     };

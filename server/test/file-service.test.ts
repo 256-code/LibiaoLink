@@ -288,6 +288,7 @@ class FakeFileRepository {
       currentVersionId: patch.currentVersionId,
       version: patch.version,
       ...(patch.status === undefined ? {} : { status: patch.status }),
+      ...(patch.name === undefined ? {} : { name: patch.name }),
       updatedAt: patch.updatedAt,
     };
     return this.file;
@@ -736,12 +737,13 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     expect(h.repo.insertedFiles).toHaveLength(0);
     expect(h.repo.insertedSessions).toHaveLength(1);
     expect(h.repo.insertedSessions[0]).toMatchObject({ fileId: FILE, intent: "change" });
-    // 变更申请随会话落 change_payload（契约 ChangeIntentBody）：未给字段补空
+    // 变更申请随会话落 change_payload（契约 ChangeIntentBody）：未给字段补空；Push 256 起随带 fileName（变更后文件名称）
     expect(h.repo.insertedSessions[0]!.changePayload).toEqual({
       reason: "设计变更（变更单 CR-2026-0918）",
       beforeSummary: null,
       afterSummary: "按变更单调整孔位",
       stageKey: null,
+      fileName: "机械设计图纸.pdf",
     });
     expect(h.audit.entries.at(-1)).toMatchObject({
       action: "update",
@@ -749,6 +751,36 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
       objectId: FILE,
       changes: [{ field: "pendingChange", from: null, to: "设计变更（变更单 CR-2026-0918）" }],
       metadata: { intent: "change", targetFileId: FILE },
+    });
+  });
+
+  it("intent=change（Push 256 · 业务口径「变更后文件的名字后后缀要用变更选择的」）→ name = 变更后文件名称：与目标不同不再 400，随会话 change_payload.fileName 落库", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", version: 3, currentVersionId: VERSION, docType: "CAD图纸" });
+    const result = await h.service.createUpload(
+      {
+        projectId: PROJECT,
+        name: "回放-变更后.pptx",
+        sizeBytes: MI_B,
+        intent: "change",
+        fileId: FILE,
+        change: { reason: "换扩展名（xls → pptx）" },
+      },
+      ACTOR,
+    );
+
+    expect(result.file.id).toBe(FILE);
+    expect(result.upload.intent).toBe("change");
+    expect(h.repo.insertedFiles).toHaveLength(0);
+    expect(h.repo.insertedSessions[0]!.changePayload).toEqual({
+      reason: "换扩展名（xls → pptx）",
+      beforeSummary: null,
+      afterSummary: null,
+      stageKey: null,
+      fileName: "回放-变更后.pptx",
+    });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      summary: "发起变更上传（定档后变更）：机械设计图纸.pdf → 回放-变更后.pptx",
     });
   });
 
@@ -2130,6 +2162,40 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
       status: "pending",
       payload: { changeRequestId: change.id, fileId: FILE, versionId: VERSION, matchedTasks: [TASK, OTHER_TASK], ownerTaskId: TASK },
     });
+  });
+
+  it("（Push 256）变更后文件名称随上传采纳（业务口径「变更后文件的名字后后缀要用变更选择的」）：完成时 files.name 更名 + 对象键 / 存储元数据用新扩展名 + 审计记 name 变化", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "final", nodeId: NODE, taskId: TASK, docType: "CAD图纸", version: 3, currentVersionId: VERSION_A });
+    h.repo.session = makeSessionRow({
+      intent: "change",
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      changePayload: {
+        reason: "变更后文件后缀随上传",
+        beforeSummary: null,
+        afterSummary: null,
+        stageKey: null,
+        fileName: "回放-变更后.pptx",
+      },
+    });
+    h.repo.deliverableTaskIds = [TASK];
+    h.repo.nodeStageKey = "construction";
+
+    await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+
+    // files.name 更名；新版本对象键 / 存储元数据用变更后扩展名（.pptx）——历史版本对象键不动（假旧名不改写）
+    expect(h.repo.file!.name).toBe("回放-变更后.pptx");
+    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.pptx`);
+    expect(h.storage.copied[0]!.destinationKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.pptx`);
+    expect(h.storage.copied[0]!.metadata).toMatchObject({ "file-name": encodeURIComponent("回放-变更后.pptx") });
+    // 审计：完成变更上传记「旧名 → 新名」；变更 create 审计的 changes 同步带 name 变化
+    const completeAudit = h.audit.entries.at(-1) as { summary: string; changes: { field: string; from: unknown; to: unknown }[] };
+    expect(completeAudit.summary).toContain("机械设计图纸.pdf → 回放-变更后.pptx");
+    expect(completeAudit.changes).toContainEqual({ field: "name", from: "机械设计图纸.pdf", to: "回放-变更后.pptx" });
+    const changeAudit = h.audit.entries.at(-2) as { changes: { field: string }[] };
+    expect(changeAudit.changes).toContainEqual({ field: "name", from: "机械设计图纸.pdf", to: "回放-变更后.pptx" });
   });
 
   it("（Push 255）成果类型为空但文件挂了任务 → 所属任务直接回写变更关联（业务反馈「变更记录 / 变更关联没显示」）", async () => {

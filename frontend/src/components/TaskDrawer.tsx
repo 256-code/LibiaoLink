@@ -16,6 +16,7 @@ import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloa
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
+import { ChangeDetailModal } from "./ChangeDetailModal";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
@@ -331,6 +332,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
    *  不能再等点「详情」才取；changeDetailId = 展开全文的那一条（数据已预取，展开只是展示切换）。 */
   const [changeDetailId, setChangeDetailId] = useState<string | null>(null);
   const [changeEntries, setChangeEntries] = useState<Record<string, ChangeEntry>>({});
+  /** 「变更关联」点击弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：非空 = 屏幕中央展示该变更的「变更管理」详情。 */
+  const [changeModalId, setChangeModalId] = useState<string | null>(null);
   /** 预取重试版本号：取不到时点「重试」+1，触发预取 effect 重跑。 */
   const [changeDetailTick, setChangeDetailTick] = useState(0);
   /** 预取循环读的最新快照（避免闭包拿到旧值重复取）。 */
@@ -1260,12 +1263,19 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         ) : (
           <span className="flex flex-col gap-1">
             {task.changes.map((change) => (
-              <span key={change.id} className="flex flex-wrap items-center gap-1.5">
-                <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+              <button
+                key={change.id}
+                type="button"
+                data-change-link-open="true"
+                title="点击查看变更详情"
+                onClick={() => { setChangeModalId(change.id); }}
+                className="flex flex-wrap items-center gap-1.5 text-left"
+              >
+                <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200">
                   变更 {dateOnlyText(change.appliedAt)}
                 </span>
                 {change.reason === "" ? null : <span className="text-xs text-zinc-500">{change.reason}</span>}
-              </span>
+              </button>
             ))}
           </span>
         ),
@@ -1743,7 +1753,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                             versions={entry.versions}
                             previewBusy={previewBusy}
                             downloadBusy={downloadBusy}
-                            onPreview={(versionId) => { void openPreview(entry.detail.file.id, entry.detail.file.name, versionId); }}
+                            onPreview={(versionId, rowName) => { void openPreview(entry.detail.file.id, rowName, versionId); }}
                             onDownload={(versionId) => { void downloadFile(entry.detail.file.id, versionId); }}
                           />
                         )}
@@ -1796,6 +1806,16 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           onClose={() => { setPreview(null); }}
         />
       )}
+      {changeModalId === null ? null : (
+        <ChangeDetailModal
+          changeId={changeModalId}
+          linkedTaskTitle={task.title}
+          members={members}
+          deliverableTypes={task.deliverableTypes}
+          onOpenLinkedTask={() => { setChangeModalId(null); }}
+          onClose={() => { setChangeModalId(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -1808,11 +1828,12 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
   versions: FileVersionBrief[] | null;
   previewBusy: string | null;
   downloadBusy: string | null;
-  onPreview: (versionId: string) => void;
+  onPreview: (versionId: string, name: string) => void;
   onDownload: (versionId: string) => void;
 }) {
   const name = detail.file.name;
-  const previewable = previewKindOf(name) !== null;
+  // Push 256：变更同时更名时「变更前」行显示更名前名称（读面 filePreviousName，来自审计）；未更名回退当前名。
+  const beforeName = detail.filePreviousName === null ? name : detail.filePreviousName;
   const before = versions === null ? null : versions.find((item) => item.seq === detail.versionSeq - 1) ?? null;
   const rows: Array<{ kind: "before" | "after"; label: string; versionId: string | null; seq: number; sizeBytes: number; uploadedAt: string }> = [
     before === null
@@ -1824,14 +1845,17 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
     <div data-change-item-files="true" className="mt-1.5 flex flex-col gap-1 rounded-lg border border-zinc-100 bg-white px-2.5 py-2">
       {rows.map((row) => {
         const versionId = row.versionId;
+        // 行名 / 可预览性都按「该版本自己的名称」判：变更前 = 更名前名称（各版本扩展名随版本对象键）。
+        const rowName = row.kind === "before" ? beforeName : name;
+        const previewable = previewKindOf(rowName) !== null;
         return (
           <span key={row.kind} data-change-file={row.kind} className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-[11px] text-zinc-400">{row.label}：</span>
             {versionId === null ? (
-              <span className="min-w-0 flex-1 truncate text-xs text-zinc-400" title={versions === null ? "版本链取不到" : "首个版本"}>{name}（{versions === null ? "版本链取不到" : "首个版本"}）</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-zinc-400" title={versions === null ? "版本链取不到" : "首个版本"}>{rowName}（{versions === null ? "版本链取不到" : "首个版本"}）</span>
             ) : (
-              <span className="min-w-0 flex-1 truncate text-xs text-zinc-700" title={name + " · v" + String(row.seq) + " · " + dateOnlyText(row.uploadedAt)}>
-                {name}
+              <span className="min-w-0 flex-1 truncate text-xs text-zinc-700" title={rowName + " · v" + String(row.seq) + " · " + dateOnlyText(row.uploadedAt)}>
+                {rowName}
                 <span className="ml-1 text-[10px] text-zinc-400">v{String(row.seq)} · {fileSizeText(row.sizeBytes)}</span>
               </span>
             )}
@@ -1839,7 +1863,7 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
               <button
                 type="button"
                 data-change-preview={row.kind}
-                onClick={() => { onPreview(versionId); }}
+                onClick={() => { onPreview(versionId, rowName); }}
                 disabled={previewBusy !== null}
                 className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
               >

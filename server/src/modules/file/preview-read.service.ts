@@ -4,7 +4,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutboxIfAbsent } from "../../db/outbox.js";
-import { ObjectStorage } from "../../storage/index.js";
+import { ObjectStorage, versionFileName } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import { UserService } from "../identity/index.js";
 import { PermissionService } from "../permission/index.js";
@@ -78,15 +78,21 @@ export class PreviewReadService {
       return this.degrade(file.id, null, "文件尚无任何版本（未完成过上传），请下载查看");
     }
 
+    // Push 256（业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：通道判定的文件名取**该版本**
+    // 的真实名称 —— 主名取当前文件名、扩展名取版本对象键（落库时定下的扩展名）。变更更名（.xls → .pptx）后，
+    // 新版本按新扩展名判通道（否则 ONLYOFFICE 报 -85「扩展名不一致」）；历史版本仍按各自旧扩展名判通道
+    //（否则历史的 xls 内容会被当成 pptx）。
+    const channelName = versionFileName(file.name, version.objectKey);
+
     // S6-前置（D6）：图片 → 原对象短时签名直签（优先于产物通道判定：不投任务 / 不落产物行 / 不经 deploy/preview）。
-    if (isImageFile({ fileName: file.name, mime: version.mime })) {
+    if (isImageFile({ fileName: channelName, mime: version.mime })) {
       return this.serveImageDirect(file, version, actorId);
     }
 
-    const targets = previewTargetsFor({ fileName: file.name, mime: version.mime });
+    const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
     if (targets.length === 0) {
       // S3（ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
-      const viewerChannel = viewerChannelFor({ fileName: file.name, mime: version.mime });
+      const viewerChannel = viewerChannelFor({ fileName: channelName, mime: version.mime });
       if (viewerChannel !== null) {
         return this.serveViewer(file, version, viewerChannel, actorId);
       }

@@ -153,8 +153,10 @@ export type FileChangePayload = {
  * 提交 = `intent=change` 分片直传（沿用上传管道），完成上传时同事务生成变更记录 + 新版本挂 changeRequestId +
  * 文件状态改 changed + R01 回写任务「变更关联」；**无变更后文件不允许提交**（A4-13 提交校验，本函数 file 必传）。
  * 变更后清一次该文件的预览签名缓存（旧版本 URL 作废）。
+ * Push 256（业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：`name` 传**变更后文件名**（含扩展名）
+ * —— 服务端完成变更时把文件更名为该名称（对象键 / 预览通道随之用新扩展名；历史版本仍按各自旧扩展名预览）。
  */
-export async function applyFileChange(projectId: string, target: TaskFileRef, file: Blob, change: FileChangePayload, taskFinalized = false): Promise<void> {
+export async function applyFileChange(projectId: string, target: TaskFileRef, file: File, change: FileChangePayload, taskFinalized = false): Promise<void> {
   const taskFinalizedDraft = taskFinalized && target.status === "draft";
   if (target.status !== "final" && target.status !== "changed" && !taskFinalizedDraft) {
     throw new Error("只有已定档文件可以发起变更");
@@ -169,7 +171,7 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
   const contentHash = await sha256Hex(buffer);
   const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
     projectId,
-    name: target.name,
+    name: file.name === "" ? target.name : file.name,
     sizeBytes: file.size,
     mime: file.type === "" ? undefined : file.type,
     contentHash,
@@ -203,6 +205,8 @@ export type ChangeRequestDetail = {
   versionSeq: number;
   file: { id: string; name: string; docType: string | null; status: string };
   version: { id: string; seq: number; sizeBytes: number; uploadedAt: string };
+  /** Push 256：本次变更同时更名时 = 更名前文件名称（变更记录「变更前」行显示）；未更名 = null。 */
+  filePreviousName: string | null;
 };
 
 /** 变更详情（抽屉「变更记录」页按任务 changeLinks 逐条取全文；非成员 / 不存在统一 404）。 */
@@ -210,7 +214,7 @@ export function fetchChangeRequest(id: string): Promise<ChangeRequestDetail> {
   return apiRequest<ChangeRequestDetail>("/api/v1/change-requests/" + encodeURIComponent(id));
 }
 
-export async function replaceFileContent(projectId: string, target: TaskFileRef, file: Blob, reason: string | null, finalize = false): Promise<void> {
+export async function replaceFileContent(projectId: string, target: TaskFileRef, file: File, reason: string | null, finalize = false): Promise<void> {
   const needsChange = target.status === "final" || target.status === "changed";
   const changeReason = reason === null ? "" : reason.trim();
   if (needsChange && changeReason === "") {
@@ -220,7 +224,8 @@ export async function replaceFileContent(projectId: string, target: TaskFileRef,
   const contentHash = await sha256Hex(buffer);
   const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
     projectId,
-    name: target.name,
+    // Push 256：change 路径 name = 变更后文件名（完成时更名）；version 路径须与目标文件一致（直接替换 = 同一文件）
+    name: needsChange ? (file.name === "" ? target.name : file.name) : target.name,
     sizeBytes: file.size,
     mime: file.type === "" ? undefined : file.type,
     contentHash,

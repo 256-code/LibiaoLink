@@ -21,7 +21,7 @@ export type {
   StorageFailureCode,
   UploadedPart,
 } from "./object-storage.js";
-export { buildObjectKey, buildPreviewArtifactKey, buildUploadStagingKey, extensionOf } from "./object-key.js";
+export { buildObjectKey, buildPreviewArtifactKey, buildUploadStagingKey, extensionOf, versionFileName } from "./object-key.js";
 export type { ObjectKeyInput } from "./object-key.js";
 export {
   DEFAULT_PART_SIZE_BYTES,
