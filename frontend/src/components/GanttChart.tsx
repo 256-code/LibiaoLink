@@ -1561,7 +1561,10 @@ export function GanttChart({ tasks, members, onPatchTask, onSetProgress }: { tas
               只给「裁切层」上 clipPath（只裁不重排 —— 列宽一直不变，也不新建滚动容器，sticky 照常）。
               分隔线把手放在裁切层之外，否则悬停高亮线与外侧 8px 的抓手会被一起裁掉。
             */}
-            <div className="sticky left-0 z-20 shrink-0" style={{ width: leftWidth }}>
+            {/* 层级（Push 244 业务口径「甘特图页面会挡住 日报子页面」）：左侧 sticky 表列 z-20 → **z-[19]** ——
+                低于主标签栏的 z-20（同 TaskBoard 表头口径），两列齐平时不再按 DOM 靠后盖住「日报及问题」下拉面板；
+                对时间轴各列仍是最高层（列本身 z-auto），左表「横向不滚」的吸层行为不变。 */}
+            <div className="sticky left-0 z-[19] shrink-0" style={{ width: leftWidth }}>
               <div
                 className="h-full border-r border-zinc-200 bg-white"
                 style={{ width: leftWidth, clipPath: "inset(0)" }}
