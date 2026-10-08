@@ -1760,8 +1760,8 @@ describe("FileService.finalizeFile（定档锁版）", () => {
       dedupeKey: "file.finalized:" + FILE + ":6",
       status: "pending",
     });
-    // M4-05c 定档预生成（P1）：PDF 2026-10-08 并入查看器通道后不再投 preview.job（业务口径「统一用onlyoffice」）——
-    // 本用例只有 file.finalized；预生成覆盖见下方 .png / .zip 用例。
+    // M4-05c 定档预生成（P1）：PDF 2026-10-08 并入查看器通道、图片 S6-前置 起改原对象直签 —— 均不再投 preview.job
+    // （业务口径「统一用onlyoffice」）；本用例只有 file.finalized，预生成负例见下方 .png / .zip 用例。
     expect((h.database.outbox as { topic: string }[]).map((entry) => entry.topic)).toEqual(["file.finalized"]);
   });
 
@@ -1808,16 +1808,13 @@ describe("FileService.finalizeFile（定档锁版）", () => {
     expect((h.database.outbox as { topic: string }[]).map((entry) => entry.topic)).toEqual(["file.finalized"]);
   });
 
-  it("定档预生成：图片版本（.png）投 image 通道（不是 pdf）", async () => {
+  it("定档预生成：图片版本（.png）不投 preview.job（S6-前置 直签后转换管线无投递）", async () => {
     const h = makeService();
     h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 1, name: "现场照片.png" });
     h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1, mime: "image/png" })];
     await h.service.finalizeFile(FILE, { version: 1 }, ACTOR);
 
-    expect((h.database.outbox.at(-1) as { topic: string; dedupeKey: string })).toMatchObject({
-      topic: "preview.job",
-      dedupeKey: "preview.job:" + HASH + ":1.0.0:image",
-    });
+    expect((h.database.outbox as { topic: string }[]).map((entry) => entry.topic)).toEqual(["file.finalized"]);
   });
 });
 

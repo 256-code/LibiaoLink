@@ -2,34 +2,37 @@ import { extensionOf } from "../../storage/index.js";
 import type { PreviewTarget } from "./preview.job.js";
 
 /**
- * 预览通道判定（S3 起两段口径：转换产物通道 + ONLYOFFICE 查看器通道 · ADR-030 / S8-2 定案）。
+ * 预览通道判定（S3 起两段口径 · S6-前置 起收敛：图片直签 + 查看器通道 · ADR-030 / S8-2 定案 / 计划 D6）。
  *
- * - **产物通道**（`previewTargetsFor`）：只投 / 只走「转换管线真能出产物」的通道 —— 图片 → `image`（直通）；
- *   `structured` 一期 501 不投（缓存键 / 枚举保留，随二期结构化渲染启用）；PDF 自 2026-10-08 起并入查看器通道、不再走源直通产物。
- *   Office / 文本族自 S3 起**不再投递转换任务**（改由 ONLYOFFICE 查看器承接、无转换产物 ——
- *   就绪以 `FilePreviewResponse.viewer` 判定、不占 `target`）。判不出类型不投：读取侧按确定性降级「请下载」。
+ * - **图片直签**（S6-前置 · D6 · `isImageFile`）：图片预览不走产物通道 —— 读取侧对原对象短时签名直出
+ *   （不投转换任务、不落产物行、不经 `deploy/preview`；字节 = 原对象；前端 `url` 通道与缩略图零改动）。
+ * - **投递通道**（`previewTargetsFor`）：S6-前置 起**无投递**（常量空表）—— 图片改直签后转换管线归零消费者；
+ *   `structured` 一期 501 不投（缓存键 / 枚举保留，随二期结构化渲染启用：届时在此恢复映射）。
  * - **查看器通道**（`viewerChannelFor`）：Office（含宏变体 docm / xlsm / pptm）+ 文本族（txt / csv / html / htm）
  *   + PDF（2026-10-08 业务口径「统一用onlyoffice」）→ ONLYOFFICE 文档大类（word / cell / slide / pdf）+
  *   文件类型（扩展名小写；无扩展名时按 MIME 反推）—— 查看器配置 `documentType` / `document.fileType` 的输入
  *   （S8-2 三补 1：文本族按 word / cell 映射）。
  *
- * 判定优先级与历史口径一致：图片（扩展名或 MIME）优先，其余才进查看器族。
- * 分类只影响「谁被提前转换 / 谁直接进查看器」；转换器自身的通道判定（扩展名 + `x-source-mime`）不变 ——
- * 两侧口径不一致时转换器返回 415 / 422，按确定性失败降级，不会产出错产物。
+ * 判定优先级与历史口径一致：图片（扩展名或 MIME）优先，其余才进查看器族 —— 读取侧先判 `isImageFile`、
+ * 再判查看器通道；判不出类型不投 / 不落表，读取侧按确定性降级「请下载」。
  */
 
 /** 图片族：浏览器直接渲染；矢量 SVG 也归 image 通道（ADR-007：枚举按渲染通道而非格式定义）。 */
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "svg"]);
 
-/**
- * 产物通道映射：图片 → image、其余不投（PDF / Office / 文本族走查看器通道 —— PDF 2026-10-08 并入）。
- */
-export function previewTargetsFor(input: { fileName: string; mime: string | null }): readonly PreviewTarget[] {
+/** 图片直签判定（S6-前置 · D6）：扩展名或 MIME ∈ 图片族 —— 读取侧据此走原对象短时签名。 */
+export function isImageFile(input: { fileName: string; mime: string | null }): boolean {
   const extension = extensionOf(input.fileName);
   const mime = (input.mime ?? "").toLowerCase();
-  if (IMAGE_EXTENSIONS.has(extension) || mime.startsWith("image/")) {
-    return ["image"];
-  }
+  return IMAGE_EXTENSIONS.has(extension) || mime.startsWith("image/");
+}
+
+/**
+ * 投递通道映射（M4-05c 定档预生成 / 读取侧补投的共用判定点）：S6-前置（D6）起常量空表 ——
+ * 图片改原对象直签（见 `isImageFile`，不经转换）、其余走查看器通道，转换管线无投递；
+ * `structured` 二期启用时在此恢复映射（契约 `PREVIEW_TARGETS` 枚举已预留）。
+ */
+export function previewTargetsFor(_input: { fileName: string; mime: string | null }): readonly PreviewTarget[] {
   return [];
 }
 
