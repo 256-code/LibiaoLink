@@ -89,6 +89,8 @@ interface ChangePayload {
   beforeSummary: string | null;
   afterSummary: string | null;
   stageKey: string | null;
+  /** Push 256：变更后文件名称（完成变更时采纳为 files.name —— 更名 + 扩展名随上传）。 */
+  fileName: string | null;
 }
 
 const HOUR_MS = 3_600_000;
@@ -163,10 +165,13 @@ export class FileService {
     });
     // 目标文件（Push 130 定案；M4-02 放开 version、M4-04 放开 change）：
     // version 给出 fileId = 对既有 draft 文件替换 / 追加版本；change 必填 fileId = 对已定档（final / changed）文件发起变更。
+    // Push 256（业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：change 的 name = **变更后文件名称**
+    // —— 可不同于目标文件名，随会话 change_payload.fileName 一并落库；完成上传时把 files.name 更名为该名称
+    //（扩展名随之上新，预览 / 下载按新名称）；version / 新建沿用原口径（version 与目标一致、新建 = name）。
     const target = await this.resolveUploadTarget(body, actorId);
     const isChange = body.intent === "change";
-    const changePayload = body.intent === "change" ? normalizeChangePayload(body.change) : null;
-    const effectiveName = target === null ? body.name : target.name;
+    const changePayload = isChange ? normalizeChangePayload(body.change, body.name) : null;
+    const effectiveName = target === null || isChange ? body.name : target.name;
     const effectiveDocType = target === null ? body.docType ?? null : target.docType;
     const effectiveNodeId = target === null ? body.nodeId : target.nodeId ?? undefined;
     const effectiveTaskId = target === null ? body.taskId : target.taskId ?? undefined;
@@ -237,10 +242,10 @@ export class FileService {
         projectId: body.projectId,
         summary:
           (target === null
-            ? "发起上传："
+            ? "发起上传：" + effectiveName
             : isChange
-              ? "发起变更上传（定档后变更）："
-              : "发起上传（既有 draft 文件追加版本）：") + effectiveName,
+              ? "发起变更上传（定档后变更）：" + (target.name === effectiveName ? effectiveName : target.name + " → " + effectiveName)
+              : "发起上传（既有 draft 文件追加版本）：" + effectiveName),
         changes:
           target === null
             ? [
@@ -406,14 +411,18 @@ export class FileService {
 
     // 契约键（ADR-006：v{seq}/{contentHash}.{ext}）：先复制再落库 —— 若数据库事务失败，重试会覆盖同一个键，
     // 不留「落库版本指向不存在对象」的悬挂引用；seq 在事务内锁行复核，防并发完成抢同一位次。
+    // Push 256：change 意图采纳「变更后文件名称」（会话 change_payload.fileName）—— 对象键 / 存储元数据 / 完成
+    // 事务内的 files.name 全部随新名称（扩展名随之上新）；历史版本对象键不动，按各自扩展名预览 / 下载（preview-read / download 同口径）。
+    const changePayload = isChange ? readChangePayload(session.changePayload) : null;
+    const effectiveName = changePayload?.fileName ?? file.name;
     const seq = await this.repository.nextVersionSeq(fileId);
-    const objectKey = buildObjectKey({ projectId: file.projectId, fileId, seq, contentHash, fileName: file.name });
+    const objectKey = buildObjectKey({ projectId: file.projectId, fileId, seq, contentHash, fileName: effectiveName });
     try {
       await this.storage.copyObject({
         sourceKey: stagingKey,
         destinationKey: objectKey,
         contentType: session.mime,
-        metadata: { "file-name": encodeURIComponent(file.name) },
+        metadata: { "file-name": encodeURIComponent(effectiveName) },
       });
     } catch (error) {
       throw toApiError(error);
@@ -463,7 +472,7 @@ export class FileService {
           : await this.insertChangeInTx(tx, {
               changeRequestId,
               file: lockedFile,
-              payload: readChangePayload(session.changePayload),
+              payload: changePayload ?? readChangePayload(session.changePayload),
               actorId,
               at,
             });
@@ -487,6 +496,7 @@ export class FileService {
           currentVersionId: version.id,
           version: lockedFile.version + 1,
           status: isChange ? "changed" : undefined,
+          name: isChange && effectiveName !== lockedFile.name ? effectiveName : undefined,
           updatedAt: at,
         },
         tx,
@@ -502,11 +512,12 @@ export class FileService {
       if (changeDraft !== null) {
         await this.finishChangeInTx(tx, {
           draft: changeDraft,
-          file: lockedFile,
+          file: effectiveName === lockedFile.name ? lockedFile : { ...lockedFile, name: effectiveName },
           version,
           actorId,
           at,
           fromStatus: lockedFile.status,
+          renamedFrom: effectiveName === lockedFile.name ? null : lockedFile.name,
         });
       }
       const changeRequest = changeDraft === null ? null : changeDraft.row;
@@ -517,11 +528,12 @@ export class FileService {
         objectId: fileId,
         projectId: file.projectId,
         summary: isChange
-          ? "完成变更上传：" + lockedFile.name + " v" + version.seq + "（状态 " + lockedFile.status + " → changed）"
+          ? "完成变更上传：" + (effectiveName === lockedFile.name ? lockedFile.name : lockedFile.name + " → " + effectiveName) + " v" + version.seq + "（状态 " + lockedFile.status + " → changed）"
           : "完成上传：" + lockedFile.name + " v" + version.seq,
         changes: [
           { field: "currentVersionId", from: lockedFile.currentVersionId, to: version.id },
           { field: "version", from: String(lockedFile.version), to: String(updatedFile.version) },
+          ...(effectiveName === lockedFile.name ? [] : [{ field: "name", from: lockedFile.name, to: effectiveName }]),
         ],
         metadata: {
           uploadId: session.id,
@@ -597,12 +609,14 @@ export class FileService {
   }
 
   /**
-   * M4-04 变更生效第二步（版本写入之后）：同事务写 `file_links`(change) + R01 回写任务 `change_refs` + 变更审计
+   * M4-04 变更生效第二步（版本写入之后）：同事务写 `file_links`(change) + 任务回写 `change_refs` + 变更审计
    * + outbox `change.applied`；变更后文件状态置 `changed`（由调用方随状态流转落库）。
    *
-   * R01 口径（ADR-024 多值命中 / `docs/rules/R01-R07-内置规则文案.md` / A1-07）：按「变更文件成果类型 ∈
-   * 任务输出成果文件（deliverable_types 多值）」匹配任务 —— 命中多条全部关联（`change_refs` 追加 + 去重）；
-   * 无匹配只记日志（不阻断变更生效，提示申请人由通知侧承担，随 M5）。
+   * 任务关联口径（Push 255 业务反馈「同时相关的关联也没有显示啊」；ADR-024 多值命中 / `docs/rules/R01-R07-内置规则文案.md` / A1-07）：
+   * ① **变更文件所属任务**（`files.task_id`）直接回写 —— 变更发生在哪个任务里，就必须出现在哪个任务的「变更记录 / 变更关联」里
+   *   （此前只走 ②，而前端上传口不带成果类型 → doc_type 为空 → R01 匹配零条 → 变更关联一直空）；
+   * ② **R01**：按「变更文件成果类型 ∈ 任务输出成果文件（deliverable_types 多值）」匹配 —— 命中多条全部关联；
+   * ① ∪ ② 去重后统一「追加 + 去重」写 `change_refs`；一条都没有只记日志（不阻断变更生效，提示申请人由通知侧承担，随 M5）。
    */
   private async finishChangeInTx(
     tx: DbTransaction,
@@ -613,6 +627,8 @@ export class FileService {
       actorId: string;
       at: Date;
       fromStatus: string;
+      /** Push 256：本次变更同时更名时 = 更名前名称（审计记 name 变化）；未更名 = null。 */
+      renamedFrom: string | null;
     },
   ): Promise<void> {
     const { file } = input;
@@ -623,10 +639,12 @@ export class FileService {
     );
     const matchedTaskIds =
       file.docType === null ? [] : await this.repository.listTaskIdsByDeliverable(file.projectId, file.docType, tx);
-    const linkedTasks = await this.repository.appendTasksChangeRefs(matchedTaskIds, changeRequest.id, tx);
+    const targetTaskIds =
+      file.taskId === null || matchedTaskIds.includes(file.taskId) ? matchedTaskIds : [file.taskId, ...matchedTaskIds];
+    const linkedTasks = await this.repository.appendTasksChangeRefs(targetTaskIds, changeRequest.id, tx);
     if (linkedTasks === 0) {
       this.logger.warn(
-        "变更 R01 无匹配任务（变更关联未回写）：" + changeRequest.id + " / 成果类型 " + String(file.docType),
+        "变更无关联任务（所属任务为空 + R01 无匹配，变更关联未回写）：" + changeRequest.id + " / 成果类型 " + String(file.docType),
       );
     }
     await this.audit.record(tx, {
@@ -636,7 +654,10 @@ export class FileService {
       objectId: changeRequest.id,
       projectId: file.projectId,
       summary: "变更申请即通过：" + file.name + " → v" + input.version.seq + "（" + summarizeText(changeRequest.reason, 60) + "）",
-      changes: [{ field: "status", from: input.fromStatus, to: "changed" }],
+      changes: [
+        { field: "status", from: input.fromStatus, to: "changed" },
+        ...(input.renamedFrom === null ? [] : [{ field: "name", from: input.renamedFrom, to: file.name }]),
+      ],
       metadata: {
         fileId: file.id,
         versionId: input.version.id,
@@ -645,6 +666,8 @@ export class FileService {
         stageKey,
         deliverableType: file.docType,
         matchedTasks: matchedTaskIds,
+        ownerTaskId: file.taskId,
+        linkedTaskIds: targetTaskIds,
         linkedTasks,
       },
     });
@@ -661,6 +684,7 @@ export class FileService {
         stageKey,
         reason: changeRequest.reason,
         matchedTasks: matchedTaskIds,
+        ownerTaskId: file.taskId,
         actorId: input.actorId,
         at: input.at.toISOString(),
       },
@@ -977,7 +1001,7 @@ export class FileService {
           : await this.insertChangeInTx(tx, {
               changeRequestId,
               file: locked,
-              payload: { reason: body.reason, beforeSummary: null, afterSummary: null, stageKey: null },
+              payload: { reason: body.reason, beforeSummary: null, afterSummary: null, stageKey: null, fileName: null },
               actorId,
               at,
             });
@@ -1014,6 +1038,7 @@ export class FileService {
           actorId,
           at,
           fromStatus: locked.status,
+          renamedFrom: null,
         });
       }
       const changeRequest = changeDraft === null ? null : changeDraft.row;
@@ -1246,7 +1271,7 @@ export class FileService {
   /**
    * 目标文件解析（Push 130 定案；M4-02 放开 version、M4-04 放开 change；Push 254 续放行「任务已定档」）：
    * `fileId` 省略（仅 version）→ 新建文件（返回 null）；给出：不存在 / 不可见 → 404；与 projectId 不一致 /
-   * 名称与归属（name / docType / nodeId / taskId）与现状不符 → 400；状态：version 意图须 draft、change 意图须
+   * 归属（docType / nodeId / taskId）与现状不符 → 400（change 的 name 例外 —— Push 256：= 变更后文件名称，可不同于目标）；状态：version 意图须 draft、change 意图须
    * final / changed（或 draft 但其挂接任务已定档），否则 409 FILE_STATE_INVALID。生效字段一律以目标文件现状为准。
    */
   private async resolveUploadTarget(body: UploadCreateBody, actorId: string): Promise<FileRow | null> {
@@ -1286,7 +1311,9 @@ export class FileService {
         "目标文件当前状态（" + file.status + "）不允许追加版本；定档后修改请走变更（M4-04）",
       );
     }
-    if (body.name !== file.name) {
+    // Push 256：change 的 name = 变更后文件名称（可不同于目标 —— 完成变更时更名，见 createUpload / completeUpload）；
+    // version 意图仍要求与目标文件一致（直接替换 = 同一文件，名称不变）。
+    if (body.intent !== "change" && body.name !== file.name) {
       throw new AppError("VALIDATION_FAILED", "name 与目标文件现状不一致（以目标文件为准，可原样回填）", [
         { code: "name_mismatch", message: "name 与目标文件不一致", path: "name", meta: { current: file.name } },
       ]);
@@ -1589,12 +1616,13 @@ export function toChangeRequestView(
 }
 
 /** 变更申请载荷规范化（`intent=change` 随上传会话落 `upload_sessions.change_payload`）。 */
-function normalizeChangePayload(change: ChangeIntentBody): ChangePayload {
+function normalizeChangePayload(change: ChangeIntentBody, fileName: string): ChangePayload {
   return {
     reason: change.reason,
     beforeSummary: change.beforeSummary ?? null,
     afterSummary: change.afterSummary ?? null,
     stageKey: change.stageKey ?? null,
+    fileName,
   };
 }
 
@@ -1606,6 +1634,7 @@ function readChangePayload(value: unknown): ChangePayload {
     beforeSummary: typeof record.beforeSummary === "string" ? record.beforeSummary : null,
     afterSummary: typeof record.afterSummary === "string" ? record.afterSummary : null,
     stageKey: typeof record.stageKey === "string" ? record.stageKey : null,
+    fileName: typeof record.fileName === "string" && record.fileName !== "" ? record.fileName : null,
   };
 }
 

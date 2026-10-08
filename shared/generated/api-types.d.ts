@@ -7164,6 +7164,8 @@ export interface components {
         ChangeRequestDetail: components["schemas"]["ChangeRequest"] & {
             file: components["schemas"]["File"];
             version: components["schemas"]["FileVersion"];
+            /** @description 变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null） */
+            filePreviousName: string | null;
         };
         ChangeRequestListResponse: {
             items: (components["schemas"]["ChangeRequest"] & unknown)[];
@@ -8807,9 +8809,10 @@ export interface components {
             version: components["schemas"]["FileVersion"];
             changeRequest: components["schemas"]["ChangeRequest"];
         };
-        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效） */
+        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效；name = 变更后文件名称 —— 完成时文件更名为该名称） */
         UploadCreateBody: {
             projectId: components["schemas"]["Uuid"];
+            /** @description 文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称） */
             name: string;
             /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
             sizeBytes: number;
@@ -8823,6 +8826,7 @@ export interface components {
             fileId?: components["schemas"]["Uuid"] & unknown;
         } | {
             projectId: components["schemas"]["Uuid"];
+            /** @description 文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称） */
             name: string;
             /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
             sizeBytes: number;

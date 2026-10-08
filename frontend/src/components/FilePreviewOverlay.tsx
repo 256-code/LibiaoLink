@@ -9,11 +9,13 @@ import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
  *  短时签名地址（D2-04 禁止匿名读取）。Esc / 点浮层关闭；capture 阶段拦 keydown，避免同一按 Esc
  *  连带把外层（详情抽屉 / 文件下拉）关掉（「Esc 先关内层」口径）。
  *  Push 226 续四：caption 挂「下载原文件」—— 查看器自带的下载拿的是**转换产物**，这里直取原文件。 */
-export function FilePreviewOverlay({ pane, name, kind, nonce, onRetry, onDownload, onClose }: {
+export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]", onRetry, onDownload, onClose }: {
   pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
   name: string;
   kind: FilePreviewKind;
   nonce: number;
+  /** 浮层层级（Push 256 续：变更详情弹窗内的预览要盖在弹窗 z-[70] 之上 → 传 z-[80]；默认同抽屉口径 z-[60]）。 */
+  zClass?: string;
   onRetry: () => void;
   onDownload: () => void;
   onClose: () => void;
@@ -40,7 +42,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, onRetry, onDownloa
         event.stopPropagation();
         onClose();
       }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
+      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 p-6"}
     >
       <figure className="flex max-h-full max-w-full flex-col items-center">
         {pane.mode === "viewer" ? (

@@ -101,6 +101,10 @@ export const ChangeRequestSchema = z
 export const ChangeRequestDetailSchema = ChangeRequestSchema.extend({
   file: FileSchema,
   version: FileVersionSchema,
+  filePreviousName: z
+    .string()
+    .nullable()
+    .openapi({ description: "变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null）" }),
 }).openapi("ChangeRequestDetail");
 
 export const ChangeRequestListQuerySchema = z
@@ -130,7 +134,9 @@ export const ChangeIntentBodySchema = z
 
 const UploadCreateBaseSchema = z.object({
   projectId: UuidSchema,
-  name: z.string().min(1).max(255),
+  name: z.string().min(1).max(255).openapi({
+    description: "文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称）",
+  }),
   sizeBytes: z
     .number()
     .int()
@@ -160,12 +166,12 @@ export const UploadCreateBodySchema = z
     UploadCreateBaseSchema.extend({
       intent: z.literal("change"),
       fileId: UuidSchema.openapi({
-        description: "变更目标文件（必填，A4-13）：须为已定档（final / changed）状态；非该状态 → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空",
+        description: "变更目标文件（必填，A4-13）：须为已定档（final / changed）状态；非该状态 → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；归属（docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；**name = 变更后文件名称（Push 256）**：可与目标文件名不同（不一致不再 400）—— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称；duplicateHint 恒为空",
       }),
       change: ChangeIntentBodySchema,
     }),
   ])
-  .openapi("UploadCreateBody", { description: "发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效）" });
+  .openapi("UploadCreateBody", { description: "发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效；name = 变更后文件名称 —— 完成时文件更名为该名称）" });
 
 export const UploadSessionSchema = z
   .object({

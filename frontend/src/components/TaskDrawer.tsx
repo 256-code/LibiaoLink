@@ -12,10 +12,11 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type PreviewViewerConfig } from "../fileApi";
+import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
+import { ChangeDetailModal } from "./ChangeDetailModal";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
@@ -41,6 +42,27 @@ const DRAWER_TABS: Array<{ key: DrawerTab; label: string }> = [
   { key: "history", label: "变更记录" },
 ];
 
+/** 「变更记录」页每条的数据（Push 255）：detail = 变更全文；versions = 该文件版本链（取「变更前」v(n-1)，
+ *  取不到记 null 只出「变更后」）；两者任一失败时 note = 灰字原因 + 「重试」。 */
+type ChangeEntry =
+  | { state: "loading" }
+  | { state: "ready"; detail: ChangeRequestDetail; versions: FileVersionBrief[] | null }
+  | { state: "error"; note: string };
+
+/** 文件大小展示（变更记录版本行）：B / KB / MB / GB。 */
+function fileSizeText(bytes: number): string {
+  if (bytes < 1024) {
+    return String(bytes) + " B";
+  }
+  if (bytes < 1024 * 1024) {
+    return (bytes / 1024).toFixed(1) + " KB";
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+}
+
 /** 可变更文件状态（A4-13）：只有已定档（final）/ 已变更（changed）文件可以发起变更；Push 254 续：任务已定档时的 draft 文件同视为已定档（见 taskFinalized）。 */
 const CHANGEABLE_STATUS: Record<string, boolean> = { final: true, changed: true };
 
@@ -62,15 +84,16 @@ function stageLabelOf(stageKey: string | null): string {
   return label === "" ? "—" : label;
 }
 
-/** 文件状态标签（Push 226 续修）：**只标非定档档位** —— 「未定档 / 已定档」不再出现在文件清单里
- *  （业务口径 2026-09-29：定档是整个项目的定档安排，不由单个文件区分；定档功能后续单独开发）。 */
+/** 文件状态标签（Push 226 续修 · Push 255 收窄）：**只标非定档档位** —— 「未定档 / 已定档」不再出现在文件清单里
+ *  （业务口径 2026-09-29：定档是整个项目的定档安排，不由单个文件区分；定档功能后续单独开发）。
+ *  Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊 直接显示变更后添加的文件 不要显示已变更」）：
+ *  changed 不再挂签 —— 变更完成后清单里这一行显示的就是**变更后的文件本身**（名称沿用 + 当前版本已是变更版本），
+ *  再挂「已变更」只是赘述；归档 / 回收站档位保留（那是与在库文件的差异，仍要看得出）。 */
 const FILE_STATUS_LABEL: Record<string, string> = {
-  changed: "已变更",
   archived: "已归档",
   recycled: "回收站",
 };
 const FILE_STATUS_CLASS: Record<string, string> = {
-  changed: "bg-sky-50 text-sky-700",
   archived: "bg-zinc-100 text-zinc-500",
   recycled: "bg-zinc-100 text-zinc-400",
 };
@@ -266,6 +289,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     name: string;
     kind: FilePreviewKind;
     fileId: string;
+    /** Push 255：版本态预览（变更记录里预览「变更前 / 变更后」）—— null = 当前版本（文件清单口径不变）。 */
+    versionId: string | null;
     nonce: number;
   } | null>(null);
   /** 正在取预览签名的文件 id（null = 没有）。 */
@@ -303,11 +328,17 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const [changeFinalizeId, setChangeFinalizeId] = useState<string | null>(null);
   const [changeFinalizeBusy, setChangeFinalizeBusy] = useState(false);
   const [changeFinalizeDone, setChangeFinalizeDone] = useState<string | null>(null);
-  /** 「变更记录」页：展开中的变更 id 与其详情（列表只带短原因，全文按需取；note = 取不到的一行灰字）。 */
+  /** 「变更记录」页（Push 255 重构）：每条的详情 + 版本链随页预取 —— 列表行就要显示「之前是什么文件 / 这次是什么文件」，
+   *  不能再等点「详情」才取；changeDetailId = 展开全文的那一条（数据已预取，展开只是展示切换）。 */
   const [changeDetailId, setChangeDetailId] = useState<string | null>(null);
-  const [changeDetail, setChangeDetail] = useState<ChangeRequestDetail | null>(null);
-  const [changeDetailNote, setChangeDetailNote] = useState<string | null>(null);
-  const [changeDetailBusy, setChangeDetailBusy] = useState(false);
+  const [changeEntries, setChangeEntries] = useState<Record<string, ChangeEntry>>({});
+  /** 「变更关联」点击弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：非空 = 屏幕中央展示该变更的「变更管理」详情。 */
+  const [changeModalId, setChangeModalId] = useState<string | null>(null);
+  /** 预取重试版本号：取不到时点「重试」+1，触发预取 effect 重跑。 */
+  const [changeDetailTick, setChangeDetailTick] = useState(0);
+  /** 预取循环读的最新快照（避免闭包拿到旧值重复取）。 */
+  const changeEntriesRef = useRef(changeEntries);
+  changeEntriesRef.current = changeEntries;
 
   useEffect(() => {
     closingRef.current = false;
@@ -342,9 +373,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     setChangeFinalizeBusy(false);
     setChangeFinalizeDone(null);
     setChangeDetailId(null);
-    setChangeDetail(null);
-    setChangeDetailNote(null);
-    setChangeDetailBusy(false);
+    setChangeEntries({});
+    setChangeDetailTick(0);
     setDraft(draftOf(task, managerIds));
     // 换任务时把草稿重置成新任务的字段；同一个任务上父级刷新不重置，避免打断正在输入的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -390,6 +420,44 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       window.clearTimeout(timer);
     };
   }, [savedTick]);
+
+  /** 「变更记录」页预取（Push 255）：进页即逐条取全文 + 版本链（列表行显示变更前 / 变更后文件）——
+   *  已取到（或已取败）的不重复取；「重试」经 changeDetailTick 触发重跑。 */
+  const changeIdsKey = task === null ? "" : task.changes.map((change) => change.id).join(",");
+  useEffect(() => {
+    if (tab !== "history" || changeIdsKey === "") {
+      return undefined;
+    }
+    let alive = true;
+    void (async () => {
+      for (const id of changeIdsKey.split(",")) {
+        if (changeEntriesRef.current[id] !== undefined) {
+          continue;
+        }
+        setChangeEntries((previous) => (previous[id] === undefined ? { ...previous, [id]: { state: "loading" } } : previous));
+        try {
+          const detail = await fetchChangeRequest(id);
+          const versions = await fetchFileVersions(detail.fileId).catch(() => null);
+          if (!alive) {
+            return;
+          }
+          setChangeEntries((previous) => ({ ...previous, [id]: { state: "ready", detail, versions } }));
+        } catch (error: unknown) {
+          if (!alive) {
+            return;
+          }
+          setChangeEntries((previous) => ({
+            ...previous,
+            [id]: { state: "error", note: error instanceof Error && error.message !== "" ? error.message : "记录取不到" },
+          }));
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, changeIdsKey, changeDetailTick]);
 
   const requestClose = useCallback(() => {
     if (closingRef.current) {
@@ -516,13 +584,13 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览读取会写「查看」审计，不该随清单一开就铺开申请。
    *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
    *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
-  const openPreview = async (fileId: string, name: string) => {
+  const openPreview = async (fileId: string, name: string, versionId?: string) => {
     if (previewBusy !== null) {
       return;
     }
     setPreviewBusy(fileId);
     setPreviewNote(null);
-    const outcome = await ensurePreviewOutcome(fileId);
+    const outcome = await ensurePreviewOutcome(fileId, versionId);
     setPreviewBusy(null);
     const kind = previewKindOf(name) ?? "image";
     if (outcome.kind === "unavailable") {
@@ -530,20 +598,20 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       return;
     }
     if (outcome.kind === "viewer") {
-      setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, nonce: 0 });
+      setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, versionId: versionId ?? null, nonce: 0 });
       return;
     }
-    setPreview({ pane: { mode: "url", url: outcome.url }, name, kind, fileId, nonce: 0 });
+    setPreview({ pane: { mode: "url", url: outcome.url }, name, kind, fileId, versionId: versionId ?? null, nonce: 0 });
   };
 
   /** 查看器外壳「重试」（S4 · R5）：重取查看器配置（token 随签发刷新）+ nonce 自增强制重建；
    *  仍取不到（failed / 超时）→ 关浮层 + 一行灰字降级提示。 */
-  const retryPreview = async (fileId: string, name: string) => {
+  const retryPreview = async (fileId: string, name: string, versionId?: string) => {
     if (previewBusy !== null) {
       return;
     }
     setPreviewBusy(fileId);
-    const outcome = await ensurePreviewOutcome(fileId);
+    const outcome = await ensurePreviewOutcome(fileId, versionId);
     setPreviewBusy(null);
     if (outcome.kind === "unavailable") {
       setPreview(null);
@@ -557,21 +625,21 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       const pane = outcome.kind === "viewer"
         ? { mode: "viewer" as const, viewer: outcome.viewer }
         : { mode: "url" as const, url: outcome.url };
-      return { pane, name, kind: previous.kind, fileId, nonce: previous.nonce + 1 };
+      return { pane, name, kind: previous.kind, fileId, versionId: previous.versionId, nonce: previous.nonce + 1 };
     });
   };
 
   /** 下载原文件（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：取当前版本的
    *  attachment 短时签名（原文件字节 + 原文件名；服务端写 download 审计），再触发浏览器落盘 ——
    *  与预览区分（S4）：Office / 文本族走 ONLYOFFICE 查看器渲染、图片 / PDF 走产物浮层；下载始终拿原文件。 */
-  const downloadFile = async (fileId: string) => {
+  const downloadFile = async (fileId: string, versionId?: string) => {
     if (downloadBusy !== null) {
       return;
     }
-    setDownloadBusy(fileId);
+    setDownloadBusy(versionId === undefined ? fileId : versionId);
     setPreviewNote(null);
     try {
-      const signed = await fetchDownloadUrl(fileId);
+      const signed = await fetchDownloadUrl(fileId, versionId);
       triggerDownload(signed.url, signed.fileName);
     } catch (error) {
       setPreviewNote(error instanceof Error && error.message !== "" ? error.message : "下载失败，请稍后再试");
@@ -760,31 +828,19 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       });
   };
 
-  /** 变更记录展开 / 收起（列表短文本 → 详情全文按需取；再点同一条 = 收起）。 */
+  /** 变更记录展开 / 收起（Push 255：详情已随页预取，这里只切展开态；再点同一条 = 收起）。 */
   const toggleChangeDetail = (id: string) => {
-    if (changeDetailBusy) {
-      return;
-    }
-    if (changeDetailId === id) {
-      setChangeDetailId(null);
-      setChangeDetail(null);
-      setChangeDetailNote(null);
-      return;
-    }
-    setChangeDetailId(id);
-    setChangeDetail(null);
-    setChangeDetailNote(null);
-    setChangeDetailBusy(true);
-    void fetchChangeRequest(id)
-      .then((detail) => {
-        setChangeDetail(detail);
-      })
-      .catch((error: unknown) => {
-        setChangeDetailNote(error instanceof Error && error.message !== "" ? error.message : "记录取不到");
-      })
-      .finally(() => {
-        setChangeDetailBusy(false);
-      });
+    setChangeDetailId((previous) => (previous === id ? null : id));
+  };
+
+  /** 变更记录单条重试（详情 / 版本链取不到时）：清掉该条 + 触发预取 effect 重跑。 */
+  const retryChangeEntry = (id: string) => {
+    setChangeEntries((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+    setChangeDetailTick((tick) => tick + 1);
   };
 
   const rows: Array<{ label: string; value: ReactNode }> = [
@@ -1207,12 +1263,19 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         ) : (
           <span className="flex flex-col gap-1">
             {task.changes.map((change) => (
-              <span key={change.id} className="flex flex-wrap items-center gap-1.5">
-                <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+              <button
+                key={change.id}
+                type="button"
+                data-change-link-open="true"
+                title="点击查看变更详情"
+                onClick={() => { setChangeModalId(change.id); }}
+                className="flex flex-wrap items-center gap-1.5 text-left"
+              >
+                <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200">
                   变更 {dateOnlyText(change.appliedAt)}
                 </span>
                 {change.reason === "" ? null : <span className="text-xs text-zinc-500">{change.reason}</span>}
-              </span>
+              </button>
             ))}
           </span>
         ),
@@ -1649,13 +1712,13 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel="变更记录">
             <div data-drawer-page="history" className="flex flex-col gap-2 py-4">
               {task.changes.length === 0 ? (
-                <p data-drawer-history-empty="true" className="rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">暂无变更记录：变更生效后自动关联到本任务（按输出成果文件命中）。</p>
+                <p data-drawer-history-empty="true" className="rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">暂无变更记录：变更生效后自动关联到本任务（变更文件所属任务直接回写；输出成果文件命中 R01 一并关联）。</p>
               ) : (
                 <>
-                  <p className="text-[11px] leading-4 text-zinc-400">本任务关联的变更（最新在前）；点「详情」取变更全文。</p>
+                  <p className="text-[11px] leading-4 text-zinc-400">本任务关联的变更（最新在前）；每条 = 变更前文件 → 变更后文件（各自可预览 / 下载），点「详情」取变更全文。</p>
                   {[...task.changes].reverse().map((change) => {
                     const open = changeDetailId === change.id;
-                    const detail = open && changeDetail !== null && changeDetail.id === change.id ? changeDetail : null;
+                    const entry = changeEntries[change.id];
                     return (
                       <div key={change.id} data-change-item={change.id} className="rounded-xl border border-zinc-100 bg-zinc-50/60 px-3 py-2.5">
                         <div className="flex items-start gap-2">
@@ -1670,22 +1733,46 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                             {open ? "收起" : "详情"}
                           </button>
                         </div>
+                        {entry === undefined || entry.state === "loading" ? (
+                          <p data-change-item-files="true" className="mt-1.5 rounded-lg border border-zinc-100 bg-white px-2.5 py-2 text-[11px] text-zinc-400">变更文件加载中…</p>
+                        ) : entry.state === "error" ? (
+                          <p data-change-item-note="true" className="mt-1.5 flex items-center gap-2 rounded-lg border border-zinc-100 bg-white px-2.5 py-2 text-[11px] text-zinc-400">
+                            <span className="min-w-0 flex-1">{entry.note}</span>
+                            <button
+                              type="button"
+                              data-change-item-retry="true"
+                              onClick={() => { retryChangeEntry(change.id); }}
+                              className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                            >
+                              重试
+                            </button>
+                          </p>
+                        ) : (
+                          <ChangeFileRows
+                            detail={entry.detail}
+                            versions={entry.versions}
+                            previewBusy={previewBusy}
+                            downloadBusy={downloadBusy}
+                            onPreview={(versionId, rowName) => { void openPreview(entry.detail.file.id, rowName, versionId); }}
+                            onDownload={(versionId) => { void downloadFile(entry.detail.file.id, versionId); }}
+                          />
+                        )}
                         {open ? (
                           <div data-change-item-detail="true" className="mt-2 flex flex-col gap-1 border-t border-zinc-100 pt-2 text-xs leading-5 text-zinc-600">
-                            {detail !== null ? (
+                            {entry !== undefined && entry.state === "ready" ? (
                               <>
-                                <span>变更后文件：{detail.file.name}（版本 v{String(detail.versionSeq)}）</span>
-                                <span>变更阶段：{stageLabelOf(detail.stageKey)}</span>
-                                <span>变更原因：{detail.reason}</span>
-                                <span>审批状态：{detail.status === "applied" ? "已通过（申请即通过）" : detail.status}</span>
-                                {detail.beforeSummary === null || detail.beforeSummary === "" ? null : <span>变更前：{detail.beforeSummary}</span>}
-                                {detail.afterSummary === null || detail.afterSummary === "" ? null : <span>变更后：{detail.afterSummary}</span>}
-                                <span className="text-zinc-400">申请人：{memberNameOf(members, detail.appliedBy) ?? "成员"} · {dateOnlyText(detail.appliedAt)}</span>
+                                <span>变更后文件：{entry.detail.file.name}（版本 v{String(entry.detail.versionSeq)}）</span>
+                                <span>变更阶段：{stageLabelOf(entry.detail.stageKey)}</span>
+                                <span>变更原因：{entry.detail.reason}</span>
+                                <span>审批状态：{entry.detail.status === "applied" ? "已通过（申请即通过）" : entry.detail.status}</span>
+                                {entry.detail.beforeSummary === null || entry.detail.beforeSummary === "" ? null : <span>变更前：{entry.detail.beforeSummary}</span>}
+                                {entry.detail.afterSummary === null || entry.detail.afterSummary === "" ? null : <span>变更后：{entry.detail.afterSummary}</span>}
+                                <span className="text-zinc-400">申请人：{memberNameOf(members, entry.detail.appliedBy) ?? "成员"} · {dateOnlyText(entry.detail.appliedAt)}</span>
                               </>
-                            ) : changeDetailNote === null ? (
-                              <span className="text-zinc-400">加载中…</span>
+                            ) : entry !== undefined && entry.state === "error" ? (
+                              <span data-change-item-note="true" className="text-zinc-400">{entry.note}</span>
                             ) : (
-                              <span data-change-item-note="true" className="text-zinc-400">{changeDetailNote}</span>
+                              <span className="text-zinc-400">加载中…</span>
                             )}
                           </div>
                         ) : null}
@@ -1694,6 +1781,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                   })}
                 </>
               )}
+              {previewNote === null ? null : <p data-file-preview-note="true" className="text-[11px] text-zinc-400">{previewNote}</p>}
             </div>
           </ScrollArea>
         )}
@@ -1713,11 +1801,89 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           name={preview.name}
           kind={preview.kind}
           nonce={preview.nonce}
-          onRetry={() => { void retryPreview(preview.fileId, preview.name); }}
-          onDownload={() => { void downloadFile(preview.fileId); }}
+          onRetry={() => { void retryPreview(preview.fileId, preview.name, preview.versionId ?? undefined); }}
+          onDownload={() => { void downloadFile(preview.fileId, preview.versionId ?? undefined); }}
           onClose={() => { setPreview(null); }}
         />
       )}
+      {changeModalId === null ? null : (
+        <ChangeDetailModal
+          changeId={changeModalId}
+          linkedTaskTitle={task.title}
+          members={members}
+          deliverableTypes={task.deliverableTypes}
+          onOpenLinkedTask={() => { setChangeModalId(null); }}
+          onClose={() => { setChangeModalId(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 「变更记录」每条的变更文件行（Push 255 · 业务口径「变更记录也要显示 之前是什么文件 这次是什么文件…文件可以预览在变更里面」）：
+ *  变更前 = 版本链里 seq = 变更版本号 - 1 的那一版（版本链只追加）；变更后 = 本次变更的版本（详情自带）。
+ *  预览 / 下载都走版本态入口（A4-06：任意历史版本可预览与下载）—— 可预览类型（图片 / PDF / Office 文本族）出「预览」钮，其余只出「下载」。 */
+function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview, onDownload }: {
+  detail: ChangeRequestDetail;
+  versions: FileVersionBrief[] | null;
+  previewBusy: string | null;
+  downloadBusy: string | null;
+  onPreview: (versionId: string, name: string) => void;
+  onDownload: (versionId: string) => void;
+}) {
+  const name = detail.file.name;
+  // Push 256：变更同时更名时「变更前」行显示更名前名称（读面 filePreviousName，来自审计）；未更名回退当前名。
+  const beforeName = detail.filePreviousName === null ? name : detail.filePreviousName;
+  const before = versions === null ? null : versions.find((item) => item.seq === detail.versionSeq - 1) ?? null;
+  const rows: Array<{ kind: "before" | "after"; label: string; versionId: string | null; seq: number; sizeBytes: number; uploadedAt: string }> = [
+    before === null
+      ? { kind: "before", label: "变更前", versionId: null, seq: detail.versionSeq - 1, sizeBytes: 0, uploadedAt: "" }
+      : { kind: "before", label: "变更前", versionId: before.id, seq: before.seq, sizeBytes: before.sizeBytes, uploadedAt: before.uploadedAt },
+    { kind: "after", label: "变更后", versionId: detail.versionId, seq: detail.versionSeq, sizeBytes: detail.version.sizeBytes, uploadedAt: detail.version.uploadedAt },
+  ];
+  return (
+    <div data-change-item-files="true" className="mt-1.5 flex flex-col gap-1 rounded-lg border border-zinc-100 bg-white px-2.5 py-2">
+      {rows.map((row) => {
+        const versionId = row.versionId;
+        // 行名 / 可预览性都按「该版本自己的名称」判：变更前 = 更名前名称（各版本扩展名随版本对象键）。
+        const rowName = row.kind === "before" ? beforeName : name;
+        const previewable = previewKindOf(rowName) !== null;
+        return (
+          <span key={row.kind} data-change-file={row.kind} className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0 text-[11px] text-zinc-400">{row.label}：</span>
+            {versionId === null ? (
+              <span className="min-w-0 flex-1 truncate text-xs text-zinc-400" title={versions === null ? "版本链取不到" : "首个版本"}>{rowName}（{versions === null ? "版本链取不到" : "首个版本"}）</span>
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-xs text-zinc-700" title={rowName + " · v" + String(row.seq) + " · " + dateOnlyText(row.uploadedAt)}>
+                {rowName}
+                <span className="ml-1 text-[10px] text-zinc-400">v{String(row.seq)} · {fileSizeText(row.sizeBytes)}</span>
+              </span>
+            )}
+            {previewable && versionId !== null ? (
+              <button
+                type="button"
+                data-change-preview={row.kind}
+                onClick={() => { onPreview(versionId, rowName); }}
+                disabled={previewBusy !== null}
+                className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+              >
+                {previewBusy === versionId ? "预览中…" : "预览"}
+              </button>
+            ) : null}
+            {versionId === null ? null : (
+              <button
+                type="button"
+                data-change-download={row.kind}
+                onClick={() => { onDownload(versionId); }}
+                disabled={downloadBusy !== null}
+                className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+              >
+                {downloadBusy === versionId ? "下载中…" : "下载"}
+              </button>
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }
