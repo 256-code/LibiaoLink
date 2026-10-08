@@ -16,6 +16,7 @@ import {
   TaskCreateFromTemplateResponseSchema,
   TaskDeleteResponseSchema,
   TaskDetailSchema,
+  TaskFinalizeBodySchema,
   TaskGateMissingSchema,
   TaskGateWarningSchema,
   TaskListItemSchema,
@@ -60,6 +61,7 @@ import { TaskGateRepository, type TaskGateDocCountRow, type TaskGateScope } from
 
 type Task = z.infer<typeof TaskSchema>;
 type TaskDetail = z.infer<typeof TaskDetailSchema>;
+type TaskFinalizeBody = z.infer<typeof TaskFinalizeBodySchema>;
 type TaskListItem = z.infer<typeof TaskListItemSchema>;
 type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
 type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
@@ -86,7 +88,7 @@ type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchem
  */
 type TaskWriteRequest = Pick<
   TaskUpdateBody,
-  "title" | "titleEn" | "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "note" | "sortIndex"
+  "title" | "titleEn" | "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "deliverableTypes" | "note" | "sortIndex"
 > & { expectedVersion: number | null };
 
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
@@ -450,6 +452,7 @@ export class TaskService {
             estimatedDays: body.estimatedDays,
             headcount: body.headcount,
             priority: body.priority,
+            deliverableTypes: body.deliverableTypes,
             note: body.note,
           },
           actorId,
@@ -538,6 +541,7 @@ export class TaskService {
     const at = new Date();
     await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
+      this.assertTaskMutable(before);
       const references = await this.referencesOf(tx, before);
       if (references.length > 0) {
         throw new AppError(
@@ -596,6 +600,7 @@ export class TaskService {
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
+      this.assertTaskMutable(before);
       if (before.version !== body.version) {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
       }
@@ -675,6 +680,19 @@ export class TaskService {
     return row;
   }
   /**
+   * 任务定档写口闸（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
+   * 定档后的任务不支持任何修改 —— 编辑 / 批量 / 进度 / 完成提交 / 删除 / 锁定字段例外调整一律 409 TASK_FINALIZED。
+   * 唯一保留的修改通道 = 对已定档文件的变更（A2-10「定档后修改须走变更管理」，A4-13 申请即通过）。
+   */
+  private assertTaskMutable(task: TaskRow): void {
+    if (task.finalizedAt !== null) {
+      throw new AppError("TASK_FINALIZED", "任务已定档，不支持任何修改（文件修改走变更）", [
+        { code: "task_finalized", message: "任务定档时间：" + task.finalizedAt.toISOString(), path: "finalizedAt" },
+      ]);
+    }
+  }
+
+  /**
    * 单条写入内核（编辑 / 批量共用）：锁行 → 校验 → 状态联动 → 门禁 → 落库 + 事件 + outbox + 审计。
    * expectedVersion = null 表示批量（按当前行覆盖：批量是「把选中行统一改成同一值」，不带逐行乐观锁）；
    * batchId 非空时审计 metadata 标注「批量」入口（entry=batch）并共享批次号。
@@ -700,6 +718,7 @@ export class TaskService {
     if (before === null || before.projectId !== projectId) {
       throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
     }
+    this.assertTaskMutable(before);
     if (request.expectedVersion !== null && before.version !== request.expectedVersion) {
       throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
     }
@@ -740,6 +759,8 @@ export class TaskService {
       estimatedDays: request.estimatedDays !== undefined ? request.estimatedDays : before.estimatedDays,
       headcount: request.headcount !== undefined ? request.headcount : before.headcount,
       priority: request.priority !== undefined ? request.priority : before.priority,
+      // 2026-10-08（业务口径「文件输出成果也要可以选择」）：输出成果文件常规编辑开放（去重保序；[] = 不要求）
+      deliverableTypes: request.deliverableTypes !== undefined ? normalizeDocTypes(request.deliverableTypes) : before.deliverableTypes,
       note: request.note !== undefined ? request.note : before.note,
     };
     const updated = await this.repository.updateWithVersion(taskId, request.expectedVersion ?? before.version, patch, at, tx);
@@ -792,6 +813,7 @@ export class TaskService {
       if (before === null || before.projectId !== projectId) {
         throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
       }
+      this.assertTaskMutable(before);
       if (before.version !== body.version) {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
       }
@@ -879,6 +901,7 @@ export class TaskService {
         if (before === null || before.projectId !== projectId) {
           throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
         }
+        this.assertTaskMutable(before);
         if (before.status === "done") {
           throw new AppError("TASK_ALREADY_DONE", "任务已完成，无需重复提交");
         }
@@ -944,6 +967,61 @@ export class TaskService {
       }),
     );
     return { task: toTaskView(result.task, today, await this.changeLinksOf(result.task)), warnings: result.warnings };
+  }
+
+  /**
+   * POST /projects/{id}/tasks/{taskId}/finalize：任务定档（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）。
+   * 口径：未定档 → 置位 finalized_at / finalized_by（version+1、留痕、outbox task.finalized、项目触点）；此后写口一律 409 TASK_FINALIZED（assertTaskMutable）；修改走变更。
+   * 已定档 → 幂等短路（200 原样返回，不写库 / 不递增版本 —— 抽屉开关重复点击 / 与文件定档并发都只生效一次）；version 不匹配 → 409 VERSION_CONFLICT。
+   * 与文件定档（file.finalizeFile → markTaskFinalized）双入口并存：两条路径都只置位一次。
+   */
+  async finalize(projectId: string, taskId: string, body: TaskFinalizeBody, actorId: string): Promise<Task> {
+    await this.loadProjectForWrite(projectId);
+    const at = new Date();
+    const today = shanghaiToday(at);
+    const row = await this.database.db.transaction(async (tx) => {
+      const before = await this.requireActiveTask(tx, projectId, taskId);
+      if (before.finalizedAt !== null) {
+        return before;
+      }
+      if (before.version !== body.version) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      const updated = await this.repository.updateWithVersion(
+        taskId,
+        body.version,
+        { finalizedAt: at, finalizedBy: actorId },
+        at,
+        tx,
+      );
+      if (updated === null) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      await appendOutbox(tx, {
+        topic: "task.finalized",
+        dedupeKey: "task.finalized:" + taskId + ":" + updated.version,
+        payload: {
+          projectId,
+          taskId,
+          finalizedAt: at.toISOString(),
+          finalizedBy: actorId,
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+      await this.repository.touchProject(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "task",
+        objectId: taskId,
+        projectId,
+        summary: "任务定档：" + updated.title + "（此后不支持任何修改；文件修改走变更）",
+        changes: [{ field: "finalizedAt", from: null, to: at.toISOString() }],
+      });
+      return updated;
+    });
+    return toTaskView(row, today, await this.changeLinksOf(row));
   }
 
   /**
@@ -1128,6 +1206,8 @@ function toBatchFailure(taskId: string, error: unknown): TaskBatchFailure | null
       return { id: taskId, code: "already_done", message };
     case "VERSION_CONFLICT":
       return { id: taskId, code: "version_conflict", message };
+    case "TASK_FINALIZED":
+      return { id: taskId, code: "finalized", message };
     default:
       return error.httpStatus >= 400 && error.httpStatus < 500
         ? { id: taskId, code: "invalid_state", message }
@@ -1171,6 +1251,7 @@ function taskAuditSnapshot(row: {
   estimatedDays: number | null;
   headcount: number | null;
   priority: string | null;
+  deliverableTypes: string[];
   note: string | null;
 }): Record<string, unknown> {
   return {
@@ -1187,6 +1268,7 @@ function taskAuditSnapshot(row: {
     estimatedDays: row.estimatedDays,
     headcount: row.headcount,
     priority: row.priority,
+    deliverableTypes: normalizeDocTypes(row.deliverableTypes),
     note: row.note,
   };
 }
@@ -1224,6 +1306,8 @@ function toTaskView(row: TaskRow, today: string, changeLinks: Task["changeLinks"
     note: row.note,
     onTime: deriveOnTime(input),
     changeLinks,
+    finalizedAt: row.finalizedAt === null ? null : row.finalizedAt.toISOString(),
+    finalizedBy: row.finalizedBy,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

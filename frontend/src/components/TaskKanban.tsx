@@ -261,6 +261,11 @@ type TaskKanbanProps = {
   onDeleteFile?: (fileId: string) => Promise<void>;
   /** 任务文件改名（Push 226 续二）：透传给任务详情抽屉 —— 清单里点名字编辑提交，由调用方执行。 */
   onRenameFile?: (fileId: string, name: string) => Promise<void>;
+  /**
+   * 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：透传给任务详情抽屉，确认后由调用方 POST …/finalize
+   * （置位后任务不支持任何修改，服务端 409 TASK_FINALIZED 兜底）；不传 = 抽屉不渲染开关。
+   */
+  onFinalize?: (taskId: string) => void;
   projectId?: string;
 };
 
@@ -780,7 +785,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, projectId }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, projectId }: TaskKanbanProps) {
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
    * 新建的临时任务等列表刷新回来即自动打开详情，不依赖点击那一刻的快照。
@@ -1185,6 +1190,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
         onUploadFiles={onUploadFiles}
         onDeleteFile={onDeleteFile}
         onRenameFile={onRenameFile}
+        onFinalize={onFinalize}
         projectId={projectId}
         onClose={() => {
           setSelectedTaskId(null);

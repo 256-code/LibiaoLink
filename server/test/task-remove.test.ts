@@ -89,6 +89,8 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     updatedAt: new Date("2026-09-01T00:00:00Z"),
     deletedAt: null,
     deletedBy: null,
+    finalizedAt: null,
+    finalizedBy: null,
     ...overrides,
   };
 }
@@ -421,6 +423,23 @@ describe("M3-05 · 任务软删（A25）", () => {
     const details = (rejected as { details: { code: string; meta?: Record<string, unknown> }[] }).details;
     expect(details.map((item) => item.code)).toEqual(["change_ref", "issue_ref"]);
     expect(details[1]?.meta?.["count"]).toBe(3);
+    expect(repo.tasks.get(TASK_A)?.deletedAt).toBeNull();
+    expect(db.outbox).toEqual([]);
+    expect(audit.entries).toEqual([]);
+  });
+});
+
+
+describe("Push 249 · 定档任务写口闸（删除）", () => {
+  it("定档任务：删除 → 409 TASK_FINALIZED，不落库 / 无 outbox / 无审计", async () => {
+    const repo = new FakeTaskRepository();
+    repo.tasks.set(TASK_A, makeRow(TASK_A, { finalizedAt: new Date("2026-10-08T02:00:00Z"), finalizedBy: ACTOR }));
+    const { service, db, audit } = makeService(repo);
+    await expect(service.remove(PROJECT, TASK_A, ACTOR)).rejects.toMatchObject({
+      code: "TASK_FINALIZED",
+      httpStatus: 409,
+      details: [{ code: "task_finalized", path: "finalizedAt" }],
+    });
     expect(repo.tasks.get(TASK_A)?.deletedAt).toBeNull();
     expect(db.outbox).toEqual([]);
     expect(audit.entries).toEqual([]);

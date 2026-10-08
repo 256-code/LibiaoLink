@@ -25,6 +25,7 @@ import {
   deleteTask,
   fetchProjectSummary,
   fetchProjectTasks,
+  finalizeTask,
   stageKeyOfName,
   statusWriteValue,
   taskWriteMessage,
@@ -301,16 +302,20 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   /**
    * 任务文件上传（Push 226 · 「文件」列与任务抽屉共用一条链路）：逐份分片直传文件库并关联任务（taskId），
    * 完成后整表重取刷新文件计数（文件不改变项目时间，不触发 onTaskEdited）；失败走统一写入错误出口（toolError 提示条）。
+   * finalize（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
+   * 每份传完即定档（files.finalize），任务随文件定档一并锁定（此后写口一律 409 TASK_FINALIZED）。
    */
-  const handleUploadTaskFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void): Promise<void> => {
+  const handleUploadTaskFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize = false): Promise<void> => {
     if (projectId === null) {
       return Promise.resolve();
     }
     return (async () => {
       try {
-        await uploadFiles(projectId, files, { taskId, onProgress });
+        await uploadFiles(projectId, files, { taskId, onProgress, finalize });
         reloadAll();
       } catch (error) {
+        // 可能已部分成功（逐份直传中途失败 / 定档被 409 拦下）：先整表重取让计数与状态归位，再走统一错误出口
+        reloadAll();
         reportWriteError(error);
       }
     })();
@@ -385,6 +390,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   };
 
   /** 实际完成日期（§6.9）：填 = 完成（满格 + 该日期）、清 = 退回进行中（3/4 格，服务端同时清掉完成日期）。 */
+
+  /**
+   * 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：未定档 → 置位锁定（此后写口全 409 TASK_FINALIZED；文件修改走变更）；
+   * 已定档 → 服务端幂等原样返回（响应仍整行替换，开关停在「已」态）。
+   */
+  const handleFinalizeTask = (taskId: string) => {
+    const row = rowOf(taskId);
+    if (projectId === null || row === undefined) {
+      return;
+    }
+    void (async () => {
+      try {
+        replaceRow(await finalizeTask(projectId, taskId, row.version));
+        await afterWrite();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
+  };
   const handleSetActualEnd = (taskId: string, iso: string) => {
     const row = rowOf(taskId);
     if (projectId === null || row === undefined) {
@@ -434,6 +458,10 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (patch.priority !== undefined) {
       body.priority = patch.priority;
     }
+    // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：常规编辑开放，传数组 = 整体替换
+    if (patch.deliverableTypes !== undefined) {
+      body.deliverableTypes = patch.deliverableTypes;
+    }
     if (patch.note !== undefined) {
       body.note = patch.note;
     }
@@ -462,6 +490,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       days: values.days,
       headcount: values.headcount,
       priority: values.priority,
+      deliverableTypes: values.deliverableTypes,
       note: values.note,
     });
   };
@@ -922,7 +951,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -953,6 +982,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               onUploadFiles={handleUploadTaskFiles}
               onDeleteFile={handleDeleteTaskFile}
               onRenameFile={handleRenameTaskFile}
+              onFinalize={handleFinalizeTask}
               projectId={project.id}
             />
           )}

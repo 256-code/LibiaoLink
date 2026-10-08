@@ -70,6 +70,9 @@ export type ProjectTask = {
   priority: TaskPriority | null;
   /** 乐观锁版本（写入必须回传当前值）。 */
   version: number;
+  /** 任务定档（Push 249 · 契约 Task.finalizedAt）：非空 = 已定档 —— 任务不支持任何修改
+   *  （行内编辑 / 删除 / 文件新增 / 直替 / 改名全部关闭，服务端 409 TASK_FINALIZED；文件修改走变更）。 */
+  finalizedAt: string | null;
 };
 
 /**

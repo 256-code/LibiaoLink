@@ -50,6 +50,7 @@ import { FocusModeToggle } from "./components/FocusModeToggle";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS } from "./components/ReportIssuePanel";
 import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
 import { TrackerDots } from "./components/Tracker";
+import { docTypeCapsule } from "./components/DeliverablePicker";
 import { dateOnlyText, daysBetweenInclusive } from "./data/tasks";
 import type { ReportPhoto } from "./data/reports";
 import { usePhotoUrl } from "./fileApi";
@@ -504,8 +505,8 @@ function TaskTable({ projectId, items, full, ready, focus }: {
                       <span className="text-xs text-zinc-300">—</span>
                     ) : (
                       <>
-                        <span className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600" title={deliverableTypes.join("、")}>
-                          {deliverableTypes[0]}
+                        <span className="min-w-0 truncate" title={deliverableTypes.join("、")}>
+                          {docTypeCapsule(deliverableTypes[0])}
                         </span>
                         {deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{deliverableTypes.length - 1}</span> : null}
                       </>
