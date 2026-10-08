@@ -261,6 +261,13 @@ type TaskBoardProps = {
    * （置位后任务不支持任何修改，服务端 409 TASK_FINALIZED 兜底）；不传 = 抽屉不渲染开关。
    */
   onFinalize?: (taskId: string) => void;
+  /**
+   * 变更生效后的父级刷新（Push 254 · 抽屉「变更申请」页）：透传给任务详情抽屉 —— 提交变更是变更记录 +
+   * 新版本 + 任务「变更关联」（R01）的合并落库，完成后由调用方整表重取刷新；不传 = 抽屉只刷新自己的文件清单。
+   */
+  onChanged?: () => void;
+  /** 当前登录人姓名（Push 254 · 抽屉「变更申请」页「变更申请人」只读展示）；不传 = 显示「当前登录人」。 */
+  actorName?: string;
   /** 任务 → 文件引用（Push 246 · fileApi.fetchTaskFiles）：「文件」列胶囊显示文件名 / 「+N」、
    *  下拉里点名字预览 + 删除；不传 / 取不到 = 退回「N 份」计数（老数据 / 请求失败）。 */
   filesByTask?: ReadonlyMap<string, TaskFileRef[]>;
@@ -695,7 +702,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, filesByTask, projectId, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onChanged, actorName, filesByTask, projectId, focusMode }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -1132,6 +1139,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         onDeleteFile={onDeleteFile}
         onRenameFile={onRenameFile}
         onFinalize={onFinalize}
+        onChanged={onChanged}
+        actorName={actorName}
         projectId={projectId}
         onClose={closeDrawer}
       />

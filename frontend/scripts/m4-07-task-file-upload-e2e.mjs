@@ -36,7 +36,20 @@
  *   ⑮ 「定档」侧签（Push 252 · 业务口径演进：「不是在表格内 要在表格外部懂吗 延伸出一个小标签」→「黄色变淡」→「竖排／横排」→ 定稿「竖着的定档二字的在表格外」）：
  *      定档任务的签不落行内 / 表内 —— 在**表格左边缘外侧**挂一颗竖排小签（2 字 · amber-50 底 + amber-700 字）；#task-board-scroll 会裁越界内容，
  *      所以签画在卡片外这一层、y 按行中心量出；定档前无签、定档后才有（④t0b / ④t8 段）；
- *   ⑯ 收尾：五份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
+ *   ⑯ 抽屉页标签导航（Push 254 · 业务口径「抽屉上方增加 页面标签导航栏 任务详情 变更申请 变更记录三个页面」）：
+ *      抽屉头部下出三页标签（默认「任务详情」= 原内容）；「变更申请」= A4-13 十三列字段面 —— 变更时间（只读：提交即记）/
+ *      变更阶段（九阶段下拉）/ 变更文件（已定档可选、未定档置灰 + 行尾「定档」就地补门）/ 变更内容描述（必填，落契约 reason）/ 变更前 /
+ *      变更后（文本摘要）/ 变更原因（选填，合并记入 reason）/ 变更申请人（只读 = 当前登录人）/ 变更后文件版本（只读：
+ *      系统递增）/ 变更后文件（必传）/ 关联（只读：R01 回写任务变更关联）→ 提交即生效（intent=change 分片直传）；
+ *      「变更记录」= 任务 changeLinks 逐条回溯（最新在前）+ 按需取详情全文（④u 段）；
+ *   ⑰ 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行不可选但不再死路 ——
+ *      行尾「定档」→ 就地二次确认（锁版 + 任务一并锁定）→ POST /files/{id}/finalize → 该行转「已定档」随即可选、
+ *      自动选中 + 绿字指引（④v 段：阻断说明 / 二次确认 / 定档转可选 + 写面 files.status=final、tasks.finalized_at 非空）；
+ *   ⑱ 任务已定档 → 其文件视为已定档（Push 254 续之二 · 业务反馈「不是已经定档了吗 为什么变更申请里面还是未定档」）：
+ *      任务定档是业务可见的定档动作（抽屉开关 / 表格侧签）—— 任务已定档时，其名下 draft 文件在「变更文件」里
+ *      显示「已定档」、直接可选可提交（服务端 change 闸同口径放行：final / changed 或所属任务已定档；
+ *      ④w 段：可选面 + 全链路提交 + 写面 files.status=changed / 版本 v2 / R01）；
+ *   ⑲ 收尾：八份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
  * 证据：docs/m4-07-回放证据(任务文件上传·前端).md
  */
 
@@ -853,6 +866,298 @@ const replaceGoneFinal = popoverForChange === true ? await ev("(function(){var p
 check("④r2b 重载后（A 已定档 + 任务已定档）下拉仍无替换入口（替换流程整体撤除 · 定档常驻提示仍在 · 清单已回流 C）",
   filesRefetchedForChange === true && popoverForChange === true && replaceGoneFinal !== null && replaceGoneFinal !== undefined && replaceGoneFinal.rowEntry === true && replaceGoneFinal.input === true && replaceGoneFinal.note === true && replaceGoneFinal.text === true, JSON.stringify(replaceGoneFinal));
 
+
+// ---------- ④u 抽屉页标签导航（Push 254）----------
+// 夹具（变更须落在「有变更关联」的任务上才好验「变更记录」）：第三条任务（输出成果文件 = CAD图纸）+
+// 经 API 直传一份 docType=CAD图纸 的成果文件并定档 —— R01 按「变更文件成果类型 ∈ 任务输出成果文件」回写 change_refs。
+const changeTaskTitle = "回放任务·变更申请与记录";
+const task3Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: changeTaskTitle, ownerIds: [userRow.id], deliverableTypes: ["CAD图纸"] });
+check("④u0 夹具：建第三条任务（输出成果文件 = CAD图纸）", task3Res.status === 201, String(task3Res.status) + " " + task3Res.text.slice(0, 140));
+const task3Id = task3Res.json === null ? "" : task3Res.json.id;
+const changedTargetName = "回放-变更目标-图纸.txt";
+const changeAfterName = "回放-变更后-图纸-v2.txt";
+const changedTargetPath = join(fileDir, changedTargetName);
+const changeAfterPath = join(fileDir, changeAfterName);
+const changedTargetBuf = Buffer.from("LibiaoLink 回放变更目标 v1 " + fixtureCode + String.fromCharCode(10), "utf8");
+const changeAfterBuf = Buffer.from("LibiaoLink 回放变更后 v2 " + fixtureCode + String.fromCharCode(10), "utf8");
+writeFileSync(changedTargetPath, changedTargetBuf);
+writeFileSync(changeAfterPath, changeAfterBuf);
+/** 经 API 分片直传一份文件（带 docType / taskId；变更夹具）→ finalize=true 时完成即定档（file final + 任务随定档锁定）；
+ *  finalize=false = 只传成 draft（「变更前先定档」用例的未定档夹具）。 */
+async function uploadViaApi(name, buffer, docType, taskIdArg, finalize = true) {
+  const hash = sha256(buffer);
+  const created = await api("/api/v1/files/uploads", "POST", { projectId, name, sizeBytes: buffer.byteLength, contentHash: hash, intent: "version", taskId: taskIdArg, docType });
+  if (created.status !== 201 || created.json === null) return { ok: false, detail: "create " + String(created.status) + " " + created.text.slice(0, 120) };
+  const fileId = created.json.file.id;
+  const uploadId = created.json.upload.id;
+  const partSize = Number(created.json.upload.partSizeBytes);
+  const totalParts = Number(created.json.upload.totalParts);
+  const partNumbers = [];
+  for (let index = 1; index <= totalParts; index += 1) partNumbers.push(index);
+  const signed = await api("/api/v1/files/" + fileId + "/uploads/" + uploadId + "/parts", "POST", { partNumbers });
+  if (signed.status !== 200 || signed.json === null) return { ok: false, detail: "parts " + String(signed.status) };
+  for (const part of signed.json.parts) {
+    const start = (Number(part.partNumber) - 1) * partSize;
+    const slice = buffer.subarray(start, Math.min(start + partSize, buffer.byteLength));
+    const put = await fetch(part.url, { method: "PUT", body: slice });
+    if (!put.ok) return { ok: false, detail: "put " + String(put.status) };
+  }
+  const done = await api("/api/v1/files/" + fileId + "/uploads/" + uploadId + "/complete", "POST", { contentHash: hash });
+  if (done.status !== 200) return { ok: false, detail: "complete " + String(done.status) + " " + done.text.slice(0, 120) };
+  if (finalize === false) return { ok: true, fileId, detail: "complete 200（未定档 · 保持 draft）" };
+  const detail = await api("/api/v1/files/" + fileId);
+  const finalized = await api("/api/v1/files/" + fileId + "/finalize", "POST", { version: detail.json.version });
+  return { ok: finalized.status === 200, fileId, detail: "finalize " + String(finalized.status) + " " + finalized.text.slice(0, 120) };
+}
+const dUpload = await uploadViaApi(changedTargetName, changedTargetBuf, "CAD图纸", task3Id);
+check("④u0b 夹具：变更目标文件（docType=CAD图纸）分片直传 + 定档（final · 任务随定档锁定）", dUpload.ok === true, String(dUpload.detail));
+
+// 第四条任务夹具（就地定档用例 · ④v）：一份未定档文件 —— 变更文件行不可选但行尾有「定档」入口。
+const draftTaskTitle = "回放任务·变更前先定档";
+const task4Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: draftTaskTitle, ownerIds: [userRow.id], deliverableTypes: ["CAD图纸"] });
+check("④v0 夹具：建第四条任务（含未定档文件 —— 就地定档用例）", task4Res.status === 201, String(task4Res.status) + " " + task4Res.text.slice(0, 140));
+const task4Id = task4Res.json === null ? "" : task4Res.json.id;
+const draftName = "回放-先定档-草图.txt";
+const draftBuf = Buffer.from("LibiaoLink 回放先定档 v0 " + fixtureCode + String.fromCharCode(10), "utf8");
+writeFileSync(join(fileDir, draftName), draftBuf);
+const draftUpload = await uploadViaApi(draftName, draftBuf, "CAD图纸", task4Id, false);
+check("④v0b 夹具：未定档文件（docType=CAD图纸）分片直传（不定档 · 任务保持未定档）", draftUpload.ok === true, String(draftUpload.detail));
+
+// 第五条任务夹具（任务定档后变更用例 · ④w · 业务反馈「不是已经定档了吗 为什么变更申请里面还是未定档」）：
+// 任务经定档端点置位（与抽屉开关同端点），文件保持 draft —— 变更申请里该文件应显示「已定档」、直接可变更。
+const taskFinalizedTitle = "回放任务·任务定档后变更";
+const task5Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: taskFinalizedTitle, ownerIds: [userRow.id], deliverableTypes: ["CAD图纸"] });
+check("④w0 夹具：建第五条任务（任务定档后变更用例）", task5Res.status === 201, String(task5Res.status) + " " + task5Res.text.slice(0, 140));
+const task5Id = task5Res.json === null ? "" : task5Res.json.id;
+const taskLockedName = "回放-任务定档后-目标.txt";
+const taskLockedAfterName = "回放-任务定档后-变更后-v2.txt";
+const taskLockedBuf = Buffer.from("LibiaoLink 回放任务定档后变更 v1 " + fixtureCode + String.fromCharCode(10), "utf8");
+const taskLockedAfterBuf = Buffer.from("LibiaoLink 回放任务定档后变更 v2 " + fixtureCode + String.fromCharCode(10), "utf8");
+writeFileSync(join(fileDir, taskLockedName), taskLockedBuf);
+writeFileSync(join(fileDir, taskLockedAfterName), taskLockedAfterBuf);
+const taskLockedUpload = await uploadViaApi(taskLockedName, taskLockedBuf, "CAD图纸", task5Id, false);
+check("④w0b 夹具：未定档文件分片直传（file 保持 draft）", taskLockedUpload.ok === true, String(taskLockedUpload.detail));
+const task5Finalize = await api("/api/v1/projects/" + projectId + "/tasks/" + task5Id + "/finalize", "POST", { version: 0 });
+check("④w0c 夹具：任务经定档端点置位（任务已定档 · 文件仍为 draft —— 复现业务场景）", task5Finalize.status === 200, String(task5Finalize.status) + " " + task5Finalize.text.slice(0, 140));
+const task5FileRow = (await db.query("select status from files where id = $1", [taskLockedUpload.fileId])).rows[0];
+check("④w0d 夹具核对：任务已定档而文件状态确为 draft（不是场景写错）", task5FileRow !== undefined && task5FileRow.status === "draft", JSON.stringify(task5FileRow));
+
+/** 抽屉局部截图（回放证据用：变更申请 / 变更记录两页）。 */
+async function shotDrawerClip(name) {
+  const box = await ev("(function(){var d=document.querySelector(" + j(DRAWER) + ");if(d===null){return null;}var r=d.getBoundingClientRect();return {x:Math.max(0,Math.round(r.left)),y:Math.max(0,Math.round(r.top)),width:Math.round(r.width),height:Math.round(r.height)};})()");
+  if (box === null || box === undefined) return;
+  const shot = await page.send("Page.captureScreenshot", { format: "png", clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 } });
+  writeFileSync(join(SCREENSHOT_DIR, name), Buffer.from(shot.data, "base64"));
+  console.log("截图：" + join(SCREENSHOT_DIR, name));
+}
+
+/** 抽屉内点击（先把目标滚进可视区再量点，避免 ScrollArea 内按钮在视口外点空）。 */
+async function clickScrolled(selector) {
+  await ev("(function(){var b=document.querySelector(" + j(selector) + ");if(b!==null){b.scrollIntoView({block:" + j("center") + ",inline:" + j("nearest") + "});}return true;})()");
+  await sleep(300);
+  return await clickSelector(selector);
+}
+/** 聚焦 + 全选 + 输入（React 受控控件走 input 事件）。 */
+async function fillField(selector, text) {
+  await ev("(function(){var n=document.querySelector(" + j(selector) + ");if(n!==null){n.focus();n.select();}return true;})()");
+  await sleep(150);
+  await page.send("Input.insertText", { text });
+  await sleep(250);
+}
+
+await page.send("Page.reload", { ignoreCache: true });
+const row3Ready = await waitFor("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(changeTaskTitle) + ")>=0){return true;}}return false;})()", 20000);
+if (row3Ready !== true) await bail("第三条任务行没渲染出来（抽屉页标签用例）");
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(changeTaskTitle) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
+const row3Point = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(changeTaskTitle) + ")>=0){var b=rows[i].getBoundingClientRect();return {x:Math.round(b.left+60),y:Math.round(b.top+b.height/2)};}}return null;})()");
+if (row3Point === null || row3Point === undefined) await bail("第三条任务行坐标量不到");
+await clickAt(row3Point);
+const drawer3Open = await waitFor("document.querySelector(" + j(DRAWER) + ")!==null", 8000);
+const tabsInfo = drawer3Open === true ? await ev("(function(){var bar=document.querySelector(" + j("[data-drawer-tabs=true]") + ");if(bar===null){return null;}var bs=bar.querySelectorAll(" + j("[data-drawer-tab]") + ");var out=[];for(var i=0;i<bs.length;i++){out.push({key:bs[i].getAttribute(" + j("data-drawer-tab") + "),label:bs[i].textContent.trim(),selected:bs[i].getAttribute(" + j("aria-selected") + ")});}return {count:bs.length,items:out,detailShown:document.querySelector(" + j("[data-drawer-file-item]") + ")!==null};})()") : null;
+check("④u1 抽屉头部下出页标签导航栏（任务详情 / 变更申请 / 变更记录 三页 · 默认选中「任务详情」= 原内容在位）",
+  tabsInfo !== null && tabsInfo !== undefined && tabsInfo.count === 3
+  && tabsInfo.items[0].key === "detail" && tabsInfo.items[0].label === "任务详情" && tabsInfo.items[0].selected === "true"
+  && tabsInfo.items[1].key === "change" && tabsInfo.items[1].label === "变更申请"
+  && tabsInfo.items[2].key === "history" && tabsInfo.items[2].label === "变更记录"
+  && tabsInfo.detailShown === true,
+  JSON.stringify(tabsInfo));
+
+const changeTabPoint = await clickScrolled("[data-drawer-tab=change]");
+const changePageShown = await waitFor("(function(){return document.querySelector(" + j("[data-drawer-page=change]") + ")!==null&&document.querySelector(" + j("[data-drawer-file-item]") + ")==null;})()", 8000);
+const changeFormInfo = changePageShown === true ? await ev("(function(){var p=document.querySelector(" + j("[data-drawer-page=change]") + ");if(p===null){return null;}var targets=p.querySelectorAll(" + j("[data-change-target]") + ");var out=[];for(var i=0;i<targets.length;i++){out.push({disabled:targets[i].disabled===true,text:targets[i].innerText});}var t=function(s){var n=p.querySelector(s);return n===null?null:n.textContent.trim();};return {targets:out,time:t(" + j("[data-change-time]") + "),stage:p.querySelector(" + j("[data-change-stage]") + ")!==null,content:p.querySelector(" + j("[data-change-reason]") + ")!==null,before:p.querySelector(" + j("[data-change-before]") + ")!==null,after:p.querySelector(" + j("[data-change-after]") + ")!==null,cause:p.querySelector(" + j("[data-change-cause]") + ")!==null,applicant:t(" + j("[data-change-applicant]") + "),version:t(" + j("[data-change-version]") + "),link:t(" + j("[data-change-link]") + "),pick:p.querySelector(" + j("[data-change-pick]") + ")!==null};})()") : null;
+check("④u2 点「变更申请」= 切页（详情清单收起）+ A4-13 字段面在位（变更时间只读 / 变更阶段 / 变更文件 / 变更内容描述 / 变更前 / 变更后 / 变更原因 / 变更申请人 / 变更后文件版本 / 变更后文件 / 关联）",
+  changeTabPoint === true && changePageShown === true && changeFormInfo !== null && changeFormInfo !== undefined
+  && Array.isArray(changeFormInfo.targets) && changeFormInfo.targets.length === 1 && changeFormInfo.targets[0].disabled === false
+  && String(changeFormInfo.targets[0].text).indexOf(changedTargetName) >= 0 && String(changeFormInfo.targets[0].text).indexOf("已定档") >= 0
+  && changeFormInfo.time !== null && changeFormInfo.time !== "" && changeFormInfo.stage === true && changeFormInfo.content === true
+  && changeFormInfo.before === true && changeFormInfo.after === true && changeFormInfo.cause === true
+  && String(changeFormInfo.applicant).indexOf("潘兴") >= 0 && String(changeFormInfo.version).indexOf("版本") >= 0 && String(changeFormInfo.link).indexOf("系统") >= 0 && changeFormInfo.pick === true,
+  JSON.stringify(changeFormInfo));
+await shotDrawerClip("m4-07-drawer-change.png");
+
+const submitNoTarget = await clickScrolled("[data-change-submit]");
+const errNoTarget = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-error]") + ");return n!==null&&n.textContent.indexOf(" + j("请选择变更文件") + ")>=0;})()", 6000);
+const pickTarget = await clickScrolled("[data-change-target]");
+const submitNoContent = await clickScrolled("[data-change-submit]");
+const errNoContent = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-error]") + ");return n!==null&&n.textContent.indexOf(" + j("请填写变更内容描述") + ")>=0;})()", 6000);
+const contentText = "回放变更内容：图纸尺寸调整 " + fixtureCode;
+await fillField("[data-change-reason]", contentText);
+const submitNoFile = await clickScrolled("[data-change-submit]");
+const errNoFile = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-error]") + ");return n!==null&&n.textContent.indexOf(" + j("请选择变更后文件") + ")>=0;})()", 6000);
+check("④u3 提交三道前拦（A4-13 提交校验）：未选变更文件「请选择变更文件」→ 未填变更内容描述「请填写变更内容描述」→ 未选变更后文件「请选择变更后文件」",
+  submitNoTarget === true && errNoTarget === true && pickTarget === true && submitNoContent === true && errNoContent === true && submitNoFile === true && errNoFile === true,
+  JSON.stringify({ noTarget: errNoTarget, noContent: errNoContent, noFile: errNoFile }));
+const noChangeRowYet = (await db.query("select count(*)::int as c from change_requests where project_id = $1", [projectId])).rows[0].c;
+check("④u3b 被拦下的提交没有落库（change_requests 0 行）", Number(noChangeRowYet) === 0, String(noChangeRowYet));
+
+const causeText = "客户现场复测要求";
+const beforeText = "调整前：旧尺寸";
+const afterText = "调整后：新尺寸";
+await fillField("[data-change-cause]", causeText);
+await fillField("[data-change-before]", beforeText);
+await fillField("[data-change-after]", afterText);
+await setFileInput("[data-change-upload-input=true]", changeAfterPath);
+const pickedName = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-file]") + ");return n!==null&&n.textContent.indexOf(" + j(changeAfterName) + ")>=0;})()", 6000);
+const expectedReason = contentText + "；变更原因：" + causeText;
+const submitPoint = await clickScrolled("[data-change-submit]");
+const changeLanded = await waitForAsync(async () => {
+  const rows = (await db.query("select status from files where id = $1", [dUpload.fileId])).rows;
+  return rows.length === 1 && rows[0].status === "changed";
+}, 30000);
+const changeRow = (await db.query("select id, reason, before_summary, after_summary, stage_key, status, applied_by from change_requests where project_id = $1", [projectId])).rows[0];
+const dVersions = (await db.query("select seq, change_request_id from file_versions where file_id = $1 order by seq", [dUpload.fileId])).rows;
+const task3Refs = (await db.query("select change_refs from tasks where id = $1", [task3Id])).rows[0].change_refs;
+check("④u4 提交变更（申请即通过）：files.status=changed + 变更记录（内容+原因合并 / 前后摘要 / 阶段 design / status=applied / 申请人）+ 版本 v2 挂 change_request_id + R01 回写任务变更关联",
+  pickedName === true && submitPoint === true && changeLanded === true
+  && changeRow !== undefined && changeRow.reason === expectedReason && changeRow.before_summary === beforeText && changeRow.after_summary === afterText
+  && changeRow.stage_key === "design" && changeRow.status === "applied" && changeRow.applied_by === userRow.id
+  && dVersions.length === 2 && Number(dVersions[1].seq) === 2 && dVersions[1].change_request_id === changeRow.id
+  && Array.isArray(task3Refs) && task3Refs.indexOf(changeRow.id) >= 0,
+  JSON.stringify({ change: { reason: changeRow === undefined ? null : changeRow.reason, stage: changeRow === undefined ? null : changeRow.stage_key }, versions: dVersions, refs: task3Refs }));
+const doneShown = await waitFor("document.querySelector(" + j("[data-change-done]") + ")!==null", 15000);
+check("④u5 提交成功 = 页面绿条「变更已提交生效」", doneShown === true, String(doneShown));
+
+const backToDetail = await clickScrolled("[data-drawer-tab=detail]");
+const changedChip = await waitFor("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(changedTargetName) + ")>=0&&items[i].textContent.indexOf(" + j("已变更") + ")>=0){return true;}}return false;})()", 20000);
+const linkedShown = await waitFor("(function(){var d=document.querySelector(" + j(DRAWER) + ");return d!==null&&d.innerText.indexOf(" + j(contentText) + ")>=0;})()", 20000);
+check("④u6 回「任务详情」：文件行转「已变更」色签（清单重取）+ 「变更关联」行回流（R01 + 整表重取）",
+  backToDetail === true && changedChip === true && linkedShown === true, JSON.stringify({ back: backToDetail, chip: changedChip, linked: linkedShown }));
+
+const historyTabPoint = await clickScrolled("[data-drawer-tab=history]");
+const historyShown = await waitFor("(function(){var p=document.querySelector(" + j("[data-drawer-page=history]") + ");return p!==null&&p.querySelectorAll(" + j("[data-change-item]") + ").length===1;})()", 10000);
+const historyItemInfo = historyShown === true ? await ev("(function(){var p=document.querySelector(" + j("[data-drawer-page=history]") + ");var it=p.querySelector(" + j("[data-change-item]") + ");if(it===null){return null;}var b=it.querySelector(" + j("[data-change-item-open]") + ");return {text:it.innerText,open:b===null?null:b.textContent.trim()};})()") : null;
+check("④u7 点「变更记录」= 本任务一条变更（日期签 + 短原因 · 最新在前 · 「详情」入口）",
+  historyTabPoint === true && historyShown === true && historyItemInfo !== null && historyItemInfo !== undefined
+  && String(historyItemInfo.text).indexOf(contentText) >= 0 && String(historyItemInfo.text).indexOf("变更") >= 0 && historyItemInfo.open === "详情",
+  JSON.stringify(historyItemInfo));
+
+const detailOpenPoint = await clickScrolled("[data-change-item-open]");
+// 变更后文件 = 目标文件本体（变更 = 同一文件的新版本：名称沿用、版本号递增）—— 读面 file.name 即目标文件名。
+const itemDetailShown = await waitFor("(function(){var d=document.querySelector(" + j("[data-change-item-detail]") + ");return d!==null&&d.innerText.indexOf(" + j(changedTargetName) + ")>=0&&d.innerText.indexOf(" + j("v2") + ")>=0;})()", 10000);
+const itemDetailText = await ev("(function(){var d=document.querySelector(" + j("[data-change-item-detail]") + ");return d===null?" + j("") + ":d.innerText;})()");
+const historyText = await ev("(function(){var p=document.querySelector(" + j("[data-drawer-page=history]") + ");return p===null?" + j("") + ":p.innerText;})()");
+check("④u8 点「详情」按需取全文（13 列读面）：变更后文件 + 版本 v2 + 变更阶段（设计开发）+ 原因全文 + 前后摘要 + 申请人（潘兴）+ 审批状态（已通过）",
+  detailOpenPoint === true && itemDetailShown === true
+  && String(itemDetailText).indexOf(changedTargetName) >= 0 && String(itemDetailText).indexOf("v2") >= 0 && String(itemDetailText).indexOf("设计开发") >= 0
+  && String(itemDetailText).indexOf(expectedReason) >= 0 && String(itemDetailText).indexOf(beforeText) >= 0 && String(itemDetailText).indexOf(afterText) >= 0
+  && String(itemDetailText).indexOf("潘兴") >= 0 && String(itemDetailText).indexOf("已通过") >= 0,
+  JSON.stringify({ clicked: detailOpenPoint, shown: itemDetailShown, detail: String(itemDetailText).slice(0, 220), page: String(historyText).slice(0, 120) }));
+await shotDrawerClip("m4-07-drawer-history.png");
+
+// ---------- ④v 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）----------
+// 业务口径：未定档文件不能直接变更（A4-13 前置门）—— 但页面不能死路：行尾「定档」→ 就地二次确认 → 定档后随即可选。
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
+const row4Ready = await waitFor("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(draftTaskTitle) + ")>=0){return true;}}return false;})()", 20000);
+if (row4Ready !== true) await bail("第四条任务行没渲染出来（就地定档用例）");
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(draftTaskTitle) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
+const row4Point = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(draftTaskTitle) + ")>=0){var b=rows[i].getBoundingClientRect();return {x:Math.round(b.left+60),y:Math.round(b.top+b.height/2)};}}return null;})()");
+if (row4Point === null || row4Point === undefined) await bail("第四条任务行坐标量不到");
+await clickAt(row4Point);
+const drawer4Open = await waitFor("document.querySelector(" + j(DRAWER) + ")!==null", 8000);
+const changeTabPoint4 = await clickScrolled("[data-drawer-tab=change]");
+const blockedShown = await waitFor("(function(){var p=document.querySelector(" + j("[data-drawer-page=change]") + ");if(p===null){return false;}var t=p.querySelector(" + j("[data-change-target]") + ");var f=p.querySelector(" + j("[data-change-finalize]") + ");var h=p.querySelector(" + j("[data-change-none-hint]") + ");return t!==null&&t.disabled===true&&f!==null&&h!==null;})()", 10000);
+const blockedInfo = blockedShown === true ? await ev("(function(){var p=document.querySelector(" + j("[data-drawer-page=change]") + ");if(p===null){return null;}var t=p.querySelector(" + j("[data-change-target]") + ");var f=p.querySelector(" + j("[data-change-finalize]") + ");var h=p.querySelector(" + j("[data-change-none-hint]") + ");return {disabled:t===null?null:t.disabled,text:t===null?null:t.innerText,finalize:f===null?null:f.textContent.trim(),hint:h===null?null:h.textContent};})()") : null;
+check("④v1 未定档任务：变更文件行不可选（未定档 · 不可变更）+ 行尾「定档」入口 + 空态指引（不再死路）",
+  drawer4Open === true && changeTabPoint4 === true && blockedInfo !== null && blockedInfo !== undefined
+  && blockedInfo.disabled === true && String(blockedInfo.text).indexOf(draftName) >= 0 && String(blockedInfo.text).indexOf("未定档") >= 0 && String(blockedInfo.text).indexOf("不可变更") >= 0
+  && blockedInfo.finalize === "定档" && String(blockedInfo.hint).indexOf("定档后即可发起变更") >= 0,
+  JSON.stringify(blockedInfo));
+
+const finalizeOpenPoint = await clickScrolled("[data-change-finalize]");
+const draftFinalizeConfirm = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-finalize-confirm]") + ");return n!==null&&n.textContent.indexOf(" + j("确定定档该文件") + ")>=0&&n.textContent.indexOf(" + j("任务一并锁定") + ")>=0;})()", 6000);
+const confirmCancel = await clickScrolled("[data-change-finalize-cancel]");
+await shotDrawerClip("m4-07-drawer-finalize-inline.png");
+const confirmGone = await waitFor("document.querySelector(" + j("[data-change-finalize-confirm]") + ")==null", 6000);
+check("④v2 点「定档」= 就地二次确认（锁版 + 任务一并锁定提示；可取消）",
+  finalizeOpenPoint === true && draftFinalizeConfirm === true && confirmCancel === true && confirmGone === true,
+  JSON.stringify({ open: finalizeOpenPoint, confirm: draftFinalizeConfirm, cancel: confirmCancel, gone: confirmGone }));
+
+await clickScrolled("[data-change-finalize]");
+const finalizeOkPoint = await clickScrolled("[data-change-finalize-ok]");
+const finalizedRow = await waitFor("(function(){var p=document.querySelector(" + j("[data-drawer-page=change]") + ");if(p===null){return false;}var t=p.querySelector(" + j("[data-change-target]") + ");var done=p.querySelector(" + j("[data-change-finalize-done]") + ");return t!==null&&t.disabled!==true&&t.innerText.indexOf(" + j("已定档") + ")>=0&&t.getAttribute(" + j("aria-pressed") + ")===" + j("true") + "&&done!==null;})()", 20000);
+const draftDb = (await db.query("select status from files where id = $1", [draftUpload.fileId])).rows[0];
+const task4Row = (await db.query("select finalized_at is not null as locked from tasks where id = $1", [task4Id])).rows[0];
+check("④v3 确认定档：行转「已定档」随即可选（自动选中 + 绿字指引）+ 写面 files.status=final / 任务随定档锁定",
+  finalizeOkPoint === true && finalizedRow === true
+  && draftDb !== undefined && draftDb.status === "final"
+  && task4Row !== undefined && task4Row.locked === true,
+  JSON.stringify({ row: finalizedRow, db: draftDb, task: task4Row }));
+
+// ---------- ④w 任务已定档 → 其文件视为已定档（Push 254 续之二 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）----------
+// 场景：任务经定档开关 / 端点已定档，文件未做文件级定档（保持 draft）—— 变更申请里该文件应显示「已定档」、
+// 不再出「定档」按钮 / 空态指引，直接可选；提交走完整链路（服务端 change 闸放行 → files.status=changed + v2 + R01）。
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
+const row5Ready = await waitFor("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(taskFinalizedTitle) + ")>=0){return true;}}return false;})()", 20000);
+if (row5Ready !== true) await bail("第五条任务行没渲染出来（任务定档后变更用例）");
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(taskFinalizedTitle) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
+const row5Point = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(taskFinalizedTitle) + ")>=0){var b=rows[i].getBoundingClientRect();return {x:Math.round(b.left+60),y:Math.round(b.top+b.height/2)};}}return null;})()");
+if (row5Point === null || row5Point === undefined) await bail("第五条任务行坐标量不到");
+await clickAt(row5Point);
+const drawer5Open = await waitFor("document.querySelector(" + j(DRAWER) + ")!==null", 8000);
+const changeTabPoint5 = await clickScrolled("[data-drawer-tab=change]");
+const taskLockedRowShown = await waitFor("(function(){var p=document.querySelector(" + j("[data-drawer-page=change]") + ");if(p===null){return false;}var t=p.querySelector(" + j("[data-change-target]") + ");if(t===null||t.disabled===true||t.innerText.indexOf(" + j("已定档") + ") < 0){return false;}var f=p.querySelector(" + j("[data-change-finalize]") + ");var h=p.querySelector(" + j("[data-change-none-hint]") + ");return f===null&&h===null;})()", 10000);
+const taskLockedRowInfo = taskLockedRowShown === true ? await ev("(function(){var p=document.querySelector(" + j("[data-drawer-page=change]") + ");var t=p.querySelector(" + j("[data-change-target]") + ");return {disabled:t===null?null:t.disabled,text:t===null?null:t.innerText,pressed:t===null?null:t.getAttribute(" + j("aria-pressed") + ")};})()") : null;
+check("④w1 任务已定档：变更文件行「已定档」可直接选（不置灰 / 无「定档」按钮 / 无空态指引）",
+  drawer5Open === true && changeTabPoint5 === true && taskLockedRowShown === true && taskLockedRowInfo !== null && taskLockedRowInfo !== undefined
+  && taskLockedRowInfo.disabled === false && String(taskLockedRowInfo.text).indexOf(taskLockedName) >= 0 && String(taskLockedRowInfo.text).indexOf("已定档") >= 0,
+  JSON.stringify(taskLockedRowInfo));
+await shotDrawerClip("m4-07-drawer-task-finalized-change.png");
+
+const lockedContent = "回放变更内容：任务定档后直接变更 " + fixtureCode;
+const lockedPickTarget = await clickScrolled("[data-change-target]");
+await fillField("[data-change-reason]", lockedContent);
+await setFileInput("[data-change-upload-input=true]", join(fileDir, taskLockedAfterName));
+const lockedPicked = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-file]") + ");return n!==null&&n.textContent.indexOf(" + j(taskLockedAfterName) + ")>=0;})()", 6000);
+const lockedSubmit = await clickScrolled("[data-change-submit]");
+const lockedLanded = await waitForAsync(async () => {
+  const rows = (await db.query("select status from files where id = $1", [taskLockedUpload.fileId])).rows;
+  return rows.length === 1 && rows[0].status === "changed";
+}, 30000);
+const lockedChange = (await db.query("select id, reason, status, applied_by from change_requests where project_id = $1 order by applied_at desc limit 1", [projectId])).rows[0];
+const lockedVersions = (await db.query("select seq, change_request_id from file_versions where file_id = $1 order by seq", [taskLockedUpload.fileId])).rows;
+const task5Refs = (await db.query("select change_refs from tasks where id = $1", [task5Id])).rows[0].change_refs;
+check("④w2 任务已定档 → draft 文件直接变更（服务端放行 · 全链路）：files.status=changed + 版本 v2 挂 change_request_id + 变更记录（内容 / status=applied / 申请人）+ R01 变更关联回写",
+  lockedPickTarget === true && lockedPicked === true && lockedSubmit === true && lockedLanded === true
+  && lockedChange !== undefined && lockedChange.reason === lockedContent && lockedChange.status === "applied" && lockedChange.applied_by === userRow.id
+  && lockedVersions.length === 2 && Number(lockedVersions[1].seq) === 2 && lockedVersions[1].change_request_id === lockedChange.id
+  && Array.isArray(task5Refs) && task5Refs.indexOf(lockedChange.id) >= 0,
+  JSON.stringify({ change: lockedChange === undefined ? null : { id: lockedChange.id, reason: lockedChange.reason }, versions: lockedVersions, refs: task5Refs }));
+const lockedDone = await waitFor("document.querySelector(" + j("[data-change-done]") + ")!==null", 15000);
+check("④w3 提交成功 = 绿条「变更已提交生效」（与变更申请页同口径）", lockedDone === true, String(lockedDone));
+
+// 现场还原（给下面的截图段）：关抽屉 → 重开「文件」列下拉（截图段假设下拉是开的）。
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
+await ev("(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");if(b!==null){b.scrollIntoView({block:" + j("center") + ",inline:" + j("center") + "});}return true;})()");
+await sleep(400);
+const popoverRestored = await openTaskFilesPopover();
+check("④u9 用例收尾：关抽屉、重开「文件」列下拉（截图段现场还原）", popoverRestored === true, String(popoverRestored));
+
 const shotHoverPoint = await ev("(function(){var b=document.querySelector(" + j("[data-task-files-delete] button") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
 if (shotHoverPoint !== null && shotHoverPoint !== undefined) {
   await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: shotHoverPoint.x, y: shotHoverPoint.y });
@@ -874,7 +1179,7 @@ if (cellBox !== null && cellBox !== undefined) {
 
 // ---------- ⑥ 收尾：purge 三份文件 → 物理删临时项目 → 撤销会话 → 零残留 ----------
 const purgeResult = await purgeProjectFiles(projectId);
-check("⑤a 五份回放文件（含已回收的 B / PDF 与定档的 C）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 5 && purgeResult.purged === 5, JSON.stringify(purgeResult));
+check("⑤a 八份回放文件（含已回收的 B / PDF、定档的 C、已变更的 D、先定档用例的草图与任务定档后变更的目标）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 8 && purgeResult.purged === 8, JSON.stringify(purgeResult));
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
 check("⑤b 临时项目物理删（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
