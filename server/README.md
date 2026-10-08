@@ -528,6 +528,7 @@ server/
 - 切片提示 / 风险：① **预览产物对象清理未接**（彻底删除 / 回收站到期目前只清 `projects/` 前缀，`previews/` 产物对象待 M4-05 收口时按 `content_hash` 反查引用后清理 —— `preview_artifacts` 行随 `files` 级联删除，对象不会自己消失）；② **未压测**（并发 2~4 / 200MB 长跑 / 转换成功率 ≥95% 属 M4-05 压测与 PoC-1 真实样本集）；③ 转换器镜像**未推内网 registry**（M8 生产部署形态固化，与 `deploy/minio/` 同口径）；④ `structured` 通道一期 501（xlsx 走 pdf）。
 - **修订（PR-14）**：① 产物清理已随 PR-12 落地；② **已压测**（两档实跑：沙箱 2C2G / ADR-013 2C4G，成功率 / 200MB 续传 / 并发背压 / 长跑内存见下「M4-05g 压测」）；③④ 不变。
 - **修订（Push 201 · S6-前置）**：① **投递映射归零** —— `previewTargetsFor` 改**常量空表**（图片 → 原对象短时签名直签 · 计划 D6；`structured` 二期启用时在此恢复映射），定档预生成（P1）与读取侧补投点原样保留、自然空转；② **图片不再经转换器** —— 读取侧 `isImageFile` → 原对象直签（不投任务 / 不落产物行 / 不经 `deploy/preview`）；`deploy/preview` 停机态图片 + 缩略图走通、字节与原对象全等（证据 `docs/s6-pre-回放证据(图片直通·原对象直签).md`）；③ 门禁更新：`test/preview-queue.test.ts` **25 例**（+2：投递全空 / `isImageFile`）、`test/file-service.test.ts` **73 例**（图片定档断言改「不投 `preview.job`」）、`check:boundaries`（**216 文件 / 930 依赖 / 0 违规**）。
+- **修订（Push 203 · S6 退役）**：`deploy/preview`（LibreOffice 转换栈）**已退役**（2026-10-08 · 退役评审通过，见 `docs/s6-退役评审(LibreOffice转换栈).md`）—— 转换管线零消费者（投递面空表）；本段与上条「修订（Push 201 · S6-前置）」保留为契约 / 回滚台账，**不再部署 / 启动**；镜像保留供回滚，`structured` 二期如恢复转换再评。
 
 ## M4-05d 读 API（S7·file 预览读面 · 三态 + 短时签名 + 仅 ready 写审计）
 

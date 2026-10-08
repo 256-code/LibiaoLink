@@ -3,7 +3,7 @@
 > **唯一执行口径**：本文件是「Office 文档预览改由 ONLYOFFICE 承接」的唯一执行口径（2026-09-30 由 lan 指定）；后续执行过程中的任何变动**直接修改本文件**并登记「变更记录」，不另开会话口径、不另立清单。
 > 卡片：主责 lan；协办 wmj（契约 / ADR）、px（部署 / 前端 / 交付）；业务口：样本与验收。
 > 计划内审核（2026-09-30 起）：本计划（仅限本计划范围）由 lan 全权负责 —— 计划内审核与变更由 lan 执行并登记；跨线实现仍按分工路由。
-> 关联：首关证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md`；保真度证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md`；安全定稿 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md`；部署前置定稿 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；S1 契约切片 `docs/契约切片草案(S8-2-ONLYOFFICE查看器).md`（px 代 wmj 线起草 · Push 241 / PR #251 先入 `main`；**已定案**（wmj · 2026-09-30 · lan 代行登记））；治理件 `docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`（wmj 线 Push 238 / PR #247 先入 `main`）；S3 回放证据 `docs/s8-2-回放证据(S3·受控预览端点).md`（Push 194 / PR #255 / squash `35490f3`）；分工卡 `团队分工.md` §6 第 10~11 项。
+> 关联：首关证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md`；保真度证据 `docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md`；安全定稿 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md`；部署前置定稿 `docs/PoC-10-部署前置定稿(F1-R3·R6).md`；S1 契约切片 `docs/契约切片草案(S8-2-ONLYOFFICE查看器).md`（px 代 wmj 线起草 · Push 241 / PR #251 先入 `main`；**已定案**（wmj · 2026-09-30 · lan 代行登记））；治理件 `docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`（wmj 线 Push 238 / PR #247 先入 `main`）；S3 回放证据 `docs/s8-2-回放证据(S3·受控预览端点).md`（Push 194 / PR #255 / squash `35490f3`）；分工卡 `团队分工.md` §6 第 10~11 项；S6 退役评审 `docs/s6-退役评审(LibreOffice转换栈).md`。
 
 ## 0. 已定决策（冻结，勿再翻）
 
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | **首关** | 三件可能杀方案的事：20/50 并发与资源曲线；JWT 只读不可绕；中文字体与内网拓扑 | ✅ 已完成（2026-09-30，服务端侧通过） | 三项全过（证据归档） |
 | **次关** | N1 保真度抽查；N2 R1/R2 安全定稿；N3 实施前置定稿（F1/R6 + ADR-030） | ✅ 已完成（2026-09-30：N1 ✅ / N2 ✅ / N3 ✅；出口达成 = 随 PR #246 合入 `main`，squash `f8c762c`） | N1 达标 + N2/N3 定稿并入 ADR-030 / 部署清单 |
-| **实施** | S1 契约切片 → S2 `deploy/onlyoffice` → S3 server 改造 → S4 前端文件库 → S5 回归与双轨（含 R4 门禁）→ S6-前置 图片直通迁移（D6）→ S6 退役 LibreOffice | 🔄 进行中（S1 ✅ 定案 · S2 ✅ 已交付 · S3 ✅ 已交付（PR #255 已合并）· S4 ✅ 已交付（px 线 · 回放 21/21 · 合并收口已回填：squash `cc63d3e` · 双 CI 四 job 全绿）· 范围修订 2026-10-08：PDF 并入查看器通道（PR #268，见 v1.12）· S5 ✅ 已完成（R4 达标 · 见 v1.13）· S6-前置 ✅ 已交付（图片直通迁移 · Push 201 · 回放 14/14 + 前端 11/11 · 见 v1.15）· 下一刀 S6（退役 LibreOffice，待业务确认）） | 各切片出口见 §4 |
+| **实施** | S1 契约切片 → S2 `deploy/onlyoffice` → S3 server 改造 → S4 前端文件库 → S5 回归与双轨（含 R4 门禁）→ S6-前置 图片直通迁移（D6）→ S6 退役 LibreOffice | ✅ 已完成（S1 ✅ 定案 · S2 ✅ 已交付 · S3 ✅ 已交付（PR #255 已合并）· S4 ✅ 已交付（px 线 · 回放 21/21 · 合并收口已回填：squash `cc63d3e` · 双 CI 四 job 全绿）· 范围修订 2026-10-08：PDF 并入查看器通道（PR #268，见 v1.12）· S5 ✅ 已完成（R4 达标 · 见 v1.13）· S6-前置 ✅ 已交付（图片直通迁移 · Push 201 · 回放 14/14 + 前端 11/11 · 见 v1.15）· S6 ✅ 已完成（退役 LibreOffice · 退役评审通过 · 2026-10-08 · 见 v1.16）—— 实施切片全收官） | 各切片出口见 §4 |
 
 > 口径说明（防漂移）：会话历史里曾出现两种旧口径——① 11:20「次关 = 保真度、契约切片、部署改造」（过宽，含实施项）；② 证据文档初版「次关 = outbox / 受控下载端点 / 生产部署态复测」（过窄，只含遗留收口）。**本文件为准**：次关 = 实施前置收口（N1~N3）；契约切片与部署改造归入实施切片（§4）。原 09:48「完整 PoC-10」中的移动端项随 D4 移除。
 
@@ -66,7 +66,7 @@
 | S4 ✅ | 前端文件库预览页 | 内嵌查看器外壳（**R5**：超时 / 重试 / 文案 + 降级「请下载」）；**已交付**：Push 245 / PR [#264](https://github.com/256-code/LibiaoLink/pull/264) / squash `cc63d3e`（回放 21/21；证据 `docs/s4-回放证据(ONLYOFFICE查看器外壳·前端).md`） | px | ✅ 回放证据（PR #264 已合并） |
 | S5 ✅ | 回归与双轨 | 全量回归 + 部署环境复测（**R4 门禁**：50 并发（含受控预览端点内存核查）、真实终端、CE 许可行为）+ 文本族抽样（1~2 份）+ **PDF 查看器通道回归（2026-10-08 业务修订）** + 灰度；**已完成（2026-10-08 · lan）**：R4 门禁 50 并发全过（docx 25 + pdf 25 字节全等 · p95 134ms · 内存 Δduring +12MB / 静置回落 · 无泄漏）+ S3 回放 12 项 + PDF 端到端（ready/documentType=pdf/转换 `%PDF-`）+ 双轨并存（LibreOffice 9900 healthz 200）+ 部署侧五项与 R6 核验 + CE 许可行为核验 + 既有门禁（server 791 例 / boundaries / db-schema / 契约零漂移 87 / 240 / 前端 typecheck + build）；证据 `docs/s5-回放证据(回归与双轨·R4门禁).md` + `docs/s5-R4并发报告(受控预览端点50并发).md` + `server/scripts/s5-r4-preview-burst.mjs`；未覆盖项（真实终端人工点检 / 生产网关拓扑复验 / ⑤ 401 计数本次 SKIP）已登记 | lan | ✅ R4 报告达标（0 遗留断言；未覆盖项已登记） |
 | S6-前置 ✅ | 图片直通迁移（预览） | 图片预览改**原对象短时签名直签**（不投转换任务、不落产物行、不经 `deploy/preview`；字节 = 原对象；前端 `url` 通道与缩略图零改动；显示 / 审计 / 下载链口径不变；响应形状不变） | lan | ✅ 已交付（2026-10-08 · Push 201）：`previewTargetsFor` 归零（structured 二期恢复的挂账注释保留）+ 读面图片 `isImageFile` → `serveImageDirect` 原对象短时签名（`target=image`、`pipelineVersion` / `generatedAt` 空；产物三态段保留）；回放 14/14（`deploy/preview` 停机态：字节与夹具全等 / 零投递 / 零产物行 / 审计恰一条 / 版本路由 v1·v2 不串 / PDF 对照）+ 前端 11/11（缩略图与大图浮层实测原对象签名地址渲染 + 截图）；证据 `docs/s6-pre-回放证据(图片直通·原对象直签).md`；PR [#272](https://github.com/256-code/LibiaoLink/pull/272) / squash [`c5b568d`](https://github.com/256-code/LibiaoLink/commit/c5b568d6fd138da554167008453d44d213cc3bec)（已合并 · 2026-10-08；PR CI 37739388391 / main CI 37740018891 四 job 全绿） |
-| S6 | 退役 LibreOffice | 业务确认后退役 `deploy/preview`（**前置 = S6-前置 ✅（Push 201）**） | px | 退役评审通过 |
+| S6 ✅ | 退役 LibreOffice | 业务确认后退役 `deploy/preview`（**前置 = S6-前置 ✅（Push 201）**） | px（lan 代做 · 请 px 复核） | ✅ 已退役（2026-10-08 · Push 203）：退役评审通过（`docs/s6-退役评审(LibreOffice转换栈).md` —— 消费者归零核查 6 项 / 风险评估与回滚 / 遗留移交）+ `deploy/preview` README 退役状态行 + `server/README.md` / `server/.env.example` 注记 + 环境 compose down（容器移除、镜像保留）；PR 待回填 |
 
 > **S3 遗留（v1.9 登记；明细见证据文档「未覆盖 / 风险登记」；v1.10 挂账落点）**：① 受控端点暂整读对象进内存（流式读取 + 大文件护栏记后续切片）→ **落点：S5 门禁核查（50 并发内存表现）+ 后续切片（分段流式 + 大小护栏）**；② 405 / 503 走 Nest 异常信封（HTTP 状态码正确、无契约专属错误码，由 unit 覆盖）→ **落点：契约变更（wmj 线）**；③ 401 暂以逐条 warn 日志替代 M5 告警出口 → **落点：M5（`技术设计v0.3-实施与验收.md` §4.10「会话与 401 突增」）**；④ Range / HEAD 未覆盖（DocServer 后续版本若出现，回 `docs/PoC-10-安全定稿(R1-R2·受控下载端点).md` §3.2 补全）→ **落点：DocServer 升级回归核查（联动 `deploy/onlyoffice` 升级回归项）+ 出现即回安全定稿 §3.2 补全**。
 
@@ -77,9 +77,10 @@
 | R1 | 预签名 TTL 可绕 `download=false` | 定稿完成（去预签名） | 受控下载端点（a，与 R2 合并设计） | N2 ✅ → S1·S3 |
 | R2 | outbox × 预签名冲突 400 | 定稿完成（约束 + 设计） | 禁止同开；受控端点取代预签名（outbox 常开、鉴权依赖） | N2 ✅ → S2·S3 |
 | R3 | `blockPrivateIP` 属运行时配置 | 定稿完成 | 部署清单固化 + 升级回归（五项） | N3 ✅ → S2 |
-| R4 | 50 并发生产复测 | 待办 | 部署环境复测（真实终端） | S5 门禁 |
-| R5 | 前端错误 UX（白屏无重试） | 待办 | 外壳超时 / 重试 / 文案 | S4 |
+| R4 | 50 并发生产复测 | ✅ 已达成（S5 · 2026-10-08） | 部署环境复测（真实终端） | S5 门禁 |
+| R5 | 前端错误 UX（白屏无重试） | ✅ 已达成（S4 外壳 · 回放 21/21） | 外壳超时 / 重试 / 文案 | S4 |
 | R6 | 示例 app（`ds:example`） | 定稿完成 | 保持默认关闭、不暴露 `/example/` + S5 验收断言 | N3 ✅ → S2·S5 |
+> 收口（S6 退役评审 · 2026-10-08）：R1~R6 落点全闭环 —— R4 ✅（S5 门禁）/ R5 ✅（S4 外壳）/ R6 ✅（N3 → S2·S5）；R1~R3 定稿随 N2 / N3 与 S2 / S3 落地。
 
 ## 6. 变更记录
 
@@ -101,3 +102,4 @@
 | v1.13 | 2026-10-08 | **业务范围修订登记 + S5 完成（lan 线 · Push 199）**：① 计划口径同步 PR #268（PDF 并入 ONLYOFFICE 查看器通道）—— D4 修订、实施行范围注记、S5 范围补「PDF 查看器通道回归」（v1.12 已登记，本行收口）；② **S5 ✅ 完成**：R4 门禁 50 并发（25 × docx + 25 × pdf，字节全等；p95 134ms；内存 Δduring +12MB、静置 2 分钟回落无泄漏 —— v1.10 挂账①「受控端点整读内存」按本口径核查通过，大文件护栏 / 分段流式仍留后续切片）+ S3 受控端点回放 12 项 + PDF 端到端（ready / documentType=pdf / DocServer 转换 `%PDF-`）+ 双轨并存 + 部署侧五项与 R6（含 CE 许可行为）+ 既有门禁全绿（server 791 / boundaries / db-schema 44 表 / 契约 87 paths · 240 schemas / 前端）；新增回放脚本 `server/scripts/s5-r4-preview-burst.mjs`（可作门禁复跑）；证据 `docs/s5-回放证据(回归与双轨·R4门禁).md`；**未覆盖项登记**（真实终端人工点检 / 生产网关拓扑复验 / ⑤ 401 计数本次 SKIP）。实施状态转「S5 ✅ 已完成 · 下一刀 S6（退役 LibreOffice，待业务确认）」 | lan |
 | v1.14 | 2026-10-08 | **图片直通迁移登记（S6 前置 · lan 线 · Push 200）**：新增 **D6** —— 图片预览改原对象短时签名直签（不经产物通道；依据：图片经转换器为 passthrough 字节直通、LibreOffice 引擎不参与；S3 后 `deploy/preview` 仅剩图片一个消费者，直签后归零、S6 退役无功能损失）；D4 补「载体迁移见 D6」指针；§4 增「S6-前置」行（主责 lan）+ S6 行补前置注记；实施行转「下一刀 S6-前置」。**S5 证据措辞修正**（`docs/s5-回放证据(回归与双轨·R4门禁).md` §4）：「图片类仍走产物通道（LibreOffice 转换）」→「passthrough 字节直通、无实际转换」 | lan |
 | v1.15 | 2026-10-08 | **S6-前置 交付（lan 线 · Push 201）**：`previewTargetsFor` 改**常量空表**（投递归零 · structured 二期恢复）+ 读面图片直签（`isImageFile` → `serveImageDirect`：原对象短时签名 / `target=image` / `pipelineVersion`·`generatedAt` 空 / 一条 `action=preview` 审计 metadata `{versionId, target}`；产物三态段保留为二期复用段）；定档预生成（P1）循环保留自然空转；单测 791/791（预览读 16 / 队列 25 / 文件服务 73）+ boundaries 0 违规；回放 `server/scripts/s6-pre-image-direct-replay.mjs` **14/14**（停机态：字节全等 / 零投递 / 零产物行 / 版本路由 / PDF 对照）+ 前端 `frontend/scripts/s6-pre-image-direct-e2e.mjs` **11/11**（缩略图 / 大图浮层 + 截图，0 控制台异常；零前端实现改动）；`server/README.md` + 模块 README 修订；实施行转「下一刀 S6（待业务确认）」 | lan |
+| v1.16 | 2026-10-08 | **S6 退役 LibreOffice（lan 代做（px 线）· 请 px 复核 · Push 203）**：退役评审通过（证据 `docs/s6-退役评审(LibreOffice转换栈).md`）—— 消费者归零核查（投递面空表 / 图片直签 / 查看器承接 Office·文本族·PDF / 下载链独立 / CI 不构建本栈）+ 环境停用（`docker compose down`：容器与网络移除、镜像保留）+ 回滚方案（栈可一键重建、产物段代码未删）；`deploy/preview/README.md` 退役状态行 + `server/README.md` / `server/.env.example` 注记 + §5 R4 / R5 收口；实施切片 S1~S6 全收官（业务确认 = px 侧五类预览验证）。**Push 202 回填**（PR #273 → squash `26db48a`；双 CI 四 job 全绿） | lan |
