@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AppConfig } from "../../config/config.module.js";
+import { AuditModule } from "../audit/index.js";
 import { AuthController } from "./auth.controller.js";
 import { CasdoorDirectorySource } from "./casdoor-directory.source.js";
 import { CsrfGuard } from "./csrf.guard.js";
@@ -21,8 +22,11 @@ import { UserRepository } from "./user.repository.js";
 import { UserService } from "./user.service.js";
 import { UsersController } from "./users.controller.js";
 
-/** identity 模块（领域）：SSO 接入、会话、用户、组织同步与角色（h1）。 */
+/** identity 模块（领域）：SSO 接入、会话、用户、组织同步与角色（h1）。
+ * 依赖：audit（Push 173：离职回收 / 组织同步写审计 —— 独立模块，避免 admin ↔ identity 循环）。
+ */
 @Module({
+  imports: [AuditModule],
   controllers: [AuthController, UsersController, InternalUsersController, InternalOrgSyncController],
   providers: [
     OidcService,

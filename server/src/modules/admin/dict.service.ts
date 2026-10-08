@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import type { Dict, DictItemCreateBody, DictItemUpdateBody, DictListResponse } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
-import { AuditService } from "./audit.service.js";
+import { AuditService } from "../audit/index.js";
 import { diffRecords } from "./audit.rules.js";
 import { DictRepository } from "./dict.repository.js";
 import type { DictItemRow, DictTypeRow } from "./dict.repository.js";

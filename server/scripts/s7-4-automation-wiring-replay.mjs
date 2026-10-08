@@ -150,8 +150,8 @@ async function loadRuntime() {
       load("modules/automation/index.js"),
       load("modules/calendar/calendar.service.js"),
       load("modules/calendar/calendar.repository.js"),
-      load("modules/admin/audit.service.js"),
-      load("modules/admin/audit.repository.js"),
+      load("modules/audit/audit.service.js"),
+      load("modules/audit/audit.repository.js"),
     ]);
     return {
       loadEnv: envModule.loadEnv,

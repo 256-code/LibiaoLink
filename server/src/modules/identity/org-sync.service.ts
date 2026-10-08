@@ -1,5 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { AppError } from "../../common/errors/app-error.js";
+import { DatabaseService } from "../../db/database.service.js";
+import { AuditService } from "../audit/index.js";
 import { DepartmentRepository } from "./department.repository.js";
 import { SessionService } from "./session.service.js";
 import { UserRepository } from "./user.repository.js";
@@ -100,6 +102,8 @@ function orderDepartments(records: readonly OrgDepartmentRecord[]): OrgDepartmen
 /**
  * 组织同步引擎（h1 · D1-02 / D1-07）：消费目录快照 —— 部门树 upsert + 缺失停用、用户 upsert + 离职停用 + 踢线，产出差异报告。
  * 外部拉取（Casdoor / 企微）由适配器承担，随调度卡片（i5）接入 worker；本服务保持纯领域逻辑、可单测。
+ * 留痕（Push 173）：用户停用 / 启用逐条写审计（objectType = user、entry = system、actorId = null —— 系统动作）；
+ * 批次运行报告仍经返回值下发（新建 / 更新计数不逐条落审计，避免首次全量同步刷屏）。
  */
 @Injectable()
 export class OrgSyncService {
@@ -107,6 +111,8 @@ export class OrgSyncService {
     private readonly departments: DepartmentRepository,
     private readonly users: UserRepository,
     private readonly sessions: SessionService,
+    private readonly audit: AuditService,
+    private readonly database: DatabaseService,
   ) {}
 
   async applySnapshot(snapshot: OrgDirectorySnapshot, options: OrgSyncOptions = {}): Promise<OrgSyncReport> {
@@ -215,9 +221,30 @@ export class OrgSyncService {
       }
       if (before.status === "active" && row.status === "disabled") {
         disabledUsernames.push(row.username);
-        sessionsRevoked += await this.sessions.revokeAllForUser(row.id);
+        const revoked = await this.sessions.revokeAllForUser(row.id);
+        sessionsRevoked += revoked;
+        await this.audit.record(this.database.db, {
+          actorId: null,
+          action: "update",
+          objectType: "user",
+          objectId: row.id,
+          entry: "system",
+          summary: "组织同步 · 停用用户（目录标记离职）：" + row.displayName + "（" + row.username + "，撤销会话 " + revoked + " 个）",
+          changes: [{ field: "status", from: "active", to: "disabled" }],
+          metadata: { source: "org_sync", reason: "directory_disabled", casdoorId: row.casdoorId, sessionsRevoked: revoked },
+        });
       } else if (before.status === "disabled" && row.status === "active") {
         enabled += 1;
+        await this.audit.record(this.database.db, {
+          actorId: null,
+          action: "update",
+          objectType: "user",
+          objectId: row.id,
+          entry: "system",
+          summary: "组织同步 · 启用用户（复职）：" + row.displayName + "（" + row.username + "）",
+          changes: [{ field: "status", from: "disabled", to: "active" }],
+          metadata: { source: "org_sync", reason: "directory_enabled", casdoorId: row.casdoorId },
+        });
       }
     }
 
@@ -230,8 +257,19 @@ export class OrgSyncService {
       if (missingActive.length <= allowed) {
         for (const row of missingActive) {
           await this.users.updateStatus(row.id, "disabled", at);
-          sessionsRevoked += await this.sessions.revokeAllForUser(row.id);
+          const revoked = await this.sessions.revokeAllForUser(row.id);
+          sessionsRevoked += revoked;
           disabledUsernames.push(row.username);
+          await this.audit.record(this.database.db, {
+            actorId: null,
+            action: "update",
+            objectType: "user",
+            objectId: row.id,
+            entry: "system",
+            summary: "组织同步 · 停用用户（目录缺失 · 策略 disable 执行）：" + row.displayName + "（" + row.username + "，撤销会话 " + revoked + " 个）",
+            changes: [{ field: "status", from: "active", to: "disabled" }],
+            metadata: { source: "org_sync", reason: "missing_from_snapshot", casdoorId: row.casdoorId, sessionsRevoked: revoked },
+          });
         }
         missingDisabled = true;
       } else {

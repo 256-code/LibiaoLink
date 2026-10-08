@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { and, asc, count, eq, ilike, or, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
+import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
 
 export type UserRow = typeof users.$inferSelect;
@@ -101,8 +102,8 @@ export class UserRepository {
     return this.database.db.select().from(users).orderBy(users.casdoorId);
   }
 
-  async updateStatus(id: string, status: "active" | "disabled", at: Date): Promise<void> {
-    await this.database.db.update(users).set({ status, updatedAt: at }).where(eq(users.id, id));
+  async updateStatus(id: string, status: "active" | "disabled", at: Date, client: DbClient = this.database.db): Promise<void> {
+    await client.update(users).set({ status, updatedAt: at }).where(eq(users.id, id));
   }
 
   /** 内部离职回收（h1）：按目标态更新 status / removed_at（removedAt 未提供 = 不改动该列）。 */
@@ -110,6 +111,7 @@ export class UserRepository {
     id: string,
     next: { status: "active" | "disabled"; removedAt?: Date | null },
     at: Date,
+    client: DbClient = this.database.db,
   ): Promise<void> {
     const patch: { status: "active" | "disabled"; updatedAt: Date; removedAt?: Date | null } = {
       status: next.status,
@@ -118,7 +120,7 @@ export class UserRepository {
     if (Object.prototype.hasOwnProperty.call(next, "removedAt")) {
       patch.removedAt = next.removedAt ?? null;
     }
-    await this.database.db.update(users).set(patch).where(eq(users.id, id));
+    await client.update(users).set(patch).where(eq(users.id, id));
   }
 
   /** 内部离职回收：按工号定位（name 为准）。 */

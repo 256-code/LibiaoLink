@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { AppError } from "../../common/errors/app-error.js";
+import type { DbClient } from "../../db/db-client.js";
 import { AppConfig } from "../../config/config.module.js";
 import { SessionRepository, type SessionWithUser } from "./session.repository.js";
 
@@ -78,8 +79,8 @@ export class SessionService {
     return found.session.idToken;
   }
 
-  /** 踢掉某用户全部在线会话（管理动作 / h1 组织同步复用）。 */
-  async revokeAllForUser(userId: string): Promise<number> {
-    return this.sessions.revokeAllForUser(userId, new Date());
+  /** 踢掉某用户全部在线会话（管理动作 / h1 组织同步 / 离职回收复用；client 传入时并入调用方事务）。 */
+  async revokeAllForUser(userId: string, client?: DbClient): Promise<number> {
+    return this.sessions.revokeAllForUser(userId, new Date(), client);
   }
 }
