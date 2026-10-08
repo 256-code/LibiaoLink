@@ -3,8 +3,8 @@ import { AppError } from "../src/common/errors/app-error.js";
 import { isUuidLike, objectRefOfUrl, shouldRecordDenied } from "../src/common/audit/audit-path.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import { diffRecords, stableValue } from "../src/modules/admin/audit.rules.js";
-import { AuditService, toAuditLog } from "../src/modules/admin/audit.service.js";
-import type { AuditInsertInput, AuditListFilter, AuditRepository, AuditRow } from "../src/modules/admin/audit.repository.js";
+import { AuditService, toAuditLog } from "../src/modules/audit/audit.service.js";
+import type { AuditInsertInput, AuditListFilter, AuditRepository, AuditRow } from "../src/modules/audit/audit.repository.js";
 import { DictService } from "../src/modules/admin/dict.service.js";
 import type { DictItemRow, DictRepository, DictTypeRow } from "../src/modules/admin/dict.repository.js";
 
