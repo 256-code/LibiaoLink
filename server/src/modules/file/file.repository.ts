@@ -224,6 +224,27 @@ export class FileRepository {
     return rows[0]?.id ?? null;
   }
 
+  /**
+   * 任务定档兜底（防绕过补漏）：撤销该任务名下文件「在途（active）」的 version 上传会话。
+   * 只撤 version —— change 是 A4-13 唯一保留的修改通道；返回条数供任务审计 metadata 记录
+   * （对象存储未完成分片由生命周期兜底清理，同归档口径 ADR-027）。
+   */
+  async abortActiveTaskUploadSessions(taskId: string, at: Date, client: DbClient): Promise<number> {
+    const fileIds = client.select({ id: files.id }).from(files).where(eq(files.taskId, taskId));
+    const rows = await client
+      .update(uploadSessions)
+      .set({ status: "aborted", abortedAt: at, updatedAt: at })
+      .where(
+        and(
+          eq(uploadSessions.status, "active"),
+          eq(uploadSessions.intent, "version"),
+          inArray(uploadSessions.fileId, fileIds),
+        ),
+      )
+      .returning({ id: uploadSessions.id });
+    return rows.length;
+  }
+
   async insertFile(input: FileInsertInput, client: DbClient): Promise<FileRow> {
     const rows = await client
       .insert(files)

@@ -171,6 +171,13 @@ class FakeTaskRepository {
   async touchProject(projectId: string): Promise<void> {
     this.touched.push(projectId);
   }
+  /** 定档兜底撤销调用记录（防绕过补漏）。 */
+  abortedTaskUploadSessions: { taskId: string; at: Date }[] = [];
+  abortedTaskSessionCount = 0;
+  async abortActiveTaskUploadSessions(taskId: string, at: Date): Promise<number> {
+    this.abortedTaskUploadSessions.push({ taskId, at });
+    return this.abortedTaskSessionCount;
+  }
   async countStageTasks(): Promise<{ total: number; done: number }> {
     return { total: 0, done: 0 };
   }
@@ -741,18 +748,22 @@ describe("任务定档入口（Push 252 · 抽屉「定档」开关 + 二次确�
   it("未定档任务：finalize 置位 finalizedAt / finalizedBy + version+1 + 审计「任务定档」+ 项目触点", async () => {
     const repo = new FakeTaskRepository();
     const audit = new FakeAuditService();
+    repo.abortedTaskSessionCount = 3;
     const updated = await makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit).finalize(PROJECT, TASK, { version: 3 }, ACTOR);
     expect(updated.finalizedAt).not.toBeNull();
     expect(updated.finalizedBy).toBe(ACTOR);
     expect(updated.version).toBe(4);
     expect(repo.task?.finalizedAt).not.toBeNull();
     expect(repo.touched).toEqual([PROJECT]);
+    // 定档兜底：撤销在途 version 上传会话，条数进审计 metadata
+    expect(repo.abortedTaskUploadSessions).toEqual([{ taskId: TASK, at: expect.any(Date) }]);
     expect(audit.entries).toHaveLength(1);
-    const entry = audit.entries[0] as { action: string; objectType: string; objectId: string; summary: string };
+    const entry = audit.entries[0] as { action: string; objectType: string; objectId: string; summary: string; metadata?: unknown };
     expect(entry.action).toBe("update");
     expect(entry.objectType).toBe("task");
     expect(entry.objectId).toBe(TASK);
     expect(entry.summary).toContain("任务定档");
+    expect(entry.metadata).toEqual({ abortedUploadSessions: 3 });
   });
 
   it("已定档任务：finalize 幂等短路（原样返回、不递增版本、不再写审计）", async () => {
@@ -766,6 +777,7 @@ describe("任务定档入口（Push 252 · 抽屉「定档」开关 + 二次确�
     expect(repo.task?.version).toBe(7);
     expect(audit.entries).toHaveLength(0);
     expect(repo.touched).toEqual([]);
+    expect(repo.abortedTaskUploadSessions).toEqual([]);
   });
 
   it("未定档任务：version 不匹配 → 409 VERSION_CONFLICT（不写库）", async () => {

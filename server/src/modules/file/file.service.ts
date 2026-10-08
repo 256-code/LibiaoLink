@@ -30,7 +30,7 @@ import {
 import { ClockService } from "../../common/clock/clock.service.js";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
-import type { DbTransaction } from "../../db/db-client.js";
+import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox, appendOutboxIfAbsent } from "../../db/outbox.js";
 import {
@@ -442,6 +442,11 @@ export class FileService {
           "目标文件已不是未定档状态（" + lockedFile.status + "），不能追加版本；定档后修改请走变更（M4-04）",
         );
       }
+      // 任务定档复核（定档绕过补漏）：会话发起时任务可能未定档、会话期间才被定档 —— 此时状态门禁拦不住，
+      // 非 change 意图一律 409（与 createUpload / renameFile 同闸；A4-13：定档后修改走变更）。
+      if (!isChange && lockedFile.taskId !== null) {
+        await this.assertTaskNotFinalized(lockedFile.taskId, tx);
+      }
       const currentSeq = await this.repository.nextVersionSeq(fileId, tx);
       if (currentSeq !== seq) {
         throw new AppError("INTERNAL", "文件版本位次被并发上传占用，请重试完成上传");
@@ -751,9 +756,11 @@ export class FileService {
   /**
    * 任务定档闸（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：文件挂接的任务已定档时，
    * 新增 / 直接替换 / 追加版本 / 改名 / 普通回溯（draft）一律 409 TASK_FINALIZED；修改走变更（A2-10 / A4-13）。
+   * 定档绕过补漏：`completeUpload` 事务内复核（会话早于定档发起时，状态门禁不够）；
+   * 定档侧同时撤销在途 version 会话（finalizeFile / task.finalize）。
    */
-  private async assertTaskNotFinalized(taskId: string): Promise<void> {
-    const task = await this.repository.findTaskBrief(taskId);
+  private async assertTaskNotFinalized(taskId: string, client?: DbClient): Promise<void> {
+    const task = await this.repository.findTaskBrief(taskId, client);
     if (task !== null && task.finalizedAt !== null) {
       throw new AppError("TASK_FINALIZED", "任务已定档，不支持任何修改（文件修改走变更）", [
         { code: "task_finalized", message: "任务定档时间：" + task.finalizedAt.toISOString(), path: "taskId" },
@@ -947,7 +954,7 @@ export class FileService {
       this.assertOptimisticVersion(body.version, locked.version);
       const mode = this.assertRollbackAllowed(locked.status);
       if (mode === "draft" && locked.taskId !== null) {
-        await this.assertTaskNotFinalized(locked.taskId);
+        await this.assertTaskNotFinalized(locked.taskId, tx);
       }
       const changeRequestId = mode === "change" ? randomUUID() : null;
       if (locked.currentVersionId === target.id) {
@@ -1104,7 +1111,7 @@ export class FileService {
       const locked = await this.lockFileOr404(tx, fileId);
       this.assertOptimisticVersion(body.version, locked.version);
       if (locked.taskId !== null) {
-        await this.assertTaskNotFinalized(locked.taskId);
+        await this.assertTaskNotFinalized(locked.taskId, tx);
       }
       if (locked.status === "recycled") {
         throw new AppError("FILE_STATE_INVALID", "文件已在回收站，不能改名；请先恢复");
@@ -1187,6 +1194,9 @@ export class FileService {
       if (locked.taskId !== null) {
         const finalizedTaskId = await this.repository.markTaskFinalized(locked.taskId, at, actorId, tx);
         if (finalizedTaskId !== null) {
+          // 定档兜底（防绕过补漏）：撤销该任务在途的 version 上传会话（change = A4-13 唯一保留的修改通道，不撤）；
+          // 漏网会话由 completeUpload 的任务定档复核兜住。
+          const abortedUploadSessions = await this.repository.abortActiveTaskUploadSessions(locked.taskId, at, tx);
           await this.audit.record(tx, {
             actorId,
             action: "update",
@@ -1195,7 +1205,7 @@ export class FileService {
             projectId: file.projectId,
             summary: "任务定档（随文件定档：" + locked.name + "）——此后不支持任何修改（文件修改走变更）",
             changes: [{ field: "finalizedAt", from: null, to: at.toISOString() }],
-            metadata: { fileId, fileStatus: "final" },
+            metadata: { fileId, fileStatus: "final", abortedUploadSessions },
           });
         }
       }
