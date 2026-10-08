@@ -7160,6 +7160,8 @@ export interface components {
             photoFileIds?: components["schemas"]["Uuid"][];
             /** @description 当前问题附图（文件 id 整体替换；提交生成问题时转挂到问题） */
             issuePhotoFileIds?: components["schemas"]["Uuid"][];
+            /** @description 内联问题清单（1~N 条；与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥 —— 二选一） */
+            issues?: components["schemas"]["ReportIssueDraft"][];
         };
         /** @description 日报删除（成对删除派生问题） */
         DailyReportDeleteResponse: {
@@ -7251,6 +7253,8 @@ export interface components {
             photoFileIds?: components["schemas"]["Uuid"][];
             /** @description 当前问题附图整体替换（缺省 = 不改；空数组 = 清空）；该日报已生成问题时转挂目标 = 该问题 */
             issuePhotoFileIds?: components["schemas"]["Uuid"][];
+            /** @description 内联问题清单整体替换（草稿 → 提交时逐条生成问题；空数组 = 清空；非空时与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥） */
+            issues?: components["schemas"]["ReportIssueDraft"][];
         };
         /**
          * @description draft 暂存 / submitted 提交（缺省 submitted）
@@ -7577,7 +7581,7 @@ export interface components {
             sourceReportId: components["schemas"]["Uuid"] & (string | null);
             /** @description 问题描述（自动生成 = 日报「现场发现问题」原文；超 500 字截短落库） */
             title: string;
-            categories: components["schemas"]["IssueCategoryList"];
+            categories: components["schemas"]["IssueCategoryList"] & unknown;
             state: components["schemas"]["IssueState"];
             reporterId: components["schemas"]["Uuid"];
             /** @description 提出人显示名（= 来源日报提交人） */
@@ -7602,7 +7606,7 @@ export interface components {
          * @enum {string}
          */
         IssueCategory: "机械部" | "采购部" | "规划部" | "项目部" | "物流原因" | "供应商原因" | "客户原因" | "客观原因" | "生产原因" | "其它原因";
-        /** @description 问题归类（多值，≥1 项；C9 字典十项） */
+        /** @description 问题归类（多值 ≥1 项；C9 十项） */
         IssueCategoryList: components["schemas"]["IssueCategory"][];
         /** @description 问题删除（成对删除来源日报） */
         IssueDeleteResponse: {
@@ -8170,6 +8174,21 @@ export interface components {
             status?: "active" | "paused" | "done";
             description?: string | null;
             version: components["schemas"]["Version"];
+        };
+        /** @description 日报内联问题草稿（一次填报 1~N 条；提交时逐条生成问题记录） */
+        ReportIssueDraft: {
+            /** @description 问题描述（原文；问题记录标题超 500 字截短落库） */
+            title: string;
+            categories: components["schemas"]["IssueCategoryList"];
+            /**
+             * Format: uuid
+             * @description 问题处理人 / 责任人（缺省 / null = 按归类自动分派责任部门）
+             */
+            ownerId?: string | null;
+            /** @description 解决方案或建议（落问题的 solution） */
+            solution?: string;
+            /** @description 该问题附图（文件 id；提交时直接挂到生成的问题） */
+            photoFileIds?: components["schemas"]["Uuid"][];
         };
         /** @description 常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters） */
         SavedHomeFilter: {
@@ -8934,7 +8953,7 @@ export interface components {
             projectName: string;
             taskId: components["schemas"]["Uuid"] & (string | null);
             title: string;
-            categories: components["schemas"]["IssueCategoryList"];
+            categories: components["schemas"]["IssueCategoryList"] & unknown;
             state: components["schemas"]["IssueState"];
             reporterId: components["schemas"]["Uuid"];
             reporterName: string | null;

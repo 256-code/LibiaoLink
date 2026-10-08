@@ -7,6 +7,7 @@ import {
   DailyReportSchema,
   DailyReportUpdateBodySchema,
   STAGE_NAMES,
+  type ReportIssueDraft,
   z,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
@@ -73,6 +74,22 @@ function issueSnapshot(row: IssueRow): Record<string, unknown> {
 /** 问题描述上限（issues.title CHECK 1~500）：日报原文超长时截短落库，原文仍在日报行。 */
 const ISSUE_TITLE_MAX = 500;
 
+/** 行内联问题清单（Push 243）：jsonb 原样读取（写入前已过契约校验），非数组按空处理（= 旧单问题字段口径）。 */
+function issueDraftsOf(row: DailyReportRow): ReportIssueDraft[] {
+  return Array.isArray(row.issueDrafts) ? (row.issueDrafts as ReportIssueDraft[]) : [];
+}
+
+/** 内联问题清单规范化（Push 243）：标题去首尾空白；全空白标题 400（契约 min(1) 挡不住纯空白）。 */
+function normalizeIssueDrafts(input: readonly ReportIssueDraft[]): ReportIssueDraft[] {
+  const drafts = input.map((draft) => ({ ...draft, title: draft.title.trim(), ownerId: draft.ownerId ?? null }));
+  if (drafts.some((draft) => draft.title === "")) {
+    throw new AppError("VALIDATION_FAILED", "问题描述不能为空（issues.title）", [
+      { code: "issue_title_required", message: "问题描述去空白后不能为空", path: "issues" },
+    ]);
+  }
+  return drafts;
+}
+
 /** 行 → 契约（stageNames 查 STAGE_NAMES；photos / issuePhotos 由调用方批量装载后传入）。 */
 export function toDailyReportView(row: DailyReportRow, photos: { onsite: FilePhotoRefRow[]; issue: FilePhotoRefRow[] }): DailyReport {
   const stageNameByKey = STAGE_NAMES as Record<string, string>;
@@ -104,7 +121,9 @@ export function toDailyReportView(row: DailyReportRow, photos: { onsite: FilePho
  * 日报用例（M6-01 / M6-02 · A3-01 ~ A3-04 / A3-09 · Push 215）。
  * 1) 同人同项目同日可多条（原「一人一天一条」与 409 REPORT_ALREADY_EXISTS 随批删除）；
  * 2) 状态：draft / submitted / supplement（对过去日期首次提交 = 补填，服务端推导，不接受客户端指定）；
- * 3) 提交后副作用（同事务、幂等）：A3-09 生成问题（source_report_id 唯一兜底），并把问题图从日报转挂到问题；
+ * 3) 提交后副作用（同事务、幂等 · Push 243 多条口径）：A3-09 生成问题 —— 内联问题清单（issues）逐条生成独立问题
+ *    （各自归类 / 处理人 / 解决方案 / 附图），幂等 = 生成前按 source_report_id 计数（原唯一约束 0043 删除）；
+ *    旧单问题字段口径照旧（并把问题图从日报转挂到问题）；
  * 4) 附图（方案一）：现场图 / 问题图都挂 file_links(report, kind=onsite|issue)，整体替换语义；
  * 5) 删除为成对删除：删日报 = 连它派生的全部问题 + 两侧附图关联（DELETE）；
  * 6) 留痕：审计（对象 daily_report + 连带问题）+ outbox report.submitted / report.deleted；归档项目写保护 409 PROJECT_ARCHIVED。
@@ -155,8 +174,12 @@ export class ReportService {
     const issueCategories = foundIssueText.length === 0 ? [] : (body.issueCategories ?? []);
     const photoFileIds = body.photoFileIds ?? [];
     const issuePhotoFileIds = body.issuePhotoFileIds ?? [];
-    if (photoFileIds.length > 0 || issuePhotoFileIds.length > 0) {
-      await assertPhotoFilesInProject(projectId, [...photoFileIds, ...issuePhotoFileIds], this.database.db);
+    /** 内联问题清单（Push 243）：与旧单问题字段二选一由契约 superRefine 兜底（按内容判）。 */
+    const issueDrafts = normalizeIssueDrafts(body.issues ?? []);
+    const draftPhotoFileIds = issueDrafts.flatMap((draft) => draft.photoFileIds ?? []);
+    const fileIdsToCheck = [...photoFileIds, ...issuePhotoFileIds, ...draftPhotoFileIds];
+    if (fileIdsToCheck.length > 0) {
+      await assertPhotoFilesInProject(projectId, fileIdsToCheck, this.database.db);
     }
     let createdId = "";
     await this.database.db.transaction(async (tx) => {
@@ -172,6 +195,7 @@ export class ReportService {
           foundIssue: body.foundIssue ?? null,
           issueCategories,
           suggestion: body.suggestion ?? null,
+          issueDrafts,
           stageKeys,
           submittedAt: state === "draft" ? null : at,
         },
@@ -208,8 +232,10 @@ export class ReportService {
     const today = shanghaiToday(at);
     const photoFileIds = body.photoFileIds;
     const issuePhotoFileIds = body.issuePhotoFileIds;
-    if (photoFileIds !== undefined || issuePhotoFileIds !== undefined) {
-      await assertPhotoFilesInProject(projectId, [...(photoFileIds ?? []), ...(issuePhotoFileIds ?? [])], this.database.db);
+    const issueDrafts = body.issues === undefined ? undefined : normalizeIssueDrafts(body.issues);
+    const draftPhotoFileIds = (issueDrafts ?? []).flatMap((draft) => draft.photoFileIds ?? []);
+    if (photoFileIds !== undefined || issuePhotoFileIds !== undefined || draftPhotoFileIds.length > 0) {
+      await assertPhotoFilesInProject(projectId, [...(photoFileIds ?? []), ...(issuePhotoFileIds ?? []), ...draftPhotoFileIds], this.database.db);
     }
     await this.database.db.transaction(async (tx) => {
       const before = await this.requireReport(projectId, reportId, tx);
@@ -228,6 +254,7 @@ export class ReportService {
       if (body.foundIssue !== undefined) patch.foundIssue = body.foundIssue;
       if (body.issueCategories !== undefined) patch.issueCategories = issueCategories;
       if (body.suggestion !== undefined) patch.suggestion = body.suggestion;
+      if (issueDrafts !== undefined) patch.issueDrafts = issueDrafts;
       if (body.stageKeys !== undefined) patch.stageKeys = [...new Set(body.stageKeys)];
       if (body.state === "submitted") {
         patch.state = before.state === "draft" ? resolveReportState("submitted", before.reportDate, today) : before.state;
@@ -244,9 +271,12 @@ export class ReportService {
         await replaceReportPhotos(reportId, "onsite", photoFileIds, actorId, at, tx);
       }
       if (issuePhotoFileIds !== undefined) {
-        const generated = await this.issues.findBySourceReport(reportId, tx);
-        if (generated === null) await replaceReportPhotos(reportId, "issue", issuePhotoFileIds, actorId, at, tx);
-        else await replaceIssuePhotos(generated.id, issuePhotoFileIds, actorId, at, tx);
+        // 旧口径「当前问题附图」：已生成问题且恰好一条时转挂到那条问题；Push 243 起一日报可多条 / 新口径走 issues[].photoFileIds
+        // 直接挂问题 —— 多条时无可归属目标，附图保留在日报侧。
+        const generated = await this.issues.listBySourceReport(reportId, tx);
+        const only: IssueRow | null = generated.length === 1 ? (generated[0] ?? null) : null;
+        if (only !== null) await replaceIssuePhotos(only.id, issuePhotoFileIds, actorId, at, tx);
+        else await replaceReportPhotos(reportId, "issue", issuePhotoFileIds, actorId, at, tx);
       }
       await this.audit.record(tx, {
         actorId,
@@ -271,11 +301,62 @@ export class ReportService {
   }
 
   /**
-   * 提交后副作用（A3-09 问题自动生成 · Push 215 幂等可重放）：source_report_id 唯一约束兜底 ——
-   * 已生成过则 insert 返回 null（不重复写事件与留痕）；新生成时把日报「当前问题附图」转挂到问题（file_links(issue)）。
+   * 提交后副作用（A3-09 问题自动生成 · Push 243 多条口径）：
+   * - 幂等兜底：生成前按 source_report_id 计数（> 0 = 已生成过，直接返回）—— 原 uq_issues_source_report 唯一约束随 0043 删除；
+   * - 新口径（内联问题清单 issues 非空）：逐条生成独立问题 —— 各自归类 / 处理人（ownerId 显式给出）/ 解决方案 /
+   *   附图（issues[].photoFileIds 直接挂问题侧 file_links(issue)）；每条都写 created 事件 + 审计 + outbox；
+   * - 旧口径（found_issue 非空 + 归类非空）：生成一条问题，并把日报「当前问题附图」整体转挂到问题。
    * A3-08 回写关联任务进展随「关联任务改关联阶段」停用（Push 215）。
    */
   private async afterSubmit(tx: DbClient, row: DailyReportRow, actorId: string, at: Date): Promise<void> {
+    const generated = await this.issues.countBySourceReport(row.id, tx);
+    if (generated > 0) return;
+    const drafts = issueDraftsOf(row);
+    if (drafts.length > 0) {
+      for (const draft of drafts) {
+        const issue = await this.issues.insert(
+          {
+            projectId: row.projectId,
+            taskId: null,
+            sourceReportId: row.id,
+            title: draft.title.length > ISSUE_TITLE_MAX ? draft.title.slice(0, ISSUE_TITLE_MAX) : draft.title,
+            categories: draft.categories,
+            solution: draft.solution ?? null,
+            state: "open",
+            reporterId: row.authorId,
+            ownerDepartment: departmentOfCategories(draft.categories),
+            ownerId: draft.ownerId ?? null,
+            raisedAt: row.reportDate,
+          },
+          at,
+          tx,
+        );
+        const photoFileIds = draft.photoFileIds ?? [];
+        if (photoFileIds.length > 0) await replaceIssuePhotos(issue.id, photoFileIds, actorId, at, tx);
+        await this.issues.insertEvent(
+          { issueId: issue.id, eventType: "created", fromState: null, toState: "open", note: null },
+          actorId,
+          at,
+          tx,
+        );
+        await this.audit.record(tx, {
+          actorId,
+          action: "create",
+          objectType: "issue",
+          objectId: issue.id,
+          projectId: row.projectId,
+          summary: "日报自动生成问题：" + issue.title,
+          changes: diffRecords({}, issueSnapshot(issue)),
+          metadata: { sourceReportId: row.id, categories: issue.categories, state: issue.state, ownerId: issue.ownerId },
+        });
+        await appendOutbox(tx, {
+          topic: "issue.created",
+          dedupeKey: "issue.created:" + issue.id,
+          payload: { projectId: row.projectId, issueId: issue.id, sourceReportId: row.id, categories: issue.categories, at: at.toISOString() },
+        });
+      }
+      return;
+    }
     const foundIssue = row.foundIssue === null ? "" : row.foundIssue.trim();
     if (foundIssue.length === 0 || row.issueCategories.length === 0) return;
     const issue = await this.issues.insert(
@@ -285,6 +366,7 @@ export class ReportService {
         sourceReportId: row.id,
         title: foundIssue.length > ISSUE_TITLE_MAX ? foundIssue.slice(0, ISSUE_TITLE_MAX) : foundIssue,
         categories: row.issueCategories,
+        solution: null,
         state: "open",
         reporterId: row.authorId,
         ownerDepartment: departmentOfCategories(row.issueCategories),
@@ -294,7 +376,6 @@ export class ReportService {
       at,
       tx,
     );
-    if (issue === null) return;
     await moveIssuePhotosToIssue(row.id, issue.id, actorId, at, tx);
     await this.issues.insertEvent(
       { issueId: issue.id, eventType: "created", fromState: null, toState: "open", note: null },

@@ -8,6 +8,7 @@
  * 真机口径见 server/README.md「M6-01 ~ M6-03」与 server/src/modules/report-issue/README.md。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DailyReportCreateBodySchema, DailyReportUpdateBodySchema } from "@libiaolink/contracts";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
@@ -90,6 +91,7 @@ function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyR
     foundIssue: null,
     issueCategories: [],
     suggestion: null,
+    issueDrafts: [],
     stageKeys: [],
     submittedAt: AT,
     createdAt: AT,
@@ -195,18 +197,19 @@ class FakeIssueRepository {
     return row !== undefined && row.projectId === projectId ? row : null;
   }
 
-  async findBySourceReport(reportId: string): Promise<IssueRow | null> {
-    return [...this.issues.values()].find((row) => row.sourceReportId === reportId) ?? null;
+  /** Push 243：一日报多条问题 —— 反查返回全部（生成序）；幂等改由服务层按计数兜底。 */
+  async listBySourceReport(reportId: string): Promise<IssueRow[]> {
+    return [...this.issues.values()].filter((row) => row.sourceReportId === reportId);
+  }
+
+  async countBySourceReport(reportId: string): Promise<number> {
+    return [...this.issues.values()].filter((row) => row.sourceReportId === reportId).length;
   }
 
   async insert(
     input: Omit<IssueRow, "id" | "reporterName" | "ownerName" | "version" | "createdAt" | "updatedAt">,
     at: Date,
-  ): Promise<IssueRow | null> {
-    if (input.sourceReportId !== null) {
-      const conflict = [...this.issues.values()].some((row) => row.sourceReportId === input.sourceReportId);
-      if (conflict) return null;
-    }
+  ): Promise<IssueRow> {
     const id = this.issueIds[this.issuedIssues] ?? ISSUE_2 + "-" + String(this.issuedIssues);
     this.issuedIssues += 1;
     const row = makeIssue(id, { ...input, version: 1, createdAt: at, updatedAt: at });
@@ -406,6 +409,104 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
     );
     expect(issues.issues.size).toBe(1);
     expect(issues.events).toHaveLength(1);
+  });
+
+  it("Push 243 内联问题清单：一次填报多条问题 → 提交逐条生成独立问题（各自归类 / 处理人 / 解决方案 / 附图）", async () => {
+    const { db, issues, audit, service } = seed();
+    photoStore.seedFile(FILE_A, "问题一.jpg", PROJECT);
+    const created = await service.create(
+      PROJECT,
+      {
+        date: PAST_DATE,
+        state: "submitted",
+        doneWork: "安装完成",
+        issues: [
+          { title: "液压泵渗油", categories: ["机械部"], ownerId: OTHER_ACTOR, solution: "更换密封圈", photoFileIds: [FILE_A] },
+          { title: "清关单证缺失", categories: ["物流原因"] },
+        ],
+      },
+      ACTOR,
+    );
+    const generated = [...issues.issues.values()];
+    expect(generated).toHaveLength(2);
+    expect(generated[0]).toMatchObject({
+      sourceReportId: created.id,
+      state: "open",
+      categories: ["机械部"],
+      ownerId: OTHER_ACTOR,
+      ownerDepartment: "机械部",
+      solution: "更换密封圈",
+      raisedAt: PAST_DATE,
+    });
+    expect(generated[1]).toMatchObject({ categories: ["物流原因"], ownerId: null, ownerDepartment: null, solution: null });
+    expect(issues.events).toHaveLength(2);
+    expect(issues.events.every((event) => event.eventType === "created")).toBe(true);
+    expect(db.outbox.filter((row) => row.topic === "issue.created")).toHaveLength(2);
+    expect(audit.entries.map((entry) => entry.objectType)).toEqual(["daily_report", "issue", "issue"]);
+    // 附图：新口径直接挂问题侧（不落日报侧 kind=issue）；日报侧 issuePhotos 为空
+    const firstIssueId = generated[0]?.id ?? "";
+    expect(photoStore.refs("issue", firstIssueId).map((ref) => ref.fileId)).toEqual([FILE_A]);
+    expect(photoStore.refs("report", created.id, "issue")).toEqual([]);
+  });
+
+  it("Push 243 草稿携带清单：state=draft 落 issue_drafts 不生成问题；PATCH 提交后逐条生成", async () => {
+    const { reports, issues, service } = seed();
+    const created = await service.create(
+      PROJECT,
+      {
+        date: PAST_DATE,
+        state: "draft",
+        doneWork: "草稿内容",
+        issues: [
+          { title: "问题甲", categories: ["采购部"] },
+          { title: "问题乙", categories: ["生产原因"] },
+        ],
+      },
+      ACTOR,
+    );
+    expect(issues.issues.size).toBe(0);
+    expect(reports.reports.get(created.id)?.issueDrafts).toHaveLength(2);
+    const submitted = await service.update(PROJECT, created.id, { version: created.version, state: "submitted" }, ACTOR);
+    expect(submitted.state).toBe("supplement");
+    expect(issues.issues.size).toBe(2);
+  });
+
+  it("Push 243 幂等：已生成后重编辑不重复生成（按 source_report_id 计数兜底）", async () => {
+    const { issues, service } = seed();
+    const created = await service.create(
+      PROJECT,
+      { date: PAST_DATE, state: "submitted", doneWork: "安装完成", issues: [{ title: "问题甲", categories: ["项目部"] }] },
+      ACTOR,
+    );
+    expect(issues.issues.size).toBe(1);
+    await service.update(PROJECT, created.id, { version: created.version, state: "submitted", doneWork: "安装完成（补记）" }, ACTOR);
+    expect(issues.issues.size).toBe(1);
+    expect(issues.events).toHaveLength(1);
+  });
+
+  it("Push 243 契约：issues 与旧单问题字段按内容互斥（null / 空数组不算冲突；更新体空数组 = 清空清单）", () => {
+    const draft = { title: "问题甲", categories: ["机械部"] as const };
+    expect(DailyReportCreateBodySchema.safeParse({ date: NOW_DAY, doneWork: "x", issues: [draft] }).success).toBe(true);
+    expect(
+      DailyReportCreateBodySchema.safeParse({
+        date: NOW_DAY,
+        doneWork: "x",
+        foundIssue: "旧口径问题",
+        issueCategories: ["机械部"],
+        issues: [draft],
+      }).success,
+    ).toBe(false);
+    expect(
+      DailyReportUpdateBodySchema.safeParse({
+        version: 1,
+        issues: [],
+        foundIssue: null,
+        issueCategories: null,
+        suggestion: null,
+        issuePhotoFileIds: [],
+      }).success,
+    ).toBe(true);
+    expect(DailyReportUpdateBodySchema.safeParse({ version: 1, issues: [draft], foundIssue: null, issueCategories: null }).success).toBe(true);
   });
 
   it("附图（方案一）：日报两张图都挂 file_links(report)（kind 区分）；提交生成问题时问题图转挂到问题侧", async () => {

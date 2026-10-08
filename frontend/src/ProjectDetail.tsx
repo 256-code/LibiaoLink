@@ -930,7 +930,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 207 同批追加：醒目模式值透传给「问题追踪」做表格呈现（开关本体在标签栏最右侧，见上）；失败提示沿用同一条 toolError
-            <ReportIssuePanel key={project.id} project={project} me={me} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+            <ReportIssuePanel key={project.id} project={project} me={me} members={members} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
             <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />

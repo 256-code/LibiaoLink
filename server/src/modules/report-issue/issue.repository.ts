@@ -50,6 +50,8 @@ export interface IssueInsertInput {
   sourceReportId: string | null;
   title: string;
   categories: string[];
+  /** 解决方案或建议（Push 243：内联问题草稿可随提交直接落 solution；旧单问题口径 = null）。 */
+  solution: string | null;
   state: string;
   reporterId: string;
   ownerDepartment: string | null;
@@ -102,7 +104,8 @@ const ISSUE_COLUMNS = {
 
 /**
  * 问题数据访问（M6-02 / M6-03）：列表 / 详情 / 乐观锁更新 / 处理过程留痕。
- * A3-09 幂等：自动生成走 source_report_id 唯一约束（onConflictDoNothing → 返回 null = 已生成过）。
+ * A3-09 幂等（Push 243 起）：自动生成的问题不再有唯一约束兜底 —— 生成前由服务层按 source_report_id 计数判重
+ * （countBySourceReport > 0 = 已生成过），本层只提供计数 / 反查（插入序）与插入。
  */
 @Injectable()
 export class IssueRepository {
@@ -140,20 +143,26 @@ export class IssueRepository {
     return (rows[0] ?? null) as IssueRow | null;
   }
 
-  /** 按来源日报反查自动生成的问题（A3-09 幂等 / 附图转挂目标；无 = null）。 */
-  async findBySourceReport(reportId: string, client: DbClient = this.database.db): Promise<IssueRow | null> {
+  /** 按来源日报反查自动生成的问题（A3-09：成对删除 / 附图转挂目标；Push 243 起一日报可多条，按生成顺序返回）。 */
+  async listBySourceReport(reportId: string, client: DbClient = this.database.db): Promise<IssueRow[]> {
     const rows = await client
       .select(ISSUE_COLUMNS)
       .from(issues)
       .leftJoin(users, eq(users.id, issues.reporterId))
       .leftJoin(ISSUE_OWNER, eq(ISSUE_OWNER.id, issues.ownerId))
       .where(eq(issues.sourceReportId, reportId))
-      .limit(1);
-    return (rows[0] ?? null) as IssueRow | null;
+      .orderBy(asc(issues.createdAt), asc(issues.id));
+    return rows as IssueRow[];
   }
 
-  /** 自动生成（A3-09）：source_report_id 冲突 = 已生成过，返回 null（不重复写事件）。 */
-  async insert(input: IssueInsertInput, at: Date, client: DbClient): Promise<IssueRow | null> {
+  /** 来源日报已生成的问题数（A3-09 幂等兜底 · Push 243）：> 0 = 已生成过，不重复生成。 */
+  async countBySourceReport(reportId: string, client: DbClient = this.database.db): Promise<number> {
+    const rows = await client.select({ total: sql<number>`count(*)::int` }).from(issues).where(eq(issues.sourceReportId, reportId));
+    return rows[0]?.total ?? 0;
+  }
+
+  /** 自动生成（A3-09）：幂等由调用方按 countBySourceReport 兜底（Push 243 删唯一约束，本层不再判重）。 */
+  async insert(input: IssueInsertInput, at: Date, client: DbClient): Promise<IssueRow> {
     const inserted = await client
       .insert(issues)
       .values({
@@ -162,6 +171,7 @@ export class IssueRepository {
         sourceReportId: input.sourceReportId,
         title: input.title,
         categories: input.categories,
+        solution: input.solution,
         state: input.state,
         reporterId: input.reporterId,
         ownerDepartment: input.ownerDepartment,
@@ -170,11 +180,12 @@ export class IssueRepository {
         createdAt: at,
         updatedAt: at,
       })
-      .onConflictDoNothing({ target: issues.sourceReportId })
       .returning({ id: issues.id });
     const id = inserted[0]?.id;
-    if (id === undefined) return null;
-    return this.findById(input.projectId, id, client);
+    if (id === undefined) throw new Error("issues insert 未返回 id");
+    const row = await this.findById(input.projectId, id, client);
+    if (row === null) throw new Error("issues insert 后读回失败：" + id);
+    return row;
   }
 
   /** 乐观锁更新（version 不匹配返回 false，由服务层转 409 VERSION_CONFLICT）。 */

@@ -1,11 +1,11 @@
 /**
  * daily_reports / issues / issue_events（0023 · M6-01 ~ M6-03 第一刀 · A3-01 / A3-02 / A3-04 / A3-09 / A3-10 / A3-13）。
- * 表口径见 database/migrations/0023_daily_reports_issues.sql（Push 215 修订见 0041：同日多条 / 关联阶段 / 归类多值 / 三态 / 删 due_at）。
+ * 表口径见 database/migrations/0023_daily_reports_issues.sql（Push 215 修订见 0041：同日多条 / 关联阶段 / 归类多值 / 三态 / 删 due_at；Push 243 见 0043：删 uq_issues_source_report + 增 issue_drafts（内联问题清单），一日报可派生多条问题）。
  * 契约见 shared/src/modules/reports.ts 与 issues.ts。
  * 引用守卫（系统功能书 A2-01）：tasks 删除时只检查 issues.task_id（b-tree）；日报一侧 task_ids 守卫随「关联任务改关联阶段」删除（Push 215）。
  */
 import { sql } from "drizzle-orm";
-import { check, date, index, integer, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { check, date, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
 import { DAILY_REPORT_STATE_KEYS, ISSUE_CATEGORY_KEYS, ISSUE_EVENT_TYPE_KEYS, ISSUE_STATE_KEYS, STAGE_KEYS, sqlArrayLiteral, sqlValueList } from "./literals.js";
 import { projects } from "./projects.js";
@@ -30,6 +30,11 @@ export const dailyReports = pgTable(
       .notNull()
       .default(sql`array[]::text[]`),
     suggestion: text("suggestion"),
+    /** 内联问题清单（Push 243）：「添加问题」逐条填的问题（描述 / 归类 / 处理人 / 解决方案 / 附图）——
+     *  草稿期整体落这里；提交时逐条生成独立问题记录（原稿保留不改写）；空数组 = 旧单问题字段口径（found_issue / issue_categories / suggestion）。 */
+    issueDrafts: jsonb("issue_drafts")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     /** 关联阶段（Push 198 口径 / Push 215 落库）：空数组 = 不关联（原关联任务 task_ids 已删）。 */
     stageKeys: text("stage_keys")
       .array()
@@ -52,16 +57,17 @@ export const dailyReports = pgTable(
     check("ck_daily_reports_issue_categories", sql`array_position(${table.issueCategories}, null) is null and cardinality(${table.issueCategories}) <= 10 and ${table.issueCategories} <@ ${sql.raw(sqlArrayLiteral(ISSUE_CATEGORY_KEYS))}`),
     check("ck_daily_reports_issue_pairs", sql`${table.foundIssue} is null or cardinality(${table.issueCategories}) >= 1`),
     check("ck_daily_reports_stage_keys", sql`array_position(${table.stageKeys}, null) is null and cardinality(${table.stageKeys}) <= 9 and ${table.stageKeys} <@ ${sql.raw(sqlArrayLiteral(STAGE_KEYS))}`),
+    check("ck_daily_reports_issue_drafts", sql`jsonb_typeof(${table.issueDrafts}) = 'array'`),
   ],
 );
-/** 问题（A3-09 / A3-10 / A3-11 / A3-12）：由日报「现场发现问题」自动生成（source_report_id 唯一 = 幂等），也可手工创建。 */
+/** 问题（A3-09 / A3-10 / A3-11 / A3-12）：由日报「现场发现问题」自动生成（Push 243 起一条日报可派生多条 —— 原 uq_issues_source_report 删除，幂等处见 report.service），也可手工创建。 */
 export const issues = pgTable(
   "issues",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     projectId: uuid("project_id").notNull().references(() => projects.id),
     taskId: uuid("task_id").references(() => tasks.id),
-    /** 来源日报（A3-09 幂等兜底）：uq_issues_source_report 唯一；空 = 手工创建的问题。 */
+    /** 来源日报（A3-09）：空 = 手工创建的问题；Push 243 起非唯一（一日报可多条，幂等改由应用层按计数判断，索引见下）。 */
     sourceReportId: uuid("source_report_id").references(() => dailyReports.id),
     title: text("title").notNull(),
     /** 问题归类（Push 215 多值，≥1 项）。 */
@@ -83,7 +89,7 @@ export const issues = pgTable(
     version: integer("version").notNull().default(1),
   },
   (table) => [
-    unique("uq_issues_source_report").on(table.sourceReportId),
+    index("ix_issues_source_report").on(table.sourceReportId).where(sql`source_report_id is not null`),
     index("ix_issues_project_state").on(table.projectId, table.state, table.raisedAt.desc()),
     index("ix_issues_task").on(table.taskId),
     index("ix_issues_categories").using("gin", table.categories),
