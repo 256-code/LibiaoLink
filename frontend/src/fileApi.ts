@@ -9,6 +9,9 @@
  * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
  *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
  * 2026-10-08：PDF 并入查看器通道（业务口径「统一用onlyoffice」）—— 服务端返回 viewer，本文件按响应裁决、无分支。
+ * 2026-10-08 续：文件替换（replaceFileContent —— 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
+ *   未定档（draft）直替 = intent=version + fileId（版本链追加、名称 / 归属不变）；已定档 / 已变更 = intent=change
+ *   + change.reason 必填（A4-13 申请即通过，完成上传时同事务生效）。
  * 上传链路（D2 分片直传，契约 shared/src/modules/files.ts；参考实现 server/scripts/m4-upload-replay.mjs）：
  *   POST /api/v1/files/uploads（intent=version，contentHash = SHA-256）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/parts 取预签名分片 URL
@@ -61,6 +64,37 @@ export type UploadFileOptions = { taskId?: string };
  * 上传一个文件 / Blob 到站内文件库（M4-01 分片直传；任务成果文件与日报附图共用一条链路）。
  * name 单独传：剪贴板图片的 File 名与业务名不一致（见 uploadPhoto）；options.taskId 关联任务。返回新文件的 id。
  */
+/** 分片直传公共尾段（uploadFile / replaceFileContent 共用）：取分片签名 → 逐片原样 PUT → complete。 */
+async function transferChunks(
+  fileId: string,
+  upload: { id: string; partSizeBytes: number; totalParts: number },
+  buffer: ArrayBuffer,
+  contentHash: string,
+): Promise<void> {
+  const partNumbers: number[] = [];
+  for (let index = 1; index <= upload.totalParts; index += 1) {
+    partNumbers.push(index);
+  }
+  const signed = await apiSend<UploadPartsResponse>(
+    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/parts",
+    "POST",
+    { partNumbers },
+  );
+  for (const part of signed.parts) {
+    const start = (part.partNumber - 1) * upload.partSizeBytes;
+    const slice = buffer.slice(start, Math.min(start + upload.partSizeBytes, buffer.byteLength));
+    const response = await fetch(part.url, { method: "PUT", body: slice });
+    if (!response.ok) {
+      throw new Error("文件上传失败（第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + "）");
+    }
+  }
+  await apiSend<UploadCompleteResponse>(
+    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/complete",
+    "POST",
+    { contentHash },
+  );
+}
+
 export async function uploadFile(projectId: string, file: Blob, name: string, options: UploadFileOptions = {}): Promise<string> {
   const buffer = await file.arrayBuffer();
   const contentHash = await sha256Hex(buffer);
@@ -73,32 +107,37 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
     intent: "version",
     taskId: options.taskId,
   });
-  const fileId = created.file.id;
-  const uploadId = created.upload.id;
-  const partNumbers: number[] = [];
-  for (let index = 1; index <= created.upload.totalParts; index += 1) {
-    partNumbers.push(index);
+  await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  return created.file.id;
+}
+
+/**
+ * 替换文件内容（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
+ * 未定档（draft）= 直接替换 —— intent=version + fileId（A2-10「未定档文件可直接替换」；版本链追加，
+ * 名称 / 归属不变 —— 契约要求给出 fileId 时 name 与目标一致）；已定档 / 已变更（final / changed）= 走变更
+ * （A4-13 申请即通过）—— intent=change + change.reason 必填，完成上传时同事务生效（文件状态 → changed）。
+ * 替换完成后清一次该文件的预览签名缓存（旧版本 URL 作废）。
+ */
+export async function replaceFileContent(projectId: string, target: TaskFileRef, file: Blob, reason: string | null): Promise<void> {
+  const needsChange = target.status === "final" || target.status === "changed";
+  const changeReason = reason === null ? "" : reason.trim();
+  if (needsChange && changeReason === "") {
+    throw new Error("已定档文件替换需填写变更原因");
   }
-  const signed = await apiSend<UploadPartsResponse>(
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/parts",
-    "POST",
-    { partNumbers },
-  );
-  const partSize = created.upload.partSizeBytes;
-  for (const part of signed.parts) {
-    const start = (part.partNumber - 1) * partSize;
-    const slice = buffer.slice(start, Math.min(start + partSize, buffer.byteLength));
-    const response = await fetch(part.url, { method: "PUT", body: slice });
-    if (!response.ok) {
-      throw new Error("文件上传失败（第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + "）");
-    }
-  }
-  await apiSend<UploadCompleteResponse>(
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/complete",
-    "POST",
-    { contentHash },
-  );
-  return fileId;
+  const buffer = await file.arrayBuffer();
+  const contentHash = await sha256Hex(buffer);
+  const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
+    projectId,
+    name: target.name,
+    sizeBytes: file.size,
+    mime: file.type === "" ? undefined : file.type,
+    contentHash,
+    intent: needsChange ? "change" : "version",
+    fileId: target.id,
+    change: needsChange ? { reason: changeReason } : undefined,
+  });
+  await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  invalidatePreview(target.id);
 }
 
 /** 批量上传（任务「文件」列 / 抽屉共用）：逐份直传；每份完成回调一次（done = 已完成份数）。 */
@@ -195,16 +234,17 @@ export function triggerDownload(url: string, fileName: string): void {
   anchor.remove();
 }
 
-/** 任务文件引用（Push 246）：任务列表「文件」列下拉与单元格展示共用 —— id 供预览 / 删除，name 供展示。 */
-export type TaskFileRef = { id: string; name: string };
+/** 任务文件引用（Push 246；2026-10-08 携 status 供「替换」裁决）：任务列表「文件」列下拉与单元格展示共用 ——
+ *  id 供预览 / 删除 / 替换，name 供展示，status（draft / final / changed / archived）= 替换走直替还是变更的分支依据。 */
+export type TaskFileRef = { id: string; name: string; status: string };
 
 /** 项目文件库名单（任务「文件」列下拉 / 单元格文件名用 · Push 246 起携 id）：按项目分页取满（契约 limit 上限 200、默认排除 recycled），
  *  返回 taskId → 文件引用数组（服务端默认序 = 最新在前）；列表接口不带文件名，逐行反查会 N+1，这里一次拉全量；
- *  Push 246 起带 id（下拉里点击文件名 = 预览、行尾「删除」= 移入回收站）。 */
+ *  Push 246 起带 id（下拉里点击文件名 = 预览、行尾「删除」= 移入回收站）；2026-10-08 起带 status（行尾「替换」按状态直替 / 走变更）。 */
 export async function fetchTaskFiles(projectId: string): Promise<Map<string, TaskFileRef[]>> {
   const files = new Map<string, TaskFileRef[]>();
   for (let page = 1; page <= 20; page += 1) {
-    const list = await apiRequest<{ items: Array<{ id: string; name: string; taskId: string | null }>; total: number }>(
+    const list = await apiRequest<{ items: Array<{ id: string; name: string; taskId: string | null; status: string }>; total: number }>(
       "/api/v1/projects/" + encodeURIComponent(projectId) + "/files?limit=200&page=" + String(page),
     );
     for (const file of list.items) {
@@ -213,9 +253,9 @@ export async function fetchTaskFiles(projectId: string): Promise<Map<string, Tas
       }
       const current = files.get(file.taskId);
       if (current === undefined) {
-        files.set(file.taskId, [{ id: file.id, name: file.name }]);
+        files.set(file.taskId, [{ id: file.id, name: file.name, status: file.status }]);
       } else {
-        current.push({ id: file.id, name: file.name });
+        current.push({ id: file.id, name: file.name, status: file.status });
       }
     }
     if (list.items.length === 0 || page * 200 >= list.total) {
@@ -241,6 +281,13 @@ function subscribePreview(listener: () => void): () => void {
   return () => {
     previewListeners.delete(listener);
   };
+}
+
+/** 替换 / 内容更新后清掉该文件的预览签名缓存（缓存 URL 指着旧版本）。 */
+export function invalidatePreview(fileId: string): void {
+  if (previewUrls.delete(fileId)) {
+    notifyPreview();
+  }
 }
 
 /** 预览打开结果（S4 两通道裁决）：url = 产物通道短时签名；viewer = 查看器通道配置；unavailable = 未就绪超时 / 失败 / 异常。 */

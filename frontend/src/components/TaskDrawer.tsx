@@ -21,6 +21,7 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } from "./Tracker";
@@ -96,6 +97,8 @@ export type TaskEditSubmit = {
   days: number;
   headcount: number;
   priority: TaskPriority;
+  /** 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」：常规编辑开放）。 */
+  deliverableTypes: string[];
   note: string;
 };
 
@@ -109,6 +112,7 @@ type Draft = {
   range: DateRange | null;
   headcount: string;
   priority: TaskPriority;
+  deliverableTypes: string[];
   note: string;
 };
 
@@ -127,6 +131,7 @@ function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
     range: task === null ? null : rangeOf(task),
     headcount: task !== null && task.headcount > 0 ? String(task.headcount) : "",
     priority: task === null || task.priority === null ? "中" : task.priority,
+    deliverableTypes: task === null ? [] : [...task.deliverableTypes],
     note: task === null ? "" : task.note,
   };
 }
@@ -180,7 +185,7 @@ type TaskDrawerProps = {
  * 进度自 Push 98 起也能在抽屉里改：进度条长度不变，**四颗点平均分布在条上**（刚开工 / 完成一半 / 快完成了 / 已完成），点哪颗写哪档；
  * 任务状态与实际完成日期自 Push 101 起也能在抽屉里直接改（口径与任务表行内 / 看板卡片完全一致，§6.9：
  * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
- * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、变更关联；
+ * 仍只读：是否按时交付（读时派生）、变更关联（输出成果文件 2026-10-08 起可改 —— 业务口径「文件输出成果也要可以选择」）；
  * 「文件」自 Push 226 起可在抽屉内直接上传（点击「＋ 上传文件」→ 分片直传文件库并关联本任务；上传完成自动重取清单）；
  * 文件名 / 文档类型 / 状态清单随详情接口（GET …/tasks/{taskId}）下发；Push 226 续：清单里每份文件可「删除」（= 移入回收站，二次确认），
  * 图片文件点**缩略图**看大图预览（懒取短时签名 —— 点开才请求）；**点文件名改名**（Push 226 续二 · 只改主名、后缀保留）；
@@ -344,6 +349,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         days: next.range === null ? 0 : daysBetweenInclusive(next.range.from, next.range.to),
         headcount: headcountText === "" || Number.isNaN(headcountValue) ? 0 : Math.floor(headcountValue),
         priority: next.priority,
+        deliverableTypes: next.deliverableTypes,
         note: next.note.trim(),
       });
       setSavedTick(Date.now());
@@ -692,19 +698,26 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         ),
     },
     {
+      // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读色签改可点选择（搜索 + 十类多选，
+      // 彩签全量摊开）；勾选即存（与其它字段同一套写入口径）。不传 onSubmit（只读抽屉）= 静态色签。
       label: "输出成果文件",
-      value:
-        task.deliverableTypes.length === 0 ? (
-          dash
-        ) : (
-          <span className="flex flex-wrap gap-1.5">
-            {task.deliverableTypes.map((docType) => (
-              <span key={docType} className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600">
-                {docType}
-              </span>
-            ))}
-          </span>
-        ),
+      value: editable ? (
+        <DeliverableCell
+          all
+          values={draft.deliverableTypes}
+          onChange={(next) => {
+            commit({ deliverableTypes: next });
+          }}
+        />
+      ) : task.deliverableTypes.length === 0 ? (
+        dash
+      ) : (
+        <span className="flex flex-wrap gap-1.5">
+          {task.deliverableTypes.map((docType) => (
+            <span key={docType}>{docTypeChip(docType)}</span>
+          ))}
+        </span>
+      ),
     },
     {
       label: "文件",
@@ -816,7 +829,6 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                         data-file-preview-open="true"
                         onClick={() => { void openPreview(file.id, file.name); }}
                         disabled={previewing}
-                        title={previewKind === "pdf" ? "在线预览（浏览器内置查看器）" : "在线预览（ONLYOFFICE 查看器）"}
                         className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                       >
                         {previewing ? "预览中…" : "预览"}

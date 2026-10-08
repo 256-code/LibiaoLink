@@ -8697,7 +8697,7 @@ export interface components {
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
-        /** @description 编辑任务（乐观锁 version 必传；成果文件 / 阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**无来源节点**的临时任务可改，节点 / 模板生成的任务仍锁定（带字段请求 400） */
+        /** @description 编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架 */
         TaskUpdateBody: {
             /** @description 任务描述（中文；Push 196）：仅**无来源节点**的任务可改（看板「添加 → 临时任务」手工创建）；节点 / 模板生成的任务按 A1-17 锁定，带该字段请求 400 */
             title?: string;
@@ -8713,6 +8713,8 @@ export interface components {
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
+            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
+            deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
             version: components["schemas"]["Version"];
         };

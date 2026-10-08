@@ -270,9 +270,11 @@ export const TaskStatusWriteSchema = z
   });
 
 /**
- * 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。
+ * 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述按 A1-17 生成后锁定，进度与完成日期走 /progress。
  * Push 196 起例外：**无来源节点**的任务（看板「添加 → 临时任务」手工创建）的任务描述（title / titleEn）可走本接口直接改 ——
  * 节点 / 模板生成的任务仍锁定；带这俩字段请求节点任务 = 400 VALIDATION_FAILED。
+ * 2026-10-08（业务口径「文件输出成果也要可以选择」）：**输出成果文件（deliverableTypes）改为常规编辑开放** ——
+ * 原「生成后锁定、修正走管理员例外调整（locked-fields）」下架；locked-fields 端点自身保留（任务描述例外调整）。
  */
 export const TaskUpdateBodySchema = z
   .object({
@@ -299,12 +301,16 @@ export const TaskUpdateBodySchema = z
     estimatedDays: z.number().int().min(0).nullable().optional(),
     headcount: z.number().int().min(0).nullable().optional(),
     priority: PrioritySchema.nullable().optional(),
+    deliverableTypes: z.array(DocTypeSchema).optional().openapi({
+      description:
+        "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改",
+    }),
     note: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
   })
   .openapi("TaskUpdateBody", {
     description:
-      "编辑任务（乐观锁 version 必传；成果文件 / 阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**无来源节点**的临时任务可改，节点 / 模板生成的任务仍锁定（带字段请求 400）",
+      "编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架",
   });
 
 /** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
@@ -428,9 +434,11 @@ export const TaskDeleteResponseSchema = z
 export type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
 
 /**
- * 锁定字段例外调整（A1-17 / C9-07 · M3-05 · Push 153）：任务描述、输出成果文件按流程节点模板生成后锁定，
+ * 锁定字段例外调整（A1-17 / C9-07 · M3-05 · Push 153）：任务描述按流程节点模板生成后锁定，
  * 常规编辑（PATCH /tasks/{taskId}）不可达；确需修正时由**系统管理员**执行「例外调整」—— 原因必填并留痕（模板本身由管理员修正，C9-07）。
- * 「阶段性里程」一期任务无对应列（A1-17 映射修订），故 body 只开放下述三项。
+ * 2026-10-08（业务口径「文件输出成果也要可以选择」）：输出成果文件（deliverableTypes）改为常规编辑开放，
+ * 常规路径见 TaskUpdateBodySchema；本端点 body 该字段保留（既有例外修正通道不动）。
+ * 「阶段性里程」一期任务无对应列（A1-17 映射修订），故 body 不做字段扩展。
  */
 export const TaskLockedFieldsAdjustBodySchema = z
   .object({

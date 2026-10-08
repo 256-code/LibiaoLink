@@ -86,7 +86,7 @@ type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchem
  */
 type TaskWriteRequest = Pick<
   TaskUpdateBody,
-  "title" | "titleEn" | "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "note" | "sortIndex"
+  "title" | "titleEn" | "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "deliverableTypes" | "note" | "sortIndex"
 > & { expectedVersion: number | null };
 
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
@@ -450,6 +450,7 @@ export class TaskService {
             estimatedDays: body.estimatedDays,
             headcount: body.headcount,
             priority: body.priority,
+            deliverableTypes: body.deliverableTypes,
             note: body.note,
           },
           actorId,
@@ -740,6 +741,8 @@ export class TaskService {
       estimatedDays: request.estimatedDays !== undefined ? request.estimatedDays : before.estimatedDays,
       headcount: request.headcount !== undefined ? request.headcount : before.headcount,
       priority: request.priority !== undefined ? request.priority : before.priority,
+      // 2026-10-08（业务口径「文件输出成果也要可以选择」）：输出成果文件常规编辑开放（去重保序；[] = 不要求）
+      deliverableTypes: request.deliverableTypes !== undefined ? normalizeDocTypes(request.deliverableTypes) : before.deliverableTypes,
       note: request.note !== undefined ? request.note : before.note,
     };
     const updated = await this.repository.updateWithVersion(taskId, request.expectedVersion ?? before.version, patch, at, tx);
@@ -1171,6 +1174,7 @@ function taskAuditSnapshot(row: {
   estimatedDays: number | null;
   headcount: number | null;
   priority: string | null;
+  deliverableTypes: string[];
   note: string | null;
 }): Record<string, unknown> {
   return {
@@ -1187,6 +1191,7 @@ function taskAuditSnapshot(row: {
     estimatedDays: row.estimatedDays,
     headcount: row.headcount,
     priority: row.priority,
+    deliverableTypes: normalizeDocTypes(row.deliverableTypes),
     note: row.note,
   };
 }

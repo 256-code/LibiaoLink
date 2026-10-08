@@ -257,7 +257,7 @@ export type TaskFromTemplateResult = {
   skipped: Array<{ nodeId: string; taskId: string }>;
 };
 
-/** 编辑可写字段（契约 TaskUpdateBody 白名单；任务描述 / 成果文件 / 阶段不在此）。 */
+/** 编辑可写字段（契约 TaskUpdateBody 白名单；阶段不在此；任务描述仅临时任务可改）。 */
 /** 「整套添加」（A1-16）：一次调用整批生成，服务端同事务 + 按节点判重（已存在的进 skipped）。 */
 export function createTasksFromTemplate(projectId: string, body: TaskFromTemplateInput): Promise<TaskFromTemplateResult> {
   return apiSend<TaskFromTemplateResult>(
@@ -280,6 +280,8 @@ export type TaskUpdateInput = {
   estimatedDays?: number | null;
   headcount?: number | null;
   priority?: string | null;
+  /** 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：传数组 = 整体替换（去重保序）、[] = 不要求。 */
+  deliverableTypes?: string[];
   note?: string | null;
   version: number;
 };

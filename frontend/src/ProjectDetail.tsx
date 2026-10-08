@@ -15,7 +15,7 @@ import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
 import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
-import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
+import { fetchTaskFiles, recycleFile, renameFile, replaceFileContent, uploadFiles, type TaskFileRef } from "./fileApi";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
@@ -347,6 +347,18 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   };
 
   /**
+   * 任务文件替换（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：未定档直替 /
+   * 已定档走变更（fileApi.replaceFileContent），完成后整表重取；失败原样抛回下拉（行内一行提示）。
+   */
+  const handleReplaceTaskFile = async (file: TaskFileRef, picked: File, reason: string | null): Promise<void> => {
+    if (projectId === null) {
+      return;
+    }
+    await replaceFileContent(projectId, file, picked, reason);
+    reloadAll();
+  };
+
+  /**
    * 点四格进度条 / 甘特进度圆点（Push 65 / 67 · §6.4）：只写进度，状态与完成日期的联动（0 格 = 待开始、
    * 1~3 格 = 进行中、4 格 = 完成；已过预计完成日期仍保持「已延期」）由服务端裁决 —— 与原型联动口径一致。
    */
@@ -434,6 +446,10 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (patch.priority !== undefined) {
       body.priority = patch.priority;
     }
+    // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：常规编辑开放，传数组 = 整体替换
+    if (patch.deliverableTypes !== undefined) {
+      body.deliverableTypes = patch.deliverableTypes;
+    }
     if (patch.note !== undefined) {
       body.note = patch.note;
     }
@@ -462,6 +478,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       days: values.days,
       headcount: values.headcount,
       priority: values.priority,
+      deliverableTypes: values.deliverableTypes,
       note: values.note,
     });
   };
@@ -922,7 +939,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onReplaceFile={handleReplaceTaskFile} onRenameFile={handleRenameTaskFile} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径

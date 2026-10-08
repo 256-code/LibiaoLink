@@ -11,6 +11,7 @@ import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
 import { Tracker } from "./Tracker";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { DeliverableCell, docTypeCapsule } from "./DeliverablePicker";
 import { StageAddCard } from "./StageAddCard";
 import type { StagePlacement } from "./StageAddCard";
 import { TempTaskCreateForm } from "./TempTaskCreateForm";
@@ -186,7 +187,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -251,6 +252,11 @@ type TaskBoardProps = {
    * = 调用方走回收站（M4-02），完成后整表重取刷新计数；不传 = 清单与下拉只读（不显示删除入口）。
    */
   onDeleteFile?: (fileId: string) => Promise<void>;
+  /**
+   * 任务文件替换（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」；「文件」列下拉行尾）：
+   * 选新文件 → 调用方按目标状态直替 / 变更替换，完成后整表重取刷新；不传 = 下拉里不显示替换入口。
+   */
+  onReplaceFile?: (file: TaskFileRef, picked: File, reason: string | null) => Promise<void>;
   /** 任务文件改名（Push 226 续二）：抽屉清单里点名字 → 编辑提交（只改主名、后缀保留）；不传 = 名字只读。 */
   onRenameFile?: (fileId: string, name: string) => Promise<void>;
   /** 任务 → 文件引用（Push 246 · fileApi.fetchTaskFiles）：「文件」列胶囊显示文件名 / 「+N」、
@@ -275,7 +281,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, onReplaceFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; onReplaceFile?: (file: TaskFileRef, picked: File, reason: string | null) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -457,23 +463,28 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         )}
       </span>
     ),
-    deliverable: (
-      <span className="flex min-w-0 items-center gap-1">
-        {task.deliverableTypes.length === 0 ? (
-          <span className="text-xs text-zinc-300">—</span>
-        ) : (
-          <>
-            <span
-              className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600"
-              title={task.deliverableTypes.join("、")}
-            >
-              {task.deliverableTypes[0]}
-            </span>
-            {task.deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.deliverableTypes.length - 1}</span> : null}
-          </>
-        )}
-      </span>
-    ),
+    // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读徽标改可点选择 ——
+    // 点开 = DeliverablePicker（搜索 + 十类彩签多选）；列窄走「首枚 + +N」，全名清单进浮层。
+    deliverable:
+      onPatch === undefined ? (
+        <span className="flex min-w-0 items-center gap-1">
+          {task.deliverableTypes.length === 0 ? (
+            <span className="text-xs text-zinc-300">—</span>
+          ) : (
+            <>
+              {docTypeCapsule(task.deliverableTypes[0])}
+              {task.deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.deliverableTypes.length - 1}</span> : null}
+            </>
+          )}
+        </span>
+      ) : (
+        <DeliverableCell
+          values={task.deliverableTypes}
+          onChange={(next) => {
+            onPatch({ deliverableTypes: next });
+          }}
+        />
+      ),
     files: (
       <span className="relative flex min-w-0 items-center justify-center gap-1 self-stretch">
         {onUploadFiles === undefined && onDeleteFile === undefined ? (
@@ -485,6 +496,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
             files={filesForTask}
             onUpload={onUploadFiles}
             onDelete={onDeleteFile}
+            onReplace={onReplaceFile}
           >
             {fileCellContent}
           </TaskFilesPopover>
@@ -680,7 +692,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, filesByTask, projectId, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onReplaceFile, onRenameFile, filesByTask, projectId, focusMode }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -1004,6 +1016,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                         onUploadFiles={onUploadFiles}
                         onDeleteFile={onDeleteFile}
+                        onReplaceFile={onReplaceFile}
                         files={filesByTask?.get(task.id)}
                       />
                     ))}
