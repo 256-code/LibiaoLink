@@ -92,10 +92,10 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 
 ## 任务定档联动与写口闸（Push 249 · A2-10 / A4-05 修订）
 
-- `finalizeFile`（`POST /files/{id}/finalize`）：文件 draft → final 的同时，**同一事务**把其挂接任务定档（`repository.markTaskFinalized(taskId, at, actorId, tx)`：`isNull(finalized_at)` 幂等置位 + 任务 `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）—— 任务定档后不支持任何修改（修改走变更 A4-13）。
-- `assertTaskNotFinalized(taskId)`：任务已定档时 **409 `TASK_FINALIZED`** —— 覆盖 `createUpload`（`intent=version` 且解析出的 `effectiveTaskId` 非空：新建 / 直接替换（fileId）/ 追加版本）、`renameFile`、`rollbackFile`（普通回溯 draft）；**`intent=change` 不受影响**（唯一保留的修改通道）。
+- `finalizeFile`（`POST /files/{id}/finalize`）：文件 draft → final 的同时，**同一事务**把其挂接任务定档（`repository.markTaskFinalized(taskId, at, actorId, tx)`：`isNull(finalized_at)` 幂等置位 + 任务 `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）—— 任务定档后不支持任何修改（修改走变更 A4-13）；**同事务撤销该任务在途的 version 上传会话**（`abortActiveTaskUploadSessions`：只撤 version、不撤 change；条数记入任务审计 metadata）。
+- `assertTaskNotFinalized(taskId)`：任务已定档时 **409 `TASK_FINALIZED`** —— 覆盖 `createUpload`（`intent=version` 且解析出的 `effectiveTaskId` 非空：新建 / 直接替换（fileId）/ 追加版本）、`completeUpload`（**事务内复核**：会话先发起、任务后被定档的绕过补漏）、`renameFile`、`rollbackFile`（普通回溯 draft）；**`intent=change` 不受影响**（唯一保留的修改通道）。
 - `file.repository.findTaskBrief` 增 `finalizedAt`（闸判定用）；回收站（recycle）/ purge **不受**任务定档影响（M4-02「任意状态可删」口径不变）。
-- 单测：`test/file-service.test.ts`（「Push 249 · 任务定档联动与写口闸」4 例，含 fake `markTaskFinalized` / `finalizedTasks`）。
+- 单测：`test/file-service.test.ts`（「Push 249 · 任务定档联动与写口闸」6 例，含 fake `markTaskFinalized` / `finalizedTasks`、定档撤销 `abortActiveTaskUploadSessions`、completeUpload 复核与 change 放行 2 例）。
 
 ## 待落地（按卡片）
 

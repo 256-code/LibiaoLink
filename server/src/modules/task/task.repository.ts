@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, or, sql, t
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
-import { files } from "../../db/schema/files.js";
+import { files, uploadSessions } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
 import { projectStages, projects } from "../../db/schema/projects.js";
@@ -490,6 +490,27 @@ export class TaskRepository {
   /** 项目最近活动触点（ADR-022 ④：任务变更视为项目活动；系统调度类写入不调用本方法）。 */
   async touchProject(projectId: string, at: Date, client: DbClient): Promise<void> {
     await client.update(projects).set({ updatedAt: at }).where(eq(projects.id, projectId));
+  }
+
+  /**
+   * 任务定档兜底（防绕过补漏）：撤销该任务名下文件「在途（active）」的 version 上传会话；
+   * 只撤 version —— change 是 A4-13 唯一保留的修改通道，且 change 会话只针对已定档文件。
+   * 返回撤销条数（进任务定档审计 metadata）；漏网会话由 completeUpload 的任务定档复核兜住。
+   */
+  async abortActiveTaskUploadSessions(taskId: string, at: Date, client: DbClient): Promise<number> {
+    const fileIds = client.select({ id: files.id }).from(files).where(eq(files.taskId, taskId));
+    const rows = await client
+      .update(uploadSessions)
+      .set({ status: "aborted", abortedAt: at, updatedAt: at })
+      .where(
+        and(
+          eq(uploadSessions.status, "active"),
+          eq(uploadSessions.intent, "version"),
+          inArray(uploadSessions.fileId, fileIds),
+        ),
+      )
+      .returning({ id: uploadSessions.id });
+    return rows.length;
   }
 
   /** 项目总览汇总（GET /projects/{id}/summary）：三个计数 + 最慢 / 最新阶段（阶段判定在 service，按 STAGE_KEYS 序）。 */

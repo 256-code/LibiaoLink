@@ -400,6 +400,16 @@ class FakeFileRepository {
     return taskId;
   }
 
+  /** 定档兜底撤销调用记录（防绕过补漏）。 */
+  abortedTaskUploadSessions: { taskId: string; at: Date }[] = [];
+  /** abortActiveTaskUploadSessions 的返回条数（任务审计 metadata 断言用）。 */
+  abortedTaskSessionCount = 0;
+
+  async abortActiveTaskUploadSessions(taskId: string, at: Date): Promise<number> {
+    this.abortedTaskUploadSessions.push({ taskId, at });
+    return this.abortedTaskSessionCount;
+  }
+
   async updateFileState(fileId: string, patch: FileStatePatch): Promise<FileRow> {
     this.filePatches.push({ id: fileId, patch });
     const target = this.findFile(fileId);
@@ -2099,17 +2109,27 @@ describe("Push 249 · 任务定档联动与写口闸（业务口径「若是则�
     const h = makeService();
     h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 5, taskId: TASK });
     h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    h.repo.abortedTaskSessionCount = 2;
     await h.service.finalizeFile(FILE, { version: 5 }, ACTOR);
 
     expect(h.repo.finalizedTasks).toEqual([{ taskId: TASK, actorId: ACTOR }]);
+    // 定档兜底：撤销在途 version 上传会话，条数记入任务审计 metadata
+    expect(h.repo.abortedTaskUploadSessions).toEqual([{ taskId: TASK, at: NOW }]);
     expect(h.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file", "task"]);
-    expect(h.audit.entries.at(-1)).toMatchObject({ action: "update", objectType: "task", objectId: TASK, projectId: PROJECT });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "update",
+      objectType: "task",
+      objectId: TASK,
+      projectId: PROJECT,
+      metadata: { fileId: FILE, fileStatus: "final", abortedUploadSessions: 2 },
+    });
 
     const h2 = makeService();
     h2.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 1, taskId: null });
     h2.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
     await h2.service.finalizeFile(FILE, { version: 1 }, ACTOR);
     expect(h2.repo.finalizedTasks).toEqual([]);
+    expect(h2.repo.abortedTaskUploadSessions).toEqual([]);
     expect(h2.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file"]);
   });
 
@@ -2136,6 +2156,50 @@ describe("Push 249 · 任务定档联动与写口闸（业务口径「若是则�
       httpStatus: 409,
     });
     expect(h.repo.filePatches).toHaveLength(0);
+  });
+
+  it("先开会话、后定档：completeUpload 事务内复核 → 409 TASK_FINALIZED（不落版本、会话不完成）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ taskId: TASK });
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/pdf" });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: FINALIZED_AT };
+    h.storage.parts = [part(1, 8 * MI_B), part(2, 4 * MI_B)];
+    h.storage.head = {
+      objectKey: STAGING_KEY,
+      sizeBytes: 12 * MI_B,
+      etag: "\"merged-etag\"",
+      contentType: "application/pdf",
+      lastModified: NOW,
+    };
+
+    await expect(h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR)).rejects.toMatchObject({
+      code: "TASK_FINALIZED",
+      httpStatus: 409,
+      details: [{ code: "task_finalized", path: "taskId" }],
+    });
+    expect(h.repo.insertedVersions).toHaveLength(0);
+    expect(h.repo.sessionPatches).toHaveLength(0);
+  });
+
+  it("任务已定档：change 意图 completeUpload 照常成功（A4-13 修改走变更，唯一保留通道）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", docType: "CAD图纸", taskId: TASK, currentVersionId: VERSION, version: 1 });
+    h.repo.session = makeSessionRow({
+      intent: "change",
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "application/pdf",
+      changePayload: { reason: "按变更单调整孔位", beforeSummary: null, afterSummary: null, stageKey: null },
+    });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: FINALIZED_AT };
+    h.repo.deliverableTaskIds = [TASK];
+    h.storage.parts = [part(1, 8 * MI_B), part(2, 4 * MI_B)];
+    h.storage.head = { objectKey: STAGING_KEY, sizeBytes: 12 * MI_B, etag: null, contentType: null, lastModified: NOW };
+
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(result.changeRequest).not.toBeNull();
+    expect(h.repo.insertedVersions).toHaveLength(1);
+    expect(h.repo.sessionPatches.at(-1)!.patch.status).toBe("completed");
   });
 
   it("未定档任务：intent=version 上传照常（对照）", async () => {

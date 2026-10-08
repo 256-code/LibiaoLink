@@ -972,6 +972,7 @@ export class TaskService {
   /**
    * POST /projects/{id}/tasks/{taskId}/finalize：任务定档（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）。
    * 口径：未定档 → 置位 finalized_at / finalized_by（version+1、留痕、outbox task.finalized、项目触点）；此后写口一律 409 TASK_FINALIZED（assertTaskMutable）；修改走变更。
+   * 防绕过补漏：定档同时撤销该任务在途的 version 上传会话；completeUpload 事务内再复核（会话早于定档发起时状态门禁不够）。
    * 已定档 → 幂等短路（200 原样返回，不写库 / 不递增版本 —— 抽屉开关重复点击 / 与文件定档并发都只生效一次）；version 不匹配 → 409 VERSION_CONFLICT。
    * 与文件定档（file.finalizeFile → markTaskFinalized）双入口并存：两条路径都只置位一次。
    */
@@ -1010,6 +1011,9 @@ export class TaskService {
         },
       });
       await this.repository.touchProject(projectId, at, tx);
+      // 定档兜底（防绕过补漏）：撤销该任务在途的 version 上传会话（change = A4-13 唯一保留的修改通道，不撤）；
+      // 漏网会话（如并发发起）由 completeUpload 的任务定档复核兜住。
+      const abortedUploadSessions = await this.repository.abortActiveTaskUploadSessions(taskId, at, tx);
       await this.audit.record(tx, {
         actorId,
         action: "update",
@@ -1018,6 +1022,7 @@ export class TaskService {
         projectId,
         summary: "任务定档：" + updated.title + "（此后不支持任何修改；文件修改走变更）",
         changes: [{ field: "finalizedAt", from: null, to: at.toISOString() }],
+        metadata: { abortedUploadSessions },
       });
       return updated;
     });
