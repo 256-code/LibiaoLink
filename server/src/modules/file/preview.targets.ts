@@ -4,15 +4,16 @@ import type { PreviewTarget } from "./preview.job.js";
 /**
  * 预览通道判定（S3 起两段口径：转换产物通道 + ONLYOFFICE 查看器通道 · ADR-030 / S8-2 定案）。
  *
- * - **产物通道**（`previewTargetsFor`）：只投 / 只走「转换管线真能出产物」的通道 —— 图片 → `image`（直通）、
- *   PDF → `pdf`（源直通）；`structured` 一期 501 不投（缓存键 / 枚举保留，随二期结构化渲染启用）。
+ * - **产物通道**（`previewTargetsFor`）：只投 / 只走「转换管线真能出产物」的通道 —— 图片 → `image`（直通）；
+ *   `structured` 一期 501 不投（缓存键 / 枚举保留，随二期结构化渲染启用）；PDF 自 2026-10-08 起并入查看器通道、不再走源直通产物。
  *   Office / 文本族自 S3 起**不再投递转换任务**（改由 ONLYOFFICE 查看器承接、无转换产物 ——
  *   就绪以 `FilePreviewResponse.viewer` 判定、不占 `target`）。判不出类型不投：读取侧按确定性降级「请下载」。
  * - **查看器通道**（`viewerChannelFor`）：Office（含宏变体 docm / xlsm / pptm）+ 文本族（txt / csv / html / htm）
- *   → ONLYOFFICE 文档大类（word / cell / slide）+ 文件类型（扩展名小写；无扩展名时按 MIME 反推）——
- *   查看器配置 `documentType` / `document.fileType` 的输入（S8-2 三补 1：文本族按 word / cell 映射）。
+ *   + PDF（2026-10-08 业务口径「统一用onlyoffice」）→ ONLYOFFICE 文档大类（word / cell / slide / pdf）+
+ *   文件类型（扩展名小写；无扩展名时按 MIME 反推）—— 查看器配置 `documentType` / `document.fileType` 的输入
+ *   （S8-2 三补 1：文本族按 word / cell 映射）。
  *
- * 判定优先级与历史口径一致：图片 / PDF（扩展名或 MIME）优先，其余才进查看器族。
+ * 判定优先级与历史口径一致：图片（扩展名或 MIME）优先，其余才进查看器族。
  * 分类只影响「谁被提前转换 / 谁直接进查看器」；转换器自身的通道判定（扩展名 + `x-source-mime`）不变 ——
  * 两侧口径不一致时转换器返回 415 / 422，按确定性失败降级，不会产出错产物。
  */
@@ -21,7 +22,7 @@ import type { PreviewTarget } from "./preview.job.js";
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "svg"]);
 
 /**
- * 产物通道映射：图片 → image、PDF → pdf、其余不投（Office / 文本族走查看器通道）。
+ * 产物通道映射：图片 → image、其余不投（PDF / Office / 文本族走查看器通道 —— PDF 2026-10-08 并入）。
  */
 export function previewTargetsFor(input: { fileName: string; mime: string | null }): readonly PreviewTarget[] {
   const extension = extensionOf(input.fileName);
@@ -29,15 +30,12 @@ export function previewTargetsFor(input: { fileName: string; mime: string | null
   if (IMAGE_EXTENSIONS.has(extension) || mime.startsWith("image/")) {
     return ["image"];
   }
-  if (extension === "pdf" || mime === "application/pdf") {
-    return ["pdf"];
-  }
   return [];
 }
 
 /** 查看器通道输出：ONLYOFFICE documentType / document.fileType 的判定输入。 */
 export interface ViewerChannel {
-  documentType: "word" | "cell" | "slide";
+  documentType: "word" | "cell" | "slide" | "pdf";
   fileType: string;
 }
 
@@ -60,6 +58,8 @@ const VIEWER_EXTENSION_TYPES: Record<string, ViewerChannel> = {
   pptx: { documentType: "slide", fileType: "pptx" },
   pptm: { documentType: "slide", fileType: "pptm" },
   odp: { documentType: "slide", fileType: "odp" },
+  // PDF（2026-10-08 业务口径「统一用onlyoffice」）：预览走查看器（documentType = pdf）。
+  pdf: { documentType: "pdf", fileType: "pdf" },
 };
 
 /** MIME → 查看器通道（无扩展名 / 扩展名判不出时的反推；宏变体 MIME 以 DocServer 实际注册的小写形态比对）。 */
@@ -92,11 +92,12 @@ const VIEWER_MIME_TYPES: readonly { mime: string; channel: ViewerChannel }[] = [
     channel: { documentType: "slide", fileType: "pptm" },
   },
   { mime: "application/vnd.oasis.opendocument.presentation", channel: { documentType: "slide", fileType: "odp" } },
+  { mime: "application/pdf", channel: { documentType: "pdf", fileType: "pdf" } },
 ];
 
 /**
- * 查看器通道判定（S3 · ADR-030）：Office / 文本族 → `{ documentType, fileType }`；其余 null（含图片 / PDF ——
- * 它们先经 `previewTargetsFor` 走产物通道）。扩展名优先、MIME 兜底（与历史判定优先级一致）。
+ * 查看器通道判定（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `{ documentType, fileType }`；
+ * 其余 null（含图片 —— 先经 `previewTargetsFor` 走产物通道）。扩展名优先、MIME 兜底（与历史判定优先级一致）。
  */
 export function viewerChannelFor(input: { fileName: string; mime: string | null }): ViewerChannel | null {
   const byExtension = VIEWER_EXTENSION_TYPES[extensionOf(input.fileName)];

@@ -7843,10 +7843,10 @@ export interface components {
             key: string;
         };
         /**
-         * @description 文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）
+         * @description 文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）
          * @enum {string}
          */
-        PreviewViewerDocumentType: "word" | "cell" | "slide";
+        PreviewViewerDocumentType: "word" | "cell" | "slide" | "pdf";
         PreviewViewerEditorConfig: {
             /**
              * @description 固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）

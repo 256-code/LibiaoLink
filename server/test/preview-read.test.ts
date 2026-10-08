@@ -28,8 +28,8 @@ const ACTOR = "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69";
 const HASH = "a".repeat(64);
 const HASH_HISTORY = "b".repeat(64);
 const NOW = new Date("2026-09-23T08:00:00Z");
-const ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/pdf";
-const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/1.0.0/pdf";
+const ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/image";
+const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/1.0.0/image";
 
 const ENV = {
   PREVIEW_PIPELINE_VERSION: "1.0.0",
@@ -48,7 +48,7 @@ function makeFileRow(overrides: Partial<FileRow> = {}): FileRow {
     nodeId: null,
     taskId: null,
     docType: null,
-    name: "机械设计图纸.pdf",
+    name: "机械设计图纸.png",
     status: "final",
     currentVersionId: VERSION,
     version: 6,
@@ -70,10 +70,10 @@ function makeVersionRow(overrides: Partial<FileVersionRow> = {}): FileVersionRow
     id: VERSION,
     fileId: FILE,
     seq: 1,
-    objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + ".pdf",
+    objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + ".png",
     sizeBytes: 12 * 1024 * 1024,
     contentHash: HASH,
-    mime: "application/pdf",
+    mime: "image/png",
     uploadedBy: ACTOR,
     uploadedAt: NOW,
     changeRequestId: null,
@@ -87,7 +87,7 @@ function makeArtifactRow(overrides: Partial<PreviewArtifactRow> = {}): PreviewAr
     fileId: FILE,
     versionId: VERSION,
     contentHash: HASH,
-    target: "pdf",
+    target: "image",
     pipelineVersion: "1.0.0",
     status: "not_ready",
     objectKey: null,
@@ -259,7 +259,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       fileId: FILE,
       versionId: VERSION,
       status: "ready",
-      target: "pdf",
+      target: "image",
       viewer: null,
       url: "https://minio.local/" + ARTIFACT_KEY + "?sig=1",
       expiresAt: "2026-09-23T08:05:00.000Z",
@@ -274,9 +274,9 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       objectType: "file",
       objectId: FILE,
       projectId: PROJECT,
-      metadata: { versionId: VERSION, target: "pdf", pipelineVersion: "1.0.0" },
+      metadata: { versionId: VERSION, target: "image", pipelineVersion: "1.0.0" },
     });
-    expect(h.audit.entries[0]!.summary).toContain("机械设计图纸.pdf");
+    expect(h.audit.entries[0]!.summary).toContain("机械设计图纸.png");
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
   });
@@ -301,13 +301,13 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
 
     const result = await h.service.getPreview(FILE, HISTORY, ACTOR);
 
-    expect(h.previews.queries).toEqual([{ contentHash: HASH_HISTORY, pipelineVersion: "1.0.0", target: "pdf" }]);
+    expect(h.previews.queries).toEqual([{ contentHash: HASH_HISTORY, pipelineVersion: "1.0.0", target: "image" }]);
     expect(result).toMatchObject({
       versionId: HISTORY,
       status: "ready",
       url: "https://minio.local/" + ARTIFACT_KEY_HISTORY + "?sig=1",
     });
-    expect(h.audit.entries[0]).toMatchObject({ metadata: { versionId: HISTORY, target: "pdf", pipelineVersion: "1.0.0" } });
+    expect(h.audit.entries[0]).toMatchObject({ metadata: { versionId: HISTORY, target: "image", pipelineVersion: "1.0.0" } });
   });
 
   it("not_ready（首次请求）：同事务登记 not_ready + 幂等补投（去重键 = 三元组，trigger = read）+ 不写审计", async () => {
@@ -329,19 +329,19 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     });
     expect(h.database.transactions).toBe(1);
     expect(h.previews.ensured).toEqual([
-      { fileId: FILE, versionId: VERSION, contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" },
+      { fileId: FILE, versionId: VERSION, contentHash: HASH, pipelineVersion: "1.0.0", target: "image" },
     ]);
     expect(h.database.outbox).toEqual([
       {
         topic: "preview.job",
-        dedupeKey: "preview.job:" + HASH + ":1.0.0:pdf",
+        dedupeKey: "preview.job:" + HASH + ":1.0.0:image",
         status: "pending",
         payload: {
           projectId: PROJECT,
           fileId: FILE,
           versionId: VERSION,
           contentHash: HASH,
-          target: "pdf",
+          target: "image",
           trigger: "read",
         },
       },
@@ -359,7 +359,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(result.status).toBe("not_ready");
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(1);
-    expect(h.database.outbox[0]).toMatchObject({ dedupeKey: "preview.job:" + HASH + ":1.0.0:pdf" });
+    expect(h.database.outbox[0]).toMatchObject({ dedupeKey: "preview.job:" + HASH + ":1.0.0:image" });
   });
 
   it("failed（缓存态）：回原因、不原地重试（不补投 / 不登记 / 不签名 / 不审计）", async () => {
@@ -457,6 +457,27 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
 });
 
 describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", () => {
+  it("PDF 并入查看器通道（2026-10-08 业务口径「统一用onlyoffice」）：ready + viewer（documentType / fileType = pdf）、不查产物 / 不投递", async () => {
+    const h = makeService();
+    // 默认 fixture 为 png（产物通道用例）；这里显式改回 PDF，锁定「PDF 不再走源直通产物」的新口径。
+    h.repo.file = makeFileRow({ name: "机械设计图纸.pdf" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/pdf" }));
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result).toMatchObject({
+      status: "ready",
+      target: null,
+      url: null,
+      viewer: { kind: "onlyoffice", documentType: "pdf", document: { title: "机械设计图纸.pdf", fileType: "pdf" } },
+    });
+    expect(h.previews.queries).toHaveLength(0);
+    expect(h.previews.ensured).toHaveLength(0);
+    expect(h.database.outbox).toHaveLength(0);
+    expect(h.storage.signed).toHaveLength(0);
+    expect(h.audit.entries[0]).toMatchObject({ metadata: { viewerKind: "onlyoffice", documentType: "pdf" } });
+  });
+
   it("Office（docx）→ ready + viewer 非空：不查产物 / 不投递 / 不签名；审计记 viewerKind 与 documentType", async () => {
     const h = makeService();
     h.repo.file = makeFileRow({ name: "方案.docx" });

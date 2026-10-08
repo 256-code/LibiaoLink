@@ -293,10 +293,10 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
 });
 
 describe("previewTargetsFor / preview.job（投递侧映射）", () => {
-  it("产物通道映射：图片 → image、PDF → pdf；Office / 文本族自 S3 起不再投递（走查看器通道）；判不出类型不投", () => {
+  it("产物通道映射：图片 → image；PDF / Office / 文本族自 S3 起不再投递（走查看器通道 · PDF 2026-10-08 并入）；判不出类型不投", () => {
     expect(previewTargetsFor({ fileName: "现场照片.png", mime: "image/png" })).toEqual(["image"]);
     expect(previewTargetsFor({ fileName: "矢量图.svg", mime: null })).toEqual(["image"]);
-    expect(previewTargetsFor({ fileName: "机械设计图纸.pdf", mime: null })).toEqual(["pdf"]);
+    expect(previewTargetsFor({ fileName: "机械设计图纸.pdf", mime: null })).toEqual([]);
     expect(previewTargetsFor({ fileName: "方案.docx", mime: null })).toEqual([]);
     expect(previewTargetsFor({ fileName: "报价.xlsx", mime: null })).toEqual([]);
     expect(previewTargetsFor({ fileName: "说明.txt", mime: null })).toEqual([]);
@@ -305,7 +305,7 @@ describe("previewTargetsFor / preview.job（投递侧映射）", () => {
     expect(previewTargetsFor({ fileName: "工具包", mime: null })).toEqual([]);
   });
 
-  it("查看器通道映射（S3）：Office / 文本族 → documentType + fileType（扩展名优先、MIME 兜底）", () => {
+  it("查看器通道映射（S3；PDF 2026-10-08 并入）：Office / 文本族 / PDF → documentType + fileType（扩展名优先、MIME 兜底）", () => {
     expect(viewerChannelFor({ fileName: "方案.docx", mime: null })).toEqual({ documentType: "word", fileType: "docx" });
     expect(viewerChannelFor({ fileName: "报表.xlsm", mime: null })).toEqual({ documentType: "cell", fileType: "xlsm" });
     expect(viewerChannelFor({ fileName: "说明.txt", mime: null })).toEqual({ documentType: "word", fileType: "txt" });
@@ -316,7 +316,9 @@ describe("previewTargetsFor / preview.job（投递侧映射）", () => {
       fileType: "xls",
     });
     expect(viewerChannelFor({ fileName: "现场照片.png", mime: "image/png" })).toBeNull();
-    expect(viewerChannelFor({ fileName: "机械设计图纸.pdf", mime: null })).toBeNull();
+    // PDF（2026-10-08 业务口径「统一用onlyoffice」）：并入查看器通道（documentType = pdf）
+    expect(viewerChannelFor({ fileName: "机械设计图纸.pdf", mime: null })).toEqual({ documentType: "pdf", fileType: "pdf" });
+    expect(viewerChannelFor({ fileName: "无扩展名", mime: "application/pdf" })).toEqual({ documentType: "pdf", fileType: "pdf" });
     expect(viewerChannelFor({ fileName: "交付包.zip", mime: null })).toBeNull();
   });
 

@@ -752,7 +752,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                 const previewing = previewBusy === file.id;
                 const confirming = pendingDelete === file.id;
                 return (
-                  <li key={file.id} data-drawer-file-item="true" className="group flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5">
+                  <li key={file.id} data-drawer-file-item="true" className="group flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5 transition-colors hover:bg-zinc-100">
                     {previewKind === "image" ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : <FileTypeIcon name={file.name} />}
                     {renamingId === file.id ? (
                       <span className="flex min-w-0 flex-1 items-center gap-0.5">
@@ -785,7 +785,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                           onClick={() => { void openPreview(file.id, file.name); }}
                           disabled={previewing}
                           title="点击预览"
-                          className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition hover:text-zinc-900 hover:underline disabled:text-zinc-400"
+                          className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                         >
                           {file.name}
                         </button>
@@ -798,7 +798,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                         data-file-rename="true"
                         onClick={() => { startFileRename(file); }}
                         title="点名字可自定义（后缀由系统保留）"
-                        className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition hover:text-zinc-900 hover:underline"
+                        className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900"
                       >
                         {file.name}
                       </button>
