@@ -1,5 +1,7 @@
 # deploy/preview/ · 预览转换器沙箱（M4-05 · ADR-007）
 
+> **已退役（S6 · 2026-10-08）**：ONLYOFFICE 替换收官后本转换栈**不再部署 / 启动** —— 预览链路 = `deploy/onlyoffice` 查看器（Office / 文本族 / PDF）+ 图片原对象直签；转换管线零消费者。目录与镜像保留供回滚与 `structured` 二期评估；退役评审见 `docs/s6-退役评审(LibreOffice转换栈).md`。
+
 本目录是**在线预览管道**里 converter（转换沙箱）的落点（px 线运维件）：镜像构建、compose 编排、
 沙箱约束、中文字体与自检脚本。lan 线（PR-10）按本目录 README 的接口契约调用它，不关心镜像内部。
 
