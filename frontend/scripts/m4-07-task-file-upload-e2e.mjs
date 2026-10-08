@@ -41,7 +41,14 @@
  *      变更阶段（九阶段下拉）/ 变更文件（已定档可选、未定档置灰 + 行尾「定档」就地补门）/ 变更内容描述（必填，落契约 reason）/ 变更前 /
  *      变更后（文本摘要）/ 变更原因（选填，合并记入 reason）/ 变更申请人（只读 = 当前登录人）/ 变更后文件版本（只读：
  *      系统递增）/ 变更后文件（必传）/ 关联（只读：R01 回写任务变更关联）→ 提交即生效（intent=change 分片直传）；
- *      「变更记录」= 任务 changeLinks 逐条回溯（最新在前）+ 按需取详情全文（④u 段）；
+ *      「变更记录」= 任务 changeLinks 逐条回溯（最新在前）+ 详情全文（Push 255 起进页即预取 · ④u 段）；
+ *   ⑯b 变更记录 / 关联回写（Push 255 · 业务反馈「文件显示 已变更 不如直接替换成变更后的啊 直接显示变更后添加的文件 不要显示已变更」+
+ *      「同时相关的关联也没有显示啊 变更记录也要显示 之前是什么文件 这次是什么文件 按照时间排序上下 文件可以预览在变更里面 变更可以看到详细内容」）：
+ *      ① 任务详情文件行不再挂「已变更」签（行内显示的就是变更后的文件本身，④u6）；
+ *      ② 变更记录每条直接出「变更前 v(n-1) → 变更后 v(n)」两个版本行（名称 / 版本号 / 大小）+ 各自「预览 / 下载」
+ *      （版本态 A4-06：变更前点预览 = 历史版本预览浮层，④u7b / ④u8b / ④u8c）；「详情」仍出全文（阶段 / 原因 / 前后摘要 / 申请人 / 审批状态，④u8）；
+ *      ③ 变更回写任务「变更关联」= 「变更文件所属任务」∪ R01 成果类型命中（去重）—— 无成果类型文件（doc_type 空、
+ *      前端上传口默认口径）的变更也必回写所属任务（④v4 端到端：任务 change_refs 含该变更）；
  *   ⑰ 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行不可选但不再死路 ——
  *      行尾「定档」→ 就地二次确认（锁版 + 任务一并锁定）→ POST /files/{id}/finalize → 该行转「已定档」随即可选、
  *      自动选中 + 绿字指引（④v 段：阻断说明 / 二次确认 / 定档转可选 + 写面 files.status=final、tasks.finalized_at 非空）；
@@ -920,8 +927,9 @@ const task4Id = task4Res.json === null ? "" : task4Res.json.id;
 const draftName = "回放-先定档-草图.txt";
 const draftBuf = Buffer.from("LibiaoLink 回放先定档 v0 " + fixtureCode + String.fromCharCode(10), "utf8");
 writeFileSync(join(fileDir, draftName), draftBuf);
-const draftUpload = await uploadViaApi(draftName, draftBuf, "CAD图纸", task4Id, false);
-check("④v0b 夹具：未定档文件（docType=CAD图纸）分片直传（不定档 · 任务保持未定档）", draftUpload.ok === true, String(draftUpload.detail));
+// Push 255：本文件**不带成果类型**（doc_type 空，与业务真机口径一致）—— 变更后只能靠「所属任务」回写变更关联（R01 匹配不到）。
+const draftUpload = await uploadViaApi(draftName, draftBuf, undefined, task4Id, false);
+check("④v0b 夹具：未定档文件（不带成果类型）分片直传（不定档 · 任务保持未定档）", draftUpload.ok === true, String(draftUpload.detail));
 
 // 第五条任务夹具（任务定档后变更用例 · ④w · 业务反馈「不是已经定档了吗 为什么变更申请里面还是未定档」）：
 // 任务经定档端点置位（与抽屉开关同端点），文件保持 draft —— 变更申请里该文件应显示「已定档」、直接可变更。
@@ -1039,10 +1047,14 @@ const doneShown = await waitFor("document.querySelector(" + j("[data-change-done
 check("④u5 提交成功 = 页面绿条「变更已提交生效」", doneShown === true, String(doneShown));
 
 const backToDetail = await clickScrolled("[data-drawer-tab=detail]");
-const changedChip = await waitFor("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(changedTargetName) + ")>=0&&items[i].textContent.indexOf(" + j("已变更") + ")>=0){return true;}}return false;})()", 20000);
+// Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊 直接显示变更后添加的文件 不要显示已变更」）：
+// 变更后清单行直接显示变更后的文件本身（名称沿用 + 当前版本已是变更版本），不再挂「已变更」色签。
+const changedRowShown = await waitFor("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(changedTargetName) + ")>=0&&items[i].textContent.indexOf(" + j("已变更") + ")<0){return true;}}return false;})()", 20000);
+const changedRowText = changedRowShown === true ? await ev("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(changedTargetName) + ")>=0){return items[i].innerText;}}return null;})()") : null;
 const linkedShown = await waitFor("(function(){var d=document.querySelector(" + j(DRAWER) + ");return d!==null&&d.innerText.indexOf(" + j(contentText) + ")>=0;})()", 20000);
-check("④u6 回「任务详情」：文件行转「已变更」色签（清单重取）+ 「变更关联」行回流（R01 + 整表重取）",
-  backToDetail === true && changedChip === true && linkedShown === true, JSON.stringify({ back: backToDetail, chip: changedChip, linked: linkedShown }));
+check("④u6 回「任务详情」：文件行直接显示变更后的文件（Push 255：不再挂「已变更」签）+ 「变更关联」行回流（整表重取）",
+  backToDetail === true && changedRowShown === true && linkedShown === true,
+  JSON.stringify({ back: backToDetail, row: changedRowText === null ? null : String(changedRowText).slice(0, 120), linked: linkedShown }));
 
 const historyTabPoint = await clickScrolled("[data-drawer-tab=history]");
 const historyShown = await waitFor("(function(){var p=document.querySelector(" + j("[data-drawer-page=history]") + ");return p!==null&&p.querySelectorAll(" + j("[data-change-item]") + ").length===1;})()", 10000);
@@ -1051,6 +1063,13 @@ check("④u7 点「变更记录」= 本任务一条变更（日期签 + 短原�
   historyTabPoint === true && historyShown === true && historyItemInfo !== null && historyItemInfo !== undefined
   && String(historyItemInfo.text).indexOf(contentText) >= 0 && String(historyItemInfo.text).indexOf("变更") >= 0 && historyItemInfo.open === "详情",
   JSON.stringify(historyItemInfo));
+
+// ④u7b（Push 255 · 业务口径「变更记录也要显示 之前是什么文件 这次是什么文件」）：列表行直接出「变更前 v1 → 变更后 v2」两行，
+// 各自带「预览 / 下载」入口（不需要先点「详情」）—— 进页即预取（详情 + 版本链）。
+const historyFilesShown = await waitFor("(function(){var f=document.querySelector(" + j("[data-change-item-files]") + ");if(f===null){return false;}var b=f.querySelector(" + j("[data-change-file=before]") + ");var a=f.querySelector(" + j("[data-change-file=after]") + ");if(b===null||a===null){return false;}return b.innerText.indexOf(" + j("变更前") + ")>=0&&b.innerText.indexOf(" + j(changedTargetName) + ")>=0&&b.innerText.indexOf(" + j("v1") + ")>=0&&a.innerText.indexOf(" + j("变更后") + ")>=0&&a.innerText.indexOf(" + j(changedTargetName) + ")>=0&&a.innerText.indexOf(" + j("v2") + ")>=0&&b.querySelector(" + j("[data-change-preview=before]") + ")!==null&&b.querySelector(" + j("[data-change-download=before]") + ")!==null&&a.querySelector(" + j("[data-change-preview=after]") + ")!==null&&a.querySelector(" + j("[data-change-download=after]") + ")!==null;})()", 15000);
+const historyFilesText = historyFilesShown === true ? await ev("(function(){var f=document.querySelector(" + j("[data-change-item-files]") + ");return f===null?null:f.innerText;})()") : null;
+check("④u7b 变更记录行显示「变更前 v1 → 变更后 v2」两个文件版本 + 各自「预览 / 下载」入口（进页即取，不必先点详情）",
+  historyFilesShown === true, JSON.stringify({ shown: historyFilesShown, text: historyFilesText === null ? null : String(historyFilesText).slice(0, 200) }));
 
 const detailOpenPoint = await clickScrolled("[data-change-item-open]");
 // 变更后文件 = 目标文件本体（变更 = 同一文件的新版本：名称沿用、版本号递增）—— 读面 file.name 即目标文件名。
@@ -1064,6 +1083,18 @@ check("④u8 点「详情」按需取全文（13 列读面）：变更后文件 
   && String(itemDetailText).indexOf("潘兴") >= 0 && String(itemDetailText).indexOf("已通过") >= 0,
   JSON.stringify({ clicked: detailOpenPoint, shown: itemDetailShown, detail: String(itemDetailText).slice(0, 220), page: String(historyText).slice(0, 120) }));
 await shotDrawerClip("m4-07-drawer-history.png");
+
+// ④u8b（Push 255 · 业务口径「文件可以预览在变更里面」）：变更记录里的「变更前」文件可预览 —— 版本态预览（A4-06 历史版本）；
+// 点「预览」→ 查看器浮层打开且抽屉仍在；Esc 先关浮层、抽屉（变更记录页）仍在。
+const beforePreviewPoint = await clickScrolled("[data-change-preview=before]");
+const beforePreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-drawer-page=history]") + ")!==null", 25000);
+const beforePreviewInfo = beforePreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}return {open:true,kind:el.getAttribute(" + j("data-file-preview-kind") + "),caption:el.innerText.slice(0,120)};})()") : null;
+check("④u8b 变更记录「变更前」版本可预览（版本态预览浮层打开 + 变更记录页仍在）",
+  beforePreviewPoint === true && beforePreviewShown === true && beforePreviewInfo !== null && beforePreviewInfo !== undefined && String(beforePreviewInfo.caption).indexOf(changedTargetName) >= 0,
+  JSON.stringify(beforePreviewInfo));
+await pressKey("Escape", "Escape", 27);
+const beforePreviewClosed = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 8000);
+check("④u8c Esc 先关预览浮层（变更记录页仍在 —— 「Esc 先关内层」）", beforePreviewClosed === true, String(beforePreviewClosed));
 
 // ---------- ④v 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）----------
 // 业务口径：未定档文件不能直接变更（A4-13 前置门）—— 但页面不能死路：行尾「定档」→ 就地二次确认 → 定档后随即可选。
@@ -1105,6 +1136,30 @@ check("④v3 确认定档：行转「已定档」随即可选（自动选中 + �
   && draftDb !== undefined && draftDb.status === "final"
   && task4Row !== undefined && task4Row.locked === true,
   JSON.stringify({ row: finalizedRow, db: draftDb, task: task4Row }));
+
+// ④v4（Push 255 · 业务反馈「同时相关的关联也没有显示啊」）：变更文件**不带成果类型**（doc_type 空，R01 匹配不到任何任务）——
+// 变更仍必须回写「变更文件所属任务」（task4 由抽屉内变更），任务「变更关联 / 变更记录」不再空白。
+const noDocAfterName = "回放-先定档-变更后-v2.txt";
+const noDocAfterBuf = Buffer.from("LibiaoLink 回放先定档变更后 v2 " + fixtureCode + String.fromCharCode(10), "utf8");
+writeFileSync(join(fileDir, noDocAfterName), noDocAfterBuf);
+const noDocContent = "回放变更内容：无成果类型文件变更 " + fixtureCode;
+await fillField("[data-change-reason]", noDocContent);
+await setFileInput("[data-change-upload-input=true]", join(fileDir, noDocAfterName));
+const noDocPicked = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-file]") + ");return n!==null&&n.textContent.indexOf(" + j(noDocAfterName) + ")>=0;})()", 6000);
+const noDocSubmit = await clickScrolled("[data-change-submit]");
+const noDocLanded = await waitForAsync(async () => {
+  const rows = (await db.query("select status from files where id = $1", [draftUpload.fileId])).rows;
+  return rows.length === 1 && rows[0].status === "changed";
+}, 30000);
+const noDocChange = (await db.query("select id, reason, stage_key, status from change_requests where project_id = $1 order by applied_at desc limit 1", [projectId])).rows[0];
+const noDocFileRow = (await db.query("select doc_type from files where id = $1", [draftUpload.fileId])).rows[0];
+const task4Refs = (await db.query("select change_refs from tasks where id = $1", [task4Id])).rows[0].change_refs;
+check("④v4 无成果类型文件的变更（doc_type 空 · R01 零匹配）→ 所属任务 change_refs 直接回写（变更关联 / 变更记录不再空白）",
+  noDocPicked === true && noDocSubmit === true && noDocLanded === true
+  && noDocFileRow !== undefined && noDocFileRow.doc_type === null
+  && noDocChange !== undefined && noDocChange.reason === noDocContent && noDocChange.status === "applied"
+  && Array.isArray(task4Refs) && task4Refs.indexOf(noDocChange.id) >= 0,
+  JSON.stringify({ change: noDocChange === undefined ? null : noDocChange, file: noDocFileRow, refs: task4Refs }));
 
 // ---------- ④w 任务已定档 → 其文件视为已定档（Push 254 续之二 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）----------
 // 场景：任务经定档开关 / 端点已定档，文件未做文件级定档（保持 draft）—— 变更申请里该文件应显示「已定档」、

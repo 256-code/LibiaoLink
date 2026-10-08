@@ -22,6 +22,9 @@
  *   → 对预签名 URL **原样 PUT**（不带任何额外请求头，与浏览器直传同口径）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/complete { contentHash }
  * 预览：GET /api/v1/files/{fileId}/preview → ready 时短时签名 URL（模块级缓存 + 订阅，供附图懒取）。
+ * Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊… 变更记录也要显示 之前是什么文件 这次是什么文件… 文件可以预览在变更里面」）：
+ *   变更记录行接版本链 —— fetchFileVersions（GET /files/{id}/versions）+ 版本态预览 / 下载
+ *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载）。
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { apiRequest, apiSend } from "./api";
@@ -308,20 +311,35 @@ type FileDownloadUrlResponse = { url: string; fileName: string; sizeBytes: numbe
 
 /**
  * 取**原文件**的短时签名下载地址（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：
- * `GET /files/{id}/versions/{versionId}/download-url`（版本必填 —— 先读详情拿当前版本）。
+ * `GET /files/{id}/versions/{versionId}/download-url`（版本必填 —— 缺省先读详情拿当前版本）。
+ * Push 255：versionId 可选给出 —— 变更记录「变更前 / 变更后」直接下对应历史版本（A4-06），不再回落到当前版本。
  * 契约语义：签名带 `Content-Disposition: attachment` + 原文件名 → 浏览器落盘的是**原文件字节**
  * （与预览区分：S4 起 Office / 文本族走 ONLYOFFICE 查看器渲染 —— 下载始终拿原文件）；服务端写 download 审计、判 `file.download` 权限。
  */
-export async function fetchDownloadUrl(fileId: string): Promise<{ url: string; fileName: string }> {
-  const detail = await apiRequest<{ currentVersion: { id: string } | null }>("/api/v1/files/" + encodeURIComponent(fileId));
-  const versionId = detail.currentVersion === null ? null : detail.currentVersion.id;
-  if (versionId === null) {
+export async function fetchDownloadUrl(fileId: string, versionId?: string): Promise<{ url: string; fileName: string }> {
+  let target = versionId;
+  if (target === undefined) {
+    const detail = await apiRequest<{ currentVersion: { id: string } | null }>("/api/v1/files/" + encodeURIComponent(fileId));
+    target = detail.currentVersion === null ? undefined : detail.currentVersion.id;
+  }
+  if (target === undefined) {
     throw new Error("文件还没有版本，暂时不能下载");
   }
   const signed = await apiRequest<FileDownloadUrlResponse>(
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/versions/" + encodeURIComponent(versionId) + "/download-url",
+    "/api/v1/files/" + encodeURIComponent(fileId) + "/versions/" + encodeURIComponent(target) + "/download-url",
   );
   return { url: signed.url, fileName: signed.fileName };
+}
+
+/** 版本链摘要（Push 255 · 变更记录「变更前 / 变更后」行）：GET /files/{id}/versions —— 只追加的版本链按 seq 反查上一版。 */
+export type FileVersionBrief = { id: string; seq: number; sizeBytes: number; uploadedAt: string };
+
+/** 取文件版本链（只追加；变更记录用 seq = 变更版本号 - 1 反查「变更前」文件版本）。 */
+export async function fetchFileVersions(fileId: string): Promise<FileVersionBrief[]> {
+  const list = await apiRequest<{ items: Array<{ id: string; seq: number; sizeBytes: number; uploadedAt: string }>; total: number }>(
+    "/api/v1/files/" + encodeURIComponent(fileId) + "/versions",
+  );
+  return list.items.map((item) => ({ id: item.id, seq: item.seq, sizeBytes: item.sizeBytes, uploadedAt: item.uploadedAt }));
 }
 
 /** 触发一次浏览器下载（attachment 签名地址 —— 地址失效时页面不跳走；原文件名由 Content-Disposition 落盘）。 */
@@ -384,9 +402,21 @@ function subscribePreview(listener: () => void): () => void {
   };
 }
 
-/** 替换 / 内容更新后清掉该文件的预览签名缓存（缓存 URL 指着旧版本）。 */
+/** 预览缓存键（Push 255）：版本态预览按 fileId + versionId 分开缓存（缺省版本沿用 fileId —— 附图 / 缩略图口径不变）。 */
+function previewCacheKey(fileId: string, versionId?: string): string {
+  return versionId === undefined ? fileId : fileId + "@" + versionId;
+}
+
+/** 替换 / 内容更新后清掉该文件的预览签名缓存（缓存 URL 指着旧版本；Push 255：该文件的版本态键一并清）。 */
 export function invalidatePreview(fileId: string): void {
-  if (previewUrls.delete(fileId)) {
+  let removed = false;
+  for (const key of [...previewUrls.keys()]) {
+    if (key === fileId || key.startsWith(fileId + "@")) {
+      previewUrls.delete(key);
+      removed = true;
+    }
+  }
+  if (removed) {
     notifyPreview();
   }
 }
@@ -397,27 +427,31 @@ export type PreviewOpenOutcome =
   | { kind: "viewer"; viewer: PreviewViewerConfig }
   | { kind: "unavailable"; reason: string | null };
 
-/** 取预览打开输入（带 URL 缓存 + 同文件并发去重）。就绪轮询预算 = 20 秒（Push 226 续：worker 的 outbox 领取间隔
+/** 取预览打开输入（带 URL 缓存 + 同文件并发去重；Push 255：versionId 可选 —— 变更记录按版本态取，缓存键分开）。
+ *  就绪轮询预算 = 20 秒（Push 226 续：worker 的 outbox 领取间隔
  *  默认 5 秒 —— 首次预览「点开才排队转换」，6 秒窗口在真机上会偶发拿不到；failed 立即返回，不会白等；
  *  查看器通道（Office / 文本）就绪即签发、无需等待转换）。S4：外壳按响应裁决 viewer / url 两通道。 */
-export async function ensurePreviewOutcome(fileId: string): Promise<PreviewOpenOutcome> {
-  const cached = previewUrls.get(fileId);
+export async function ensurePreviewOutcome(fileId: string, versionId?: string): Promise<PreviewOpenOutcome> {
+  const key = previewCacheKey(fileId, versionId);
+  const cached = previewUrls.get(key);
   if (cached !== undefined) {
     return { kind: "url", url: cached };
   }
-  if (previewLoading.has(fileId)) {
+  if (previewLoading.has(key)) {
     return { kind: "unavailable", reason: null };
   }
-  previewLoading.add(fileId);
+  previewLoading.add(key);
+  const endpoint =
+    "/api/v1/files/" + encodeURIComponent(fileId) + "/preview" + (versionId === undefined ? "" : "?versionId=" + encodeURIComponent(versionId));
   try {
     for (let attempt = 0; attempt < 40; attempt += 1) {
-      const preview = await apiRequest<FilePreviewResponse>("/api/v1/files/" + encodeURIComponent(fileId) + "/preview");
+      const preview = await apiRequest<FilePreviewResponse>(endpoint);
       if (preview.status === "ready") {
         if (preview.viewer !== null) {
           return { kind: "viewer", viewer: preview.viewer };
         }
         if (preview.url !== null) {
-          previewUrls.set(fileId, preview.url);
+          previewUrls.set(key, preview.url);
           notifyPreview();
           return { kind: "url", url: preview.url };
         }
@@ -432,7 +466,7 @@ export async function ensurePreviewOutcome(fileId: string): Promise<PreviewOpenO
   } catch {
     return { kind: "unavailable", reason: null };
   } finally {
-    previewLoading.delete(fileId);
+    previewLoading.delete(key);
   }
 }
 

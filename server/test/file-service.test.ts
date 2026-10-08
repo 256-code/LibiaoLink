@@ -2055,6 +2055,8 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
 
   it("生效链路：change_requests(applied) + 版本挂 change_request_id + 状态 changed + change 关联 + R01 回写 + 变更审计 + outbox", async () => {
     const h = changeHarness();
+    // Push 255：文件同时挂任务（TASK）—— 归属回写与 R01 结果先去重再写
+    h.repo.file = makeFileRow({ status: "final", nodeId: NODE, taskId: TASK, docType: "CAD图纸", version: 3, currentVersionId: VERSION_A });
     h.repo.deliverableTaskIds = [TASK, OTHER_TASK];
     h.repo.nodeStageKey = "construction";
 
@@ -2089,10 +2091,10 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
       appliedBy: ACTOR,
     });
     expect(h.repo.sessionPatches.at(-1)!.patch.status).toBe("completed");
-    // 多态关联：project / node / change（change 指向本次变更）
-    expect(h.repo.insertedLinks.map((row) => row.objectType)).toEqual(["project", "node", "change"]);
+    // 多态关联：project / node / task（文件挂 TASK，Push 255 用例）/ change（change 指向本次变更）
+    expect(h.repo.insertedLinks.map((row) => row.objectType)).toEqual(["project", "node", "task", "change"]);
     expect(h.repo.insertedLinks.find((row) => row.objectType === "change")!.objectId).toBe(change.id);
-    // R01：docType ∈ deliverable_types（多值命中）的全部任务一律追加 change_refs
+    // 任务关联（Push 255）：① 所属任务（TASK）② R01 docType ∈ deliverable_types 多值命中（TASK / OTHER_TASK）—— 并集去重后写 change_refs
     expect(h.repo.deliverableQueries).toEqual([{ projectId: PROJECT, deliverable: "CAD图纸" }]);
     expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK, OTHER_TASK], changeRequestId: change.id }]);
     // 审计：变更 create（objectType=change）+ 上传 complete（metadata 带 changeRequestId）
@@ -2110,6 +2112,8 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
         stageKey: "construction",
         deliverableType: "CAD图纸",
         matchedTasks: [TASK, OTHER_TASK],
+        ownerTaskId: TASK,
+        linkedTaskIds: [TASK, OTHER_TASK],
         linkedTasks: 2,
       },
     });
@@ -2124,11 +2128,33 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
     expect(h.database.outbox[0]).toMatchObject({
       dedupeKey: "change.applied:" + change.id,
       status: "pending",
-      payload: { changeRequestId: change.id, fileId: FILE, versionId: VERSION, matchedTasks: [TASK, OTHER_TASK] },
+      payload: { changeRequestId: change.id, fileId: FILE, versionId: VERSION, matchedTasks: [TASK, OTHER_TASK], ownerTaskId: TASK },
     });
   });
 
-  it("R01 无匹配（成果类型为空）→ 只记日志、不阻断变更生效", async () => {
+  it("（Push 255）成果类型为空但文件挂了任务 → 所属任务直接回写变更关联（业务反馈「变更记录 / 变更关联没显示」）", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "changed", nodeId: NODE, taskId: TASK, docType: null, version: 4, currentVersionId: VERSION_A });
+    const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
+    try {
+      const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+      expect(result.changeRequest).not.toBeNull();
+      expect(result.file.status).toBe("changed");
+      // 前端上传口不带成果类型（doc_type 空）→ R01 零匹配；但变更发生在 TASK 里 → 该任务必须拿到 change_refs
+      expect(h.repo.deliverableQueries).toHaveLength(0);
+      expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK], changeRequestId: result.changeRequest!.id }]);
+      expect(h.audit.entries.at(-2)).toMatchObject({
+        action: "create",
+        objectType: "change",
+        metadata: { matchedTasks: [], ownerTaskId: TASK, linkedTaskIds: [TASK], linkedTasks: 1 },
+      });
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("变更无关联任务"))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("所属任务为空 + R01 无匹配（成果类型为空）→ 只记日志、不阻断变更生效", async () => {
     const h = changeHarness();
     h.repo.file = makeFileRow({ status: "changed", nodeId: NODE, docType: null, version: 4, currentVersionId: VERSION_A });
     const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
@@ -2138,7 +2164,7 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
       expect(result.file.status).toBe("changed");
       expect(h.repo.deliverableQueries).toHaveLength(0);
       expect(h.repo.changeRefAppends).toEqual([{ taskIds: [], changeRequestId: result.changeRequest!.id }]);
-      expect(warn.mock.calls.some((call) => String(call[0]).includes("变更 R01 无匹配任务"))).toBe(true);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("变更无关联任务"))).toBe(true);
     } finally {
       warn.mockRestore();
     }
