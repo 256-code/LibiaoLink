@@ -1492,6 +1492,15 @@
             },
             "maxItems": 30,
             "description": "当前问题附图（文件 id 整体替换；提交生成问题时转挂到问题）"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportIssueDraft"
+            },
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "内联问题清单（1~N 条；与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥 —— 二选一）"
           }
         },
         "required": [
@@ -1875,6 +1884,14 @@
             },
             "maxItems": 30,
             "description": "当前问题附图整体替换（缺省 = 不改；空数组 = 清空）；该日报已生成问题时转挂目标 = 该问题"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportIssueDraft"
+            },
+            "maxItems": 50,
+            "description": "内联问题清单整体替换（草稿 → 提交时逐条生成问题；空数组 = 清空；非空时与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥）"
           }
         },
         "required": [
@@ -3057,7 +3074,14 @@
             "description": "问题描述（自动生成 = 日报「现场发现问题」原文；超 500 字截短落库）"
           },
           "categories": {
-            "$ref": "#/components/schemas/IssueCategoryList"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IssueCategoryList"
+              },
+              {
+                "description": "问题归类（多值，≥1 项；C9 字典十项）"
+              }
+            ]
           },
           "state": {
             "$ref": "#/components/schemas/IssueState"
@@ -3207,7 +3231,7 @@
         },
         "minItems": 1,
         "maxItems": 10,
-        "description": "问题归类（多值，≥1 项；C9 字典十项）"
+        "description": "问题归类（多值 ≥1 项；C9 十项）"
       },
       "IssueDeleteResponse": {
         "type": "object",
@@ -5386,6 +5410,47 @@
         "required": [
           "version"
         ]
+      },
+      "ReportIssueDraft": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "问题描述（原文；问题记录标题超 500 字截短落库）"
+          },
+          "categories": {
+            "$ref": "#/components/schemas/IssueCategoryList"
+          },
+          "ownerId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "问题处理人 / 责任人（缺省 / null = 按归类自动分派责任部门）"
+          },
+          "solution": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "解决方案或建议（落问题的 solution）"
+          },
+          "photoFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "该问题附图（文件 id；提交时直接挂到生成的问题）"
+          }
+        },
+        "required": [
+          "title",
+          "categories"
+        ],
+        "description": "日报内联问题草稿（一次填报 1~N 条；提交时逐条生成问题记录）"
       },
       "SavedHomeFilter": {
         "type": "object",
@@ -8240,7 +8305,14 @@
             "type": "string"
           },
           "categories": {
-            "$ref": "#/components/schemas/IssueCategoryList"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IssueCategoryList"
+              },
+              {
+                "description": "问题归类（多值，≥1 项；C9 字典十项）"
+              }
+            ]
           },
           "state": {
             "$ref": "#/components/schemas/IssueState"

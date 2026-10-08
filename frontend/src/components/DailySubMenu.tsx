@@ -7,7 +7,7 @@ import type { DailySubView } from "../useHashRoute";
  * 原来是主标签栏下面单独一排**键帽按钮**（页内导航栏，Push 200/201 还做过吸顶）；本刀把这四块子视图
  * **收进主标签栏「日报及问题」标签的下拉子菜单**（图一：父项带下划线，悬停 / 点击展开白色圆角面板，
  * 面板里按分组列子项）—— 分组 = 「日报」（日报填写 / 日报记录）+ 「问题」（问题追踪 / 问题看板）。
- * 地址口径不变：四块子视图仍是 ?view=daily&sub=（缺省 form，见 useHashRoute 的 DailySubView）。
+ * 地址口径不变：四块子视图仍是 ?view=daily&sub=（Push 243 起缺省 records「日报记录」，见 useHashRoute 的 DailySubView）。
  */
 
 /** 页内导航栏的四块子视图（业务口径：第一块日报填写、第二块日报记录、第三块问题追踪、第四块问题看板）。 */
@@ -18,7 +18,7 @@ export const SUB_TABS: readonly SubTab[] = ["日报填写", "日报记录", "问
 /**
  * 中文标签 ↔ 地址 slug（Push 214 · 业务口径「这几个页面也要做路由」）：四块子视图进地址 `?view=daily&sub=`，
  * 与主标签栏 `?view=` 同一套「地址即状态」口径 —— 刷新 / 收藏 / 分享 / 上次后退都能停在原块；
- * 缺省「日报填写」= form 不落参数（旧链接 `?view=daily` 原样打开 = 日报填写）。
+ * 缺省「日报记录」= records 不落参数（Push 243 业务口径「点击默认是日报记录页面」；旧链接 `?view=daily` 原样打开 = 日报记录）。
  */
 export const SUB_TAB_KEYS: Record<SubTab, DailySubView> = {
   日报填写: "form",

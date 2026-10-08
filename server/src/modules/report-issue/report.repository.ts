@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import type { ReportIssueDraft } from "@libiaolink/contracts";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -21,6 +22,8 @@ export interface DailyReportRow {
   foundIssue: string | null;
   issueCategories: string[];
   suggestion: string | null;
+  /** 内联问题清单（Push 243）：jsonb 原样；写入前已过契约校验（空数组 = 旧单问题字段口径）。 */
+  issueDrafts: ReportIssueDraft[];
   stageKeys: string[];
   submittedAt: Date | null;
   createdAt: Date;
@@ -39,6 +42,7 @@ export interface DailyReportInsertInput {
   foundIssue: string | null;
   issueCategories: string[];
   suggestion: string | null;
+  issueDrafts: ReportIssueDraft[];
   stageKeys: string[];
   submittedAt: Date | null;
 }
@@ -51,6 +55,7 @@ export interface DailyReportPatch {
   foundIssue?: string | null;
   issueCategories?: string[];
   suggestion?: string | null;
+  issueDrafts?: ReportIssueDraft[];
   stageKeys?: string[];
   submittedAt?: Date | null;
 }
@@ -68,6 +73,7 @@ const REPORT_COLUMNS = {
   foundIssue: dailyReports.foundIssue,
   issueCategories: dailyReports.issueCategories,
   suggestion: dailyReports.suggestion,
+  issueDrafts: dailyReports.issueDrafts,
   stageKeys: dailyReports.stageKeys,
   submittedAt: dailyReports.submittedAt,
   createdAt: dailyReports.createdAt,
@@ -142,6 +148,7 @@ export class ReportRepository {
         foundIssue: input.foundIssue,
         issueCategories: input.issueCategories,
         suggestion: input.suggestion,
+        issueDrafts: input.issueDrafts,
         stageKeys: input.stageKeys,
         submittedAt: input.submittedAt,
         createdAt: at,

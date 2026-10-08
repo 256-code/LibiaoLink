@@ -94,6 +94,7 @@ function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyR
     foundIssue: null,
     issueCategories: [],
     suggestion: null,
+    issueDrafts: [],
     stageKeys: [],
     submittedAt: AT_EARLY,
     createdAt: AT_EARLY,
