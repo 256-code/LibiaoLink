@@ -12,6 +12,7 @@
  * 2026-10-08 续：文件替换（replaceFileContent —— 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
  *   未定档（draft）直替 = intent=version + fileId（版本链追加、名称 / 归属不变）；已定档 / 已变更 = intent=change
  *   + change.reason 必填（A4-13 申请即通过，完成上传时同事务生效）。
+ *   Push 251 撤销：业务口径「取消这个替换按钮」→ UI 入口与替换流程整体撤除（本函数保留、未接线；服务端变更通道不动）。
  * 2026-10-08 续二（Push 249）：定档上传（uploadFile / uploadFiles / replaceFileContent 的 finalize 选项 + finalizeFile）——
  *   业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」：传输完成即定档该文件
  *   （POST /files/{id}/finalize），挂接任务随文件定档一并锁定（服务端同事务）：此后任务写口一律 409 TASK_FINALIZED，修改走变更。
@@ -129,6 +130,7 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
  * （A4-13 申请即通过）—— intent=change + change.reason 必填，完成上传时同事务生效（文件状态 → changed）。
  * 替换完成后清一次该文件的预览签名缓存（旧版本 URL 作废）。
  * finalize（Push 249）= 未定档直替后定档（任务随定档锁定）；已定档 / 已变更走变更、不定档（change 路径下忽略）。
+ * Push 251 撤销（业务口径「取消这个替换按钮」）：入口与流程已从 UI 撤除，本函数保留未接线（供后续需要时复用）。
  */
 export async function replaceFileContent(projectId: string, target: TaskFileRef, file: Blob, reason: string | null, finalize = false): Promise<void> {
   const needsChange = target.status === "final" || target.status === "changed";

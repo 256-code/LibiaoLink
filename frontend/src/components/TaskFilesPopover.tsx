@@ -6,77 +6,41 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { usePopover } from "./usePopover";
 
-/** 「替换」按钮（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：与行删除同款的
- *  「幽灵态 → 悬停展开胶囊」动效（RowDeleteButton 的姐妹件，不改它），颜色取中性墨色（不抢删除的红）；
- *  图标 = 业务给的 iconfont 替换图标（folder + 双箭头，1024 viewBox，fill 跟字色）。 */
-function RowReplaceButton({ onReplace, label }: { onReplace: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={(event) => {
-        event.stopPropagation();
-        onReplace();
-      }}
-      onKeyDown={(event) => event.stopPropagation()}
-      className="group/rep relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-transparent text-zinc-300 opacity-0 transition-[width,background-color,color,opacity] duration-300 ease-out hover:w-12 hover:bg-blue-700 hover:text-white focus-visible:w-12 focus-visible:bg-blue-700 focus-visible:text-white focus-visible:opacity-100 focus-visible:outline-none group-hover:opacity-100"
-    >
-      <span className="pointer-events-none absolute -translate-y-3 text-[11px] font-semibold opacity-0 transition-all duration-300 group-hover/rep:translate-y-0 group-hover/rep:opacity-100 group-focus-visible/rep:translate-y-0 group-focus-visible/rep:opacity-100">
-        替换
-      </span>
-      <svg viewBox="0 0 1024 1024" aria-hidden="true" className="h-4 w-4 shrink-0 transition-all duration-300 group-hover/rep:translate-y-4 group-hover/rep:scale-[1.6] group-hover/rep:opacity-0 group-focus-visible/rep:translate-y-4 group-focus-visible/rep:scale-[1.6] group-focus-visible/rep:opacity-0">
-        <path fill="currentColor" d="M400.541538 196.923077c20.873846 0 40.96 8.270769 55.926154 23.236923L512 275.692308h315.076923c43.323077 0 78.769231 35.446154 78.769231 78.76923v393.846154c0 43.323077-35.446154 78.769231-78.769231 78.769231H196.923077c-43.323077 0-78.769231-35.446154-78.769231-78.769231V275.692308c0-43.323077 35.446154-78.769231 78.769231-78.769231z m293.612308 320.315077h-55.611077l2.993231 10.121846 2.244923 8.625231a123.746462 123.746462 0 0 1-31.901538 112.600615l-2.756923 2.756923-5.907693 5.316923a122.958769 122.958769 0 0 1-79.950769 29.380923l-8.664615-0.275692-8.664616-0.905846a122.88 122.88 0 0 1-33.122461-9.570462l-0.393846-0.196923 27.254153-45.292307H359.305846l5.632 11.342769 4.056616 7.719384a176.64 176.64 0 0 0 154.269538 90.427077c36.588308 0.078769 87.355077-18.983385 110.473846-38.754461 12.996923-11.106462 22.252308-20.361846 27.766154-27.884308a177.152 177.152 0 0 0 34.028308-149.267692l-1.378462-6.144zM523.224615 385.969231l-8.270769 0.196923a176.600615 176.600615 0 0 0-163.997538 215.709538l1.378461 6.144h55.650462l-3.032616-10.121846-2.205538-8.585846a123.352615 123.352615 0 0 1 120.516923-150.055385l8.664615 0.275693 8.664616 0.905846c11.421538 1.575385 22.606769 4.844308 33.437538 9.688615l-27.175384 45.371077h140.366769l-5.671385-11.382154-4.056615-7.719384A176.64 176.64 0 0 0 523.264 385.969231z" />
-      </svg>
-    </button>
-  );
-}
-
 /** 任务列表「文件」列下拉（Push 246 · 业务口径 2026-10-08「这里点击后出现右侧下拉框吧 最上方是添加文件
  *  下方是已有文件 点击即可预览 也有删除按钮」）：
  *  - 触发器 = 「文件」列胶囊（内容沿用「文件名 + +N」/「N 份」/「—」，液态玻璃样式与行内可编辑单元格同款）；
  *  - 下拉优先贴右侧展开（放不下自动回落上下 —— usePopover placement "right" 口径）：
- *    顶部「＋ 添加文件」（隐藏多选 input，上传中「上传中 N/M」）+ 已有文件清单（服务端默认序 = 最新在前）；
+ *    顶部一行 = 「＋ 添加文件」/「＋ 添加定档文件」（Push 251 改版：点哪个直接开选文件框、不再出一问——业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」；上传中两个入口禁用、行尾「上传中 N/M」）+ 已有文件清单（服务端默认序 = 最新在前）；
  *  - 点文件名 = 预览（与详情抽屉同一套两通道裁决 + FilePreviewOverlay：图片大图 / PDF iframe /
  *    Office·文本 ONLYOFFICE 查看器外壳；R5 降级在同一下拉内出一行灰字提示）；
  *  - 行尾「删除」= 与任务表行删除**同款胶囊**（业务口径 2026-10-08「和胶囊的一样」—— 复用 RowDeleteButton：
  *    随行悬停浮现 24px 幽灵态、悬停按钮展开 48px 红胶囊「删除」，动效一致）→ 行内二次确认「确认删除 / 取消」，
  *    第二下才移入回收站（M4-02）；
- *  - 行尾「替换」（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）= 与删除同款动效的宝蓝色胶囊（2026-10-08 业务口径「替换改成宝蓝色的」；图标 16px、向删除侧收拢）：
- *    未定档（draft）直替（intent=version，版本链追加、名称不变）；已定档 / 已变更 = 先在行内填「变更原因」（必填）
- *    再选新文件（intent=change，A4-13 申请即通过），成功 / 失败都在下拉里留一行提示；
- *  - 定档确认（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
- *    点「＋ 添加文件」/ 未定档行的「替换」先出行内一问「是否为定档文件？」——「是，定档」= 传 / 换完成后对该文件定档
- *    （files.finalize），任务随文件定档一并锁定（服务端同事务）：此后任务不支持任何修改、修改走变更；「否，仅上传」= 普通 draft；
- *    任务已定档（taskFinalized）时添加 / 草稿替换关闭、下拉顶出常驻提示（已定档文件的「替换」仍走变更）。
- *  - 上传 / 进度 / 删除确认 / 替换都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉；
+ *  - 定档入口（Push 249 → Push 251 改版 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」→
+ *    「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」）：顶部并排两钮，
+ *    「＋ 添加文件」在前 = 普通 draft 直传、「＋ 添加定档文件」在后 = 直接开选文件框、传完即对该文件定档（files.finalize），
+ *    任务随文件定档一并锁定（服务端同事务）：此后任务不支持任何修改、修改走变更（两者都不再出一问、无取消按钮）；
+ *    任务已定档（taskFinalized）时两个添加入口关闭并落一行提示、下拉顶出常驻提示；
+ *  - Push 248 的行尾「替换」入口已在 Push 251 撤销（业务口径「取消这个替换按钮」）：入口与整套替换流程整体撤除 ——
+ *    接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）；
+ *  - 上传 / 进度 / 删除确认都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉；
  *  - 点击冒泡（2026-10-08 修正 · 业务口径「点击这部分内容现在抽屉也会出来 是bug」）：portal 的 click 按 **React 树**冒泡 ——
  *    根节点拦一道 stopPropagation，点下拉里的空白 / 图标 / 提示条不再冒到任务行（行点击 = 开详情抽屉）。 */
-export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, onReplace, taskFinalized = false, children }: {
+export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, children }: {
   taskId: string;
   taskTitle: string;
   files: readonly TaskFileRef[];
   onUpload?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>;
   onDelete?: (fileId: string) => Promise<void>;
-  /** 替换文件内容（2026-10-08）：未定档直替（reason=null；Push 249 起可另带 finalize = 替换完成后定档）；
-   *  已定档 / 已变更携变更原因（reason 必填非空，走变更、不定档）；不传 = 不显示替换入口。 */
-  onReplace?: (file: TaskFileRef, picked: File, reason: string | null, finalize?: boolean) => Promise<void>;
   /** 任务定档（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：true = 该任务已定档 ——
-   *  添加 / 草稿替换关闭（服务端 409 TASK_FINALIZED），下拉顶出常驻提示；已定档文件的「替换」仍走变更。 */
+   *  两个添加入口关闭（服务端 409 TASK_FINALIZED），下拉顶出常驻提示。 */
   taskFinalized?: boolean;
   children: ReactNode;
 }) {
   const measuredHeight = Math.min(430, 84 + Math.max(files.length, 1) * 30);
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(276, measuredHeight, "right");
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
-  const [replaceTarget, setReplaceTarget] = useState<TaskFileRef | null>(null);
-  const [replaceReasonFor, setReplaceReasonFor] = useState<string | null>(null);
-  const [replaceReason, setReplaceReason] = useState("");
-  const [replacingId, setReplacingId] = useState<string | null>(null);
-  const [replaceNote, setReplaceNote] = useState<string | null>(null);
-  const [finalizeAsk, setFinalizeAsk] = useState<{ mode: "add" } | { mode: "replace"; file: TaskFileRef } | null>(null);
   const [finalizeUpload, setFinalizeUpload] = useState(false);
   const [finalizeNote, setFinalizeNote] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -110,36 +74,19 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     });
   };
 
-  /** 点「＋ 添加文件」（Push 249）：先问「是否为定档文件」；任务已定档 = 直接出提示（服务端同口径 409 TASK_FINALIZED）。 */
-  const beginAddFlow = () => {
-    setReplaceNote(null);
+  /** 点顶部「＋ 添加文件」/「＋ 添加定档文件」（Push 251 改版 · 业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件
+   *  和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」）：两者都直接开选文件框、不再出定档一问（无取消按钮）—— 普通版 =
+   *  普通 draft 直传、定档版 finalize = true（传完即定档、任务连带锁定）；任务已定档 = 直接出提示（服务端同口径 409 TASK_FINALIZED）。 */
+  const beginAddFlow = (finalize: boolean) => {
     setPreviewNote(null);
     setPendingDelete(null);
     if (taskFinalized) {
-      setFinalizeAsk(null);
-      setFinalizeNote("任务已定档：不支持新增文件（文件修改请对已定档文件用「替换」走变更）");
+      setFinalizeNote("任务已定档：不支持新增文件");
       return;
     }
-    setFinalizeNote(null);
-    setFinalizeAsk({ mode: "add" });
-  };
-
-  /** 定档确认的答复（Push 249）：「是」= 传 / 换完成后对该文件定档（任务随定档锁定）；「否」= 仅上传（draft）。 */
-  const answerFinalizeAsk = (finalize: boolean) => {
-    const ask = finalizeAsk;
-    setFinalizeAsk(null);
     setFinalizeNote(null);
     setFinalizeUpload(finalize);
-    if (ask === null) {
-      return;
-    }
-    if (ask.mode === "add") {
-      inputRef.current?.click();
-      return;
-    }
-    setReplaceReasonFor(null);
-    setReplaceTarget(ask.file);
-    replaceInputRef.current?.click();
+    inputRef.current?.click();
   };
 
   /** 点文件名 = 预览（两通道裁决同详情抽屉；取不到 → 下拉内一行灰字降级，不弹浮层）。 */
@@ -201,68 +148,6 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     }
   };
 
-  /** 点「替换」：未定档 = 先问「是否为定档文件」（Push 249）再选文件；已定档 / 已变更 = 先在行内填
-   *  「变更原因」（A4-13 申请即通过，走变更、不定档）；任务已定档时草稿替换关闭（服务端 409）。 */
-  const beginReplace = (file: TaskFileRef) => {
-    if (onReplace === undefined) {
-      return;
-    }
-    setReplaceNote(null);
-    setPreviewNote(null);
-    setPendingDelete(null);
-    if (file.status === "final" || file.status === "changed") {
-      setFinalizeAsk(null);
-      setFinalizeNote(null);
-      setReplaceReason("");
-      setReplaceReasonFor(file.id);
-      return;
-    }
-    if (taskFinalized) {
-      setFinalizeAsk(null);
-      setFinalizeNote("任务已定档：草稿文件不支持替换（文件修改请对已定档文件用「替换」走变更）");
-      return;
-    }
-    setFinalizeNote(null);
-    setFinalizeAsk({ mode: "replace", file });
-  };
-
-  /** 变更原因确认（必填）→ 存目标并开选文件框（同一个用户手势里点 input）。 */
-  const confirmReplaceReason = (file: TaskFileRef) => {
-    if (replaceReason.trim() === "") {
-      return;
-    }
-    setReplaceReasonFor(null);
-    setReplaceTarget(file);
-    replaceInputRef.current?.click();
-  };
-
-  /** 选完文件 → 直替 / 变更替换；成功 / 失败都在下拉里留一行提示（替换中该行显示「替换中…」）。 */
-  const beginReplaceUpload = (picked: FileList | null) => {
-    const target = replaceTarget;
-    setReplaceTarget(null);
-    if (picked === null || picked.length === 0 || target === null || onReplace === undefined) {
-      return;
-    }
-    const pickedFile = picked[0];
-    const needsChange = target.status === "final" || target.status === "changed";
-    const finalize = needsChange ? false : finalizeUpload;
-    setFinalizeUpload(false);
-    setReplacingId(target.id);
-    void onReplace(target, pickedFile, needsChange ? replaceReason.trim() : null, finalize)
-      .then(() => {
-        setReplaceNote("已替换「" + target.name + "」" + (needsChange ? "（变更已生效）" : finalize ? "（已生成新版本并定档，任务此后不支持任何修改）" : "（已生成新版本）"));
-      })
-      .catch((error) => {
-        setReplaceNote(error instanceof Error && error.message !== "" ? error.message : "替换失败，请稍后再试");
-      })
-      .finally(() => {
-        setReplacingId(null);
-        setReplaceReason("");
-      });
-  };
-
-  const replacePromptFile = replaceReasonFor === null ? null : files.find((item) => item.id === replaceReasonFor) ?? null;
-
   return (
     <>
       <button
@@ -302,18 +187,33 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
           }}
           className="fixed z-50 flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
         >
-          <button
-            type="button"
-            data-task-files-add="true"
-            onClick={() => { beginAddFlow(); }}
-            disabled={uploading !== null}
-            title="添加文件（关联到本任务）"
-            className="flex items-center gap-1 px-3 py-2 text-left text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400"
-          >
-            {uploading === null
-              ? "＋ 添加文件"
-              : uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
-          </button>
+          <div className="flex items-center gap-1 px-2 py-1.5">
+            <button
+              type="button"
+              data-task-files-add="true"
+              onClick={() => { beginAddFlow(false); }}
+              disabled={uploading !== null}
+              title="添加文件（关联到本任务）"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              ＋ 添加文件
+            </button>
+            <button
+              type="button"
+              data-task-files-add-finalize="true"
+              onClick={() => { beginAddFlow(true); }}
+              disabled={uploading !== null}
+              title="添加定档文件：定档后该任务不支持任何修改（修改走变更）"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              ＋ 添加定档文件
+            </button>
+            {uploading === null ? null : (
+              <span className="ml-auto text-[11px] tabular-nums text-zinc-400">
+                {uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
+              </span>
+            )}
+          </div>
           <input
             ref={inputRef}
             type="file"
@@ -332,57 +232,9 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
               event.currentTarget.value = "";
             }}
           />
-          <input
-            ref={replaceInputRef}
-            type="file"
-            data-task-files-replace-input="true"
-            className="hidden"
-            aria-label="选择用于替换的文件"
-            onClick={(event) => {
-              // 同「添加文件」：拦住选文件对话框关掉后补发的 click，不让它冒泡出下拉
-              event.stopPropagation();
-            }}
-            onChange={(event) => {
-              beginReplaceUpload(event.currentTarget.files);
-              event.currentTarget.value = "";
-            }}
-          />
-          {finalizeAsk === null ? null : (
-            <div data-task-files-finalize-prompt="true" className="border-t border-zinc-100 px-3 py-2">
-              <p className="text-[11px] leading-4 text-zinc-500">
-                {finalizeAsk.mode === "add" ? "是否为定档文件？" : "替换后是否为定档文件？"}
-                <span className="block">定档后该任务不支持任何修改（修改走变更）；「否」= 仅上传、仍可修改。</span>
-              </p>
-              <div className="mt-1.5 flex items-center gap-1.5">
-                <button
-                  type="button"
-                  data-task-files-finalize-yes="true"
-                  onClick={() => { answerFinalizeAsk(true); }}
-                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-blue-700 px-2.5 text-[11px] font-semibold leading-none text-white transition-colors hover:bg-blue-800"
-                >
-                  是，定档
-                </button>
-                <button
-                  type="button"
-                  data-task-files-finalize-no="true"
-                  onClick={() => { answerFinalizeAsk(false); }}
-                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-600 px-2.5 text-[11px] font-semibold leading-none text-white transition-colors hover:bg-zinc-700"
-                >
-                  否，仅上传
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setFinalizeAsk(null); }}
-                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-          )}
           {taskFinalized ? (
             <p data-task-files-note-finalized="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] leading-4 text-amber-600">
-              任务已定档：不支持新增 / 改名 / 草稿替换；文件修改走「替换」变更
+              任务已定档：不支持新增 / 改名等修改
             </p>
           ) : null}
           <div className="border-t border-zinc-100">
@@ -407,16 +259,6 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                         {file.name}
                       </button>
                       {previewingThis ? <span className="shrink-0 text-[10px] text-zinc-400">预览中…</span> : null}
-                      {onReplace === undefined || confirming || file.status === "archived" || file.status === "recycled" ? null : replacingId === file.id ? (
-                        <span data-task-files-replacing="true" className="shrink-0 text-[10px] text-zinc-400">替换中…</span>
-                      ) : (
-                        <span data-task-files-replace="true" className="flex h-6 w-12 shrink-0 items-center justify-end">
-                          <RowReplaceButton
-                            onReplace={() => { beginReplace(file); }}
-                            label={"替换文件内容（选择新文件代替）：" + file.name}
-                          />
-                        </span>
-                      )}
                       {onDelete === undefined ? null : confirming ? (
                         <span data-task-files-delete-confirm="true" className="flex shrink-0 items-center gap-1">
                           <button
@@ -448,45 +290,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
               </ul>
             )}
           </div>
-          {replacePromptFile === null ? null : (
-            <div data-task-files-replace-prompt="true" className="border-t border-zinc-100 px-3 py-2">
-              <p className="text-[11px] leading-4 text-zinc-500">已定档文件改动走变更（申请即通过）—— 请填写变更原因</p>
-              <div className="mt-1.5 flex items-center gap-1.5">
-                <input
-                  data-task-files-replace-reason="true"
-                  value={replaceReason}
-                  onChange={(event) => { setReplaceReason(event.target.value); }}
-                  onKeyDown={(event) => {
-                    event.stopPropagation();
-                    if (event.key === "Escape") {
-                      setReplaceReasonFor(null);
-                      setReplaceReason("");
-                    }
-                  }}
-                  placeholder="变更原因（必填）"
-                  className="min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-700 outline-none placeholder:text-zinc-400 focus:border-zinc-300"
-                />
-                <button
-                  type="button"
-                  data-task-files-replace-confirm="true"
-                  disabled={replaceReason.trim() === ""}
-                  onClick={() => { confirmReplaceReason(replacePromptFile); }}
-                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-600 px-2.5 text-[11px] font-semibold leading-none text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
-                >
-                  确认替换
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setReplaceReasonFor(null); setReplaceReason(""); }}
-                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-          )}
           {finalizeNote === null ? null : <p data-task-files-note-finalize="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-amber-600">{finalizeNote}</p>}
-          {replaceNote === null ? null : <p data-task-files-note-replace="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400">{replaceNote}</p>}
           {previewNote === null ? null : <p data-task-files-note="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400">{previewNote}</p>}
         </div>,
         document.body,

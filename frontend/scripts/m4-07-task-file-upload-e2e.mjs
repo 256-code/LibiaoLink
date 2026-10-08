@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：任务「文件」列下拉（Push 246：添加 / 预览 / 删除；Push 248：替换）/ 任务详情抽屉「文件」行上传接真（Push 226 · 「文件」那一刀前端接线）
+ * LibiaoLink 前端 · 回放：任务「文件」列下拉（Push 246：添加 / 预览 / 删除；Push 248：替换 → Push 251 撤销）/ 任务详情抽屉「文件」行上传接真（Push 226 · 「文件」那一刀前端接线）
  *
  * 前置（都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -13,7 +13,7 @@
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE / SCREENSHOT_DIR
  *
  * 它做什么：一条临时会话（跑完撤销）+ 一个临时项目（跑完先 purge 文件、再物理删）在真机浏览器里跑一遍：
- *   ① 「文件」列空态 = 与任务表其它行内可编辑单元格同款的「液态玻璃」描边胶囊 + 「—」；点开 = 右侧下拉（顶部「＋ 添加文件」、空清单「暂无文件」、隐藏文件框在下拉内）；
+ *   ① 「文件」列空态 = 与任务表其它行内可编辑单元格同款的「液态玻璃」描边胶囊 + 「—」；点开 = 右侧下拉（顶部一行「＋ 添加文件」/「＋ 添加定档文件」（Push 251 改版：点哪个直接开选文件框、不再出一问；添加文件在前、定档文件在后）、空清单「暂无文件」、隐藏文件框在下拉内）；
  *   ② 下拉内真实文件选择（CDP DOM.setFileInputFiles）→ 分片直传文件库（带 taskId）→ 下拉清单与单元格同步回流（最新一份 + 「+N」）；
  *   ③ 库面：files.task_id 落行 + file_links(task) 建链 + TaskListItem.fileSummary 1（draft 1）；
  *   ④ 抽屉「文件」行：文件名清单随详情接口下发（**不显示「未定档 / 已定档」** —— 定档是项目级安排）+ 上传入口在位；
@@ -25,11 +25,11 @@
  *   ⑩ 下载 = 原文件（抽屉每行「下载」+ 预览浮层「下载原文件」；attachment 签名落盘 + download 审计）；
  *   ⑪ 「文件」列下拉交互（Push 246 · 业务口径 2026-10-08「点击后出现右侧下拉框 / 点文件名预览 / 删除按钮」）：
  *      点文件名 = 预览浮层（Esc 先关浮层）；Esc 先关下拉（任务行 / 详情抽屉不被连带）；行尾「删除」= 红胶囊按钮 → 行内二次确认 → 移入回收站（清单 / 单元格回落）；
- *   ⑫ 行尾「替换」（Push 248 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：删除同款动效 + 宝蓝胶囊
- *      + 16px 文件夹双箭头图标；draft 直替（版本链追加）/ 已定档走变更（必填原因 → 状态 changed + change_requests 留痕）；
- *   ⑬ 定档确认（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
- *      添加 / 草稿替换先问「是否为定档文件」——「是，定档」= 传完即定档（任务随定档锁定：任务 / 文件写口全 409 TASK_FINALIZED、
- *      下拉顶常驻提示、添加与草稿替换关闭，已定档文件「替换」仍走变更）；「否，仅上传」= 普通 draft（②/④r1 段走「否」，定档流程在 ④s 段）；
+ *   ⑫ 行尾「替换」（Push 248）已在 Push 251 按业务口径「取消这个替换按钮」整体撤除：下拉清单查不到替换入口 /
+ *      替换输入框 / 变更原因区 / 替换提示（④r0 断言）；接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）；
+ *   ⑬ 定档入口（Push 249 → Push 251 改版 · 业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」）：
+ *      顶部「＋ 添加文件」/「＋ 添加定档文件」一行两个按钮（添加文件在前、定档文件在后）= 点哪个直接开选文件框、不出定档一问（无取消按钮）——定档版传完即定档
+ *      （任务随定档锁定：任务 / 文件写口全 409 TASK_FINALIZED、下拉顶常驻提示、两个添加入口关闭）；
  *   ⑭ 收尾：五份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
  * 证据：docs/m4-07-回放证据(任务文件上传·前端).md
  */
@@ -299,8 +299,6 @@ const FILE_CELL_BUTTON = "[data-cell-action=task-files]";
 const TASK_FILES_POPOVER = "[data-task-files-popover=true]";
 const POPOVER_INPUT = "[data-task-files-input=true]";
 const FINALIZE_PROMPT = "[data-task-files-finalize-prompt=true]";
-const FINALIZE_YES = "[data-task-files-finalize-yes=true]";
-const FINALIZE_NO = "[data-task-files-finalize-no=true]";
 const FINALIZE_NOTE = "[data-task-files-note-finalized=true]";
 const FINALIZE_BLOCK_NOTE = "[data-task-files-note-finalize=true]";
 const DRAWER = "aside[role=dialog]";
@@ -344,22 +342,19 @@ check("①a 「文件」列空态 = 与同一行其它行内可编辑单元格�
   pill.exists === true && pill.text === "—" && pill.ref !== null && pill.ref !== undefined && pill.mine === pill.ref, JSON.stringify(pill));
 check("①b 胶囊 title = 点击添加文件（关联到本任务）", typeof pill.title === "string" && pill.title.indexOf("点击添加文件") === 0, String(pill.title));
 const popoverOpened = await openTaskFilesPopover();
-const popoverInfo = popoverOpened === true ? await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var t=document.querySelector(" + j(FILE_CELL_BUTTON) + ");var pr=p.getBoundingClientRect();var tr=t===null?null:t.getBoundingClientRect();var add=p.querySelector(" + j("[data-task-files-add]") + ");return {add:add===null?null:add.textContent.trim(),input:p.querySelector(" + j(POPOVER_INPUT) + ")!==null,right:tr===null?false:pr.left>=tr.right-2,text:p.innerText.replace(String.fromCharCode(10)," + j(" / ") + ").slice(0,140)};})()") : null;
-check("①c 点胶囊 → 出下拉（顶部「＋ 添加文件」+ 空清单「暂无文件」+ 隐藏文件框在下拉内）", popoverOpened === true && popoverInfo !== null && popoverInfo.add === "＋ 添加文件" && popoverInfo.input === true && popoverInfo.text.indexOf("暂无文件") >= 0, JSON.stringify(popoverInfo));
+const popoverInfo = popoverOpened === true ? await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var t=document.querySelector(" + j(FILE_CELL_BUTTON) + ");var pr=p.getBoundingClientRect();var tr=t===null?null:t.getBoundingClientRect();var add=p.querySelector(" + j("[data-task-files-add]") + ");var af=p.querySelector(" + j("[data-task-files-add-finalize]") + ");return {add:add===null?null:add.textContent.trim(),af:af===null?null:af.textContent.trim(),sameRow:add!==null&&af!==null&&Math.abs(add.getBoundingClientRect().top-af.getBoundingClientRect().top)<2,firstAdd:add!==null&&af!==null&&add.getBoundingClientRect().left<af.getBoundingClientRect().left,input:p.querySelector(" + j(POPOVER_INPUT) + ")!==null,right:tr===null?false:pr.left>=tr.right-2,text:p.innerText.replace(String.fromCharCode(10)," + j(" / ") + ").slice(0,140)};})()") : null;
+check("①c 点胶囊 → 出下拉（顶部一行「＋ 添加文件」/「＋ 添加定档文件」两钮（添加在前）+ 空清单「暂无文件」+ 隐藏文件框在下拉内）", popoverOpened === true && popoverInfo !== null && popoverInfo.add === "＋ 添加文件" && popoverInfo.af === "＋ 添加定档文件" && popoverInfo.sameRow === true && popoverInfo.firstAdd === true && popoverInfo.input === true && popoverInfo.text.indexOf("暂无文件") >= 0, JSON.stringify(popoverInfo));
 check("①d 下拉优先贴触发器右侧展开（placement right 口径）", popoverInfo !== null && popoverInfo.right === true, JSON.stringify({ right: popoverInfo === null ? null : popoverInfo.right }));
 
 // ② 列表上传：真选文件 → 分片直传（带 taskId）
-// ②a0（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件」）：点「＋ 添加文件」先出一问「是否为定档文件？」——
-//   「是，定档」= 传完即定档（任务随定档锁定，定档流程在 ④s 段）；「否，仅上传」= 普通 draft（本段走「否」）。
-const addAskPoint = await clickSelector("[data-task-files-add]");
-const addAskShown = await waitFor("document.querySelector(" + j(FINALIZE_PROMPT) + ")!==null", 6000);
-const addAskInfo = await ev("(function(){var p=document.querySelector(" + j(FINALIZE_PROMPT) + ");if(p===null){return null;}return {text:p.innerText.replace(String.fromCharCode(10)," + j(" / ") + "),yes:document.querySelector(" + j(FINALIZE_YES) + ")!==null,no:document.querySelector(" + j(FINALIZE_NO) + ")!==null};})()");
-check("②a0 点「＋ 添加文件」先出定档确认（「是否为定档文件？」+ 是，定档 / 否，仅上传 · 未直接开选文件框）",
-  addAskPoint === true && addAskShown === true && addAskInfo !== null && addAskInfo.yes === true && addAskInfo.no === true
-  && addAskInfo.text.indexOf("是否为定档文件") >= 0 && addAskInfo.text.indexOf("不支持任何修改") >= 0, JSON.stringify(addAskInfo));
-const addAskNo = await clickSelector(FINALIZE_NO);
-const addAskGone = await waitFor("document.querySelector(" + j(FINALIZE_PROMPT) + ")===null", 6000);
-check("②a0b 选「否，仅上传」= 收确认、开选文件框（本份走普通 draft 上传）", addAskNo === true && addAskGone === true, JSON.stringify({ clicked: addAskNo, gone: addAskGone }));
+// ②a0（Push 251 改版 · 业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」）：
+//   点「＋ 添加文件」直接开选文件框（不再出定档确认 / 无取消按钮）；定档走顶部「＋ 添加定档文件」直点（④s 段）。
+const addDirectPoint = await clickSelector("[data-task-files-add]");
+await sleep(400);
+const addNoAsk = await ev("document.querySelector(" + j(FINALIZE_PROMPT) + ")===null");
+check("②a0 点「＋ 添加文件」= 直接进取文件框（不出定档确认 / 无取消按钮）", addDirectPoint === true && addNoAsk === true, JSON.stringify({ clicked: addDirectPoint, noPrompt: addNoAsk }));
+const addFinalizeBtnInfo = await ev("(function(){var b=document.querySelector(" + j("[data-task-files-add-finalize]") + ");return b===null?null:{text:b.textContent.trim(),title:String(b.getAttribute(" + Q + "title" + Q + "))};})()");
+check("②a0b 顶部「＋ 添加定档文件」在位且 title = 定档说明（定档后该任务不支持任何修改）", addFinalizeBtnInfo !== null && addFinalizeBtnInfo !== undefined && addFinalizeBtnInfo.text === "＋ 添加定档文件" && addFinalizeBtnInfo.title.indexOf("不支持任何修改") >= 0, JSON.stringify(addFinalizeBtnInfo));
 await setFileInput(POPOVER_INPUT, fileAPath);
 const firstLanded = await waitForAsync(async () => (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c === 1, 30000);
 const fileRows1 = (await db.query("select f.id, f.name, f.status, v.mime from files f left join file_versions v on v.id = f.current_version_id where f.task_id = $1 order by f.created_at", [taskId])).rows;
@@ -668,66 +663,30 @@ const popListAfterDelete = await waitFor("(function(){var p=document.querySelect
 const cellAfterPopDelete = await waitCellHas([filePngRenamed, "+1"], 20000);
 const cellAfterPopDeleteText = String(await ev(CELL_TEXT_PROBE));
 check("④q5 下拉清单回落 2 行、「文件」列 = 改名后的 PNG + 「+1」（recycled 不进读面）", popListAfterDelete === true && cellAfterPopDelete === true && cellAfterPopDeleteText === filePngRenamed + "+1", JSON.stringify({ list: popListAfterDelete, cell: cellAfterPopDeleteText }));
-// ④r（Push 248 · 2026-10-08 业务口径「增加一个替换按钮 点击替换则选择新文件代替」/「替换图标如上 然后动画效果和删除一致」/「之间的距离太远了 然后替换的图标太小了 然后替换改成宝蓝色的」）：
-//   行尾「替换」= 与删除同款动效的宝蓝胶囊（静止隐 → 行悬停 24px 幽灵态 → 悬停展开 48px 宝蓝胶囊；16px 文件夹双箭头图标，向右收拢贴近删除）；
-//   draft 直替 = 版本链追加（名称 / 状态 / 文件行数不变）；已定档 = 先填「变更原因」（必填）再选新文件，走变更（A4-13 申请即通过）。
-const fileAV2Name = "回放-任务文件-A-第二版.txt";
-const fileAV3Name = "回放-任务文件-A-第三版.txt";
-const fileAV2Path = join(fileDir, fileAV2Name);
-const fileAV3Path = join(fileDir, fileAV3Name);
-writeFileSync(fileAV2Path, "LibiaoLink 回放 A 第二版内容 " + fixtureCode + "\n", "utf8");
-writeFileSync(fileAV3Path, "LibiaoLink 回放 A 第三版内容 " + fixtureCode + "\n", "utf8");
+// ④r（Push 248 → Push 251 撤销 · 业务口径「取消这个替换按钮」）：
+//   行尾「替换」入口与整套替换流程（草稿直替 / 替换前定档一问 / 已定档变更原因）整体从 UI 撤除，
+//   接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）。
 const fileAId = (await db.query("select id from files where task_id = $1 and name = $2", [taskId, fileAName])).rows[0].id;
 const aVersionsBefore = (await db.query("select seq, content_hash from file_versions where file_id = $1 order by seq", [fileAId])).rows;
-const replaceRowProbe = "(function(){var items=document.querySelectorAll(" + j("[data-task-files-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(fileAName) + ")>=0){"
-  + "var rep=items[i].querySelector(" + j("[data-task-files-replace] button") + ");var del=items[i].querySelector(" + j("[data-task-files-delete] button") + ");if(rep===null||del===null){return null;}"
-  + "var r=rep.getBoundingClientRect();var d=del.getBoundingClientRect();var s=getComputedStyle(rep);var svg=rep.querySelector(" + j("svg") + ");var sr=svg===null?null:svg.getBoundingClientRect();"
-  + "var n=items[i].querySelector(" + j("[data-task-files-preview]") + ");var nr=n===null?null:n.getBoundingClientRect();"
-  + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),w:Math.round(r.width),h:Math.round(r.height),opacity:s.opacity,bg:s.backgroundColor,gap:Math.round(d.left-r.right),icon:sr===null?null:Math.round(sr.width*100)/100,nx:nr===null?null:Math.round(nr.left+10),ny:nr===null?null:Math.round(nr.top+nr.height/2)};}}return null;})()";
-const popRowButtonPoint = (fileName, selector) => ev("(function(){var items=document.querySelectorAll(" + j("[data-task-files-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(fileName) + ")>=0){var b=items[i].querySelector(" + j(selector) + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}}return null;})()");
-const replaceRest = await ev(replaceRowProbe);
-if (replaceRest === null || replaceRest === undefined) await bail("下拉里没有替换入口（data-task-files-replace）");
-await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: replaceRest.nx, y: replaceRest.ny });
-await sleep(400);
-const replaceGhost = await ev(replaceRowProbe);
-if (replaceGhost === null || replaceGhost === undefined) await bail("行悬停后量不到替换按钮（幽灵态）");
-await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: replaceGhost.x, y: replaceGhost.y });
-await sleep(600);
-const replaceHover = await ev(replaceRowProbe);
-check("④r0 行尾「替换」= 与删除同款动效（静止隐 → 行悬停 24px 幽灵态 → 悬停展开 48px 宝蓝胶囊）+ 16px 文件夹双箭头图标 + 贴近删除（贴边距 0-10px）",
-  replaceRest.opacity === "0" && replaceRest.icon >= 15.5 && replaceRest.gap >= 0 && replaceRest.gap <= 10
-  && replaceGhost.opacity === "1" && replaceGhost.w === 24 && replaceGhost.h === 24 && replaceGhost.gap >= 0 && replaceGhost.gap <= 10
-  && replaceHover !== null && replaceHover.w === 48 && (replaceHover.bg.indexOf("29, 78, 216") >= 0 || replaceHover.bg.indexOf("0.488 0.243 264") >= 0),
-  JSON.stringify({ rest: replaceRest, ghost: replaceGhost, hover: replaceHover }));
-await clickAt({ x: replaceGhost.x, y: replaceGhost.y });
-// ④r1a（Push 249）：未定档行点「替换」同样先出定档确认（本段走「否，仅上传」= 直替、不定档）
-const repAskShown = await waitFor("document.querySelector(" + j(FINALIZE_PROMPT) + ")!==null", 6000);
-const repAskInfo = await ev("(function(){var p=document.querySelector(" + j(FINALIZE_PROMPT) + ");if(p===null){return null;}return {text:p.innerText.replace(String.fromCharCode(10)," + j(" / ") + "),yes:document.querySelector(" + j(FINALIZE_YES) + ")!==null,no:document.querySelector(" + j(FINALIZE_NO) + ")!==null};})()");
-check("④r1a 未定档（draft）点「替换」先出定档确认（「替换后是否为定档文件？」+ 是，定档 / 否，仅上传 · 未直接开选文件框）",
-  repAskShown === true && repAskInfo !== null && repAskInfo.yes === true && repAskInfo.no === true && repAskInfo.text.indexOf("替换后是否为定档文件") >= 0, JSON.stringify(repAskInfo));
-const repAskNo = await clickSelector(FINALIZE_NO);
-const repAskGone = await waitFor("document.querySelector(" + j(FINALIZE_PROMPT) + ")===null", 6000);
-if (repAskNo !== true || repAskGone !== true) await bail("替换前的定档确认没有按「否，仅上传」收口");
-await setFileInput("[data-task-files-replace-input=true]", fileAV2Path);
-const draftReplaced = await waitForAsync(async () => (await db.query("select count(*)::int as c from file_versions where file_id = $1", [fileAId])).rows[0].c === 2, 30000);
-const aAfterDraft = (await db.query("select f.status, f.name, v.seq, v.content_hash from files f join file_versions v on v.id = f.current_version_id where f.id = $1", [fileAId])).rows[0];
-const filesRowCount1 = (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c;
-check("④r1 未定档（draft）替换 = 版本链追加（seq 1→2、内容哈希已变）、名称 / 状态不变（仍 draft）、文件行数不变（只加版本不加行）",
-  draftReplaced === true && aVersionsBefore.length === 1 && aAfterDraft.status === "draft" && aAfterDraft.name === fileAName && Number(aAfterDraft.seq) === 2 && aAfterDraft.content_hash !== aVersionsBefore[0].content_hash && filesRowCount1 === 4,
-  JSON.stringify({ landed: draftReplaced, after: aAfterDraft, files: filesRowCount1 }));
-const draftNoteOk = await waitFor("(function(){var n=document.querySelector(" + j("[data-task-files-note-replace]") + ");return n!==null&&n.textContent.indexOf(" + j("已替换") + ")>=0&&n.textContent.indexOf(" + j("已生成新版本") + ")>=0;})()", 15000);
-check("④r1b 替换成功后下拉留一行提示（「已替换…（已生成新版本）」）", draftNoteOk === true, String(draftNoteOk));
+const replaceGoneInfo = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}"
+  + "return {rowEntry:p.querySelector(" + j("[data-task-files-replace]") + ")===null,rowReplacing:p.querySelector(" + j("[data-task-files-replacing]") + ")===null,input:p.querySelector(" + j("[data-task-files-replace-input]") + ")===null,reason:p.querySelector(" + j("[data-task-files-replace-prompt]") + ")===null,note:p.querySelector(" + j("[data-task-files-note-replace]") + ")===null,text:p.innerText.indexOf(" + j("替换") + ")<0};})()");
+check("④r0 下拉里替换入口整体撤除（无 data-task-files-replace / 无替换输入框 / 无变更原因区 / 无替换提示 / 文本不含「替换」）",
+  replaceGoneInfo !== null && replaceGoneInfo !== undefined && replaceGoneInfo.rowEntry === true && replaceGoneInfo.rowReplacing === true && replaceGoneInfo.input === true && replaceGoneInfo.reason === true && replaceGoneInfo.note === true && replaceGoneInfo.text === true, JSON.stringify(replaceGoneInfo));
+const versionCountNoReplace = (await db.query("select count(*)::int as c from file_versions where file_id = $1", [fileAId])).rows[0].c;
+check("④r1 无替换路径 → A 版本链保持初版一行（file_versions 1 · 草稿替换已随入口撤除）",
+  aVersionsBefore.length === 1 && Number(versionCountNoReplace) === 1, JSON.stringify({ before: aVersionsBefore.length, now: versionCountNoReplace }));
 
 // ④s（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
-//   「是，定档」→ 传完即定档（POST /files/{id}/finalize）→ files final + tasks.finalized_at 同事务置位 + 任务定档审计；
-//   此后任务写口全 409 TASK_FINALIZED（编辑 / 删除 / 新增上传 / 改名 / 直替），下拉顶常驻提示、添加与草稿替换关闭。
+//   「＋ 添加定档文件」直点 → 传完即定档（POST /files/{id}/finalize）→ files final + tasks.finalized_at 同事务置位 + 任务定档审计；
+//   此后任务写口全 409 TASK_FINALIZED（编辑 / 删除 / 新增上传 / 改名 / 直替），下拉顶常驻提示、两个添加入口关闭（替换入口已随 Push 251 整体撤除）。
 const fileCFinalName = "回放-任务文件-C-定档.txt";
 const fileCFinalPath = join(fileDir, fileCFinalName);
 writeFileSync(fileCFinalPath, "LibiaoLink 回放 C 定档内容 " + fixtureCode + String.fromCharCode(10), "utf8");
-const addFinalPoint = await clickSelector("[data-task-files-add]");
-const addFinalAsk = await waitFor("document.querySelector(" + j(FINALIZE_PROMPT) + ")!==null", 6000);
-const addFinalYes = addFinalAsk === true ? await clickSelector(FINALIZE_YES) : false;
-if (addFinalPoint !== true || addFinalAsk !== true || addFinalYes !== true) await bail("下拉「＋ 添加文件」的定档确认点不开（是，定档）");
+const addFinalPoint = await clickSelector("[data-task-files-add-finalize]");
+await sleep(400);
+const addFinalNoAsk = await ev("document.querySelector(" + j(FINALIZE_PROMPT) + ")===null");
+if (addFinalPoint !== true || addFinalNoAsk !== true) await bail("下拉「＋ 添加定档文件」点不开或仍出定档确认");
+check("④s0 点「＋ 添加定档文件」= 直接进取文件框（不出定档确认）", addFinalPoint === true && addFinalNoAsk === true, JSON.stringify({ clicked: addFinalPoint, noPrompt: addFinalNoAsk }));
 await setFileInput(POPOVER_INPUT, fileCFinalPath);
 const cFinalLanded = await waitForAsync(async () => {
   const rows = (await db.query("select status from files where task_id = $1 and name = $2", [taskId, fileCFinalName])).rows;
@@ -736,25 +695,24 @@ const cFinalLanded = await waitForAsync(async () => {
 const cFinalRow = (await db.query("select id, status, finalized_at, finalized_by from files where task_id = $1 and name = $2", [taskId, fileCFinalName])).rows[0];
 const taskFinalRow = (await db.query("select finalized_at, finalized_by from tasks where id = $1", [taskId])).rows[0];
 const taskFinalAudit = (await db.query("select count(*)::int as c, max(summary) as summary from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", taskId, "%任务定档%"])).rows[0];
-check("④s1 「是，定档」→ 上传完成即定档：files.status = final（finalized_at / finalized_by 成对）+ 任务随文件定档同事务置位（tasks.finalized_at 非空 · 操作人一致）+ 任务定档审计行",
+check("④s1 「＋ 添加定档文件」→ 上传完成即定档：files.status = final（finalized_at / finalized_by 成对）+ 任务随文件定档同事务置位（tasks.finalized_at 非空 · 操作人一致）+ 任务定档审计行",
   cFinalLanded === true && cFinalRow !== undefined && cFinalRow.status === "final" && cFinalRow.finalized_at !== null && cFinalRow.finalized_by !== null
   && taskFinalRow !== undefined && taskFinalRow.finalized_at !== null && taskFinalRow.finalized_by === cFinalRow.finalized_by
   && Number(taskFinalAudit.c) === 1 && String(taskFinalAudit.summary).indexOf("随文件定档") >= 0,
   JSON.stringify({ file: cFinalRow, task: taskFinalRow, audit: taskFinalAudit }));
 const finalNoteShown = await waitFor("document.querySelector(" + j(FINALIZE_NOTE) + ")!==null", 20000);
 const finalNoteText = finalNoteShown === true ? String(await ev("(function(){var n=document.querySelector(" + j(FINALIZE_NOTE) + ");return n===null?" + j("") + ":n.textContent.trim();})()")) : "";
-check("④s2 定档后下拉顶出常驻提示（整表重取后随任务定档态出现：不支持新增 / 改名 / 草稿替换 · 修改走变更）",
+check("④s2 定档后下拉顶出常驻提示（整表重取后随任务定档态出现：不支持新增 / 改名等修改）",
   finalNoteShown === true && finalNoteText.indexOf("任务已定档") >= 0 && finalNoteText.indexOf("不支持新增") >= 0, finalNoteText.slice(0, 120));
+const blockAddFinalizePoint = await clickSelector("[data-task-files-add-finalize]");
+const blockAddNoteFinalize = await waitFor("(function(){var n=document.querySelector(" + j(FINALIZE_BLOCK_NOTE) + ");return n!==null&&n.textContent.indexOf(" + j("不支持新增文件") + ")>=0;})()", 6000);
 const blockAddPoint = await clickSelector("[data-task-files-add]");
-const blockAddNote = await waitFor("document.querySelector(" + j(FINALIZE_BLOCK_NOTE) + ")!==null", 6000);
 const blockAddInfo = await ev("(function(){var n=document.querySelector(" + j(FINALIZE_BLOCK_NOTE) + ");return {note:n===null?null:n.textContent.trim(),prompt:document.querySelector(" + j(FINALIZE_PROMPT) + ")!==null};})()");
-check("④s3 已定档再点「＋ 添加文件」= 不出定档确认、不开选文件框，改出一行提示（服务端同口径 409 TASK_FINALIZED）",
-  blockAddPoint === true && blockAddNote === true && blockAddInfo.prompt === false && blockAddInfo.note !== null && blockAddInfo.note.indexOf("不支持新增文件") >= 0, JSON.stringify(blockAddInfo));
-const aRepBlockPoint = await popRowButtonPoint(fileAName, "[data-task-files-replace] button");
-if (aRepBlockPoint === null || aRepBlockPoint === undefined) await bail("定档后下拉里 A 行没有替换入口（data-task-files-replace）");
-await clickAt(aRepBlockPoint);
-const draftRepBlock = await waitFor("(function(){var n=document.querySelector(" + j(FINALIZE_BLOCK_NOTE) + ");return n!==null&&n.textContent.indexOf(" + j("草稿文件不支持替换") + ")>=0&&document.querySelector(" + j(FINALIZE_PROMPT) + ")===null&&document.querySelector(" + j("[data-task-files-replace-prompt]") + ")===null;})()", 6000);
-check("④s4 已定档任务里草稿文件（A）点「替换」= 不出定档确认 / 不出变更原因，改出一行提示（改已定档文件才走变更）", draftRepBlock === true, String(draftRepBlock));
+check("④s3 已定档再点「＋ 添加定档文件」/「＋ 添加文件」= 不出定档确认、不开选文件框，改出一行提示（服务端同口径 409 TASK_FINALIZED）",
+  blockAddFinalizePoint === true && blockAddNoteFinalize === true && blockAddPoint === true && blockAddInfo.prompt === false && blockAddInfo.note !== null && blockAddInfo.note.indexOf("不支持新增文件") >= 0, JSON.stringify(blockAddInfo));
+const finalReplaceGone = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}return {rowEntry:p.querySelector(" + j("[data-task-files-replace]") + ")===null,reason:p.querySelector(" + j("[data-task-files-replace-prompt]") + ")===null,text:p.innerText.indexOf(" + j("替换") + ")<0};})()");
+check("④s4 已定档任务下拉里同样无替换入口 / 无变更原因区（替换流程整体撤除 · 定档拦截提示口径不变）",
+  finalReplaceGone !== null && finalReplaceGone !== undefined && finalReplaceGone.rowEntry === true && finalReplaceGone.reason === true && finalReplaceGone.text === true, JSON.stringify(finalReplaceGone));
 const taskVerNow = (await db.query("select version from tasks where id = $1", [taskId])).rows[0];
 const patchBlocked = await api("/api/v1/projects/" + projectId + "/tasks/" + taskId, "PATCH", { version: Number(taskVerNow.version), progress: 60 });
 const deleteBlocked = await api("/api/v1/projects/" + projectId + "/tasks/" + taskId, "DELETE", undefined, { "If-Match": String(taskVerNow.version) });
@@ -779,43 +737,9 @@ await page.send("Page.reload", { ignoreCache: true });
 const boardReloadedForChange = await waitFor("document.querySelector(" + j(FILE_CELL_BUTTON) + ")!==null&&document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null", 20000);
 const filesRefetchedForChange = boardReloadedForChange === true ? await waitCellHas([fileCFinalName], 20000) : false;
 const popoverForChange = filesRefetchedForChange === true ? await openTaskFilesPopover() : false;
-const repPointForChange = popoverForChange === true ? await popRowButtonPoint(fileAName, "[data-task-files-replace] button") : null;
-if (repPointForChange === null || repPointForChange === undefined) await bail("重载后下拉里没有替换入口（定档态）");
-await clickAt(repPointForChange);
-const reasonPrompt = await waitFor("document.querySelector(" + j("[data-task-files-replace-prompt]") + ")!==null", 6000);
-const reasonGate = await ev("(function(){var c=document.querySelector(" + j("[data-task-files-replace-confirm]") + ");if(c===null){return null;}return {disabled:c.disabled,hasReasonInput:document.querySelector(" + j("[data-task-files-replace-reason]") + ")!==null};})()");
-check("④r2b 已定档点「替换」= 先出行内「变更原因」必填（空原因确认钮禁用 · 未直接开选文件框）", reasonPrompt === true && reasonGate !== null && reasonGate !== undefined && reasonGate.disabled === true && reasonGate.hasReasonInput === true, JSON.stringify(reasonGate));
-const reasonPoint = await ev("(function(){var el=document.querySelector(" + j("[data-task-files-replace-reason]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-if (reasonPoint === null || reasonPoint === undefined) await bail("变更原因输入框不在（data-task-files-replace-reason）");
-await clickAt(reasonPoint);
-await typeRenameInput("回放变更原因 " + fixtureCode);
-const reasonReady = await ev("(function(){var c=document.querySelector(" + j("[data-task-files-replace-confirm]") + ");if(c===null){return null;}var el=document.querySelector(" + j("[data-task-files-replace-reason]") + ");return {disabled:c.disabled,value:el===null?null:el.value};})()");
-check("④r2c 填入原因后确认钮放行（原因必填才可提交）", reasonReady !== null && reasonReady !== undefined && reasonReady.disabled === false && typeof reasonReady.value === "string" && reasonReady.value.indexOf("回放变更原因") === 0, JSON.stringify(reasonReady));
-const changeConfirmPoint = await ev("(function(){var b=document.querySelector(" + j("[data-task-files-replace-confirm]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-if (changeConfirmPoint === null || changeConfirmPoint === undefined) await bail("变更原因确认钮不在（data-task-files-replace-confirm）");
-await clickAt(changeConfirmPoint);
-await setFileInput("[data-task-files-replace-input=true]", fileAV3Path);
-const changeLanded = await waitForAsync(async () => (await db.query("select status from files where id = $1", [fileAId])).rows[0].status === "changed", 30000);
-const versionsA3 = (await db.query("select seq, change_request_id, content_hash from file_versions where file_id = $1 order by seq", [fileAId])).rows;
-const changeRow = (await db.query("select id, reason, status from change_requests where project_id = $1 order by created_at desc limit 1", [projectId])).rows[0];
-const filesRowCount2 = (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c;
-check("④r2d 定档替换走变更：状态 draft→final→changed、版本 seq 1→2→3 且新版本挂 change_request_id、change_requests 留痕（reason 匹配 · applied）、文件行数不变",
-  changeLanded === true && versionsA3.length === 3 && Number(versionsA3[2].seq) === 3 && versionsA3[2].change_request_id !== null && versionsA3[2].content_hash !== versionsA3[1].content_hash
-  && changeRow !== undefined && changeRow.status === "applied" && String(changeRow.reason).indexOf("回放变更原因") === 0 && versionsA3[2].change_request_id === changeRow.id && filesRowCount2 === 5,
-  JSON.stringify({ landed: changeLanded, versions: versionsA3, change: changeRow, files: filesRowCount2 }));
-const changeNoteOk = await waitFor("(function(){var n=document.querySelector(" + j("[data-task-files-note-replace]") + ");return n!==null&&n.textContent.indexOf(" + j("已替换") + ")>=0&&n.textContent.indexOf(" + j("变更已生效") + ")>=0;})()", 15000);
-check("④r2e 变更替换成功后下拉留一行提示（「已替换…（变更已生效）」）", changeNoteOk === true, String(changeNoteOk));
-const replaceShotPoint = await popRowButtonPoint(fileAName, "[data-task-files-replace] button");
-if (replaceShotPoint !== null && replaceShotPoint !== undefined) {
-  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: replaceShotPoint.x, y: replaceShotPoint.y });
-  await sleep(800);
-  const popBox = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var r=p.getBoundingClientRect();return {x:Math.max(0,r.left-8),y:Math.max(0,r.top-8),width:r.width+16,height:r.height+16};})()");
-  if (popBox !== null && popBox !== undefined) {
-    const shotReplace = await page.send("Page.captureScreenshot", { format: "png", clip: { x: popBox.x, y: popBox.y, width: popBox.width, height: popBox.height, scale: 2 } });
-    writeFileSync(join(SCREENSHOT_DIR, "m4-07-replace-hover.png"), Buffer.from(shotReplace.data, "base64"));
-    console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-replace-hover.png"));
-  }
-}
+const replaceGoneFinal = popoverForChange === true ? await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}return {rowEntry:p.querySelector(" + j("[data-task-files-replace]") + ")===null,input:p.querySelector(" + j("[data-task-files-replace-input]") + ")===null,note:p.querySelector(" + j("[data-task-files-note-finalized]") + ")!==null,text:p.innerText.indexOf(" + j("替换") + ")<0};})()") : null;
+check("④r2b 重载后（A 已定档 + 任务已定档）下拉仍无替换入口（替换流程整体撤除 · 定档常驻提示仍在 · 清单已回流 C）",
+  filesRefetchedForChange === true && popoverForChange === true && replaceGoneFinal !== null && replaceGoneFinal !== undefined && replaceGoneFinal.rowEntry === true && replaceGoneFinal.input === true && replaceGoneFinal.note === true && replaceGoneFinal.text === true, JSON.stringify(replaceGoneFinal));
 
 const shotHoverPoint = await ev("(function(){var b=document.querySelector(" + j("[data-task-files-delete] button") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
 if (shotHoverPoint !== null && shotHoverPoint !== undefined) {

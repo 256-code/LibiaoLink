@@ -254,12 +254,6 @@ type TaskBoardProps = {
    * = 调用方走回收站（M4-02），完成后整表重取刷新计数；不传 = 清单与下拉只读（不显示删除入口）。
    */
   onDeleteFile?: (fileId: string) => Promise<void>;
-  /**
-   * 任务文件替换（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」；「文件」列下拉行尾）：
-   * 选新文件 → 调用方按目标状态直替 / 变更替换，完成后整表重取刷新；不传 = 下拉里不显示替换入口。
-   * finalize（Push 249）= 未定档直替后定档（任务随定档锁定）；已定档 / 已变更走变更、不定档。
-   */
-  onReplaceFile?: (file: TaskFileRef, picked: File, reason: string | null, finalize?: boolean) => Promise<void>;
   /** 任务文件改名（Push 226 续二）：抽屉清单里点名字 → 编辑提交（只改主名、后缀保留）；不传 = 名字只读。 */
   onRenameFile?: (fileId: string, name: string) => Promise<void>;
   /** 任务 → 文件引用（Push 246 · fileApi.fetchTaskFiles）：「文件」列胶囊显示文件名 / 「+N」、
@@ -284,7 +278,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, onReplaceFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; onReplaceFile?: (file: TaskFileRef, picked: File, reason: string | null, finalize?: boolean) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -499,7 +493,6 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
             files={filesForTask}
             onUpload={onUploadFiles}
             onDelete={onDeleteFile}
-            onReplace={onReplaceFile}
             taskFinalized={task.finalizedAt !== null}
           >
             {fileCellContent}
@@ -696,7 +689,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onReplaceFile, onRenameFile, filesByTask, projectId, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, filesByTask, projectId, focusMode }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -1020,7 +1013,6 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                         onUploadFiles={onUploadFiles}
                         onDeleteFile={onDeleteFile}
-                        onReplaceFile={onReplaceFile}
                         files={filesByTask?.get(task.id)}
                       />
                     ))}
