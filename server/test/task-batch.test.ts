@@ -83,6 +83,8 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     updatedAt: new Date("2026-09-01T00:00:00Z"),
     deletedAt: null,
     deletedBy: null,
+    finalizedAt: null,
+    finalizedBy: null,
     ...overrides,
   };
 }

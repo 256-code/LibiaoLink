@@ -12,6 +12,9 @@
  * 2026-10-08 续：文件替换（replaceFileContent —— 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
  *   未定档（draft）直替 = intent=version + fileId（版本链追加、名称 / 归属不变）；已定档 / 已变更 = intent=change
  *   + change.reason 必填（A4-13 申请即通过，完成上传时同事务生效）。
+ * 2026-10-08 续二（Push 249）：定档上传（uploadFile / uploadFiles / replaceFileContent 的 finalize 选项 + finalizeFile）——
+ *   业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」：传输完成即定档该文件
+ *   （POST /files/{id}/finalize），挂接任务随文件定档一并锁定（服务端同事务）：此后任务写口一律 409 TASK_FINALIZED，修改走变更。
  * 上传链路（D2 分片直传，契约 shared/src/modules/files.ts；参考实现 server/scripts/m4-upload-replay.mjs）：
  *   POST /api/v1/files/uploads（intent=version，contentHash = SHA-256）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/parts 取预签名分片 URL
@@ -58,7 +61,12 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
 }
 
 /** 上传文件的可选关联（taskId 给出时文件挂到该任务；file_links 同事务建立）。 */
-export type UploadFileOptions = { taskId?: string };
+export type UploadFileOptions = {
+  taskId?: string;
+  /** 定档上传（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：传输完成即对该文件定档
+   *  （POST /files/{id}/finalize）—— 挂接任务随文件定档一并锁定（服务端同事务、幂等）。 */
+  finalize?: boolean;
+};
 
 /**
  * 上传一个文件 / Blob 到站内文件库（M4-01 分片直传；任务成果文件与日报附图共用一条链路）。
@@ -108,6 +116,9 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
     taskId: options.taskId,
   });
   await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  if (options.finalize === true) {
+    await finalizeFile(created.file.id);
+  }
   return created.file.id;
 }
 
@@ -117,8 +128,9 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
  * 名称 / 归属不变 —— 契约要求给出 fileId 时 name 与目标一致）；已定档 / 已变更（final / changed）= 走变更
  * （A4-13 申请即通过）—— intent=change + change.reason 必填，完成上传时同事务生效（文件状态 → changed）。
  * 替换完成后清一次该文件的预览签名缓存（旧版本 URL 作废）。
+ * finalize（Push 249）= 未定档直替后定档（任务随定档锁定）；已定档 / 已变更走变更、不定档（change 路径下忽略）。
  */
-export async function replaceFileContent(projectId: string, target: TaskFileRef, file: Blob, reason: string | null): Promise<void> {
+export async function replaceFileContent(projectId: string, target: TaskFileRef, file: Blob, reason: string | null, finalize = false): Promise<void> {
   const needsChange = target.status === "final" || target.status === "changed";
   const changeReason = reason === null ? "" : reason.trim();
   if (needsChange && changeReason === "") {
@@ -138,6 +150,9 @@ export async function replaceFileContent(projectId: string, target: TaskFileRef,
   });
   await transferChunks(created.file.id, created.upload, buffer, contentHash);
   invalidatePreview(target.id);
+  if (finalize && !needsChange) {
+    await finalizeFile(target.id);
+  }
 }
 
 /** 批量上传（任务「文件」列 / 抽屉共用）：逐份直传；每份完成回调一次（done = 已完成份数）。 */
@@ -200,6 +215,15 @@ export async function recycleFile(fileId: string): Promise<void> {
 export async function renameFile(fileId: string, name: string): Promise<void> {
   const detail = await apiRequest<{ version: number }>("/api/v1/files/" + encodeURIComponent(fileId));
   await apiSend<{ id: string }>("/api/v1/files/" + encodeURIComponent(fileId), "PATCH", { name, version: detail.version });
+}
+
+/** 文件定档（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
+ *  POST /files/{id}/finalize —— draft → final（锁版、至少 1 个版本）；挂接任务随文件定档一并定档（服务端同事务、幂等）：
+ *  此后任务不支持任何修改（写口一律 409 TASK_FINALIZED），修改走变更（A4-13 申请即通过）。
+ *  乐观锁 version 先读详情取回（同 recycle / rename 口径）。 */
+export async function finalizeFile(fileId: string): Promise<void> {
+  const detail = await apiRequest<{ version: number }>("/api/v1/files/" + encodeURIComponent(fileId));
+  await apiSend<{ id: string }>("/api/v1/files/" + encodeURIComponent(fileId) + "/finalize", "POST", { version: detail.version });
 }
 
 /** 下载签名响应（契约 FileDownloadUrlResponse 子集）。 */

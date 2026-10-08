@@ -2150,6 +2150,7 @@
           "TASK_ALREADY_EXISTS",
           "TASK_ALREADY_DONE",
           "TASK_HAS_REFERENCES",
+          "TASK_FINALIZED",
           "REPORT_ALREADY_EXISTS",
           "BLUEPRINT_SCHEMA_INVALID",
           "BLUEPRINT_REF_UNKNOWN",
@@ -2416,7 +2417,7 @@
         "required": [
           "version"
         ],
-        "description": "定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换"
+        "description": "定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换；**挂接任务的文件定档时，同事务把该任务一并定档**（Push 249：任务定档后不支持任何修改，见 Task.finalizedAt / 409 TASK_FINALIZED）"
       },
       "FileListResponse": {
         "type": "object",
@@ -6200,6 +6201,34 @@
             },
             "description": "变更关联（A1-07 / R01：**一条任务可关联多条变更**，写面「追加＋去重」）：数组顺序 = 关联先后（追加序，末位 = 最近一次变更）；空数组 = 无变更。前端「变更关联」列按本数组渲染多条变更徽标（悬浮显示变更日期）"
           },
+          "finalizedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档"
+              }
+            ]
+          },
+          "finalizedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "任务定档操作人（随文件定档同事务写入；与 finalizedAt 成对出现，同为 null = 未定档）"
+              }
+            ]
+          },
           "version": {
             "$ref": "#/components/schemas/Version"
           },
@@ -6233,6 +6262,8 @@
           "note",
           "onTime",
           "changeLinks",
+          "finalizedAt",
+          "finalizedBy",
           "version",
           "createdAt",
           "updatedAt"
@@ -6385,9 +6416,10 @@
           "gate_not_passed",
           "already_done",
           "version_conflict",
-          "invalid_state"
+          "invalid_state",
+          "finalized"
         ],
-        "description": "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败"
+        "description": "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败；finalized 任务已定档（不支持任何修改，Push 249）"
       },
       "TaskBatchResponse": {
         "type": "object",
@@ -7623,7 +7655,7 @@
                     "$ref": "#/components/schemas/Uuid"
                   },
                   {
-                    "description": "目标文件（可选）：省略 = 新建文件；给出 = 对既有未定档（draft）文件替换 / 追加新版本（系统功能书 A2-10「未定档文件可直接替换」）。目标非 draft → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；给出时名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空"
+                    "description": "目标文件（可选）：省略 = 新建文件；给出 = 对既有未定档（draft）文件替换 / 追加新版本（系统功能书 A2-10「未定档文件可直接替换」）。目标非 draft → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；给出时名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空；**任务定档（Push 249）**：目标任务已定档（Task.finalizedAt 非空）时，intent=version 的挂接（新建 / 直接替换 / 追加版本）一律 409 TASK_FINALIZED"
                   }
                 ]
               }
@@ -7724,7 +7756,7 @@
           "version",
           "change"
         ],
-        "description": "上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）"
+        "description": "上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）；**目标任务已定档（Task.finalizedAt 非空）时 version 意图一律 409 TASK_FINALIZED**（Push 249：任务定档后不支持任何修改，修改走变更）"
       },
       "UploadPartsBody": {
         "type": "object",

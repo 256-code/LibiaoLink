@@ -185,6 +185,10 @@ export class FileService {
       ]);
     }
     await this.assertLinksInProject(body.projectId, effectiveNodeId, effectiveTaskId);
+    // 任务定档（Push 249）：任务已定档时禁止直接新增 / 替换 / 追加版本（intent=version）；修改走变更（A4-13）。
+    if (body.intent !== "change" && effectiveTaskId !== undefined) {
+      await this.assertTaskNotFinalized(effectiveTaskId);
+    }
 
     const at = this.clock.now();
     const expiresAt = new Date(at.getTime() + this.config.env.UPLOAD_SESSION_TTL_HOURS * HOUR_MS);
@@ -745,6 +749,19 @@ export class FileService {
   }
 
   /**
+   * 任务定档闸（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：文件挂接的任务已定档时，
+   * 新增 / 直接替换 / 追加版本 / 改名 / 普通回溯（draft）一律 409 TASK_FINALIZED；修改走变更（A2-10 / A4-13）。
+   */
+  private async assertTaskNotFinalized(taskId: string): Promise<void> {
+    const task = await this.repository.findTaskBrief(taskId);
+    if (task !== null && task.finalizedAt !== null) {
+      throw new AppError("TASK_FINALIZED", "任务已定档，不支持任何修改（文件修改走变更）", [
+        { code: "task_finalized", message: "任务定档时间：" + task.finalizedAt.toISOString(), path: "taskId" },
+      ]);
+    }
+  }
+
+  /**
    * 回溯准入（M4-04 起）：draft = 普通回溯（无变更记录）；final / changed = 走变更流（申请即通过，A4-13）；
    * recycled / archived 不允许（回收站中的文件需先恢复）。
    */
@@ -929,6 +946,9 @@ export class FileService {
       const locked = await this.lockFileOr404(tx, fileId);
       this.assertOptimisticVersion(body.version, locked.version);
       const mode = this.assertRollbackAllowed(locked.status);
+      if (mode === "draft" && locked.taskId !== null) {
+        await this.assertTaskNotFinalized(locked.taskId);
+      }
       const changeRequestId = mode === "change" ? randomUUID() : null;
       if (locked.currentVersionId === target.id) {
         throw new AppError("VALIDATION_FAILED", "目标版本已是当前版本，无需回溯", [
@@ -1083,6 +1103,9 @@ export class FileService {
     return this.database.db.transaction(async (tx) => {
       const locked = await this.lockFileOr404(tx, fileId);
       this.assertOptimisticVersion(body.version, locked.version);
+      if (locked.taskId !== null) {
+        await this.assertTaskNotFinalized(locked.taskId);
+      }
       if (locked.status === "recycled") {
         throw new AppError("FILE_STATE_INVALID", "文件已在回收站，不能改名；请先恢复");
       }
@@ -1160,6 +1183,22 @@ export class FileService {
           at: at.toISOString(),
         },
       });
+      // 任务定档（Push 249）：文件定档 → 其挂接任务一并定档（同事务、幂等；任务定档后不支持任何修改）。
+      if (locked.taskId !== null) {
+        const finalizedTaskId = await this.repository.markTaskFinalized(locked.taskId, at, actorId, tx);
+        if (finalizedTaskId !== null) {
+          await this.audit.record(tx, {
+            actorId,
+            action: "update",
+            objectType: "task",
+            objectId: finalizedTaskId,
+            projectId: file.projectId,
+            summary: "任务定档（随文件定档：" + locked.name + "）——此后不支持任何修改（文件修改走变更）",
+            changes: [{ field: "finalizedAt", from: null, to: at.toISOString() }],
+            metadata: { fileId, fileStatus: "final" },
+          });
+        }
+      }
       // 定档预生成（P1 · ADR-007「定档文件预生成，其余按需懒生成」）：只投当前版本、只投一期真能出产物的通道。
       // 用 appendOutboxIfAbsent：去重键 = 三元组（内容 + 管线版本 + 通道）—— 同三元组已有任务不重复插入、
       // 只有 dead 才唤醒；普通 insert 会在「恢复 → 再定档」「两个文件同内容」时撞唯一约束，把整个定档事务打回 500。

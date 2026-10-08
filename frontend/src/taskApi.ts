@@ -36,6 +36,9 @@ export type ApiTask = {
   note: string | null;
   onTime: boolean | null;
   changeLinks: Array<{ id: string; reason: string | null; appliedAt: string }>;
+  /** 任务定档（Push 249）：非空 = 已定档，任务不支持任何修改；与 finalizedBy 成对。 */
+  finalizedAt: string | null;
+  finalizedBy: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -144,7 +147,9 @@ function fileSummaryOf(summary: { total: number; draft: number; final: number } 
 
 /**
  * 契约任务 → UI 模型。previous = 列表里已有的那一行（缺省 undefined 表示新行）：
- * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary）：文件摘要从 previous 继承；
+ * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary）：文件摘要从 previous 继承 ——
+ * 2026-10-08 修正（Push 249 · 业务口径「当我修改别的信息 文件一栏的内容就消失了 要刷新才能回来」）：
+ * 原来这行漏继承（previous?.files 没接上，摘要归零）→ 改完任一字段「文件」列退回「—」、刷新才回来；现按注释口径继承；
  * 负责人姓名按「用户目录（resolveName，ProjectDetail 传 members）→ 旧行同 id 姓名 → —」三级兜底 ——
  * 2026-09-24 修：原来直接沿用旧行姓名，改负责人后要刷新才变（勾上 / 取消即时可见）。
  */
@@ -188,12 +193,13 @@ export function toUiTask(
     doneDate: view.actualEnd ?? "",
     days: view.estimatedDays ?? derivedDays,
     deliverableTypes: [...view.deliverableTypes],
-    files: fileSummaryOf("fileSummary" in view ? view.fileSummary : undefined),
+    files: fileSummaryOf("fileSummary" in view ? view.fileSummary : previous?.files),
     changes: changeLinksOf(view.changeLinks),
     onTime: view.onTime,
     note: view.note ?? "",
     headcount: view.headcount ?? 0,
     priority: priorityOf(view.priority),
+    finalizedAt: view.finalizedAt ?? null,
     version: view.version,
   };
 }

@@ -57,6 +57,8 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     updatedAt: new Date("2026-09-01T00:00:00Z"),
     deletedAt: null,
     deletedBy: null,
+    finalizedAt: null,
+    finalizedBy: null,
     ...overrides,
   };
 }
@@ -678,5 +680,57 @@ describe("变更关联多条（A1-07 / R01 · Push 144）", () => {
     const detail = await makeService(repo).detail(PROJECT, TASK);
 
     expect(detail.changeLinks).toEqual([]);
+  });
+});
+
+
+describe("任务定档写口闸（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）", () => {
+  const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
+
+  it("定档任务：编辑 → 409 TASK_FINALIZED（details 带定档时间）；批量 → failures 的 finalized", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR });
+
+    await expect(
+      makeService(repo).update(PROJECT, TASK, { version: 3, note: "改备注" }, ACTOR),
+    ).rejects.toMatchObject({
+      code: "TASK_FINALIZED",
+      details: [{ code: "task_finalized", path: "finalizedAt" }],
+    });
+
+    const batch = await makeService(repo).batch(PROJECT, { ids: [TASK], changes: { note: "批量改" } }, ACTOR);
+    expect(batch.succeededCount).toBe(0);
+    expect(batch.failedCount).toBe(1);
+    expect(batch.failures[0]).toMatchObject({ id: TASK, code: "finalized" });
+  });
+
+  it("定档任务：进度 / 完成 一律 409 TASK_FINALIZED", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR });
+
+    await expect(
+      makeService(repo).updateProgress(PROJECT, TASK, { version: 3, progress: 0.5 }, ACTOR),
+    ).rejects.toMatchObject({ code: "TASK_FINALIZED" });
+
+    await expect(
+      makeService(repo).complete(PROJECT, TASK, { version: 3 }, ACTOR),
+    ).rejects.toMatchObject({ code: "TASK_FINALIZED" });
+  });
+
+  it("未定档任务：同一写口照常（对照）；响应 finalizedAt / finalizedBy = null", async () => {
+    const repo = new FakeTaskRepository();
+    const updated = await makeService(repo).update(PROJECT, TASK, { version: 3, note: "改备注" }, ACTOR);
+    expect(updated.note).toBe("改备注");
+    expect(updated.finalizedAt).toBeNull();
+    expect(updated.finalizedBy).toBeNull();
+  });
+
+  it("详情 / 编辑响应下发 finalizedAt（ISO）/ finalizedBy（成对）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR });
+
+    const detail = await makeService(repo).detail(PROJECT, TASK);
+    expect(detail.finalizedAt).toBe(FINALIZED_AT.toISOString());
+    expect(detail.finalizedBy).toBe(ACTOR);
   });
 });

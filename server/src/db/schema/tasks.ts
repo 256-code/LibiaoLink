@@ -83,7 +83,15 @@ export const tasks = pgTable(
      * （读面统一过滤 deleted_at is null），节点约束随之释放；不物理删行（历史与留痕保留）。
      */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /**
+     * 任务定档（Push 249 · 迁移 0044）：定档某文件（files.finalize → final）时同事务置位其挂接任务的这两列
+     * （文件模块 finalizeFile —— 任务侧不单独开定档端点）；置位后任务写口（编辑 / 批量 / 进度 / 完成 / 删除 /
+     * 锁定字段例外调整）与文件直接写口（新增 / 直替 / 改名）一律 409 TASK_FINALIZED，修改走变更（A4-13）。
+     * 成对不变式：要么都空（未定档）、要么都有（ck_tasks_finalized_pair）。
+     */
     deletedBy: uuid("deleted_by").references(() => users.id),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    finalizedBy: uuid("finalized_by").references(() => users.id),
   },
   (table) => [
     index("ix_tasks_project_stage").on(table.projectId, table.stageKey),
@@ -124,6 +132,7 @@ export const tasks = pgTable(
     ),
     check("ck_tasks_deliverable_types_no_null", sql`array_position(${table.deliverableTypes}, null::text) is null`),
     check("ck_tasks_change_refs_no_null", sql`array_position(${table.changeRefs}, null::uuid) is null`),
+    check("ck_tasks_finalized_pair", sql`(${table.finalizedAt} is null) = (${table.finalizedBy} is null)`),
   ],
 );
 

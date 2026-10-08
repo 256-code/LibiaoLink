@@ -71,6 +71,13 @@ export const TaskSchema = z
       description:
         "变更关联（A1-07 / R01：**一条任务可关联多条变更**，写面「追加＋去重」）：数组顺序 = 关联先后（追加序，末位 = 最近一次变更）；空数组 = 无变更。前端「变更关联」列按本数组渲染多条变更徽标（悬浮显示变更日期）",
     }),
+    finalizedAt: DateTimeSchema.nullable().openapi({
+      description:
+        "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档",
+    }),
+    finalizedBy: UuidSchema.nullable().openapi({
+      description: "任务定档操作人（随文件定档同事务写入；与 finalizedAt 成对出现，同为 null = 未定档）",
+    }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
@@ -346,11 +353,12 @@ export const TASK_BATCH_FAILURE_CODES = [
   "already_done",
   "version_conflict",
   "invalid_state",
+  "finalized",
 ] as const;
 
 export const TaskBatchFailureCodeSchema = z.enum(TASK_BATCH_FAILURE_CODES).openapi("TaskBatchFailureCode", {
   description:
-    "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败",
+    "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败；finalized 任务已定档（不支持任何修改，Push 249）",
 });
 
 export const TaskBatchFailureSchema = z

@@ -90,6 +90,13 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 - 横切：`AuditService`（同事务留痕）、`PermissionService`（`file.upload` / `file.download` 与记录级 404）、`ClockService`（会话到期判定 / 预览产物 `generated_at` 与退避基准，禁止直接取系统时间）。
 - 平台：`OutboxStore`（`db/outbox.store.ts`：`claim` 单条 SQL 原子领取（`for update skip locked`，不把行锁握满整个转换时长；S7-1 起回写 `locked_by` / `updated_at`）+ `markDone` / `markRetry`（退避回 pending）/ `markDead` + S7-1 增 `stats`（告警快照）/ `purgeDone`（done 行保留期））、`appendOutboxIfAbsent`（M4-05c · `db/outbox.ts`：同 dedupeKey 不覆盖进度、`dead` 才唤醒）。本模块**不**再自领队列 —— 领取 / 退避 / dead 由 worker 的 `src/outbox/`（S7-1）统一收口。
 
+## 任务定档联动与写口闸（Push 249 · A2-10 / A4-05 修订）
+
+- `finalizeFile`（`POST /files/{id}/finalize`）：文件 draft → final 的同时，**同一事务**把其挂接任务定档（`repository.markTaskFinalized(taskId, at, actorId, tx)`：`isNull(finalized_at)` 幂等置位 + 任务 `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）—— 任务定档后不支持任何修改（修改走变更 A4-13）。
+- `assertTaskNotFinalized(taskId)`：任务已定档时 **409 `TASK_FINALIZED`** —— 覆盖 `createUpload`（`intent=version` 且解析出的 `effectiveTaskId` 非空：新建 / 直接替换（fileId）/ 追加版本）、`renameFile`、`rollbackFile`（普通回溯 draft）；**`intent=change` 不受影响**（唯一保留的修改通道）。
+- `file.repository.findTaskBrief` 增 `finalizedAt`（闸判定用）；回收站（recycle）/ purge **不受**任务定档影响（M4-02「任意状态可删」口径不变）。
+- 单测：`test/file-service.test.ts`（「Push 249 · 任务定档联动与写口闸」4 例，含 fake `markTaskFinalized` / `finalizedTasks`）。
+
 ## 待落地（按卡片）
 
 - **M4-04**：写入面**已落地（PR-7）**、读面**已落地（PR-8）**（列表 / 详情，见上「M4-04 变更口径」「M4-04 变更读面」）；**剩余** = 变更统计（A4-17，无对外契约，口径由后续切片 / 仪表盘定）与通知（A4-18，随 M5；outbox `change.applied` 已埋点）。

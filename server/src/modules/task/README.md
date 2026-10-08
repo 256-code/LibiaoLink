@@ -111,6 +111,14 @@
 - 读面：列表与详情下发 `sourceNodeId`（= `tasks.task_node_id`，可空）。
 - 真机回放：`server/scripts/m3-07-replay-from-template.mjs`（真 PG + 真 api :3001，47 项断言，退出码即门禁）；证据入 `docs/m3-07-回放证据(添加任务模板化).md`（前端侧 `frontend/scripts/m3-07-from-template-e2e.mjs` · 21 项 · 证据 `docs/m3-07-回放证据(添加任务模板化·前端).md`）。
 
+## 任务定档（Push 249 · A2-10 / A4-05 修订）
+
+- 字段：`tasks.finalized_at timestamptz` / `tasks.finalized_by uuid → users(id)`（迁移 `0044_task_finalize.sql`；成对 CHECK `ck_tasks_finalized_pair`：同 null 或同非 null）—— **任务侧无单独定档端点**：定档一律由**文件定档**触发（`file.service.finalizeFile` 在同一事务内 `repository.markTaskFinalized`，`isNull` 幂等置位 + `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）。
+- 写口闸 `assertTaskMutable`：任务已定档（`finalized_at` 非空）时 **409 `TASK_FINALIZED`**（新错误码；details `code: task_finalized` / `path: finalizedAt`）—— 覆盖 `applyUpdate`（编辑 / 批量：批量失败码映射 `TASK_FINALIZED → finalized`）、`remove`、`adjustLockedFields`、`updateProgress`、`complete`。
+- 读面：`toTaskView` 下发 `finalizedAt`（ISO）/ `finalizedBy`；`TaskListItem` 经 spread 同口径（前端 `ProjectTask.finalizedAt` 据此出「已定档」提示与入口闸）。
+- 唯一保留的修改通道 = 对已定档文件的变更（A4-13 申请即通过，`intent=change`）。
+- 单测：`test/task-service.test.ts`（「任务定档写口闸」4 例）+ `task-remove` / `task-locked-fields` 各 1 例；其余 task 测试夹具补 `finalizedAt: null, finalizedBy: null`。
+
 ## 边界与后续（差异登记）
 
 - 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；

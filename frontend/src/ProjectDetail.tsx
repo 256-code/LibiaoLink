@@ -301,16 +301,20 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   /**
    * 任务文件上传（Push 226 · 「文件」列与任务抽屉共用一条链路）：逐份分片直传文件库并关联任务（taskId），
    * 完成后整表重取刷新文件计数（文件不改变项目时间，不触发 onTaskEdited）；失败走统一写入错误出口（toolError 提示条）。
+   * finalize（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
+   * 每份传完即定档（files.finalize），任务随文件定档一并锁定（此后写口一律 409 TASK_FINALIZED）。
    */
-  const handleUploadTaskFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void): Promise<void> => {
+  const handleUploadTaskFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize = false): Promise<void> => {
     if (projectId === null) {
       return Promise.resolve();
     }
     return (async () => {
       try {
-        await uploadFiles(projectId, files, { taskId, onProgress });
+        await uploadFiles(projectId, files, { taskId, onProgress, finalize });
         reloadAll();
       } catch (error) {
+        // 可能已部分成功（逐份直传中途失败 / 定档被 409 拦下）：先整表重取让计数与状态归位，再走统一错误出口
+        reloadAll();
         reportWriteError(error);
       }
     })();
@@ -349,12 +353,13 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   /**
    * 任务文件替换（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：未定档直替 /
    * 已定档走变更（fileApi.replaceFileContent），完成后整表重取；失败原样抛回下拉（行内一行提示）。
+   * finalize（Push 249）：未定档直替完成后定档（任务随定档锁定）；已定档 / 已变更走变更、不定档。
    */
-  const handleReplaceTaskFile = async (file: TaskFileRef, picked: File, reason: string | null): Promise<void> => {
+  const handleReplaceTaskFile = async (file: TaskFileRef, picked: File, reason: string | null, finalize = false): Promise<void> => {
     if (projectId === null) {
       return;
     }
-    await replaceFileContent(projectId, file, picked, reason);
+    await replaceFileContent(projectId, file, picked, reason, finalize);
     reloadAll();
   };
 
