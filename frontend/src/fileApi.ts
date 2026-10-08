@@ -3,9 +3,11 @@
  * Push 226 续：任务文件删除（recycleFile —— 先读 version 再移入回收站）与图片点击预览（isImageFileName + ensurePreviewUrl）。
  * Push 226 续二：文件改名（renameFile —— PATCH /files/{id}，先读 version 再写）与列表「文件」列
  *   显示文件名所需的项目文件名单（fetchTaskFileNames —— 列表接口不带文件名，这里按项目一次拉全量，免 N+1）。
- * Push 226 续三：PDF / Office / 文本点击预览（previewKindOf —— 与 server preview.targets.ts 同口径，走浏览器内置 PDF 查看器）。
+ * Push 226 续三：PDF / Office / 文本点击预览（previewKindOf —— 与 server preview.targets.ts 同口径）。
  * Push 226 续四：原文件下载（fetchDownloadUrl + triggerDownload —— 版本短时签名 attachment + 原文件名；
- *   与预览转换件区分：Office / 文本的预览浮层里是转换出的 PDF，下载始终拿原文件）。
+ *   与预览浮层区分：下载始终拿原文件、写 download 审计）。
+ * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
+ *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
  * 上传链路（D2 分片直传，契约 shared/src/modules/files.ts；参考实现 server/scripts/m4-upload-replay.mjs）：
  *   POST /api/v1/files/uploads（intent=version，contentHash = SHA-256）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/parts 取预签名分片 URL
@@ -25,8 +27,24 @@ type UploadPartsResponse = { parts: Array<{ partNumber: number; url: string }> }
 
 type UploadCompleteResponse = { file: { id: string; name: string } };
 
-/** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址。 */
-type FilePreviewResponse = { status: string; url: string | null };
+/** ONLYOFFICE 查看器配置（契约 PreviewViewer 子集 · S4 直接组装 DocEditor 配置；token = 四段逐字签发）。 */
+export type PreviewViewerConfig = {
+  kind: string;
+  docServerUrl: string;
+  documentType: "word" | "cell" | "slide";
+  document: { title: string; url: string; fileType: string; key: string };
+  editorConfig: { mode: "view"; lang: string; user: { id: string; name: string } };
+  permissions: { edit: boolean; download: boolean; print: boolean; comment: boolean; chat: boolean; fillForms: boolean; protect: boolean };
+  token: string;
+};
+
+/** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址 / 查看器配置（两通道互斥）。 */
+type FilePreviewResponse = {
+  status: string;
+  url: string | null;
+  viewer: PreviewViewerConfig | null;
+  reason: string | null;
+};
 
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buffer);
@@ -108,19 +126,27 @@ export function isImageFileName(name: string): boolean {
   return IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension));
 }
 
-/** PDF 查看器族（Push 226 续三 · 业务口径「这个pdf我也打不开啊」）：PDF 源直通、Office / 文本经转换器出 PDF
- *  （与 server preview.targets.ts 同一口径），统一走浏览器内置查看器预览。 */
-const PDF_PREVIEW_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".rtf", ".txt", ".csv", ".html", ".htm"];
+/** PDF 查看器族（Push 226 续三 · 业务口径「这个pdf我也打不开啊」）：PDF 源直通（S4 起 Office / 文本族
+ *  不再经转换器出 PDF —— 改走 ONLYOFFICE 查看器通道，这里只剩 PDF 源本身）。 */
+const PDF_PREVIEW_EXTENSIONS = [".pdf"];
+
+/** ONLYOFFICE 查看器族（S4 · 名单与 server preview.targets.ts 的 viewerChannelFor 对齐）：Office（含宏变体）
+ *  + 文本族（txt / csv / html / htm）。服务端负责最终通道裁决；判不出的文件前端不出预览入口。 */
+const OFFICE_VIEWER_EXTENSIONS = [".doc", ".docx", ".docm", ".odt", ".rtf", ".txt", ".html", ".htm", ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".ppt", ".pptx", ".pptm", ".odp"];
 
 /** 可视预览通道：image = 浏览器直渲染（40×40 缩略图 + img 浮层）；pdf = 浏览器内置查看器（iframe 浮层）；
+ *  office = ONLYOFFICE 查看器外壳（S4：api.js + DocEditor，超时 / 重试 / 降级「请下载」）；
  *  判不出 = null（抽屉里没有预览入口，只有改名 / 删除）。 */
-export type FilePreviewKind = "image" | "pdf";
+export type FilePreviewKind = "image" | "pdf" | "office";
 export function previewKindOf(name: string): FilePreviewKind | null {
   if (isImageFileName(name)) {
     return "image";
   }
   const lower = name.toLowerCase();
-  return PDF_PREVIEW_EXTENSIONS.some((extension) => lower.endsWith(extension)) ? "pdf" : null;
+  if (PDF_PREVIEW_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
+    return "pdf";
+  }
+  return OFFICE_VIEWER_EXTENSIONS.some((extension) => lower.endsWith(extension)) ? "office" : null;
 }
 
 /** 删除文件 = 移入回收站（M4-02；任意状态可删、默认保留 30 天可恢复）。
@@ -143,7 +169,7 @@ type FileDownloadUrlResponse = { url: string; fileName: string; sizeBytes: numbe
  * 取**原文件**的短时签名下载地址（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：
  * `GET /files/{id}/versions/{versionId}/download-url`（版本必填 —— 先读详情拿当前版本）。
  * 契约语义：签名带 `Content-Disposition: attachment` + 原文件名 → 浏览器落盘的是**原文件字节**
- * （与预览产物区分：Office / 文本的预览浮层里是转换出的 PDF）；服务端写 download 审计、判 `file.download` 权限。
+ * （与预览区分：S4 起 Office / 文本族走 ONLYOFFICE 查看器渲染 —— 下载始终拿原文件）；服务端写 download 审计、判 `file.download` 权限。
  */
 export async function fetchDownloadUrl(fileId: string): Promise<{ url: string; fileName: string }> {
   const detail = await apiRequest<{ currentVersion: { id: string } | null }>("/api/v1/files/" + encodeURIComponent(fileId));
@@ -212,37 +238,55 @@ function subscribePreview(listener: () => void): () => void {
   };
 }
 
-/** 取预览签名（带缓存）。
- *  not_ready 轮询预算 = 20 秒（Push 226 续：worker 的 outbox 领取间隔默认 5 秒 —— 首次预览「点开才排队转换」，
- *  6 秒窗口在真机上会偶发拿不到；failed 立即返回，不会白等）。 */
-export async function ensurePreviewUrl(fileId: string): Promise<string | null> {
+/** 预览打开结果（S4 两通道裁决）：url = 产物通道短时签名；viewer = 查看器通道配置；unavailable = 未就绪超时 / 失败 / 异常。 */
+export type PreviewOpenOutcome =
+  | { kind: "url"; url: string }
+  | { kind: "viewer"; viewer: PreviewViewerConfig }
+  | { kind: "unavailable"; reason: string | null };
+
+/** 取预览打开输入（带 URL 缓存 + 同文件并发去重）。就绪轮询预算 = 20 秒（Push 226 续：worker 的 outbox 领取间隔
+ *  默认 5 秒 —— 首次预览「点开才排队转换」，6 秒窗口在真机上会偶发拿不到；failed 立即返回，不会白等；
+ *  查看器通道（Office / 文本）就绪即签发、无需等待转换）。S4：外壳按响应裁决 viewer / url 两通道。 */
+export async function ensurePreviewOutcome(fileId: string): Promise<PreviewOpenOutcome> {
   const cached = previewUrls.get(fileId);
   if (cached !== undefined) {
-    return cached;
+    return { kind: "url", url: cached };
   }
   if (previewLoading.has(fileId)) {
-    return null;
+    return { kind: "unavailable", reason: null };
   }
   previewLoading.add(fileId);
   try {
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const preview = await apiRequest<FilePreviewResponse>("/api/v1/files/" + encodeURIComponent(fileId) + "/preview");
-      if (preview.status === "ready" && preview.url !== null) {
-        previewUrls.set(fileId, preview.url);
-        notifyPreview();
-        return preview.url;
+      if (preview.status === "ready") {
+        if (preview.viewer !== null) {
+          return { kind: "viewer", viewer: preview.viewer };
+        }
+        if (preview.url !== null) {
+          previewUrls.set(fileId, preview.url);
+          notifyPreview();
+          return { kind: "url", url: preview.url };
+        }
+        return { kind: "unavailable", reason: null };
       }
       if (preview.status === "failed") {
-        return null;
+        return { kind: "unavailable", reason: preview.reason };
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return null;
+    return { kind: "unavailable", reason: null };
   } catch {
-    return null;
+    return { kind: "unavailable", reason: null };
   } finally {
     previewLoading.delete(fileId);
   }
+}
+
+/** 取预览签名（带缓存；产物通道专用 —— 图片缩略图 / 附图懒取、PDF 浮层）。查看器通道走 ensurePreviewOutcome。 */
+export async function ensurePreviewUrl(fileId: string): Promise<string | null> {
+  const outcome = await ensurePreviewOutcome(fileId);
+  return outcome.kind === "url" ? outcome.url : null;
 }
 
 /** 附图展示地址：本地 blob（会话内刚贴的图）优先，否则懒取服务端预览签名并订阅缓存变化。 */

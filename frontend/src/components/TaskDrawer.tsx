@@ -12,12 +12,13 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { ensurePreviewUrl, fetchDownloadUrl, previewKindOf, triggerDownload, usePhotoUrl, type FilePreviewKind } from "../fileApi";
+import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, triggerDownload, usePhotoUrl, type FilePreviewKind, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, type TaskFileBrief } from "../taskApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
+import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } from "./Tracker";
@@ -206,8 +207,15 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   /** 上传中的份数进度（null = 没有上传）。 */
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  /** 预览浮层（Push 226 续 / 续三）：点清单里的图片 / PDF → 取短时签名 → 看大图 / 内置查看器（null = 未开）。 */
-  const [preview, setPreview] = useState<{ url: string; name: string; kind: FilePreviewKind; fileId: string } | null>(null);
+  /** 预览浮层（Push 226 续 / 续三 · S4 两通道）：点清单里的图片 / PDF → 产物浮层（大图 / 内置查看器 iframe）；
+   *  Office / 文本族 → ONLYOFFICE 查看器外壳（viewer 配置逐字下发）。nonce = 重试自增，强制重建查看器（重取 token）。null = 未开。 */
+  const [preview, setPreview] = useState<{
+    pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
+    name: string;
+    kind: FilePreviewKind;
+    fileId: string;
+    nonce: number;
+  } | null>(null);
   /** 正在取预览签名的文件 id（null = 没有）。 */
   const [previewBusy, setPreviewBusy] = useState<string | null>(null);
   /** 预览 / 下载取不到时的一行灰字提示（null = 不显示）。 */
@@ -398,25 +406,57 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     });
   };
 
-  /** 图片预览（Push 226 续）：点开才懒取签名 —— 预览读取会写「查看」审计，不该随清单一开就铺开申请。 */
+  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览读取会写「查看」审计，不该随清单一开就铺开申请。
+   *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
+   *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
   const openPreview = async (fileId: string, name: string) => {
     if (previewBusy !== null) {
       return;
     }
     setPreviewBusy(fileId);
     setPreviewNote(null);
-    const url = await ensurePreviewUrl(fileId);
+    const outcome = await ensurePreviewOutcome(fileId);
     setPreviewBusy(null);
-    if (url === null) {
-      setPreviewNote("预览暂时取不到（生成中或暂不支持预览），稍后再试");
+    const kind = previewKindOf(name) ?? "image";
+    if (outcome.kind === "unavailable") {
+      setPreviewNote(outcome.reason ?? "暂不支持在线预览，请下载查看");
       return;
     }
-    setPreview({ url, name, kind: previewKindOf(name) ?? "image", fileId });
+    if (outcome.kind === "viewer") {
+      setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, nonce: 0 });
+      return;
+    }
+    setPreview({ pane: { mode: "url", url: outcome.url }, name, kind, fileId, nonce: 0 });
+  };
+
+  /** 查看器外壳「重试」（S4 · R5）：重取查看器配置（token 随签发刷新）+ nonce 自增强制重建；
+   *  仍取不到（failed / 超时）→ 关浮层 + 一行灰字降级提示。 */
+  const retryPreview = async (fileId: string, name: string) => {
+    if (previewBusy !== null) {
+      return;
+    }
+    setPreviewBusy(fileId);
+    const outcome = await ensurePreviewOutcome(fileId);
+    setPreviewBusy(null);
+    if (outcome.kind === "unavailable") {
+      setPreview(null);
+      setPreviewNote(outcome.reason ?? "暂不支持在线预览，请下载查看");
+      return;
+    }
+    setPreview((previous) => {
+      if (previous === null || previous.fileId !== fileId) {
+        return previous;
+      }
+      const pane = outcome.kind === "viewer"
+        ? { mode: "viewer" as const, viewer: outcome.viewer }
+        : { mode: "url" as const, url: outcome.url };
+      return { pane, name, kind: previous.kind, fileId, nonce: previous.nonce + 1 };
+    });
   };
 
   /** 下载原文件（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：取当前版本的
    *  attachment 短时签名（原文件字节 + 原文件名；服务端写 download 审计），再触发浏览器落盘 ——
-   *  与预览产物区分：Office / 文本的浮层里是转换出的 PDF，下载始终拿原文件。 */
+   *  与预览区分（S4）：Office / 文本族走 ONLYOFFICE 查看器渲染、图片 / PDF 走产物浮层；下载始终拿原文件。 */
   const downloadFile = async (fileId: string) => {
     if (downloadBusy !== null) {
       return;
@@ -770,13 +810,13 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                       </span>
                     )}
                     {previewing && previewKind === "image" ? <span className="shrink-0 text-[10px] text-zinc-400">预览中…</span> : null}
-                    {previewKind === "pdf" ? (
+                    {previewKind === "pdf" || previewKind === "office" ? (
                       <button
                         type="button"
                         data-file-preview-open="true"
                         onClick={() => { void openPreview(file.id, file.name); }}
                         disabled={previewing}
-                        title="在线预览（浏览器内置查看器）"
+                        title={previewKind === "pdf" ? "在线预览（浏览器内置查看器）" : "在线预览（ONLYOFFICE 查看器）"}
                         className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                       >
                         {previewing ? "预览中…" : "预览"}
@@ -787,7 +827,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                       data-file-download="true"
                       onClick={() => { void downloadFile(file.id); }}
                       disabled={downloadBusy === file.id}
-                      title="下载原文件（原格式落盘；预览浮层里的转换件不是原文件）"
+                      title="下载原文件（原格式落盘）"
                       className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                     >
                       {downloadBusy === file.id ? "下载中…" : "下载"}
@@ -1032,7 +1072,17 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           ) : null}
         </footer>
       </aside>
-      {preview === null ? null : <FilePreviewOverlay url={preview.url} name={preview.name} kind={preview.kind} onDownload={() => { void downloadFile(preview.fileId); }} onClose={() => { setPreview(null); }} />}
+      {preview === null ? null : (
+        <FilePreviewOverlay
+          pane={preview.pane}
+          name={preview.name}
+          kind={preview.kind}
+          nonce={preview.nonce}
+          onRetry={() => { void retryPreview(preview.fileId, preview.name); }}
+          onDownload={() => { void downloadFile(preview.fileId); }}
+          onClose={() => { setPreview(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -1058,10 +1108,19 @@ function FileThumb({ fileId, name, onOpen }: { fileId: string; name: string; onO
   );
 }
 
-/** 预览浮层（Push 226 续 / 续三）：图片 = 大图（img）、PDF / Office / 文本 = 浏览器内置查看器（iframe）；
+/** 预览浮层（Push 226 续 / 续三 · S4）：图片 = 大图（img）、PDF = 浏览器内置查看器（iframe）、
+ *  Office / 文本族 = ONLYOFFICE 查看器外壳（OnlyOfficeViewer；加载 → 就绪 / 超时 / 失败降级，重试自增 nonce 重建）。
  *  短时签名地址（D2-04 禁止匿名读取）。Esc / 点浮层关闭；capture 阶段拦 keydown，避免同一按 Esc 连带把抽屉关掉（「Esc 先关内层」口径）。
  *  Push 226 续四：caption 挂「下载原文件」—— 查看器自带的下载拿的是**转换产物**，这里直取原文件（drawer.downloadFile）。 */
-function FilePreviewOverlay({ url, name, kind, onDownload, onClose }: { url: string; name: string; kind: FilePreviewKind; onDownload: () => void; onClose: () => void }) {
+function FilePreviewOverlay({ pane, name, kind, nonce, onRetry, onDownload, onClose }: {
+  pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
+  name: string;
+  kind: FilePreviewKind;
+  nonce: number;
+  onRetry: () => void;
+  onDownload: () => void;
+  onClose: () => void;
+}) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -1087,15 +1146,17 @@ function FilePreviewOverlay({ url, name, kind, onDownload, onClose }: { url: str
       className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
     >
       <figure className="flex max-h-full max-w-full flex-col items-center">
-        {kind === "pdf" ? (
+        {pane.mode === "viewer" ? (
+          <OnlyOfficeViewer key={nonce} viewer={pane.viewer} onRetry={onRetry} />
+        ) : kind === "pdf" ? (
           <iframe
-            src={url}
+            src={pane.url}
             title={name}
             data-file-preview-frame="true"
             className="h-[80vh] w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white shadow-2xl"
           />
         ) : (
-          <img src={url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
+          <img src={pane.url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
         )}
         <figcaption className="mt-2 flex items-center gap-3 text-xs text-white/80">
           <span>{name}</span>
