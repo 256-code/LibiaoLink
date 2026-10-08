@@ -12,7 +12,7 @@ import { FileRepository, type FileRow, type FileVersionRow } from "./file.reposi
 import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
-import { previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
+import { isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
@@ -30,9 +30,17 @@ const VIEWER_PERMISSIONS = {
 /**
  * 预览读 API（M4-05 读面 · `GET /files/{id}/preview` · 契约 shared/src/modules/files.ts）。
  *
- * 三态语义（D2-05，未就绪 / 失败都是 200）：
- * - `ready`：三元组命中产物 → 签发**短时签名地址**（D2-04：对象存储禁匿名读取）+ 写**一条** `action = preview` 审计；
- * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组，`dead` / 产物行缺失时的 `done` 都会被唤醒）→ 前端轮询；
+ * 就绪通道（S6-前置 起图片直签 + 查看器通道均同步 ready；产物通道段保留但无投递，见下）：
+ * - **图片直签**（S6-前置 · D6）：`isImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
+ *   status=ready、target=image、`pipelineVersion` / `generatedAt` 空（无产物语义），签发即写**一条**
+ *   `action = preview` 审计；不查 / 不落产物行、不投转换任务、不经 `deploy/preview`（字节 = 原对象）。
+ * - **查看器通道**（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `viewer` 非空、`target` / `url` 空，
+ *   与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置 + 审计。
+ *
+ * **产物通道三态（M4-05d · 保留段）**：S6-前置 起 `previewTargetsFor` 无投递通道（图片改直签、其余走查看器）——
+ * 该段对新请求**不可达**，保留 = structured 二期启用投递后复用（S6 退役评审另行处置）：
+ * - `ready`：三元组命中产物 → 短时签名地址 + **一条** `action = preview` 审计；
+ * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组）→ 前端轮询；
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
  *   （缓存态：管线修复靠 `PREVIEW_PIPELINE_VERSION` 递增失效）。
  *
@@ -41,13 +49,11 @@ const VIEWER_PERMISSIONS = {
  * - 判不出渲染通道（如 `.zip`）：`failed` + 「暂不支持在线预览」。
  * 两者都返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
  *
- * 查看器通道（S3 · ADR-030）：Office / 文本族 ready 为「无转换产物」形态 —— `viewer` 非空、`target` / `url` 空，
- * 与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置 + 审计。
- *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
  * 版本 404：`versionId` 给定但不属于该文件 / 不存在（A4-06「任意历史版本可预览」，缺省 = 当前版本）。
- * 审计只记**用户访问**（`object_type = file` + metadata `versionId` / `target` / `pipelineVersion`）：
- * 生成侧不写审计（否则一次预览两条，把「查看 / 下载」审计计数翻倍）。
+ * 审计只记**用户访问**（`object_type = file`；图片直签 = `versionId` / `target`，查看器 = `versionId` / `viewerKind` /
+ * `documentType`，产物通道 = `versionId` / `target` / `pipelineVersion`）：生成侧不写审计（否则一次预览两条，
+ * 把「查看 / 下载」审计计数翻倍）。
  */
 @Injectable()
 export class PreviewReadService {
@@ -64,7 +70,7 @@ export class PreviewReadService {
     private readonly config: AppConfig,
   ) {}
 
-  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 三元组三态。 */
+  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（图片直签 / 查看器 / 产物通道三态保留段）。 */
   async getPreview(fileId: string, versionId: string | null, actorId: string): Promise<FilePreviewResponse> {
     const file = await this.loadVisibleFile(fileId, actorId);
     const version = await this.resolveVersion(file, versionId);
@@ -72,9 +78,14 @@ export class PreviewReadService {
       return this.degrade(file.id, null, "文件尚无任何版本（未完成过上传），请下载查看");
     }
 
+    // S6-前置（D6）：图片 → 原对象短时签名直签（优先于产物通道判定：不投任务 / 不落产物行 / 不经 deploy/preview）。
+    if (isImageFile({ fileName: file.name, mime: version.mime })) {
+      return this.serveImageDirect(file, version, actorId);
+    }
+
     const targets = previewTargetsFor({ fileName: file.name, mime: version.mime });
     if (targets.length === 0) {
-      // S3（ADR-030）：Office / 文本族 → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
+      // S3（ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
       const viewerChannel = viewerChannelFor({ fileName: file.name, mime: version.mime });
       if (viewerChannel !== null) {
         return this.serveViewer(file, version, viewerChannel, actorId);
@@ -82,6 +93,8 @@ export class PreviewReadService {
       return this.degrade(file.id, version.id, "该文件类型暂不支持在线预览，请下载查看");
     }
 
+    // 产物通道三态（M4-05d · 保留段）：S6-前置（D6）起 `previewTargetsFor` 无投递通道（常量空表）——本段对新请求不可达，
+    // 保留 = structured 二期启用投递后复用（S6 退役评审另行处置）；新请求就绪路径 = 上方图片直签 / 查看器 / 降级。
     // 缓存键 = 三元组（内容哈希 + 管线版本 + 通道）；同一内容可有多个通道，逐个查已有产物。
     const pipelineVersion = this.config.env.PREVIEW_PIPELINE_VERSION;
     const keys: PreviewArtifactKey[] = targets.map((target) => ({
@@ -190,6 +203,44 @@ export class PreviewReadService {
       pipelineVersion: key.pipelineVersion,
       reason: null,
       generatedAt: row.generatedAt === null ? null : row.generatedAt.toISOString(),
+    };
+  }
+
+  /**
+   * 图片直签 ready（S6-前置 · D6）：原对象短时签名 —— 对齐产物通道 ready 的响应形状（契约不变）：
+   * status=ready、target=image、url=短时签名（**不传 fileName** → 内联渲染，缩略图 / 浮层共用）；
+   * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；签发即写**一条** `action = preview`
+   * 审计（D2-07：先签名后审计，地址没签发成功就不算一次「查看」）。
+   */
+  private async serveImageDirect(
+    file: FileRow,
+    version: FileVersionRow,
+    actorId: string,
+  ): Promise<FilePreviewResponse> {
+    const signed = await this.storage.signDownloadUrl({
+      objectKey: version.objectKey,
+      expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
+    });
+    await this.audit.record(this.database.db, {
+      actorId,
+      action: "preview",
+      objectType: "file",
+      objectId: file.id,
+      projectId: file.projectId,
+      summary: "预览文件：" + file.name + "（版本 v" + version.seq + " · 图片直签）",
+      metadata: { versionId: version.id, target: "image" },
+    });
+    return {
+      fileId: file.id,
+      versionId: version.id,
+      status: "ready",
+      target: "image",
+      viewer: null,
+      url: signed.url,
+      expiresAt: signed.expiresAt.toISOString(),
+      pipelineVersion: null,
+      reason: null,
+      generatedAt: null,
     };
   }
 

@@ -11,8 +11,14 @@
  * 全 15 列 —— 任务描述 / 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 / 输出成果文件 / 文件 /
  * 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 / 预计所需施工人数 / 实际完成日期 / 变更关联）。
  * 表仍是**只读** —— 工作台读面不带任务 version，不挂项目页那套点开编辑。折叠面板头常驻**「进入项目」**按钮
- * （Push 232 · 业务口径「增加进入项目按钮」）→ 项目详情缺省标签「项目总览」`#/project/{id}`（与问题表「在项目中
- * 查看」同一套深链口径，只是落点 = 总览；按钮在面板头右侧、不参与展开收起）。
+ * （Push 232 · 业务口径「增加进入项目按钮」）：落点由调用方给定 —— 「我的任务」= 项目详情缺省标签「项目总览」
+ * `#/project/{id}`；「我提出的问题」= 该项目「日报及问题 → 日报记录」（Push 242，见下条）；按钮在面板头右侧、
+ * 不参与展开收起。
+ *
+ * Push 242（业务口径 2026-10-08「这个页面的列要对齐吧 不然不美观」+「删除在项目中查看 进入项目直接进入日报记录页面
+ * 替代在项目中查看」）「我提出的问题」两处调整：① 问题表改 **`table-fixed` + `<colgroup>` 固定列宽** —— 各项目
+ * 折叠面板的同名列一一对齐（原 `table-auto` 按各自内容算宽，换一个项目列就飘）；② 行尾「在项目中查看」下架，
+ * 进入项目的入口收敛到面板头「进入项目」（定标 = 该项目「日报记录」）。
  *
  * 「我的计划」标签（Push 234 · 业务口径「增加一个我的计划页面」→「你只要把导航栏设计好 后续详细设计再说」）：
  * 导航栏第三枚标签 + 路由 `?tab=plan` 本刀就位；页面内容（数据口径 / 布局）随后续详细设计再做 —— 本刀只落登记卡。
@@ -44,6 +50,7 @@ import { FocusModeToggle } from "./components/FocusModeToggle";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS } from "./components/ReportIssuePanel";
 import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
 import { TrackerDots } from "./components/Tracker";
+import { docTypeCapsule } from "./components/DeliverablePicker";
 import { dateOnlyText, daysBetweenInclusive } from "./data/tasks";
 import type { ReportPhoto } from "./data/reports";
 import { usePhotoUrl } from "./fileApi";
@@ -309,15 +316,18 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
 
 /** 折叠面板（业务口径「未展开是项目名称和编号 下拉是具体我的任务」「也是折叠面板」）：
  *  收起 = 项目名称 + 编号（+ 右侧摘要 + 「进入项目」按钮）；展开 = 该项目下的内容（任务表 / 问题表）。
- *  「进入项目」是面板头里的独立锚点（Push 232）：点它跳 `#/project/{id}` 总览，不切换展开态。
+ *  「进入项目」是面板头里的独立锚点（Push 232）：点它走调用方给定的深链（Push 242 起按标签区分 ——
+ *  「我的任务」= 总览 / 「我提出的问题」= 该项目「日报记录」），不切换展开态。
  *  展开态 Push 233 起受控 + 按账号记忆（业务口径「这个下拉要有记忆」）：由 App 层偏好 workspaceOpenProjects 按标签分记
  *  已展开的项目 id（刷新 / 同账号换设备保持；不进地址）；面板壳 = 白卡 + 圆角描边 + 行悬停（与站内表格壳同一套材质）。 */
-function ProjectPanel({ projectId, projectCode, projectName, summary, open, onToggle, children }: {
+function ProjectPanel({ projectId, projectCode, projectName, summary, href, open, onToggle, children }: {
   projectId: string;
   projectCode: string;
   projectName: string;
   /** 收起态右侧摘要（计数 / 逾期小签）。 */
   summary: ReactNode;
+  /** 「进入项目」深链（Push 242 起由调用方给定：任务表 = 总览 / 问题表 = 该项目「日报记录」）。 */
+  href: string;
   /** 展开态（Push 233 起受控：由账号偏好按项目 id 记忆 —— 见 WorkspacePage 的 openProjects / openIds）。 */
   open: boolean;
   /** 切换展开态（点面板头触发；「进入项目」是独立锚点、不触发）。 */
@@ -342,7 +352,7 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, open, onTo
           <span className="ml-auto flex shrink-0 items-center gap-2">{summary}</span>
         </button>
         <a
-          href={projectViewHref(projectId, "overview")}
+          href={href}
           data-workspace-project-link={projectId}
           title={"进入项目：" + projectName + "（" + projectCode + "）"}
           className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
@@ -495,8 +505,8 @@ function TaskTable({ projectId, items, full, ready, focus }: {
                       <span className="text-xs text-zinc-300">—</span>
                     ) : (
                       <>
-                        <span className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600" title={deliverableTypes.join("、")}>
-                          {deliverableTypes[0]}
+                        <span className="min-w-0 truncate" title={deliverableTypes.join("、")}>
+                          {docTypeCapsule(deliverableTypes[0])}
                         </span>
                         {deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{deliverableTypes.length - 1}</span> : null}
                       </>
@@ -680,11 +690,22 @@ function IssuePhotos({ photos }: { photos: readonly ReportPhoto[] }) {
 }
 
 /** 展开区 ② 我提出的问题表（列口径照「问题追踪」完整六列）：日期 / 问题描述 / 问题归类 / 解决方案或建议 /
- *  问题附图 / 问题是否处理 + 行尾「在项目中查看」（窄屏横向滚动）。 */
+ *  问题附图 / 问题是否处理（窄屏横向滚动）。
+ *  Push 242：① `table-fixed` + `<colgroup>` 定死列宽（见 ISSUE_COL_WIDTHS）—— 各项目面板的同名列一一对齐
+ *  （原 `table-auto` 各自按内容算宽、换一个项目列就飘；业务口径「这个页面的列要对齐吧 不然不美观」）；
+ *  ② 行尾「在项目中查看」下架 —— 进项目的入口收敛到面板头「进入项目」（定标 = 该项目「日报记录」）。 */
+const ISSUE_COL_WIDTHS = ["10%", "21%", "10%", "21%", "27%", "11%"] as const;
+
 function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; focus: boolean }) {
   return (
     <div data-workspace-issue-table="" data-workspace-issue-focus={focus ? "true" : "false"} className="overflow-x-auto rounded-lg border border-zinc-200">
-      <table className="w-full min-w-[1280px] border-collapse text-left text-sm">
+      <table className="w-full min-w-[1280px] table-fixed border-collapse text-left text-sm">
+        {/* 定死六列宽度：跨面板同名列的 x 坐标逐列一致；长文本按列宽换行、不再把列撑开 */}
+        <colgroup>
+          {ISSUE_COL_WIDTHS.map((width, index) => (
+            <col key={String(index)} style={{ width }} />
+          ))}
+        </colgroup>
         <thead className="bg-zinc-50 text-zinc-500">
           <tr>
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">日期</th>
@@ -693,9 +714,6 @@ function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssu
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">解决方案或建议</th>
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题附图</th>
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题是否处理</th>
-            <th className="w-[110px] border-b border-zinc-200 px-4 py-2.5 font-medium">
-              <span className="sr-only">操作</span>
-            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
@@ -705,18 +723,18 @@ function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssu
             return (
               <tr key={issue.id} data-workspace-issue={issue.id} className={"align-top transition-colors " + (focus ? state.focusRowClass : "hover:bg-zinc-50/80")}>
                 <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{cnDateFull(issue.raisedAt)}</td>
-                <td className="min-w-[240px] px-4 py-3">
+                <td className="px-4 py-3">
                   <span className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>
                 </td>
                 <td className="px-4 py-3">
                   <CategoryTags values={issue.categories} />
                 </td>
-                <td className="min-w-[280px] px-4 py-3">
+                <td className="px-4 py-3">
                   <span data-workspace-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">
                     {detail === undefined || detail.solution === "" ? "—" : detail.solution}
                   </span>
                 </td>
-                <td className="min-w-[440px] px-4 py-3">
+                <td className="px-4 py-3">
                   <IssuePhotos photos={detail === undefined ? [] : detail.photos} />
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-center">
@@ -729,15 +747,6 @@ function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssu
                   >
                     {state.label}
                   </span>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 text-right">
-                  <a
-                    href={projectViewHref(issue.projectId, "daily", "issues")}
-                    title={"在项目中查看：" + issue.projectCode + " → 日报及问题 → 问题追踪"}
-                    className="text-xs font-medium text-zinc-500 underline-offset-2 transition hover:text-zinc-900 hover:underline"
-                  >
-                    在项目中查看
-                  </a>
                 </td>
               </tr>
             );
@@ -794,6 +803,7 @@ function MyTasksView({ data, focus, openIds, onToggleProject }: { data: ApiWorks
               projectCode={project.projectCode}
               projectName={project.projectName}
               summary={<TaskPanelSummary items={project.items} />}
+              href={projectViewHref(project.projectId, "overview")}
               open={openIds.has(project.projectId)}
               onToggle={() => {
                 onToggleProject(project.projectId);
@@ -836,6 +846,7 @@ function RaisedIssuesView({ issues, focus, openIds, onToggleProject }: { issues:
               projectCode={project.projectCode}
               projectName={project.projectName}
               summary={<span className="text-xs font-normal text-zinc-400">{"共 " + String(project.issues.length) + " 条"}</span>}
+              href={projectViewHref(project.projectId, "daily", "records")}
               open={openIds.has(project.projectId)}
               onToggle={() => {
                 onToggleProject(project.projectId);

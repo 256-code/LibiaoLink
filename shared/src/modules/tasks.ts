@@ -71,6 +71,13 @@ export const TaskSchema = z
       description:
         "变更关联（A1-07 / R01：**一条任务可关联多条变更**，写面「追加＋去重」）：数组顺序 = 关联先后（追加序，末位 = 最近一次变更）；空数组 = 无变更。前端「变更关联」列按本数组渲染多条变更徽标（悬浮显示变更日期）",
     }),
+    finalizedAt: DateTimeSchema.nullable().openapi({
+      description:
+        "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档",
+    }),
+    finalizedBy: UuidSchema.nullable().openapi({
+      description: "任务定档操作人（随文件定档同事务写入；与 finalizedAt 成对出现，同为 null = 未定档）",
+    }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
@@ -206,6 +213,14 @@ export const TaskCompleteResponseSchema = z
   .object({ task: TaskSchema, warnings: z.array(TaskGateWarningSchema) })
   .openapi("TaskCompleteResponse", { description: "完成结果（warnings 非空 = 已放行但存在未定档成果文件，R02 已入队）" });
 
+/** 任务定档提交（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）：抽屉头部开关二次确认后调用。
+ * 未定档 → 置位 finalizedAt / finalizedBy 并锁定（此后写口全 409 TASK_FINALIZED）；已定档 → 幂等短路（200 原样返回，不重复写）。 */
+export const TaskFinalizeBodySchema = z
+  .object({
+    version: VersionSchema.openapi({ description: "乐观锁版本（未定档路径必校验；已定档幂等短路不校验）" }),
+  })
+  .openapi("TaskFinalizeBody", { description: "任务定档提交（version = 抽屉当前行版本）" });
+
 /** 完成预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。 */
 export const TaskCanCompleteResponseSchema = z
   .object({
@@ -270,9 +285,11 @@ export const TaskStatusWriteSchema = z
   });
 
 /**
- * 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述 / 成果文件按 A1-17 生成后锁定，进度与完成日期走 /progress。
+ * 任务编辑（A10 / A12 · Push 70）：仅开放未锁定字段；任务描述按 A1-17 生成后锁定，进度与完成日期走 /progress。
  * Push 196 起例外：**无来源节点**的任务（看板「添加 → 临时任务」手工创建）的任务描述（title / titleEn）可走本接口直接改 ——
  * 节点 / 模板生成的任务仍锁定；带这俩字段请求节点任务 = 400 VALIDATION_FAILED。
+ * 2026-10-08（业务口径「文件输出成果也要可以选择」）：**输出成果文件（deliverableTypes）改为常规编辑开放** ——
+ * 原「生成后锁定、修正走管理员例外调整（locked-fields）」下架；locked-fields 端点自身保留（任务描述例外调整）。
  */
 export const TaskUpdateBodySchema = z
   .object({
@@ -299,12 +316,16 @@ export const TaskUpdateBodySchema = z
     estimatedDays: z.number().int().min(0).nullable().optional(),
     headcount: z.number().int().min(0).nullable().optional(),
     priority: PrioritySchema.nullable().optional(),
+    deliverableTypes: z.array(DocTypeSchema).optional().openapi({
+      description:
+        "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改",
+    }),
     note: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
   })
   .openapi("TaskUpdateBody", {
     description:
-      "编辑任务（乐观锁 version 必传；成果文件 / 阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**无来源节点**的临时任务可改，节点 / 模板生成的任务仍锁定（带字段请求 400）",
+      "编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架",
   });
 
 /** 从任务模板批量生成任务（「整套添加」）：按节点判重，已存在默认跳过。 */
@@ -340,11 +361,12 @@ export const TASK_BATCH_FAILURE_CODES = [
   "already_done",
   "version_conflict",
   "invalid_state",
+  "finalized",
 ] as const;
 
 export const TaskBatchFailureCodeSchema = z.enum(TASK_BATCH_FAILURE_CODES).openapi("TaskBatchFailureCode", {
   description:
-    "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败",
+    "批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败；finalized 任务已定档（不支持任何修改，Push 249）",
 });
 
 export const TaskBatchFailureSchema = z
@@ -428,9 +450,11 @@ export const TaskDeleteResponseSchema = z
 export type TaskDeleteResponse = z.infer<typeof TaskDeleteResponseSchema>;
 
 /**
- * 锁定字段例外调整（A1-17 / C9-07 · M3-05 · Push 153）：任务描述、输出成果文件按流程节点模板生成后锁定，
+ * 锁定字段例外调整（A1-17 / C9-07 · M3-05 · Push 153）：任务描述按流程节点模板生成后锁定，
  * 常规编辑（PATCH /tasks/{taskId}）不可达；确需修正时由**系统管理员**执行「例外调整」—— 原因必填并留痕（模板本身由管理员修正，C9-07）。
- * 「阶段性里程」一期任务无对应列（A1-17 映射修订），故 body 只开放下述三项。
+ * 2026-10-08（业务口径「文件输出成果也要可以选择」）：输出成果文件（deliverableTypes）改为常规编辑开放，
+ * 常规路径见 TaskUpdateBodySchema；本端点 body 该字段保留（既有例外修正通道不动）。
+ * 「阶段性里程」一期任务无对应列（A1-17 映射修订），故 body 不做字段扩展。
  */
 export const TaskLockedFieldsAdjustBodySchema = z
   .object({

@@ -2,10 +2,20 @@
  * 文件库客户端（Push 216 · 日报 / 问题附图上传与预览接线；Push 226 · 任务「文件」列 / 抽屉上传接线）。
  * Push 226 续：任务文件删除（recycleFile —— 先读 version 再移入回收站）与图片点击预览（isImageFileName + ensurePreviewUrl）。
  * Push 226 续二：文件改名（renameFile —— PATCH /files/{id}，先读 version 再写）与列表「文件」列
- *   显示文件名所需的项目文件名单（fetchTaskFileNames —— 列表接口不带文件名，这里按项目一次拉全量，免 N+1）。
- * Push 226 续三：PDF / Office / 文本点击预览（previewKindOf —— 与 server preview.targets.ts 同口径，走浏览器内置 PDF 查看器）。
+ *   显示文件名所需的项目文件名单（fetchTaskFiles —— 列表接口不带文件名，这里按项目一次拉全量，免 N+1；Push 246 起携 id 供「文件」列下拉预览 / 删除）。
+ * Push 226 续三：PDF / Office / 文本点击预览（previewKindOf —— 与 server preview.targets.ts 同口径）。
  * Push 226 续四：原文件下载（fetchDownloadUrl + triggerDownload —— 版本短时签名 attachment + 原文件名；
- *   与预览转换件区分：Office / 文本的预览浮层里是转换出的 PDF，下载始终拿原文件）。
+ *   与预览浮层区分：下载始终拿原文件、写 download 审计）。
+ * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
+ *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
+ * 2026-10-08：PDF 并入查看器通道（业务口径「统一用onlyoffice」）—— 服务端返回 viewer，本文件按响应裁决、无分支。
+ * 2026-10-08 续：文件替换（replaceFileContent —— 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
+ *   未定档（draft）直替 = intent=version + fileId（版本链追加、名称 / 归属不变）；已定档 / 已变更 = intent=change
+ *   + change.reason 必填（A4-13 申请即通过，完成上传时同事务生效）。
+ *   Push 251 撤销：业务口径「取消这个替换按钮」→ UI 入口与替换流程整体撤除（本函数保留、未接线；服务端变更通道不动）。
+ * 2026-10-08 续二（Push 249）：定档上传（uploadFile / uploadFiles / replaceFileContent 的 finalize 选项 + finalizeFile）——
+ *   业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」：传输完成即定档该文件
+ *   （POST /files/{id}/finalize），挂接任务随文件定档一并锁定（服务端同事务）：此后任务写口一律 409 TASK_FINALIZED，修改走变更。
  * 上传链路（D2 分片直传，契约 shared/src/modules/files.ts；参考实现 server/scripts/m4-upload-replay.mjs）：
  *   POST /api/v1/files/uploads（intent=version，contentHash = SHA-256）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/parts 取预签名分片 URL
@@ -25,8 +35,24 @@ type UploadPartsResponse = { parts: Array<{ partNumber: number; url: string }> }
 
 type UploadCompleteResponse = { file: { id: string; name: string } };
 
-/** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址。 */
-type FilePreviewResponse = { status: string; url: string | null };
+/** ONLYOFFICE 查看器配置（契约 PreviewViewer 子集 · S4 直接组装 DocEditor 配置；token = 四段逐字签发）。 */
+export type PreviewViewerConfig = {
+  kind: string;
+  docServerUrl: string;
+  documentType: "word" | "cell" | "slide";
+  document: { title: string; url: string; fileType: string; key: string };
+  editorConfig: { mode: "view"; lang: string; user: { id: string; name: string } };
+  permissions: { edit: boolean; download: boolean; print: boolean; comment: boolean; chat: boolean; fillForms: boolean; protect: boolean };
+  token: string;
+};
+
+/** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址 / 查看器配置（两通道互斥）。 */
+type FilePreviewResponse = {
+  status: string;
+  url: string | null;
+  viewer: PreviewViewerConfig | null;
+  reason: string | null;
+};
 
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buffer);
@@ -36,12 +62,48 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
 }
 
 /** 上传文件的可选关联（taskId 给出时文件挂到该任务；file_links 同事务建立）。 */
-export type UploadFileOptions = { taskId?: string };
+export type UploadFileOptions = {
+  taskId?: string;
+  /** 定档上传（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：传输完成即对该文件定档
+   *  （POST /files/{id}/finalize）—— 挂接任务随文件定档一并锁定（服务端同事务、幂等）。 */
+  finalize?: boolean;
+};
 
 /**
  * 上传一个文件 / Blob 到站内文件库（M4-01 分片直传；任务成果文件与日报附图共用一条链路）。
  * name 单独传：剪贴板图片的 File 名与业务名不一致（见 uploadPhoto）；options.taskId 关联任务。返回新文件的 id。
  */
+/** 分片直传公共尾段（uploadFile / replaceFileContent 共用）：取分片签名 → 逐片原样 PUT → complete。 */
+async function transferChunks(
+  fileId: string,
+  upload: { id: string; partSizeBytes: number; totalParts: number },
+  buffer: ArrayBuffer,
+  contentHash: string,
+): Promise<void> {
+  const partNumbers: number[] = [];
+  for (let index = 1; index <= upload.totalParts; index += 1) {
+    partNumbers.push(index);
+  }
+  const signed = await apiSend<UploadPartsResponse>(
+    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/parts",
+    "POST",
+    { partNumbers },
+  );
+  for (const part of signed.parts) {
+    const start = (part.partNumber - 1) * upload.partSizeBytes;
+    const slice = buffer.slice(start, Math.min(start + upload.partSizeBytes, buffer.byteLength));
+    const response = await fetch(part.url, { method: "PUT", body: slice });
+    if (!response.ok) {
+      throw new Error("文件上传失败（第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + "）");
+    }
+  }
+  await apiSend<UploadCompleteResponse>(
+    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/complete",
+    "POST",
+    { contentHash },
+  );
+}
+
 export async function uploadFile(projectId: string, file: Blob, name: string, options: UploadFileOptions = {}): Promise<string> {
   const buffer = await file.arrayBuffer();
   const contentHash = await sha256Hex(buffer);
@@ -54,32 +116,45 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
     intent: "version",
     taskId: options.taskId,
   });
-  const fileId = created.file.id;
-  const uploadId = created.upload.id;
-  const partNumbers: number[] = [];
-  for (let index = 1; index <= created.upload.totalParts; index += 1) {
-    partNumbers.push(index);
+  await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  if (options.finalize === true) {
+    await finalizeFile(created.file.id);
   }
-  const signed = await apiSend<UploadPartsResponse>(
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/parts",
-    "POST",
-    { partNumbers },
-  );
-  const partSize = created.upload.partSizeBytes;
-  for (const part of signed.parts) {
-    const start = (part.partNumber - 1) * partSize;
-    const slice = buffer.slice(start, Math.min(start + partSize, buffer.byteLength));
-    const response = await fetch(part.url, { method: "PUT", body: slice });
-    if (!response.ok) {
-      throw new Error("文件上传失败（第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + "）");
-    }
+  return created.file.id;
+}
+
+/**
+ * 替换文件内容（2026-10-08 · 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
+ * 未定档（draft）= 直接替换 —— intent=version + fileId（A2-10「未定档文件可直接替换」；版本链追加，
+ * 名称 / 归属不变 —— 契约要求给出 fileId 时 name 与目标一致）；已定档 / 已变更（final / changed）= 走变更
+ * （A4-13 申请即通过）—— intent=change + change.reason 必填，完成上传时同事务生效（文件状态 → changed）。
+ * 替换完成后清一次该文件的预览签名缓存（旧版本 URL 作废）。
+ * finalize（Push 249）= 未定档直替后定档（任务随定档锁定）；已定档 / 已变更走变更、不定档（change 路径下忽略）。
+ * Push 251 撤销（业务口径「取消这个替换按钮」）：入口与流程已从 UI 撤除，本函数保留未接线（供后续需要时复用）。
+ */
+export async function replaceFileContent(projectId: string, target: TaskFileRef, file: Blob, reason: string | null, finalize = false): Promise<void> {
+  const needsChange = target.status === "final" || target.status === "changed";
+  const changeReason = reason === null ? "" : reason.trim();
+  if (needsChange && changeReason === "") {
+    throw new Error("已定档文件替换需填写变更原因");
   }
-  await apiSend<UploadCompleteResponse>(
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/complete",
-    "POST",
-    { contentHash },
-  );
-  return fileId;
+  const buffer = await file.arrayBuffer();
+  const contentHash = await sha256Hex(buffer);
+  const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
+    projectId,
+    name: target.name,
+    sizeBytes: file.size,
+    mime: file.type === "" ? undefined : file.type,
+    contentHash,
+    intent: needsChange ? "change" : "version",
+    fileId: target.id,
+    change: needsChange ? { reason: changeReason } : undefined,
+  });
+  await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  invalidatePreview(target.id);
+  if (finalize && !needsChange) {
+    await finalizeFile(target.id);
+  }
 }
 
 /** 批量上传（任务「文件」列 / 抽屉共用）：逐份直传；每份完成回调一次（done = 已完成份数）。 */
@@ -108,19 +183,27 @@ export function isImageFileName(name: string): boolean {
   return IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension));
 }
 
-/** PDF 查看器族（Push 226 续三 · 业务口径「这个pdf我也打不开啊」）：PDF 源直通、Office / 文本经转换器出 PDF
- *  （与 server preview.targets.ts 同一口径），统一走浏览器内置查看器预览。 */
-const PDF_PREVIEW_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".rtf", ".txt", ".csv", ".html", ".htm"];
+/** PDF 查看器族（Push 226 续三 · 业务口径「这个pdf我也打不开啊」）：PDF 源直通（S4 起 Office / 文本族
+ *  不再经转换器出 PDF —— 改走 ONLYOFFICE 查看器通道，这里只剩 PDF 源本身）。 */
+const PDF_PREVIEW_EXTENSIONS = [".pdf"];
+
+/** ONLYOFFICE 查看器族（S4 · 名单与 server preview.targets.ts 的 viewerChannelFor 对齐）：Office（含宏变体）
+ *  + 文本族（txt / csv / html / htm）。服务端负责最终通道裁决；判不出的文件前端不出预览入口。 */
+const OFFICE_VIEWER_EXTENSIONS = [".doc", ".docx", ".docm", ".odt", ".rtf", ".txt", ".html", ".htm", ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".ppt", ".pptx", ".pptm", ".odp"];
 
 /** 可视预览通道：image = 浏览器直渲染（40×40 缩略图 + img 浮层）；pdf = 浏览器内置查看器（iframe 浮层）；
+ *  office = ONLYOFFICE 查看器外壳（S4：api.js + DocEditor，超时 / 重试 / 降级「请下载」）；
  *  判不出 = null（抽屉里没有预览入口，只有改名 / 删除）。 */
-export type FilePreviewKind = "image" | "pdf";
+export type FilePreviewKind = "image" | "pdf" | "office";
 export function previewKindOf(name: string): FilePreviewKind | null {
   if (isImageFileName(name)) {
     return "image";
   }
   const lower = name.toLowerCase();
-  return PDF_PREVIEW_EXTENSIONS.some((extension) => lower.endsWith(extension)) ? "pdf" : null;
+  if (PDF_PREVIEW_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
+    return "pdf";
+  }
+  return OFFICE_VIEWER_EXTENSIONS.some((extension) => lower.endsWith(extension)) ? "office" : null;
 }
 
 /** 删除文件 = 移入回收站（M4-02；任意状态可删、默认保留 30 天可恢复）。
@@ -136,6 +219,15 @@ export async function renameFile(fileId: string, name: string): Promise<void> {
   await apiSend<{ id: string }>("/api/v1/files/" + encodeURIComponent(fileId), "PATCH", { name, version: detail.version });
 }
 
+/** 文件定档（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
+ *  POST /files/{id}/finalize —— draft → final（锁版、至少 1 个版本）；挂接任务随文件定档一并定档（服务端同事务、幂等）：
+ *  此后任务不支持任何修改（写口一律 409 TASK_FINALIZED），修改走变更（A4-13 申请即通过）。
+ *  乐观锁 version 先读详情取回（同 recycle / rename 口径）。 */
+export async function finalizeFile(fileId: string): Promise<void> {
+  const detail = await apiRequest<{ version: number }>("/api/v1/files/" + encodeURIComponent(fileId));
+  await apiSend<{ id: string }>("/api/v1/files/" + encodeURIComponent(fileId) + "/finalize", "POST", { version: detail.version });
+}
+
 /** 下载签名响应（契约 FileDownloadUrlResponse 子集）。 */
 type FileDownloadUrlResponse = { url: string; fileName: string; sizeBytes: number; expiresAt: string };
 
@@ -143,7 +235,7 @@ type FileDownloadUrlResponse = { url: string; fileName: string; sizeBytes: numbe
  * 取**原文件**的短时签名下载地址（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：
  * `GET /files/{id}/versions/{versionId}/download-url`（版本必填 —— 先读详情拿当前版本）。
  * 契约语义：签名带 `Content-Disposition: attachment` + 原文件名 → 浏览器落盘的是**原文件字节**
- * （与预览产物区分：Office / 文本的预览浮层里是转换出的 PDF）；服务端写 download 审计、判 `file.download` 权限。
+ * （与预览区分：S4 起 Office / 文本族走 ONLYOFFICE 查看器渲染 —— 下载始终拿原文件）；服务端写 download 审计、判 `file.download` 权限。
  */
 export async function fetchDownloadUrl(fileId: string): Promise<{ url: string; fileName: string }> {
   const detail = await apiRequest<{ currentVersion: { id: string } | null }>("/api/v1/files/" + encodeURIComponent(fileId));
@@ -168,30 +260,35 @@ export function triggerDownload(url: string, fileName: string): void {
   anchor.remove();
 }
 
-/** 项目文件库名单（列表「文件」列显示文件名用）：按项目分页取满（契约 limit 上限 200、默认排除 recycled），
- *  返回 taskId → 文件名数组（服务端默认序 = 最新在前）；列表接口不带文件名，逐行反查会 N+1，这里一次拉全量。 */
-export async function fetchTaskFileNames(projectId: string): Promise<Map<string, string[]>> {
-  const names = new Map<string, string[]>();
+/** 任务文件引用（Push 246；2026-10-08 携 status 供「替换」裁决）：任务列表「文件」列下拉与单元格展示共用 ——
+ *  id 供预览 / 删除 / 替换，name 供展示，status（draft / final / changed / archived）= 替换走直替还是变更的分支依据。 */
+export type TaskFileRef = { id: string; name: string; status: string };
+
+/** 项目文件库名单（任务「文件」列下拉 / 单元格文件名用 · Push 246 起携 id）：按项目分页取满（契约 limit 上限 200、默认排除 recycled），
+ *  返回 taskId → 文件引用数组（服务端默认序 = 最新在前）；列表接口不带文件名，逐行反查会 N+1，这里一次拉全量；
+ *  Push 246 起带 id（下拉里点击文件名 = 预览、行尾「删除」= 移入回收站）；2026-10-08 起带 status（行尾「替换」按状态直替 / 走变更）。 */
+export async function fetchTaskFiles(projectId: string): Promise<Map<string, TaskFileRef[]>> {
+  const files = new Map<string, TaskFileRef[]>();
   for (let page = 1; page <= 20; page += 1) {
-    const list = await apiRequest<{ items: Array<{ name: string; taskId: string | null }>; total: number }>(
+    const list = await apiRequest<{ items: Array<{ id: string; name: string; taskId: string | null; status: string }>; total: number }>(
       "/api/v1/projects/" + encodeURIComponent(projectId) + "/files?limit=200&page=" + String(page),
     );
     for (const file of list.items) {
       if (file.taskId === null) {
         continue;
       }
-      const current = names.get(file.taskId);
+      const current = files.get(file.taskId);
       if (current === undefined) {
-        names.set(file.taskId, [file.name]);
+        files.set(file.taskId, [{ id: file.id, name: file.name, status: file.status }]);
       } else {
-        current.push(file.name);
+        current.push({ id: file.id, name: file.name, status: file.status });
       }
     }
     if (list.items.length === 0 || page * 200 >= list.total) {
       break;
     }
   }
-  return names;
+  return files;
 }
 
 /** fileId → 已就绪的预览签名（无 = 还没取到 / 取不到）。 */
@@ -212,37 +309,62 @@ function subscribePreview(listener: () => void): () => void {
   };
 }
 
-/** 取预览签名（带缓存）。
- *  not_ready 轮询预算 = 20 秒（Push 226 续：worker 的 outbox 领取间隔默认 5 秒 —— 首次预览「点开才排队转换」，
- *  6 秒窗口在真机上会偶发拿不到；failed 立即返回，不会白等）。 */
-export async function ensurePreviewUrl(fileId: string): Promise<string | null> {
+/** 替换 / 内容更新后清掉该文件的预览签名缓存（缓存 URL 指着旧版本）。 */
+export function invalidatePreview(fileId: string): void {
+  if (previewUrls.delete(fileId)) {
+    notifyPreview();
+  }
+}
+
+/** 预览打开结果（S4 两通道裁决）：url = 产物通道短时签名；viewer = 查看器通道配置；unavailable = 未就绪超时 / 失败 / 异常。 */
+export type PreviewOpenOutcome =
+  | { kind: "url"; url: string }
+  | { kind: "viewer"; viewer: PreviewViewerConfig }
+  | { kind: "unavailable"; reason: string | null };
+
+/** 取预览打开输入（带 URL 缓存 + 同文件并发去重）。就绪轮询预算 = 20 秒（Push 226 续：worker 的 outbox 领取间隔
+ *  默认 5 秒 —— 首次预览「点开才排队转换」，6 秒窗口在真机上会偶发拿不到；failed 立即返回，不会白等；
+ *  查看器通道（Office / 文本）就绪即签发、无需等待转换）。S4：外壳按响应裁决 viewer / url 两通道。 */
+export async function ensurePreviewOutcome(fileId: string): Promise<PreviewOpenOutcome> {
   const cached = previewUrls.get(fileId);
   if (cached !== undefined) {
-    return cached;
+    return { kind: "url", url: cached };
   }
   if (previewLoading.has(fileId)) {
-    return null;
+    return { kind: "unavailable", reason: null };
   }
   previewLoading.add(fileId);
   try {
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const preview = await apiRequest<FilePreviewResponse>("/api/v1/files/" + encodeURIComponent(fileId) + "/preview");
-      if (preview.status === "ready" && preview.url !== null) {
-        previewUrls.set(fileId, preview.url);
-        notifyPreview();
-        return preview.url;
+      if (preview.status === "ready") {
+        if (preview.viewer !== null) {
+          return { kind: "viewer", viewer: preview.viewer };
+        }
+        if (preview.url !== null) {
+          previewUrls.set(fileId, preview.url);
+          notifyPreview();
+          return { kind: "url", url: preview.url };
+        }
+        return { kind: "unavailable", reason: null };
       }
       if (preview.status === "failed") {
-        return null;
+        return { kind: "unavailable", reason: preview.reason };
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return null;
+    return { kind: "unavailable", reason: null };
   } catch {
-    return null;
+    return { kind: "unavailable", reason: null };
   } finally {
     previewLoading.delete(fileId);
   }
+}
+
+/** 取预览签名（带缓存；产物通道专用 —— 图片缩略图 / 附图懒取、PDF 浮层）。查看器通道走 ensurePreviewOutcome。 */
+export async function ensurePreviewUrl(fileId: string): Promise<string | null> {
+  const outcome = await ensurePreviewOutcome(fileId);
+  return outcome.kind === "url" ? outcome.url : null;
 }
 
 /** 附图展示地址：本地 blob（会话内刚贴的图）优先，否则懒取服务端预览签名并订阅缓存变化。 */

@@ -30,7 +30,7 @@ export const FilePhotoRefSchema = z
 
 export const UploadIntentSchema = z.enum(["version", "change"]).openapi("UploadIntent", {
   description:
-    "上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）",
+    "上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）；**目标任务已定档（Task.finalizedAt 非空）时 version 意图一律 409 TASK_FINALIZED**（Push 249：任务定档后不支持任何修改，修改走变更）",
 });
 
 export const UploadSessionStatusSchema = z
@@ -154,7 +154,7 @@ export const UploadCreateBodySchema = z
     UploadCreateBaseSchema.extend({
       intent: z.literal("version"),
       fileId: UuidSchema.optional().openapi({
-        description: "目标文件（可选）：省略 = 新建文件；给出 = 对既有未定档（draft）文件替换 / 追加新版本（系统功能书 A2-10「未定档文件可直接替换」）。目标非 draft → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；给出时名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空",
+        description: "目标文件（可选）：省略 = 新建文件；给出 = 对既有未定档（draft）文件替换 / 追加新版本（系统功能书 A2-10「未定档文件可直接替换」）。目标非 draft → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；给出时名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空；**任务定档（Push 249）**：目标任务已定档（Task.finalizedAt 非空）时，intent=version 的挂接（新建 / 直接替换 / 追加版本）一律 409 TASK_FINALIZED",
       }),
     }),
     UploadCreateBaseSchema.extend({
@@ -250,7 +250,7 @@ export const FileVersionListResponseSchema = z
   .openapi("FileVersionListResponse");
 
 export const FileFinalizeBodySchema = z.object({ version: VersionSchema }).openapi("FileFinalizeBody", {
-  description: "定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换",
+  description: "定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换；**挂接任务的文件定档时，同事务把该任务一并定档**（Push 249：任务定档后不支持任何修改，见 Task.finalizedAt / 409 TASK_FINALIZED）",
 });
 
 export const FileRollbackBodySchema = z
@@ -379,8 +379,8 @@ export const PreviewViewerSchema = z
   .object({
     kind: PreviewViewerKindSchema,
     docServerUrl: z.string().openapi({ description: "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）" }),
-    documentType: z.enum(["word", "cell", "slide"]).openapi("PreviewViewerDocumentType", {
-      description: "文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）",
+    documentType: z.enum(["word", "cell", "slide", "pdf"]).openapi("PreviewViewerDocumentType", {
+      description: "文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）",
     }),
     document: PreviewViewerDocumentSchema,
     editorConfig: PreviewViewerEditorConfigSchema,

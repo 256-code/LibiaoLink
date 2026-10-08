@@ -1,7 +1,7 @@
 import { z } from "../zod.ts";
 import { DateOnlySchema, DateTimeSchema, PageQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { StageKeySchema } from "../common/dicts.ts";
-import { IssueCategorySchema } from "./issues.ts";
+import { IssueCategoryListSchema, IssueCategorySchema } from "./issues.ts";
 import { CalendarDayKindSchema } from "./calendar.ts";
 import { FilePhotoRefSchema } from "./files.ts";
 import { ProjectMemberRoleSchema } from "./projects.ts";
@@ -17,6 +17,9 @@ import { ProjectMemberRoleSchema } from "./projects.ts";
  * （file_links(object_type=issue)），问题侧可独立增删；⑤ 处理时限 due_at 删除（A3-14 / 规则 A03 / ADR-026 随批下线）；
  * ⑥ 新增 DELETE 成对删除（删日报 = 连其全部问题）。
  * 一期口径（差异登记）：补填 = 对过去日期首次提交；不做版本历史（「补填保留原始提交记录」以状态 + 提交时间表达，随迭代再评估）。
+ * Push 243（业务口径 2026-10-08 · 代做 wmj 线，请 wmj 复核）：① 新增**内联问题清单** `issues`（`ReportIssueDraft` 1~N 条）—— 一次填报可带多条问题（一天可有多个类型的问题，
+ * 提交后逐条生成独立问题记录，便于追溯）；与旧单问题字段（foundIssue / issueCategories / suggestion / issuePhotoFileIds）互斥（二选一）；
+ * ② 「问题处理人 / 责任人」= `ownerId`（显式给出落责任人；缺省仍按归类自动分派责任部门，A3-12）。
  */
 
 /** 日报状态（A3-02）：draft / submitted / supplement。 */
@@ -59,6 +62,36 @@ export const DailyReportSchema = z
 
 export type DailyReport = z.infer<typeof DailyReportSchema>;
 
+/** 日报内联问题草稿（Push 243 · 业务口径「日报填写问题时新增 添加问题按钮 … 提交后各自独立便于追溯」+「新加可以选择 问题处理人/责任人」）：
+ *  一次填报可携带多条问题（1~N），提交时逐条生成独立问题记录 —— 各自归类 / 处理人 / 解决方案 / 附图。
+ *  `ownerId` 缺省（undefined / null）= 按归类自动分派责任部门（A3-12）；显式给出 = 直接落该责任人为处理人。 */
+export const ReportIssueDraftSchema = z
+  .object({
+    title: z.string().min(1).max(2000).openapi({ description: "问题描述（原文；问题记录标题超 500 字截短落库）" }),
+    categories: IssueCategoryListSchema.openapi({ description: "问题归类（多值 ≥1 项；C9 十项）" }),
+    ownerId: UuidSchema.nullable().optional().openapi({ description: "问题处理人 / 责任人（缺省 / null = 按归类自动分派责任部门）" }),
+    solution: z.string().min(1).max(2000).optional().openapi({ description: "解决方案或建议（落问题的 solution）" }),
+    photoFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "该问题附图（文件 id；提交时直接挂到生成的问题）" }),
+  })
+  .openapi("ReportIssueDraft", { description: "日报内联问题草稿（一次填报 1~N 条；提交时逐条生成问题记录）" });
+
+export type ReportIssueDraft = z.infer<typeof ReportIssueDraftSchema>;
+
+/** 旧单问题字段是否携带内容（Push 243 · issues 二选一的判定基准）：null / 空数组 / 空串 / 全空白都算未携带 —— 「清空旧字段」的正常写法不该被判成二选一冲突。 */
+function legacyIssueInputUsed(value: {
+  foundIssue?: string | null;
+  issueCategories?: readonly string[] | null;
+  suggestion?: string | null;
+  issuePhotoFileIds?: readonly string[];
+}): boolean {
+  return (
+    (value.foundIssue ?? "").trim() !== "" ||
+    (value.issueCategories ?? []).length > 0 ||
+    (value.suggestion ?? "").trim() !== "" ||
+    (value.issuePhotoFileIds ?? []).length > 0
+  );
+}
+
 /** 新报一天的日报（A3-01 / A3-02 · Push 215：同人同项目同日可多条 —— 原「一人一天一条」唯一约束与 409 已删除，同日多条按创建时间区分）。 */
 export const DailyReportCreateBodySchema = z
   .object({
@@ -73,8 +106,16 @@ export const DailyReportCreateBodySchema = z
     stageKeys: z.array(StageKeySchema).max(9).optional().openapi({ description: "关联阶段（A3-03 多选，九阶段字典；须为合法阶段键）" }),
     photoFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "现场工作附图（文件 id 整体替换；须为本项目已上传文件，上限 30 张）" }),
     issuePhotoFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "当前问题附图（文件 id 整体替换；提交生成问题时转挂到问题）" }),
+    issues: z.array(ReportIssueDraftSchema).min(1).max(50).optional().openapi({ description: "内联问题清单（1~N 条；与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥 —— 二选一）" }),
   })
   .superRefine((value, ctx) => {
+    // Push 243：新口径（issues 非空）与旧单问题字段**按内容**互斥 —— 显式 null / 空数组（清空旧字段的正常写法）不算旧字段内容。
+    if (value.issues !== undefined && value.issues.length > 0) {
+      if (legacyIssueInputUsed(value)) {
+        ctx.addIssue({ code: "custom", message: "issues 与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥（新口径用 issues）", path: ["issues"] });
+      }
+      return;
+    }
     if (value.foundIssue !== undefined && value.foundIssue.trim().length > 0 && (value.issueCategories === undefined || value.issueCategories.length === 0)) {
       ctx.addIssue({ code: "custom", message: "「现场发现问题」非空时问题归类必填（A3-04）", path: ["issueCategories"] });
     }
@@ -97,8 +138,16 @@ export const DailyReportUpdateBodySchema = z
     stageKeys: z.array(StageKeySchema).max(9).optional().openapi({ description: "关联阶段整体替换（缺省 = 不改）" }),
     photoFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "现场工作附图整体替换（缺省 = 不改；空数组 = 清空）" }),
     issuePhotoFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "当前问题附图整体替换（缺省 = 不改；空数组 = 清空）；该日报已生成问题时转挂目标 = 该问题" }),
+    issues: z.array(ReportIssueDraftSchema).max(50).optional().openapi({ description: "内联问题清单整体替换（草稿 → 提交时逐条生成问题；空数组 = 清空；非空时与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥）" }),
   })
   .superRefine((value, ctx) => {
+    // Push 243：同 create —— issues 非空时与旧单问题字段（按内容）互斥；issues = [] 是「清空清单」的正常写法。
+    if (value.issues !== undefined && value.issues.length > 0) {
+      if (legacyIssueInputUsed(value)) {
+        ctx.addIssue({ code: "custom", message: "issues 与 foundIssue / issueCategories / suggestion / issuePhotoFileIds 互斥（新口径用 issues）", path: ["issues"] });
+      }
+      return;
+    }
     if (value.foundIssue !== undefined && value.foundIssue !== null && value.foundIssue.trim().length > 0 && (value.issueCategories === undefined || value.issueCategories === null || value.issueCategories.length === 0)) {
       ctx.addIssue({ code: "custom", message: "「现场发现问题」非空时问题归类必填（A3-04）", path: ["issueCategories"] });
     }

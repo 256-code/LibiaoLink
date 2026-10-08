@@ -15,7 +15,7 @@ import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
 import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
-import { fetchTaskFileNames, recycleFile, renameFile, uploadFiles } from "./fileApi";
+import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
@@ -25,6 +25,7 @@ import {
   deleteTask,
   fetchProjectSummary,
   fetchProjectTasks,
+  finalizeTask,
   stageKeyOfName,
   statusWriteValue,
   taskWriteMessage,
@@ -117,9 +118,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 原「五层内存覆盖」（进度 / 字段编辑 / 看板顺序 / 行内删除 / 新增任务）随接线整体下线 —— 写成功即回读。
    */
   const [rawTasks, setRawTasks] = useState<ProjectTask[]>([]);
-  /** 任务 → 文件名数组（Push 226 续二）：「文件」列显示文件名 / 「+N」用 —— 随整表重取一起刷新
-   *  （列表接口不带文件名，这里按项目走文件库列表一次拉全量，见 fileApi.fetchTaskFileNames）。 */
-  const [taskFileNames, setTaskFileNames] = useState<Map<string, string[]>>(new Map());
+  /** 任务 → 文件引用数组（Push 226 续二；Push 246 起携 id——「文件」列下拉预览 / 删除用）：随整表重取一起刷新
+   *  （列表接口不带文件名，这里按项目走文件库列表一次拉全量，见 fileApi.fetchTaskFiles）。 */
+  const [taskFiles, setTaskFiles] = useState<Map<string, TaskFileRef[]>>(new Map());
   const [summary, setSummary] = useState<ApiProjectSummary | null>(null);
   /** 取数版本号：换项目、或新建 / 删除 / 排序 / 版本冲突后需要整表重取时 +1。 */
   const [dataVersion, setDataVersion] = useState(0);
@@ -205,25 +206,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (projectId === null) {
       setRawTasks([]);
       setSummary(null);
-      setTaskFileNames(new Map());
+      setTaskFiles(new Map());
       return undefined;
     }
     let alive = true;
     setDataLoading(true);
     void (async () => {
       try {
-        const [list, card, names] = await Promise.all([
+        const [list, card, files] = await Promise.all([
           fetchProjectTasks(projectId),
           fetchProjectSummary(projectId),
-          // 文件名映射是次要信息：取不到就退回「N 份」计数展示，不打断整表
-          fetchTaskFileNames(projectId).catch(() => new Map<string, string[]>()),
+          // 文件映射是次要信息：取不到就退回「N 份」计数展示，不打断整表
+          fetchTaskFiles(projectId).catch(() => new Map<string, TaskFileRef[]>()),
         ]);
         if (!alive) {
           return;
         }
         setRawTasks(list.items.map((item) => toUiTask(item)));
         setSummary(card);
-        setTaskFileNames(names);
+        setTaskFiles(files);
         setDataError(null);
         // 列表一次取满（契约 limit 上限 200）：超了先提示，按需分页随搜索那一刀接线
         if (list.total > list.items.length) {
@@ -301,16 +302,20 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   /**
    * 任务文件上传（Push 226 · 「文件」列与任务抽屉共用一条链路）：逐份分片直传文件库并关联任务（taskId），
    * 完成后整表重取刷新文件计数（文件不改变项目时间，不触发 onTaskEdited）；失败走统一写入错误出口（toolError 提示条）。
+   * finalize（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
+   * 每份传完即定档（files.finalize），任务随文件定档一并锁定（此后写口一律 409 TASK_FINALIZED）。
    */
-  const handleUploadTaskFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void): Promise<void> => {
+  const handleUploadTaskFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize = false): Promise<void> => {
     if (projectId === null) {
       return Promise.resolve();
     }
     return (async () => {
       try {
-        await uploadFiles(projectId, files, { taskId, onProgress });
+        await uploadFiles(projectId, files, { taskId, onProgress, finalize });
         reloadAll();
       } catch (error) {
+        // 可能已部分成功（逐份直传中途失败 / 定档被 409 拦下）：先整表重取让计数与状态归位，再走统一错误出口
+        reloadAll();
         reportWriteError(error);
       }
     })();
@@ -385,6 +390,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   };
 
   /** 实际完成日期（§6.9）：填 = 完成（满格 + 该日期）、清 = 退回进行中（3/4 格，服务端同时清掉完成日期）。 */
+
+  /**
+   * 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：未定档 → 置位锁定（此后写口全 409 TASK_FINALIZED；文件修改走变更）；
+   * 已定档 → 服务端幂等原样返回（响应仍整行替换，开关停在「已」态）。
+   */
+  const handleFinalizeTask = (taskId: string) => {
+    const row = rowOf(taskId);
+    if (projectId === null || row === undefined) {
+      return;
+    }
+    void (async () => {
+      try {
+        replaceRow(await finalizeTask(projectId, taskId, row.version));
+        await afterWrite();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
+  };
   const handleSetActualEnd = (taskId: string, iso: string) => {
     const row = rowOf(taskId);
     if (projectId === null || row === undefined) {
@@ -434,6 +458,10 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (patch.priority !== undefined) {
       body.priority = patch.priority;
     }
+    // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：常规编辑开放，传数组 = 整体替换
+    if (patch.deliverableTypes !== undefined) {
+      body.deliverableTypes = patch.deliverableTypes;
+    }
     if (patch.note !== undefined) {
       body.note = patch.note;
     }
@@ -462,6 +490,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       days: values.days,
       headcount: values.headcount,
       priority: values.priority,
+      deliverableTypes: values.deliverableTypes,
       note: values.note,
     });
   };
@@ -922,7 +951,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} fileNames={taskFileNames} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -930,7 +959,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 207 同批追加：醒目模式值透传给「问题追踪」做表格呈现（开关本体在标签栏最右侧，见上）；失败提示沿用同一条 toolError
-            <ReportIssuePanel key={project.id} project={project} me={me} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+            <ReportIssuePanel key={project.id} project={project} me={me} members={members} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
             <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />
@@ -953,6 +982,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               onUploadFiles={handleUploadTaskFiles}
               onDeleteFile={handleDeleteTaskFile}
               onRenameFile={handleRenameTaskFile}
+              onFinalize={handleFinalizeTask}
               projectId={project.id}
             />
           )}

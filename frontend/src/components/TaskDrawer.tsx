@@ -12,17 +12,19 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { ensurePreviewUrl, fetchDownloadUrl, previewKindOf, triggerDownload, usePhotoUrl, type FilePreviewKind } from "../fileApi";
+import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, triggerDownload, usePhotoUrl, type FilePreviewKind, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, type TaskFileBrief } from "../taskApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
+import { FilePreviewOverlay } from "./FilePreviewOverlay";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
+import { RowDeleteButton } from "./RowDeleteButton";
+import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } from "./Tracker";
-import { createPortal } from "react-dom";
-
 const CLOSE_ANIMATION_MS = 170;
 /** 「已保存」提示的停留时间。 */
 const SAVED_FLASH_MS = 1600;
@@ -95,6 +97,8 @@ export type TaskEditSubmit = {
   days: number;
   headcount: number;
   priority: TaskPriority;
+  /** 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」：常规编辑开放）。 */
+  deliverableTypes: string[];
   note: string;
 };
 
@@ -108,6 +112,7 @@ type Draft = {
   range: DateRange | null;
   headcount: string;
   priority: TaskPriority;
+  deliverableTypes: string[];
   note: string;
 };
 
@@ -126,6 +131,7 @@ function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
     range: task === null ? null : rangeOf(task),
     headcount: task !== null && task.headcount > 0 ? String(task.headcount) : "",
     priority: task === null || task.priority === null ? "中" : task.priority,
+    deliverableTypes: task === null ? [] : [...task.deliverableTypes],
     note: task === null ? "" : task.note,
   };
 }
@@ -148,7 +154,13 @@ type TaskDrawerProps = {
   /** 任务状态下拉（五态；联动由服务端裁决）；不传 = 状态字段只读。 */
   onSetStatus?: (taskId: string, status: TaskStatus) => void;
   /** 实际完成日期（填 = 完成、清 = 退回进行中）；不传 = 该字段只读。 */
+  /**
+   * 任务定档（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）：
+   * 头部状态签旁「定档」开关点开 = 就地二次确认；确认后由调用方 POST …/tasks/{taskId}/finalize
+   * （置位后任务不支持任何修改 —— 服务端 409 TASK_FINALIZED 兜底）；不传 = 未定档任务不渲染开关。
+   */
   onSetActualEnd?: (taskId: string, iso: string) => void;
+  onFinalize?: (taskId: string) => void;
   /**
    * 任务文件上传（Push 226 · 「文件」那一刀前端接线）：选完文件由调用方分片直传文件库并关联本任务（taskId）；
    * onProgress 供抽屉内「上传中 N/M」提示（done = 已完成份数）。不传 = 「文件」行只读（保留计数展示、无上传入口）。
@@ -179,7 +191,7 @@ type TaskDrawerProps = {
  * 进度自 Push 98 起也能在抽屉里改：进度条长度不变，**四颗点平均分布在条上**（刚开工 / 完成一半 / 快完成了 / 已完成），点哪颗写哪档；
  * 任务状态与实际完成日期自 Push 101 起也能在抽屉里直接改（口径与任务表行内 / 看板卡片完全一致，§6.9：
  * 状态 ↔ 四格进度双向联动、改成非完成态会清空实际完成日期；填实际完成日期 = 完成、清空 = 退回进行中）；
- * 仍只读：是否按时交付（读时派生）、输出成果文件（A1-17 锁定）、变更关联；
+ * 仍只读：是否按时交付（读时派生）、变更关联（输出成果文件 2026-10-08 起可改 —— 业务口径「文件输出成果也要可以选择」）；
  * 「文件」自 Push 226 起可在抽屉内直接上传（点击「＋ 上传文件」→ 分片直传文件库并关联本任务；上传完成自动重取清单）；
  * 文件名 / 文档类型 / 状态清单随详情接口（GET …/tasks/{taskId}）下发；Push 226 续：清单里每份文件可「删除」（= 移入回收站，二次确认），
  * 图片文件点**缩略图**看大图预览（懒取短时签名 —— 点开才请求）；**点文件名改名**（Push 226 续二 · 只改主名、后缀保留）；
@@ -188,7 +200,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -206,8 +218,15 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   /** 上传中的份数进度（null = 没有上传）。 */
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  /** 预览浮层（Push 226 续 / 续三）：点清单里的图片 / PDF → 取短时签名 → 看大图 / 内置查看器（null = 未开）。 */
-  const [preview, setPreview] = useState<{ url: string; name: string; kind: FilePreviewKind; fileId: string } | null>(null);
+  /** 预览浮层（Push 226 续 / 续三 · S4 两通道）：点清单里的图片 / PDF → 产物浮层（大图 / 内置查看器 iframe）；
+   *  Office / 文本族 → ONLYOFFICE 查看器外壳（viewer 配置逐字下发）。nonce = 重试自增，强制重建查看器（重取 token）。null = 未开。 */
+  const [preview, setPreview] = useState<{
+    pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
+    name: string;
+    kind: FilePreviewKind;
+    fileId: string;
+    nonce: number;
+  } | null>(null);
   /** 正在取预览签名的文件 id（null = 没有）。 */
   const [previewBusy, setPreviewBusy] = useState<string | null>(null);
   /** 预览 / 下载取不到时的一行灰字提示（null = 不显示）。 */
@@ -216,6 +235,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const [downloadBusy, setDownloadBusy] = useState<string | null>(null);
   /** 待二次确认删除的文件 id（null = 没有）。 */
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  /** 定档二次确认条（Push 252）：开关点开 = 就地提示「定档后不支持任何修改」，确认才调接口落库。 */
+  const [finalizeConfirm, setFinalizeConfirm] = useState(false);
   /** 正在改名的文件 id（Push 226 续二；null = 没有在改名）。 */
   const [renamingId, setRenamingId] = useState<string | null>(null);
   /** 编辑中的**主名**（后缀不参与编辑 —— 同日报口径「自定义把图片png格式删了怎么办」：格式由系统保留）。 */
@@ -236,6 +257,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     setPreviewNote(null);
     setDownloadBusy(null);
     setPendingDelete(null);
+    setFinalizeConfirm(false);
     setRenamingId(null);
     setRenameText("");
     setRenameExt("");
@@ -300,6 +322,11 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     }
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (finalizeConfirm) {
+          // 「Esc 先关内层」（Push 252）：二次确认条开着时先收确认条，不连带关抽屉
+          setFinalizeConfirm(false);
+          return;
+        }
         requestClose();
       }
     };
@@ -307,7 +334,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [taskId, requestClose]);
+  }, [taskId, requestClose, finalizeConfirm]);
 
   /** 改草稿：ref 与 state 一起写 —— 失焦可能与最后一次输入同一批处理，只写 state 会让失焦读到旧值。 */
   const updateDraft = useCallback((patch: Partial<Draft>) => {
@@ -336,6 +363,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         days: next.range === null ? 0 : daysBetweenInclusive(next.range.from, next.range.to),
         headcount: headcountText === "" || Number.isNaN(headcountValue) ? 0 : Math.floor(headcountValue),
         priority: next.priority,
+        deliverableTypes: next.deliverableTypes,
         note: next.note.trim(),
       });
       setSavedTick(Date.now());
@@ -398,25 +426,57 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     });
   };
 
-  /** 图片预览（Push 226 续）：点开才懒取签名 —— 预览读取会写「查看」审计，不该随清单一开就铺开申请。 */
+  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览读取会写「查看」审计，不该随清单一开就铺开申请。
+   *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
+   *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
   const openPreview = async (fileId: string, name: string) => {
     if (previewBusy !== null) {
       return;
     }
     setPreviewBusy(fileId);
     setPreviewNote(null);
-    const url = await ensurePreviewUrl(fileId);
+    const outcome = await ensurePreviewOutcome(fileId);
     setPreviewBusy(null);
-    if (url === null) {
-      setPreviewNote("预览暂时取不到（生成中或暂不支持预览），稍后再试");
+    const kind = previewKindOf(name) ?? "image";
+    if (outcome.kind === "unavailable") {
+      setPreviewNote(outcome.reason ?? "暂不支持在线预览，请下载查看");
       return;
     }
-    setPreview({ url, name, kind: previewKindOf(name) ?? "image", fileId });
+    if (outcome.kind === "viewer") {
+      setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, nonce: 0 });
+      return;
+    }
+    setPreview({ pane: { mode: "url", url: outcome.url }, name, kind, fileId, nonce: 0 });
+  };
+
+  /** 查看器外壳「重试」（S4 · R5）：重取查看器配置（token 随签发刷新）+ nonce 自增强制重建；
+   *  仍取不到（failed / 超时）→ 关浮层 + 一行灰字降级提示。 */
+  const retryPreview = async (fileId: string, name: string) => {
+    if (previewBusy !== null) {
+      return;
+    }
+    setPreviewBusy(fileId);
+    const outcome = await ensurePreviewOutcome(fileId);
+    setPreviewBusy(null);
+    if (outcome.kind === "unavailable") {
+      setPreview(null);
+      setPreviewNote(outcome.reason ?? "暂不支持在线预览，请下载查看");
+      return;
+    }
+    setPreview((previous) => {
+      if (previous === null || previous.fileId !== fileId) {
+        return previous;
+      }
+      const pane = outcome.kind === "viewer"
+        ? { mode: "viewer" as const, viewer: outcome.viewer }
+        : { mode: "url" as const, url: outcome.url };
+      return { pane, name, kind: previous.kind, fileId, nonce: previous.nonce + 1 };
+    });
   };
 
   /** 下载原文件（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：取当前版本的
    *  attachment 短时签名（原文件字节 + 原文件名；服务端写 download 审计），再触发浏览器落盘 ——
-   *  与预览产物区分：Office / 文本的浮层里是转换出的 PDF，下载始终拿原文件。 */
+   *  与预览区分（S4）：Office / 文本族走 ONLYOFFICE 查看器渲染、图片 / PDF 走产物浮层；下载始终拿原文件。 */
   const downloadFile = async (fileId: string) => {
     if (downloadBusy !== null) {
       return;
@@ -652,19 +712,26 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         ),
     },
     {
+      // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读色签改可点选择（搜索 + 十类多选，
+      // 彩签全量摊开）；勾选即存（与其它字段同一套写入口径）。不传 onSubmit（只读抽屉）= 静态色签。
       label: "输出成果文件",
-      value:
-        task.deliverableTypes.length === 0 ? (
-          dash
-        ) : (
-          <span className="flex flex-wrap gap-1.5">
-            {task.deliverableTypes.map((docType) => (
-              <span key={docType} className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600">
-                {docType}
-              </span>
-            ))}
-          </span>
-        ),
+      value: editable ? (
+        <DeliverableCell
+          all
+          values={draft.deliverableTypes}
+          onChange={(next) => {
+            commit({ deliverableTypes: next });
+          }}
+        />
+      ) : task.deliverableTypes.length === 0 ? (
+        dash
+      ) : (
+        <span className="flex flex-wrap gap-1.5">
+          {task.deliverableTypes.map((docType) => (
+            <span key={docType}>{docTypeChip(docType)}</span>
+          ))}
+        </span>
+      ),
     },
     {
       label: "文件",
@@ -712,8 +779,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                 const previewing = previewBusy === file.id;
                 const confirming = pendingDelete === file.id;
                 return (
-                  <li key={file.id} data-drawer-file-item="true" className="flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5">
-                    {previewKind === "image" ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : null}
+                  <li key={file.id} data-drawer-file-item="true" className="group flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5 transition-colors hover:bg-zinc-100">
+                    {previewKind === "image" ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : <FileTypeIcon name={file.name} />}
                     {renamingId === file.id ? (
                       <span className="flex min-w-0 flex-1 items-center gap-0.5">
                         <input
@@ -745,7 +812,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                           onClick={() => { void openPreview(file.id, file.name); }}
                           disabled={previewing}
                           title="点击预览"
-                          className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition hover:text-zinc-900 hover:underline disabled:text-zinc-400"
+                          className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                         >
                           {file.name}
                         </button>
@@ -758,7 +825,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                         data-file-rename="true"
                         onClick={() => { startFileRename(file); }}
                         title="点名字可自定义（后缀由系统保留）"
-                        className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition hover:text-zinc-900 hover:underline"
+                        className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900"
                       >
                         {file.name}
                       </button>
@@ -770,13 +837,12 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                       </span>
                     )}
                     {previewing && previewKind === "image" ? <span className="shrink-0 text-[10px] text-zinc-400">预览中…</span> : null}
-                    {previewKind === "pdf" ? (
+                    {previewKind === "pdf" || previewKind === "office" ? (
                       <button
                         type="button"
                         data-file-preview-open="true"
                         onClick={() => { void openPreview(file.id, file.name); }}
                         disabled={previewing}
-                        title="在线预览（浏览器内置查看器）"
                         className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                       >
                         {previewing ? "预览中…" : "预览"}
@@ -787,26 +853,23 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                       data-file-download="true"
                       onClick={() => { void downloadFile(file.id); }}
                       disabled={downloadBusy === file.id}
-                      title="下载原文件（原格式落盘；预览浮层里的转换件不是原文件）"
+                      title="下载原文件（原格式落盘）"
                       className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                     >
                       {downloadBusy === file.id ? "下载中…" : "下载"}
                     </button>
                     {onDeleteFile === undefined ? null : confirming ? (
                       <span data-file-delete-confirm="true" className="flex shrink-0 items-center gap-1">
-                        <button type="button" onClick={() => { confirmFileDelete(file.id); }} className="rounded px-1.5 py-0.5 text-[10px] font-medium text-red-600 transition hover:bg-red-50">确认删除</button>
-                        <button type="button" onClick={() => { setPendingDelete(null); }} className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 transition hover:bg-zinc-100">取消</button>
+                        <button type="button" onClick={() => { confirmFileDelete(file.id); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600">确认删除</button>
+                        <button type="button" onClick={() => { setPendingDelete(null); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200">取消</button>
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        data-file-delete="true"
-                        onClick={() => { setPendingDelete(file.id); }}
-                        title="删除（移入回收站，30 天内可恢复）"
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                      >
-                        删除
-                      </button>
+                      <span data-file-delete="true" className="flex h-6 w-12 shrink-0 items-center">
+                        <RowDeleteButton
+                          onDelete={() => { setPendingDelete(file.id); }}
+                          label={"删除（移入回收站，30 天内可恢复）：" + file.name}
+                        />
+                      </span>
                     )}
                   </li>
                 );
@@ -958,7 +1021,40 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{task.stage === "" ? TEMP_TASK_STAGE : task.stage}</span>
-              <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
+              <span data-task-status-chip="true" className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{status}</span>
+              {task.finalizedAt !== null ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-zinc-400">定档</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked="true"
+                    aria-label="任务已定档"
+                    data-task-finalize="on"
+                    title="任务已定档，不支持任何修改（文件修改走变更）"
+                    disabled
+                    className="relative inline-flex h-6 w-11 shrink-0 cursor-default items-center rounded-full bg-[#FECA04] transition-colors duration-200"
+                  >
+                    <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] translate-x-5 items-center justify-center rounded-full bg-white text-[9px] font-semibold text-amber-700 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">已</span>
+                  </button>
+                </span>
+              ) : onFinalize === undefined ? null : (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-zinc-400">定档</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked="false"
+                    aria-label="任务定档"
+                    data-task-finalize="off"
+                    title="定档后该任务不支持任何修改（文件修改走变更）"
+                    onClick={() => { setFinalizeConfirm(true); }}
+                    className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full bg-zinc-200 transition-colors duration-200 hover:bg-zinc-300"
+                  >
+                    <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white text-[9px] font-semibold text-zinc-400 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">未</span>
+                  </button>
+                </span>
+              )}
             </div>
             <button
               type="button"
@@ -971,6 +1067,29 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               </svg>
             </button>
           </div>
+          {finalizeConfirm && task.finalizedAt === null ? (
+            <div data-task-finalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs leading-5 text-amber-800">定档后该任务不支持任何修改（文件修改走变更），确定定档？</p>
+              <span className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  data-task-finalize-confirm-btn="true"
+                  onClick={() => { setFinalizeConfirm(false); onFinalize?.(task.id); }}
+                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-[#FECA04] px-2.5 text-[11px] font-semibold leading-none text-zinc-900 shadow-[0_1px_2px_rgba(202,154,0,0.35)] transition-colors hover:bg-[#F2BE00]"
+                >
+                  确认定档
+                </button>
+                <button
+                  type="button"
+                  data-task-finalize-cancel="true"
+                  onClick={() => { setFinalizeConfirm(false); }}
+                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-semibold leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
+                >
+                  取消
+                </button>
+              </span>
+            </div>
+          ) : null}
           <h2 id="task-drawer-title" className="mt-3.5 text-lg font-semibold leading-7 text-zinc-900">
             {task.title}
           </h2>
@@ -1032,7 +1151,17 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           ) : null}
         </footer>
       </aside>
-      {preview === null ? null : <FilePreviewOverlay url={preview.url} name={preview.name} kind={preview.kind} onDownload={() => { void downloadFile(preview.fileId); }} onClose={() => { setPreview(null); }} />}
+      {preview === null ? null : (
+        <FilePreviewOverlay
+          pane={preview.pane}
+          name={preview.name}
+          kind={preview.kind}
+          nonce={preview.nonce}
+          onRetry={() => { void retryPreview(preview.fileId, preview.name); }}
+          onDownload={() => { void downloadFile(preview.fileId); }}
+          onClose={() => { setPreview(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -1055,64 +1184,5 @@ function FileThumb({ fileId, name, onOpen }: { fileId: string; name: string; onO
         <img src={url} alt={name} className="h-full w-full object-cover" />
       )}
     </button>
-  );
-}
-
-/** 预览浮层（Push 226 续 / 续三）：图片 = 大图（img）、PDF / Office / 文本 = 浏览器内置查看器（iframe）；
- *  短时签名地址（D2-04 禁止匿名读取）。Esc / 点浮层关闭；capture 阶段拦 keydown，避免同一按 Esc 连带把抽屉关掉（「Esc 先关内层」口径）。
- *  Push 226 续四：caption 挂「下载原文件」—— 查看器自带的下载拿的是**转换产物**，这里直取原文件（drawer.downloadFile）。 */
-function FilePreviewOverlay({ url, name, kind, onDownload, onClose }: { url: string; name: string; kind: FilePreviewKind; onDownload: () => void; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [onClose]);
-  return createPortal(
-    <div
-      data-file-preview="true"
-      data-file-preview-kind={kind}
-      role="dialog"
-      aria-label={"预览 " + name}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClose();
-      }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
-    >
-      <figure className="flex max-h-full max-w-full flex-col items-center">
-        {kind === "pdf" ? (
-          <iframe
-            src={url}
-            title={name}
-            data-file-preview-frame="true"
-            className="h-[80vh] w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white shadow-2xl"
-          />
-        ) : (
-          <img src={url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
-        )}
-        <figcaption className="mt-2 flex items-center gap-3 text-xs text-white/80">
-          <span>{name}</span>
-          <button
-            type="button"
-            data-file-preview-download="true"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDownload();
-            }}
-            className="rounded-md border border-white/30 px-2 py-0.5 text-[11px] text-white/90 transition hover:bg-white/10"
-          >
-            下载原文件
-          </button>
-        </figcaption>
-      </figure>
-    </div>,
-    document.body,
   );
 }

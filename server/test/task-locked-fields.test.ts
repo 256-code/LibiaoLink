@@ -80,6 +80,8 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     updatedAt: new Date("2026-09-01T00:00:00Z"),
     deletedAt: null,
     deletedBy: null,
+    finalizedAt: null,
+    finalizedBy: null,
     ...overrides,
   };
 }
@@ -330,5 +332,19 @@ describe("M3-05 续卡 · 锁定字段例外调整（A1-17 / C9-07）", () => {
     const changes = audit.entries[0]?.changes as { field: string; from: unknown; to: unknown }[];
     expect(changes).toEqual([{ field: "titleEn", from: "Kongwei review", to: null }]);
     expect(db.outbox[0]?.payload).toMatchObject({ fields: ["titleEn"] });
+  });
+});
+
+
+describe("Push 249 · 定档任务写口闸（锁定字段例外调整）", () => {
+  it("定档任务：管理员例外调整同样 409 TASK_FINALIZED（不支持任何修改；不落库 / 无 outbox / 无审计）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.tasks.set(TASK_A, makeRow(TASK_A, { finalizedAt: new Date("2026-10-08T02:00:00Z"), finalizedBy: ADMIN }));
+    const { service, db, audit } = makeService(repo);
+    await expect(
+      service.adjustLockedFields(PROJECT, TASK_A, { version: 3, reason: "定档后修正", title: "改标题" }, ADMIN),
+    ).rejects.toMatchObject({ code: "TASK_FINALIZED", httpStatus: 409 });
+    expect(db.outbox).toEqual([]);
+    expect(audit.entries).toEqual([]);
   });
 });

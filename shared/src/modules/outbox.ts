@@ -13,7 +13,7 @@ import { DateTimeSchema } from "../common/conventions.ts";
  *   `server/src/outbox/`（S7-1 运行时分派 / 重试退避 / 死信与积压告警 / done 保留期）、
  *   `server/src/entry/worker.ts`（常驻三轮：分派 / 告警探针 / 保留期清理）。
  *
- *   白名单口径（Push 169 定案）：`OUTBOX_TOPICS` = **已写入主题闭集 ∪ 已定案预留主题**（当前 **26 项全部为写入闭集** —— `notify.message` 随 S7-4 规则接线转写入端、预留清单为空；Push 215 增 `report.deleted` / `issue.deleted`）。
+ *   白名单口径（Push 169 定案）：`OUTBOX_TOPICS` = **已写入主题闭集 ∪ 已定案预留主题**（当前 **27 项全部为写入闭集** —— `notify.message` 随 S7-4 规则接线转写入端、预留清单为空；Push 215 增 `report.deleted` / `issue.deleted`；Push 252 增 `task.finalized`（任务定档 · 抽屉开关入口））。
  *   新增主题须同时改写入端与本表；`scripts/outbox-contract-replay.mjs` 扫 `server/src` 的主题字面量与主题常量，
  *   断言「写入 ⊆ 本表」且「本表无死条目」（未被写入者必须在预留清单）。
  *
@@ -39,6 +39,7 @@ export const OUTBOX_TOPICS = [
   "task.updated",
   "task.progress_changed",
   "task.completed",
+  "task.finalized",
   "task.deleted",
   "task.locked_fields_adjusted",
   "task.draft_doc_reminded",
