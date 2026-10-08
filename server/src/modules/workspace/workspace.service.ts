@@ -1,14 +1,15 @@
 import { Injectable } from "@nestjs/common";
-import { PRIORITY_VALUES, WORKSPACE_UPCOMING_DAYS } from "@libiaolink/contracts";
+import { PRIORITY_VALUES } from "@libiaolink/contracts";
 import type { WorkspaceIssueItem, WorkspaceResponse, WorkspaceTaskItem } from "@libiaolink/contracts";
 import { PermissionService } from "../permission/index.js";
 import { deriveDisplayStatus, shanghaiToday, type TaskDerivationInput } from "../task/index.js";
 import { WorkspaceRepository, type WorkspaceIssueRow, type WorkspaceTaskRow } from "./workspace.repository.js";
-import { addDays, emptyTaskGroups, taskGroupOf } from "./workspace.rules.js";
+import { emptyTaskGroups, taskGroupOf } from "./workspace.rules.js";
 
 /**
- * 工作台用例（M6-05 第一刀 · A6-01 / A6-03）：
- * 一次读出口返回「我的任务三组 + 我的问题两栏」；分组口径见 workspace.rules（基准日 = Asia/Shanghai 今天，ADR-028）。
+ * 工作台用例（M6-05 · A6-01 / A6-03）：
+ * 一次读出口返回「我的任务四组 + 我的问题两栏」；分组口径见 workspace.rules（基准日 = Asia/Shanghai 今天，ADR-028；
+ * 2026-09-30 复评：不限窗口 / 项目经理含我 / 未排期单列）。
  * 记录级可见性：PermissionService.projectScope（管理员 = 全量；其余 = 可见项目 id 集合，空集短路）。
  */
 @Injectable()
@@ -22,15 +23,13 @@ export class WorkspaceService {
   async get(actorId: string): Promise<WorkspaceResponse> {
     const today = shanghaiToday(new Date());
     const scope = await this.permission.projectScope(actorId);
-    const until = addDays(today, WORKSPACE_UPCOMING_DAYS);
     const [taskRows, issueRows] = await Promise.all([
-      this.repository.listMyTasks(actorId, scope, until),
+      this.repository.listMyTasks(actorId, scope),
       this.repository.listMyIssues(actorId, scope),
     ]);
     const myTasks = emptyTaskGroups<WorkspaceTaskItem>();
     for (const row of taskRows) {
-      const group = taskGroupOf(row.plannedEnd, today);
-      if (group !== null) myTasks[group].push(toTaskItem(row, today));
+      myTasks[taskGroupOf(row.plannedEnd, today)].push(toTaskItem(row, today));
     }
     return {
       today,

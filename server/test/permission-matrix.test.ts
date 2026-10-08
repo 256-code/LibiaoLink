@@ -180,19 +180,19 @@ describe("功能权限：can（全局位 ∪ 项目内角色隐含位 · ADR-011
 describe("字段级：字段策略表（A5-07 / C3-04 / C3-08 无权字段不返回）", () => {
   it("持有 stakeholder.contact.view → 联系方式三字段与商务字段全部可见", () => {
     const sales = actorWithKeys(["stakeholder.view", "stakeholder.manage", "stakeholder.contact.view"]);
-    expect(visibleFields(sales, "stakeholder")).toEqual(["name", "company", "title", "phone", "wechat", "email", "remark"]);
+    expect(visibleFields(sales, "stakeholder")).toEqual(["name", "company", "title", "phone", "wechat", "email", "remark", "role"]);
     expect(hiddenFields(sales, "stakeholder")).toEqual([]);
   });
 
   it("只有 stakeholder.view → 联系方式被裁掉（A5-07「无关角色不可见」）", () => {
     const owner = actorWithKeys(["stakeholder.view"]);
     expect(hiddenFields(owner, "stakeholder")).toEqual(["phone", "wechat", "email", "remark"]);
-    expect(visibleFields(owner, "stakeholder")).toEqual(["name", "company", "title"]);
+    expect(visibleFields(owner, "stakeholder")).toEqual(["name", "company", "title", "role"]);
   });
 
-  it("无干系人权限 → 仅未登记字段（姓名）可见", () => {
+  it("无干系人权限 → 仅未登记字段（姓名 / 角色）可见", () => {
     const outsider = actor();
-    expect(visibleFields(outsider, "stakeholder")).toEqual(["name"]);
+    expect(visibleFields(outsider, "stakeholder")).toEqual(["name", "role"]);
   });
 
   it("行投影：删掉无权字段，不落 null 占位，未登记字段原样保留", () => {
@@ -243,7 +243,7 @@ describe("五出口：页面 / 导出 / 搜索 / 通知同源（C3-08 不变量�
     const viewer = actorWithKeys(["project.export", "stakeholder.view"]);
     const plan = planExit(viewer, "export", "stakeholder");
     expect(plan.allowed).toBe(true);
-    expect(plan.fields).toEqual(["name", "company", "title"]);
+    expect(plan.fields).toEqual(["name", "company", "title", "role"]);
     expect(plan.hidden).toEqual(["phone", "wechat", "email", "remark"]);
   });
 

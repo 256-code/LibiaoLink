@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
+import { DailySubMenu } from "./components/DailySubMenu";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
+import { StakeholderPanel } from "./components/StakeholderPanel";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
@@ -13,6 +15,7 @@ import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
 import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
+import { fetchTaskFileNames, recycleFile, renameFile, uploadFiles } from "./fileApi";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
@@ -64,7 +67,8 @@ function stageRankOf(stage: string): number {
  * Push 142：「项目总览」之后再加「甘特图」（口径见 components/GanttChart.tsx）；
  * Push 154：当前标签走地址 `?view=`，刷新 / 收藏 / 分享都停在同一块标签。
  */
-const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题"] as const;
+/** Push 221：再往后加第六个视图「干系人」（排最右侧；A27 台账前端接线，口径见 components/StakeholderPanel.tsx）。 */
+const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题", "干系人"] as const;
 type ViewTab = (typeof VIEW_TABS)[number];
 
 /** 顶部标签 ↔ 地址参数（`?view=`）：缺省「项目总览」（overview）不落参数。 */
@@ -74,6 +78,7 @@ const VIEW_KEYS: Record<ViewTab, ProjectView> = {
   "人员任务分配": "owners",
   "任务进展": "progress",
   "日报及问题": "daily",
+  "干系人": "stakeholders",
 };
 
 
@@ -98,9 +103,11 @@ type ProjectDetailProps = {
   focusMode?: boolean | null;
   /** 保存醒目模式（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。 */
   onFocusModeChange?: (value: boolean) => Promise<string | null>;
+  /** 干系人写入口（Push 221 · A27）：= stakeholder.manage（画像未到时乐观放行，服务端逐请求仍是最终裁决）。 */
+  canManageStakeholders: boolean;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange, canManageStakeholders }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
@@ -110,11 +117,84 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 原「五层内存覆盖」（进度 / 字段编辑 / 看板顺序 / 行内删除 / 新增任务）随接线整体下线 —— 写成功即回读。
    */
   const [rawTasks, setRawTasks] = useState<ProjectTask[]>([]);
+  /** 任务 → 文件名数组（Push 226 续二）：「文件」列显示文件名 / 「+N」用 —— 随整表重取一起刷新
+   *  （列表接口不带文件名，这里按项目走文件库列表一次拉全量，见 fileApi.fetchTaskFileNames）。 */
+  const [taskFileNames, setTaskFileNames] = useState<Map<string, string[]>>(new Map());
   const [summary, setSummary] = useState<ApiProjectSummary | null>(null);
   /** 取数版本号：换项目、或新建 / 删除 / 排序 / 版本冲突后需要整表重取时 +1。 */
   const [dataVersion, setDataVersion] = useState(0);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+
+  /**
+   * 「日报及问题」子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
+   * 四块子视图从页内键帽导航栏搬进主标签栏的下拉子菜单（面板见 components/DailySubMenu.tsx）——
+   * 悬停 / 点击父标签展开；面板左缘对齐父标签（展开时量一次）：标签栏可横向滚动，滚动即收起，避免锚点漂移。
+   */
+  const [submenuOpen, setSubmenuOpen] = useState(false);
+  const [submenuLeft, setSubmenuLeft] = useState(0);
+  const maintabsRef = useRef<HTMLDivElement | null>(null);
+  const dailyTabRef = useRef<HTMLButtonElement | null>(null);
+  const submenuTimer = useRef<number | null>(null);
+
+  const cancelSubmenuClose = () => {
+    if (submenuTimer.current !== null) {
+      window.clearTimeout(submenuTimer.current);
+      submenuTimer.current = null;
+    }
+  };
+
+  const openSubmenu = () => {
+    cancelSubmenuClose();
+    const tab = dailyTabRef.current;
+    const bar = maintabsRef.current;
+    if (tab !== null && bar !== null) {
+      setSubmenuLeft(Math.max(0, Math.round(tab.getBoundingClientRect().left - bar.getBoundingClientRect().left)));
+    }
+    setSubmenuOpen(true);
+  };
+
+  const closeSubmenu = () => {
+    cancelSubmenuClose();
+    setSubmenuOpen(false);
+  };
+
+  /** 鼠标离开父标签 / 面板后延迟收起：给指针从标签移到面板（下移 8px）留一条过道。 */
+  const scheduleSubmenuClose = () => {
+    cancelSubmenuClose();
+    submenuTimer.current = window.setTimeout(() => {
+      submenuTimer.current = null;
+      setSubmenuOpen(false);
+    }, 160);
+  };
+
+  useEffect(() => {
+    if (!submenuOpen) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSubmenu();
+      }
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      if (maintabsRef.current !== null && !maintabsRef.current.contains(event.target as Node)) {
+        closeSubmenu();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [submenuOpen]);
+
+  useEffect(() => () => {
+    if (submenuTimer.current !== null) {
+      window.clearTimeout(submenuTimer.current);
+    }
+  }, []);
 
   /** 整表重取（新建 / 删除 / 排序 / 版本冲突后调用；换项目由下面这个 effect 自动触发）。 */
   const reloadAll = () => {
@@ -125,18 +205,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (projectId === null) {
       setRawTasks([]);
       setSummary(null);
+      setTaskFileNames(new Map());
       return undefined;
     }
     let alive = true;
     setDataLoading(true);
     void (async () => {
       try {
-        const [list, card] = await Promise.all([fetchProjectTasks(projectId), fetchProjectSummary(projectId)]);
+        const [list, card, names] = await Promise.all([
+          fetchProjectTasks(projectId),
+          fetchProjectSummary(projectId),
+          // 文件名映射是次要信息：取不到就退回「N 份」计数展示，不打断整表
+          fetchTaskFileNames(projectId).catch(() => new Map<string, string[]>()),
+        ]);
         if (!alive) {
           return;
         }
         setRawTasks(list.items.map((item) => toUiTask(item)));
         setSummary(card);
+        setTaskFileNames(names);
         setDataError(null);
         // 列表一次取满（契约 limit 上限 200）：超了先提示，按需分页随搜索那一刀接线
         if (list.total > list.items.length) {
@@ -209,6 +296,54 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (projectId !== null) {
       onTaskEdited?.(projectId);
     }
+  };
+
+  /**
+   * 任务文件上传（Push 226 · 「文件」列与任务抽屉共用一条链路）：逐份分片直传文件库并关联任务（taskId），
+   * 完成后整表重取刷新文件计数（文件不改变项目时间，不触发 onTaskEdited）；失败走统一写入错误出口（toolError 提示条）。
+   */
+  const handleUploadTaskFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void): Promise<void> => {
+    if (projectId === null) {
+      return Promise.resolve();
+    }
+    return (async () => {
+      try {
+        await uploadFiles(projectId, files, { taskId, onProgress });
+        reloadAll();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
+  };
+
+  /**
+   * 任务文件删除（Push 226 续）：清单里「删除」= 移入回收站（M4-02，30 天内可恢复），
+   * 完成后整表重取刷新文件计数；失败走统一写入错误出口（toolError 提示条）。
+   */
+  const handleDeleteTaskFile = (fileId: string): Promise<void> => {
+    return (async () => {
+      try {
+        await recycleFile(fileId);
+        reloadAll();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
+  };
+
+  /**
+   * 任务文件改名（Push 226 续二 · 业务口径「名称要可以修改」）：抽屉清单里点名字进编辑、回车 / 失焦提交
+   * （只改主名、后缀由系统保留）；成功后整表重取刷新清单与「文件」列文件名。
+   */
+  const handleRenameTaskFile = (fileId: string, name: string): Promise<void> => {
+    return (async () => {
+      try {
+        await renameFile(fileId, name);
+        reloadAll();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
   };
 
   /**
@@ -654,26 +789,60 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             站灰底 + 毛玻璃兜住滚动内容；-mx-6 / -mt-3 + 同值内衬抵消：横幅铺满行宽、标签位置与原来一致。
             自身高 59px（pt-3 12 + 标签 46 + 底边 1）—— 页面里的其它吸顶元素一律叠在它下面（top = 64 + 59 = 123px）：
             项目总览的任务表头、日报及问题的页内导航栏。 */}
-        <div data-maintabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
+        <div ref={maintabsRef} data-maintabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
           <div className="flex items-center gap-3">
-            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onScroll={submenuOpen ? closeSubmenu : undefined}>
               {VIEW_TABS.map((tab) => {
                 const active = tab === activeView;
+                // 子菜单父项（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
+                // 四块子视图收进这枚标签的下拉面板；悬停即展开；点击时已在该视图 = 切换展开态，否则照旧先切视图。
+                const withSubmenu = tab === "日报及问题";
                 return (
                   <button
                     key={tab}
+                    ref={withSubmenu ? dailyTabRef : undefined}
                     type="button"
                     data-maintabs-item={tab}
-                    onClick={() => replaceProjectView(project.id, VIEW_KEYS[tab])}
+                    data-maintabs-parent={withSubmenu ? "true" : undefined}
+                    onMouseEnter={withSubmenu ? openSubmenu : undefined}
+                    onMouseLeave={withSubmenu ? scheduleSubmenuClose : undefined}
+                    onClick={() => {
+                      if (!withSubmenu) {
+                        closeSubmenu();
+                        replaceProjectView(project.id, VIEW_KEYS[tab]);
+                        return;
+                      }
+                      // 悬停已经展开时点击**保持展开**（不切换成收起：鼠标先到必然先 hover，切换会让「点开」永远点不开）
+                      openSubmenu();
+                      if (!active) {
+                        replaceProjectView(project.id, VIEW_KEYS[tab]);
+                      }
+                    }}
                     aria-current={active ? "page" : undefined}
+                    aria-haspopup={withSubmenu ? "menu" : undefined}
+                    aria-expanded={withSubmenu ? submenuOpen : undefined}
                     className={
-                      "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
+                      "inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
                       (active
                         ? "border-zinc-900 text-zinc-900"
                         : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                     }
                   >
                     {tab}
+                    {withSubmenu ? (
+                      <svg
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                        className={"h-3.5 w-3.5 transition-transform " + (submenuOpen ? "rotate-180" : "")}
+                      >
+                        <path d="M5.5 8l4.5 4.5L14.5 8" />
+                      </svg>
+                    ) : null}
                   </button>
                 );
               })}
@@ -691,6 +860,29 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               </div>
             ) : null}
           </div>
+
+          {/* 「日报及问题」子菜单面板（图一：白色圆角面板 + 分组标题 + 子项）—— 左缘对齐父标签（展开时量一次），
+              面板自己在鼠标进出时续命 / 延迟收起，避免指针过道断开；选完 = 收起面板 + 写回地址 ?view=daily&sub=。 */}
+          {submenuOpen ? (
+            <div
+              data-daily-submenu-anchor="true"
+              className="absolute top-full z-30 mt-2"
+              style={{ left: submenuLeft }}
+              onMouseEnter={cancelSubmenuClose}
+              onMouseLeave={scheduleSubmenuClose}
+            >
+              <DailySubMenu
+                active={dailySub}
+                onSelect={(next) => {
+                  closeSubmenu();
+                  if (activeView !== "日报及问题") {
+                    replaceProjectView(project.id, "daily");
+                  }
+                  replaceProjectSubView(project.id, next);
+                }}
+              />
+            </div>
+          ) : null}
         </div>
 
         {toolError === null ? null : (
@@ -730,7 +922,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} fileNames={taskFileNames} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -739,6 +931,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 207 同批追加：醒目模式值透传给「问题追踪」做表格呈现（开关本体在标签栏最右侧，见上）；失败提示沿用同一条 toolError
             <ReportIssuePanel key={project.id} project={project} me={me} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+          ) : activeView === "干系人" ? (
+            // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
+            <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}
@@ -755,11 +950,17 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               onSetActualEnd={handleSetActualEnd}
               onReorderTask={handleReorderTask}
               onSetProgress={handleSetProgress}
+              onUploadFiles={handleUploadTaskFiles}
+              onDeleteFile={handleDeleteTaskFile}
+              onRenameFile={handleRenameTaskFile}
+              projectId={project.id}
             />
           )}
         </div>
 
-        {activeView === "项目总览" ? (
+        {/* 底部滑块（Push 221 起）：项目总览与干系人两个表格共用同一枚 —— 两视图互斥，scrollRef / 溢出态复用；
+            滚动容器 id 由 controlsId 按当前视图切换（task-board-scroll / stakeholder-board-scroll）。 */}
+        {activeView === "项目总览" || activeView === "干系人" ? (
         <div
           id="table-scrollbar-bar"
           className={
@@ -767,7 +968,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             (tableOverflow ? "mt-4 border-t border-zinc-200 bg-white/95 py-2.5 backdrop-blur" : "h-0 overflow-hidden")
           }
         >
-          <TableScrollbar scrollRef={tableScrollRef} onOverflowChange={setTableOverflow} />
+          <TableScrollbar scrollRef={tableScrollRef} onOverflowChange={setTableOverflow} controlsId={activeView === "干系人" ? "stakeholder-board-scroll" : "task-board-scroll"} />
         </div>
         ) : null}
       </main>

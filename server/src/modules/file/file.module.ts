@@ -11,6 +11,8 @@ import { FileDownloadService } from "./file-download.service.js";
 import { FileLibraryController } from "./file-library.controller.js";
 import { FileRepository } from "./file.repository.js";
 import { FileService } from "./file.service.js";
+import { PreviewContentController } from "./preview-content.controller.js";
+import { PreviewContentService } from "./preview-content.service.js";
 import { PreviewConverter } from "./preview.converter.js";
 import { PreviewReadService } from "./preview-read.service.js";
 import { PreviewRepository } from "./preview.repository.js";
@@ -23,10 +25,18 @@ import { PreviewService } from "./preview.service.js";
  * 已落：M4-01 上传管道、M4-02 版本 / 定档 / 回溯 / 回收站、M4-03 文件库查询 + 多态关联（file_links）、
  * M4-04 变更写入 + 读面（变更记录列表 / 详情）、M4-05 预览（数据层 + 转换队列：outbox `preview.job`
  * 消费 / 转换器客户端 / 三元组幂等 / 失败降级；领取与重试 / dead 回写自 S7-1 起归 worker 的 OutboxDispatcher）+ 读 API（三态 + 短时签名 + 仅 ready 写审计）+ 产物清理（彻底删除 / 到期清理按 content_hash 反查引用：有引用归属转移、无引用清对象）+ 下载切片（版本短时签名 —— attachment + file.download 权限 + download 审计）。
+ * S3（ADR-030）起：Office / 文本族预览改由 ONLYOFFICE 查看器承接（`PreviewReadService` 签发只读查看器配置、不再投递转换任务）+
+ * 受控预览内容端点（`/preview-content`：服务间 Bearer 自验 / fail-closed —— `PreviewContentController` + `PreviewContentService`）。
  */
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule],
-  controllers: [FileController, FileLibraryController, ChangeRequestLibraryController, ChangeRequestController],
+  controllers: [
+    FileController,
+    FileLibraryController,
+    ChangeRequestLibraryController,
+    ChangeRequestController,
+    PreviewContentController,
+  ],
   providers: [
     FileRepository,
     FileService,
@@ -38,6 +48,8 @@ import { PreviewService } from "./preview.service.js";
     PreviewService,
     // M4-05 读 API：api 侧三态 + 短时签名 + 仅 ready 写审计（worker 侧队列见 PreviewService）。
     PreviewReadService,
+    // S3 受控预览内容端点：服务间 Bearer 自验 + fail-closed + 字节流直写（安全定稿 §3.2 / §3.3）。
+    PreviewContentService,
     // M4-05f 下载切片：版本短时签名（attachment）+ file.download 权限 + download 审计。
     FileDownloadService,
   ],

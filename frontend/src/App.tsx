@@ -3,6 +3,7 @@ import Hub from "./Hub";
 import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
+import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
@@ -20,9 +21,9 @@ import {
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns } from "./preferencesApi";
+import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
-import { useHashRoute } from "./useHashRoute";
+import { replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
 
 type ViewState =
@@ -76,6 +77,8 @@ export default function App() {
   const [taskTableHiddenColumns, setTaskTableHiddenColumns] = useState<string[] | null>(null);
   // 醒目模式（A4 · §6.13 · Push 171）：同样按账号存服务端；null = 偏好尚未取到（页面按默认「关」渲染，不回写）
   const [focusMode, setFocusMode] = useState<boolean | null>(null);
+  /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；null = 偏好尚未取到（按全收起渲染，不回写）。 */
+  const [workspaceOpenProjects, setWorkspaceOpenProjects] = useState<WorkspaceOpenProjects | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
@@ -131,6 +134,7 @@ export default function App() {
           setSavedFilters(prefsResult.value.homeSavedFilters);
           setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
           setFocusMode(prefsResult.value.focusMode);
+          setWorkspaceOpenProjects(prefsResult.value.workspaceOpenProjects);
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -313,6 +317,24 @@ export default function App() {
     }
   };
 
+  /**
+   * 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：点一下即生效 + 单键 PATCH ——
+   * 与醒目模式同一套乐观更新 + 失败回滚（对象整体替换，用引用比较判断有没有被更新的操作覆盖）；
+   * 返回文案交给 WorkspacePage 的提示条（服务端没落库，界面不能停在假状态）。
+   */
+  const handleSaveWorkspaceOpenProjects = async (value: WorkspaceOpenProjects): Promise<string | null> => {
+    const previous = workspaceOpenProjects;
+    setWorkspaceOpenProjects(value);
+    try {
+      const prefs = await saveWorkspaceOpenProjects(value);
+      setWorkspaceOpenProjects(prefs.workspaceOpenProjects);
+      return null;
+    } catch (error: unknown) {
+      setWorkspaceOpenProjects((current) => (current === value ? previous : current));
+      return errorMessageOf(error, "面板展开态保存失败");
+    }
+  };
+
   /** 编辑项目（PATCH + 乐观锁 version）：返回 null = 成功；返回文案 = 弹窗内提示。 */
   const handleUpdateProject = async (project: Project, draft: ProjectDraft): Promise<string | null> => {
     try {
@@ -389,6 +411,12 @@ export default function App() {
    * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
    */
   const canManageBlueprint = hasPermission(permissions, "blueprint.manage");
+  /**
+   * 干系人写入口（Push 221 · A27）：新建 / 编辑 / 删除 = stakeholder.manage。与 project.create / project.update
+   * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
+   * 全部角色都有，标签本身不收敛。
+   */
+  const canManageStakeholders = permissions === null || hasPermission(permissions, "stakeholder.manage");
 
   if (state.kind === "loading") {
     return (
@@ -523,6 +551,26 @@ export default function App() {
     );
   }
 
+  if (route.kind === "workspace") {
+    // 工作台「我的任务」页（Push 230 起正式落地）：两个标签（我的任务 / 我提出的问题）+ 按项目的折叠面板，
+    // 数据 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）；标签走地址（?tab=，见 useHashRoute）。
+    return (
+      <>
+        {/* 醒目模式（Push 232）：与项目详情同一个账号偏好（App 层持有 / 单键 PATCH），工作台只吃值 + 回显保存失败文案 */}
+        <WorkspacePage
+          me={state.me}
+          tab={route.tab}
+          onChangeTab={replaceWorkspaceTab}
+          focusMode={focusMode}
+          onFocusModeChange={handleSaveFocusMode}
+          workspaceOpenProjects={workspaceOpenProjects}
+          onWorkspaceOpenProjectsChange={handleSaveWorkspaceOpenProjects}
+        />
+        {bottomBars}
+      </>
+    );
+  }
+
   if (route.kind === "placeholder") {
     return (
       <>
@@ -554,6 +602,7 @@ export default function App() {
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           focusMode={focusMode}
           onFocusModeChange={handleSaveFocusMode}
+          canManageStakeholders={canManageStakeholders}
         />
         {editModal}
         {bottomBars}

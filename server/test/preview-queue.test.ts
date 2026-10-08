@@ -8,7 +8,7 @@ import { ConverterError, PreviewConverter, type ConvertInput, type ConvertResult
 import { buildPreviewJobPayload, parsePreviewJob, previewJobDedupeKey } from "../src/modules/file/preview.job.js";
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
 import { PreviewService } from "../src/modules/file/preview.service.js";
-import { previewTargetsFor } from "../src/modules/file/preview.targets.js";
+import { previewTargetsFor, viewerChannelFor } from "../src/modules/file/preview.targets.js";
 import { StorageError, type GetObjectResult, type PutObjectInput } from "../src/storage/index.js";
 import type { ObjectStorage } from "../src/storage/index.js";
 
@@ -293,15 +293,31 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
 });
 
 describe("previewTargetsFor / preview.job（投递侧映射）", () => {
-  it("通道映射：图片 → image；PDF / Office（含 xlsx）→ pdf；判不出类型不投", () => {
+  it("产物通道映射：图片 → image、PDF → pdf；Office / 文本族自 S3 起不再投递（走查看器通道）；判不出类型不投", () => {
     expect(previewTargetsFor({ fileName: "现场照片.png", mime: "image/png" })).toEqual(["image"]);
     expect(previewTargetsFor({ fileName: "矢量图.svg", mime: null })).toEqual(["image"]);
     expect(previewTargetsFor({ fileName: "机械设计图纸.pdf", mime: null })).toEqual(["pdf"]);
-    expect(previewTargetsFor({ fileName: "方案.docx", mime: null })).toEqual(["pdf"]);
-    expect(previewTargetsFor({ fileName: "报价.xlsx", mime: null })).toEqual(["pdf"]);
-    expect(previewTargetsFor({ fileName: "无扩展名", mime: "application/vnd.ms-excel" })).toEqual(["pdf"]);
+    expect(previewTargetsFor({ fileName: "方案.docx", mime: null })).toEqual([]);
+    expect(previewTargetsFor({ fileName: "报价.xlsx", mime: null })).toEqual([]);
+    expect(previewTargetsFor({ fileName: "说明.txt", mime: null })).toEqual([]);
+    expect(previewTargetsFor({ fileName: "无扩展名", mime: "application/vnd.ms-excel" })).toEqual([]);
     expect(previewTargetsFor({ fileName: "交付包.zip", mime: null })).toEqual([]);
     expect(previewTargetsFor({ fileName: "工具包", mime: null })).toEqual([]);
+  });
+
+  it("查看器通道映射（S3）：Office / 文本族 → documentType + fileType（扩展名优先、MIME 兜底）", () => {
+    expect(viewerChannelFor({ fileName: "方案.docx", mime: null })).toEqual({ documentType: "word", fileType: "docx" });
+    expect(viewerChannelFor({ fileName: "报表.xlsm", mime: null })).toEqual({ documentType: "cell", fileType: "xlsm" });
+    expect(viewerChannelFor({ fileName: "说明.txt", mime: null })).toEqual({ documentType: "word", fileType: "txt" });
+    expect(viewerChannelFor({ fileName: "清单.csv", mime: null })).toEqual({ documentType: "cell", fileType: "csv" });
+    expect(viewerChannelFor({ fileName: "汇报.pptx", mime: null })).toEqual({ documentType: "slide", fileType: "pptx" });
+    expect(viewerChannelFor({ fileName: "无扩展名", mime: "application/vnd.ms-excel" })).toEqual({
+      documentType: "cell",
+      fileType: "xls",
+    });
+    expect(viewerChannelFor({ fileName: "现场照片.png", mime: "image/png" })).toBeNull();
+    expect(viewerChannelFor({ fileName: "机械设计图纸.pdf", mime: null })).toBeNull();
+    expect(viewerChannelFor({ fileName: "交付包.zip", mime: null })).toBeNull();
   });
 
   it("去重键 = 三元组：内容 / 管线版本 / 通道 任一不同即不同任务", () => {

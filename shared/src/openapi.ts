@@ -161,6 +161,7 @@ import {
   FilePurgeBodySchema,
   FilePurgeResponseSchema,
   FileRecycleBodySchema,
+  FileRenameBodySchema,
   FileRestoreBodySchema,
   FileRollbackBodySchema,
   FileRollbackResponseSchema,
@@ -647,7 +648,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式）",
+    summary: "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态）",
     responses: {
       200: { description: "偏好全量", ...json(UserPreferencesSchema) },
       401: commonErrors[401],
@@ -658,7 +659,7 @@ export function buildOpenApiDocument() {
     method: "patch",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400）",
+    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400）",
     request: { body: json(UserPreferencesUpdateBodySchema) },
     responses: {
       200: { description: "更新后的偏好全量", ...json(UserPreferencesSchema) },
@@ -990,6 +991,32 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // 受控预览内容端点（S1 契约切片 · ONLYOFFICE 查看器；安全定稿 §3.2 / C1~C6）：服务间拉取口，不是用户下载口。
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/files/{id}/versions/{versionId}/preview-content",
+    tags: ["files"],
+    summary: "受控预览内容端点（服务间 · DocServer outbox Bearer JWT；预览链无预签名、无重定向）",
+    description:
+      "S1 契约切片（ONLYOFFICE 查看器 · 安全定稿 §3.2）：语义 = 交给在线查看器拉取的原文件字节流（不是用户下载口）；" +
+      "鉴权 = 服务间 Bearer JWT（HS256 共享密钥 / payload.url 逐字绑定 / exp ≤ 300s + 容差），缺 token 或不匹配统一 401 且不区分原因；" +
+      "仅 GET（其余方法 405）；不参与用户会话（忽略 Cookie）、不向浏览器来源开 CORS；网关不暴露（仅 DocServer 网段可达）。",
+    request: { params: versionParams },
+    responses: {
+      200: {
+        description:
+          "原文件字节流（Content-Type = 版本 mime；Content-Length；Content-Disposition: inline；Cache-Control: no-store；" +
+          "X-Content-Type-Options: nosniff；禁止 302 到预签名 —— 无重定向、不回退预签名）",
+        content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
+      },
+      401: errorResponse("服务间鉴权未通过（缺 / 签名错 / 过期 / URL 绑定不匹配 —— 统一文案不区分原因）"),
+      404: commonErrors[404],
+      405: errorResponse("仅接受 GET（其余方法显式 405，不进业务逻辑）"),
+      502: errorResponse("存储返回异常响应（fail-closed：不重定向、不回退预签名）"),
+      503: errorResponse("存储 / 依赖故障（fail-closed：不重定向、不回退预签名）"),
+    },
+  });
+
   registry.registerPath({
     method: "post",
     path: "/api/v1/files/{id}/uploads/{uploadId}/parts",
@@ -1079,6 +1106,19 @@ export function buildOpenApiDocument() {
     request: { params: idParams, headers: idempotencyHeader, body: json(FileRecycleBodySchema) },
     responses: {
       200: { description: "已回收的文件", ...json(FileSchema) },
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/files/{id}",
+    tags: ["files"],
+    summary: "文件改名（只改元数据名称；乐观锁 version 必传）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(FileRenameBodySchema) },
+    responses: {
+      200: { description: "改名后的文件", ...json(FileSchema) },
       404: commonErrors[404],
       409: commonErrors[409],
     },
@@ -1541,12 +1581,12 @@ export function buildOpenApiDocument() {
       404: commonErrors[404],
     },
   });
-  // ---- 工作台（M6-05 第一刀 · A6-01 / A6-03：我的任务 / 我负责的问题 · wmj 线）----
+  // ---- 工作台（M6-05 · A6-01 / A6-03：我的任务四组 / 我负责的问题 · wmj 线；2026-09-30 复评：取消 7 天窗口 / 项目经理含我 / 未排期单列）----
   registry.registerPath({
     method: "get",
     path: "/api/v1/workspace",
     tags: ["workspace"],
-    summary: "工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的）",
+    summary: "工作台（M6-05）：我的任务四组（今日待办 / 即将到期 / 已逾期 / 未排期）+ 我的问题（我处理 / 我提出的）",
     responses: {
       200: { description: "工作台聚合（按会话用户；记录级可见性过滤后）", ...json(WorkspaceResponseSchema) },
       401: commonErrors[401],

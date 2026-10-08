@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody } from "@libiaolink/contracts";
+import { SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -76,6 +76,12 @@ function booleanOf(value: unknown): boolean {
   return value === true;
 }
 
+/** 工作台展开态（A31 · Push 233）：`{ tasks, raised }` 两个项目 id 列表；jsonb 里非对象 / 数组内非字符串项一律收敛（不抛错）。 */
+function openProjectsOf(value: unknown): WorkspaceOpenProjects {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return { tasks: stringArrayOf(record["tasks"]), raised: stringArrayOf(record["raised"]) };
+}
+
 const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 function dayOf(value: unknown): string | null {
@@ -83,7 +89,7 @@ function dayOf(value: unknown): string | null {
 }
 
 /**
- * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）；
+ * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）；
  * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
  * 偏好是界面状态（非业务数据），不写审计；单用户单写者，无乐观锁。
@@ -110,6 +116,7 @@ export class UserPreferenceService {
       taskTableHiddenColumns: columnKeysOf(prefs["taskTableHiddenColumns"]),
       homeSavedFilters: savedFiltersOf(prefs["homeSavedFilters"]),
       focusMode: booleanOf(prefs["focusMode"]),
+      workspaceOpenProjects: openProjectsOf(prefs["workspaceOpenProjects"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }

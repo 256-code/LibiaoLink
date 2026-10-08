@@ -224,12 +224,20 @@ body {
   animation: ll-menu-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* 主标签栏「日报及问题」子菜单弹出动画（Push 236）：与账号菜单共用一条 keyframes，弹出原点改左上 ——
+   面板左缘对齐父标签（图一：父项带下划线、面板从它下面展开）。 */
+.submenu-pop {
+  transform-origin: top left;
+  animation: ll-menu-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drawer-backdrop,
   .drawer-panel,
   .drawer-backdrop.is-closing,
   .drawer-panel.is-closing,
-  .menu-pop {
+  .menu-pop,
+  .submenu-pop {
     animation: none;
   }
 }
@@ -956,4 +964,52 @@ body {
 .hub-map__micro:not([data-tier="0"])[data-linked="true"] .hub-map__micro-dot {
   fill: #1a73e8;
   stroke: #ffffff;
+}
+
+
+/* ============================================================================
+   顶部导航栏（业务口径 2026-09-30「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」）。
+   首版按业务给的 styled-components 玻璃胶囊样张还原，随后业务口径三轮收口：
+   「把阴影去除」→ 撤落影层；「黑很明显的黑边去除」→ 描边改浅灰发丝边；「字的阴影也不要」→ 去 text-shadow；
+   最后一刀「去除这个液态效果 只保留文字」（2026-09-30）→ 胶囊面（玻璃渐变 + 内阴影 + backdrop blur）、
+   描边环 / 高光扫过的 ::after、悬停缩放与按下 rotate3d 整套下架，只剩纯文字导航：
+   默认中灰、悬停加深、当前项深色加粗（与项目页内键帽导航同一套「当前项」语言）。
+   命中区靠 padding 撑出来（13px 字号 ≈ 上下 10px / 左右 12px），焦点圈保留。
+   ============================================================================ */
+.topnav {
+  gap: 0.125rem;
+}
+
+.topnav-btn {
+  display: inline-block;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  line-height: 1;
+  text-decoration: none;
+  letter-spacing: -0.01em;
+  border-radius: 0.375rem;
+  padding: 0.769em 0.923em;
+  color: rgba(82, 82, 82, 1);
+  transition: color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+}
+
+.topnav-btn:hover {
+  color: rgba(24, 24, 27, 1);
+}
+
+.topnav-btn[aria-current="page"] {
+  font-weight: 700;
+  color: rgba(24, 24, 27, 1);
+}
+
+.topnav-btn:focus-visible {
+  outline: 2px solid rgba(251, 191, 36, 0.7);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topnav-btn {
+    transition: none;
+  }
 }

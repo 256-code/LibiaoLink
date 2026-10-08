@@ -1,6 +1,8 @@
 /**
  * M3-03 任务完成门禁回归（A4-20 / ADR-024 · Push 143）：预检（can-complete）、完成提交缺件 422 + 留痕、
  * draft 放行 + R02 提醒、PATCH status / progress 与完成提交同一门禁（三入口一致）、无节点任务 deliverable_types 兜底。
+ * 【暂时下线 · 2026-09-30】业务口径「暂时不要这个约束功能」：task.service.ts 常量 TASK_COMPLETION_DOC_GATE_ENABLED=false ——
+ * 缺件不再 422（预检缺件也恒放行 / missing 恒空）；draft 放行 + R02 提醒保留。恢复门禁时把本文件断言与常量一起还原（原断言见 git 历史）。
  * 真机口径见 server/README.md「M3-03」；与之对称的节点门禁回归见 test/flow-gate-rejection.test.ts。
  */
 import { describe, expect, it } from "vitest";
@@ -173,44 +175,42 @@ function makeService(repo: FakeTaskRepository, gate: FakeTaskGateRepository): {
 }
 
 describe("M3-03 · 任务完成门禁（A4-20 / ADR-024）", () => {
-  it("预检：有节点任务按 node_requirements 缺件 → canComplete=false + missing 明细", async () => {
+  it("预检（门禁暂时下线 2026-09-30）：节点缺件不再置灰 —— canComplete=true + missing=[]", async () => {
     const repo = new FakeTaskRepository();
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
     const { service } = makeService(repo, gate);
     const result = await service.canComplete(PROJECT, TASK);
-    expect(result.canComplete).toBe(false);
-    expect(result.missing).toEqual([{ docType: "合同", required: 1, present: 0 }]);
+    // 恢复门禁时还原：canComplete=false + missing=[{ docType: "合同", required: 1, present: 0 }]
+    expect(result.canComplete).toBe(true);
+    expect(result.missing).toEqual([]);
     expect(result.warnings).toEqual([]);
   });
 
-  it("预检：无节点任务按 deliverable_types 兜底（每类 ≥ 1 份；已有定档的那类放行）", async () => {
+  it("预检（门禁暂时下线 2026-09-30）：无节点任务缺件同样放行 —— canComplete=true + missing=[]", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ nodeId: null, deliverableTypes: ["合同", "验收单"] });
     const gate = new FakeTaskGateRepository();
     gate.finalCounts = [{ docType: "合同", present: 1 }];
     const { service } = makeService(repo, gate);
     const result = await service.canComplete(PROJECT, TASK);
-    expect(result.canComplete).toBe(false);
-    expect(result.missing).toEqual([{ docType: "验收单", required: 1, present: 0 }]);
+    // 恢复门禁时还原：canComplete=false + missing=[{ docType: "验收单", required: 1, present: 0 }]
+    expect(result.canComplete).toBe(true);
+    expect(result.missing).toEqual([]);
   });
 
-  it("完成提交：缺件 → 422 TASK_REQUIRED_DOC_MISSING（不部分生效）+ outbox / 审计留痕", async () => {
+  it("完成提交（门禁暂时下线 2026-09-30）：缺件也放行 —— done，无拒绝留痕", async () => {
     const repo = new FakeTaskRepository();
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
     const { service, db, audit } = makeService(repo, gate);
-    await expect(service.complete(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({
-      code: "TASK_REQUIRED_DOC_MISSING",
-      httpStatus: 422,
-    });
-    expect(repo.task?.status).toBe("pending");
-    const event = db.outbox.find((row) => row.topic === "task.gate_rejected");
-    expect(event?.payload["taskId"]).toBe(TASK);
-    expect(event?.dedupeKey.startsWith("task.gate_rejected:" + TASK + ":")).toBe(true);
-    const failed = audit.entries.find((entry) => entry.result === "failed");
-    expect(failed?.objectType).toBe("task");
-    expect(failed?.action).toBe("complete");
+    const result = await service.complete(PROJECT, TASK, { version: 3 }, ACTOR);
+    // 恢复门禁时还原：rejects TASK_REQUIRED_DOC_MISSING + gate_rejected 留痕 + failed 审计
+    expect(result.task.status).toBe("done");
+    expect(repo.task?.status).toBe("done");
+    expect(db.outbox.some((row) => row.topic === "task.gate_rejected")).toBe(false);
+    expect(db.outbox.some((row) => row.topic === "task.completed")).toBe(true);
+    expect(audit.entries.some((entry) => entry.result === "failed")).toBe(false);
   });
 
   it("完成提交：门禁通过 → 200 task=done（满格 + 完成日期按当天）+ outbox task.completed", async () => {
@@ -253,27 +253,25 @@ describe("M3-03 · 任务完成门禁（A4-20 / ADR-024）", () => {
     });
   });
 
-  it("表格编辑入口：PATCH status=done 同一门禁（缺件 422，不写库）", async () => {
+  it("表格编辑入口（门禁暂时下线 2026-09-30）：PATCH status=done 缺件也放行（done）", async () => {
     const repo = new FakeTaskRepository();
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
     const { service } = makeService(repo, gate);
-    await expect(service.update(PROJECT, TASK, { status: "done", version: 3 }, ACTOR)).rejects.toMatchObject({
-      code: "TASK_REQUIRED_DOC_MISSING",
-      httpStatus: 422,
-    });
-    expect(repo.task?.status).toBe("pending");
+    const updated = await service.update(PROJECT, TASK, { status: "done", version: 3 }, ACTOR);
+    // 恢复门禁时还原：rejects TASK_REQUIRED_DOC_MISSING + 不写库
+    expect(updated.status).toBe("done");
+    expect(repo.task?.status).toBe("done");
   });
 
-  it("看板 / 四格入口：PATCH progress=1 同一门禁（缺件 422）", async () => {
+  it("看板 / 四格入口（门禁暂时下线 2026-09-30）：PATCH progress=1 缺件也放行（done）", async () => {
     const repo = new FakeTaskRepository();
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
     const { service } = makeService(repo, gate);
-    await expect(service.updateProgress(PROJECT, TASK, { progress: 1, version: 3 }, ACTOR)).rejects.toMatchObject({
-      code: "TASK_REQUIRED_DOC_MISSING",
-      httpStatus: 422,
-    });
-    expect(repo.task?.status).toBe("pending");
+    await service.updateProgress(PROJECT, TASK, { progress: 1, version: 3 }, ACTOR);
+    // 恢复门禁时还原：rejects TASK_REQUIRED_DOC_MISSING + 不写库
+    expect(repo.task?.status).toBe("done");
+    expect(Number(repo.task?.progress)).toBe(1);
   });
 });

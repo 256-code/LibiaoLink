@@ -26,10 +26,11 @@ export const EMPTY_LIST_QUERY: ListQueryState = {
   sortDesc: true,
 };
 
-export type PlaceholderPage = "templates" | "files";
+/** 占位页（Push 230 起只剩「任务模板」）：「我的任务」已转正式页面 frontend/src/WorkspacePage.tsx。 */
+export type PlaceholderPage = "templates";
 
-/** 项目详情页顶部标签（5 视图，Push 82 / 128 / 145）在地址里的取值：`#/project/{id}?view=`。缺省「项目总览」不落参数（默认值不进 URL，与列表筛选态同一口径）。 */
-export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily";
+/** 项目详情页顶部标签（6 视图，Push 82 / 128 / 145 / 221）在地址里的取值：`#/project/{id}?view=`。缺省「项目总览」不落参数（默认值不进 URL，与列表筛选态同一口径）。 */
+export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily" | "stakeholders";
 
 /**
  * 「日报及问题」的四块页内子视图（Push 214）在地址里的取值：`#/project/{id}?view=daily&sub=`。
@@ -38,8 +39,15 @@ export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily"
  */
 export type DailySubView = "form" | "records" | "issues" | "board";
 
+/**
+ * 工作台「我的任务」页的标签（Push 230 两枚 / Push 234 增加「我的计划」）在地址里的取值：`#/my-tasks?tab=`。
+ * 取值 = tasks（我的任务，缺省，不落参数）/ raised（我提出的问题）/ plan（我的计划）；缺省不落参数与顶部标签 / 列表筛选态同一口径。
+ */
+export type WorkspaceTab = "tasks" | "raised" | "plan";
+
 export type Route =
   | { kind: "hub" }
+  | { kind: "workspace"; tab: WorkspaceTab }
   | { kind: "list"; filters: ListQueryState }
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null };
@@ -55,6 +63,9 @@ export const HUB_HASH = "#/";
 
 /** 项目详情地址前缀：当前标签走 `?view=`（缺省「项目总览」不落参数）。 */
 export const PROJECT_BASE_HASH = "#/project/";
+
+/** 工作台「我的任务」页地址（Push 230 转正式）：标签走 `?tab=`，缺省「我的任务」不落参数。 */
+export const WORKSPACE_BASE_HASH = "#/my-tasks";
 
 const PROJECT_PATH = /^\/project\/([^/]+)$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -154,7 +165,7 @@ function parseSectionValue(search: string): string | null {
 }
 
 /** 项目详情标签的合法取值（顺序与标签栏一致）。 */
-const PROJECT_VIEW_KEYS: readonly ProjectView[] = ["overview", "gantt", "owners", "progress", "daily"];
+const PROJECT_VIEW_KEYS: readonly ProjectView[] = ["overview", "gantt", "owners", "progress", "daily", "stakeholders"];
 
 /** 项目详情标签参数（`?view=`）：只认 `PROJECT_VIEW_KEYS`，不认识的取值 / 重复键一律落回「项目总览」。 */
 function parseProjectView(search: string): ProjectView {
@@ -194,6 +205,29 @@ function parseProjectSub(search: string): DailySubView {
     return PROJECT_SUB_KEYS.find((sub) => sub === value) ?? "form";
   }
   return "form";
+}
+
+/** 工作台标签的合法取值（顺序与标签栏一致）。 */
+const WORKSPACE_TAB_KEYS: readonly WorkspaceTab[] = ["tasks", "raised", "plan"];
+
+/**
+ * 工作台标签参数（`?tab=`）：只认 `WORKSPACE_TAB_KEYS` 里的 ASCII slug，不认识的取值 / 重复键一律落回缺省「我的任务」
+ * （地址不纠正，与 `?view=` / `?sub=` 同口径）；重复键只认第一个。
+ */
+function parseWorkspaceTab(search: string): WorkspaceTab {
+  for (const chunk of search.split("&")) {
+    if (chunk === "") {
+      continue;
+    }
+    const separator = chunk.indexOf("=");
+    const key = safeDecode(separator === -1 ? chunk : chunk.slice(0, separator));
+    if (key !== "tab") {
+      continue;
+    }
+    const value = safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)).trim();
+    return WORKSPACE_TAB_KEYS.find((tab) => tab === value) ?? "tasks";
+  }
+  return "tasks";
 }
 
 /**
@@ -292,6 +326,25 @@ export function replaceProjectSubView(id: string, sub: DailySubView): void {
   }
 }
 
+/** 工作台标签地址（缺省「我的任务」不落参数；其余标签按 `?tab=` 取值）—— 与 `projectViewHref` 同一口径。 */
+export function workspaceHref(tab: WorkspaceTab): string {
+  return tab === "tasks" ? WORKSPACE_BASE_HASH : WORKSPACE_BASE_HASH + "?tab=" + tab;
+}
+
+/** 切工作台标签（Push 230）：同步渲染并写回地址（replace，不新增历史条目）—— 刷新 / 收藏 / 分享都停在同一块标签。 */
+export function replaceWorkspaceTab(tab: WorkspaceTab): void {
+  if (currentRoute.kind !== "workspace" || currentRoute.tab === tab) {
+    return;
+  }
+  currentRoute = { ...currentRoute, tab };
+  emit();
+  try {
+    window.history.replaceState(null, "", workspaceHref(tab));
+  } catch {
+    // URL 只是当前标签的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
+  }
+}
+
 /** 序列化筛选态：默认值不落 URL（排序固定按创建时间、默认降序 → 省略 sort；时间区间两端齐全才写入）。 */
 export function buildListHash(filters: ListQueryState): string {
   const parts: string[] = [];
@@ -347,8 +400,10 @@ export function parseHash(hash: string): Route {
   if (path === "/templates") {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
   }
-  if (path === "/files") {
-    return { kind: "placeholder", page: "files", section: null };
+  if (path === "/my-tasks") {
+    // 工作台（系统功能书 A6 我的工作台 · A6-01 / A6-03）：Push 230 起页面正式落地（frontend/src/WorkspacePage.tsx），
+    // 标签走地址（`?tab=raised` = 我提出的问题 / `?tab=plan` = 我的计划；缺省「我的任务」不落参数）；数据面 = GET /api/v1/workspace（workspaceApi.ts）。
+    return { kind: "workspace", tab: parseWorkspaceTab(search) };
   }
   const match = PROJECT_PATH.exec(path);
   if (match) {

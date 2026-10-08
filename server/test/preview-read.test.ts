@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
 import { AppError } from "../src/common/errors/app-error.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
@@ -7,6 +8,7 @@ import type { AuditService } from "../src/modules/admin/index.js";
 import type { FileRepository, FileRow, FileVersionRow } from "../src/modules/file/file.repository.js";
 import { PreviewReadService } from "../src/modules/file/preview-read.service.js";
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
+import type { UserService } from "../src/modules/identity/index.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
 import type { DownloadUrlInput, ObjectStorage, SignedUrl } from "../src/storage/index.js";
 
@@ -32,6 +34,11 @@ const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/1.0.0/pdf";
 const ENV = {
   PREVIEW_PIPELINE_VERSION: "1.0.0",
   PREVIEW_URL_TTL_SECONDS: 300,
+  ONLYOFFICE_DOCSERVER_URL: "http://docs.local:8001",
+  ONLYOFFICE_DOCSERVER_API_BASE_URL: "http://api.internal:3000",
+  ONLYOFFICE_JWT_SECRET: "unit-test-secret",
+  ONLYOFFICE_JWT_TTL_SECONDS: 900,
+  ONLYOFFICE_JWT_CLOCK_TOLERANCE_SECONDS: 60,
 } as unknown as Env;
 
 function makeFileRow(overrides: Partial<FileRow> = {}): FileRow {
@@ -200,8 +207,21 @@ interface Harness {
   previews: FakePreviewRepository;
   storage: FakeStorage;
   permission: FakePermissionService;
+  users: FakeUserService;
   audit: FakeAuditService;
   database: FakeDatabase;
+}
+
+class FakeUserService {
+  readonly names = new Map<string, string>([[ACTOR, "蓝工"]]);
+
+  async getUser(userId: string): Promise<{ displayName: string }> {
+    const displayName = this.names.get(userId);
+    if (displayName === undefined) {
+      throw new AppError("NOT_FOUND", "用户不存在");
+    }
+    return { displayName };
+  }
 }
 
 function makeService(env: Partial<Env> = {}): Harness {
@@ -209,6 +229,7 @@ function makeService(env: Partial<Env> = {}): Harness {
   const previews = new FakePreviewRepository();
   const storage = new FakeStorage();
   const permission = new FakePermissionService();
+  const users = new FakeUserService();
   const audit = new FakeAuditService();
   const database = new FakeDatabase();
   const config = new AppConfig({ ...ENV, ...env } as Env);
@@ -218,10 +239,11 @@ function makeService(env: Partial<Env> = {}): Harness {
     previews as unknown as PreviewRepository,
     storage as unknown as ObjectStorage,
     permission as unknown as PermissionService,
+    users as unknown as UserService,
     audit as unknown as AuditService,
     config,
   );
-  return { service, repo, previews, storage, permission, audit, database };
+  return { service, repo, previews, storage, permission, users, audit, database };
 }
 
 describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
@@ -238,6 +260,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       versionId: VERSION,
       status: "ready",
       target: "pdf",
+      viewer: null,
       url: "https://minio.local/" + ARTIFACT_KEY + "?sig=1",
       expiresAt: "2026-09-23T08:05:00.000Z",
       pipelineVersion: "1.0.0",
@@ -297,6 +320,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       versionId: VERSION,
       status: "not_ready",
       target: null,
+      viewer: null,
       url: null,
       expiresAt: null,
       pipelineVersion: "1.0.0",
@@ -351,6 +375,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       versionId: VERSION,
       status: "failed",
       target: null,
+      viewer: null,
       url: null,
       expiresAt: null,
       pipelineVersion: "1.0.0",
@@ -392,6 +417,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       versionId: null,
       status: "failed",
       target: null,
+      viewer: null,
       url: null,
       expiresAt: null,
       pipelineVersion: null,
@@ -427,5 +453,125 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(h.database.outbox).toHaveLength(0);
     expect(h.storage.signed).toHaveLength(0);
     expect(h.audit.entries).toHaveLength(0);
+  });
+});
+
+describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", () => {
+  it("Office（docx）→ ready + viewer 非空：不查产物 / 不投递 / 不签名；审计记 viewerKind 与 documentType", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "方案.docx" });
+    h.repo.versions.set(
+      VERSION,
+      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+    );
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result).toMatchObject({
+      fileId: FILE,
+      versionId: VERSION,
+      status: "ready",
+      target: null,
+      url: null,
+      expiresAt: null,
+      pipelineVersion: null,
+      reason: null,
+      generatedAt: null,
+    });
+    expect(result.viewer).toMatchObject({
+      kind: "onlyoffice",
+      docServerUrl: "http://docs.local:8001",
+      documentType: "word",
+      document: {
+        title: "方案.docx",
+        url: "http://api.internal:3000/api/v1/files/" + FILE + "/versions/" + VERSION + "/preview-content",
+        fileType: "docx",
+        key: HASH,
+      },
+      editorConfig: { mode: "view", lang: "zh-CN", user: { id: ACTOR, name: "蓝工" } },
+      permissions: { edit: false, download: false, print: false, comment: false, chat: false, fillForms: false, protect: true },
+    });
+    expect(h.previews.queries).toHaveLength(0);
+    expect(h.previews.ensured).toHaveLength(0);
+    expect(h.database.outbox).toHaveLength(0);
+    expect(h.storage.signed).toHaveLength(0);
+    expect(h.audit.entries).toHaveLength(1);
+    expect(h.audit.entries[0]).toMatchObject({
+      actorId: ACTOR,
+      action: "preview",
+      objectId: FILE,
+      metadata: { versionId: VERSION, viewerKind: "onlyoffice", documentType: "word" },
+    });
+  });
+
+  it("viewer token：HS256 逐字签发四段 + iat/exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS），document.url 不含存储凭证", async () => {
+    const h = makeService({ ONLYOFFICE_JWT_TTL_SECONDS: 900 });
+    h.repo.file = makeFileRow({ name: "说明.txt" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "text/plain" }));
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    const token = result.viewer!.token;
+    const [header, payload, signature] = token.split(".");
+    expect(signature).toBeDefined();
+    expect(createHmac("sha256", "unit-test-secret").update(header + "." + payload).digest("base64url")).toBe(signature);
+    const claims = JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")) as {
+      documentType: string;
+      document: { url: string; key: string };
+      editorConfig: { mode: string };
+      permissions: { edit: boolean; download: boolean };
+      iat: number;
+      exp: number;
+    };
+    expect(claims.documentType).toBe("word");
+    expect(claims.document.url).toBe(
+      "http://api.internal:3000/api/v1/files/" + FILE + "/versions/" + VERSION + "/preview-content",
+    );
+    expect(claims.document.url).not.toContain("X-Amz-");
+    expect(claims.document.key).toBe(HASH);
+    expect(claims.editorConfig.mode).toBe("view");
+    expect(claims.exp - claims.iat).toBe(900);
+  });
+
+  it("文本族 / Office 映射：csv → cell、无扩展名按 MIME 反推（ms-excel → cell/xls）", async () => {
+    const csv = makeService();
+    csv.repo.file = makeFileRow({ name: "清单.csv" });
+    csv.repo.versions.set(VERSION, makeVersionRow({ mime: "text/csv" }));
+    const csvResult = await csv.service.getPreview(FILE, null, ACTOR);
+    expect(csvResult.viewer).toMatchObject({ documentType: "cell", document: { fileType: "csv" } });
+
+    const byMime = makeService();
+    byMime.repo.file = makeFileRow({ name: "无扩展名" });
+    byMime.repo.versions.set(VERSION, makeVersionRow({ mime: "application/vnd.ms-excel" }));
+    const byMimeResult = await byMime.service.getPreview(FILE, null, ACTOR);
+    expect(byMimeResult.viewer).toMatchObject({ documentType: "cell", document: { fileType: "xls" } });
+  });
+
+  it("ONLYOFFICE_JWT_SECRET 未配置 → INTERNAL fail closed（不签发、不审计、不落表）", async () => {
+    const h = makeService({ ONLYOFFICE_JWT_SECRET: "" });
+    h.repo.file = makeFileRow({ name: "方案.docx" });
+    h.repo.versions.set(
+      VERSION,
+      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+    );
+
+    await expect(h.service.getPreview(FILE, null, ACTOR)).rejects.toMatchObject({ code: "INTERNAL" });
+    expect(h.audit.entries).toHaveLength(0);
+    expect(h.previews.ensured).toHaveLength(0);
+    expect(h.database.outbox).toHaveLength(0);
+  });
+
+  it("展示名取不到（账号已删）→ 退化 actorId（展示用，不阻塞签发）", async () => {
+    const h = makeService();
+    h.users.names.delete(ACTOR);
+    h.repo.file = makeFileRow({ name: "方案.docx" });
+    h.repo.versions.set(
+      VERSION,
+      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+    );
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result.viewer).toMatchObject({ editorConfig: { user: { id: ACTOR, name: ACTOR } } });
   });
 });

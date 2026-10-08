@@ -109,7 +109,7 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
  * 与状态列同一套做法：色签底色**铺满整颗胶囊**（不再套「液态玻璃」白底小框 + 内层色签），悬停再深一档。
  * 底色取色签同色系 100 档（原标签底是 50 档，铺满整颗胶囊后 50 档几乎看不出颜色，故抬一档），字色沿用原标签。
  */
-const PRIORITY_CAPSULE_CLASS: Record<TaskPriority, string> = {
+export const PRIORITY_CAPSULE_CLASS: Record<TaskPriority, string> = {
   高: "bg-rose-100 text-rose-600 hover:bg-rose-200/70",
   中: "bg-amber-100 text-amber-700 hover:bg-amber-200/70",
   低: "bg-zinc-100 text-zinc-500 hover:bg-zinc-200/70",
@@ -143,8 +143,9 @@ export const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
 /**
  * 醒目模式（Push 134）的整行底色：业务口径「保留整行浅色，但大幅降低透明度」——
  * 同一个状态色（图一色系）压到 **6% 不透明**（马卡龙级极淡，只隐约区分），悬停再抬一档到 12% 留住「这一行可点」的手感。
+ * Push 232：导出给工作台「我的任务」表复用（同款醒目模式口径，避免两处色表漂移）。
  */
-const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
+export const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
   已延期: "bg-rose-500/[0.06] hover:bg-rose-500/[0.12]",
   进行中: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
   已完成: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
@@ -156,7 +157,7 @@ const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
  * 正常模式的状态列胶囊（Push 134 收口：业务口径「这个颜色填满胶囊」）——
  * 色签底色铺满整颗胶囊（不再套「液态玻璃」白底小框、也不留内层白边），悬停再深一档。
  */
-const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
+export const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
   已延期: "bg-rose-100 text-rose-700 hover:bg-rose-200/70",
   进行中: "bg-amber-100 text-amber-800 hover:bg-amber-200/70",
   已完成: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200/70",
@@ -166,8 +167,9 @@ const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
 
 /**
  * 醒目模式下的状态字色（Push 134）：整行已经有状态色了，状态列不再套白底小框 / 色签底色，只留这一档深色字。
+ * Push 232：导出给工作台「我的任务」表复用（状态胶囊在醒目模式下收口成这一档）。
  */
-const STATUS_TAG_TEXT_CLASS: Record<TaskStatus, string> = {
+export const STATUS_TAG_TEXT_CLASS: Record<TaskStatus, string> = {
   已延期: "text-rose-700",
   进行中: "text-amber-800",
   已完成: "text-emerald-700",
@@ -236,6 +238,23 @@ type TaskBoardProps = {
    * 打开后每张任务卡片整行铺该任务状态的底色（图一色签同款），关掉 = 保持现状（白底行）。
    */
   focusMode?: boolean;
+  /**
+   * 任务文件上传（Push 226 · 「文件」那一刀前端接线）：点「文件」列 = 选文件 → 调用方分片直传文件库并关联本任务，
+   * 完成后整表重取刷新计数；不传 = 该列只读（保持原计数 / 「—」展示）。
+   * onProgress 供单元格内「上传中 N/M」提示（done = 已完成份数）。
+   */
+  onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>;
+  /**
+   * 任务文件删除（Push 226 续）：抽屉清单里点「删除」= 调用方走回收站（M4-02），完成后整表重取刷新计数；
+   * 不传 = 清单只读（不显示删除入口）。
+   */
+  onDeleteFile?: (fileId: string) => Promise<void>;
+  /** 任务文件改名（Push 226 续二）：抽屉清单里点名字 → 编辑提交（只改主名、后缀保留）；不传 = 名字只读。 */
+  onRenameFile?: (fileId: string, name: string) => Promise<void>;
+  /** 任务 → 文件名数组（Push 226 续二）：「文件」列显示文件名、超出部分「+N」；不传 / 取不到 = 退回「N 份」。 */
+  fileNames?: ReadonlyMap<string, string[]>;
+  /** 任务详情接口所需（抽屉里的文件清单按它取详情）；不传 = 抽屉不拉清单。 */
+  projectId?: string;
 };
 
 function Chevron({ collapsed }: { collapsed: boolean }) {
@@ -253,7 +272,10 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; focusMode: boolean }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, fileNames, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>; fileNames?: ReadonlyMap<string, string[]>; focusMode: boolean }) {
+  /** 「文件」列的上传入口（Push 226）：隐藏的文件选择框 + 「上传中 N/M」进度。 */
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -272,6 +294,44 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       startDate: nextStartIso,
       dueDate: nextDueIso,
       days: nextStartIso !== "" && nextDueIso !== "" ? daysBetweenInclusive(nextStartIso, nextDueIso) : 0,
+    });
+  };
+
+  /** 「文件」列内容（Push 226 续二 · 业务口径「应该是文件名字 超出长度后面写+1 +2」）：与「输出成果文件」列同套 ——
+   *  第一份出名字（截断 + title 全名）、后面还有就「+N」；文件名映射没取到（老数据 / 请求失败）退回「N 份」计数。 */
+  const fileNamesForTask = fileNames?.get(task.id) ?? [];
+  const fileCellContent = task.files.total === 0 ? (
+    <span className="text-xs text-zinc-300">—</span>
+  ) : fileNamesForTask.length > 0 ? (
+    <>
+      <span
+        className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600"
+        title={fileNamesForTask.join("、")}
+      >
+        {fileNamesForTask[0]}
+      </span>
+      {fileNamesForTask.length > 1 ? <span className="text-[10px] text-zinc-400">+{fileNamesForTask.length - 1}</span> : null}
+    </>
+  ) : (
+    <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600" title={"共 " + String(task.files.total) + " 份"}>
+      {task.files.total} 份
+    </span>
+  );
+
+  /** 「文件」列（Push 226）：点单元格选文件 → 调用方分片直传（关联本任务）→ 完成后整表重取刷新计数。 */
+  const beginFileUpload = (picked: FileList | null) => {
+    if (picked === null || onUploadFiles === undefined) {
+      return;
+    }
+    const list = Array.from(picked);
+    if (list.length === 0) {
+      return;
+    }
+    setUploading({ done: 0, total: list.length });
+    void onUploadFiles(task.id, list, (done, total) => {
+      setUploading({ done, total });
+    }).finally(() => {
+      setUploading(null);
     });
   };
 
@@ -431,19 +491,56 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       </span>
     ),
     files: (
-      <span className="flex min-w-0 items-center justify-center gap-1">
-        {task.files.total === 0 ? (
-          <span className="text-xs text-zinc-300">—</span>
+      <span className="relative flex min-w-0 items-center justify-center gap-1 self-stretch">
+        {onUploadFiles === undefined ? (
+          fileCellContent
         ) : (
-          <>
-            <span
-              className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600"
-              title={"共 " + String(task.files.total) + " 份（未定档 " + String(task.files.draft) + " / 已定档 " + String(task.files.final) + "）"}
-            >
-              {task.files.total} 份
-            </span>
-            {task.files.draft > 0 ? <span className="text-[10px] text-amber-600">未定档 {task.files.draft}</span> : null}
-          </>
+          <button
+            type="button"
+            data-cell-action="file-upload"
+            title={task.files.total === 0 ? "点击上传文件（关联到本任务）" : "点击继续上传文件（关联到本任务）"}
+            aria-label={"上传文件（" + task.title + "）"}
+            disabled={uploading !== null}
+            onClick={(event) => {
+              // 「文件」列整格是上传热区：点击不冒泡到行（行点击 = 打开详情抽屉）
+              event.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.stopPropagation();
+              }
+            }}
+            className="inline-flex max-w-full items-center gap-1 rounded-lg border border-zinc-200/90 bg-white/75 px-1.5 py-[3px] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(15,23,42,0.04)] backdrop-blur-[3px] transition hover:border-zinc-300 hover:bg-white hover:shadow-[0_2px_6px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/15 disabled:cursor-not-allowed"
+          >
+            {uploading !== null ? (
+              <span className="tabular-nums text-zinc-500">
+                {uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
+              </span>
+            ) : (
+              fileCellContent
+            )}
+          </button>
+        )}
+        {onUploadFiles === undefined ? null : (
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            data-file-upload-input="true"
+            className="hidden"
+            onClick={(event) => {
+              // Push 226 修正：选文件对话框关掉后浏览器会向 input 补发一次 click，
+              // 它会从 input 冒泡到行（行点击 = 打开详情抽屉）—— 这里拦一道，
+              // 上传动作不连带打开抽屉（回放断言 ②e）。
+              event.stopPropagation();
+            }}
+            onChange={(event) => {
+              beginFileUpload(event.currentTarget.files);
+              // 清空 value：同一份文件再选一次仍会触发 change
+              event.currentTarget.value = "";
+            }}
+          />
         )}
       </span>
     ),
@@ -590,8 +687,10 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           {column.key === "title" ? (
             cells[column.key]
           ) : (
-            // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）
-            <div className="flex min-w-0 items-center justify-center self-stretch">{cells[column.key]}</div>
+            // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）。
+            // 左右各留 4px 内衬（业务口径 2026-09-30「这个触碰到了 要优化一下」）：满宽内容（文件名胶囊 / 进展描述胶囊）
+            // 与相邻列不再贴边 —— 两格相邻时天然留出 8px 空隙；内容居中口径不变。
+            <div className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
           )}
         </Fragment>
       ))}
@@ -634,7 +733,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, fileNames, projectId, focusMode }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -956,6 +1055,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                         onSetActualEnd={onSetActualEnd === undefined ? undefined : (iso) => onSetActualEnd(task.id, iso)}
                         onChangeManagers={onChangeManagers}
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
+                        onUploadFiles={onUploadFiles}
+                        fileNames={fileNames}
                       />
                     ))}
                   </div>
@@ -1011,6 +1112,10 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         onProgress={onSetProgress}
         onSetStatus={onSetStatus}
         onSetActualEnd={onSetActualEnd}
+        onUploadFiles={onUploadFiles}
+        onDeleteFile={onDeleteFile}
+        onRenameFile={onRenameFile}
+        projectId={projectId}
         onClose={closeDrawer}
       />
     </>

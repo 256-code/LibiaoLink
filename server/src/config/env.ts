@@ -65,6 +65,20 @@ export const EnvSchema = z
     PREVIEW_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(300),
     /** 预览转换队列开关（worker）：`false` = 只投递不消费（排障 / 压测用）。 */
     PREVIEW_JOB_ENABLED: z.enum(["true", "false"]).default("true"),
+    // ---- ONLYOFFICE 查看器（S3 · ADR-030：Office / 文本族预览改由 ONLYOFFICE 查看器承接；受控端点鉴权 = 与 DocServer 共享密钥） ----
+    /** DocServer 浏览器侧基址：查看器配置 `docServerUrl` 下发（前端据此加载 api.js）；dev 沙箱 = deploy/onlyoffice 的 127.0.0.1:8001。 */
+    ONLYOFFICE_DOCSERVER_URL: z.string().min(1).default("http://127.0.0.1:8001"),
+    /**
+     * 「DocServer 视角」API 基址（安全定稿 C1）：受控端点绝对 URL（配置签发）与 token `payload.url` 绑定校验
+     * **共用的唯一配置源** —— 同源生成、不信任 Host 头；容器部署 = DocServer 可达的 API 内网地址（如 http://api:3000）。
+     */
+    ONLYOFFICE_DOCSERVER_API_BASE_URL: z.string().min(1).default("http://127.0.0.1:3000"),
+    /** 与 DocServer `JWT_SECRET` 同值（查看器配置签发 + 受控端点 Bearer 自验）；生产必填（启动即校验）、空值下受控端点一律 401（fail closed）。 */
+    ONLYOFFICE_JWT_SECRET: z.string().default(""),
+    /** 查看器配置 token TTL（秒）：S8-2 定案 900s（契约不含该字段，服务端配置下发）。 */
+    ONLYOFFICE_JWT_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(900),
+    /** 受控端点签名校验的时钟漂移容差（秒；N2 附条件 C5：≤60s 且配置化）。 */
+    ONLYOFFICE_JWT_CLOCK_TOLERANCE_SECONDS: z.coerce.number().int().min(0).max(60).default(60),
     // ---- Outbox 领取器（M4-05c：领取 + 消费 + 重试 + dead；不含规则 / 通知编排） ----
     /** 领取轮询周期（毫秒）。 */
     OUTBOX_POLL_MS: z.coerce.number().int().min(200).max(600000).default(5000),
@@ -197,6 +211,13 @@ export const EnvSchema = z
     }
     if (value.S3_SECRET_KEY === "") {
       context.addIssue({ code: "custom", message: "生产环境必须配置 S3_SECRET_KEY", path: ["S3_SECRET_KEY"] });
+    }
+    if (value.ONLYOFFICE_JWT_SECRET === "") {
+      context.addIssue({
+        code: "custom",
+        message: "生产环境必须配置 ONLYOFFICE_JWT_SECRET（与 DocServer JWT_SECRET 同值）",
+        path: ["ONLYOFFICE_JWT_SECRET"],
+      });
     }
   });
 

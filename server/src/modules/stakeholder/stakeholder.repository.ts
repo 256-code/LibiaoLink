@@ -18,6 +18,8 @@ export interface StakeholderRow {
   wechat: string | null;
   email: string | null;
   remark: string | null;
+  /** 干系人角色（A5-01 · Push 225 增列）。 */
+  role: string | null;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: Date;
@@ -41,6 +43,7 @@ export interface StakeholderInsertInput {
   wechat: string | null;
   email: string | null;
   remark: string | null;
+  role: string | null;
 }
 
 export interface StakeholderUpdatePatch {
@@ -52,6 +55,7 @@ export interface StakeholderUpdatePatch {
   wechat?: string | null | undefined;
   email?: string | null | undefined;
   remark?: string | null | undefined;
+  role?: string | null | undefined;
 }
 
 const ROW_COLUMNS = {
@@ -64,6 +68,7 @@ const ROW_COLUMNS = {
   wechat: stakeholders.wechat,
   email: stakeholders.email,
   remark: stakeholders.remark,
+  role: stakeholders.role,
   createdBy: stakeholders.createdBy,
   createdByName: users.displayName,
   createdAt: stakeholders.createdAt,
@@ -128,6 +133,7 @@ export class StakeholderRepository {
         wechat: input.wechat,
         email: input.email,
         remark: input.remark,
+        role: input.role,
         createdBy: actorId,
         createdAt: at,
         updatedAt: at,
@@ -143,7 +149,7 @@ export class StakeholderRepository {
   /** 部分更新（只写传入键；无变更时仍刷新 updated_at 与 updated_by 语义由审计承担）。 */
   async update(stakeholderId: string, patch: StakeholderUpdatePatch, at: Date, client: DbClient): Promise<StakeholderRow | null> {
     const values: Record<string, unknown> = { updatedAt: at };
-    for (const key of ["name", "companyType", "company", "title", "phone", "wechat", "email", "remark"] as const) {
+    for (const key of ["name", "companyType", "company", "title", "phone", "wechat", "email", "remark", "role"] as const) {
       const value = patch[key];
       if (value !== undefined) values[key] = value;
     }

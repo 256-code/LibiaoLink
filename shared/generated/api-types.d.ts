@@ -1869,7 +1869,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式） */
+        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态） */
         get: {
             parameters: {
                 query?: never;
@@ -1904,7 +1904,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400） */
         patch: {
             parameters: {
                 query?: never;
@@ -3403,7 +3403,55 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** 文件改名（只改元数据名称；乐观锁 version 必传） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileRenameBody"];
+                };
+            };
+            responses: {
+                /** @description 改名后的文件 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["File"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/api/v1/files/{id}/versions": {
@@ -3487,6 +3535,95 @@ export interface paths {
                 };
                 /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/versions/{versionId}/preview-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 受控预览内容端点（服务间 · DocServer outbox Bearer JWT；预览链无预签名、无重定向）
+         * @description S1 契约切片（ONLYOFFICE 查看器 · 安全定稿 §3.2）：语义 = 交给在线查看器拉取的原文件字节流（不是用户下载口）；鉴权 = 服务间 Bearer JWT（HS256 共享密钥 / payload.url 逐字绑定 / exp ≤ 300s + 容差），缺 token 或不匹配统一 401 且不区分原因；仅 GET（其余方法 405）；不参与用户会话（忽略 Cookie）、不向浏览器来源开 CORS；网关不暴露（仅 DocServer 网段可达）。
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 原文件字节流（Content-Type = 版本 mime；Content-Length；Content-Disposition: inline；Cache-Control: no-store；X-Content-Type-Options: nosniff；禁止 302 到预签名 —— 无重定向、不回退预签名） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description 服务间鉴权未通过（缺 / 签名错 / 过期 / URL 绑定不匹配 —— 统一文案不区分原因） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 仅接受 GET（其余方法显式 405，不进业务逻辑） */
+                405: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 存储返回异常响应（fail-closed：不重定向、不回退预签名） */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 存储 / 依赖故障（fail-closed：不重定向、不回退预签名） */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -5883,7 +6020,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的） */
+        /** 工作台（M6-05）：我的任务四组（今日待办 / 即将到期 / 已逾期 / 未排期）+ 我的问题（我处理 / 我提出的） */
         get: {
             parameters: {
                 query?: never;
@@ -7282,12 +7419,13 @@ export interface components {
             /** @description 原文件名（缩略图角标 / 无障碍文案） */
             name: string;
         };
-        /** @description 文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed） */
+        /** @description 文件预览状态与短时签名地址 / 查看器配置（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed；ONLYOFFICE 查看器通道（S1 契约 / S3 起签发）：ready + viewer 非空、url 为空） */
         FilePreviewResponse: {
             fileId: components["schemas"]["Uuid"];
             versionId: components["schemas"]["Uuid"] & (string | null);
             status: components["schemas"]["PreviewStatus"];
             target: components["schemas"]["PreviewTarget"];
+            viewer: components["schemas"]["PreviewViewer"];
             /** @description 短时签名预览地址（仅 ready；未就绪 / 失败为空；对象存储禁止匿名读取） */
             url: string | null;
             expiresAt: components["schemas"]["DateTime"] & (string | null);
@@ -7310,6 +7448,15 @@ export interface components {
         FileRecycleBody: {
             version: components["schemas"]["Version"];
             reason?: string;
+        };
+        /** @description 文件改名（Push 226 续：文件名可修改；乐观锁 version 必传；回收站中的文件不可改名） */
+        FileRenameBody: {
+            /**
+             * @description 新文件名（原文件名的元数据改名：不动内容 / 版本链 / 定档状态）
+             * @example 机械设计图纸-v3.docx
+             */
+            name: string;
+            version: components["schemas"]["Version"];
         };
         FileRestoreBody: {
             version: components["schemas"]["Version"];
@@ -7665,10 +7812,65 @@ export interface components {
          */
         PreviewStatus: "ready" | "not_ready" | "failed";
         /**
-         * @description 已就绪产物的目标（渲染通道）；未就绪 / 失败为空
+         * @description 已就绪转换产物的目标（渲染通道）；查看器通道 / 未就绪 / 失败为空 —— 查看器就绪以 viewer 判定
          * @enum {string|null}
          */
         PreviewTarget: "pdf" | "image" | "structured" | null;
+        /** @description 在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发） */
+        PreviewViewer: {
+            kind: components["schemas"]["PreviewViewerKind"];
+            /** @description DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发） */
+            docServerUrl: string;
+            documentType: components["schemas"]["PreviewViewerDocumentType"];
+            document: components["schemas"]["PreviewViewerDocument"];
+            editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
+            permissions: components["schemas"]["PreviewViewerPermissions"];
+            /** @description 查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
+            token: string;
+        } | null;
+        PreviewViewerDocument: {
+            /** @description 文档标题（展示用；取文件名） */
+            title: string;
+            /** @description 受控预览内容端点绝对 URL（DocServer 视角；无存储凭证；浏览器直取 401、外网入口 404） */
+            url: string;
+            /** @description 文件类型（扩展名小写，如 docx / xlsx / pptx） */
+            fileType: string;
+            /** @description 文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效） */
+            key: string;
+        };
+        /**
+         * @description 文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）
+         * @enum {string}
+         */
+        PreviewViewerDocumentType: "word" | "cell" | "slide";
+        PreviewViewerEditorConfig: {
+            /**
+             * @description 固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）
+             * @enum {string}
+             */
+            mode: "view";
+            /** @description 界面语言（如 zh-CN） */
+            lang: string;
+            /** @description 会话标识（展示用；查看会话不落用户审计 —— 审计在签发查看器配置时点） */
+            user: {
+                id: string;
+                name: string;
+            };
+        };
+        /**
+         * @description 在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）
+         * @enum {string}
+         */
+        PreviewViewerKind: "onlyoffice";
+        PreviewViewerPermissions: {
+            edit: boolean;
+            download: boolean;
+            print: boolean;
+            comment: boolean;
+            chat: boolean;
+            fillForms: boolean;
+            protect: boolean;
+        };
         /**
          * @description 紧急重要度三档字典（高 / 中 / 低）；2026-09-24 定案「与页面口径一致」—— 四象限口径作废，存量值由迁移 0031 折算（有损：中 = 重要不紧急 / 紧急但不重要）
          * @enum {string|null}
@@ -8052,6 +8254,8 @@ export interface components {
             email?: string | null;
             /** @description 备注；需 stakeholder.manage，无权时键不存在 */
             remark?: string | null;
+            /** @description 干系人角色（A5-01 · Push 225 增列）；自由文本，未登记字段级策略 —— 与姓名 / 公司分类同档：登录且可见即返回，空为 null */
+            role: string | null;
             createdBy: components["schemas"]["Uuid"] & (string | null);
             /** @description 录入人显示名（清单「填写者」列） */
             createdByName: string | null;
@@ -8077,6 +8281,8 @@ export interface components {
             /** @description 邮箱（格式校验在服务端软校验，避免历史数据误拦） */
             email?: string;
             remark?: string;
+            /** @description 干系人角色；不传则空 */
+            role?: string;
             /** @description 建台账时一并关联的项目（A5-03）；项目不存在 404 */
             projectIds?: components["schemas"]["Uuid"][];
         };
@@ -8114,6 +8320,7 @@ export interface components {
             wechat?: string | null;
             email?: string | null;
             remark?: string | null;
+            role?: string | null;
         };
         /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124） */
         Task: {
@@ -8618,6 +8825,7 @@ export interface components {
             homeSavedFilters: components["schemas"]["SavedHomeFilter"][];
             /** @description 醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false */
             focusMode: boolean;
+            workspaceOpenProjects: components["schemas"]["WorkspaceOpenProjects"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED */
@@ -8625,6 +8833,7 @@ export interface components {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
             focusMode?: boolean;
+            workspaceOpenProjects?: components["schemas"]["WorkspaceOpenProjects"];
         } & {
             [key: string]: unknown;
         };
@@ -8743,13 +8952,20 @@ export interface components {
             /** @description 我提出的（reporterId = 会话用户） */
             raised: components["schemas"]["WorkspaceIssueItem"][];
         };
-        /** @description 工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏 */
+        /** @description 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；默认两空数组 = 全部收起；读侧坏形状收敛为空数组（整体替换语义） */
+        WorkspaceOpenProjects: {
+            /** @description 「我的任务」标签已展开的项目 id 列表（整体替换语义） */
+            tasks: components["schemas"]["Uuid"][];
+            /** @description 「我提出的问题」标签已展开的项目 id 列表（整体替换语义） */
+            raised: components["schemas"]["Uuid"][];
+        };
+        /** @description 工作台聚合：我的任务四组 + 我的问题两栏 */
         WorkspaceResponse: {
             today: components["schemas"]["DateOnly"] & unknown;
             myTasks: components["schemas"]["WorkspaceTasks"];
             myIssues: components["schemas"]["WorkspaceIssues"];
         };
-        /** @description 工作台任务项（跨项目；按预计完成日期落入三组之一） */
+        /** @description 工作台任务项（跨项目；按预计完成日期落入四组之一） */
         WorkspaceTaskItem: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
@@ -8764,20 +8980,22 @@ export interface components {
             plannedStart: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd: components["schemas"]["DateOnly"] & (string | null);
             actualEnd: components["schemas"]["DateOnly"] & (string | null);
-            /** @description 任务负责人（多值；本组内必含会话用户） */
+            /** @description 任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评） */
             ownerIds: components["schemas"]["Uuid"][];
             /** @description 负责人姓名（与 ownerIds 同下标；缺失为 null） */
             ownerNames: (string | null)[];
             priority: components["schemas"]["Priority"];
         };
-        /** @description 我的任务三组（A6-01；组内按 plannedEnd 升序、id 升序） */
+        /** @description 我的任务四组（A6-01；组内按 plannedEnd 升序、id 升序，未排期置末） */
         WorkspaceTasks: {
             /** @description 今日待办：plannedEnd = 今天且未完成 */
             today: components["schemas"]["WorkspaceTaskItem"][];
-            /** @description 即将到期：今天 < plannedEnd ≤ 今天 + 7 天且未完成 */
+            /** @description 即将到期：plannedEnd > 今天且未完成（2026-09-30 复评起不设天数窗口，远期照收） */
             upcoming: components["schemas"]["WorkspaceTaskItem"][];
             /** @description 已逾期：plannedEnd < 今天且未完成 */
             overdue: components["schemas"]["WorkspaceTaskItem"][];
+            /** @description 未排期：plannedEnd 为空且未完成（组内排末） */
+            unscheduled: components["schemas"]["WorkspaceTaskItem"][];
         };
     };
     responses: never;

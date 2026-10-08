@@ -2473,6 +2473,9 @@
           "target": {
             "$ref": "#/components/schemas/PreviewTarget"
           },
+          "viewer": {
+            "$ref": "#/components/schemas/PreviewViewer"
+          },
           "url": {
             "type": [
               "string",
@@ -2529,13 +2532,14 @@
           "versionId",
           "status",
           "target",
+          "viewer",
           "url",
           "expiresAt",
           "pipelineVersion",
           "reason",
           "generatedAt"
         ],
-        "description": "文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed）"
+        "description": "文件预览状态与短时签名地址 / 查看器配置（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed；ONLYOFFICE 查看器通道（S1 契约 / S3 起签发）：ready + viewer 非空、url 为空）"
       },
       "FilePurgeBody": {
         "type": "object",
@@ -2583,6 +2587,26 @@
           "version"
         ],
         "description": "移入回收站（任意状态可删；默认保留 30 天，可恢复）"
+      },
+      "FileRenameBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "example": "机械设计图纸-v3.docx",
+            "description": "新文件名（原文件名的元数据改名：不动内容 / 版本链 / 定档状态）"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "description": "文件改名（Push 226 续：文件名可修改；乐观锁 version 必传；回收站中的文件不可改名）"
       },
       "FileRestoreBody": {
         "type": "object",
@@ -3953,7 +3977,163 @@
           "structured",
           null
         ],
-        "description": "已就绪产物的目标（渲染通道）；未就绪 / 失败为空"
+        "description": "已就绪转换产物的目标（渲染通道）；查看器通道 / 未就绪 / 失败为空 —— 查看器就绪以 viewer 判定"
+      },
+      "PreviewViewer": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PreviewViewerKind"
+          },
+          "docServerUrl": {
+            "type": "string",
+            "description": "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）"
+          },
+          "documentType": {
+            "$ref": "#/components/schemas/PreviewViewerDocumentType"
+          },
+          "document": {
+            "$ref": "#/components/schemas/PreviewViewerDocument"
+          },
+          "editorConfig": {
+            "$ref": "#/components/schemas/PreviewViewerEditorConfig"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PreviewViewerPermissions"
+          },
+          "token": {
+            "type": "string",
+            "description": "查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）"
+          }
+        },
+        "required": [
+          "kind",
+          "docServerUrl",
+          "documentType",
+          "document",
+          "editorConfig",
+          "permissions",
+          "token"
+        ],
+        "description": "在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发）"
+      },
+      "PreviewViewerDocument": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "文档标题（展示用；取文件名）"
+          },
+          "url": {
+            "type": "string",
+            "description": "受控预览内容端点绝对 URL（DocServer 视角；无存储凭证；浏览器直取 401、外网入口 404）"
+          },
+          "fileType": {
+            "type": "string",
+            "description": "文件类型（扩展名小写，如 docx / xlsx / pptx）"
+          },
+          "key": {
+            "type": "string",
+            "description": "文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效）"
+          }
+        },
+        "required": [
+          "title",
+          "url",
+          "fileType",
+          "key"
+        ]
+      },
+      "PreviewViewerDocumentType": {
+        "type": "string",
+        "enum": [
+          "word",
+          "cell",
+          "slide"
+        ],
+        "description": "文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）"
+      },
+      "PreviewViewerEditorConfig": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "view"
+            ],
+            "description": "固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）"
+          },
+          "lang": {
+            "type": "string",
+            "description": "界面语言（如 zh-CN）"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "description": "会话标识（展示用；查看会话不落用户审计 —— 审计在签发查看器配置时点）"
+          }
+        },
+        "required": [
+          "mode",
+          "lang",
+          "user"
+        ]
+      },
+      "PreviewViewerKind": {
+        "type": "string",
+        "enum": [
+          "onlyoffice"
+        ],
+        "description": "在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）"
+      },
+      "PreviewViewerPermissions": {
+        "type": "object",
+        "properties": {
+          "edit": {
+            "type": "boolean"
+          },
+          "download": {
+            "type": "boolean"
+          },
+          "print": {
+            "type": "boolean"
+          },
+          "comment": {
+            "type": "boolean"
+          },
+          "chat": {
+            "type": "boolean"
+          },
+          "fillForms": {
+            "type": "boolean"
+          },
+          "protect": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "edit",
+          "download",
+          "print",
+          "comment",
+          "chat",
+          "fillForms",
+          "protect"
+        ]
       },
       "Priority": {
         "type": [
@@ -5504,6 +5684,13 @@
             ],
             "description": "备注；需 stakeholder.manage，无权时键不存在"
           },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "干系人角色（A5-01 · Push 225 增列）；自由文本，未登记字段级策略 —— 与姓名 / 公司分类同档：登录且可见即返回，空为 null"
+          },
           "createdBy": {
             "allOf": [
               {
@@ -5550,6 +5737,7 @@
           "id",
           "name",
           "companyType",
+          "role",
           "createdBy",
           "createdByName",
           "projects",
@@ -5609,6 +5797,12 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 500
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "干系人角色；不传则空"
           },
           "projectIds": {
             "type": "array",
@@ -5764,6 +5958,13 @@
               "null"
             ],
             "maxLength": 500
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
           }
         },
         "description": "更新干系人（部分更新；null = 清空该字段）：变更写审计留痕（字段级 before / after）"
@@ -7707,6 +7908,9 @@
             "type": "boolean",
             "description": "醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false"
           },
+          "workspaceOpenProjects": {
+            "$ref": "#/components/schemas/WorkspaceOpenProjects"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -7726,6 +7930,7 @@
           "taskTableHiddenColumns",
           "homeSavedFilters",
           "focusMode",
+          "workspaceOpenProjects",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -7749,6 +7954,9 @@
           },
           "focusMode": {
             "type": "boolean"
+          },
+          "workspaceOpenProjects": {
+            "$ref": "#/components/schemas/WorkspaceOpenProjects"
           }
         },
         "additionalProperties": {},
@@ -8132,6 +8340,32 @@
         ],
         "description": "我的问题两栏（A6-03）；同一问题两边都命中时两个清单都出现；未关闭在前、已完成后置"
       },
+      "WorkspaceOpenProjects": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 200,
+            "description": "「我的任务」标签已展开的项目 id 列表（整体替换语义）"
+          },
+          "raised": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 200,
+            "description": "「我提出的问题」标签已展开的项目 id 列表（整体替换语义）"
+          }
+        },
+        "required": [
+          "tasks",
+          "raised"
+        ],
+        "description": "工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；默认两空数组 = 全部收起；读侧坏形状收敛为空数组（整体替换语义）"
+      },
       "WorkspaceResponse": {
         "type": "object",
         "properties": {
@@ -8157,7 +8391,7 @@
           "myTasks",
           "myIssues"
         ],
-        "description": "工作台聚合（M6-05 第一刀）：我的任务三组 + 我的问题两栏"
+        "description": "工作台聚合：我的任务四组 + 我的问题两栏"
       },
       "WorkspaceTaskItem": {
         "type": "object",
@@ -8235,7 +8469,7 @@
                   "string",
                   "null"
                 ],
-                "description": "预计完成日期（分组依据；三组内必非空）"
+                "description": "预计完成日期（分组依据；未排期组为空）"
               }
             ]
           },
@@ -8258,7 +8492,7 @@
             "items": {
               "$ref": "#/components/schemas/Uuid"
             },
-            "description": "任务负责人（多值；本组内必含会话用户）"
+            "description": "任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评）"
           },
           "ownerNames": {
             "type": "array",
@@ -8291,7 +8525,7 @@
           "ownerNames",
           "priority"
         ],
-        "description": "工作台任务项（跨项目；按预计完成日期落入三组之一）"
+        "description": "工作台任务项（跨项目；按预计完成日期落入四组之一）"
       },
       "WorkspaceTasks": {
         "type": "object",
@@ -8308,7 +8542,7 @@
             "items": {
               "$ref": "#/components/schemas/WorkspaceTaskItem"
             },
-            "description": "即将到期：今天 < plannedEnd ≤ 今天 + 7 天且未完成"
+            "description": "即将到期：plannedEnd > 今天且未完成（2026-09-30 复评起不设天数窗口，远期照收）"
           },
           "overdue": {
             "type": "array",
@@ -8316,14 +8550,22 @@
               "$ref": "#/components/schemas/WorkspaceTaskItem"
             },
             "description": "已逾期：plannedEnd < 今天且未完成"
+          },
+          "unscheduled": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTaskItem"
+            },
+            "description": "未排期：plannedEnd 为空且未完成（组内排末）"
           }
         },
         "required": [
           "today",
           "upcoming",
-          "overdue"
+          "overdue",
+          "unscheduled"
         ],
-        "description": "我的任务三组（A6-01；组内按 plannedEnd 升序、id 升序）"
+        "description": "我的任务四组（A6-01；组内按 plannedEnd 升序、id 升序，未排期置末）"
       }
     },
     "parameters": {}
@@ -10647,7 +10889,7 @@
         "tags": [
           "users"
         ],
-        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式）",
+        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态）",
         "responses": {
           "200": {
             "description": "偏好全量",
@@ -10675,7 +10917,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400）",
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400）",
         "requestBody": {
           "content": {
             "application/json": {
@@ -12431,6 +12673,73 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "files"
+        ],
+        "summary": "文件改名（只改元数据名称；乐观锁 version 必传）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRenameBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "改名后的文件",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/File"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/files/{id}/versions": {
@@ -12513,6 +12822,98 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/versions/{versionId}/preview-content": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "受控预览内容端点（服务间 · DocServer outbox Bearer JWT；预览链无预签名、无重定向）",
+        "description": "S1 契约切片（ONLYOFFICE 查看器 · 安全定稿 §3.2）：语义 = 交给在线查看器拉取的原文件字节流（不是用户下载口）；鉴权 = 服务间 Bearer JWT（HS256 共享密钥 / payload.url 逐字绑定 / exp ≤ 300s + 容差），缺 token 或不匹配统一 401 且不区分原因；仅 GET（其余方法 405）；不参与用户会话（忽略 Cookie）、不向浏览器来源开 CORS；网关不暴露（仅 DocServer 网段可达）。",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "原文件字节流（Content-Type = 版本 mime；Content-Length；Content-Disposition: inline；Cache-Control: no-store；X-Content-Type-Options: nosniff；禁止 302 到预签名 —— 无重定向、不回退预签名）",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "服务间鉴权未通过（缺 / 签名错 / 过期 / URL 绑定不匹配 —— 统一文案不区分原因）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "仅接受 GET（其余方法显式 405，不进业务逻辑）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "存储返回异常响应（fail-closed：不重定向、不回退预签名）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "存储 / 依赖故障（fail-closed：不重定向、不回退预签名）",
             "content": {
               "application/json": {
                 "schema": {
@@ -15314,7 +15715,7 @@
         "tags": [
           "workspace"
         ],
-        "summary": "工作台（M6-05 第一刀）：我的任务三组（今日待办 / 即将到期 / 已逾期）+ 我的问题（我处理 / 我提出的）",
+        "summary": "工作台（M6-05）：我的任务四组（今日待办 / 即将到期 / 已逾期 / 未排期）+ 我的问题（我处理 / 我提出的）",
         "responses": {
           "200": {
             "description": "工作台聚合（按会话用户；记录级可见性过滤后）",

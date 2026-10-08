@@ -1,6 +1,6 @@
 /**
  * 用户偏好（A4 / A24）：GET / PATCH /api/v1/users/me/preferences。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）。
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）。
  * 常用筛选（A24）自 Push 169 起按账号存服务端（user_preferences.prefs.homeSavedFilters）——
  * 同一账号换设备可见；同一设备换账号互不可见（服务端按会话 actorId 隔离，路径不接受用户 id）。
  * 契约 shared/src/modules/users.ts：PATCH 为合并语义（只传变更键、数组键整体替换）。
@@ -9,12 +9,20 @@ import { apiRequest, apiSend } from "./api";
 import { clearLegacySavedFilters, readLegacySavedFilters } from "./savedFilters";
 import type { SavedFilter } from "./savedFilters";
 
+/** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：tasks / raised 两枚已展开的项目 id 列表（整体替换语义；默认两空数组 = 全部收起）。 */
+export type WorkspaceOpenProjects = {
+  tasks: string[];
+  raised: string[];
+};
+
 /** 偏好全量（与契约 UserPreferences 同形；`updatedAt` = 尚未保存过时 null）。 */
 export type UserPreferences = {
   taskTableHiddenColumns: string[];
   homeSavedFilters: SavedFilter[];
   /** 醒目模式（A4 · §6.13 · Push 171）：按账号记住开关状态；默认 false。 */
   focusMode: boolean;
+  /** 工作台折叠面板展开态（A31 · Push 233）：按标签记住已展开的项目 id；默认两空数组 = 全部收起。 */
+  workspaceOpenProjects: WorkspaceOpenProjects;
   updatedAt: string | null;
 };
 
@@ -36,6 +44,11 @@ export function saveTaskTableHiddenColumns(keys: string[]): Promise<UserPreferen
 /** 醒目模式（A4 · §6.13 · Push 171）单键 PATCH：返回服务端收敛后的全量偏好，前端以返回值覆盖本地。 */
 export function saveFocusMode(value: boolean): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { focusMode: value });
+}
+
+/** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）单键 PATCH：整体替换两标签的项目 id 列表。 */
+export function saveWorkspaceOpenProjects(value: WorkspaceOpenProjects): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { workspaceOpenProjects: value });
 }
 
 /**

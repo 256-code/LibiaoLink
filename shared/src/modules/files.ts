@@ -278,6 +278,14 @@ export const FileRecycleBodySchema = z
 
 export const FileRestoreBodySchema = z.object({ version: VersionSchema }).openapi("FileRestoreBody");
 
+/** 文件改名（Push 226 续）：只改元数据 name（不动内容 / 版本链 / 定档状态）；乐观锁 version 必传。 */
+export const FileRenameBodySchema = z
+  .object({
+    name: z.string().min(1).max(255).openapi({ example: "机械设计图纸-v3.docx", description: "新文件名（原文件名的元数据改名：不动内容 / 版本链 / 定档状态）" }),
+    version: VersionSchema,
+  })
+  .openapi("FileRenameBody", { description: "文件改名（Push 226 续：文件名可修改；乐观锁 version 必传；回收站中的文件不可改名）" });
+
 export const FilePurgeBodySchema = z
   .object({
     version: VersionSchema,
@@ -299,12 +307,12 @@ export const FileDownloadUrlResponseSchema = z
 /**
  * 预览目标（渲染通道口径 · wmj 评审定案 · PR #103）：按前端渲染方式定义，不按文件格式；格式差异由产物 MIME 表达。
  * 缓存键 = 内容哈希 + pipelineVersion + target（ADR-007 / v0.2 §5.4 三元组）。
- * pdf = PDF 查看器通道（Office / PDF 转出；CAD 产物格式随 M4-06 PoC 定）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
+ * pdf = PDF 查看器通道（PDF 直通；Office 改走查看器通道 viewer、不产转换产物 —— 历史 LibreOffice 转出口径随 S3 收口；CAD 产物格式随 M4-06 PoC 定）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
  */
 export const PREVIEW_TARGETS = ["pdf", "image", "structured"] as const;
 export const PreviewTargetSchema = z.enum(PREVIEW_TARGETS).openapi("PreviewTarget", {
   description:
-    "预览目标（渲染通道）：pdf PDF 查看器通道（Office / PDF 转出；CAD 若 PoC 产物为 PDF 也走这里） / image 图片查看器通道（图片直出、Office 图片型兜底、含矢量 SVG 产物 —— CAD 若 PoC 只能出 SVG 也走这里） / structured 结构化表格渲染通道（一期未启用时 xlsx 走 pdf 通道）",
+    "预览目标（渲染通道口径 · 转换产物通道）：pdf PDF 查看器通道（PDF 直通；历史 Office 转出口径随 S3 收口 —— Office 改走查看器通道、不占 target；CAD 若 PoC 产物为 PDF 也走这里） / image 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物 —— CAD 若 PoC 只能出 SVG 也走这里） / structured 结构化表格渲染通道（一期未启用时 xlsx 走 pdf 通道）；ONLYOFFICE 查看器通道不产生转换产物、不占用 target（见 FilePreviewResponse.viewer）",
 });
 
 /**
@@ -324,13 +332,77 @@ export const FilePreviewQuerySchema = z
   })
   .openapi("FilePreviewQuery");
 
+/**
+ * 在线查看器（ONLYOFFICE 查看通道 · S1 契约切片 · 安全定稿 §3.2）：ready 且走查看器通道时下发（无转换产物）。
+ * docServerUrl + 四段配置 + token 直接交给 DocServer 的 api.js 初始化 DocEditor（查看器行为面）；
+ * 安全语义在服务端受控端点（document.url 无存储凭证；鉴权 = DocServer outbox Bearer JWT，随 S3 落地）。
+ */
+export const PREVIEW_VIEWER_KINDS = ["onlyoffice"] as const;
+export const PreviewViewerKindSchema = z.enum(PREVIEW_VIEWER_KINDS).openapi("PreviewViewerKind", {
+  description: "在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）",
+});
+
+/** 查看器文档段（DocEditor 配置的 document；url = 受控预览内容端点绝对 URL —— C1：同源生成、不信任 Host 头）。 */
+export const PreviewViewerDocumentSchema = z
+  .object({
+    title: z.string().openapi({ description: "文档标题（展示用；取文件名）" }),
+    url: z.string().openapi({ description: "受控预览内容端点绝对 URL（DocServer 视角；无存储凭证；浏览器直取 401、外网入口 404）" }),
+    fileType: z.string().openapi({ description: "文件类型（扩展名小写，如 docx / xlsx / pptx）" }),
+    key: z.string().openapi({ description: "文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效）" }),
+  })
+  .openapi("PreviewViewerDocument");
+
+/** 查看器编辑器配置段（固定只读：mode = view；D1：不做在线编辑）。 */
+export const PreviewViewerEditorConfigSchema = z
+  .object({
+    mode: z.literal("view").openapi({ description: "固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）" }),
+    lang: z.string().openapi({ description: "界面语言（如 zh-CN）" }),
+    user: z.object({ id: z.string(), name: z.string() }).openapi({ description: "会话标识（展示用；查看会话不落用户审计 —— 审计在签发查看器配置时点）" }),
+  })
+  .openapi("PreviewViewerEditorConfig");
+
+/** 查看器权限段（行为面；download=false 只约束查看器自身 —— 防直取依赖受控端点鉴权，R1 不变量）。 */
+export const PreviewViewerPermissionsSchema = z
+  .object({
+    edit: z.boolean(),
+    download: z.boolean(),
+    print: z.boolean(),
+    comment: z.boolean(),
+    chat: z.boolean(),
+    fillForms: z.boolean(),
+    protect: z.boolean(),
+  })
+  .openapi("PreviewViewerPermissions");
+
+/** 在线查看器配置（FilePreviewResponse.viewer；token = 对 documentType / document / editorConfig / permissions 逐字签发）。 */
+export const PreviewViewerSchema = z
+  .object({
+    kind: PreviewViewerKindSchema,
+    docServerUrl: z.string().openapi({ description: "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）" }),
+    documentType: z.enum(["word", "cell", "slide"]).openapi("PreviewViewerDocumentType", {
+      description: "文档大类（word 文档 / cell 表格 / slide 演示；由文件类型映射）",
+    }),
+    document: PreviewViewerDocumentSchema,
+    editorConfig: PreviewViewerEditorConfigSchema,
+    permissions: PreviewViewerPermissionsSchema,
+    token: z.string().openapi({ description: "查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）" }),
+  })
+  .openapi("PreviewViewer", {
+    description: "在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名）",
+  });
+
 /** 预览状态响应（GET /files/{id}/preview；D2-04 短时签名 + 禁止匿名读取、D2-05 失败降级、D2-06 缓存、D2-07 审计）。 */
 export const FilePreviewResponseSchema = z
   .object({
     fileId: UuidSchema,
     versionId: UuidSchema.nullable().openapi({ description: "本次预览对应版本（查询参数指定时随指定，缺省 = 当前版本）；无版本为空" }),
     status: PreviewStatusSchema,
-    target: PreviewTargetSchema.nullable().openapi({ description: "已就绪产物的目标（渲染通道）；未就绪 / 失败为空" }),
+    target: PreviewTargetSchema.nullable().openapi({
+      description: "已就绪转换产物的目标（渲染通道）；查看器通道 / 未就绪 / 失败为空 —— 查看器就绪以 viewer 判定",
+    }),
+    viewer: PreviewViewerSchema.nullable().openapi({
+      description: "在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发）",
+    }),
     url: z
       .string()
       .nullable()
@@ -347,7 +419,9 @@ export const FilePreviewResponseSchema = z
       .openapi({ description: "失败原因（仅 failed，最长 500 字；D2-05 记录原因，不影响下载）" }),
     generatedAt: DateTimeSchema.nullable().openapi({ description: "产物生成时间（仅 ready；对齐 preview_artifacts.generated_at —— 查看时间在审计里）" }),
   })
-  .openapi("FilePreviewResponse", { description: "文件预览状态与短时签名地址（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed）" });
+  .openapi("FilePreviewResponse", {
+    description: "文件预览状态与短时签名地址 / 查看器配置（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed；ONLYOFFICE 查看器通道（S1 契约 / S3 起签发）：ready + viewer 非空、url 为空）",
+  });
 
 export const FileListQuerySchema = z
   .object({

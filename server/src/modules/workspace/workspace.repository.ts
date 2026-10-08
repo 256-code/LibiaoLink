@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, eq, inArray, isNotNull, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -68,20 +68,16 @@ const ISSUE_OWNER = alias(users, "workspace_issue_owner");
 export class WorkspaceRepository {
   constructor(private readonly database: DatabaseService) {}
 
-  /** 我的任务：任务负责人含我（A23 多值任一位命中）、未完成、未删除；预计完成日期 ≤ until（= 今天 + 7 天）。 */
-  async listMyTasks(
-    actorId: string,
-    scope: ProjectScopeFilter,
-    until: string,
-    client: DbClient = this.database.db,
-  ): Promise<WorkspaceTaskRow[]> {
+  /**
+   * 我的任务：负责人含我 或 项目经理含我（均多值任一位命中 · 2026-09-30 复评）、未完成、未删除；不设时间窗口。
+   * 组内排序 plannedEnd 升序（未排期空值置末 —— PG ASC 默认 NULLS LAST）→ id 升序。
+   */
+  async listMyTasks(actorId: string, scope: ProjectScopeFilter, client: DbClient = this.database.db): Promise<WorkspaceTaskRow[]> {
     if (scope.kind === "ids" && scope.ids.length === 0) return [];
     const conditions: SQL[] = [
       isNull(tasks.deletedAt),
       ne(tasks.status, "done"),
-      sql`${tasks.ownerIds} @> array[${actorId}]::uuid[]`,
-      isNotNull(tasks.plannedEnd),
-      lte(tasks.plannedEnd, until),
+      sql`(${tasks.ownerIds} @> array[${actorId}]::uuid[] or ${projects.managerIds} @> array[${actorId}]::uuid[])`,
       isNull(projects.deletedAt),
       ne(projects.status, "archived"),
     ];

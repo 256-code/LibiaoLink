@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { RowDeleteButton } from "./components/RowDeleteButton";
 import { TaskNodeCard } from "./components/TaskNodeCard";
@@ -21,11 +21,6 @@ import {
 } from "./templateApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import type { MeResponse } from "./types";
-
-const PAGES: Record<PlaceholderPageKey, { title: string; note: string }> = {
-  templates: { title: "任务模板", note: "左侧「任务节点」= 节点库接口（Push 181：`GET /api/v1/task-nodes`，可新增 / 编辑 / 删除）；右侧模板面板 = 模板接口（Push 182：`GET/POST/PATCH/DELETE /api/v1/task-templates`，改名 / 拖入拖出 / 排序改完点「保存」落库，删模板走同款红胶囊 + 底部确认条）。写 = 系统管理员（blueprint.manage）。把左侧节点拖进模板 = 定这份模板的节点顺序。" },
-  files: { title: "文件库", note: "文件库还没开工：先把入口与路由占好，后续按需求填充。" },
-};
 
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
 const TEMPLATE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
@@ -99,19 +94,6 @@ type PlaceholderPageProps = {
   canManageBlueprint: boolean;
 };
 
-/** 占位卡：页面主体内容未定稿前统一用它撑住版面。 */
-function PlaceholderCard({ title, note }: { title: string; note: string }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-8 py-20 text-center">
-      <p className="text-base font-semibold text-zinc-800">{title}</p>
-      <p className="mt-2 text-sm text-zinc-500">{note}</p>
-      <a href="#/" className="mt-6 inline-block text-sm font-medium text-zinc-700 underline underline-offset-4">
-        返回入口页
-      </a>
-    </div>
-  );
-}
-
 /** 占位页：入口页的按钮先各自落地，页面内容后续迭代；任务模板先出阶段板块标签栏 + 左侧任务节点卡片区。 */
 /**
  * 拖动（Push 116，业务口径「这里拖动卡片也要可以滑动鼠标」）：改成**指针拖动** —— 原生 HTML5 拖拽在拖动期间会把 `wheel` 吞掉,
@@ -137,7 +119,6 @@ function InsertLine({ className }: { className: string }) {
 }
 
 export default function PlaceholderPage({ me, page, section, canManageBlueprint }: PlaceholderPageProps) {
-  const { title, note } = PAGES[page];
   /** 当前板块：URL 是唯一来源（点标签栏 = 换地址；`?section=` 取 ASCII slug，兼容旧链接的中文板块名），缺省 / 不认识的值回落到第一个板块。 */
   const activeSection = templateSectionFromParam(section) ?? TEMPLATE_SECTIONS[0] ?? "";
 
@@ -430,6 +411,21 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
     setFocusTemplateId(null);
   }, [focusTemplateId]);
 
+  /**
+   * 打开节点表单后把光标落在中文名输入框（Push 219）：编辑表单是**就地插在被编辑卡片下方**的，
+   * 聚焦既能直接开改、也保证它随卡片进入视野（长列表里点靠后的卡片，不用再滚回列头找表单）。
+   */
+  useEffect(() => {
+    if (nodeForm === null) {
+      return;
+    }
+    const input = document.getElementById("node-form-title");
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+      input.select();
+    }
+  }, [nodeForm]);
+
   /** 写节点库失败的统一文案（ApiError 带业务码；其它异常给兜底话术，不把原始堆栈抛给用户）。 */
   const nodeErrorMessage = (error: unknown, fallback: string): string =>
     error instanceof ApiError ? nodeWriteMessage(error) : fallback;
@@ -501,6 +497,63 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
       }
     })();
   };
+
+  /**
+   * 节点表单（新增 / 编辑共用一套控件，Push 219）：新增 = 挂在列头「＋ 添加节点」按钮下方；
+   * 编辑 = **就地插在被编辑的那张卡片下面** —— 业务口径「任务模板里面点编辑，应该就近就可以修改，不是像当前一样在最上方才行」：
+   * 长列表里点靠后的卡片，表单就在这张卡片底下出现，不用再滚回列头找（打开后焦点直接落在中文名输入框）。
+   */
+  const renderNodeForm = (form: { mode: "create" | "edit" }): ReactNode => (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitNodeForm();
+      }}
+      className={
+        (form.mode === "create" ? "mb-3 " : "") + "rounded-xl border border-white/80 bg-white/70 p-3"
+      }
+    >
+      <p className="mb-2 text-xs font-medium text-zinc-700">
+        {form.mode === "create" ? "新增节点" : "编辑节点"} · {activeSection}
+      </p>
+      <input
+        type="text"
+        value={formTitle}
+        onChange={(event) => { setFormTitle(event.target.value); }}
+        placeholder="节点名称（中文，必填）"
+        id="node-form-title"
+        aria-label="节点名称"
+        maxLength={200}
+        className="mb-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-300"
+      />
+      <input
+        type="text"
+        value={formTitleEn}
+        onChange={(event) => { setFormTitleEn(event.target.value); }}
+        placeholder="英文名（可空）"
+        aria-label="节点英文名"
+        maxLength={200}
+        className="mb-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-300"
+      />
+      {formError === null ? null : <p className="mb-2 text-xs text-rose-600">{formError}</p>}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={closeNodeForm}
+          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
+        >
+          取消
+        </button>
+        <button
+          type="submit"
+          disabled={formBusy || formTitle.trim() === ""}
+          className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
+        >
+          {formBusy ? "保存中…" : "保存"}
+        </button>
+      </div>
+    </form>
+  );
 
   /** 删除节点（DELETE /api/v1/task-nodes/{id}）：成功 = 重取该板块（卡片消失就是反馈）；失败出提示条。 */
   const confirmDeleteNode = (): void => {
@@ -731,9 +784,13 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
   if (page === "templates") {
     return (
       <div className="min-h-screen">
-        <AppHeader me={me} title={title} />
+        <AppHeader me={me} />
         <main className="w-full px-6 pb-10 pt-3">
-          <div className="flex items-center gap-3 border-b border-zinc-200">
+          {/* 板块标签栏吸顶（Push 235 业务口径「任务模版和我的任务都要做吸顶效果」）：与项目详情主标签栏同一套口径 ——
+              滚动时停在应用顶栏（h-16 = 64px）正下方，站灰底 + 毛玻璃兜住滚动内容；
+              -mx-6 / -mt-3 + 同值内衬抵消：横幅铺满行宽、标签位置与原来一致。自身高 59px（pt-3 12 + 标签 46 + 底边 1）——
+              左列「任务节点」的吸顶位随之顺延（top = 64 + 59 − 1 = 122px，多叠 1px 防缝）。 */}
+          <div data-template-tabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 flex items-center gap-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
               {TEMPLATE_SECTIONS.map((stage) => {
                 const active = stage === activeSection;
@@ -784,9 +841,9 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
               </div>
             </div>
 
-            {/* 左列「任务节点」固定不动（宽屏滚动时钉住），右侧模板面板一行放不下就换到下一行 */}
+            {/* 左列「任务节点」固定不动（宽屏滚动时钉住；Push 235 起叠在吸顶的板块标签栏下面：top = 122px = 顶栏 64 + 标签栏 59 − 1px 防缝），右侧模板面板一行放不下就换到下一行 */}
             <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-start">
-              <section className="flex w-full flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 lg:sticky lg:top-[81px] lg:w-[370px] lg:shrink-0 lg:self-start">
+              <section className="flex w-full flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.62),rgba(255,255,255,0.32))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_8px_32px_rgba(15,23,42,0.14)] backdrop-blur-2xl backdrop-saturate-150 lg:sticky lg:top-[122px] lg:w-[370px] lg:shrink-0 lg:self-start">
                 {/* 列头行（Push 181）：左边板块标题、右边计数 + 「＋ 添加节点」——业务口径「在图二任务节点的位置加一个添加节点的按钮」 */}
                 <div className="mb-2 flex items-center justify-between gap-2 text-sm">
                   <span className="shrink-0 font-semibold text-zinc-800">任务节点</span>
@@ -810,54 +867,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                     ) : null}
                   </span>
                 </div>
-                {nodeForm === null ? null : (
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      submitNodeForm();
-                    }}
-                    className="mb-3 rounded-xl border border-white/80 bg-white/70 p-3"
-                  >
-                    <p className="mb-2 text-xs font-medium text-zinc-700">
-                      {nodeForm.mode === "create" ? "新增节点" : "编辑节点"} · {activeSection}
-                    </p>
-                    <input
-                      type="text"
-                      value={formTitle}
-                      onChange={(event) => { setFormTitle(event.target.value); }}
-                      placeholder="节点名称（中文，必填）"
-                      aria-label="节点名称"
-                      maxLength={200}
-                      className="mb-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-300"
-                    />
-                    <input
-                      type="text"
-                      value={formTitleEn}
-                      onChange={(event) => { setFormTitleEn(event.target.value); }}
-                      placeholder="英文名（可空）"
-                      aria-label="节点英文名"
-                      maxLength={200}
-                      className="mb-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-300"
-                    />
-                    {formError === null ? null : <p className="mb-2 text-xs text-rose-600">{formError}</p>}
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={closeNodeForm}
-                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
-                      >
-                        取消
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={formBusy || formTitle.trim() === ""}
-                        className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
-                      >
-                        {formBusy ? "保存中…" : "保存"}
-                      </button>
-                    </div>
-                  </form>
-                )}
+                {nodeForm !== null && nodeForm.mode === "create" ? renderNodeForm(nodeForm) : null}
                 {/* 搜索框：按中 / 英文名过滤左列的节点卡片（切板块时自动清空） */}
                 <div className="relative mb-3">
                   <svg
@@ -919,34 +929,38 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                     </p>
                   )}
                   {visibleNodes.map((item) => (
-                    <TaskNodeCard
-                      key={item.id}
-                      title={item.title}
-                      subtitle={item.titleEn}
-                      grab={canManageBlueprint}
-                      onPointerDown={
-                        canManageBlueprint
-                          ? (event) => {
-                              beginDrag({ nodeId: item.id, source: "left", fromTemplateId: null }, event);
-                            }
-                          : undefined
-                      }
-                      onEdit={
-                        canManageBlueprint
-                          ? () => {
-                              openEditForm(item);
-                            }
-                          : undefined
-                      }
-                      onDelete={
-                        canManageBlueprint
-                          ? () => {
-                              resetDrag();
-                              setPendingDeleteNode(item);
-                            }
-                          : undefined
-                      }
-                    />
+                    <Fragment key={item.id}>
+                      <TaskNodeCard
+                        title={item.title}
+                        subtitle={item.titleEn}
+                        grab={canManageBlueprint}
+                        onPointerDown={
+                          canManageBlueprint
+                            ? (event) => {
+                                beginDrag({ nodeId: item.id, source: "left", fromTemplateId: null }, event);
+                              }
+                            : undefined
+                        }
+                        onEdit={
+                          canManageBlueprint
+                            ? () => {
+                                openEditForm(item);
+                              }
+                            : undefined
+                        }
+                        onDelete={
+                          canManageBlueprint
+                            ? () => {
+                                resetDrag();
+                                setPendingDeleteNode(item);
+                              }
+                            : undefined
+                        }
+                      />
+                      {nodeForm !== null && nodeForm.mode === "edit" && nodeForm.node.id === item.id
+                        ? renderNodeForm(nodeForm)
+                        : null}
+                    </Fragment>
                   ))}
                   {visibleNodes.length === 0 && !nodesLoading && nodesError === null && (
                     <p className="rounded-xl border border-dashed border-white/80 bg-white/35 px-4 py-8 text-center text-xs text-zinc-500">
@@ -1215,14 +1229,5 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
         )}
       </div>
     );
-  }  return (
-    <div className="min-h-screen">
-      <AppHeader me={me} title={title} />
-      <main className="w-full px-6 py-10">
-        <div className="mx-auto max-w-2xl">
-          <PlaceholderCard title={title} note={note} />
-        </div>
-      </main>
-    </div>
-  );
+  }
 }
