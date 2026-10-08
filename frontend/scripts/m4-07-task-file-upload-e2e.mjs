@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：任务「文件」列 / 任务详情抽屉「文件」行上传接真（Push 226 · 「文件」那一刀前端接线）
+ * LibiaoLink 前端 · 回放：任务「文件」列下拉（Push 246：添加 / 预览 / 删除）/ 任务详情抽屉「文件」行上传接真（Push 226 · 「文件」那一刀前端接线）
  *
  * 前置（都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -13,8 +13,8 @@
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE / SCREENSHOT_DIR
  *
  * 它做什么：一条临时会话（跑完撤销）+ 一个临时项目（跑完先 purge 文件、再物理删）在真机浏览器里跑一遍：
- *   ① 「文件」列空态 = 与任务表其它行内可编辑单元格同款的「液态玻璃」描边胶囊 + 「—」；
- *   ② 真实文件选择（CDP DOM.setFileInputFiles）→ 分片直传文件库（带 taskId）→ 单元格回流文件名（最新一份 + 「+N」）；
+ *   ① 「文件」列空态 = 与任务表其它行内可编辑单元格同款的「液态玻璃」描边胶囊 + 「—」；点开 = 右侧下拉（顶部「＋ 添加文件」、空清单「暂无文件」、隐藏文件框在下拉内）；
+ *   ② 下拉内真实文件选择（CDP DOM.setFileInputFiles）→ 分片直传文件库（带 taskId）→ 下拉清单与单元格同步回流（最新一份 + 「+N」）；
  *   ③ 库面：files.task_id 落行 + file_links(task) 建链 + TaskListItem.fileSummary 1（draft 1）；
  *   ④ 抽屉「文件」行：文件名清单随详情接口下发（**不显示「未定档 / 已定档」** —— 定档是项目级安排）+ 上传入口在位；
  *   ⑤ 抽屉内再传（txt / 真 PNG）→ 清单与「文件」列同步（文件名 + 「+N」；同一条直传链路）；
@@ -23,7 +23,9 @@
  *   ⑧ 抽屉内「删除」= 二次确认 → 移入回收站（清单 / 计数回落，recycled 不进读面）；
  *   ⑨ PDF：点「预览」→ 浏览器内置查看器浮层（iframe 短时签名 URL，PDF 源直通）；Esc 先关浮层；
  *   ⑩ 下载 = 原文件（抽屉每行「下载」+ 预览浮层「下载原文件」；attachment 签名落盘 + download 审计）；
- *   ⑪ 收尾：四份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
+ *   ⑪ 「文件」列下拉交互（Push 246 · 业务口径 2026-10-08「点击后出现右侧下拉框 / 点文件名预览 / 删除按钮」）：
+ *      点文件名 = 预览浮层（Esc 先关浮层）；Esc 先关下拉（任务行 / 详情抽屉不被连带）；行尾「删除」= 红胶囊按钮 → 行内二次确认 → 移入回收站（清单 / 单元格回落）；
+ *   ⑫ 收尾：四份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
  * 证据：docs/m4-07-回放证据(任务文件上传·前端).md
  */
 
@@ -281,8 +283,9 @@ async function bail(message) {
   process.exit(1);
 }
 
-const FILE_CELL_BUTTON = "[data-cell-action=file-upload]";
-const FILE_CELL_INPUT = "[data-file-upload-input=true]";
+const FILE_CELL_BUTTON = "[data-cell-action=task-files]";
+const TASK_FILES_POPOVER = "[data-task-files-popover=true]";
+const POPOVER_INPUT = "[data-task-files-input=true]";
 const DRAWER = "aside[role=dialog]";
 const DRAWER_INPUT = "aside[role=dialog] [data-file-upload-input=true]";
 const CELL_TEXT_PROBE = "(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");return b===null?null:b.textContent.trim();})()";
@@ -298,25 +301,38 @@ async function waitDrawerFiles(count, timeoutMs) {
   return await waitFor("(function(){var d=document.querySelector(" + j(DRAWER) + ");return d!==null&&d.querySelectorAll(" + j("[data-drawer-file-item]") + ").length===" + String(count) + ";})()", timeoutMs);
 }
 
+/** 点「文件」列胶囊 → 打开下拉（Push 246 起上传 / 预览 / 删除都从下拉进；先把单元格滚进可视区）。 */
+async function openTaskFilesPopover() {
+  await ev("(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");if(b!==null){b.scrollIntoView({block:" + j("center") + ",inline:" + j("center") + "});}return true;})()");
+  await sleep(400);
+  const point = await ev("(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+  if (point === null || point === undefined) await bail("「文件」列胶囊不在（列表没渲染 / 被抽屉挡住）");
+  await clickAt(point);
+  return await waitFor("document.querySelector(" + j(TASK_FILES_POPOVER) + ")!==null", 6000);
+}
+
 // ---------- 打开项目总览 ----------
 await page.send("Page.navigate", { url: FRONTEND + "/#/project/" + projectId });
 const boardReady = await waitFor("document.querySelector(" + j(FILE_CELL_BUTTON) + ")!==null", 15000);
 if (boardReady !== true) await bail("项目总览没渲染出「文件」列上传单元（检查前端 dev / api / 会话）");
 
-// ① 空态胶囊（与行内可编辑单元格同款）
+// ① 空态胶囊（与行内可编辑单元格同款）+ 点开右侧下拉（Push 246）
 const pill = await ev("(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");if(b===null){return {exists:false};}"
   + "var s=getComputedStyle(b);var row=b.closest(" + j("[role=button]") + ");var ref=null;var all=document.querySelectorAll(" + j("[data-inline-cell=editor]") + ");"
   + "for(var i=0;i<all.length;i++){if(row!==null&&!row.contains(all[i])){continue;}ref=all[i];break;}"
   + "var f=function(x){return x===null?null:[x.borderRadius,x.backgroundColor,x.borderTopWidth,x.paddingTop,x.paddingLeft,x.fontSize,x.backdropFilter,x.boxShadow].join(" + j("~") + ");};"
-  + "return {exists:true,text:b.textContent.trim(),title:b.getAttribute(" + Q + "title" + Q + "),input:b.parentElement!==null&&b.parentElement.querySelector(" + j(FILE_CELL_INPUT) + ")!==null,"
+  + "return {exists:true,text:b.textContent.trim(),title:b.getAttribute(" + Q + "title" + Q + "),"
   + "mine:f(s),refLabel:ref===null?null:String(ref.getAttribute(" + Q + "aria-label" + Q + ")),ref:f(ref===null?null:getComputedStyle(ref))};})()");
 check("①a 「文件」列空态 = 与同一行其它行内可编辑单元格同款的「液态玻璃」胶囊 + 「—」（逐项样式比对）",
   pill.exists === true && pill.text === "—" && pill.ref !== null && pill.ref !== undefined && pill.mine === pill.ref, JSON.stringify(pill));
-check("①b 胶囊 title = 点击上传文件（关联到本任务）", typeof pill.title === "string" && pill.title.indexOf("点击上传文件") === 0, String(pill.title));
-check("①c 单元格内隐藏文件输入框在位（候选点开前不显示）", pill.input === true, JSON.stringify({ input: pill.input }));
+check("①b 胶囊 title = 点击添加文件（关联到本任务）", typeof pill.title === "string" && pill.title.indexOf("点击添加文件") === 0, String(pill.title));
+const popoverOpened = await openTaskFilesPopover();
+const popoverInfo = popoverOpened === true ? await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var t=document.querySelector(" + j(FILE_CELL_BUTTON) + ");var pr=p.getBoundingClientRect();var tr=t===null?null:t.getBoundingClientRect();var add=p.querySelector(" + j("[data-task-files-add]") + ");return {add:add===null?null:add.textContent.trim(),input:p.querySelector(" + j(POPOVER_INPUT) + ")!==null,right:tr===null?false:pr.left>=tr.right-2,text:p.innerText.replace(String.fromCharCode(10)," + j(" / ") + ").slice(0,140)};})()") : null;
+check("①c 点胶囊 → 出下拉（顶部「＋ 添加文件」+ 空清单「暂无文件」+ 隐藏文件框在下拉内）", popoverOpened === true && popoverInfo !== null && popoverInfo.add === "＋ 添加文件" && popoverInfo.input === true && popoverInfo.text.indexOf("暂无文件") >= 0, JSON.stringify(popoverInfo));
+check("①d 下拉优先贴触发器右侧展开（placement right 口径）", popoverInfo !== null && popoverInfo.right === true, JSON.stringify({ right: popoverInfo === null ? null : popoverInfo.right }));
 
 // ② 列表上传：真选文件 → 分片直传（带 taskId）
-await setFileInput(FILE_CELL_INPUT, fileAPath);
+await setFileInput(POPOVER_INPUT, fileAPath);
 const firstLanded = await waitForAsync(async () => (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c === 1, 30000);
 const fileRows1 = (await db.query("select f.id, f.name, f.status, v.mime from files f left join file_versions v on v.id = f.current_version_id where f.task_id = $1 order by f.created_at", [taskId])).rows;
 check("②a 选文件 → 分片直传落库（files.task_id = 本任务 · draft）", firstLanded === true && fileRows1.length === 1 && fileRows1[0].name === fileAName && fileRows1[0].status === "draft", JSON.stringify(fileRows1));
@@ -326,6 +342,9 @@ check("②b file_links 建链：任务链 1 条（object_type=task · object_id=
 const cellOne = await waitCellHas([fileAName], 20000);
 const cellOneText = String(await ev(CELL_TEXT_PROBE));
 check("②c 单元格回流 = 文件名（A · 无「N 份」计数 / 无未定档签 · 口径 2026-09-29 续）", cellOne === true && cellOneText === fileAName, cellOneText);
+const popoverListOne = await waitFor("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");return p!==null&&p.querySelectorAll(" + j("[data-task-files-item]") + ").length===1;})()", 15000);
+const popoverNamesOne = String(await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");return p===null?" + j("") + ":p.innerText.replace(String.fromCharCode(10)," + j(" / ") + ");})()"));
+check("②c2 下拉清单随上传回流 = 1 行 A（上传不关下拉、完成后自动重取）", popoverListOne === true && popoverNamesOne.indexOf(fileAName) >= 0, popoverNamesOne.slice(0, 140));
 const list1 = await api("/api/v1/projects/" + projectId + "/tasks");
 const item1 = list1.json === null ? undefined : list1.json.items.find((row) => row.id === taskId);
 check("②d 列表随行 fileSummary = total 1 / draft 1 / final 0", item1 !== undefined && item1.fileSummary.total === 1 && item1.fileSummary.draft === 1 && item1.fileSummary.final === 0, JSON.stringify(item1 === undefined ? null : item1.fileSummary));
@@ -333,7 +352,7 @@ check("②d 列表随行 fileSummary = total 1 / draft 1 / final 0", item1 !== u
 const drawerAfterUpload = await ev("document.querySelector(" + j(DRAWER) + ")===null");
 check("②e 上传完成后详情抽屉仍未被连带打开（点击气泡修正）", drawerAfterUpload === true, String(drawerAfterUpload));
 // 探针：临时把 type 切成 text，避免无 user activation 的合成 click 去开原生选择框（只验冒泡链路）。
-const bubbleProbe = "(function(){var i=document.querySelector(" + j(FILE_CELL_INPUT) + ");if(i===null){return " + j("no-input") + ";}"
+const bubbleProbe = "(function(){var i=document.querySelector(" + j(POPOVER_INPUT) + ");if(i===null){return " + j("no-input") + ";}"
   + "var saved=i.type;i.type=" + j("text") + ";"
   + "i.dispatchEvent(new MouseEvent(" + j("click") + ",{bubbles:true}));"
   + "i.type=saved;"
@@ -341,7 +360,27 @@ const bubbleProbe = "(function(){var i=document.querySelector(" + j(FILE_CELL_IN
 const bubbleResult = await ev(bubbleProbe);
 check("②f 从 input 冒泡上来的 click 被拦住（回归 Push 226 修正）", bubbleResult === "ok", String(bubbleResult));
 
-// ③ 抽屉「文件」行：清单 + 上传入口
+// ②g-②i 下拉交互（Push 246）：点文件名 = 预览浮层；Esc 先关浮层、再关下拉（任务行 / 抽屉不被连带）
+const namePoint = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var b=p.querySelector(" + j("[data-task-files-preview]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+if (namePoint === null || namePoint === undefined) await bail("下拉里没有文件名按钮（data-task-files-preview）");
+await clickAt(namePoint);
+const popPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null", 25000);
+const popPreviewInfo = popPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");return {open:el!==null,kind:el===null?null:el.getAttribute(" + Q + "data-file-preview-kind" + Q + "),popoverClosed:document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null};})()") : { open: false, kind: null, popoverClosed: false };
+check("②g 点下拉文件名 = 预览浮层（kind=" + String(popPreviewInfo.kind) + " · 开预览即收下拉）", popPreviewInfo.open === true && popPreviewInfo.kind === "office" && popPreviewInfo.popoverClosed === true, JSON.stringify(popPreviewInfo));
+const popPreviewClosed = await waitForAsync(async () => {
+  await ev("(function(){if(document.activeElement&&document.activeElement.blur){document.activeElement.blur();}return true;})()");
+  await pressKey("Escape", "Escape", 27);
+  return (await ev("document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")===null")) === true;
+}, 20000);
+check("②h Esc 关预览浮层（下拉保持收起、详情抽屉不出现 —— 「Esc 先关内层」）", popPreviewClosed === true, String(popPreviewClosed));
+const popoverReopenForEsc = await openTaskFilesPopover();
+await pressKey("Escape", "Escape", 27);
+const escPopover = await waitFor("(function(){return document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null&&document.querySelector(" + j(DRAWER) + ")===null;})()", 6000);
+check("②i Esc 先关下拉（任务行 / 详情抽屉不被连带打开）", popoverReopenForEsc === true && escPopover === true, JSON.stringify({ reopened: popoverReopenForEsc, closed: escPopover }));
+
+// ③ 抽屉「文件」行：清单 + 上传入口（先把任务行滚回视口 —— ① 的居中滚动可能把行首推出屏）
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(TASK_TITLE) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
 const rowPoint = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(TASK_TITLE) + ")>=0){var b=rows[i].getBoundingClientRect();return {x:Math.round(b.left+60),y:Math.round(b.top+b.height/2)};}}return null;})()");
 if (rowPoint === null || rowPoint === undefined) await bail("点不到任务行（行没渲染）");
 await clickAt(rowPoint);
@@ -358,6 +397,8 @@ const fileRows2 = (await db.query("select name, status from files where task_id 
 check("④a 抽屉内选文件 → 第二份落库（两条 draft）", secondLanded === true && fileRows2.length === 2 && fileRows2[0].name === fileAName && fileRows2[1].name === fileBName, JSON.stringify(fileRows2));
 const drawer2 = await waitDrawerFiles(2, 12000) === true ? await ev(DRAWER_FILES_PROBE) : { count: 0, names: "" };
 check("④b 抽屉清单自动重取 = 两行（A / B 都在）", drawer2.count === 2 && drawer2.names.indexOf(fileAName) >= 0 && drawer2.names.indexOf(fileBName) >= 0, JSON.stringify({ count: drawer2.count, names: drawer2.names }));
+const drawerIconKinds = await ev("(function(){var d=document.querySelector(" + j(DRAWER) + ");if(d===null){return null;}var icons=d.querySelectorAll(" + j("[data-file-icon]") + ");var out=[];for(var i=0;i<icons.length;i++){out.push(icons[i].getAttribute(" + j("data-file-icon") + "));}return out;})()");
+check("④b2 抽屉清单非图片行行首文件类型图标（A / B 两份 txt = text · FA 同族）", Array.isArray(drawerIconKinds) === true && drawerIconKinds.length === 2 && drawerIconKinds[0] === "text" && drawerIconKinds[1] === "text", JSON.stringify(drawerIconKinds));
 const cellTwo = await waitCellHas([fileBName, "+1"], 20000);
 const cellTwoText = String(await ev(CELL_TEXT_PROBE));
 check("④c 任务表「文件」列 = 最新文件名 + 「+1」（两份 · 无未定档签）", cellTwo === true && cellTwoText === fileBName + "+1", cellTwoText);
@@ -434,7 +475,7 @@ const emptyKeep = (await db.query("select name from files where id = $1", [pngDb
 check("④n5 空主名回车：不写回（保持原名）", emptyKeep === true, String(emptyKeep));
 
 const fileBId = (await db.query("select id from files where task_id = $1 and name = $2", [taskId, fileBName])).rows[0].id;
-const deletePoint = await fileRowPoint(fileBName, "[data-file-delete=true]");
+const deletePoint = await fileRowPoint(fileBName, "[data-file-delete=true] button");
 if (deletePoint === null || deletePoint === undefined) await bail("B 行没有删除入口");
 await clickAt(deletePoint);
 const confirmShown = await waitFor("document.querySelector(" + j("[data-file-delete-confirm]") + ")!==null", 6000);
@@ -523,6 +564,60 @@ writeFileSync(join(SCREENSHOT_DIR, "m4-07-drawer.png"), Buffer.from(shotDrawer.d
 await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
 await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
 await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
+
+// ④q（Push 246）「文件」列下拉收口：点文件名 = 预览（开预览即收下拉 / Esc 先关浮层）；行尾「删除」= 红胶囊 + 行内二次确认 → 回收站
+const popoverReopened = await openTaskFilesPopover();
+check("④q0 关抽屉后点「文件」列胶囊 = 下拉重开（3 行：PDF / 改名 PNG / A 都在）", popoverReopened === true, String(popoverReopened));
+const popoverIconPairs = await ev("(function(){var items=document.querySelectorAll(" + j("[data-task-files-item]") + ");var out=[];for(var i=0;i<items.length;i++){var icon=items[i].querySelector(" + j("[data-file-icon]") + ");var name=items[i].querySelector(" + j("[data-task-files-preview]") + ");out.push({icon:icon===null?null:icon.getAttribute(" + j("data-file-icon") + "),name:name===null?null:name.textContent.trim()});}return out;})()");
+const popoverIconMap = {};
+if (Array.isArray(popoverIconPairs)) { for (const pair of popoverIconPairs) { if (pair !== null && pair.name !== null && pair.name !== undefined) { popoverIconMap[pair.name] = pair.icon; } } }
+check("④q0b 下拉清单行首文件类型图标（PDF=pdf / 改名 PNG=image / A=txt · FA 同族）", popoverIconMap[filePdfName] === "pdf" && popoverIconMap[filePngRenamed] === "image" && popoverIconMap[fileAName] === "text", JSON.stringify(popoverIconMap));
+const listNamePoint = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var b=p.querySelector(" + j("[data-task-files-preview]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+if (listNamePoint === null || listNamePoint === undefined) await bail("下拉里没有文件名按钮（data-task-files-preview）");
+await clickAt(listNamePoint);
+const listPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null", 25000);
+const listPreviewInfo = listPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");return {open:el!==null,kind:el===null?null:el.getAttribute(" + Q + "data-file-preview-kind" + Q + "),popoverClosed:document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null};})()") : { open: false, kind: null, popoverClosed: false };
+check("④q1 点下拉里最新一份（PDF）文件名 = 预览浮层（kind=" + String(listPreviewInfo.kind) + " · 开预览即收下拉）", listPreviewInfo.open === true && listPreviewInfo.kind === "pdf" && listPreviewInfo.popoverClosed === true, JSON.stringify(listPreviewInfo));
+const listPreviewClosed = await waitForAsync(async () => {
+  await ev("(function(){if(document.activeElement&&document.activeElement.blur){document.activeElement.blur();}return true;})()");
+  await pressKey("Escape", "Escape", 27);
+  return (await ev("document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")===null")) === true;
+}, 20000);
+check("④q2 Esc 关预览浮层（下拉保持收起、详情抽屉不出现 —— 「Esc 先关内层」）", listPreviewClosed === true, String(listPreviewClosed));
+const popoverForDelete = await openTaskFilesPopover();
+const popRowProbe = await ev("(function(){var items=document.querySelectorAll(" + j("[data-task-files-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(filePdfName) + ")>=0){var b=items[i].querySelector(" + j("[data-task-files-delete] button") + ");var n=items[i].querySelector(" + j("[data-task-files-preview]") + ");if(b===null||n===null){return null;}var rb=b.getBoundingClientRect();var rn=n.getBoundingClientRect();return {bx:Math.round(rb.left+rb.width/2),by:Math.round(rb.top+rb.height/2),nx:Math.round(rn.left+10),ny:Math.round(rn.top+rn.height/2)};}}return null;})()");
+if (popoverForDelete !== true || popRowProbe === null || popRowProbe === undefined) await bail("下拉里 PDF 行没有删除入口（data-task-files-delete）");
+const capsuleMeasure = "(function(){var items=document.querySelectorAll(" + j("[data-task-files-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(filePdfName) + ")>=0){var b=items[i].querySelector(" + j("[data-task-files-delete] button") + ");if(b===null){return null;}var r=b.getBoundingClientRect();var s=getComputedStyle(b);return {w:Math.round(r.width),h:Math.round(r.height),opacity:s.opacity,bg:s.backgroundColor};}}return null;})()";
+const capsuleRest = await ev(capsuleMeasure);
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: popRowProbe.nx, y: popRowProbe.ny });
+await sleep(400);
+const capsuleGhost = await ev(capsuleMeasure);
+await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: popRowProbe.bx, y: popRowProbe.by });
+await sleep(600);
+const capsuleHover = await ev(capsuleMeasure);
+check("④q3a 行尾删除 = 胶囊同款动效（静止隐 → 随行悬停浮现 24px 幽灵态 → 悬停按钮展开 48px 红胶囊）", capsuleRest !== null && capsuleRest.opacity === "0" && capsuleGhost !== null && capsuleGhost.opacity === "1" && capsuleGhost.w === 24 && capsuleGhost.h === 24 && capsuleHover !== null && capsuleHover.w === 48 && (capsuleHover.bg.indexOf("239, 68, 68") >= 0 || capsuleHover.bg.indexOf("0.637 0.237 25.331") >= 0), JSON.stringify({ rest: capsuleRest, ghost: capsuleGhost, hover: capsuleHover }));
+await clickAt({ x: popRowProbe.bx, y: popRowProbe.by });
+const popConfirmShown = await waitFor("document.querySelector(" + j("[data-task-files-delete-confirm]") + ")!==null", 6000);
+const pdfBeforePopDelete = (await db.query("select status from files where id = $1", [pdfRow.id])).rows[0].status;
+check("④q3 下拉「删除」（红胶囊）第一下 = 行内二次确认（此时未落库）", popConfirmShown === true && pdfBeforePopDelete === "draft", "confirm=" + String(popConfirmShown) + " status=" + pdfBeforePopDelete);
+const popConfirmPoint = await ev("(function(){var strip=document.querySelector(" + j("[data-task-files-delete-confirm]") + ");if(strip===null){return null;}var b=strip.querySelector(" + j("button") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+if (popConfirmPoint === null || popConfirmPoint === undefined) await bail("下拉里找不到确认删除按钮");
+await clickAt(popConfirmPoint);
+const popRecycled = await waitForAsync(async () => (await db.query("select status from files where id = $1", [pdfRow.id])).rows[0].status === "recycled", 20000);
+check("④q4 二次确认后落库 = 回收站（status recycled · 30 天内可恢复）", popRecycled === true, String(popRecycled));
+const popListAfterDelete = await waitFor("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");return p!==null&&p.querySelectorAll(" + j("[data-task-files-item]") + ").length===2;})()", 15000);
+const cellAfterPopDelete = await waitCellHas([filePngRenamed, "+1"], 20000);
+const cellAfterPopDeleteText = String(await ev(CELL_TEXT_PROBE));
+check("④q5 下拉清单回落 2 行、「文件」列 = 改名后的 PNG + 「+1」（recycled 不进读面）", popListAfterDelete === true && cellAfterPopDelete === true && cellAfterPopDeleteText === filePngRenamed + "+1", JSON.stringify({ list: popListAfterDelete, cell: cellAfterPopDeleteText }));
+const shotHoverPoint = await ev("(function(){var b=document.querySelector(" + j("[data-task-files-delete] button") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+if (shotHoverPoint !== null && shotHoverPoint !== undefined) {
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: shotHoverPoint.x, y: shotHoverPoint.y });
+  await sleep(700);
+}
+const shotPopover = await page.send("Page.captureScreenshot", { format: "png" });
+writeFileSync(join(SCREENSHOT_DIR, "m4-07-task-files-popover.png"), Buffer.from(shotPopover.data, "base64"));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null", 6000);
 await ev("(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");if(b!==null){b.scrollIntoView({block:" + j("center") + ",inline:" + j("center") + "});}return true;})()");
 await sleep(700);
 const cellBox = await ev("(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:r.left,y:r.top,width:r.width,height:r.height};})()");
@@ -530,12 +625,12 @@ if (cellBox !== null && cellBox !== undefined) {
   const clip = { x: Math.max(0, cellBox.x - 170), y: Math.max(0, cellBox.y - 26), width: cellBox.width + 340, height: cellBox.height + 52, scale: 2 };
   const shotCell = await page.send("Page.captureScreenshot", { format: "png", clip });
   writeFileSync(join(SCREENSHOT_DIR, "m4-07-file-cell.png"), Buffer.from(shotCell.data, "base64"));
-  console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-file-cell.png") + " / " + join(SCREENSHOT_DIR, "m4-07-drawer.png"));
+  console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-task-files-popover.png") + " / " + join(SCREENSHOT_DIR, "m4-07-file-cell.png") + " / " + join(SCREENSHOT_DIR, "m4-07-drawer.png"));
 }
 
 // ---------- ⑥ 收尾：purge 三份文件 → 物理删临时项目 → 撤销会话 → 零残留 ----------
 const purgeResult = await purgeProjectFiles(projectId);
-check("⑤a 四份回放文件（含已回收的 B）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 4 && purgeResult.purged === 4, JSON.stringify(purgeResult));
+check("⑤a 四份回放文件（含已回收的 B / PDF）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 4 && purgeResult.purged === 4, JSON.stringify(purgeResult));
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
 check("⑤b 临时项目物理删（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));

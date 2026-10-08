@@ -16,14 +16,14 @@ import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, triggerDownload,
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, type TaskFileBrief } from "../taskApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
+import { FilePreviewOverlay } from "./FilePreviewOverlay";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
-import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
+import { RowDeleteButton } from "./RowDeleteButton";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } from "./Tracker";
-import { createPortal } from "react-dom";
-
 const CLOSE_ANIMATION_MS = 170;
 /** 「已保存」提示的停留时间。 */
 const SAVED_FLASH_MS = 1600;
@@ -752,8 +752,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                 const previewing = previewBusy === file.id;
                 const confirming = pendingDelete === file.id;
                 return (
-                  <li key={file.id} data-drawer-file-item="true" className="flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5">
-                    {previewKind === "image" ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : null}
+                  <li key={file.id} data-drawer-file-item="true" className="group flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5">
+                    {previewKind === "image" ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : <FileTypeIcon name={file.name} />}
                     {renamingId === file.id ? (
                       <span className="flex min-w-0 flex-1 items-center gap-0.5">
                         <input
@@ -834,19 +834,16 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                     </button>
                     {onDeleteFile === undefined ? null : confirming ? (
                       <span data-file-delete-confirm="true" className="flex shrink-0 items-center gap-1">
-                        <button type="button" onClick={() => { confirmFileDelete(file.id); }} className="rounded px-1.5 py-0.5 text-[10px] font-medium text-red-600 transition hover:bg-red-50">确认删除</button>
-                        <button type="button" onClick={() => { setPendingDelete(null); }} className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 transition hover:bg-zinc-100">取消</button>
+                        <button type="button" onClick={() => { confirmFileDelete(file.id); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600">确认删除</button>
+                        <button type="button" onClick={() => { setPendingDelete(null); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200">取消</button>
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        data-file-delete="true"
-                        onClick={() => { setPendingDelete(file.id); }}
-                        title="删除（移入回收站，30 天内可恢复）"
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                      >
-                        删除
-                      </button>
+                      <span data-file-delete="true" className="flex h-6 w-12 shrink-0 items-center">
+                        <RowDeleteButton
+                          onDelete={() => { setPendingDelete(file.id); }}
+                          label={"删除（移入回收站，30 天内可恢复）：" + file.name}
+                        />
+                      </span>
                     )}
                   </li>
                 );
@@ -1105,75 +1102,5 @@ function FileThumb({ fileId, name, onOpen }: { fileId: string; name: string; onO
         <img src={url} alt={name} className="h-full w-full object-cover" />
       )}
     </button>
-  );
-}
-
-/** 预览浮层（Push 226 续 / 续三 · S4）：图片 = 大图（img）、PDF = 浏览器内置查看器（iframe）、
- *  Office / 文本族 = ONLYOFFICE 查看器外壳（OnlyOfficeViewer；加载 → 就绪 / 超时 / 失败降级，重试自增 nonce 重建）。
- *  短时签名地址（D2-04 禁止匿名读取）。Esc / 点浮层关闭；capture 阶段拦 keydown，避免同一按 Esc 连带把抽屉关掉（「Esc 先关内层」口径）。
- *  Push 226 续四：caption 挂「下载原文件」—— 查看器自带的下载拿的是**转换产物**，这里直取原文件（drawer.downloadFile）。 */
-function FilePreviewOverlay({ pane, name, kind, nonce, onRetry, onDownload, onClose }: {
-  pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
-  name: string;
-  kind: FilePreviewKind;
-  nonce: number;
-  onRetry: () => void;
-  onDownload: () => void;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [onClose]);
-  return createPortal(
-    <div
-      data-file-preview="true"
-      data-file-preview-kind={kind}
-      role="dialog"
-      aria-label={"预览 " + name}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClose();
-      }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
-    >
-      <figure className="flex max-h-full max-w-full flex-col items-center">
-        {pane.mode === "viewer" ? (
-          <OnlyOfficeViewer key={nonce} viewer={pane.viewer} onRetry={onRetry} />
-        ) : kind === "pdf" ? (
-          <iframe
-            src={pane.url}
-            title={name}
-            data-file-preview-frame="true"
-            className="h-[80vh] w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white shadow-2xl"
-          />
-        ) : (
-          <img src={pane.url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
-        )}
-        <figcaption className="mt-2 flex items-center gap-3 text-xs text-white/80">
-          <span>{name}</span>
-          <button
-            type="button"
-            data-file-preview-download="true"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDownload();
-            }}
-            className="rounded-md border border-white/30 px-2 py-0.5 text-[11px] text-white/90 transition hover:bg-white/10"
-          >
-            下载原文件
-          </button>
-        </figcaption>
-      </figure>
-    </div>,
-    document.body,
   );
 }
