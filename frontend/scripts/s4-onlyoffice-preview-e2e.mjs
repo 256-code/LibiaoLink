@@ -264,7 +264,7 @@ async function bail(message) {
   process.exit(1);
 }
 // ---------- 打开项目总览 → 打开任务抽屉 ----------
-const FILE_CELL_BUTTON = "[data-cell-action=file-upload]";
+const FILE_CELL_BUTTON = "[data-cell-action=task-files]";
 const DRAWER = "aside[role=dialog]";
 const DRAWER_INPUT = DRAWER + " [data-file-upload-input=true]";
 await page.send("Page.navigate", { url: FRONTEND + "/#/project/" + projectId });

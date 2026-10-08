@@ -1,12 +1,14 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
+import type { TaskFileRef } from "../fileApi";
 import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
+import { TaskFilesPopover } from "./TaskFilesPopover";
 import { Tracker } from "./Tracker";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { StageAddCard } from "./StageAddCard";
@@ -239,20 +241,21 @@ type TaskBoardProps = {
    */
   focusMode?: boolean;
   /**
-   * 任务文件上传（Push 226 · 「文件」那一刀前端接线）：点「文件」列 = 选文件 → 调用方分片直传文件库并关联本任务，
-   * 完成后整表重取刷新计数；不传 = 该列只读（保持原计数 / 「—」展示）。
-   * onProgress 供单元格内「上传中 N/M」提示（done = 已完成份数）。
+   * 任务文件上传（Push 226 · 「文件」那一刀前端接线；Push 246 起入口收进「文件」列下拉顶部的「＋ 添加文件」）：
+   * 选文件 → 调用方分片直传文件库并关联本任务，完成后整表重取刷新计数；不传 = 下拉里不显示添加入口。
+   * onProgress 供下拉 / 单元格胶囊上的「上传中 N/M」提示（done = 已完成份数）。
    */
   onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>;
   /**
-   * 任务文件删除（Push 226 续）：抽屉清单里点「删除」= 调用方走回收站（M4-02），完成后整表重取刷新计数；
-   * 不传 = 清单只读（不显示删除入口）。
+   * 任务文件删除（Push 226 续；Push 246 起「文件」列下拉行尾也走同一入口）：抽屉清单 / 下拉里点「删除」
+   * = 调用方走回收站（M4-02），完成后整表重取刷新计数；不传 = 清单与下拉只读（不显示删除入口）。
    */
   onDeleteFile?: (fileId: string) => Promise<void>;
   /** 任务文件改名（Push 226 续二）：抽屉清单里点名字 → 编辑提交（只改主名、后缀保留）；不传 = 名字只读。 */
   onRenameFile?: (fileId: string, name: string) => Promise<void>;
-  /** 任务 → 文件名数组（Push 226 续二）：「文件」列显示文件名、超出部分「+N」；不传 / 取不到 = 退回「N 份」。 */
-  fileNames?: ReadonlyMap<string, string[]>;
+  /** 任务 → 文件引用（Push 246 · fileApi.fetchTaskFiles）：「文件」列胶囊显示文件名 / 「+N」、
+   *  下拉里点名字预览 + 删除；不传 / 取不到 = 退回「N 份」计数（老数据 / 请求失败）。 */
+  filesByTask?: ReadonlyMap<string, TaskFileRef[]>;
   /** 任务详情接口所需（抽屉里的文件清单按它取详情）；不传 = 抽屉不拉清单。 */
   projectId?: string;
 };
@@ -272,10 +275,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, fileNames, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>; fileNames?: ReadonlyMap<string, string[]>; focusMode: boolean }) {
-  /** 「文件」列的上传入口（Push 226）：隐藏的文件选择框 + 「上传中 N/M」进度。 */
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -297,43 +297,27 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     });
   };
 
-  /** 「文件」列内容（Push 226 续二 · 业务口径「应该是文件名字 超出长度后面写+1 +2」）：与「输出成果文件」列同套 ——
-   *  第一份出名字（截断 + title 全名）、后面还有就「+N」；文件名映射没取到（老数据 / 请求失败）退回「N 份」计数。 */
-  const fileNamesForTask = fileNames?.get(task.id) ?? [];
+  /** 「文件」列胶囊内容（Push 226 续二 · 业务口径「应该是文件名字 超出长度后面写+1 +2」；Push 246 起兼作下拉触发器）：
+   *  与「输出成果文件」列同套 —— 第一份出名字（截断 + title 全名）、后面还有就「+N」；
+   *  文件清单没取到（老数据 / 请求失败）退回「N 份」计数。 */
+  const filesForTask = files ?? [];
   const fileCellContent = task.files.total === 0 ? (
     <span className="text-xs text-zinc-300">—</span>
-  ) : fileNamesForTask.length > 0 ? (
+  ) : filesForTask.length > 0 ? (
     <>
       <span
         className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600"
-        title={fileNamesForTask.join("、")}
+        title={filesForTask.map((file) => file.name).join("、")}
       >
-        {fileNamesForTask[0]}
+        {filesForTask[0].name}
       </span>
-      {fileNamesForTask.length > 1 ? <span className="text-[10px] text-zinc-400">+{fileNamesForTask.length - 1}</span> : null}
+      {filesForTask.length > 1 ? <span className="text-[10px] text-zinc-400">+{filesForTask.length - 1}</span> : null}
     </>
   ) : (
     <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600" title={"共 " + String(task.files.total) + " 份"}>
       {task.files.total} 份
     </span>
   );
-
-  /** 「文件」列（Push 226）：点单元格选文件 → 调用方分片直传（关联本任务）→ 完成后整表重取刷新计数。 */
-  const beginFileUpload = (picked: FileList | null) => {
-    if (picked === null || onUploadFiles === undefined) {
-      return;
-    }
-    const list = Array.from(picked);
-    if (list.length === 0) {
-      return;
-    }
-    setUploading({ done: 0, total: list.length });
-    void onUploadFiles(task.id, list, (done, total) => {
-      setUploading({ done, total });
-    }).finally(() => {
-      setUploading(null);
-    });
-  };
 
   const cells: Record<ColumnKey, ReactNode> = {
     title: (
@@ -492,55 +476,18 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     ),
     files: (
       <span className="relative flex min-w-0 items-center justify-center gap-1 self-stretch">
-        {onUploadFiles === undefined ? (
+        {onUploadFiles === undefined && onDeleteFile === undefined ? (
           fileCellContent
         ) : (
-          <button
-            type="button"
-            data-cell-action="file-upload"
-            title={task.files.total === 0 ? "点击上传文件（关联到本任务）" : "点击继续上传文件（关联到本任务）"}
-            aria-label={"上传文件（" + task.title + "）"}
-            disabled={uploading !== null}
-            onClick={(event) => {
-              // 「文件」列整格是上传热区：点击不冒泡到行（行点击 = 打开详情抽屉）
-              event.stopPropagation();
-              fileInputRef.current?.click();
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.stopPropagation();
-              }
-            }}
-            className="inline-flex max-w-full items-center gap-1 rounded-lg border border-zinc-200/90 bg-white/75 px-1.5 py-[3px] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(15,23,42,0.04)] backdrop-blur-[3px] transition hover:border-zinc-300 hover:bg-white hover:shadow-[0_2px_6px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/15 disabled:cursor-not-allowed"
+          <TaskFilesPopover
+            taskId={task.id}
+            taskTitle={task.title}
+            files={filesForTask}
+            onUpload={onUploadFiles}
+            onDelete={onDeleteFile}
           >
-            {uploading !== null ? (
-              <span className="tabular-nums text-zinc-500">
-                {uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
-              </span>
-            ) : (
-              fileCellContent
-            )}
-          </button>
-        )}
-        {onUploadFiles === undefined ? null : (
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            data-file-upload-input="true"
-            className="hidden"
-            onClick={(event) => {
-              // Push 226 修正：选文件对话框关掉后浏览器会向 input 补发一次 click，
-              // 它会从 input 冒泡到行（行点击 = 打开详情抽屉）—— 这里拦一道，
-              // 上传动作不连带打开抽屉（回放断言 ②e）。
-              event.stopPropagation();
-            }}
-            onChange={(event) => {
-              beginFileUpload(event.currentTarget.files);
-              // 清空 value：同一份文件再选一次仍会触发 change
-              event.currentTarget.value = "";
-            }}
-          />
+            {fileCellContent}
+          </TaskFilesPopover>
         )}
       </span>
     ),
@@ -733,7 +680,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, fileNames, projectId, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, filesByTask, projectId, focusMode }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -1056,7 +1003,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                         onChangeManagers={onChangeManagers}
                         onPatch={onPatchTask === undefined ? undefined : (patch) => onPatchTask(task.id, patch)}
                         onUploadFiles={onUploadFiles}
-                        fileNames={fileNames}
+                        onDeleteFile={onDeleteFile}
+                        files={filesByTask?.get(task.id)}
                       />
                     ))}
                   </div>
