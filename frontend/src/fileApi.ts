@@ -132,6 +132,81 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
  * finalize（Push 249）= 未定档直替后定档（任务随定档锁定）；已定档 / 已变更走变更、不定档（change 路径下忽略）。
  * Push 251 撤销（业务口径「取消这个替换按钮」）：入口与流程已从 UI 撤除，本函数保留未接线（供后续需要时复用）。
  */
+/**
+ * 变更载荷（契约 ChangeIntentBody · A4-13 十三列字段面）：reason 必填（≤ 1000，承载「变更内容描述（+变更原因）」）；
+ * 变更前 / 变更后摘要可空（各 ≤ 2000）；变更阶段可选（stageKey 缺省 = 服务端取文件节点所属阶段）。
+ */
+export type FileChangePayload = {
+  reason: string;
+  beforeSummary?: string;
+  afterSummary?: string;
+  stageKey?: string;
+};
+
+/**
+ * 变更申请（A4-13 一期「申请即通过」· 抽屉「变更申请」页）：目标文件须为已定档（final / changed）——
+ * Push 254 续（业务口径 2026-10-08「不是已经定档了吗 为什么变更申请里面还是未定档」）：任务已定档时，其名下
+ * draft 文件同视为「定档后的文件」（taskFinalized = true 放行；服务端同口径兜底）——
+ * 提交 = `intent=change` 分片直传（沿用上传管道），完成上传时同事务生成变更记录 + 新版本挂 changeRequestId +
+ * 文件状态改 changed + R01 回写任务「变更关联」；**无变更后文件不允许提交**（A4-13 提交校验，本函数 file 必传）。
+ * 变更后清一次该文件的预览签名缓存（旧版本 URL 作废）。
+ */
+export async function applyFileChange(projectId: string, target: TaskFileRef, file: Blob, change: FileChangePayload, taskFinalized = false): Promise<void> {
+  const taskFinalizedDraft = taskFinalized && target.status === "draft";
+  if (target.status !== "final" && target.status !== "changed" && !taskFinalizedDraft) {
+    throw new Error("只有已定档文件可以发起变更");
+  }
+  const reason = change.reason.trim();
+  if (reason === "") {
+    throw new Error("请填写变更原因");
+  }
+  const before = change.beforeSummary === undefined ? "" : change.beforeSummary.trim();
+  const after = change.afterSummary === undefined ? "" : change.afterSummary.trim();
+  const buffer = await file.arrayBuffer();
+  const contentHash = await sha256Hex(buffer);
+  const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
+    projectId,
+    name: target.name,
+    sizeBytes: file.size,
+    mime: file.type === "" ? undefined : file.type,
+    contentHash,
+    intent: "change",
+    fileId: target.id,
+    change: {
+      reason,
+      beforeSummary: before === "" ? undefined : before,
+      afterSummary: after === "" ? undefined : after,
+      stageKey: change.stageKey === undefined || change.stageKey === "" ? undefined : change.stageKey,
+    },
+  });
+  await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  invalidatePreview(target.id);
+}
+
+/** 变更记录详情（契约 ChangeRequestDetail · M4-04 读面 A4-15）：变更本体 + 变更后文件 + 变更后版本（本文件只需用到的字段）。 */
+export type ChangeRequestDetail = {
+  id: string;
+  projectId: string;
+  nodeId: string | null;
+  stageKey: string | null;
+  reason: string;
+  beforeSummary: string | null;
+  afterSummary: string | null;
+  status: string;
+  appliedBy: string;
+  appliedAt: string;
+  fileId: string;
+  versionId: string;
+  versionSeq: number;
+  file: { id: string; name: string; docType: string | null; status: string };
+  version: { id: string; seq: number; sizeBytes: number; uploadedAt: string };
+};
+
+/** 变更详情（抽屉「变更记录」页按任务 changeLinks 逐条取全文；非成员 / 不存在统一 404）。 */
+export function fetchChangeRequest(id: string): Promise<ChangeRequestDetail> {
+  return apiRequest<ChangeRequestDetail>("/api/v1/change-requests/" + encodeURIComponent(id));
+}
+
 export async function replaceFileContent(projectId: string, target: TaskFileRef, file: Blob, reason: string | null, finalize = false): Promise<void> {
   const needsChange = target.status === "final" || target.status === "changed";
   const changeReason = reason === null ? "" : reason.trim();

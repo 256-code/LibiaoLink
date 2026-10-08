@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { Member } from "../data/members";
+import { memberNameOf, type Member } from "../data/members";
 import {
   TEMP_TASK_STAGE,
   cnDateFromIso,
@@ -12,9 +12,9 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, triggerDownload, usePhotoUrl, type FilePreviewKind, type PreviewViewerConfig } from "../fileApi";
+import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
-import { fetchTaskDetail, type TaskFileBrief } from "../taskApi";
+import { fetchTaskDetail, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -28,6 +28,39 @@ import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } 
 const CLOSE_ANIMATION_MS = 170;
 /** 「已保存」提示的停留时间。 */
 const SAVED_FLASH_MS = 1600;
+
+/**
+ * 抽屉页标签（Push 254 · 业务口径「抽屉上方增加 页面标签导航栏 任务详情 变更申请 变更记录三个页面」）：
+ * 任务详情 = 原抽屉内容（进度 + 字段清单）；变更申请 = 对已定档文件发起变更（A4-13 申请即通过；未定档文件行尾「定档」就地补前置门 —— Push 254 续）；
+ * 变更记录 = 任务「变更关联」（R01 回写）逐条回溯 —— 列表带短原因，全文按需经变更详情接口取。
+ */
+type DrawerTab = "detail" | "change" | "history";
+const DRAWER_TABS: Array<{ key: DrawerTab; label: string }> = [
+  { key: "detail", label: "任务详情" },
+  { key: "change", label: "变更申请" },
+  { key: "history", label: "变更记录" },
+];
+
+/** 可变更文件状态（A4-13）：只有已定档（final）/ 已变更（changed）文件可以发起变更；Push 254 续：任务已定档时的 draft 文件同视为已定档（见 taskFinalized）。 */
+const CHANGEABLE_STATUS: Record<string, boolean> = { final: true, changed: true };
+
+/** 变更申请页的文件状态签（这一页要讲清「能不能变更」—— 与「文件」行不标定档的展示口径分开）。 */
+const CHANGE_FILE_STATUS_TEXT: Record<string, string> = {
+  final: "已定档",
+  changed: "已变更",
+  draft: "未定档",
+  archived: "已归档",
+  recycled: "回收站",
+};
+
+/** 变更阶段下拉（A4-13「变更阶段」）：九阶段字典，与任务表阶段同名同序。 */
+const CHANGE_STAGE_OPTIONS: SelectOption[] = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "生产阶段", "验收"].map((name) => ({ value: stageKeyOfName(name) ?? name, label: name }));
+
+/** 变更阶段展示（空 / 未知 → 「—」）。 */
+function stageLabelOf(stageKey: string | null): string {
+  const label = stageNameOf(stageKey);
+  return label === "" ? "—" : label;
+}
 
 /** 文件状态标签（Push 226 续修）：**只标非定档档位** —— 「未定档 / 已定档」不再出现在文件清单里
  *  （业务口径 2026-09-29：定档是整个项目的定档安排，不由单个文件区分；定档功能后续单独开发）。 */
@@ -177,6 +210,14 @@ type TaskDrawerProps = {
    * 不传 = 文件名只读。
    */
   onRenameFile?: (fileId: string, name: string) => Promise<void>;
+  /** 当前登录人姓名（Push 254 · 「变更申请」页「变更申请人 / 填写者」只读展示 —— 提交时由服务端记 appliedBy）。 */
+  actorName?: string;
+  /**
+   * 变更生效后的父级刷新（Push 254 · 抽屉「变更申请」页）：提交成功 = 变更记录 + 文件新版本 + 任务
+   * 「变更关联」（R01 同事务回写）都已落库 —— 由调用方整表重取，把最新文件状态与变更关联带回来；
+   * 不传 = 提交后只刷新抽屉内的文件清单。
+   */
+  onChanged?: () => void;
   /** 任务文件清单（详情接口 GET /projects/{id}/tasks/{taskId}）：不传 = 只显示列表随行计数（fileSummary）。 */
   projectId?: string;
   /** 人员候选（GET /api/v1/users 目录）：项目经理 / 任务负责人两个多选共用。 */
@@ -200,7 +241,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -243,6 +284,30 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const [renameText, setRenameText] = useState("");
   /** 编辑中保留的后缀（含点；没后缀 = 空串）。 */
   const [renameExt, setRenameExt] = useState("");
+  /** 页标签（Push 254）：默认「任务详情」；换任务时回到默认页。 */
+  const [tab, setTab] = useState<DrawerTab>("detail");
+  /** 「变更申请」页（A4-13 十三列字段面）：目标文件 / 变更阶段 / 变更内容描述 / 变更原因 / 变更前后 / 变更后文件。 */
+  const [changeTargetId, setChangeTargetId] = useState<string | null>(null);
+  const [changeStage, setChangeStage] = useState("");
+  const [changeContent, setChangeContent] = useState("");
+  const [changeCause, setChangeCause] = useState("");
+  const [changeBefore, setChangeBefore] = useState("");
+  const [changeAfter, setChangeAfter] = useState("");
+  const [changeFile, setChangeFile] = useState<File | null>(null);
+  const changeInputRef = useRef<HTMLInputElement | null>(null);
+  /** 变更提交中（防连点）与提交结果（成功绿条 / 失败红条）。 */
+  const [changeBusy, setChangeBusy] = useState(false);
+  const [changeDone, setChangeDone] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
+  /** 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行尾「定档」→ 就地二次确认 → 定档后该行随即可选。 */
+  const [changeFinalizeId, setChangeFinalizeId] = useState<string | null>(null);
+  const [changeFinalizeBusy, setChangeFinalizeBusy] = useState(false);
+  const [changeFinalizeDone, setChangeFinalizeDone] = useState<string | null>(null);
+  /** 「变更记录」页：展开中的变更 id 与其详情（列表只带短原因，全文按需取；note = 取不到的一行灰字）。 */
+  const [changeDetailId, setChangeDetailId] = useState<string | null>(null);
+  const [changeDetail, setChangeDetail] = useState<ChangeRequestDetail | null>(null);
+  const [changeDetailNote, setChangeDetailNote] = useState<string | null>(null);
+  const [changeDetailBusy, setChangeDetailBusy] = useState(false);
 
   useEffect(() => {
     closingRef.current = false;
@@ -261,6 +326,25 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     setRenamingId(null);
     setRenameText("");
     setRenameExt("");
+    setTab("detail");
+    setChangeTargetId(null);
+    // 变更阶段默认 = 任务所属阶段（临时任务没有阶段 → 留空，提交前必选）
+    setChangeStage(task === null ? "" : task.stageKey ?? stageKeyOfName(task.stage) ?? "");
+    setChangeContent("");
+    setChangeCause("");
+    setChangeBefore("");
+    setChangeAfter("");
+    setChangeFile(null);
+    setChangeBusy(false);
+    setChangeDone(false);
+    setChangeError(null);
+    setChangeFinalizeId(null);
+    setChangeFinalizeBusy(false);
+    setChangeFinalizeDone(null);
+    setChangeDetailId(null);
+    setChangeDetail(null);
+    setChangeDetailNote(null);
+    setChangeDetailBusy(false);
     setDraft(draftOf(task, managerIds));
     // 换任务时把草稿重置成新任务的字段；同一个任务上父级刷新不重置，避免打断正在输入的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -407,6 +491,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const headcountInvalid = headcountText !== "" && (Number.isNaN(headcountValue) || headcountValue < 0);
   /** 任务描述校验（Push 196）：中文名必填 —— 输入过程中为空只标红提示，失焦时还原成原值、不写库。 */
   const titleInvalid = titleEditable && draft.title.trim() === "";
+  /** 「变更申请」页只读展示：变更时间（提交当天 = 系统记录口径）与变更申请人（当前登录人）。 */
+  const changeToday = dateOnlyText(new Date().toISOString());
+  const changeApplicant = actorName === undefined || actorName === "" ? "当前登录人" : actorName;
 
   /** 「文件」行（Push 226）：选文件 → 调用方分片直传（关联本任务）→ 完成后重取清单（列表计数由调用方刷新）。 */
   const beginFileUpload = (picked: FileList | null) => {
@@ -566,6 +653,138 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     updateDraft({ title: nextTitle, titleEn: nextTitleEn });
     onRename(task.id, nextTitle, nextTitleEn);
     setSavedTick(Date.now());
+  };
+
+  /** 任务已定档（Push 254 续 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）：定档的可见口径是任务级动作（抽屉开关 / 表格侧签），已定档任务的 draft 文件同视为「定档后的文件」。 */
+  const taskFinalized = task !== null && task.finalizedAt !== null;
+  /** 可变更的目标文件（A4-13；Push 254 续）：状态 final / changed 的行，或任务已定档时的 draft 行。 */
+  const changeableFiles = (files ?? []).filter((file) => CHANGEABLE_STATUS[file.status] === true || (taskFinalized && file.status === "draft"));
+  /** 当前选中的变更目标（清单刷新后可能消失 —— 找不到按未选处理）。 */
+  const changeTarget = (files ?? []).find((file) => file.id === changeTargetId) ?? null;
+
+  /** 变更后文件选择（单份；选完在页面上显示文件名）。 */
+  const pickChangeFile = (picked: FileList | null) => {
+    if (picked === null) {
+      return;
+    }
+    const list = Array.from(picked);
+    if (list.length === 0) {
+      return;
+    }
+    setChangeFile(list[0]);
+    setChangeDone(false);
+    setChangeError(null);
+  };
+
+  /**
+   * 提交变更（A4-13 提交校验 + 一期「申请即通过」）：变更文件 / 变更内容描述 / 变更阶段 / 变更后文件四道必填 ——
+   * 前端先拦一道（服务端同口径兜底：非定档 409 FILE_STATE_INVALID / 缺校验 400）；
+   * 变更原因（选填）非空时与内容描述合并记入契约 reason（读面「变更原因」按该文本展示）；
+   * 分片直传（intent=change）完成即生效：变更记录 + 新版本 + 文件状态 changed + R01 回写任务关联。
+   * 成功后重取抽屉内文件清单，并让调用方整表重取（文件计数 / 变更关联回流）。
+   */
+  const submitChange = () => {
+    if (changeBusy || projectId === undefined) {
+      return;
+    }
+    if (changeTarget === null) {
+      setChangeError("请选择变更文件");
+      return;
+    }
+    if (changeContent.trim() === "") {
+      setChangeError("请填写变更内容描述");
+      return;
+    }
+    if (changeStage === "") {
+      setChangeError("请选择变更阶段");
+      return;
+    }
+    if (changeFile === null) {
+      setChangeError("请选择变更后文件");
+      return;
+    }
+    const cause = changeCause.trim();
+    const reason = cause === "" ? changeContent.trim() : changeContent.trim() + "；变更原因：" + cause;
+    setChangeBusy(true);
+    setChangeDone(false);
+    setChangeError(null);
+    void applyFileChange(projectId, changeTarget, changeFile, {
+      reason,
+      beforeSummary: changeBefore,
+      afterSummary: changeAfter,
+      stageKey: changeStage,
+    }, taskFinalized)
+      .then(() => {
+        setChangeDone(true);
+        setChangeTargetId(null);
+        setChangeContent("");
+        setChangeCause("");
+        setChangeBefore("");
+        setChangeAfter("");
+        setChangeFile(null);
+        setFilesTick((tick) => tick + 1);
+        onChanged?.();
+      })
+      .catch((error: unknown) => {
+        setChangeError(error instanceof Error && error.message !== "" ? error.message : "变更提交失败，请稍后再试");
+      })
+      .finally(() => {
+        setChangeBusy(false);
+      });
+  };
+
+  /**
+   * 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行尾「定档」把变更前置门
+   * （A4-13：只有已定档文件可以发起变更）就地补上 —— POST /files/{id}/finalize（draft → final 锁版；
+   * 挂接任务随文件定档一并锁定，此后修改走变更）→ 重取文件清单 → 自动选中该文件。
+   */
+  const finalizeForChange = (fileId: string) => {
+    if (changeFinalizeBusy || projectId === undefined) {
+      return;
+    }
+    setChangeFinalizeBusy(true);
+    setChangeError(null);
+    void finalizeFile(fileId)
+      .then(() => {
+        setChangeFinalizeId(null);
+        setChangeFinalizeDone(fileId);
+        setChangeTargetId(fileId);
+        setFilesTick((tick) => tick + 1);
+        onChanged?.();
+      })
+      .catch((error: unknown) => {
+        setChangeError(error instanceof Error && error.message !== "" ? error.message : "定档失败，请稍后再试");
+      })
+      .finally(() => {
+        setChangeFinalizeBusy(false);
+      });
+  };
+
+  /** 变更记录展开 / 收起（列表短文本 → 详情全文按需取；再点同一条 = 收起）。 */
+  const toggleChangeDetail = (id: string) => {
+    if (changeDetailBusy) {
+      return;
+    }
+    if (changeDetailId === id) {
+      setChangeDetailId(null);
+      setChangeDetail(null);
+      setChangeDetailNote(null);
+      return;
+    }
+    setChangeDetailId(id);
+    setChangeDetail(null);
+    setChangeDetailNote(null);
+    setChangeDetailBusy(true);
+    void fetchChangeRequest(id)
+      .then((detail) => {
+        setChangeDetail(detail);
+      })
+      .catch((error: unknown) => {
+        setChangeDetailNote(error instanceof Error && error.message !== "" ? error.message : "记录取不到");
+      })
+      .finally(() => {
+        setChangeDetailBusy(false);
+      });
   };
 
   const rows: Array<{ label: string; value: ReactNode }> = [
@@ -1096,51 +1315,388 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           {task.titleEn === "" ? null : <p className="mt-1 text-xs leading-5 text-zinc-400">{task.titleEn}</p>}
         </header>
 
-        <div className="border-b border-zinc-100 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-500">项目进度</span>
-            <span className="text-sm font-semibold text-zinc-900">{progressText}</span>
+        {/* 页标签导航栏（Push 254 · 业务口径「抽屉上方增加 页面标签导航栏 任务详情 变更申请 变更记录三个页面」）：
+            抽屉头部之下、页内容之上（与页面主标签栏同一套下划线交互）；任务详情 = 原抽屉内容（进度 + 字段清单），
+            另两页收拢变更发起与追溯。 */}
+        <div data-drawer-tabs="true" className="border-b border-zinc-100 px-6">
+          <div role="tablist" aria-label="任务抽屉页面" className="flex gap-1">
+            {DRAWER_TABS.map((item) => {
+              const active = item.key === tab;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  data-drawer-tab={item.key}
+                  onClick={() => { setTab(item.key); }}
+                  className={
+                    "border-b-2 px-4 py-2.5 text-sm font-medium transition " +
+                    (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
+                  }
+                >
+                  {item.label}
+                </button>
+              );
+            })}
           </div>
-          {onProgress === undefined ? (
-            <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
-              <div className={"h-full rounded-full " + barClass} style={{ width: stepPct + "%" }} />
-            </div>
-          ) : (
-            <div className="mt-2.5">
-              <TrackerBar
-                progress={task.progress}
-                hovered={hoveredStep}
-                onHoverChange={setHoveredStep}
-                barClassName={barClass}
-                dotOnClassName={dotOnClass}
-                onChange={(progress) => {
-                  onProgress(task.id, progress);
-                  setSavedTick(Date.now());
-                  setHoveredStep(0);
-                }}
-              />
-            </div>
-          )}
-          {overdue ? (
-            <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">
-              已超过预计完成日期（{cnDateFromIso(task.dueDate)}），当前仍未完成。
-            </p>
-          ) : null}
         </div>
 
-        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="任务详情字段">
-          <dl>
-            {rows.map((row) => (
-              <div
-                key={row.label}
-                className="grid grid-cols-[96px_1fr] items-start gap-x-4 border-b border-zinc-50 py-3 last:border-b-0"
-              >
-                <dt className="pt-px text-xs leading-5 text-zinc-400">{row.label}</dt>
-                <dd className="min-w-0 text-sm leading-5 text-zinc-800">{row.value}</dd>
+        {tab === "detail" ? (
+          <>
+            <div className="border-b border-zinc-100 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-zinc-500">项目进度</span>
+                <span className="text-sm font-semibold text-zinc-900">{progressText}</span>
               </div>
-            ))}
-          </dl>
-        </ScrollArea>
+              {onProgress === undefined ? (
+                <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
+                  <div className={"h-full rounded-full " + barClass} style={{ width: stepPct + "%" }} />
+                </div>
+              ) : (
+                <div className="mt-2.5">
+                  <TrackerBar
+                    progress={task.progress}
+                    hovered={hoveredStep}
+                    onHoverChange={setHoveredStep}
+                    barClassName={barClass}
+                    dotOnClassName={dotOnClass}
+                    onChange={(progress) => {
+                      onProgress(task.id, progress);
+                      setSavedTick(Date.now());
+                      setHoveredStep(0);
+                    }}
+                  />
+                </div>
+              )}
+              {overdue ? (
+                <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">
+                  已超过预计完成日期（{cnDateFromIso(task.dueDate)}），当前仍未完成。
+                </p>
+              ) : null}
+            </div>
+
+            <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="任务详情字段">
+              <dl>
+                {rows.map((row) => (
+                  <div
+                    key={row.label}
+                    className="grid grid-cols-[96px_1fr] items-start gap-x-4 border-b border-zinc-50 py-3 last:border-b-0"
+                  >
+                    <dt className="pt-px text-xs leading-5 text-zinc-400">{row.label}</dt>
+                    <dd className="min-w-0 text-sm leading-5 text-zinc-800">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </ScrollArea>
+          </>
+        ) : tab === "change" ? (
+          <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel="变更申请">
+            <div data-drawer-page="change" className="flex flex-col gap-5 py-4">
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更时间 <span className="text-rose-500">*</span></h3>
+                <p data-change-time="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{changeToday}</p>
+                <span className={CAPTION_CLASS}>一期申请即通过：生效时间由系统记录（提交即记，不可改）</span>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更阶段 <span className="text-rose-500">*</span></h3>
+                <span className={CAPTION_CLASS}>填写变更所处的项目阶段（九阶段字典）</span>
+                <div data-change-stage="true" className="mt-1.5">
+                  <SelectMenu
+                    value={changeStage}
+                    options={CHANGE_STAGE_OPTIONS}
+                    placeholder="请选择"
+                    onChange={(next) => {
+                      setChangeStage(next);
+                      setChangeDone(false);
+                      setChangeError(null);
+                    }}
+                    ariaLabel="选择变更阶段"
+                  />
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更文件 <span className="text-rose-500">*</span></h3>
+                <span className={CAPTION_CLASS}>选择要变更的文件：只有已定档文件可以发起变更（任务已定档 → 其文件即视为已定档；完全未定档的文件点行尾「定档」）</span>
+                {files === null ? (
+                  <p className="mt-2 rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">文件清单加载中…</p>
+                ) : files.length === 0 ? (
+                  <p data-change-empty="true" className="mt-2 rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">该任务暂无文件：先上传文件（可按定档方式上传）后再发起变更。</p>
+                ) : (
+                  <ul className="mt-2 flex flex-col gap-1.5">
+                    {files.map((file) => {
+                      const selectable = CHANGEABLE_STATUS[file.status] === true || (taskFinalized && file.status === "draft");
+                      const statusText = file.status === "draft" && taskFinalized ? "已定档" : (CHANGE_FILE_STATUS_TEXT[file.status] ?? file.status);
+                      const pickedTarget = file.id === changeTargetId;
+                      const finalizeOpen = changeFinalizeId === file.id;
+                      return (
+                        <li key={file.id}>
+                          <div className="flex items-stretch gap-1.5">
+                            <button
+                              type="button"
+                              data-change-target={file.id}
+                              disabled={!selectable}
+                              aria-pressed={pickedTarget}
+                              onClick={() => {
+                                setChangeTargetId(pickedTarget ? null : file.id);
+                                setChangeDone(false);
+                                setChangeError(null);
+                              }}
+                              className={
+                                "flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition " +
+                                (pickedTarget
+                                  ? "border-zinc-900 bg-zinc-50"
+                                  : selectable
+                                    ? "border-zinc-200 bg-white hover:border-zinc-300"
+                                    : "cursor-not-allowed border-zinc-100 bg-zinc-50/60")
+                              }
+                            >
+                              <span className={"flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border " + (pickedTarget ? "border-zinc-900" : "border-zinc-300")}>
+                                {pickedTarget ? <span className="h-1.5 w-1.5 rounded-full bg-zinc-900" /> : null}
+                              </span>
+                              <span className={"min-w-0 flex-1 truncate text-xs " + (selectable ? "text-zinc-700" : "text-zinc-400")} title={file.name}>{file.name}</span>
+                              <span className={"shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium " + (selectable ? "bg-amber-50 text-amber-700" : "bg-zinc-100 text-zinc-400")}>
+                                {statusText + (selectable ? "" : " · 不可变更")}
+                              </span>
+                            </button>
+                            {selectable || file.status !== "draft" ? null : (
+                              <button
+                                type="button"
+                                data-change-finalize={file.id}
+                                onClick={() => {
+                                  setChangeFinalizeId(finalizeOpen ? null : file.id);
+                                  setChangeError(null);
+                                }}
+                                title="定档后该文件即可发起变更（任务随定档一并锁定，修改走变更）"
+                                className="shrink-0 self-center rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700 transition hover:border-amber-300"
+                              >
+                                定档
+                              </button>
+                            )}
+                          </div>
+                          {finalizeOpen ? (
+                            <div data-change-finalize-confirm={file.id} className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
+                              <p className="text-[11px] leading-4 text-amber-800">定档后该文件锁版、任务一并锁定（不支持任何修改），修改走变更；确定定档该文件？</p>
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  data-change-finalize-ok={file.id}
+                                  disabled={changeFinalizeBusy}
+                                  onClick={() => finalizeForChange(file.id)}
+                                  className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-800 transition hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {changeFinalizeBusy ? "定档中…" : "确认定档"}
+                                </button>
+                                <button
+                                  type="button"
+                                  data-change-finalize-cancel={file.id}
+                                  onClick={() => setChangeFinalizeId(null)}
+                                  className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-zinc-500 transition hover:text-zinc-700"
+                                >
+                                  取消
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {changeFinalizeDone !== null && changeableFiles.some((file) => file.id === changeFinalizeDone) ? (
+                  <p data-change-finalize-done="true" className="mt-2 text-[11px] leading-4 text-emerald-600">已定档并自动选中该文件：填好变更内容 / 变更后文件后即可提交变更。</p>
+                ) : null}
+                {files !== null && files.length > 0 && changeableFiles.length === 0 ? (
+                  <p data-change-none-hint="true" className="mt-2 text-[11px] leading-4 text-zinc-400">当前没有可变更的文件：先点行尾「定档」完成文件定档，定档后即可发起变更。</p>
+                ) : null}
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更内容描述 <span className="text-rose-500">*</span></h3>
+                <textarea
+                  data-change-reason="true"
+                  value={changeContent}
+                  maxLength={1000}
+                  rows={3}
+                  onChange={(event) => {
+                    setChangeContent(event.target.value);
+                    setChangeDone(false);
+                    setChangeError(null);
+                  }}
+                  placeholder="请描述本次变更内容（必填，1000 字以内）"
+                  aria-label="变更内容描述"
+                  className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
+                />
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更前</h3>
+                <textarea
+                  data-change-before="true"
+                  value={changeBefore}
+                  maxLength={2000}
+                  rows={2}
+                  onChange={(event) => { setChangeBefore(event.target.value); }}
+                  placeholder="变更前内容摘要（可留空）"
+                  aria-label="变更前"
+                  className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
+                />
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更后</h3>
+                <textarea
+                  data-change-after="true"
+                  value={changeAfter}
+                  maxLength={2000}
+                  rows={2}
+                  onChange={(event) => { setChangeAfter(event.target.value); }}
+                  placeholder="变更后内容摘要（可留空）"
+                  aria-label="变更后"
+                  className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
+                />
+                <span className={CAPTION_CLASS}>变更前 / 变更后为一期文本摘要口径（各 2000 字以内）</span>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更原因</h3>
+                <input
+                  data-change-cause="true"
+                  value={changeCause}
+                  maxLength={1000}
+                  onChange={(event) => { setChangeCause(event.target.value); }}
+                  placeholder="变更原因（选填）"
+                  aria-label="变更原因"
+                  className={FIELD_CLASS + " mt-1.5"}
+                />
+                <span className={CAPTION_CLASS}>选填：填写后与变更内容描述一并记入变更记录（一期「变更原因」按该文本展示）</span>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更申请人 <span className="text-rose-500">*</span></h3>
+                <p data-change-applicant="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{changeApplicant}</p>
+                <span className={CAPTION_CLASS}>提交时由系统记录（填写者同此）</span>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更后文件版本 <span className="text-rose-500">*</span></h3>
+                <p data-change-version="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">提交后自动生成新版本（版本号递增）</p>
+                <span className={CAPTION_CLASS}>一期由系统生成：版本名称沿用文件名、版本号在目标文件当前版本上递增</span>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">变更后文件 <span className="text-rose-500">*</span></h3>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-change-pick="true"
+                    onClick={() => { changeInputRef.current?.click(); }}
+                    disabled={changeBusy}
+                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    ＋ 选择变更后文件
+                  </button>
+                  {changeFile === null ? (
+                    <span className="text-[11px] text-zinc-400">未选择</span>
+                  ) : (
+                    <span data-change-file="true" className="min-w-0 max-w-full truncate text-xs text-zinc-600" title={changeFile.name}>{changeFile.name}</span>
+                  )}
+                  <input
+                    ref={changeInputRef}
+                    type="file"
+                    data-change-upload-input="true"
+                    className="hidden"
+                    aria-label="选择变更后文件"
+                    onChange={(event) => {
+                      pickChangeFile(event.currentTarget.files);
+                      // 清空 value：同一份文件再选一次仍会触发 change
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </div>
+                <span className={CAPTION_CLASS}>必传：无变更后文件不允许提交（A4-13 提交校验）</span>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-zinc-500">关联</h3>
+                <p data-change-link="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">提交后由系统自动关联</p>
+                <span className={CAPTION_CLASS}>R01：按输出成果文件命中，回写任务「变更关联」（追加 + 去重）</span>
+              </section>
+
+              <section className="flex flex-col gap-2 border-t border-zinc-100 pt-4">
+                {changeError === null ? null : (
+                  <p data-change-error="true" className="rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">{changeError}</p>
+                )}
+                {changeDone ? (
+                  <p data-change-done="true" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700">变更已提交生效：文件状态转为「已变更」，新版本与变更记录已生成。</p>
+                ) : null}
+                <button
+                  type="button"
+                  data-change-submit="true"
+                  onClick={submitChange}
+                  disabled={changeBusy || projectId === undefined}
+                  className="w-full rounded-lg bg-zinc-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                >
+                  {changeBusy ? "提交中…" : "提交变更"}
+                </button>
+                <p className="text-[11px] leading-4 text-zinc-400">提交即生效（申请即通过）；变更文件须为已定档文件，且必须附变更后文件。</p>
+              </section>
+            </div>
+          </ScrollArea>
+        ) : (
+          <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel="变更记录">
+            <div data-drawer-page="history" className="flex flex-col gap-2 py-4">
+              {task.changes.length === 0 ? (
+                <p data-drawer-history-empty="true" className="rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">暂无变更记录：变更生效后自动关联到本任务（按输出成果文件命中）。</p>
+              ) : (
+                <>
+                  <p className="text-[11px] leading-4 text-zinc-400">本任务关联的变更（最新在前）；点「详情」取变更全文。</p>
+                  {[...task.changes].reverse().map((change) => {
+                    const open = changeDetailId === change.id;
+                    const detail = open && changeDetail !== null && changeDetail.id === change.id ? changeDetail : null;
+                    return (
+                      <div key={change.id} data-change-item={change.id} className="rounded-xl border border-zinc-100 bg-zinc-50/60 px-3 py-2.5">
+                        <div className="flex items-start gap-2">
+                          <span className="mt-0.5 shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">变更 {dateOnlyText(change.appliedAt)}</span>
+                          <p className="min-w-0 flex-1 text-xs leading-5 text-zinc-600">{change.reason === "" ? "（未填原因）" : change.reason}</p>
+                          <button
+                            type="button"
+                            data-change-item-open="true"
+                            onClick={() => { toggleChangeDetail(change.id); }}
+                            className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                          >
+                            {open ? "收起" : "详情"}
+                          </button>
+                        </div>
+                        {open ? (
+                          <div data-change-item-detail="true" className="mt-2 flex flex-col gap-1 border-t border-zinc-100 pt-2 text-xs leading-5 text-zinc-600">
+                            {detail !== null ? (
+                              <>
+                                <span>变更后文件：{detail.file.name}（版本 v{String(detail.versionSeq)}）</span>
+                                <span>变更阶段：{stageLabelOf(detail.stageKey)}</span>
+                                <span>变更原因：{detail.reason}</span>
+                                <span>审批状态：{detail.status === "applied" ? "已通过（申请即通过）" : detail.status}</span>
+                                {detail.beforeSummary === null || detail.beforeSummary === "" ? null : <span>变更前：{detail.beforeSummary}</span>}
+                                {detail.afterSummary === null || detail.afterSummary === "" ? null : <span>变更后：{detail.afterSummary}</span>}
+                                <span className="text-zinc-400">申请人：{memberNameOf(members, detail.appliedBy) ?? "成员"} · {dateOnlyText(detail.appliedAt)}</span>
+                              </>
+                            ) : changeDetailNote === null ? (
+                              <span className="text-zinc-400">加载中…</span>
+                            ) : (
+                              <span data-change-item-note="true" className="text-zinc-400">{changeDetailNote}</span>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </ScrollArea>
+        )}
 
         <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
           <p className="text-[11px] text-zinc-400">点空白处或按 Esc 关闭</p>
