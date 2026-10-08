@@ -12,13 +12,17 @@
  * 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 / 预计所需施工人数 / 实际完成日期 / 变更关联）。
  * 表仍是**只读** —— 工作台读面不带任务 version，不挂项目页那套点开编辑。折叠面板头常驻**「进入项目」**按钮
  * （Push 232 · 业务口径「增加进入项目按钮」）：落点由调用方给定 —— 「我的任务」= 项目详情缺省标签「项目总览」
- * `#/project/{id}`；「我提出的问题」= 该项目「日报及问题 → 日报记录」（Push 242，见下条）；按钮在面板头右侧、
- * 不参与展开收起。
+ * `#/project/{id}`；「我提出的问题」= 该项目「日报及问题 → 问题追踪」（Push 253 起，见下条；Push 242 时为该页
+ * 「日报记录」）；按钮在面板头右侧、不参与展开收起。
  *
  * Push 242（业务口径 2026-10-08「这个页面的列要对齐吧 不然不美观」+「删除在项目中查看 进入项目直接进入日报记录页面
  * 替代在项目中查看」）「我提出的问题」两处调整：① 问题表改 **`table-fixed` + `<colgroup>` 固定列宽** —— 各项目
  * 折叠面板的同名列一一对齐（原 `table-auto` 按各自内容算宽，换一个项目列就飘）；② 行尾「在项目中查看」下架，
- * 进入项目的入口收敛到面板头「进入项目」（定标 = 该项目「日报记录」）。
+ * 进入项目的入口收敛到面板头「进入项目」（Push 253 起的落点见下条）。
+ *
+ * Push 253（业务口径 2026-10-08「我提出的问题点击进入项目直接进入到问题追踪页面」）：「我提出的问题」面板头
+ * 「进入项目」的落点由该项目「日报记录」改**该项目「问题追踪」**（`?view=daily&sub=issues`）—— 从哪张表点进
+ * 去就停在项目页哪张表；「我的任务」标签的落点不变（项目详情「项目总览」`#/project/{id}`）。
  *
  * 「我的计划」标签（Push 234 · 业务口径「增加一个我的计划页面」→「你只要把导航栏设计好 后续详细设计再说」）：
  * 导航栏第三枚标签 + 路由 `?tab=plan` 本刀就位；页面内容（数据口径 / 布局）随后续详细设计再做 —— 本刀只落登记卡。
@@ -317,7 +321,7 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
 /** 折叠面板（业务口径「未展开是项目名称和编号 下拉是具体我的任务」「也是折叠面板」）：
  *  收起 = 项目名称 + 编号（+ 右侧摘要 + 「进入项目」按钮）；展开 = 该项目下的内容（任务表 / 问题表）。
  *  「进入项目」是面板头里的独立锚点（Push 232）：点它走调用方给定的深链（Push 242 起按标签区分 ——
- *  「我的任务」= 总览 / 「我提出的问题」= 该项目「日报记录」），不切换展开态。
+ *  「我的任务」= 总览 / 「我提出的问题」= 该项目「问题追踪」（Push 253 起），不切换展开态。
  *  展开态 Push 233 起受控 + 按账号记忆（业务口径「这个下拉要有记忆」）：由 App 层偏好 workspaceOpenProjects 按标签分记
  *  已展开的项目 id（刷新 / 同账号换设备保持；不进地址）；面板壳 = 白卡 + 圆角描边 + 行悬停（与站内表格壳同一套材质）。 */
 function ProjectPanel({ projectId, projectCode, projectName, summary, href, open, onToggle, children }: {
@@ -326,7 +330,7 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, href, open
   projectName: string;
   /** 收起态右侧摘要（计数 / 逾期小签）。 */
   summary: ReactNode;
-  /** 「进入项目」深链（Push 242 起由调用方给定：任务表 = 总览 / 问题表 = 该项目「日报记录」）。 */
+  /** 「进入项目」深链（Push 242 起由调用方给定：任务表 = 总览 / 问题表 = 该项目「问题追踪」）。 */
   href: string;
   /** 展开态（Push 233 起受控：由账号偏好按项目 id 记忆 —— 见 WorkspacePage 的 openProjects / openIds）。 */
   open: boolean;
@@ -693,7 +697,7 @@ function IssuePhotos({ photos }: { photos: readonly ReportPhoto[] }) {
  *  问题附图 / 问题是否处理（窄屏横向滚动）。
  *  Push 242：① `table-fixed` + `<colgroup>` 定死列宽（见 ISSUE_COL_WIDTHS）—— 各项目面板的同名列一一对齐
  *  （原 `table-auto` 各自按内容算宽、换一个项目列就飘；业务口径「这个页面的列要对齐吧 不然不美观」）；
- *  ② 行尾「在项目中查看」下架 —— 进项目的入口收敛到面板头「进入项目」（定标 = 该项目「日报记录」）。 */
+ *  ② 行尾「在项目中查看」下架 —— 进项目的入口收敛到面板头「进入项目」（Push 253 起定标 = 该项目「问题追踪」）。 */
 const ISSUE_COL_WIDTHS = ["10%", "21%", "10%", "21%", "27%", "11%"] as const;
 
 function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; focus: boolean }) {
@@ -846,7 +850,7 @@ function RaisedIssuesView({ issues, focus, openIds, onToggleProject }: { issues:
               projectCode={project.projectCode}
               projectName={project.projectName}
               summary={<span className="text-xs font-normal text-zinc-400">{"共 " + String(project.issues.length) + " 条"}</span>}
-              href={projectViewHref(project.projectId, "daily", "records")}
+              href={projectViewHref(project.projectId, "daily", "issues")}
               open={openIds.has(project.projectId)}
               onToggle={() => {
                 onToggleProject(project.projectId);
