@@ -785,6 +785,62 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     expect(h.repo.insertedSessions).toHaveLength(0);
   });
 
+  it("intent=change（Push 254 续 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）：任务已定档 → 其名下的 draft 文件同样放行（不必先行文件级定档）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", taskId: TASK, version: 2, currentVersionId: VERSION });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: NOW };
+    const result = await h.service.createUpload(
+      {
+        projectId: PROJECT,
+        name: "机械设计图纸.pdf",
+        sizeBytes: MI_B,
+        intent: "change",
+        fileId: FILE,
+        change: { reason: "任务定档后变更" },
+      },
+      ACTOR,
+    );
+
+    expect(result.file.id).toBe(FILE);
+    expect(result.upload.intent).toBe("change");
+    expect(h.repo.insertedSessions).toHaveLength(1);
+  });
+
+  it("intent=change 续·反例：draft 文件但任务未定档 / 未挂接任务 → 仍 409（新分支不误放行）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", taskId: TASK, version: 2, currentVersionId: VERSION });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: null };
+    await expect(
+      h.service.createUpload(
+        {
+          projectId: PROJECT,
+          name: "机械设计图纸.pdf",
+          sizeBytes: MI_B,
+          intent: "change",
+          fileId: FILE,
+          change: { reason: "任务未定档" },
+        },
+        ACTOR,
+      ),
+    ).rejects.toMatchObject({ code: "FILE_STATE_INVALID", httpStatus: 409 });
+
+    const h2 = makeService();
+    h2.repo.file = makeFileRow({ status: "draft", taskId: null, version: 2, currentVersionId: VERSION });
+    await expect(
+      h2.service.createUpload(
+        {
+          projectId: PROJECT,
+          name: "机械设计图纸.pdf",
+          sizeBytes: MI_B,
+          intent: "change",
+          fileId: FILE,
+          change: { reason: "无挂接任务" },
+        },
+        ACTOR,
+      ),
+    ).rejects.toMatchObject({ code: "FILE_STATE_INVALID", httpStatus: 409 });
+  });
+
   it("intent=version + fileId（目标 draft）→ 追加版本：复用文件行（不新建）+ 审计 update + 秒传提示恒空", async () => {
     const h = makeService();
     h.repo.file = makeFileRow({ status: "draft", version: 2, currentVersionId: VERSION });
@@ -2098,6 +2154,75 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
     expect(h.repo.insertedVersions).toHaveLength(0);
     expect(h.repo.insertedChanges).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
+  });
+
+  it("（Push 254 续）会话持有期间任务已定档 + 目标 draft → 放行：版本 + 变更落库、状态 changed（业务口径「不是已经定档了吗」）", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "draft", nodeId: NODE, taskId: TASK, docType: "CAD图纸", version: 3, currentVersionId: VERSION_A });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: NOW };
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(result.file.status).toBe("changed");
+    expect(h.repo.insertedVersions).toHaveLength(1);
+    expect(h.repo.insertedChanges).toHaveLength(1);
+  });
+});
+
+
+describe("Push 249 · 任务定档联动与写口闸（业务口径「若是则上传文件后该任务定档不支持任何修改」）", () => {
+  const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
+
+  it("挂接任务的文件定档：同事务置位任务定档 + 写任务审计；未挂接任务的文件定档不置位", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 5, taskId: TASK });
+    h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    await h.service.finalizeFile(FILE, { version: 5 }, ACTOR);
+
+    expect(h.repo.finalizedTasks).toEqual([{ taskId: TASK, actorId: ACTOR }]);
+    expect(h.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file", "task"]);
+    expect(h.audit.entries.at(-1)).toMatchObject({ action: "update", objectType: "task", objectId: TASK, projectId: PROJECT });
+
+    const h2 = makeService();
+    h2.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 1, taskId: null });
+    h2.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    await h2.service.finalizeFile(FILE, { version: 1 }, ACTOR);
+    expect(h2.repo.finalizedTasks).toEqual([]);
+    expect(h2.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file"]);
+  });
+
+  it("任务已定档：intent=version 新增上传 → 409 TASK_FINALIZED（不落会话）", async () => {
+    const h = makeService();
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: FINALIZED_AT };
+    await expect(
+      h.service.createUpload({ projectId: PROJECT, name: "图纸.pdf", sizeBytes: MI_B, taskId: TASK, intent: "version" }, ACTOR),
+    ).rejects.toMatchObject({
+      code: "TASK_FINALIZED",
+      httpStatus: 409,
+      details: [{ code: "task_finalized", path: "taskId" }],
+    });
+    expect(h.repo.insertedSessions).toHaveLength(0);
+    expect(h.repo.insertedFiles).toHaveLength(0);
+  });
+
+  it("任务已定档：文件改名 → 409 TASK_FINALIZED（不落库）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", taskId: TASK, version: 2 });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: FINALIZED_AT };
+    await expect(h.service.renameFile(FILE, { version: 2, name: "新名.pdf" }, ACTOR)).rejects.toMatchObject({
+      code: "TASK_FINALIZED",
+      httpStatus: 409,
+    });
+    expect(h.repo.filePatches).toHaveLength(0);
+  });
+
+  it("未定档任务：intent=version 上传照常（对照）", async () => {
+    const h = makeService();
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: null };
+    const created = await h.service.createUpload(
+      { projectId: PROJECT, name: "图纸.pdf", sizeBytes: MI_B, taskId: TASK, intent: "version" },
+      ACTOR,
+    );
+    expect(created.file.name).toBe("图纸.pdf");
+    expect(h.repo.finalizedTasks).toEqual([]);
   });
 });
 

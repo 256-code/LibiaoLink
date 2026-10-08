@@ -15,6 +15,10 @@
  *   项目经理是我也要算在我的任务」）：我的任务 = 任务负责人含我 或 项目项目经理含我 + 未完成、不限完成日期窗口；
  *   未排期（无预计完成日期）单列一组 —— 本脚本 ① 对账 / ②④ 任务表 / ⑩ 记忆段的行数断言随新口径重算（四组 / 6 项）。
  *
+ * 口径追订（2026-10-08）：「删除在项目中查看 进入项目直接进入日报记录页面 替代在项目中查看」（Push 242：行尾入口下架、
+ *   入口收敛到面板头「进入项目」）→「我提出的问题点击进入项目直接进入到问题追踪页面」（Push 253：「我提出的问题」的
+ *   「进入项目」落点由该项目「日报记录」改**「问题追踪」**（`?view=daily&sub=issues`）；「我的任务」落点照旧 = 项目总览）。
+ *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
  *   2. api：cd server && npm run start:api（默认 3001）
@@ -39,7 +43,7 @@
  *      解决方案或建议 / 问题附图 / 问题是否处理；后两列按项目向源接口回填，真 PNG 直传夹具保证有值）；
  *      未关闭在前、不是我提的不进；Push 242 起行尾「在项目中查看」下架、六列 `table-fixed` 固定列宽（跨面板对齐）；
  *   ⑦ 深链：`#/my-tasks?tab=raised` 直接打开仍停在该标签；`?tab=` 不认识的值落回「我的任务」；
- *      「进入项目」按钮 =「我的任务」落项目总览、切到「我提出的问题」落该项目「日报记录」（Push 232 / Push 242），
+ *      「进入项目」按钮 =「我的任务」落项目总览、切到「我提出的问题」落该项目「问题追踪」（Push 232 / Push 242 / Push 253），
  *      浏览器后退回工作台；
  *   ⑨ 醒目模式（Push 232 ·「同样增加醒目模式」）：开关在标签导航栏最右侧、值 = 账号偏好；开 = 任务 / 问题整行铺
  *      状态底色 + 状态签收口成深色字，关 = 恢复白底（跑完把账号偏好恢复原值，不留痕）；
@@ -429,6 +433,11 @@ async function clickSelector(selector) {
   await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
   await sleep(700);
 }
+/** 先把元素滚进视口再点（面板列表长时，目标可能在首屏之外）—— Push 253 新增的「进入项目」点击穿透断言用。 */
+async function scrollSelectorIntoView(selector) {
+  await ev("(function(){var node=document.querySelector(" + j(selector) + ");if(node!==null){node.scrollIntoView({block:" + j("center") + "});}})()");
+  await sleep(350);
+}
 
 /** Push 235 吸顶断言：元素几何 / 样式读数（不存在 = null）。 */
 const stickyRect = (selector) => "(function(){var el=document.querySelector(" + j(selector) + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=getComputedStyle(el);return {top:Math.round(r.top*100)/100,left:Math.round(r.left*100)/100,right:Math.round(r.right*100)/100,height:Math.round(r.height*100)/100,position:cs.position,zIndex:cs.zIndex,bg:String(cs.backgroundColor),blur:String(cs.backdropFilter||cs.webkitBackdropFilter)};})()";
@@ -535,7 +544,7 @@ check("⑥e2 「问题附图」列 = A1 一枚真图瓦片（文件名对齐）/
 const partialBanner = await ev("document.querySelector(" + j("[data-workspace-issue-partial]") + ") !== null");
 check("⑥e3 六列回填没有 partial 降级横幅（两个项目的问题源接口都取到）", partialBanner === false, String(partialBanner));
 const issuePanelLink = await ev("(function(){var a=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-project-link]') + ");return a===null?null:String(a.getAttribute(" + j("href") + "));})()");
-check("⑥f（Push 242）行尾「在项目中查看」下架（行内无链接）+ 入口 = 面板头「进入项目」→ 该项目「日报记录」深链", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.href === "") && issuePanelLink === "#/project/" + projectA + "?view=daily&sub=records", JSON.stringify({ rowHref: rowsIssueA === null ? "null" : rowsIssueA.rows[0].href, panelLink: issuePanelLink }));
+check("⑥f（Push 242 / Push 253）行尾「在项目中查看」下架（行内无链接）+ 入口 = 面板头「进入项目」→ 该项目「问题追踪」深链", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.href === "") && issuePanelLink === "#/project/" + projectA + "?view=daily&sub=issues", JSON.stringify({ rowHref: rowsIssueA === null ? "null" : rowsIssueA.rows[0].href, panelLink: issuePanelLink }));
 check("⑥g 不是我提出的（wmj 提的）不进这张表", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.id !== issueOther.issue.id), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.id)));
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 const rowsIssueB = await ev(issueRowsExpr(projectB));
@@ -565,6 +574,26 @@ check("⑦e 点「进入项目」= 打开项目详情（地址 #/project/{id}、
 await ev("window.history.back()");
 const backToWorkspace = await waitFor("document.querySelector(" + j("[data-workspace-page]") + ") !== null && window.location.hash === " + j("#/my-tasks"), 25000);
 check("⑦f 浏览器后退回工作台（#/my-tasks 原样恢复、页面还在）", backToWorkspace === true, String(backToWorkspace));
+
+// —— Push 253（业务口径 2026-10-08「我提出的问题点击进入项目直接进入到问题追踪页面」）：
+// 「我提出的问题」面板头「进入项目」落点由该项目「日报记录」改「问题追踪」—— 真点一下：落该项目「日报及问题 → 问题追踪」。
+await clickSelector("[data-workspace-tab=" + Q + "raised" + Q + "]");
+await waitFor("window.location.hash === " + j("#/my-tasks?tab=raised") + " && document.querySelector(" + j("[data-workspace-panel=\"" + projectA + "\"] [data-workspace-panel-toggle]") + ") !== null", 25000);
+await scrollSelectorIntoView("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-project-link]");
+const raisedLinkHref = await ev("(function(){var a=document.querySelector(" + j("[data-workspace-panel=\"" + projectA + "\"] [data-workspace-project-link]") + ");return a===null?null:String(a.getAttribute(" + j("href") + "));})()");
+check("⑦g（Push 253）「我提出的问题」面板头「进入项目」href = 该项目「问题追踪」深链（?view=daily&sub=issues）", raisedLinkHref === "#/project/" + projectA + "?view=daily&sub=issues", String(raisedLinkHref));
+await clickSelector("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-project-link]");
+const enteredIssueView = await waitFor("window.location.hash === " + j("#/project/" + projectA + "?view=daily&sub=issues") + " && document.querySelector(" + j("[data-issue-search]") + ") !== null", 25000);
+check("⑦h（Push 253）点「进入项目」= 直达项目「日报及问题 → 问题追踪」（地址 ?view=daily&sub=issues、问题视图搜索框在场）", enteredIssueView === true, String(enteredIssueView));
+const issueMainTab = await ev("(function(){var t=document.querySelector(" + j("[data-maintabs-item=\"日报及问题\"]") + ");return t===null?null:t.getAttribute(" + j("aria-current") + ");})()");
+check("⑦i（Push 253）顶部标签停在「日报及问题」（主标签选中态）", issueMainTab === "page", String(issueMainTab));
+await ev("window.history.back()");
+const backToRaised = await waitFor("document.querySelector(" + j("[data-workspace-issues]") + ") !== null && window.location.hash === " + j("#/my-tasks?tab=raised"), 25000);
+check("⑦j（Push 253）浏览器后退回工作台「我提出的问题」（?tab=raised 原样恢复）", backToRaised === true, String(backToRaised));
+// ⑦ 段收尾：切回「我的任务」（与 Push 242 前的落点一致 —— ⑨ 醒目模式段从任务表读起）
+await clickSelector("[data-workspace-tab=" + Q + "tasks" + Q + "]");
+await waitFor("window.location.hash === " + j("#/my-tasks") + " && document.querySelector(" + j("[data-workspace-page]") + ") !== null", 25000);
+await ev("window.scrollTo(0, 0)");
 
 // ---------- ⑨ 醒目模式（Push 232 · 业务口径「同样增加醒目模式」） ----------
 const focusCheckedExpr = "(function(){var wrap=document.querySelector(" + j("[data-workspace-focus-toggle]") + ");if(wrap===null){return null;}var box=wrap.querySelector(" + j("input") + ");return box===null?null:box.checked;})()";
