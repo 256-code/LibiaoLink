@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
@@ -11,6 +11,7 @@ import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
 import { Tracker } from "./Tracker";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { DeliverableCell, docTypeCapsule } from "./DeliverablePicker";
 import { StageAddCard } from "./StageAddCard";
 import type { StagePlacement } from "./StageAddCard";
 import { TempTaskCreateForm } from "./TempTaskCreateForm";
@@ -186,7 +187,7 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 }));
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "note">>;
+export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -243,9 +244,11 @@ type TaskBoardProps = {
   /**
    * 任务文件上传（Push 226 · 「文件」那一刀前端接线；Push 246 起入口收进「文件」列下拉顶部的「＋ 添加文件」）：
    * 选文件 → 调用方分片直传文件库并关联本任务，完成后整表重取刷新计数；不传 = 下拉里不显示添加入口。
-   * onProgress 供下拉 / 单元格胶囊上的「上传中 N/M」提示（done = 已完成份数）。
+   * onProgress 供下拉 / 单元格胶囊上的「上传中 N/M」提示（done = 已完成份数）；
+   * finalize（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）= 定档上传：传完即对该文件定档
+   * （任务随定档锁定，此后任务不支持任何修改、修改走变更）。
    */
-  onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>;
+  onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>;
   /**
    * 任务文件删除（Push 226 续；Push 246 起「文件」列下拉行尾也走同一入口）：抽屉清单 / 下拉里点「删除」
    * = 调用方走回收站（M4-02），完成后整表重取刷新计数；不传 = 清单与下拉只读（不显示删除入口）。
@@ -253,6 +256,11 @@ type TaskBoardProps = {
   onDeleteFile?: (fileId: string) => Promise<void>;
   /** 任务文件改名（Push 226 续二）：抽屉清单里点名字 → 编辑提交（只改主名、后缀保留）；不传 = 名字只读。 */
   onRenameFile?: (fileId: string, name: string) => Promise<void>;
+  /**
+   * 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：透传给任务详情抽屉，确认后由调用方 POST …/finalize
+   * （置位后任务不支持任何修改，服务端 409 TASK_FINALIZED 兜底）；不传 = 抽屉不渲染开关。
+   */
+  onFinalize?: (taskId: string) => void;
   /** 任务 → 文件引用（Push 246 · fileApi.fetchTaskFiles）：「文件」列胶囊显示文件名 / 「+N」、
    *  下拉里点名字预览 + 删除；不传 / 取不到 = 退回「N 份」计数（老数据 / 请求失败）。 */
   filesByTask?: ReadonlyMap<string, TaskFileRef[]>;
@@ -275,7 +283,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
+function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -457,23 +465,28 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         )}
       </span>
     ),
-    deliverable: (
-      <span className="flex min-w-0 items-center gap-1">
-        {task.deliverableTypes.length === 0 ? (
-          <span className="text-xs text-zinc-300">—</span>
-        ) : (
-          <>
-            <span
-              className="inline-block max-w-full truncate rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600"
-              title={task.deliverableTypes.join("、")}
-            >
-              {task.deliverableTypes[0]}
-            </span>
-            {task.deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.deliverableTypes.length - 1}</span> : null}
-          </>
-        )}
-      </span>
-    ),
+    // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读徽标改可点选择 ——
+    // 点开 = DeliverablePicker（搜索 + 十类彩签多选）；列窄走「首枚 + +N」，全名清单进浮层。
+    deliverable:
+      onPatch === undefined ? (
+        <span className="flex min-w-0 items-center gap-1">
+          {task.deliverableTypes.length === 0 ? (
+            <span className="text-xs text-zinc-300">—</span>
+          ) : (
+            <>
+              {docTypeCapsule(task.deliverableTypes[0])}
+              {task.deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.deliverableTypes.length - 1}</span> : null}
+            </>
+          )}
+        </span>
+      ) : (
+        <DeliverableCell
+          values={task.deliverableTypes}
+          onChange={(next) => {
+            onPatch({ deliverableTypes: next });
+          }}
+        />
+      ),
     files: (
       <span className="relative flex min-w-0 items-center justify-center gap-1 self-stretch">
         {onUploadFiles === undefined && onDeleteFile === undefined ? (
@@ -485,6 +498,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
             files={filesForTask}
             onUpload={onUploadFiles}
             onDelete={onDeleteFile}
+            taskFinalized={task.finalizedAt !== null}
           >
             {fileCellContent}
           </TaskFilesPopover>
@@ -609,6 +623,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
   return (
     <div
       role="button"
+      data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
       tabIndex={0}
       title="点击查看任务详情"
       onClick={onSelect}
@@ -680,7 +695,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, filesByTask, projectId, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, filesByTask, projectId, focusMode }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -824,6 +839,44 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   }, [scrollRef]);
 
   /**
+   * 「定档」侧签（Push 252 · 业务口径 2026-10-08「不是在表格内 要在表格外部懂吗 延伸出一个小标签」）：
+   * 定档任务的标记不落行内、也不进表内 —— 从表格左边缘**向外伸**一颗竖排小签（2 字 · amber-50 底 + amber-700 字；2026-10-08 业务口径定稿「竖着的定档二字、在表格外」）。
+   * 表格的横向滚动容器（#task-board-scroll）会把越界内容裁掉，所以侧签画在卡片外的这个相对定位容器里：
+   * TaskRow 在定档行的根节点落 data-task-finalized-row，本 effect 量出各定档行相对容器顶部的中心 y，逐个钉在卡片左边界外。
+   * （deps 里 tasks / collapsed / viewStage 只用来保证「行变了 → 提交后重量一遍」；量的是 DOM，值来自真实布局。）
+   */
+  const [finalizedTags, setFinalizedTags] = useState<{ key: string; top: number }[]>([]);
+  useLayoutEffect(() => {
+    const wrap = boardWrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const measure = () => {
+      const wrapTop = wrap.getBoundingClientRect().top;
+      const next: { key: string; top: number }[] = [];
+      const rows = wrap.querySelectorAll("[data-task-finalized-row]");
+      for (let index = 0; index < rows.length; index += 1) {
+        const node = rows[index] as HTMLElement;
+        const rect = node.getBoundingClientRect();
+        next.push({ key: node.getAttribute("data-task-finalized-row") ?? String(index), top: Math.round(rect.top - wrapTop + rect.height / 2) });
+      }
+      // 同值不动 state：ResizeObserver 每次量完都回流一次，值没变时避免无谓重渲染（也就不会自激）。
+      setFinalizedTags((current) =>
+        current.length === next.length && current.every((item, index) => item.key === next[index].key && item.top === next[index].top) ? current : next);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const observer = new ResizeObserver(measure);
+    if (boardCardRef.current !== null) {
+      observer.observe(boardCardRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", measure);
+      observer.disconnect();
+    };
+  }, [tasks, collapsed, viewStage]);
+
+  /**
    * 阶段不在九阶段里的任务（看板「添加 → 临时任务」直接建的空任务）归到「临时任务」组（Push 196 改名，原「未分组」）：
    * 固定在最后一组 —— 与九阶段一样常显（骨架），有任务时组头带完成计数；**Push 197 起组头可点**：
    * 它没有节点 / 模板可挑，点击 = 直接出新建表单（自己填名称），建完直接打开详情抽屉补时间等细节。
@@ -840,7 +893,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
 
   return (
     <>
-      <div ref={boardWrapRef} className="relative">
+      <div ref={boardWrapRef} data-board-wrap="true" className="relative">
       <div ref={boardCardRef} className="rounded-xl border border-zinc-200 bg-white">
       {/* 列头固定（Push 141 业务反馈「这个标题栏要固定 鼠标移动可以依旧显示」）：表头移出横向滚动容器、自身 sticky 在应用顶栏（64px）之下；
           横向偏移由上方 useEffect 跟随 #task-board-scroll 的 scrollLeft，左右滚动时表头与各列仍对齐。
@@ -1015,6 +1068,21 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         </div>
       </div>
       </div>
+      {/* 「定档」侧签（Push 252）：标签不从行内伸 —— 定档行的侧签挂在表格左边缘外侧（竖排 · 很淡的黄）。
+          y 由上面的 effect 量出的行中心给出；横向滚动容器会裁掉越界内容，所以签画在卡片之外这一层。
+          2026-10-08 业务口径演进：「不是在表格内 要在表格外部」→「改成定档两个字」→「竖排／横排来回」→ 定稿回到竖排「定档」，
+          黄色取更淡的一档（amber-50 底 + amber-200 描边 + amber-700 字）；竖排正好一颗字宽，能整颗待在表格外（不再压进卡片）。 */}
+      {finalizedTags.map((tag) => (
+        <span
+          key={tag.key}
+          data-task-finalized-badge="true"
+          title="此任务已定档：不支持任何修改（文件修改走变更）"
+          style={{ top: tag.top, writingMode: "vertical-rl" }}
+          className="absolute right-full z-[5] -translate-y-1/2 rounded-l-md border border-r-0 border-amber-200 bg-amber-50 py-1.5 pl-1 pr-0.5 text-[10px] font-bold leading-none tracking-[0.18em] text-amber-700 shadow-[0_1px_2px_rgba(24,24,27,0.12)]"
+        >
+          定档
+        </span>
+      ))}
       {tempFormOpen && onCreateTempTask !== undefined ? (
         <div
           role="dialog"
@@ -1063,6 +1131,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         onUploadFiles={onUploadFiles}
         onDeleteFile={onDeleteFile}
         onRenameFile={onRenameFile}
+        onFinalize={onFinalize}
         projectId={projectId}
         onClose={closeDrawer}
       />

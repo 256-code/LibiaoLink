@@ -32,10 +32,12 @@ export interface FileNodeBriefRow {
   deletedAt: Date | null;
 }
 
-/** 任务摘要（taskId 归属校验）。 */
+/** 任务摘要（taskId 归属校验 + 任务定档闸 · Push 249）。 */
 export interface FileTaskBriefRow {
   id: string;
   projectId: string;
+  /** 任务定档时间（非空 = 已定档：直接修改一律 409 TASK_FINALIZED；修改走变更，A4-13）。 */
+  finalizedAt: Date | null;
 }
 
 export type FileRow = typeof files.$inferSelect;
@@ -202,11 +204,24 @@ export class FileRepository {
 
   async findTaskBrief(taskId: string, client: DbClient = this.database.db): Promise<FileTaskBriefRow | null> {
     const rows = await client
-      .select({ id: tasks.id, projectId: tasks.projectId })
+      .select({ id: tasks.id, projectId: tasks.projectId, finalizedAt: tasks.finalizedAt })
       .from(tasks)
       .where(eq(tasks.id, taskId))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /**
+   * 任务定档置位（Push 249 · 迁移 0044）：任务尚未定档时置位 finalized_at / finalized_by 并递增乐观锁版本；
+   * 已定档 / 任务不存在 → 返回 null（幂等 —— 多次文件定档只置位一次）。
+   */
+  async markTaskFinalized(taskId: string, at: Date, actorId: string, client: DbClient): Promise<string | null> {
+    const rows = await client
+      .update(tasks)
+      .set({ finalizedAt: at, finalizedBy: actorId, version: sql`${tasks.version} + 1`, updatedAt: at })
+      .where(and(eq(tasks.id, taskId), isNull(tasks.finalizedAt)))
+      .returning({ id: tasks.id });
+    return rows[0]?.id ?? null;
   }
 
   async insertFile(input: FileInsertInput, client: DbClient): Promise<FileRow> {

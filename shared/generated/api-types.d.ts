@@ -1141,6 +1141,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/tasks/{taskId}/finalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskFinalizeBody"];
+                };
+            };
+            responses: {
+                /** @description 定档后的任务（Task 同形；幂等路径原样返回） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/tasks/batch": {
         parameters: {
             query?: never;
@@ -7359,7 +7431,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -7407,7 +7479,7 @@ export interface components {
             sizeBytes: number;
             expiresAt: components["schemas"]["DateTime"];
         };
-        /** @description 定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换 */
+        /** @description 定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换；**挂接任务的文件定档时，同事务把该任务一并定档**（Push 249：任务定档后不支持任何修改，见 Task.finalizedAt / 409 TASK_FINALIZED） */
         FileFinalizeBody: {
             version: components["schemas"]["Version"];
         };
@@ -8370,6 +8442,8 @@ export interface components {
             onTime: boolean | null;
             /** @description 变更关联（A1-07 / R01：**一条任务可关联多条变更**，写面「追加＋去重」）：数组顺序 = 关联先后（追加序，末位 = 最近一次变更）；空数组 = 无变更。前端「变更关联」列按本数组渲染多条变更徽标（悬浮显示变更日期） */
             changeLinks: components["schemas"]["TaskChangeLink"][];
+            finalizedAt: components["schemas"]["DateTime"] & (string | null);
+            finalizedBy: components["schemas"]["Uuid"] & (string | null);
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
@@ -8415,10 +8489,10 @@ export interface components {
             missing?: components["schemas"]["TaskGateMissing"][];
         };
         /**
-         * @description 批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败
+         * @description 批量失败原因：not_found 任务不存在 / 不属于该项目 / 已软删；archived 项目已归档；gate_not_passed 完成门禁缺件；already_done 任务已完成；version_conflict 并发写入冲突；invalid_state 其它业务校验失败；finalized 任务已定档（不支持任何修改，Push 249）
          * @enum {string}
          */
-        TaskBatchFailureCode: "not_found" | "archived" | "gate_not_passed" | "already_done" | "version_conflict" | "invalid_state";
+        TaskBatchFailureCode: "not_found" | "archived" | "gate_not_passed" | "already_done" | "version_conflict" | "invalid_state" | "finalized";
         /** @description 批量操作结果（整体 200：部分失败不影响成功项，失败清单给出逐条原因） */
         TaskBatchResponse: {
             /** @description 去重后的目标条数 */
@@ -8540,6 +8614,10 @@ export interface components {
             draft: number;
             /** @description 已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计 */
             final: number;
+        };
+        /** @description 任务定档提交（version = 抽屉当前行版本） */
+        TaskFinalizeBody: {
+            version: components["schemas"]["Version"] & unknown;
         };
         /** @description 缺件明细：required / present 按门禁统计范围逐 doc_type 给出 */
         TaskGateMissing: {
@@ -8697,7 +8775,7 @@ export interface components {
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
-        /** @description 编辑任务（乐观锁 version 必传；成果文件 / 阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**无来源节点**的临时任务可改，节点 / 模板生成的任务仍锁定（带字段请求 400） */
+        /** @description 编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架 */
         TaskUpdateBody: {
             /** @description 任务描述（中文；Push 196）：仅**无来源节点**的任务可改（看板「添加 → 临时任务」手工创建）；节点 / 模板生成的任务按 A1-17 锁定，带该字段请求 400 */
             title?: string;
@@ -8713,6 +8791,8 @@ export interface components {
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
+            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
+            deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
             version: components["schemas"]["Version"];
         };
@@ -8762,7 +8842,7 @@ export interface components {
             duplicateHint: components["schemas"]["DuplicateHint"];
         };
         /**
-         * @description 上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）
+         * @description 上传意图：version = 新增/替换版本（仅 draft 文件）；change = 定档后变更（同一事务写 change_requests + 新版本 + 状态 changed）；**目标任务已定档（Task.finalizedAt 非空）时 version 意图一律 409 TASK_FINALIZED**（Push 249：任务定档后不支持任何修改，修改走变更）
          * @enum {string}
          */
         UploadIntent: "version" | "change";

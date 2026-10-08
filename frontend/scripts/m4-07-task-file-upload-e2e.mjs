@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：任务「文件」列下拉（Push 246：添加 / 预览 / 删除）/ 任务详情抽屉「文件」行上传接真（Push 226 · 「文件」那一刀前端接线）
+ * LibiaoLink 前端 · 回放：任务「文件」列下拉（Push 246：添加 / 预览 / 删除；Push 248：替换 → Push 251 撤销）/ 任务详情抽屉「文件」行上传接真（Push 226 · 「文件」那一刀前端接线）/ 抽屉头部「定档」开关（Push 252：二次确认 → 任务定档）/ 表格外「定档」侧签（Push 252）
  *
  * 前置（都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -13,7 +13,7 @@
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE / SCREENSHOT_DIR
  *
  * 它做什么：一条临时会话（跑完撤销）+ 一个临时项目（跑完先 purge 文件、再物理删）在真机浏览器里跑一遍：
- *   ① 「文件」列空态 = 与任务表其它行内可编辑单元格同款的「液态玻璃」描边胶囊 + 「—」；点开 = 右侧下拉（顶部「＋ 添加文件」、空清单「暂无文件」、隐藏文件框在下拉内）；
+ *   ① 「文件」列空态 = 与任务表其它行内可编辑单元格同款的「液态玻璃」描边胶囊 + 「—」；点开 = 右侧下拉（顶部一行「＋ 添加文件」/「＋ 添加定档文件」（Push 251 改版：点哪个直接开选文件框、不再出一问；添加文件在前、定档文件在后）、空清单「暂无文件」、隐藏文件框在下拉内）；
  *   ② 下拉内真实文件选择（CDP DOM.setFileInputFiles）→ 分片直传文件库（带 taskId）→ 下拉清单与单元格同步回流（最新一份 + 「+N」）；
  *   ③ 库面：files.task_id 落行 + file_links(task) 建链 + TaskListItem.fileSummary 1（draft 1）；
  *   ④ 抽屉「文件」行：文件名清单随详情接口下发（**不显示「未定档 / 已定档」** —— 定档是项目级安排）+ 上传入口在位；
@@ -25,7 +25,18 @@
  *   ⑩ 下载 = 原文件（抽屉每行「下载」+ 预览浮层「下载原文件」；attachment 签名落盘 + download 审计）；
  *   ⑪ 「文件」列下拉交互（Push 246 · 业务口径 2026-10-08「点击后出现右侧下拉框 / 点文件名预览 / 删除按钮」）：
  *      点文件名 = 预览浮层（Esc 先关浮层）；Esc 先关下拉（任务行 / 详情抽屉不被连带）；行尾「删除」= 红胶囊按钮 → 行内二次确认 → 移入回收站（清单 / 单元格回落）；
- *   ⑫ 收尾：四份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
+ *   ⑫ 行尾「替换」（Push 248）已在 Push 251 按业务口径「取消这个替换按钮」整体撤除：下拉清单查不到替换入口 /
+ *      替换输入框 / 变更原因区 / 替换提示（④r0 断言）；接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）；
+ *   ⑬ 定档入口（Push 249 → Push 251 改版 · 业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」）：
+ *      顶部「＋ 添加文件」/「＋ 添加定档文件」一行两个按钮（添加文件在前、定档文件在后）= 点哪个直接开选文件框、不出定档一问（无取消按钮）——定档版传完即定档
+ *      （任务随定档锁定：任务 / 文件写口全 409 TASK_FINALIZED、下拉顶常驻提示、两个添加入口关闭）；
+ *   ⑭ 抽屉定档开关（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」）：
+ *      开关在状态签旁（未定档 = 灰底「未」；已定档 = logo 黄底「已」）；点开 = 就地二次确认条（不落库）、取消 = 收条（③d 段）；
+ *      确认定档 = POST …/tasks/{taskId}/finalize → tasks.finalized_at 置位（幂等 + 此后写口 409 TASK_FINALIZED，第二个任务端到端 · ④t 段）；
+ *   ⑮ 「定档」侧签（Push 252 · 业务口径演进：「不是在表格内 要在表格外部懂吗 延伸出一个小标签」→「黄色变淡」→「竖排／横排」→ 定稿「竖着的定档二字的在表格外」）：
+ *      定档任务的签不落行内 / 表内 —— 在**表格左边缘外侧**挂一颗竖排小签（2 字 · amber-50 底 + amber-700 字）；#task-board-scroll 会裁越界内容，
+ *      所以签画在卡片外这一层、y 按行中心量出；定档前无签、定档后才有（④t0b / ④t8 段）；
+ *   ⑯ 收尾：五份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
  * 证据：docs/m4-07-回放证据(任务文件上传·前端).md
  */
 
@@ -274,6 +285,13 @@ async function setFileInput(selector, filePath) {
   if (found === undefined || found.nodeId === 0) throw new Error("找不到文件输入框：" + selector);
   await page.send("DOM.setFileInputFiles", { nodeId: found.nodeId, files: [filePath] });
 }
+/** 点一处按钮（按选择器取中心点）；不在 / 量不到返回 false（Push 249 定档确认与拦截提示用）。 */
+async function clickSelector(selector) {
+  const point = await ev("(function(){var b=document.querySelector(" + j(selector) + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+  if (point === null || point === undefined) return false;
+  await clickAt(point);
+  return true;
+}
 async function bail(message) {
   console.log("中止：" + message);
   checks.push(false);
@@ -286,6 +304,9 @@ async function bail(message) {
 const FILE_CELL_BUTTON = "[data-cell-action=task-files]";
 const TASK_FILES_POPOVER = "[data-task-files-popover=true]";
 const POPOVER_INPUT = "[data-task-files-input=true]";
+const FINALIZE_PROMPT = "[data-task-files-finalize-prompt=true]";
+const FINALIZE_NOTE = "[data-task-files-note-finalized=true]";
+const FINALIZE_BLOCK_NOTE = "[data-task-files-note-finalize=true]";
 const DRAWER = "aside[role=dialog]";
 const DRAWER_INPUT = "aside[role=dialog] [data-file-upload-input=true]";
 const CELL_TEXT_PROBE = "(function(){var b=document.querySelector(" + j(FILE_CELL_BUTTON) + ");return b===null?null:b.textContent.trim();})()";
@@ -327,11 +348,19 @@ check("①a 「文件」列空态 = 与同一行其它行内可编辑单元格�
   pill.exists === true && pill.text === "—" && pill.ref !== null && pill.ref !== undefined && pill.mine === pill.ref, JSON.stringify(pill));
 check("①b 胶囊 title = 点击添加文件（关联到本任务）", typeof pill.title === "string" && pill.title.indexOf("点击添加文件") === 0, String(pill.title));
 const popoverOpened = await openTaskFilesPopover();
-const popoverInfo = popoverOpened === true ? await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var t=document.querySelector(" + j(FILE_CELL_BUTTON) + ");var pr=p.getBoundingClientRect();var tr=t===null?null:t.getBoundingClientRect();var add=p.querySelector(" + j("[data-task-files-add]") + ");return {add:add===null?null:add.textContent.trim(),input:p.querySelector(" + j(POPOVER_INPUT) + ")!==null,right:tr===null?false:pr.left>=tr.right-2,text:p.innerText.replace(String.fromCharCode(10)," + j(" / ") + ").slice(0,140)};})()") : null;
-check("①c 点胶囊 → 出下拉（顶部「＋ 添加文件」+ 空清单「暂无文件」+ 隐藏文件框在下拉内）", popoverOpened === true && popoverInfo !== null && popoverInfo.add === "＋ 添加文件" && popoverInfo.input === true && popoverInfo.text.indexOf("暂无文件") >= 0, JSON.stringify(popoverInfo));
+const popoverInfo = popoverOpened === true ? await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var t=document.querySelector(" + j(FILE_CELL_BUTTON) + ");var pr=p.getBoundingClientRect();var tr=t===null?null:t.getBoundingClientRect();var add=p.querySelector(" + j("[data-task-files-add]") + ");var af=p.querySelector(" + j("[data-task-files-add-finalize]") + ");return {add:add===null?null:add.textContent.trim(),af:af===null?null:af.textContent.trim(),sameRow:add!==null&&af!==null&&Math.abs(add.getBoundingClientRect().top-af.getBoundingClientRect().top)<2,firstAdd:add!==null&&af!==null&&add.getBoundingClientRect().left<af.getBoundingClientRect().left,input:p.querySelector(" + j(POPOVER_INPUT) + ")!==null,right:tr===null?false:pr.left>=tr.right-2,text:p.innerText.replace(String.fromCharCode(10)," + j(" / ") + ").slice(0,140)};})()") : null;
+check("①c 点胶囊 → 出下拉（顶部一行「＋ 添加文件」/「＋ 添加定档文件」两钮（添加在前）+ 空清单「暂无文件」+ 隐藏文件框在下拉内）", popoverOpened === true && popoverInfo !== null && popoverInfo.add === "＋ 添加文件" && popoverInfo.af === "＋ 添加定档文件" && popoverInfo.sameRow === true && popoverInfo.firstAdd === true && popoverInfo.input === true && popoverInfo.text.indexOf("暂无文件") >= 0, JSON.stringify(popoverInfo));
 check("①d 下拉优先贴触发器右侧展开（placement right 口径）", popoverInfo !== null && popoverInfo.right === true, JSON.stringify({ right: popoverInfo === null ? null : popoverInfo.right }));
 
 // ② 列表上传：真选文件 → 分片直传（带 taskId）
+// ②a0（Push 251 改版 · 业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」）：
+//   点「＋ 添加文件」直接开选文件框（不再出定档确认 / 无取消按钮）；定档走顶部「＋ 添加定档文件」直点（④s 段）。
+const addDirectPoint = await clickSelector("[data-task-files-add]");
+await sleep(400);
+const addNoAsk = await ev("document.querySelector(" + j(FINALIZE_PROMPT) + ")===null");
+check("②a0 点「＋ 添加文件」= 直接进取文件框（不出定档确认 / 无取消按钮）", addDirectPoint === true && addNoAsk === true, JSON.stringify({ clicked: addDirectPoint, noPrompt: addNoAsk }));
+const addFinalizeBtnInfo = await ev("(function(){var b=document.querySelector(" + j("[data-task-files-add-finalize]") + ");return b===null?null:{text:b.textContent.trim(),title:String(b.getAttribute(" + Q + "title" + Q + "))};})()");
+check("②a0b 顶部「＋ 添加定档文件」在位且 title = 定档说明（定档后该任务不支持任何修改）", addFinalizeBtnInfo !== null && addFinalizeBtnInfo !== undefined && addFinalizeBtnInfo.text === "＋ 添加定档文件" && addFinalizeBtnInfo.title.indexOf("不支持任何修改") >= 0, JSON.stringify(addFinalizeBtnInfo));
 await setFileInput(POPOVER_INPUT, fileAPath);
 const firstLanded = await waitForAsync(async () => (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c === 1, 30000);
 const fileRows1 = (await db.query("select f.id, f.name, f.status, v.mime from files f left join file_versions v on v.id = f.current_version_id where f.task_id = $1 order by f.created_at", [taskId])).rows;
@@ -390,6 +419,30 @@ const drawer1 = await waitDrawerFiles(1, 12000) === true ? await ev(DRAWER_FILES
 check("③b 抽屉「文件」清单 = 详情接口下发的 1 行（只出文件名，无「未定档」签）", drawer1.count === 1 && drawer1.names.indexOf(fileAName) >= 0 && drawer1.names.indexOf("未定档") < 0 && drawer1.names.indexOf("已定档") < 0, JSON.stringify(drawer1));
 check("③c 抽屉上传入口在位（＋ 上传文件 + 隐藏输入框）", drawer1.upload === "＋ 上传文件" && drawer1.input === true, JSON.stringify({ upload: drawer1.upload, input: drawer1.input }));
 
+// ③d 抽屉头部「定档」开关（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」）：
+//   开关在状态签旁（未定档 = data-task-finalize=off · 旋钮「未」）；点开 = 就地二次确认条（不落库）、取消 = 收条；
+//   确认路径（POST /finalize / 幂等 / 定档后 409）在第二个任务上端到端 —— 见 ④t 段（本任务要保持可写直到 ④s）。
+const finalizeProbe = await ev("(function(){var d=document.querySelector(" + j(DRAWER) + ");if(d===null){return null;}"
+  + "var sw=d.querySelector(" + j("[data-task-finalize]") + ");var chip=d.querySelector(" + j("[data-task-status-chip]") + ");"
+  + "if(sw===null||chip===null){return {sw:false,chip:false};}"
+  + "var rs=sw.getBoundingClientRect();var rc=chip.getBoundingClientRect();"
+  + "return {sw:true,state:sw.getAttribute(" + Q + "data-task-finalize" + Q + "),knob:sw.textContent.trim(),"
+  + "sameRow:Math.abs(Math.round(rs.top+rs.height/2)-Math.round(rc.top+rc.height/2))<=6,rightOf:rs.left>=rc.right-2};})()");
+check("③d 定档开关在任务状态签旁（未定档 = off · 旋钮「未」 · 同一行、状态签右侧）",
+  finalizeProbe !== null && finalizeProbe !== undefined && finalizeProbe.sw === true && finalizeProbe.state === "off" && finalizeProbe.knob === "未" && finalizeProbe.sameRow === true && finalizeProbe.rightOf === true,
+  JSON.stringify(finalizeProbe));
+const finalizeClicked = await clickSelector("[data-task-finalize]");
+const finalizeConfirmShown = await waitFor("document.querySelector(" + j("[data-task-finalize-confirm]") + ")!==null", 6000);
+const finalizeDbBefore = (await db.query("select finalized_at from tasks where id = $1", [taskId])).rows[0];
+check("③d2 点开关 = 就地二次确认条（data-task-finalize-confirm · 确认前不落库）",
+  finalizeClicked === true && finalizeConfirmShown === true && finalizeDbBefore.finalized_at === null,
+  JSON.stringify({ clicked: finalizeClicked, confirm: finalizeConfirmShown, finalizedAt: finalizeDbBefore.finalized_at }));
+const finalizeCancelClicked = await clickSelector("[data-task-finalize-cancel]");
+const finalizeConfirmGone = await waitFor("document.querySelector(" + j("[data-task-finalize-confirm]") + ")===null", 6000);
+const finalizeDbAfterCancel = (await db.query("select finalized_at from tasks where id = $1", [taskId])).rows[0];
+check("③d3 取消 = 收确认条、不落库（开关仍 off）",
+  finalizeCancelClicked === true && finalizeConfirmGone === true && finalizeDbAfterCancel.finalized_at === null,
+  JSON.stringify({ cancel: finalizeCancelClicked, gone: finalizeConfirmGone, finalizedAt: finalizeDbAfterCancel.finalized_at }));
 // ④ 抽屉内再传一份
 await setFileInput(DRAWER_INPUT, fileBPath);
 const secondLanded = await waitForAsync(async () => (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c === 2, 30000);
@@ -568,6 +621,28 @@ await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code
 await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
 await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
 
+// ④p5（Push 249 修正 · 业务口径「当我修改别的信息 文件一栏的内容就消失了 要刷新才能回来」）：
+//   行内改别的字段（PATCH / 进度写入只回契约 Task、不带 fileSummary）后「文件」列必须就地保持 ——
+//   toUiTask 从旧行继承文件摘要（原来漏接 previous.files → 摘要归零、「文件」列退回「—」，刷新才回来）。
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(TASK_TITLE) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
+const cellBeforeNoteEdit = String(await ev(CELL_TEXT_PROBE));
+const noteCellPoint = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(TASK_TITLE) + ")>=0){var b=rows[i].querySelector(" + j("button[aria-label=修改项目进展描述]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}}return null;})()");
+if (noteCellPoint === null || noteCellPoint === undefined) await bail("任务行里找不到「项目进展描述」行内编辑格（改别的字段用）");
+await clickAt(noteCellPoint);
+const noteEditorShown = await waitFor("document.querySelector(" + j("textarea[aria-label=修改项目进展描述]") + ")!==null", 6000);
+await typeRenameInput("回放改别的字段 " + fixtureCode);
+const noteSaved = await waitForAsync(async () => {
+  await clickSelector("[data-inline-save=true]");
+  const rows = (await db.query("select note from tasks where id = $1", [taskId])).rows;
+  return rows.length === 1 && rows[0].note === "回放改别的字段 " + fixtureCode;
+}, 20000);
+const cellAfterNoteEdit = String(await ev(CELL_TEXT_PROBE));
+check("④p5 行内改别的字段（项目进展描述）落库后「文件」列就地保持（PATCH 只回契约 Task：文件摘要从旧行继承 · 不消失、不用刷新）",
+  noteEditorShown === true && noteSaved === true && cellBeforeNoteEdit === cellAfterNoteEdit
+  && cellAfterNoteEdit.indexOf(filePdfName) >= 0 && cellAfterNoteEdit.indexOf("+2") >= 0,
+  JSON.stringify({ before: cellBeforeNoteEdit, after: cellAfterNoteEdit, editor: noteEditorShown, saved: noteSaved }));
+
 // ④q（Push 246）「文件」列下拉收口：点文件名 = 预览（开预览即收下拉 / Esc 先关浮层）；行尾「删除」= 红胶囊 + 行内二次确认 → 回收站
 const popoverReopened = await openTaskFilesPopover();
 check("④q0 关抽屉后点「文件」列胶囊 = 下拉重开（3 行：PDF / 改名 PNG / A 都在）", popoverReopened === true, String(popoverReopened));
@@ -575,12 +650,18 @@ const popoverIconPairs = await ev("(function(){var items=document.querySelectorA
 const popoverIconMap = {};
 if (Array.isArray(popoverIconPairs)) { for (const pair of popoverIconPairs) { if (pair !== null && pair.name !== null && pair.name !== undefined) { popoverIconMap[pair.name] = pair.icon; } } }
 check("④q0b 下拉清单行首文件类型图标（PDF=pdf / 改名 PNG=image / A=txt · FA 同族）", popoverIconMap[filePdfName] === "pdf" && popoverIconMap[filePngRenamed] === "image" && popoverIconMap[fileAName] === "text", JSON.stringify(popoverIconMap));
+// ④q0c（2026-10-08 · 业务口径「点击这部分内容现在抽屉也会出来 是bug」）：portal 的点击按 React 树冒泡 —— 点下拉里的空白 / 图标区不得冒到任务行
+const popoverBlankPoint = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var li=p.querySelector(" + j("[data-task-files-item]") + ");if(li===null){return null;}var r=li.getBoundingClientRect();return {x:Math.round(r.left+3),y:Math.round(r.top+r.height/2)};})()");
+if (popoverBlankPoint === null || popoverBlankPoint === undefined) await bail("下拉里没有文件行（定位空白点失败）");
+await clickAt(popoverBlankPoint);
+const popoverBlankSafe = await ev("(function(){return {drawer:document.querySelector(" + j(DRAWER) + ")!==null,popover:document.querySelector(" + j(TASK_FILES_POPOVER) + ")!==null};})()");
+check("④q0c 点下拉里的空白 / 图标区不冒泡到任务行（详情抽屉不出现、下拉保持打开）", popoverBlankSafe !== null && popoverBlankSafe.drawer === false && popoverBlankSafe.popover === true, JSON.stringify(popoverBlankSafe));
 const listNamePoint = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var b=p.querySelector(" + j("[data-task-files-preview]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
 if (listNamePoint === null || listNamePoint === undefined) await bail("下拉里没有文件名按钮（data-task-files-preview）");
 await clickAt(listNamePoint);
 const listPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null", 25000);
-const listPreviewInfo = listPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");return {open:el!==null,kind:el===null?null:el.getAttribute(" + Q + "data-file-preview-kind" + Q + "),popoverClosed:document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null};})()") : { open: false, kind: null, popoverClosed: false };
-check("④q1 点下拉里最新一份（PDF）文件名 = 预览浮层（kind=" + String(listPreviewInfo.kind) + " · 开预览即收下拉）", listPreviewInfo.open === true && listPreviewInfo.kind === "pdf" && listPreviewInfo.popoverClosed === true, JSON.stringify(listPreviewInfo));
+const listPreviewInfo = listPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");return {open:el!==null,kind:el===null?null:el.getAttribute(" + Q + "data-file-preview-kind" + Q + "),popoverClosed:document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null,drawer:document.querySelector(" + j(DRAWER) + ")!==null};})()") : { open: false, kind: null, popoverClosed: false, drawer: false };
+check("④q1 点下拉里最新一份（PDF）文件名 = 预览浮层（kind=" + String(listPreviewInfo.kind) + " · 开预览即收下拉 · 不连带开详情抽屉）", listPreviewInfo.open === true && listPreviewInfo.kind === "pdf" && listPreviewInfo.popoverClosed === true && listPreviewInfo.drawer === false, JSON.stringify(listPreviewInfo));
 const listPreviewClosed = await waitForAsync(async () => {
   await ev("(function(){if(document.activeElement&&document.activeElement.blur){document.activeElement.blur();}return true;})()");
   await pressKey("Escape", "Escape", 27);
@@ -612,6 +693,166 @@ const popListAfterDelete = await waitFor("(function(){var p=document.querySelect
 const cellAfterPopDelete = await waitCellHas([filePngRenamed, "+1"], 20000);
 const cellAfterPopDeleteText = String(await ev(CELL_TEXT_PROBE));
 check("④q5 下拉清单回落 2 行、「文件」列 = 改名后的 PNG + 「+1」（recycled 不进读面）", popListAfterDelete === true && cellAfterPopDelete === true && cellAfterPopDeleteText === filePngRenamed + "+1", JSON.stringify({ list: popListAfterDelete, cell: cellAfterPopDeleteText }));
+// ④r（Push 248 → Push 251 撤销 · 业务口径「取消这个替换按钮」）：
+//   行尾「替换」入口与整套替换流程（草稿直替 / 替换前定档一问 / 已定档变更原因）整体从 UI 撤除，
+//   接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）。
+const fileAId = (await db.query("select id from files where task_id = $1 and name = $2", [taskId, fileAName])).rows[0].id;
+const aVersionsBefore = (await db.query("select seq, content_hash from file_versions where file_id = $1 order by seq", [fileAId])).rows;
+const replaceGoneInfo = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}"
+  + "return {rowEntry:p.querySelector(" + j("[data-task-files-replace]") + ")===null,rowReplacing:p.querySelector(" + j("[data-task-files-replacing]") + ")===null,input:p.querySelector(" + j("[data-task-files-replace-input]") + ")===null,reason:p.querySelector(" + j("[data-task-files-replace-prompt]") + ")===null,note:p.querySelector(" + j("[data-task-files-note-replace]") + ")===null,text:p.innerText.indexOf(" + j("替换") + ")<0};})()");
+check("④r0 下拉里替换入口整体撤除（无 data-task-files-replace / 无替换输入框 / 无变更原因区 / 无替换提示 / 文本不含「替换」）",
+  replaceGoneInfo !== null && replaceGoneInfo !== undefined && replaceGoneInfo.rowEntry === true && replaceGoneInfo.rowReplacing === true && replaceGoneInfo.input === true && replaceGoneInfo.reason === true && replaceGoneInfo.note === true && replaceGoneInfo.text === true, JSON.stringify(replaceGoneInfo));
+const versionCountNoReplace = (await db.query("select count(*)::int as c from file_versions where file_id = $1", [fileAId])).rows[0].c;
+check("④r1 无替换路径 → A 版本链保持初版一行（file_versions 1 · 草稿替换已随入口撤除）",
+  aVersionsBefore.length === 1 && Number(versionCountNoReplace) === 1, JSON.stringify({ before: aVersionsBefore.length, now: versionCountNoReplace }));
+
+// ④s（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
+//   「＋ 添加定档文件」直点 → 传完即定档（POST /files/{id}/finalize）→ files final + tasks.finalized_at 同事务置位 + 任务定档审计；
+//   此后任务写口全 409 TASK_FINALIZED（编辑 / 删除 / 新增上传 / 改名 / 直替），下拉顶常驻提示、两个添加入口关闭（替换入口已随 Push 251 整体撤除）。
+const fileCFinalName = "回放-任务文件-C-定档.txt";
+const fileCFinalPath = join(fileDir, fileCFinalName);
+writeFileSync(fileCFinalPath, "LibiaoLink 回放 C 定档内容 " + fixtureCode + String.fromCharCode(10), "utf8");
+const addFinalPoint = await clickSelector("[data-task-files-add-finalize]");
+await sleep(400);
+const addFinalNoAsk = await ev("document.querySelector(" + j(FINALIZE_PROMPT) + ")===null");
+if (addFinalPoint !== true || addFinalNoAsk !== true) await bail("下拉「＋ 添加定档文件」点不开或仍出定档确认");
+check("④s0 点「＋ 添加定档文件」= 直接进取文件框（不出定档确认）", addFinalPoint === true && addFinalNoAsk === true, JSON.stringify({ clicked: addFinalPoint, noPrompt: addFinalNoAsk }));
+await setFileInput(POPOVER_INPUT, fileCFinalPath);
+const cFinalLanded = await waitForAsync(async () => {
+  const rows = (await db.query("select status from files where task_id = $1 and name = $2", [taskId, fileCFinalName])).rows;
+  return rows.length === 1 && rows[0].status === "final";
+}, 40000);
+const cFinalRow = (await db.query("select id, status, finalized_at, finalized_by from files where task_id = $1 and name = $2", [taskId, fileCFinalName])).rows[0];
+const taskFinalRow = (await db.query("select finalized_at, finalized_by from tasks where id = $1", [taskId])).rows[0];
+const taskFinalAudit = (await db.query("select count(*)::int as c, max(summary) as summary from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", taskId, "%任务定档%"])).rows[0];
+check("④s1 「＋ 添加定档文件」→ 上传完成即定档：files.status = final（finalized_at / finalized_by 成对）+ 任务随文件定档同事务置位（tasks.finalized_at 非空 · 操作人一致）+ 任务定档审计行",
+  cFinalLanded === true && cFinalRow !== undefined && cFinalRow.status === "final" && cFinalRow.finalized_at !== null && cFinalRow.finalized_by !== null
+  && taskFinalRow !== undefined && taskFinalRow.finalized_at !== null && taskFinalRow.finalized_by === cFinalRow.finalized_by
+  && Number(taskFinalAudit.c) === 1 && String(taskFinalAudit.summary).indexOf("随文件定档") >= 0,
+  JSON.stringify({ file: cFinalRow, task: taskFinalRow, audit: taskFinalAudit }));
+const finalNoteShown = await waitFor("document.querySelector(" + j(FINALIZE_NOTE) + ")!==null", 20000);
+const finalNoteText = finalNoteShown === true ? String(await ev("(function(){var n=document.querySelector(" + j(FINALIZE_NOTE) + ");return n===null?" + j("") + ":n.textContent.trim();})()")) : "";
+check("④s2 定档后下拉顶出常驻提示（整表重取后随任务定档态出现：不支持新增 / 改名等修改）",
+  finalNoteShown === true && finalNoteText.indexOf("任务已定档") >= 0 && finalNoteText.indexOf("不支持新增") >= 0, finalNoteText.slice(0, 120));
+const blockAddFinalizePoint = await clickSelector("[data-task-files-add-finalize]");
+const blockAddNoteFinalize = await waitFor("(function(){var n=document.querySelector(" + j(FINALIZE_BLOCK_NOTE) + ");return n!==null&&n.textContent.indexOf(" + j("不支持新增文件") + ")>=0;})()", 6000);
+const blockAddPoint = await clickSelector("[data-task-files-add]");
+const blockAddInfo = await ev("(function(){var n=document.querySelector(" + j(FINALIZE_BLOCK_NOTE) + ");return {note:n===null?null:n.textContent.trim(),prompt:document.querySelector(" + j(FINALIZE_PROMPT) + ")!==null};})()");
+check("④s3 已定档再点「＋ 添加定档文件」/「＋ 添加文件」= 不出定档确认、不开选文件框，改出一行提示（服务端同口径 409 TASK_FINALIZED）",
+  blockAddFinalizePoint === true && blockAddNoteFinalize === true && blockAddPoint === true && blockAddInfo.prompt === false && blockAddInfo.note !== null && blockAddInfo.note.indexOf("不支持新增文件") >= 0, JSON.stringify(blockAddInfo));
+const finalReplaceGone = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}return {rowEntry:p.querySelector(" + j("[data-task-files-replace]") + ")===null,reason:p.querySelector(" + j("[data-task-files-replace-prompt]") + ")===null,text:p.innerText.indexOf(" + j("替换") + ")<0};})()");
+check("④s4 已定档任务下拉里同样无替换入口 / 无变更原因区（替换流程整体撤除 · 定档拦截提示口径不变）",
+  finalReplaceGone !== null && finalReplaceGone !== undefined && finalReplaceGone.rowEntry === true && finalReplaceGone.reason === true && finalReplaceGone.text === true, JSON.stringify(finalReplaceGone));
+const taskVerNow = (await db.query("select version from tasks where id = $1", [taskId])).rows[0];
+const patchBlocked = await api("/api/v1/projects/" + projectId + "/tasks/" + taskId, "PATCH", { version: Number(taskVerNow.version), progress: 60 });
+const deleteBlocked = await api("/api/v1/projects/" + projectId + "/tasks/" + taskId, "DELETE", undefined, { "If-Match": String(taskVerNow.version) });
+check("④s5 定档后任务写口全拦（服务端）：PATCH 编辑 409 TASK_FINALIZED + DELETE 删除 409 TASK_FINALIZED",
+  patchBlocked.status === 409 && patchBlocked.json !== null && patchBlocked.json.code === "TASK_FINALIZED"
+  && deleteBlocked.status === 409 && deleteBlocked.json !== null && deleteBlocked.json.code === "TASK_FINALIZED",
+  JSON.stringify({ patch: patchBlocked.status + " " + patchBlocked.text.slice(0, 90), del: deleteBlocked.status + " " + deleteBlocked.text.slice(0, 90) }));
+const uploadBlocked = await api("/api/v1/files/uploads", "POST", { projectId, name: "回放-定档拦截-新增.txt", sizeBytes: 12, contentHash: sha256("blocked-add-" + fixtureCode), intent: "version", taskId });
+const aDetailForBlock = await api("/api/v1/files/" + fileAId);
+const renameBlocked = await api("/api/v1/files/" + fileAId, "PATCH", { name: "回放-任务文件-A-改名尝试.txt", version: aDetailForBlock.json.version });
+const directReplaceBlocked = await api("/api/v1/files/uploads", "POST", { projectId, name: fileAName, sizeBytes: 12, contentHash: sha256("blocked-replace-" + fixtureCode), intent: "version", fileId: fileAId });
+check("④s6 定档后文件直接写口全拦（服务端）：挂本任务新增上传（intent=version）409 + 改名 409 + 直替（fileId=A）409（全为 TASK_FINALIZED）",
+  uploadBlocked.status === 409 && uploadBlocked.json !== null && uploadBlocked.json.code === "TASK_FINALIZED"
+  && renameBlocked.status === 409 && renameBlocked.json !== null && renameBlocked.json.code === "TASK_FINALIZED"
+  && directReplaceBlocked.status === 409 && directReplaceBlocked.json !== null && directReplaceBlocked.json.code === "TASK_FINALIZED",
+  JSON.stringify({ upload: uploadBlocked.status + " " + uploadBlocked.text.slice(0, 60), rename: renameBlocked.status + " " + renameBlocked.text.slice(0, 60), replace: directReplaceBlocked.status + " " + directReplaceBlocked.text.slice(0, 60) }));
+// ④t 抽屉「定档」开关端到端（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」）：
+//   第二条任务（本任务已随文件定档锁定，确认路径要在未定档任务上验证）—— 建任务 → 重载 → 开抽屉 → 点开关 → 二次确认「确认定档」
+//   → tasks.finalized_at / finalized_by 置位（version+1）+ 任务定档审计 + 开关转「已（on）」并置灰；接口幂等（重复 POST 原样返回）+ 定档后写口 409。
+const task2Title = "回放任务·抽屉定档开关";
+const task2Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: task2Title, ownerIds: [userRow.id] });
+check("④t0 夹具：第二条任务（抽屉定档开关端到端用）", task2Res.status === 201, String(task2Res.status) + " " + task2Res.text.slice(0, 140));
+const task2Id = task2Res.json === null ? "" : task2Res.json.id;
+const task2Ver0 = task2Res.json === null ? 0 : Number(task2Res.json.version);
+const finalizeStale = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/finalize", "POST", { version: task2Ver0 + 5 });
+check("④t1 未定档路径 version 不匹配 → 409 VERSION_CONFLICT",
+  finalizeStale.status === 409 && finalizeStale.json !== null && finalizeStale.json.code === "VERSION_CONFLICT",
+  String(finalizeStale.status) + " " + finalizeStale.text.slice(0, 90));
+await page.send("Page.reload", { ignoreCache: true });
+const boardForFinalize = await waitFor("document.querySelector(" + j(FILE_CELL_BUTTON) + ")!==null", 20000);
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(task2Title) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
+const row2Point = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(task2Title) + ")>=0){var b=rows[i].getBoundingClientRect();return {x:Math.round(b.left+60),y:Math.round(b.top+b.height/2)};}}return null;})()");
+if (boardForFinalize !== true || row2Point === null || row2Point === undefined) await bail("第二条任务行没渲染出来（定档开关用例）");
+const scanFinalizedTags = () => ev("(function(){var all=document.querySelectorAll(" + j("[data-task-finalized-badge]") + ");var wrap=document.querySelector(" + j("[data-board-wrap]") + ");var wl=wrap===null?null:Math.round(wrap.getBoundingClientRect().left);var cv=document.createElement('canvas');cv.width=1;cv.height=1;var cx=cv.getContext('2d',{willReadFrequently:true});var toRgb=function(css){cx.clearRect(0,0,1,1);cx.fillStyle=css;cx.fillRect(0,0,1,1);var d=cx.getImageData(0,0,1,1).data;return [Number(d[0]),Number(d[1]),Number(d[2])];};var out=[];for(var i=0;i<all.length;i++){var b=all[i].getBoundingClientRect();var cs=getComputedStyle(all[i]);out.push({text:all[i].textContent.trim(),bg:cs.backgroundColor,fg:cs.color,bgRgb:toRgb(cs.backgroundColor),fgRgb:toRgb(cs.color),wm:cs.writingMode,left:Math.round(b.left),right:Math.round(b.right),top:Math.round(b.top),bottom:Math.round(b.bottom),wrapLeft:wl});}return out;})()");
+const rowBoxOf = (title) => ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(title) + ")>=0){var r=rows[i].getBoundingClientRect();return {top:Math.round(r.top),bottom:Math.round(r.bottom)};}}return null;})()");
+// 颜色比对走 sRGB：Tailwind v4 的 getComputedStyle 在 Chrome 里回 oklch(...)，不能直接和 rgb 串比 —— 用 canvas 画一格再读像素换算（oklch→sRGB 有 1~2 档取整，容差放到 12；量级仍足以排除 logo 黄 / amber-500 这类饱和黄）。
+const nearRgb = (value, r, g, b) => Array.isArray(value) && Math.abs(Number(value[0]) - r) <= 12 && Math.abs(Number(value[1]) - g) <= 12 && Math.abs(Number(value[2]) - b) <= 12;
+const tagStyled = (tag) => tag !== undefined && tag !== null && tag.text === "定档" && nearRgb(tag.bgRgb, 255, 251, 235) && nearRgb(tag.fgRgb, 187, 77, 0) && String(tag.wm).indexOf("vertical") >= 0 && Number(tag.right) - Number(tag.left) <= 24;
+const tagOutside = (tag) => tag !== undefined && tag !== null && Number(tag.right) <= Number(tag.wrapLeft) + 1;
+// 行与行上下相邻（无间隙），按「签的竖向中心落在这一行的高度区间内」判定归属，避免 ±容差同时命中两行。
+const tagOnRow = (tag, row) => tag !== undefined && tag !== null && row !== undefined && row !== null && (Number(tag.top) + Number(tag.bottom)) / 2 >= Number(row.top) && (Number(tag.top) + Number(tag.bottom)) / 2 <= Number(row.bottom);
+// ④t0b 定档前（负向）：整表只有第一个任务（已随文件定档）挂侧签 —— 第二条任务还没有（④t8 确认定档后才有）。
+// ④t8 「定档」侧签 = 竖排 2 字 · 很淡的黄底（amber-50）+ 琥珀字（amber-700）· 整颗在表格左边缘外（竖排一颗字宽，放得下）。
+const tagsBefore = (await scanFinalizedTags()) ?? [];
+const row1Box = await rowBoxOf(TASK_TITLE);
+check("④t0b 定档前：整表只有已随文件定档的第一个任务挂「定档」侧签（竖排 · 淡黄 · 整颗在表格外 · 纵向对齐）",
+  Array.isArray(tagsBefore) && tagsBefore.length === 1 && tagStyled(tagsBefore[0]) && tagOutside(tagsBefore[0]) && tagOnRow(tagsBefore[0], row1Box),
+  JSON.stringify({ tags: tagsBefore, row1: row1Box }));
+await clickAt(row2Point);
+const drawer2Open = await waitFor("document.querySelector(" + j(DRAWER) + ")!==null", 8000);
+const sw2Off = drawer2Open === true ? await ev("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s===null?null:s.getAttribute(" + Q + "data-task-finalize" + Q + ");})()") : null;
+check("④t2 第二条任务抽屉打开、开关 = off（未定档）", drawer2Open === true && sw2Off === "off", JSON.stringify({ open: drawer2Open, state: sw2Off }));
+const sw2Clicked = await clickSelector("[data-task-finalize]");
+const confirm2Shown = await waitFor("document.querySelector(" + j("[data-task-finalize-confirm]") + ")!==null", 6000);
+const task2BeforeConfirm = (await db.query("select finalized_at from tasks where id = $1", [task2Id])).rows[0];
+check("④t3 点开关出二次确认条（确认前不落库）",
+  sw2Clicked === true && confirm2Shown === true && task2BeforeConfirm.finalized_at === null,
+  JSON.stringify({ clicked: sw2Clicked, confirm: confirm2Shown, finalizedAt: task2BeforeConfirm.finalized_at }));
+const confirm2Clicked = await clickSelector("[data-task-finalize-confirm-btn]");
+const task2Finalized = await waitForAsync(async () => (await db.query("select finalized_at from tasks where id = $1", [task2Id])).rows[0].finalized_at !== null, 20000);
+const task2Row = (await db.query("select finalized_at, finalized_by, version from tasks where id = $1", [task2Id])).rows[0];
+const task2Audit = (await db.query("select count(*)::int as c, max(summary) as summary from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%任务定档%"])).rows[0];
+check("④t4 二次确认「确认定档」→ tasks.finalized_at / finalized_by 置位（version+1 · 操作人一致）+ 任务定档审计",
+  confirm2Clicked === true && task2Finalized === true && task2Row.finalized_at !== null && task2Row.finalized_by === userRow.id && Number(task2Row.version) === task2Ver0 + 1
+  && Number(task2Audit.c) === 1 && String(task2Audit.summary).indexOf("任务定档") >= 0,
+  JSON.stringify({ row: task2Row, audit: task2Audit, version0: task2Ver0 }));
+const sw2On = await waitFor("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s!==null&&s.getAttribute(" + Q + "data-task-finalize" + Q + ")===" + j("on") + "&&s.disabled===true;})()", 15000);
+const sw2After = await ev("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s===null?null:{state:s.getAttribute(" + Q + "data-task-finalize" + Q + "),knob:s.textContent.trim(),disabled:s.disabled};})()");
+check("④t5 确认后开关转「已（on）」并置灰（旋钮「已」· disabled · 不可再点）",
+  sw2On === true && sw2After !== null && sw2After !== undefined && sw2After.state === "on" && sw2After.knob === "已" && sw2After.disabled === true,
+  JSON.stringify(sw2After));
+const shotFinalized = await page.send("Page.captureScreenshot", { format: "png" });
+writeFileSync(join(SCREENSHOT_DIR, "m4-07-drawer-finalized.png"), Buffer.from(shotFinalized.data, "base64"));
+const finalizeAgain = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/finalize", "POST", { version: task2Ver0 });
+const task2RowAfter = (await db.query("select version, finalized_at from tasks where id = $1", [task2Id])).rows[0];
+const task2AuditAgain = (await db.query("select count(*)::int as c from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%任务定档%"])).rows[0];
+check("④t6 重复 POST /finalize 幂等（200 原样返回 · version 不再递增 · 审计不重复）",
+  finalizeAgain.status === 200 && finalizeAgain.json !== null && Number(finalizeAgain.json.version) === task2Ver0 + 1
+  && new Date(task2RowAfter.finalized_at).toISOString() === finalizeAgain.json.finalizedAt
+  && Number(task2RowAfter.version) === task2Ver0 + 1 && Number(task2AuditAgain.c) === 1,
+  JSON.stringify({ status: finalizeAgain.status, version: finalizeAgain.json === null ? null : finalizeAgain.json.version, dbVersion: task2RowAfter.version, audit: task2AuditAgain.c }));
+const patch2Blocked = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id, "PATCH", { version: task2Ver0 + 1, progress: 40 });
+check("④t7 定档后任务写口拦（PATCH 409 TASK_FINALIZED）",
+  patch2Blocked.status === 409 && patch2Blocked.json !== null && patch2Blocked.json.code === "TASK_FINALIZED",
+  String(patch2Blocked.status) + " " + patch2Blocked.text.slice(0, 90));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
+// ④t8 「定档」侧签（Push 252 · 业务口径演进：「不是在表格内 要在表格外部懂吗 延伸出一个小标签」→「改成定档两个字 黄色变淡」→「竖排的改横排」→ 定稿「竖着的定档二字的在表格外」）：
+//   关掉抽屉后：两个已定档任务（第一个随文件定档 + 第二个刚确认）各在**表格左边缘外侧**挂一颗竖排小签
+//   （amber-50 底 + amber-700 字 · writing-mode vertical-rl · 整颗在表格左边缘外 —— 右缘不超过卡片左边界），纵向与各自行中心对齐。
+const tagsAfter = (await scanFinalizedTags()) ?? [];
+const row1After = await rowBoxOf(TASK_TITLE);
+const row2After = await rowBoxOf(task2Title);
+check("④t8 两个定档任务各挂一颗表格外的竖排「定档」侧签（淡黄 · 整颗在表格左边缘外 · 纵向对齐各自行）",
+  tagsAfter.length === 2 && tagsAfter.every(tagStyled) && tagsAfter.every(tagOutside)
+  && tagsAfter.filter((tag) => tagOnRow(tag, row1After)).length === 1 && tagsAfter.filter((tag) => tagOnRow(tag, row2After)).length === 1,
+  JSON.stringify({ tags: tagsAfter, row1: row1After, row2: row2After }));
+const aDetail = await api("/api/v1/files/" + fileAId);
+const finalized = await api("/api/v1/files/" + fileAId + "/finalize", "POST", { version: aDetail.json.version });
+const aStatusFinal = (await db.query("select status from files where id = $1", [fileAId])).rows[0].status;
+check("④r2a 夹具：A 经 API 定档（draft → final）", finalized.status === 200 && aStatusFinal === "final", String(finalized.status) + " " + aStatusFinal);
+await page.send("Page.reload", { ignoreCache: true });
+const boardReloadedForChange = await waitFor("document.querySelector(" + j(FILE_CELL_BUTTON) + ")!==null&&document.querySelector(" + j(TASK_FILES_POPOVER) + ")===null", 20000);
+const filesRefetchedForChange = boardReloadedForChange === true ? await waitCellHas([fileCFinalName], 20000) : false;
+const popoverForChange = filesRefetchedForChange === true ? await openTaskFilesPopover() : false;
+const replaceGoneFinal = popoverForChange === true ? await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}return {rowEntry:p.querySelector(" + j("[data-task-files-replace]") + ")===null,input:p.querySelector(" + j("[data-task-files-replace-input]") + ")===null,note:p.querySelector(" + j("[data-task-files-note-finalized]") + ")!==null,text:p.innerText.indexOf(" + j("替换") + ")<0};})()") : null;
+check("④r2b 重载后（A 已定档 + 任务已定档）下拉仍无替换入口（替换流程整体撤除 · 定档常驻提示仍在 · 清单已回流 C）",
+  filesRefetchedForChange === true && popoverForChange === true && replaceGoneFinal !== null && replaceGoneFinal !== undefined && replaceGoneFinal.rowEntry === true && replaceGoneFinal.input === true && replaceGoneFinal.note === true && replaceGoneFinal.text === true, JSON.stringify(replaceGoneFinal));
+
 const shotHoverPoint = await ev("(function(){var b=document.querySelector(" + j("[data-task-files-delete] button") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
 if (shotHoverPoint !== null && shotHoverPoint !== undefined) {
   await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: shotHoverPoint.x, y: shotHoverPoint.y });
@@ -628,20 +869,20 @@ if (cellBox !== null && cellBox !== undefined) {
   const clip = { x: Math.max(0, cellBox.x - 170), y: Math.max(0, cellBox.y - 26), width: cellBox.width + 340, height: cellBox.height + 52, scale: 2 };
   const shotCell = await page.send("Page.captureScreenshot", { format: "png", clip });
   writeFileSync(join(SCREENSHOT_DIR, "m4-07-file-cell.png"), Buffer.from(shotCell.data, "base64"));
-  console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-task-files-popover.png") + " / " + join(SCREENSHOT_DIR, "m4-07-file-cell.png") + " / " + join(SCREENSHOT_DIR, "m4-07-drawer.png"));
+  console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-task-files-popover.png") + " / " + join(SCREENSHOT_DIR, "m4-07-file-cell.png") + " / " + join(SCREENSHOT_DIR, "m4-07-drawer.png") + " / " + join(SCREENSHOT_DIR, "m4-07-drawer-finalized.png"));
 }
 
 // ---------- ⑥ 收尾：purge 三份文件 → 物理删临时项目 → 撤销会话 → 零残留 ----------
 const purgeResult = await purgeProjectFiles(projectId);
-check("⑤a 四份回放文件（含已回收的 B / PDF）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 4 && purgeResult.purged === 4, JSON.stringify(purgeResult));
+check("⑤a 五份回放文件（含已回收的 B / PDF 与定档的 C）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 5 && purgeResult.purged === 5, JSON.stringify(purgeResult));
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
 check("⑤b 临时项目物理删（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
 const projGone = await api("/api/v1/projects/" + projectId);
 check("⑤c 项目读面 404（物理删、行不存在）", projGone.status === 404, String(projGone.status));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
-const residue = (await db.query("select (select count(*)::int from files where project_id = $1) as files, (select count(*)::int from file_links where object_id = $2) as links, (select count(*)::int from tasks where id = $2) as tasks, (select count(*)::int from projects where id = $1) as projects, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions", [projectId, taskId, sha256(token)])).rows[0];
-check("⑤d 零残留：文件 / 关联 / 任务 / 项目 / 会话全 0 行", Number(residue.files) === 0 && Number(residue.links) === 0 && Number(residue.tasks) === 0 && Number(residue.projects) === 0 && Number(residue.sessions) === 0, JSON.stringify(residue));
+const residue = (await db.query("select (select count(*)::int from files where project_id = $1) as files, (select count(*)::int from file_links where object_id = $2) as links, (select count(*)::int from tasks where id = $2) as tasks, (select count(*)::int from projects where id = $1) as projects, (select count(*)::int from change_requests where project_id = $1) as changes, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions", [projectId, taskId, sha256(token)])).rows[0];
+check("⑤d 零残留：文件 / 关联 / 任务 / 项目 / 变更 / 会话全 0 行", Number(residue.files) === 0 && Number(residue.links) === 0 && Number(residue.tasks) === 0 && Number(residue.projects) === 0 && Number(residue.changes) === 0 && Number(residue.sessions) === 0, JSON.stringify(residue));
 
 rmSync(fileDir, { recursive: true, force: true });
 rmSync(downloadDir, { recursive: true, force: true });

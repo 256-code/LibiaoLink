@@ -10,25 +10,39 @@ import { usePopover } from "./usePopover";
  *  下方是已有文件 点击即可预览 也有删除按钮」）：
  *  - 触发器 = 「文件」列胶囊（内容沿用「文件名 + +N」/「N 份」/「—」，液态玻璃样式与行内可编辑单元格同款）；
  *  - 下拉优先贴右侧展开（放不下自动回落上下 —— usePopover placement "right" 口径）：
- *    顶部「＋ 添加文件」（隐藏多选 input，上传中「上传中 N/M」）+ 已有文件清单（服务端默认序 = 最新在前）；
+ *    顶部一行 = 「＋ 添加文件」/「＋ 添加定档文件」（Push 251 改版：点哪个直接开选文件框、不再出一问——业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」；上传中两个入口禁用、行尾「上传中 N/M」）+ 已有文件清单（服务端默认序 = 最新在前）；
  *  - 点文件名 = 预览（与详情抽屉同一套两通道裁决 + FilePreviewOverlay：图片大图 / PDF iframe /
  *    Office·文本 ONLYOFFICE 查看器外壳；R5 降级在同一下拉内出一行灰字提示）；
  *  - 行尾「删除」= 与任务表行删除**同款胶囊**（业务口径 2026-10-08「和胶囊的一样」—— 复用 RowDeleteButton：
  *    随行悬停浮现 24px 幽灵态、悬停按钮展开 48px 红胶囊「删除」，动效一致）→ 行内二次确认「确认删除 / 取消」，
  *    第二下才移入回收站（M4-02）；
- *  - 上传 / 进度 / 删除确认都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉。 */
-export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, children }: {
+ *  - 定档入口（Push 249 → Push 251 改版 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」→
+ *    「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」）：顶部并排两钮，
+ *    「＋ 添加文件」在前 = 普通 draft 直传、「＋ 添加定档文件」在后 = 直接开选文件框、传完即对该文件定档（files.finalize），
+ *    任务随文件定档一并锁定（服务端同事务）：此后任务不支持任何修改、修改走变更（两者都不再出一问、无取消按钮）；
+ *    任务已定档（taskFinalized）时两个添加入口关闭并落一行提示、下拉顶出常驻提示；
+ *  - Push 248 的行尾「替换」入口已在 Push 251 撤销（业务口径「取消这个替换按钮」）：入口与整套替换流程整体撤除 ——
+ *    接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）；
+ *  - 上传 / 进度 / 删除确认都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉；
+ *  - 点击冒泡（2026-10-08 修正 · 业务口径「点击这部分内容现在抽屉也会出来 是bug」）：portal 的 click 按 **React 树**冒泡 ——
+ *    根节点拦一道 stopPropagation，点下拉里的空白 / 图标 / 提示条不再冒到任务行（行点击 = 开详情抽屉）。 */
+export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, children }: {
   taskId: string;
   taskTitle: string;
   files: readonly TaskFileRef[];
-  onUpload?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void) => Promise<void>;
+  onUpload?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>;
   onDelete?: (fileId: string) => Promise<void>;
+  /** 任务定档（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：true = 该任务已定档 ——
+   *  两个添加入口关闭（服务端 409 TASK_FINALIZED），下拉顶出常驻提示。 */
+  taskFinalized?: boolean;
   children: ReactNode;
 }) {
   const measuredHeight = Math.min(430, 84 + Math.max(files.length, 1) * 30);
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(276, measuredHeight, "right");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
+  const [finalizeUpload, setFinalizeUpload] = useState(false);
+  const [finalizeNote, setFinalizeNote] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState<string | null>(null);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
@@ -40,7 +54,8 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     nonce: number;
   } | null>(null);
 
-  /** 选完文件 → 交调用方分片直传（关联本任务）；关掉下拉后台上传继续（进度状态留在本组件）。 */
+  /** 选完文件 → 交调用方分片直传（关联本任务；finalize = 定档上传 —— 传完即定档、任务连带锁定）；
+   *  关掉下拉后台上传继续（进度状态留在本组件）。 */
   const beginFileUpload = (picked: FileList | null) => {
     if (picked === null || onUpload === undefined) {
       return;
@@ -49,12 +64,29 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     if (list.length === 0) {
       return;
     }
+    const finalize = finalizeUpload;
+    setFinalizeUpload(false);
     setUploading({ done: 0, total: list.length });
     void onUpload(taskId, list, (done, total) => {
       setUploading({ done, total });
-    }).finally(() => {
+    }, finalize).finally(() => {
       setUploading(null);
     });
+  };
+
+  /** 点顶部「＋ 添加文件」/「＋ 添加定档文件」（Push 251 改版 · 业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件
+   *  和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」）：两者都直接开选文件框、不再出定档一问（无取消按钮）—— 普通版 =
+   *  普通 draft 直传、定档版 finalize = true（传完即定档、任务连带锁定）；任务已定档 = 直接出提示（服务端同口径 409 TASK_FINALIZED）。 */
+  const beginAddFlow = (finalize: boolean) => {
+    setPreviewNote(null);
+    setPendingDelete(null);
+    if (taskFinalized) {
+      setFinalizeNote("任务已定档：不支持新增文件");
+      return;
+    }
+    setFinalizeNote(null);
+    setFinalizeUpload(finalize);
+    inputRef.current?.click();
   };
 
   /** 点文件名 = 预览（两通道裁决同详情抽屉；取不到 → 下拉内一行灰字降级，不弹浮层）。 */
@@ -149,20 +181,39 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
           ref={popoverRef}
           data-task-files-popover="true"
           style={{ top: position.top, left: position.left, width: position.width }}
+          onClick={(event) => {
+            // portal 的点击按 React 树冒泡：不拦的话，点下拉里的空白 / 图标 / 提示条会冒到任务行、连带开详情抽屉（同 InlineEdit / FilePreviewOverlay 口径）
+            event.stopPropagation();
+          }}
           className="fixed z-50 flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
         >
-          <button
-            type="button"
-            data-task-files-add="true"
-            onClick={() => { inputRef.current?.click(); }}
-            disabled={uploading !== null}
-            title="添加文件（关联到本任务）"
-            className="flex items-center gap-1 px-3 py-2 text-left text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400"
-          >
-            {uploading === null
-              ? "＋ 添加文件"
-              : uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
-          </button>
+          <div className="flex items-center gap-1 px-2 py-1.5">
+            <button
+              type="button"
+              data-task-files-add="true"
+              onClick={() => { beginAddFlow(false); }}
+              disabled={uploading !== null}
+              title="添加文件（关联到本任务）"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              ＋ 添加文件
+            </button>
+            <button
+              type="button"
+              data-task-files-add-finalize="true"
+              onClick={() => { beginAddFlow(true); }}
+              disabled={uploading !== null}
+              title="添加定档文件：定档后该任务不支持任何修改（修改走变更）"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              ＋ 添加定档文件
+            </button>
+            {uploading === null ? null : (
+              <span className="ml-auto text-[11px] tabular-nums text-zinc-400">
+                {uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
+              </span>
+            )}
+          </div>
           <input
             ref={inputRef}
             type="file"
@@ -181,6 +232,11 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
               event.currentTarget.value = "";
             }}
           />
+          {taskFinalized ? (
+            <p data-task-files-note-finalized="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] leading-4 text-amber-600">
+              任务已定档：不支持新增 / 改名等修改
+            </p>
+          ) : null}
           <div className="border-t border-zinc-100">
             {files.length === 0 ? (
               <p className="px-3 py-2.5 text-[11px] text-zinc-400">暂无文件</p>
@@ -234,6 +290,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
               </ul>
             )}
           </div>
+          {finalizeNote === null ? null : <p data-task-files-note-finalize="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-amber-600">{finalizeNote}</p>}
           {previewNote === null ? null : <p data-task-files-note="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400">{previewNote}</p>}
         </div>,
         document.body,

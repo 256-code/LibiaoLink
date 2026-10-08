@@ -36,6 +36,9 @@ export type ApiTask = {
   note: string | null;
   onTime: boolean | null;
   changeLinks: Array<{ id: string; reason: string | null; appliedAt: string }>;
+  /** 任务定档（Push 249）：非空 = 已定档，任务不支持任何修改；与 finalizedBy 成对。 */
+  finalizedAt: string | null;
+  finalizedBy: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -144,7 +147,9 @@ function fileSummaryOf(summary: { total: number; draft: number; final: number } 
 
 /**
  * 契约任务 → UI 模型。previous = 列表里已有的那一行（缺省 undefined 表示新行）：
- * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary）：文件摘要从 previous 继承；
+ * POST / PATCH 只回契约 Task（不带 ownerNames / fileSummary）：文件摘要从 previous 继承 ——
+ * 2026-10-08 修正（Push 249 · 业务口径「当我修改别的信息 文件一栏的内容就消失了 要刷新才能回来」）：
+ * 原来这行漏继承（previous?.files 没接上，摘要归零）→ 改完任一字段「文件」列退回「—」、刷新才回来；现按注释口径继承；
  * 负责人姓名按「用户目录（resolveName，ProjectDetail 传 members）→ 旧行同 id 姓名 → —」三级兜底 ——
  * 2026-09-24 修：原来直接沿用旧行姓名，改负责人后要刷新才变（勾上 / 取消即时可见）。
  */
@@ -188,12 +193,13 @@ export function toUiTask(
     doneDate: view.actualEnd ?? "",
     days: view.estimatedDays ?? derivedDays,
     deliverableTypes: [...view.deliverableTypes],
-    files: fileSummaryOf("fileSummary" in view ? view.fileSummary : undefined),
+    files: fileSummaryOf("fileSummary" in view ? view.fileSummary : previous?.files),
     changes: changeLinksOf(view.changeLinks),
     onTime: view.onTime,
     note: view.note ?? "",
     headcount: view.headcount ?? 0,
     priority: priorityOf(view.priority),
+    finalizedAt: view.finalizedAt ?? null,
     version: view.version,
   };
 }
@@ -257,7 +263,7 @@ export type TaskFromTemplateResult = {
   skipped: Array<{ nodeId: string; taskId: string }>;
 };
 
-/** 编辑可写字段（契约 TaskUpdateBody 白名单；任务描述 / 成果文件 / 阶段不在此）。 */
+/** 编辑可写字段（契约 TaskUpdateBody 白名单；阶段不在此；任务描述仅临时任务可改）。 */
 /** 「整套添加」（A1-16）：一次调用整批生成，服务端同事务 + 按节点判重（已存在的进 skipped）。 */
 export function createTasksFromTemplate(projectId: string, body: TaskFromTemplateInput): Promise<TaskFromTemplateResult> {
   return apiSend<TaskFromTemplateResult>(
@@ -280,6 +286,8 @@ export type TaskUpdateInput = {
   estimatedDays?: number | null;
   headcount?: number | null;
   priority?: string | null;
+  /** 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：传数组 = 整体替换（去重保序）、[] = 不要求。 */
+  deliverableTypes?: string[];
   note?: string | null;
   version: number;
 };
@@ -305,6 +313,15 @@ export function updateTaskProgress(
   );
 }
 
+/** 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：未定档 → 置位并锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回。 */
+export function finalizeTask(projectId: string, taskId: string, version: number): Promise<ApiTask> {
+  return apiSend<ApiTask>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks/" + encodeURIComponent(taskId) + "/finalize",
+    "POST",
+    { version },
+  );
+}
+
 /** 删除任务（软删）：版本走 If-Match 请求头；响应只回标记。 */
 export function deleteTask(projectId: string, taskId: string, version: number): Promise<{ id: string; deleted: boolean }> {
   return apiRequest<{ id: string; deleted: boolean }>(
@@ -320,6 +337,9 @@ export function taskWriteMessage(error: { code: string; message: string }): stri
   }
   if (error.code === "PROJECT_ARCHIVED") {
     return "项目已归档，任务不能修改";
+  }
+  if (error.code === "TASK_FINALIZED") {
+    return "任务已定档，不支持任何修改（文件修改走变更）";
   }
   if (error.code === "TASK_HAS_REFERENCES") {
     return "该任务已有变更记录引用，不能删除";
