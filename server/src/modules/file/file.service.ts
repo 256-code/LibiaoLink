@@ -428,13 +428,17 @@ export class FileService {
       if (lockedFile === null) {
         throw new AppError("NOT_FOUND", "文件不存在");
       }
-      // 状态门禁（会话期间文件可能被定档 / 回收）：version 意图目标须 draft；change 意图目标须 final / changed（A4-13）。
+      // 状态门禁（会话期间文件可能被定档 / 回收）：version 意图目标须 draft；change 意图目标须 final / changed（A4-13；
+      // Push 254 续：任务已定档时其 draft 文件同视为「定档后的文件」，与 resolveUploadTarget 同一口径）。
       if (isChange) {
         if (lockedFile.status !== "final" && lockedFile.status !== "changed") {
-          throw new AppError(
-            "FILE_STATE_INVALID",
-            "变更目标文件已不是定档状态（" + lockedFile.status + "），不能变更；变更须针对已定档（final / changed）文件",
-          );
+          const changeTask = lockedFile.status === "draft" && lockedFile.taskId !== null ? await this.repository.findTaskBrief(lockedFile.taskId, tx) : null;
+          if (changeTask === null || changeTask.finalizedAt === null) {
+            throw new AppError(
+              "FILE_STATE_INVALID",
+              "变更目标文件已不是定档状态（" + lockedFile.status + "），不能变更；变更须针对已定档（final / changed）文件（或所属任务已定档）",
+            );
+          }
         }
       } else if (lockedFile.status !== "draft") {
         throw new AppError(
@@ -1240,10 +1244,10 @@ export class FileService {
   }
 
   /**
-   * 目标文件解析（Push 130 定案；M4-02 放开 version、M4-04 放开 change）：
+   * 目标文件解析（Push 130 定案；M4-02 放开 version、M4-04 放开 change；Push 254 续放行「任务已定档」）：
    * `fileId` 省略（仅 version）→ 新建文件（返回 null）；给出：不存在 / 不可见 → 404；与 projectId 不一致 /
    * 名称与归属（name / docType / nodeId / taskId）与现状不符 → 400；状态：version 意图须 draft、change 意图须
-   * final / changed，否则 409 FILE_STATE_INVALID。生效字段一律以目标文件现状为准。
+   * final / changed（或 draft 但其挂接任务已定档），否则 409 FILE_STATE_INVALID。生效字段一律以目标文件现状为准。
    */
   private async resolveUploadTarget(body: UploadCreateBody, actorId: string): Promise<FileRow | null> {
     const fileId = body.fileId;
@@ -1264,11 +1268,17 @@ export class FileService {
     }
     if (body.intent === "change") {
       // A4-13：变更针对已定档文件（final / changed）；未定档文件直接替换版本即可。
+      // Push 254 续（业务口径 2026-10-08「不是已经定档了吗 为什么变更申请里面还是未定档」）：定档在业务上
+      // 是任务级动作（Push 252 抽屉开关 / 表格侧签）—— 任务已定档时，其名下 draft 文件同视为「定档后的文件」，
+      // 允许直接发起变更（不必先行文件级定档）；recycled 等其余状态一律不放行。
       if (file.status !== "final" && file.status !== "changed") {
-        throw new AppError(
-          "FILE_STATE_INVALID",
-          "变更目标文件当前状态（" + file.status + "）不允许变更；变更须针对已定档（final / changed）文件",
-        );
+        const task = file.status === "draft" && file.taskId !== null ? await this.repository.findTaskBrief(file.taskId) : null;
+        if (task === null || task.finalizedAt === null) {
+          throw new AppError(
+            "FILE_STATE_INVALID",
+            "变更目标文件当前状态（" + file.status + "）不允许变更；变更须针对已定档（final / changed）文件（或所属任务已定档）",
+          );
+        }
       }
     } else if (file.status !== "draft") {
       throw new AppError(
