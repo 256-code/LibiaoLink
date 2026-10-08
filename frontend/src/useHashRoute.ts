@@ -34,8 +34,8 @@ export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily"
 
 /**
  * 「日报及问题」的四块页内子视图（Push 214）在地址里的取值：`#/project/{id}?view=daily&sub=`。
- * 取值 = form（日报填写，缺省，不落参数）/ records（日报记录）/ issues（问题追踪）/ board（问题看板）；
- * 缺省不落参数与顶部标签 / 列表筛选态同一口径 —— 旧链接 `?view=daily` 原样打开 = 日报填写。
+ * 取值 = records（日报记录，缺省，不落参数）/ form（日报填写）/ issues（问题追踪）/ board（问题看板）；
+ * 缺省不落参数与顶部标签 / 列表筛选态同一口径 —— 旧链接 `?view=daily` 原样打开 = 日报记录（Push 243 业务口径「点击默认是日报记录页面」）。
  */
 export type DailySubView = "form" | "records" | "issues" | "board";
 
@@ -188,7 +188,7 @@ function parseProjectView(search: string): ProjectView {
 const PROJECT_SUB_KEYS: readonly DailySubView[] = ["form", "records", "issues", "board"];
 
 /**
- * 页内子视图参数（`?sub=`）：只认 `PROJECT_SUB_KEYS` 里的 ASCII slug，不认识的取值 / 重复键一律落回缺省「日报填写」
+ * 页内子视图参数（`?sub=`）：只认 `PROJECT_SUB_KEYS` 里的 ASCII slug，不认识的取值 / 重复键一律落回缺省「日报记录」
  * （地址不纠正，与 `?view=` 同口径）；重复键只认第一个。
  */
 function parseProjectSub(search: string): DailySubView {
@@ -202,9 +202,9 @@ function parseProjectSub(search: string): DailySubView {
       continue;
     }
     const value = safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)).trim();
-    return PROJECT_SUB_KEYS.find((sub) => sub === value) ?? "form";
+    return PROJECT_SUB_KEYS.find((sub) => sub === value) ?? "records";
   }
-  return "form";
+  return "records";
 }
 
 /** 工作台标签的合法取值（顺序与标签栏一致）。 */
@@ -285,25 +285,25 @@ export function replaceTemplateSection(section: string): void {
 
 /**
  * 项目详情某个标签的地址（标签走 query，可直接刷新 / 收藏 / 分享；「项目总览」为缺省、不落参数）。
- * Push 214：「日报及问题」的页内子视图同走地址（`?view=daily&sub=`，ASCII slug；缺省「日报填写」form 不落参数）。
+ * Push 214：「日报及问题」的页内子视图同走地址（`?view=daily&sub=`，ASCII slug；缺省「日报记录」records 不落参数 —— Push 243 改缺省）。
  */
-export function projectViewHref(id: string, view: ProjectView, sub: DailySubView = "form"): string {
+export function projectViewHref(id: string, view: ProjectView, sub: DailySubView = "records"): string {
   const base = PROJECT_BASE_HASH + encodeURIComponent(id);
   if (view === "overview") {
     return base;
   }
-  if (view === "daily" && sub !== "form") {
+  if (view === "daily" && sub !== "records") {
     return base + "?view=daily&sub=" + sub;
   }
   return base + "?view=" + view;
 }
 
-/** 切换项目详情标签：同步渲染并写回地址（replace，不新增历史条目）；切进「日报及问题」固定落在缺省「日报填写」（子视图不跨标签记忆）。 */
+/** 切换项目详情标签：同步渲染并写回地址（replace，不新增历史条目）；切进「日报及问题」固定落在缺省「日报记录」（子视图不跨标签记忆；Push 243 前缺省为「日报填写」）。 */
 export function replaceProjectView(id: string, view: ProjectView): void {
   if (currentRoute.kind !== "project" || currentRoute.id !== id || currentRoute.view === view) {
     return;
   }
-  currentRoute = { ...currentRoute, view, sub: "form" };
+  currentRoute = { ...currentRoute, view, sub: "records" };
   emit();
   try {
     window.history.replaceState(null, "", projectViewHref(id, view));

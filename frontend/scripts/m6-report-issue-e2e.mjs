@@ -16,9 +16,11 @@
  * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完硬删、零残留）在真机浏览器里跑一遍
  * 日报及问题接真后的读写口径 ——
  *   ① 首屏：主标签栏「日报及问题」下拉子菜单四项齐（Push 236：原页内键帽导航栏下架，入口收进主标签栏）
- *      + 「日报填写」表单（日期默认今天 / 提交人 = 当前用户 / 「现场发现问题」前置开关禁用三件）；
+ *      + 缺省子视图 = 「日报记录」（Push 243 业务口径「点击默认是日报记录页面」）+ 「日报填写」表单（日期默认今天 /
+ *      提交人 = 当前用户 / 问题块列表：描述 / 归类 / 处理人 / 附图 / 解决方案 + 「+ 添加问题」）；
  *   ② 附图真粘贴：真实剪贴板 + 真 Ctrl+V → 文件库分片直传 → fileId 回填（现场工作附图 + 当前问题附图两区各自上传完）；
- *   ③ 提交落库：日报 submitted + 服务端按「现场发现问题」自动生成问题（open）+ 问题图**转挂**问题侧（日报侧 issuePhotos 归零）；
+ *      Push 243：点「+ 添加问题」追加第二条问题块，第二条选「问题处理人 / 责任人」= 回放用户；
+ *   ③ 提交落库：日报 submitted + 服务端按内联问题清单**逐条**生成独立问题（open · 第二条带处理人 · 问题图挂问题侧）；
  *   ④ 同日多条：同一天第二篇照样落库（无唯一约束），列表两行；
  *   ⑤ 草稿写库：暂存 = state=draft（列表出「草稿」签）；同一表单再点「提交日报」= PATCH 转 submitted（不新增行）；
  *   ⑥ 编辑落库（Push 223 起：文字 / 图片走干系人同款弹窗、下拉保持行内）：日报（完成工作 / 明日计划 / 现场工作附图 / 关联阶段）
@@ -346,11 +348,12 @@ async function bail(message) {
 const FORM_PROBE = "(function(){var f=document.querySelector(" + j("[data-fill-form]") + ");"
   + "if(f===null){return {hasForm:false};}"
   + "var dateBtn=f.querySelector(" + j("[data-field=date] button") + ");var authorEl=f.querySelector(" + j("[data-field=author]") + ");"
-  + "var catBtn=f.querySelector(" + j("[data-field=issueCategory] button") + ");var ipp=f.querySelector(" + j("[data-paste-zone=issuePhotos]") + ");"
-  + "var sug=f.querySelector(" + j("[data-field=suggestion]") + ");var submit=f.querySelector(" + j("[data-action=submit]") + ");var hint=f.querySelector(" + j("[data-fill-hint]") + ");"
+  + "var blocks=f.querySelectorAll(" + j("[data-issue-draft]") + ");var ownerBtn=f.querySelector(" + j("[data-field=issueOwner] button") + ");"
+  + "var submit=f.querySelector(" + j("[data-action=submit]") + ");var hint=f.querySelector(" + j("[data-fill-hint]") + ");"
   + "return {hasForm:true,date:dateBtn===null?\"\":dateBtn.textContent.trim(),author:authorEl===null?\"\":authorEl.textContent.trim(),"
-  + "catDisabled:catBtn===null?null:catBtn.disabled,issuePhotosDisabled:ipp===null?null:ipp.getAttribute(\"data-paste-disabled\"),"
-  + "suggestionDisabled:sug===null?null:sug.disabled,submitDisabled:submit===null?null:submit.disabled,hint:hint===null?\"\":hint.textContent.trim()};})()";
+  + "issueBlocks:blocks.length,addIssue:f.querySelector(" + j("[data-action=add-issue]") + ")!==null,ownerTrigger:ownerBtn!==null,"
+  + "firstRemove:f.querySelector(" + j("[data-issue-draft=\"0\"] [data-action=remove-issue]") + ")!==null,"
+  + "submitDisabled:submit===null?null:submit.disabled,hint:hint===null?\"\":hint.textContent.trim()};})()";
 
 /** 表单里某枚阶段 checkbox 的标签中心（真实鼠标点标签 = 勾选）。 */
 async function clickStageLabel(text) {
@@ -361,20 +364,29 @@ async function clickStageLabel(text) {
   if (point === null || point === undefined) throw new Error("点不到阶段：" + text);
   await clickAt(point);
 }
-/** 打开「问题归类」多选并点选一枚（点选不收浮层）。 */
-async function pickIssueCategory(name) {
-  const opened = await ev("(function(){var b=document.querySelector(" + j("[data-field=issueCategory] button") + ");if(b===null||b.disabled){return false;}b.click();return true;})()");
-  if (opened !== true) throw new Error("问题归类下拉打不开（可能仍被禁用）");
+/** 打开某条问题块的「问题归类」多选并点选一枚（点选不收浮层；block = 问题块序号，0 基）。 */
+async function pickIssueCategory(name, block = 0) {
+  const scope = "[data-issue-draft=" + Q + String(block) + Q + "]";
+  const opened = await ev("(function(){var b=document.querySelector(" + j(scope + " [data-field=issueCategory] button") + ");if(b===null||b.disabled){return false;}b.click();return true;})()");
+  if (opened !== true) throw new Error("问题归类下拉打不开：" + String(block));
   await sleep(400);
   const picked = await ev("(function(){var os=document.querySelectorAll(" + j("[data-multi-option]") + ");for(var i=0;i<os.length;i++){if(os[i].getAttribute(\"data-multi-option\")===" + j(name) + "){os[i].click();return true;}}return false;})()");
   await sleep(400);
   if (picked !== true) throw new Error("问题归类里找不到：" + name);
   await pressKey("Escape", "Escape", 27);
 }
+/** 在某条问题块里选「问题处理人 / 责任人」（SearchSelect：点触发 → 点姓名行）。 */
+async function pickIssueOwner(block, name) {
+  await clickSelector("[data-issue-draft=" + Q + String(block) + Q + "] [data-field=issueOwner] button");
+  await sleep(500);
+  const picked = await ev("(function(){var os=document.querySelectorAll(\"button[role=option]\");for(var i=0;i<os.length;i++){if((os[i].textContent||\"\").indexOf(" + j(name) + ")>=0){os[i].click();return true;}}return false;})()");
+  await sleep(500);
+  if (picked !== true) throw new Error("问题处理人里找不到：" + name);
+}
 
 // ---------- ① 首屏：四块子视图 + 表单基线 ----------
 await openDaily();
-const form0 = await ev(FORM_PROBE);
+const defaultView = await ev("(function(){return {hash:location.hash,records:document.querySelector(" + j("[data-report-search]") + ")!==null,form:document.querySelector(" + j("[data-fill-form]") + ")!==null};})()");
 const todayIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const todayCn = todayIso.slice(0, 4) + "/" + todayIso.slice(5, 7) + "/" + todayIso.slice(8, 10);
 // Push 236：入口从页内键帽导航栏搬进主标签栏「日报及问题」下拉子菜单 —— 先展开，再断四项 + 两段分组。
@@ -384,10 +396,14 @@ const submenu0 = await ev("(function(){var p=document.querySelector(" + j("[data
   + "var gs=p.querySelectorAll(" + j("p") + ");var groups=[];for(var k=0;k<gs.length;k++){groups.push(gs[k].textContent.trim());}"
   + "return {items:names.join(String.fromCharCode(47)),groups:groups.join(String.fromCharCode(47))};})()");
 check("①a 子菜单四项齐（日报填写 / 日报记录 / 问题追踪 / 问题看板）+ 两段分组（日报 / 问题）", submenu0 !== null && submenu0.items === "日报填写/日报记录/问题追踪/问题看板" && submenu0.groups === "日报/问题", submenu0 === null ? "-" : JSON.stringify(submenu0));
-check("①b 「日报填写」表单在（缺省子视图）+ 时间默认今天（" + todayCn + "，站内日期选择器展示口径）", form0 !== null && form0.hasForm === true && form0.date === todayCn, form0 === null ? "-" : JSON.stringify({ date: form0.date }));
-check("①c 提交人 = 当前登录用户（" + userRow.display_name + "）", form0 !== null && form0.author.indexOf(userRow.display_name) >= 0, form0 === null ? "-" : String(form0.author));
-check("①d 空表单提交按钮禁用 + 提示「还差：当日完成工作、明日计划」", form0 !== null && form0.submitDisabled === true && form0.hint.indexOf("还差") >= 0 && form0.hint.indexOf("当日完成工作") >= 0 && form0.hint.indexOf("明日计划") >= 0, form0 === null ? "-" : JSON.stringify({ submitDisabled: form0.submitDisabled, hint: form0.hint }));
-check("①e 「现场发现问题」为空 → 前置开关禁用三件（问题归类 / 当前问题附图 / 解决方案或建议）", form0 !== null && form0.catDisabled === true && form0.issuePhotosDisabled === "true" && form0.suggestionDisabled === true, form0 === null ? "-" : JSON.stringify({ cat: form0.catDisabled, issuePhotos: form0.issuePhotosDisabled, suggestion: form0.suggestionDisabled }));
+check("①b 缺省子视图 = 「日报记录」（Push 243 业务口径「点击默认是日报记录页面」· 地址不落 sub）", defaultView !== null && defaultView.hash === "#/project/" + projectId + "?view=daily" && defaultView.records === true && defaultView.form === false, JSON.stringify(defaultView));
+await pickDailySub("日报填写");
+await sleep(700);
+const form0 = await ev(FORM_PROBE);
+check("①c 「日报填写」表单在（点子菜单进入）+ 时间默认今天（" + todayCn + "，站内日期选择器展示口径）", form0 !== null && form0.hasForm === true && form0.date === todayCn, form0 === null ? "-" : JSON.stringify({ date: form0.date }));
+check("①d 提交人 = 当前登录用户（" + userRow.display_name + "）", form0 !== null && form0.author.indexOf(userRow.display_name) >= 0, form0 === null ? "-" : String(form0.author));
+check("①e 空表单提交按钮禁用 + 提示「还差：当日完成工作、明日计划」", form0 !== null && form0.submitDisabled === true && form0.hint.indexOf("还差") >= 0 && form0.hint.indexOf("当日完成工作") >= 0 && form0.hint.indexOf("明日计划") >= 0, form0 === null ? "-" : JSON.stringify({ submitDisabled: form0.submitDisabled, hint: form0.hint }));
+check("①f 问题块基线（Push 243）：默认一条「问题 1」（描述 / 归类 / 处理人 / 附图 / 解决方案五件）+「+ 添加问题」在位 + 只有一条时无「删除」", form0 !== null && form0.issueBlocks === 1 && form0.addIssue === true && form0.ownerTrigger === true && form0.firstRemove === false, form0 === null ? "-" : JSON.stringify({ blocks: form0.issueBlocks, addIssue: form0.addIssue, owner: form0.ownerTrigger, remove: form0.firstRemove }));
 
 // ①f（Push 242 修）回车续号抗删重来：空框聚焦预置「1: 」→ 把框删空 → 回车仍应回到「1: 」，不能跳成「2: 」
 //（原实现按物理换行数算号：空串也算一行 → 删空后回车出 \n2: ；业务口径「用户删除了再回车就生成2：了 用户觉得这个是bug」）
@@ -398,37 +414,48 @@ const cleared0 = await ev("document.querySelector(" + j("[data-field=doneWork]")
 await pressKey("Enter", "Enter", 13);
 await sleep(200);
 const reEnter = await ev("(function(){var t=document.querySelector(" + j("[data-field=doneWork]") + ");return {value:t.value,caret:t.selectionStart};})()");
-check("①f 删空后再回车仍从「1: 」起（不再跳成「2: 」· Push 242 修）", cleared0 === "" && reEnter !== null && reEnter.value === "1: " && reEnter.caret === 3, JSON.stringify({ cleared: cleared0, after: reEnter }));
+check("①g 删空后再回车仍从「1: 」起（不再跳成「2: 」· Push 242 修）", cleared0 === "" && reEnter !== null && reEnter.value === "1: " && reEnter.caret === 3, JSON.stringify({ cleared: cleared0, after: reEnter }));
 await pressKey("a", "KeyA", 65, 2);
 await pressKey("Backspace", "Backspace", 8);
 
-// ---------- ② 填表 + 两张图真粘贴上传 ----------
+// ---------- ② 填表 + 两条问题块 + 两张图真粘贴上传 ----------
 const DONE_TEXT = "回放·完成工作-A1" + LF + "回放·完成工作-A2";
 const DONE_EXPECT = "1: 回放·完成工作-A1" + LF + "2: 回放·完成工作-A2";
 const PLAN_TEXT = "回放·明日计划-A1";
 const PLAN_EXPECT = "1: 回放·明日计划-A1";
 const ISSUE_TEXT = "回放·现场问题-钢结构偏差";
 const ISSUE_EXPECT = "1: 回放·现场问题-钢结构偏差";
+const ISSUE2_TEXT = "回放·现场问题-采购缺件";
+const ISSUE2_EXPECT = "1: 回放·现场问题-采购缺件";
 await typeInto("[data-field=headcount]", "12");
 await clickStageLabel("硬件实施");
 await clickStageLabel("试运行");
 await typeInto("[data-field=doneWork]", DONE_TEXT);
 await typeInto("[data-field=plan]", PLAN_TEXT);
-await typeInto("[data-field=foundIssue]", ISSUE_TEXT);
-const gateAfter = await ev(FORM_PROBE);
-check("②a 填了「现场发现问题」→ 三项解禁", gateAfter !== null && gateAfter.catDisabled === false && gateAfter.issuePhotosDisabled === "false" && gateAfter.suggestionDisabled === false, gateAfter === null ? "-" : JSON.stringify({ cat: gateAfter.catDisabled, issuePhotos: gateAfter.issuePhotosDisabled, suggestion: gateAfter.suggestionDisabled }));
+await typeInto("[data-issue-draft=" + Q + "0" + Q + "] [data-field=issueTitle]", ISSUE_TEXT);
 await pickIssueCategory("规划部");
 await pickIssueCategory("客户原因");
+const blocksBefore = await ev("document.querySelectorAll(" + j("[data-issue-draft]") + ").length");
+await clickSelector("[data-action=add-issue]");
+await sleep(500);
+const blocksAfter = await ev("document.querySelectorAll(" + j("[data-issue-draft]") + ").length");
+const removeButtons = await ev("document.querySelectorAll(" + j("[data-issue-draft] [data-action=remove-issue]") + ").length");
+check("②a 点「+ 添加问题」追加「问题 2」块（1 → 2 条 · 一天可多条 · 两条各挂「删除」）", blocksBefore === 1 && blocksAfter === 2 && removeButtons === 2, JSON.stringify({ before: blocksBefore, after: blocksAfter, removeButtons }));
+await typeInto("[data-issue-draft=" + Q + "1" + Q + "] [data-field=issueTitle]", ISSUE2_TEXT);
+await pickIssueCategory("采购部", 1);
+await pickIssueOwner(1, userRow.display_name);
+const blocksProbe = await ev("(function(){var out=[];var bs=document.querySelectorAll(" + j("[data-issue-draft]") + ");for(var i=0;i<bs.length;i++){var t=bs[i].querySelector(" + j("[data-field=issueTitle]") + ");var c=bs[i].querySelector(" + j("[data-field=issueCategory] button") + ");var o=bs[i].querySelector(" + j("[data-field=issueOwner] button") + ");out.push({title:t===null?null:t.value,cat:c===null?null:c.textContent.trim(),owner:o===null?null:o.textContent.trim()});}return {blocks:out.length,items:out};})()");
+check("②b 两条问题块各自落值（问题 1 = 描述 + 归类两项；问题 2 = 描述 + 归类「采购部」+ 处理人 / 责任人 = " + userRow.display_name + "）", blocksProbe !== null && blocksProbe.blocks === 2 && String(blocksProbe.items[0].title).indexOf(ISSUE_TEXT) >= 0 && String(blocksProbe.items[0].cat).indexOf("规划部") >= 0 && String(blocksProbe.items[0].cat).indexOf("客户原因") >= 0 && String(blocksProbe.items[1].title).indexOf(ISSUE2_TEXT) >= 0 && String(blocksProbe.items[1].cat).indexOf("采购部") >= 0 && String(blocksProbe.items[1].owner).indexOf(userRow.display_name) >= 0, JSON.stringify(blocksProbe));
 const viaIssue = await pasteInto("issuePhotos");
 const viaOnsite = await pasteInto("photos");
 const okIssueUp = await waitUploadDone("issuePhotos");
 const okOnsiteUp = await waitUploadDone("photos");
-check("②b 两张图真粘贴 + 文件库直传完成（区 1「当前问题附图」/ 区 2「现场工作附图」各有 1 条、无「上传中 / 上传失败」）", okIssueUp === true && okOnsiteUp === true, JSON.stringify({ viaIssue, viaOnsite, okIssueUp, okOnsiteUp }));
+check("②c 两张图真粘贴 + 文件库直传完成（区 1「当前问题附图」/ 区 2「现场工作附图」各有 1 条、无「上传中 / 上传失败」）", okIssueUp === true && okOnsiteUp === true, JSON.stringify({ viaIssue, viaOnsite, okIssueUp, okOnsiteUp }));
 const attachmentNames = await ev("(function(){var a=document.querySelector(" + j("[data-attachment-strip=photos]") + ");var b=document.querySelector(" + j("[data-attachment-strip=issuePhotos]") + ");"
   + "function one(s){if(s===null){return [];}var ns=s.querySelectorAll(" + j("[data-attachment]") + ");var out=[];for(var i=0;i<ns.length;i++){out.push(ns[i].getAttribute(\"data-attachment\"));}return out;}"
   + "return {onsite:one(a),issue:one(b)};})()");
 const fileRows0 = (await db.query("select id, name, status from files where project_id = $1 order by created_at", [projectId])).rows;
-check("②c 附件清单回填文件库文件名 + 库内真落两行 files（未回收）", attachmentNames !== null && attachmentNames.onsite.length === 1 && attachmentNames.issue.length === 1 && fileRows0.length === 2 && fileRows0.every((row) => row.status !== "recycled"), JSON.stringify({ attachments: attachmentNames, files: fileRows0.map((row) => row.name) }));
+check("②d 附件清单回填文件库文件名 + 库内真落两行 files（未回收）", attachmentNames !== null && attachmentNames.onsite.length === 1 && attachmentNames.issue.length === 1 && fileRows0.length === 2 && fileRows0.every((row) => row.status !== "recycled"), JSON.stringify({ attachments: attachmentNames, files: fileRows0.map((row) => row.name) }));
 
 
 // ---------- ③ 提交：日报落库 + 自动生成问题 + 问题图转挂 ----------
@@ -440,19 +467,24 @@ const list1 = await reportsOf();
 const rep1 = list1.items[0];
 if (rep1 === undefined) { await bail("提交后没取到日报行（③ 提交失败？）"); }
 check("③b 日报落库 1 篇、state=submitted、日期 = 表单默认今天", list1.total === 1 && rep1 !== undefined && rep1.state === "submitted" && rep1.date === todayIso, JSON.stringify({ total: list1.total, state: rep1 === undefined ? "-" : rep1.state, date: rep1 === undefined ? "-" : rep1.date }));
-check("③c 文字列按自动序号落库（完成工作两行 / 明日计划 / 现场问题各带 1: 2: 前缀）", rep1.doneWork === DONE_EXPECT && rep1.plan === PLAN_EXPECT && rep1.foundIssue === ISSUE_EXPECT, JSON.stringify({ doneWork: rep1.doneWork, plan: rep1.plan, foundIssue: rep1.foundIssue }));
-check("③d 关联阶段 / 施工人数 / 问题归类落库", rep1.headcount === 12 && JSON.stringify(rep1.stageKeys) === JSON.stringify(["install", "trial"]) && JSON.stringify(rep1.issueCategories) === JSON.stringify(["规划部", "客户原因"]), JSON.stringify({ headcount: rep1.headcount, stageKeys: rep1.stageKeys, issueCategories: rep1.issueCategories }));
+check("③c 文字列按自动序号落库（完成工作两行 / 明日计划各带 1: 2: 前缀）+ 旧单问题字段显式清空（Push 243 新口径走 issues）", rep1.doneWork === DONE_EXPECT && rep1.plan === PLAN_EXPECT && rep1.foundIssue === null && rep1.issueCategories.length === 0, JSON.stringify({ doneWork: rep1.doneWork, plan: rep1.plan, foundIssue: rep1.foundIssue, issueCategories: rep1.issueCategories }));
+check("③d 关联阶段 / 施工人数落库（问题归类不再落日报行 —— 各条问题自带）", rep1.headcount === 12 && JSON.stringify(rep1.stageKeys) === JSON.stringify(["install", "trial"]), JSON.stringify({ headcount: rep1.headcount, stageKeys: rep1.stageKeys }));
 check("③e 现场工作附图挂日报侧（photos 1 张）、问题图已转走（issuePhotos 0 张）", rep1.photos.length === 1 && rep1.issuePhotos.length === 0, JSON.stringify({ photos: rep1.photos, issuePhotos: rep1.issuePhotos }));
 const list1Issues = await issuesOf();
-const iss1 = list1Issues.items[0];
-if (iss1 === undefined) { await bail("提交后没取到自动生成的问题（③ A3-09 没落？）"); }
-check("③f 「现场发现问题」自动生成 1 条问题（state=open · 提出人 = 提交人 · 归类两项）", list1Issues.total === 1 && iss1 !== undefined && iss1.state === "open" && iss1.title === ISSUE_EXPECT && iss1.categories.length === 2, iss1 === undefined ? "-" : JSON.stringify({ state: iss1.state, title: iss1.title, categories: iss1.categories }));
-check("③g 问题的来源日报 = ③ 那篇（sourceReportId 对得上）、问题附图 1 张（转挂到位）", iss1.sourceReportId === rep1.id && iss1.photos.length === 1, iss1 === undefined ? "-" : JSON.stringify({ sourceReportId: iss1.sourceReportId, photos: iss1.photos }));
+const issuesOfRep1 = list1Issues.items.filter((row) => row.sourceReportId === rep1.id);
+const iss1 = issuesOfRep1.filter((row) => row.title === ISSUE_EXPECT)[0];
+const iss2 = issuesOfRep1.filter((row) => row.title === ISSUE2_EXPECT)[0];
+if (iss1 === undefined || iss2 === undefined) { await bail("提交后没取到逐条生成的问题（③ 多条生成没落？）"); }
+check("③f 内联问题清单逐条生成 2 条独立问题（state=open · 各自标题 / 归类 · 提出人 = 提交人）", list1Issues.total === 2 && iss1 !== undefined && iss2 !== undefined && iss1.state === "open" && iss2.state === "open" && iss1.title === ISSUE_EXPECT && iss1.categories.length === 2 && iss2.title === ISSUE2_EXPECT && JSON.stringify(iss2.categories) === JSON.stringify(["采购部"]), iss1 === undefined || iss2 === undefined ? "-" : JSON.stringify({ total: list1Issues.total, one: { title: iss1.title, categories: iss1.categories }, two: { title: iss2.title, categories: iss2.categories } }));
+check("③g 问题处理人 / 责任人落库（Push 243）：问题 1 留空 = 只按归类自动分派责任部门 · 问题 2 = 表单选中的 " + userRow.display_name, iss1.ownerId === null && iss2.ownerId === userRow.id && iss2.ownerName === userRow.display_name, iss1 === undefined || iss2 === undefined ? "-" : JSON.stringify({ one: { ownerId: iss1.ownerId, ownerDepartment: iss1.ownerDepartment }, two: { ownerId: iss2.ownerId, ownerName: iss2.ownerName } }));
+check("③g2 两条问题的来源日报都 = ③ 那篇、问题附图只挂问题 1（1 张 · 直接挂问题侧不经日报）", iss1.sourceReportId === rep1.id && iss2.sourceReportId === rep1.id && iss1.photos.length === 1 && iss2.photos.length === 0, iss1 === undefined || iss2 === undefined ? "-" : JSON.stringify({ photos: [iss1.photos.length, iss2.photos.length] }));
 const links1 = (await db.query("select fl.object_type, fl.kind, f.name from file_links fl join files f on f.id = fl.file_id where fl.object_id = any($1::uuid[]) order by fl.object_type, fl.kind", [[rep1.id, iss1.id]])).rows;
 const linkKey = (row) => row.object_type + ":" + row.kind;
 check("③h 库内 file_links：日报侧只有 onsite 一条、问题侧一条（kind 区分 + 转挂，方案一口径）", links1.length === 2 && links1.filter((row) => linkKey(row) === "report:onsite").length === 1 && links1.filter((row) => row.object_type === "issue").length === 1 && links1.filter((row) => row.kind === "issue").length === 0, JSON.stringify(links1.map(linkKey)));
-const dbRep1 = (await db.query("select state, headcount, done_work, plan, found_issue, issue_categories, stage_keys, submitted_at, version from daily_reports where id = $1", [rep1.id])).rows[0];
-check("③i 库内 daily_reports 行：state / 时间 / 阶段 key / 归类数组 / submitted_at 都对得上", dbRep1.state === "submitted" && dbRep1.headcount === 12 && dbRep1.done_work === DONE_EXPECT && dbRep1.plan === PLAN_EXPECT && dbRep1.found_issue === ISSUE_EXPECT && JSON.stringify(dbRep1.issue_categories) === JSON.stringify(["规划部", "客户原因"]) && JSON.stringify(dbRep1.stage_keys) === JSON.stringify(["install", "trial"]) && dbRep1.submitted_at !== null, JSON.stringify({ state: dbRep1.state, headcount: dbRep1.headcount, stage_keys: dbRep1.stage_keys, submitted_at: String(dbRep1.submitted_at) }));
+const dbRep1 = (await db.query("select state, headcount, done_work, plan, found_issue, issue_categories, issue_drafts, stage_keys, submitted_at, version from daily_reports where id = $1", [rep1.id])).rows[0];
+check("③i 库内 daily_reports 行：state / 时间 / 阶段 key / submitted_at 对得上 · 旧字段清空 + issue_drafts 落 2 条（Push 243）", dbRep1.state === "submitted" && dbRep1.headcount === 12 && dbRep1.done_work === DONE_EXPECT && dbRep1.plan === PLAN_EXPECT && dbRep1.found_issue === null && JSON.stringify(dbRep1.issue_categories) === JSON.stringify([]) && Array.isArray(dbRep1.issue_drafts) && dbRep1.issue_drafts.length === 2 && String(dbRep1.issue_drafts[0].title).indexOf("钢结构偏差") >= 0 && String(dbRep1.issue_drafts[1].title).indexOf("采购缺件") >= 0 && JSON.stringify(dbRep1.stage_keys) === JSON.stringify(["install", "trial"]) && dbRep1.submitted_at !== null, JSON.stringify({ state: dbRep1.state, headcount: dbRep1.headcount, stage_keys: dbRep1.stage_keys, drafts: Array.isArray(dbRep1.issue_drafts) ? dbRep1.issue_drafts.length : dbRep1.issue_drafts, submitted_at: String(dbRep1.submitted_at) }));
+const dbIssues1 = (await db.query("select id, title, categories, owner_id, owner_department, source_report_id, state from issues where source_report_id = $1 order by created_at, id", [rep1.id])).rows;
+check("③i2 库内 issues 两行共享同一 source_report_id（0043 删唯一约束改部分索引）：标题 / 归类 / 处理人对得上", dbIssues1.length === 2 && dbIssues1.filter((row) => row.owner_id === userRow.id).length === 1 && dbIssues1.filter((row) => row.owner_id === null).length === 1 && dbIssues1.every((row) => row.state === "open"), JSON.stringify(dbIssues1.map((row) => ({ title: row.title, categories: row.categories, owner: row.owner_id === null ? null : "set", department: row.owner_department }))));
 const row1Ui = await ev("(function(){var r=document.querySelector(" + j("[data-report-row]") + ");if(r===null){return null;}return {hasDraftBadge:r.querySelector(" + j("[data-report-state]") + ")!==null,text:r.innerText.split(String.fromCharCode(10)).join(\" | \")};})()");
 check("③j 已提交行不挂状态签（业务口径：已提交不标）、行里有阶段色签与两行完成工作", row1Ui !== null && row1Ui.hasDraftBadge === false && row1Ui.text.indexOf("硬件实施") >= 0 && row1Ui.text.indexOf("回放·完成工作-A2") >= 0, row1Ui === null ? "-" : String(row1Ui.text).slice(0, 260));
 const thumb1 = await waitFor("document.querySelector(" + j("[data-report-table] [data-attachment-thumb]") + ")!==null", 40000);
@@ -599,7 +631,7 @@ const iss1State3 = (await issuesOf()).items.filter((row) => row.id === iss1.id)[
 const dbReopen = (await db.query("select state, closed_at from issues where id = $1", [iss1.id])).rows[0];
 check("⑥m 状态允许回退：done → open（closed_at 归零）", iss1State3.state === "open" && dbReopen.state === "open" && dbReopen.closed_at === null, JSON.stringify({ state: dbReopen.state, closed_at: String(dbReopen.closed_at) }));
 const issueUiRow = await ev("(function(){var r=document.querySelector(" + j("[data-issue-row]") + ");if(r===null){return null;}return {columns:r.querySelectorAll(\"td\").length,editButtons:r.querySelectorAll(" + j("[data-issue-edit-slot] button") + ").length,deleteButtons:r.querySelectorAll(" + j("[data-issue-delete-slot] button") + ").length,text:r.innerText.split(String.fromCharCode(10)).join(\" | \")};})()");
-check("⑥n 问题追踪表 = 六列口径（+ 行尾动作列 = 7 格）、行尾「编辑 + 删除」两枚在位、三态色签在位", issueUiRow !== null && issueUiRow.columns === 7 && issueUiRow.editButtons === 1 && issueUiRow.deleteButtons === 1 && issueUiRow.text.indexOf("未解决") >= 0 && issueUiRow.text.indexOf("提出人") >= 0, issueUiRow === null ? "-" : String(issueUiRow.text).slice(0, 240));
+check("⑥n 问题追踪表 = 七列口径（Push 243 增「问题处理人 / 责任人」+ 行尾动作列 = 8 格）、行尾「编辑 + 删除」两枚在位、三态色签在位", issueUiRow !== null && issueUiRow.columns === 8 && issueUiRow.editButtons === 1 && issueUiRow.deleteButtons === 1 && issueUiRow.text.indexOf("未解决") >= 0 && issueUiRow.text.indexOf("提出人") >= 0, issueUiRow === null ? "-" : String(issueUiRow.text).slice(0, 240));
 
 
 // 抽屉口径（Push 224 续 · 业务口径「移除图片要加二次确认」——只改抽屉）：点看板卡开抽屉 → × 只出确认条（不落库）→ 确认才摘。
@@ -650,17 +682,17 @@ check("⑥p-4 「日报记录」点 × 清空：3 篇全回来（计数文案还
 await pickDailySub("问题追踪");
 await sleep(900);
 const searchIssue0 = await ev(searchProbe("issue"));
-check("⑥p-5 「问题追踪」右上角搜索框在位（同款 + 占位符「搜索日期、问题描述、归类或解决方案」）", searchIssue0 !== null && searchIssue0.placeholder === "搜索日期、问题描述、归类或解决方案" && searchIssue0.icon === true && searchIssue0.rightAligned === true && searchIssue0.rows === 1, JSON.stringify(searchIssue0));
+check("⑥p-5 「问题追踪」右上角搜索框在位（同款 + 占位符「搜索日期、问题描述、归类或解决方案」）", searchIssue0 !== null && searchIssue0.placeholder === "搜索日期、问题描述、归类或解决方案" && searchIssue0.icon === true && searchIssue0.rightAligned === true && searchIssue0.rows === 2, JSON.stringify(searchIssue0));
 await typeInto("[data-issue-search] input", "复测");
 const searchIssue1 = await ev(searchProbe("issue"));
-check("⑥p-6 「问题追踪」输入即过滤：命中「复测」（问题描述 / 解决方案任一处）+ 计数「找到 1 条」", searchIssue1 !== null && searchIssue1.rows === 1 && String(searchIssue1.hint).indexOf("找到 1 条") >= 0 && String(searchIssue1.hint).indexOf("共 1 条") >= 0, JSON.stringify(searchIssue1));
+check("⑥p-6 「问题追踪」输入即过滤：命中「复测」（问题描述 / 解决方案任一处）+ 计数「找到 1 条 · 共 2 条」", searchIssue1 !== null && searchIssue1.rows === 1 && String(searchIssue1.hint).indexOf("找到 1 条") >= 0 && String(searchIssue1.hint).indexOf("共 2 条") >= 0, JSON.stringify(searchIssue1));
 await typeInto("[data-issue-search] input", "zzzz");
 const searchIssueEmpty = await ev("(function(){return {empty:document.body.innerText.indexOf(" + j("没有匹配「zzzz」的问题。") + ")>=0,rows:" + searchRowCount("issue") + "};})()");
 check("⑥p-7 「问题追踪」无命中：出空态 + 表体零行", searchIssueEmpty.empty === true && searchIssueEmpty.rows === 0, JSON.stringify(searchIssueEmpty));
 await clickSelector("[data-issue-search] button[aria-label=" + Q + "清空搜索" + Q + "]");
 await sleep(700);
 const searchIssue2 = await ev(searchProbe("issue"));
-check("⑥p-8 「问题追踪」点 × 清空：命中行还原（共 1 条）", searchIssue2 !== null && searchIssue2.rows === 1 && String(searchIssue2.hint).indexOf("共 1 条") >= 0, JSON.stringify(searchIssue2));
+check("⑥p-8 「问题追踪」点 × 清空：命中行还原（共 2 条）", searchIssue2 !== null && searchIssue2.rows === 2 && String(searchIssue2.hint).indexOf("共 2 条") >= 0, JSON.stringify(searchIssue2));
 
 // ---------- ⑦ 成对删除（删日报连问题 / 删问题连日报） ----------
 await pickDailySub("日报记录");
@@ -678,9 +710,10 @@ const afterDelReport = await reportsOf();
 const afterDelReportIssues = await issuesOf();
 const rep404 = await api("/api/v1/projects/" + projectId + "/reports/" + rep1.id);
 const iss404 = await api("/api/v1/projects/" + projectId + "/issues/" + iss1.id);
-check("⑦a 删日报（界面行尾垃圾桶）→ 该日报 404 + 它派生的那条问题随日报一起删（成对删除）", repGone === true && afterDelReport.total === 2 && afterDelReportIssues.total === 0 && rep404.status === 404 && iss404.status === 404, JSON.stringify({ gone: repGone, reports: afterDelReport.total, issues: afterDelReportIssues.total, rep404: rep404.status, iss404: iss404.status }));
-const dbCascade = (await db.query("select (select count(*)::int from daily_reports where id = $1) as reports, (select count(*)::int from issues where id = $2) as issues", [rep1.id, iss1.id])).rows[0];
-check("⑦b 库内两行都物理删了（连 file_links 由 files 级联收走）", Number(dbCascade.reports) === 0 && Number(dbCascade.issues) === 0, JSON.stringify(dbCascade));
+const iss2_404 = await api("/api/v1/projects/" + projectId + "/issues/" + iss2.id);
+check("⑦a 删日报（界面行尾垃圾桶）→ 该日报 404 + 它派生的 2 条问题随日报一起删（成对删除）", repGone === true && afterDelReport.total === 2 && afterDelReportIssues.total === 0 && rep404.status === 404 && iss404.status === 404 && iss2_404.status === 404, JSON.stringify({ gone: repGone, reports: afterDelReport.total, issues: afterDelReportIssues.total, rep404: rep404.status, iss404: iss404.status, iss2_404: iss2_404.status }));
+const dbCascade = (await db.query("select (select count(*)::int from daily_reports where id = $1) as reports, (select count(*)::int from issues where id = any($2::uuid[])) as issues", [rep1.id, [iss1.id, iss2.id]])).rows[0];
+check("⑦b 库内三行都物理删了（日报 + 派生 2 条问题 · file_links 由 files 级联收走）", Number(dbCascade.reports) === 0 && Number(dbCascade.issues) === 0, JSON.stringify(dbCascade));
 
 // 夹具：再补一篇带问题的日报（走接口，专测「删问题连来源日报」）
 const repDRes = await api("/api/v1/projects/" + projectId + "/reports", "POST", { date: todayIso, state: "submitted", doneWork: "回放·完成工作-D1", foundIssue: "回放·现场问题-D1", issueCategories: ["物流原因"] });

@@ -3,6 +3,7 @@
  * - 状态：日报 draft 草稿 / submitted 已提交 / supplement 补填（补填由服务端按日期推导）；
  *   问题三态 open 未解决 / in_progress 处理中 / done 已完成（允许回退且留痕）。
  * - 关联阶段：stageNames（九阶段展示名数组；写面在 reportApi 映射回 stageKeys）。
+ * - 问题处理人 / 责任人（Push 243）：ownerId + owner（显示名，空 = 待分派；生成时随内联问题清单的 ownerId 落库）。
  * - 附图：ReportPhoto = fileId（文件库 id，预览经预览接口换短时签名）+ name；
  *   刚粘贴 / 选择的图在会话内带本地 blob 预览地址（url），上传中 / 失败在 pending 上表达。
  * - Push 215 口径：草稿写库、同日多条（原「一人一天一条」唯一约束删除）；处理时限 dueAt 删除；
@@ -67,6 +68,10 @@ export type Issue = {
   categories: string[];
   /** 提出人（= 来源日报的提交人） */
   reporter: string;
+  /** 问题处理人 / 责任人 id（Push 243；空 = 未指定 —— 按归类自动分派责任部门） */
+  ownerId: string;
+  /** 问题处理人 / 责任人显示名（空 = 待分派） */
+  owner: string;
   /** 提出日期（YYYY-MM-DD） */
   raisedAt: string;
   /** 解决方案 / 回复（处理中、已完成才有） */

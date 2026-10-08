@@ -59,6 +59,9 @@ export type ApiIssue = {
   categories: string[];
   state: IssueState;
   reporterName: string | null;
+  /** 问题处理人 / 责任人（Push 243 起可在日报填写里选；未分派 = null / 空）。 */
+  ownerId: string | null;
+  ownerName: string | null;
   raisedAt: string;
   solution: string | null;
   photos: ApiPhotoRef[];
@@ -100,6 +103,8 @@ export function toUiIssue(api: ApiIssue): Issue {
     state: api.state,
     categories: [...api.categories],
     reporter: api.reporterName ?? "—",
+    ownerId: api.ownerId ?? "",
+    owner: api.ownerName ?? "",
     raisedAt: api.raisedAt,
     solution: api.solution ?? "",
     photos: photosOf(api.photos),
@@ -132,6 +137,16 @@ export function fetchProjectIssues(projectId: string): Promise<Issue[]> {
   );
 }
 
+/** 内联问题清单写体（Push 243）：title / categories 必填；ownerId 缺省 / null = 按归类自动分派责任部门；
+ *  空 solution / photoFileIds **省字段**（契约不允许空串 / null —— 与 createBody 同一口径）。 */
+export type ReportIssueWriteDraft = {
+  title: string;
+  categories: string[];
+  ownerId?: string | null;
+  solution?: string;
+  photoFileIds?: string[];
+};
+
 /** 新报一天日报（草稿 / 提交）；补填由服务端按日期推导。 */
 export type ReportWriteInput = {
   date: string;
@@ -145,6 +160,8 @@ export type ReportWriteInput = {
   stageKeys?: string[];
   photoFileIds?: string[];
   issuePhotoFileIds?: string[];
+  /** 内联问题清单（Push 243）：一次填报 1~N 条问题，提交后逐条生成独立问题记录；与旧单问题字段互斥。 */
+  issues?: ReportIssueWriteDraft[];
 };
 
 /** 编辑已存在的日报行（乐观锁 version 必传；date 不可改；字段可部分提交）。 */
