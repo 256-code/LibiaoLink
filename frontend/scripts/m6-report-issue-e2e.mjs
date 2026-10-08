@@ -389,6 +389,19 @@ check("①c 提交人 = 当前登录用户（" + userRow.display_name + "）", f
 check("①d 空表单提交按钮禁用 + 提示「还差：当日完成工作、明日计划」", form0 !== null && form0.submitDisabled === true && form0.hint.indexOf("还差") >= 0 && form0.hint.indexOf("当日完成工作") >= 0 && form0.hint.indexOf("明日计划") >= 0, form0 === null ? "-" : JSON.stringify({ submitDisabled: form0.submitDisabled, hint: form0.hint }));
 check("①e 「现场发现问题」为空 → 前置开关禁用三件（问题归类 / 当前问题附图 / 解决方案或建议）", form0 !== null && form0.catDisabled === true && form0.issuePhotosDisabled === "true" && form0.suggestionDisabled === true, form0 === null ? "-" : JSON.stringify({ cat: form0.catDisabled, issuePhotos: form0.issuePhotosDisabled, suggestion: form0.suggestionDisabled }));
 
+// ①f（Push 242 修）回车续号抗删重来：空框聚焦预置「1: 」→ 把框删空 → 回车仍应回到「1: 」，不能跳成「2: 」
+//（原实现按物理换行数算号：空串也算一行 → 删空后回车出 \n2: ；业务口径「用户删除了再回车就生成2：了 用户觉得这个是bug」）
+await clickSelector("[data-field=doneWork]");
+await pressKey("a", "KeyA", 65, 2);
+await pressKey("Backspace", "Backspace", 8);
+const cleared0 = await ev("document.querySelector(" + j("[data-field=doneWork]") + ").value");
+await pressKey("Enter", "Enter", 13);
+await sleep(200);
+const reEnter = await ev("(function(){var t=document.querySelector(" + j("[data-field=doneWork]") + ");return {value:t.value,caret:t.selectionStart};})()");
+check("①f 删空后再回车仍从「1: 」起（不再跳成「2: 」· Push 242 修）", cleared0 === "" && reEnter !== null && reEnter.value === "1: " && reEnter.caret === 3, JSON.stringify({ cleared: cleared0, after: reEnter }));
+await pressKey("a", "KeyA", 65, 2);
+await pressKey("Backspace", "Backspace", 8);
+
 // ---------- ② 填表 + 两张图真粘贴上传 ----------
 const DONE_TEXT = "回放·完成工作-A1" + LF + "回放·完成工作-A2";
 const DONE_EXPECT = "1: 回放·完成工作-A1" + LF + "2: 回放·完成工作-A2";

@@ -36,10 +36,11 @@
  *      命中口径 = 负责人含我 或 项目经理含我、不限完成日期（远期照收 + 未排期单列）；他人项目（我既非负责人也非项目经理）与已完成不进；
  *   ⑤ 切标签：真实鼠标点「我提出的问题」→ 地址写回 `?tab=raised`、aria-current 转移；
  *   ⑥ 「我提出的问题」折叠面板：照「问题追踪」的完整六列（日期 / 问题描述 / 问题归类 /
- *      解决方案或建议 / 问题附图 / 问题是否处理；后两列按项目向源接口回填，真 PNG 直传夹具保证有值）+
- *      行尾「在项目中查看」；未关闭在前、不是我提的不进；
+ *      解决方案或建议 / 问题附图 / 问题是否处理；后两列按项目向源接口回填，真 PNG 直传夹具保证有值）；
+ *      未关闭在前、不是我提的不进；Push 242 起行尾「在项目中查看」下架、六列 `table-fixed` 固定列宽（跨面板对齐）；
  *   ⑦ 深链：`#/my-tasks?tab=raised` 直接打开仍停在该标签；`?tab=` 不认识的值落回「我的任务」；
- *      「进入项目」按钮点开 = 项目详情总览、浏览器后退回工作台（Push 232）；
+ *      「进入项目」按钮 =「我的任务」落项目总览、切到「我提出的问题」落该项目「日报记录」（Push 232 / Push 242），
+ *      浏览器后退回工作台；
  *   ⑨ 醒目模式（Push 232 ·「同样增加醒目模式」）：开关在标签导航栏最右侧、值 = 账号偏好；开 = 任务 / 问题整行铺
  *      状态底色 + 状态签收口成深色字，关 = 恢复白底（跑完把账号偏好恢复原值，不留痕）；
  *   ⑩ 折叠面板展开态记忆（Push 233 ·「这个下拉要有记忆」）：偏好归零 = 全收起 → 展开 A → 刷新仍展开 / B 仍收起 →
@@ -336,7 +337,8 @@ check("①d1 未排期单列一组：无预计完成日期照收（不再丢弃�
 check("①d2 项目经理口径：远期那条负责人不是我（" + other.displayName + "）—— 因我是 A 项目项目经理而命中 upcoming", (ws.myTasks.upcoming.find((item) => item.id === tFar.id)?.ownerIds ?? []).indexOf(other.id) >= 0, JSON.stringify(ws.myTasks.upcoming.find((item) => item.id === tFar.id)?.ownerIds ?? null));
 const myTaskIds = idsOf(ws.myTasks.today).concat(idsOf(ws.myTasks.upcoming), idsOf(ws.myTasks.overdue), idsOf(ws.myTasks.unscheduled));
 check("①e 反例不进：他人项目任务（C —— 我既非负责人也非项目经理）与已完成任务都不进工作台", [tStranger.id, tDone.id].every((id) => myTaskIds.indexOf(id) === -1), JSON.stringify(myTaskIds));
-check("①f 「我提出的」= 3 条（A 两条 + B 一条），不含 wmj 提出的那条", idsOf(ws.myIssues.raised).length === 3 && idsOf(ws.myIssues.raised).indexOf(issueOther.issue.id) === -1, JSON.stringify(idsOf(ws.myIssues.raised)));
+const raisedTest = idsOf(inTest(ws.myIssues.raised));
+check("①f 「我提出的」测试项目内 = 3 条（A 两条 + B 一条），不含 wmj 提出的那条（历史数据按测试项目收窄）", raisedTest.length === 3 && raisedTest.indexOf(issueA1.issue.id) >= 0 && raisedTest.indexOf(issueA2.issue.id) >= 0 && raisedTest.indexOf(issueB.issue.id) >= 0 && raisedTest.indexOf(issueOther.issue.id) === -1, JSON.stringify(raisedTest));
 check("①g 「我提出的」未关闭在前：A 的未解决排在已完成那条之前", idsOf(ws.myIssues.raised).indexOf(issueA1.issue.id) < idsOf(ws.myIssues.raised).indexOf(issueA2.issue.id), JSON.stringify(idsOf(ws.myIssues.raised)));
 
 // ---------- 真机浏览器 ----------
@@ -440,6 +442,8 @@ const TASK_HEAD_EXPECTED = ["任务描述", "项目经理", "任务负责人", "
 const taskRowsExpr = (projectId) =>
   "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("[data-workspace-task-head] [data-column]") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<rows.length;i+=1){var row=rows[i];var cell=function(key){var node=row.querySelector('[data-column=' + JSON.stringify(key) + ']');return node===null?'':node.textContent.trim();};var attr=function(name){var node=row.querySelector('[' + name + ']');return node===null?'':String(node.getAttribute(name));};var titleNode=row.querySelector(" + j("[data-workspace-task-title]") + ");var groupNode=row.querySelector(" + j("[data-workspace-task-group]") + ");out.push({id:String(row.getAttribute(" + j("data-workspace-task") + ")),title:cell(" + j("title") + "),titleText:titleNode===null?'':titleNode.textContent.trim(),group:attr(" + j("data-workspace-task-group") + "),groupText:groupNode===null?'':groupNode.textContent.trim(),manager:cell(" + j("manager") + "),owners:cell(" + j("owner") + "),status:cell(" + j("status") + "),statusKey:attr(" + j("data-workspace-task-status") + "),priority:cell(" + j("priority") + "),onTime:cell(" + j("onTime") + "),deliverable:cell(" + j("deliverable") + "),files:cell(" + j("files") + "),note:cell(" + j("note") + "),start:cell(" + j("start") + "),days:cell(" + j("days") + "),due:cell(" + j("due") + "),headcount:cell(" + j("headcount") + "),doneDate:cell(" + j("doneDate") + "),change:cell(" + j("change") + "),changeCount:attr(" + j("data-workspace-task-change") + "),dots:attr(" + j("data-workspace-task-dots") + "),rowClass:String(row.getAttribute(" + j("class") + ")),statusClass:(function(){var n=row.querySelector(" + j("[data-workspace-task-status]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
 /** 问题表读数（按项目面板）。 */
+/** Push 242 列对齐断言用：问题表表头每列的 [left, width]（四舍五入到整数像素）。 */
+const issueHeadRectsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return null;}var heads=table.querySelectorAll(" + j("thead th") + ");var out=[];for(var i=0;i<heads.length;i+=1){var r=heads[i].getBoundingClientRect();out.push([Math.round(r.left),Math.round(r.width)]);}return out;})()";
 const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var link=rows[i].querySelector(" + j("a") + ");var photoNodes=rows[i].querySelectorAll(" + j("[data-issue-photo]") + ");var photoNames=[];for(var p=0;p<photoNodes.length;p+=1){photoNames.push(String(photoNodes[p].getAttribute(" + j("data-issue-photo") + ")));}out.push({id:String(rows[i].getAttribute(" + j("data-workspace-issue") + ")),date:cells[0].textContent.trim(),title:cells[1].textContent.trim(),categories:cells[2].textContent.trim(),solution:cells[3].textContent.trim(),photosText:cells[4].textContent.trim(),photos:photoNodes.length,photoNames:photoNames,state:cells[5].textContent.trim(),href:link===null?" + j("") + ":link.getAttribute(" + j("href") + "),rowClass:String(rows[i].getAttribute(" + j("class") + ")),stateClass:(function(){var n=rows[i].querySelector(" + j("[data-issue-state]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
 /** 空态 / 汇总行读数。 */
 const totalExpr = () => "(function(){var node=document.querySelector(" + j("[data-workspace-task-total]") + ");return node===null?null:node.textContent.trim();})()";
@@ -508,16 +512,20 @@ const head1 = await ev(headExpr());
 check("⑤a 点「我提出的问题」→ 地址写回 ?tab=raised（replace，可刷新 / 可分享）", head1 !== null && head1.hash === "#/my-tasks?tab=raised", head1 === null ? "null" : String(head1.hash));
 check("⑤b 选中态转移（aria-current=page 只在「我提出的问题」上）", head1 !== null && head1.tabs[0].current === null && head1.tabs[1].current === "page", head1 === null ? "null" : JSON.stringify(head1.tabs.map((item) => item.current)));
 const panels1 = await ev(panelsExpr());
-check("⑤c 折回「我提出的问题」：面板按项目分组（A 共 2 条 / B 共 1 条，都在收起态；同日并列的项目序不作断言）", panels1 !== null && panels1.length === 2 && panels1.every((item) => item.open === "false") && panels1.map((item) => item.id).sort().join(",") === [projectA, projectB].sort().join(",") && panels1.some((item) => item.id === projectA && item.text.indexOf("共 2 条") >= 0) && panels1.some((item) => item.id === projectB && item.text.indexOf("共 1 条") >= 0), JSON.stringify(panels1));
+const panelsIssues = panels1 === null ? null : panels1.filter((item) => TEST_PROJECTS.indexOf(item.id) >= 0);
+check("⑤c 折回「我提出的问题」：面板按项目分组（A 共 2 条 / B 共 1 条，都在收起态；同日并列的项目序不作断言；历史数据按测试项目收窄）", panelsIssues !== null && panelsIssues.length === 2 && panelsIssues.every((item) => item.open === "false") && panelsIssues.map((item) => item.id).sort().join(",") === [projectA, projectB].sort().join(",") && panelsIssues.some((item) => item.id === projectA && item.text.indexOf("共 2 条") >= 0) && panelsIssues.some((item) => item.id === projectB && item.text.indexOf("共 1 条") >= 0), JSON.stringify(panels1));
 const issueTotal = await ev("(function(){var node=document.querySelector(" + j("[data-workspace-issue-total]") + ");return node===null?null:node.textContent.trim();})()");
-check("⑤d 汇总行「共 3 条 · 跨 2 个项目 · 未关闭在前」", typeof issueTotal === "string" && issueTotal.indexOf("共 3 条") >= 0 && issueTotal.indexOf("跨 2 个项目") >= 0, String(issueTotal));
+const raisedAll = idsOf(ws.myIssues.raised);
+const raisedProjects = {};
+for (const item of ws.myIssues.raised) { raisedProjects[item.projectId] = true; }
+check("⑤d 汇总行「共 N 条 · 跨 M 个项目 · 未关闭在前」（N / M 与接口读面逐项对账）", typeof issueTotal === "string" && issueTotal.indexOf("共 " + String(raisedAll.length) + " 条") >= 0 && issueTotal.indexOf("跨 " + String(Object.keys(raisedProjects).length) + " 个项目") >= 0 && issueTotal.indexOf("未关闭在前") >= 0, String(issueTotal) + " | api " + String(raisedAll.length) + "/" + String(Object.keys(raisedProjects).length));
 
 // ---------- ⑥ 问题表口径（参考「问题追踪」） ----------
 await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
 const photoTileOk = await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-issue-photo]') + ") !== null", 25000);
 check("⑥a0 问题附图瓦片懒取预览签名后出现（真 PNG 直传 → 预览就绪）", photoTileOk === true, String(photoTileOk));
 const rowsIssueA = await ev(issueRowsExpr(projectA));
-check("⑥a 表头 = 「问题追踪」完整六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理；+ 行尾动作列）", rowsIssueA !== null && rowsIssueA.heads.slice(0, 6).join("|") === "日期|问题描述|问题归类|解决方案或建议|问题附图|问题是否处理", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.heads));
+check("⑥a 表头 = 「问题追踪」完整六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理）· 无行尾动作列（Push 242 下架）", rowsIssueA !== null && rowsIssueA.heads.length === 6 && rowsIssueA.heads.join("|") === "日期|问题描述|问题归类|解决方案或建议|问题附图|问题是否处理", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.heads));
 check("⑥b A 项目 2 条（我提出的），未关闭在前：未解决 → 已完成", rowsIssueA !== null && rowsIssueA.rows.length === 2 && rowsIssueA.rows[0].id === issueA1.issue.id && rowsIssueA.rows[1].id === issueA2.issue.id, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.id)));
 check("⑥c 日期列 = 提出日（年月日）", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.date === cnDate(TODAY)), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.date)));
 check("⑥d 问题描述列 = 问题原文；归类列 = 多值色签（机械部 / 采购部 · 项目部）", rowsIssueA !== null && rowsIssueA.rows[0].title.indexOf("回放问题·我提出的未解决") >= 0 && rowsIssueA.rows[0].categories.indexOf("机械部") >= 0 && rowsIssueA.rows[1].categories.indexOf("采购部") >= 0 && rowsIssueA.rows[1].categories.indexOf("项目部") >= 0, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.categories)));
@@ -526,10 +534,14 @@ check("⑥e1 「解决方案或建议」列 = 回填的解决方案原文 / 无�
 check("⑥e2 「问题附图」列 = A1 一枚真图瓦片（文件名对齐）/ 无图落「—」", rowsIssueA !== null && rowsIssueA.rows[0].photos === 1 && rowsIssueA.rows[0].photoNames[0] === pngName && rowsIssueA.rows[1].photos === 0 && rowsIssueA.rows[1].photosText === "—", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => [item.photos, item.photoNames, item.photosText])));
 const partialBanner = await ev("document.querySelector(" + j("[data-workspace-issue-partial]") + ") !== null");
 check("⑥e3 六列回填没有 partial 降级横幅（两个项目的问题源接口都取到）", partialBanner === false, String(partialBanner));
-check("⑥f 行尾「在项目中查看」→ 该项目「日报及问题 → 问题追踪」深链", rowsIssueA !== null && rowsIssueA.rows[0].href === "#/project/" + projectA + "?view=daily&sub=issues", rowsIssueA === null ? "null" : String(rowsIssueA.rows[0].href));
+const issuePanelLink = await ev("(function(){var a=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-project-link]') + ");return a===null?null:String(a.getAttribute(" + j("href") + "));})()");
+check("⑥f（Push 242）行尾「在项目中查看」下架（行内无链接）+ 入口 = 面板头「进入项目」→ 该项目「日报记录」深链", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.href === "") && issuePanelLink === "#/project/" + projectA + "?view=daily&sub=records", JSON.stringify({ rowHref: rowsIssueA === null ? "null" : rowsIssueA.rows[0].href, panelLink: issuePanelLink }));
 check("⑥g 不是我提出的（wmj 提的）不进这张表", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.id !== issueOther.issue.id), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.id)));
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 const rowsIssueB = await ev(issueRowsExpr(projectB));
+const headRectsA = await ev(issueHeadRectsExpr(projectA));
+const headRectsB = await ev(issueHeadRectsExpr(projectB));
+check("⑥i（Push 242）列对齐：两个项目面板的问题表六列逐列同 x 同宽（table-fixed + colgroup）", headRectsA !== null && headRectsB !== null && headRectsA.length === 6 && JSON.stringify(headRectsA) === JSON.stringify(headRectsB), JSON.stringify({ a: headRectsA, b: headRectsB }));
 check("⑥h 跨项目：B 面板 1 条（我提出的；无解决方案 / 无附图落「—」）", rowsIssueB !== null && rowsIssueB.rows.length === 1 && rowsIssueB.rows[0].id === issueB.issue.id && rowsIssueB.rows[0].categories.indexOf("客观原因") >= 0 && rowsIssueB.rows[0].solution === "—" && rowsIssueB.rows[0].photos === 0 && rowsIssueB.rows[0].photosText === "—", rowsIssueB === null ? "null" : JSON.stringify(rowsIssueB.rows));
 
 // ---------- ⑦ 深链 / 未知参数 ----------

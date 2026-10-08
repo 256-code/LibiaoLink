@@ -97,7 +97,8 @@ import type { MeResponse, Project } from "../types";
  *   ⑤ （同批追加 ·「自动添加序号可以做到吗」+「这个现场问题也要同上」）「当日完成工作 / 明日计划 / 现场发现问题」
  *      三个多行框**自动序号** —— 空框聚焦预置 1: 、回车自动带下一行序号（2: / 3: …）、失焦与提交前 "renumberLines"
  *      统一重排（剥旧号 / 去空行 / 重编）；落库即带序号文本，「日报记录」表格里序号 + 换行一并显示；
- *      判定「现场发现问题」是否算填（前置开关）先剥序号 —— 空框只剩「1: 」不算填；
+ *      判定「现场发现问题」是否算填（前置开关）先剥序号 —— 空框只剩「1: 」不算填；**Push 242 修**：回车续号改按
+ *      **内容行数**编（原按物理换行数算）—— 删掉旧序号 / 删空后再回车仍从「1: 」起，不再跳成「2: 」；
  *   ⑥ （同批再追加 ·「换行很多时要自动下扩」）「日报填写」四个多行框（当日完成工作 / 明日计划 / 现场发现问题 /
  *      解决方案或建议）改 GrowingTextarea**自动下扩** —— 高度随行数长（下限 = 原 rows 行），不再出内滚动条。
  * - Push 207（业务口径 2026-09-28「责任这一栏不需要 删除吧」+「状态改成图二的三种」+「取消未分组 未分组就是未解决」+
@@ -123,7 +124,7 @@ import type { MeResponse, Project } from "../types";
  *   ⑤ 「问题附图」列（新增数据面）：`Issue.photos` —— 来源 = 日报「当前问题附图」（提交时带入问题记录），
  *      列里出 40×40 缩略图（点开看大图 · PhotoStrip 新增 `md` 档位）、空 = 「—」；演示问题补内联 SVG 占位图；
  *   ⑥ （同批追加 ·「这个也要1 2 3 同上」）「解决方案或建议」并进自动序号一套 —— 解禁后空框聚焦预置 1: 、
- *      回车续号（2: / 3: …）、失焦与提交前 "renumberLines" 重排（与上三个多行框同一套口径）。
+ *      回车续号（2: / 3: …）、失焦与提交前 "renumberLines" 重排（与上三个多行框同一套口径；Push 242 同修续号基准）。
  *   ⑦ （同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」+「醒目模式放在标签导航栏的最右侧」）「问题追踪」接**醒目模式**——
  *      开关本体由 ProjectDetail 渲染在**标签栏最右侧**（与项目总览同一枚 `FocusModeToggle`、同一个账号偏好；
  *      本视图没有列显隐按钮，它就落在最右），本组件只吃 `focusMode` 布尔做表格呈现：开 = 问题表整行铺该问题状态的
@@ -476,6 +477,16 @@ function renumberLines(text: string): string {
     .map((line) => line.replace(LINE_NUMBER_HEAD, "").trim())
     .filter((line) => line !== "");
   return lines.map((line, index) => String(index + 1) + ": " + line).join("\n");
+}
+
+/** 光标前**内容行**数（剥掉行首序号、忽略空行）—— 回车「自动序号」的续号基准（Push 242）：
+ *  序号按内容行数编、不按物理换行数 —— 删掉旧序号 / 把框删空后再回车仍从「1: 」起（原按 `before.split("\n").length`
+ *  算，空串也算一行 → 删空后回车跳成「2: 」—— 业务反馈「用户删除了再回车就生成2：了 用户觉得这个是bug」）。 */
+function contentLineCount(text: string): number {
+  return text
+    .split("\n")
+    .map((line) => line.replace(LINE_NUMBER_HEAD, "").trim())
+    .filter((line) => line !== "").length;
 }
 
 /** 主按钮（提交日报）。 */
@@ -2170,8 +2181,11 @@ function ReportFillForm({
   }
 
   /** 回车「自动序号」（Push 206 续 · 业务口径「自动添加序号可以做到吗」；Push 207 同批扩到「解决方案或建议」·「这个也要1 2 3 同上」）：
-   *  光标处插入「换行 + 下一行序号」（2: / 3: …）并补回光标。失焦 / 提交前还会统一 "renumberLines"
-   *  重排 —— 中途删改、行序乱掉也能归位。 */
+   *  在光标处续「下一行序号」（2: / 3: …）并补回光标；序号按**光标前的内容行数**编（Push 242 修：原按物理换行数算，
+   *  删掉旧序号 / 把框删空后再回车会跳成「2: 」—— 业务反馈「用户删除了再回车就生成2：了 用户觉得这个是bug」）：
+   *  ① 光标行已经有内容 → 换行 + 下一序号；② 光标停在还没写内容的行（空框 / 空行 / 只剩一个旧序号）→ 序号**就地落这一行**
+   *  （替换行首旧序号、不再多插空行，连按回车也不会 2: / 3: 地空涨）。失焦 / 提交前还会统一 "renumberLines" 重排 ——
+   *  中途删改、行序乱掉也能归位。 */
   const numberOnEnter = (field: "doneWork" | "plan" | "foundIssue" | "suggestion") => (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing) {
       return;
@@ -2181,10 +2195,14 @@ function ReportFillForm({
     const value = field === "doneWork" ? draft.doneWork : field === "plan" ? draft.plan : field === "foundIssue" ? draft.foundIssue : draft.suggestion;
     const caret = target.selectionStart === null ? value.length : target.selectionStart;
     const before = value.slice(0, caret);
-    const insert = "\n" + String(before.split("\n").length + 1) + ": ";
-    const nextValue = before + insert + value.slice(caret);
+    const lineStart = before.lastIndexOf("\n") + 1;
+    const onEmptyLine = before.slice(lineStart).replace(LINE_NUMBER_HEAD, "").trim() === "";
+    const lineNo = contentLineCount(onEmptyLine ? before.slice(0, lineStart) : before) + 1;
+    const insert = (onEmptyLine ? "" : "\n") + String(lineNo) + ": ";
+    const head = onEmptyLine ? before.slice(0, lineStart) : before;
+    const nextValue = head + insert + value.slice(caret);
     onChange(field === "doneWork" ? { doneWork: nextValue } : field === "plan" ? { plan: nextValue } : field === "foundIssue" ? { foundIssue: nextValue } : { suggestion: nextValue });
-    const nextCaret = before.length + insert.length;
+    const nextCaret = head.length + insert.length;
     requestAnimationFrame(() => target.setSelectionRange(nextCaret, nextCaret));
   };
 
