@@ -11,6 +11,7 @@ import {
   TaskCreateFromTemplateResponseSchema,
   TaskDeleteResponseSchema,
   TaskDetailSchema,
+  TaskFinalizeBodySchema,
   TaskListItemSchema,
   TaskListQuerySchema,
   TaskListResponseSchema,
@@ -32,6 +33,7 @@ type TaskCreateFromTemplateBody = z.infer<typeof TaskCreateFromTemplateBodySchem
 type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
 type TaskCompleteBody = z.infer<typeof TaskCompleteBodySchema>;
+type TaskFinalizeBody = z.infer<typeof TaskFinalizeBodySchema>;
 type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
 type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchema>;
 
@@ -172,6 +174,22 @@ export class TaskController {
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskCompleteResponseSchema>> {
     return this.tasks.complete(id, taskId, body, actorId);
+  }
+
+  /**
+   * 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：未定档 → 置位锁定（此后写口全 409 TASK_FINALIZED）；
+   * 已定档 → 幂等原样返回（不重复写、不递增版本）。
+   */
+  @Post(":id/tasks/:taskId/finalize")
+  @HttpCode(200)
+  @RequirePermission("task.update")
+  finalize(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+    @Body(new ZodValidationPipe(TaskFinalizeBodySchema)) body: TaskFinalizeBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskSchema>> {
+    return this.tasks.finalize(id, taskId, body, actorId);
   }
 
   /** 更新四格进度（联动状态与完成日期；progress<1 清完成日期 —— 清除的唯一方式）。 */

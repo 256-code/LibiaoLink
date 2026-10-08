@@ -1141,6 +1141,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/tasks/{taskId}/finalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskFinalizeBody"];
+                };
+            };
+            responses: {
+                /** @description 定档后的任务（Task 同形；幂等路径原样返回） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/tasks/batch": {
         parameters: {
             query?: never;
@@ -8542,6 +8614,10 @@ export interface components {
             draft: number;
             /** @description 已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计 */
             final: number;
+        };
+        /** @description 任务定档提交（version = 抽屉当前行版本） */
+        TaskFinalizeBody: {
+            version: components["schemas"]["Version"] & unknown;
         };
         /** @description 缺件明细：required / present 按门禁统计范围逐 doc_type 给出 */
         TaskGateMissing: {

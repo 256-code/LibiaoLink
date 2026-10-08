@@ -25,6 +25,7 @@ import {
   deleteTask,
   fetchProjectSummary,
   fetchProjectTasks,
+  finalizeTask,
   stageKeyOfName,
   statusWriteValue,
   taskWriteMessage,
@@ -389,6 +390,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   };
 
   /** 实际完成日期（§6.9）：填 = 完成（满格 + 该日期）、清 = 退回进行中（3/4 格，服务端同时清掉完成日期）。 */
+
+  /**
+   * 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：未定档 → 置位锁定（此后写口全 409 TASK_FINALIZED；文件修改走变更）；
+   * 已定档 → 服务端幂等原样返回（响应仍整行替换，开关停在「已」态）。
+   */
+  const handleFinalizeTask = (taskId: string) => {
+    const row = rowOf(taskId);
+    if (projectId === null || row === undefined) {
+      return;
+    }
+    void (async () => {
+      try {
+        replaceRow(await finalizeTask(projectId, taskId, row.version));
+        await afterWrite();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
+  };
   const handleSetActualEnd = (taskId: string, iso: string) => {
     const row = rowOf(taskId);
     if (projectId === null || row === undefined) {
@@ -931,7 +951,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -962,6 +982,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               onUploadFiles={handleUploadTaskFiles}
               onDeleteFile={handleDeleteTaskFile}
               onRenameFile={handleRenameTaskFile}
+              onFinalize={handleFinalizeTask}
               projectId={project.id}
             />
           )}

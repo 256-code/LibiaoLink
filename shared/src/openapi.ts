@@ -27,6 +27,7 @@ import {
   TaskCreateFromTemplateResponseSchema,
   TaskDeleteResponseSchema,
   TaskDetailSchema,
+  TaskFinalizeBodySchema,
   TaskListItemSchema,
   TaskListQuerySchema,
   TaskLockedFieldsAdjustBodySchema,
@@ -430,6 +431,20 @@ export function buildOpenApiDocument() {
       404: commonErrors[404],
       409: commonErrors[409],
       422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/tasks/{taskId}/finalize",
+    tags: ["tasks"],
+    summary: "任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskFinalizeBodySchema) },
+    responses: {
+      200: { description: "定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

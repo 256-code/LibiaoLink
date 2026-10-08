@@ -16,6 +16,7 @@ import {
   TaskCreateFromTemplateResponseSchema,
   TaskDeleteResponseSchema,
   TaskDetailSchema,
+  TaskFinalizeBodySchema,
   TaskGateMissingSchema,
   TaskGateWarningSchema,
   TaskListItemSchema,
@@ -60,6 +61,7 @@ import { TaskGateRepository, type TaskGateDocCountRow, type TaskGateScope } from
 
 type Task = z.infer<typeof TaskSchema>;
 type TaskDetail = z.infer<typeof TaskDetailSchema>;
+type TaskFinalizeBody = z.infer<typeof TaskFinalizeBodySchema>;
 type TaskListItem = z.infer<typeof TaskListItemSchema>;
 type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
 type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
@@ -965,6 +967,61 @@ export class TaskService {
       }),
     );
     return { task: toTaskView(result.task, today, await this.changeLinksOf(result.task)), warnings: result.warnings };
+  }
+
+  /**
+   * POST /projects/{id}/tasks/{taskId}/finalize：任务定档（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）。
+   * 口径：未定档 → 置位 finalized_at / finalized_by（version+1、留痕、outbox task.finalized、项目触点）；此后写口一律 409 TASK_FINALIZED（assertTaskMutable）；修改走变更。
+   * 已定档 → 幂等短路（200 原样返回，不写库 / 不递增版本 —— 抽屉开关重复点击 / 与文件定档并发都只生效一次）；version 不匹配 → 409 VERSION_CONFLICT。
+   * 与文件定档（file.finalizeFile → markTaskFinalized）双入口并存：两条路径都只置位一次。
+   */
+  async finalize(projectId: string, taskId: string, body: TaskFinalizeBody, actorId: string): Promise<Task> {
+    await this.loadProjectForWrite(projectId);
+    const at = new Date();
+    const today = shanghaiToday(at);
+    const row = await this.database.db.transaction(async (tx) => {
+      const before = await this.requireActiveTask(tx, projectId, taskId);
+      if (before.finalizedAt !== null) {
+        return before;
+      }
+      if (before.version !== body.version) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      const updated = await this.repository.updateWithVersion(
+        taskId,
+        body.version,
+        { finalizedAt: at, finalizedBy: actorId },
+        at,
+        tx,
+      );
+      if (updated === null) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      await appendOutbox(tx, {
+        topic: "task.finalized",
+        dedupeKey: "task.finalized:" + taskId + ":" + updated.version,
+        payload: {
+          projectId,
+          taskId,
+          finalizedAt: at.toISOString(),
+          finalizedBy: actorId,
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+      await this.repository.touchProject(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "task",
+        objectId: taskId,
+        projectId,
+        summary: "任务定档：" + updated.title + "（此后不支持任何修改；文件修改走变更）",
+        changes: [{ field: "finalizedAt", from: null, to: at.toISOString() }],
+      });
+      return updated;
+    });
+    return toTaskView(row, today, await this.changeLinksOf(row));
   }
 
   /**

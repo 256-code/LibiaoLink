@@ -313,6 +313,15 @@ export function updateTaskProgress(
   );
 }
 
+/** 任务定档（Push 252 · 抽屉头部「定档」开关 + 二次确认）：未定档 → 置位并锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回。 */
+export function finalizeTask(projectId: string, taskId: string, version: number): Promise<ApiTask> {
+  return apiSend<ApiTask>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks/" + encodeURIComponent(taskId) + "/finalize",
+    "POST",
+    { version },
+  );
+}
+
 /** 删除任务（软删）：版本走 If-Match 请求头；响应只回标记。 */
 export function deleteTask(projectId: string, taskId: string, version: number): Promise<{ id: string; deleted: boolean }> {
   return apiRequest<{ id: string; deleted: boolean }>(
@@ -328,6 +337,9 @@ export function taskWriteMessage(error: { code: string; message: string }): stri
   }
   if (error.code === "PROJECT_ARCHIVED") {
     return "项目已归档，任务不能修改";
+  }
+  if (error.code === "TASK_FINALIZED") {
+    return "任务已定档，不支持任何修改（文件修改走变更）";
   }
   if (error.code === "TASK_HAS_REFERENCES") {
     return "该任务已有变更记录引用，不能删除";

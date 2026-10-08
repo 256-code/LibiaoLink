@@ -113,7 +113,7 @@
 
 ## 任务定档（Push 249 · A2-10 / A4-05 修订）
 
-- 字段：`tasks.finalized_at timestamptz` / `tasks.finalized_by uuid → users(id)`（迁移 `0044_task_finalize.sql`；成对 CHECK `ck_tasks_finalized_pair`：同 null 或同非 null）—— **任务侧无单独定档端点**：定档一律由**文件定档**触发（`file.service.finalizeFile` 在同一事务内 `repository.markTaskFinalized`，`isNull` 幂等置位 + `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）。
+- 字段：`tasks.finalized_at timestamptz` / `tasks.finalized_by uuid → users(id)`（迁移 `0044_task_finalize.sql`；成对 CHECK `ck_tasks_finalized_pair`：同 null 或同非 null）—— **任务侧定档两个入口（Push 252）**：① **显式入口** `POST /api/v1/projects/{id}/tasks/{taskId}/finalize`（`TaskFinalizeBodySchema` = `{ version }`；乐观锁，已定档重复提交幂等短路、不写库不审计；outbox `task.finalized`）—— 抽屉头部「定档」开关走它；② **随文件定档**：`file.service.finalizeFile` 在同一事务内 `repository.markTaskFinalized`，`isNull` 幂等置位 + `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）。
 - 写口闸 `assertTaskMutable`：任务已定档（`finalized_at` 非空）时 **409 `TASK_FINALIZED`**（新错误码；details `code: task_finalized` / `path: finalizedAt`）—— 覆盖 `applyUpdate`（编辑 / 批量：批量失败码映射 `TASK_FINALIZED → finalized`）、`remove`、`adjustLockedFields`、`updateProgress`、`complete`。
 - 读面：`toTaskView` 下发 `finalizedAt`（ISO）/ `finalizedBy`；`TaskListItem` 经 spread 同口径（前端 `ProjectTask.finalizedAt` 据此出「已定档」提示与入口闸）。
 - 唯一保留的修改通道 = 对已定档文件的变更（A4-13 申请即通过，`intent=change`）。

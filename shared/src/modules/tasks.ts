@@ -213,6 +213,14 @@ export const TaskCompleteResponseSchema = z
   .object({ task: TaskSchema, warnings: z.array(TaskGateWarningSchema) })
   .openapi("TaskCompleteResponse", { description: "完成结果（warnings 非空 = 已放行但存在未定档成果文件，R02 已入队）" });
 
+/** 任务定档提交（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）：抽屉头部开关二次确认后调用。
+ * 未定档 → 置位 finalizedAt / finalizedBy 并锁定（此后写口全 409 TASK_FINALIZED）；已定档 → 幂等短路（200 原样返回，不重复写）。 */
+export const TaskFinalizeBodySchema = z
+  .object({
+    version: VersionSchema.openapi({ description: "乐观锁版本（未定档路径必校验；已定档幂等短路不校验）" }),
+  })
+  .openapi("TaskFinalizeBody", { description: "任务定档提交（version = 抽屉当前行版本）" });
+
 /** 完成预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。 */
 export const TaskCanCompleteResponseSchema = z
   .object({

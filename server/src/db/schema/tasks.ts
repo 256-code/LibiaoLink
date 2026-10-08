@@ -85,7 +85,7 @@ export const tasks = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     /**
      * 任务定档（Push 249 · 迁移 0044）：定档某文件（files.finalize → final）时同事务置位其挂接任务的这两列
-     * （文件模块 finalizeFile —— 任务侧不单独开定档端点）；置位后任务写口（编辑 / 批量 / 进度 / 完成 / 删除 /
+     * （文件模块 finalizeFile）或任务侧显式定档（Push 252：POST /projects/{id}/tasks/{taskId}/finalize —— 抽屉头部「定档」开关）；置位后任务写口（编辑 / 批量 / 进度 / 完成 / 删除 /
      * 锁定字段例外调整）与文件直接写口（新增 / 直替 / 改名）一律 409 TASK_FINALIZED，修改走变更（A4-13）。
      * 成对不变式：要么都空（未定档）、要么都有（ck_tasks_finalized_pair）。
      */

@@ -6905,6 +6905,25 @@
           "final"
         ]
       },
+      "TaskFinalizeBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "description": "乐观锁版本（未定档路径必校验；已定档幂等短路不校验）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "任务定档提交（version = 抽屉当前行版本）"
+      },
       "TaskGateMissing": {
         "type": "object",
         "properties": {
@@ -10177,6 +10196,85 @@
           },
           "422": {
             "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}/finalize": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskFinalizeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "定档后的任务（Task 同形；幂等路径原样返回）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {
