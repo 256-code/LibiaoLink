@@ -26,6 +26,8 @@
  *   ⑥ 编辑落库（Push 223 起：文字 / 图片走干系人同款弹窗、下拉保持行内）：日报（完成工作 / 明日计划 / 现场工作附图 / 关联阶段）
  *      与问题（描述 / 解决方案 / 问题附图 / 归类 / 状态三态）PATCH 回包替换该行、version 递增；
  *      Push 224 续：问题详情抽屉里「移除图片」要二次确认（第一下 × 只出确认条、第二下「移除」才落库）；
+ *      Push 244 续：处理人 / 责任人可编辑（编辑弹窗 + 详情抽屉行内单选，含「待分派」清空）+ 问题看板双滚动条修复
+ *      + 处理人下拉首项文案收敛为「待分派」（撤「（按归类自动分派）」字样）+ 抽屉所有可编辑行统一「施工人数」同款小框（Push 244 口径）；
  *   ⑥p 页内搜索（日报记录 / 问题追踪各一枚 · 与项目空间右上角同款 SearchInput）：在 ⑥ 的表上验证输入即过滤
  *      （行数 / 计数文案 / 空态 / × 清空还原），两枚关键词各管一表；
  *   ⑦ 成对删除：删问题连来源日报、删日报连派生问题（两侧读面同时归零）；
@@ -405,6 +407,14 @@ check("①d 提交人 = 当前登录用户（" + userRow.display_name + "）", f
 check("①e 空表单提交按钮禁用 + 提示「还差：当日完成工作、明日计划」", form0 !== null && form0.submitDisabled === true && form0.hint.indexOf("还差") >= 0 && form0.hint.indexOf("当日完成工作") >= 0 && form0.hint.indexOf("明日计划") >= 0, form0 === null ? "-" : JSON.stringify({ submitDisabled: form0.submitDisabled, hint: form0.hint }));
 check("①f 问题块基线（Push 243）：默认一条「问题 1」（描述 / 归类 / 处理人 / 附图 / 解决方案五件）+「+ 添加问题」在位 + 只有一条时无「删除」", form0 !== null && form0.issueBlocks === 1 && form0.addIssue === true && form0.ownerTrigger === true && form0.firstRemove === false, form0 === null ? "-" : JSON.stringify({ blocks: form0.issueBlocks, addIssue: form0.addIssue, owner: form0.ownerTrigger, remove: form0.firstRemove }));
 
+// ①f-2（Push 244 业务口径「这个字样删除掉」）：处理人 / 责任人下拉首项 = 「待分派」（不再带「（按归类自动分派）」字样），全列表无「自动分派」。
+await clickSelector("[data-issue-draft=" + Q + "0" + Q + "] [data-field=issueOwner] button");
+const ownerPop0 = await waitFor("document.querySelector(" + j("[data-select-popover]") + ")!==null", 6000);
+const ownerOptions0 = await ev("(function(){var p=document.querySelector(" + j("[data-select-popover]") + ");if(p===null){return null;}var rows=p.querySelectorAll(" + j("[role=option]") + ");var out=[];for(var i=0;i<rows.length;i++){out.push(rows[i].textContent.trim());}return {count:rows.length,first:out.length>0?out[0]:\"\",anyAuto:out.join(\"|\").indexOf(\"自动分派\")>=0};})()");
+check("①f-2 处理人 / 责任人下拉首项 = 「待分派」（Push 244 删「（按归类自动分派）」字样）+ 全列表无「自动分派」", ownerPop0 === true && ownerOptions0 !== null && ownerOptions0.count >= 2 && ownerOptions0.first.indexOf("待分派") >= 0 && ownerOptions0.anyAuto === false, JSON.stringify(ownerOptions0));
+await clickSelector("[data-issue-draft=" + Q + "0" + Q + "] [data-field=issueOwner] button");
+await sleep(300);
+
 // ①f（Push 242 修）回车续号抗删重来：空框聚焦预置「1: 」→ 把框删空 → 回车仍应回到「1: 」，不能跳成「2: 」
 //（原实现按物理换行数算号：空串也算一行 → 删空后回车出 \n2: ；业务口径「用户删除了再回车就生成2：了 用户觉得这个是bug」）
 await clickSelector("[data-field=doneWork]");
@@ -415,6 +425,12 @@ await pressKey("Enter", "Enter", 13);
 await sleep(200);
 const reEnter = await ev("(function(){var t=document.querySelector(" + j("[data-field=doneWork]") + ");return {value:t.value,caret:t.selectionStart};})()");
 check("①g 删空后再回车仍从「1: 」起（不再跳成「2: 」· Push 242 修）", cleared0 === "" && reEnter !== null && reEnter.value === "1: " && reEnter.caret === 3, JSON.stringify({ cleared: cleared0, after: reEnter }));
+
+// ①h（Push 244 业务口径「1：要作为整体删除 不然会出现冒号删除了 1 还在 再回车」）：退格落在序号里 = 整段删除。
+const beforeAtomic = await ev("(function(){var t=document.querySelector(" + j("[data-field=doneWork]") + ");return {value:t.value,caret:t.selectionStart};})()");
+await pressKey("Backspace", "Backspace", 8);
+const afterAtomic = await ev("(function(){var t=document.querySelector(" + j("[data-field=doneWork]") + ");return {value:t.value,caret:t.selectionStart};})()");
+check("①h 「1: 」序号退格 = 整段删除（Push 244）：一次退格回空串（不再留「1:」/「1」半截再去回车跳号）", beforeAtomic !== null && beforeAtomic.value === "1: " && beforeAtomic.caret === 3 && afterAtomic !== null && afterAtomic.value === "" && afterAtomic.caret === 0, JSON.stringify({ before: beforeAtomic, after: afterAtomic }));
 await pressKey("a", "KeyA", 65, 2);
 await pressKey("Backspace", "Backspace", 8);
 
@@ -607,7 +623,7 @@ const issueRowSel = "[data-issue-row=" + Q + iss1.id + Q + "]";
 await clickSelector(issueRowSel + " [data-issue-edit-slot] button");
 const issueModalOpened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
 const issueModalScope = await ev(modalScopeExpr);
-check("⑥h 问题编辑弹窗 = 文字两列 + 图片一区（归类 / 状态不在弹窗里 —— 下拉保持行内）", issueModalOpened === true && issueModalScope !== null && issueModalScope.fields.join(",") === "title,solution" && issueModalScope.pasteZones === 1 && issueModalScope.attachments === 1 && issueModalScope.inlineSave === 0 && issueModalScope.multiOptions === 0 && issueModalScope.options === 0, JSON.stringify(issueModalScope));
+check("⑥h 问题编辑弹窗 = 文字两列 + 图片一区（Push 244 起含「问题处理人 / 责任人」单选；归类 / 状态不在弹窗里 —— 下拉保持行内）", issueModalOpened === true && issueModalScope !== null && issueModalScope.fields.join(",") === "title,owner,solution" && issueModalScope.pasteZones === 1 && issueModalScope.attachments === 1 && issueModalScope.inlineSave === 0 && issueModalScope.multiOptions === 0 && issueModalScope.options === 0, JSON.stringify(issueModalScope));
 await typeInto("[data-record-field=title]", "回放·钢结构偏差（已复测）");
 await typeInto("[data-record-field=solution]", "回放·解决方案-复测通过");
 await clickSelector("[data-record-edit-submit]");
@@ -633,10 +649,30 @@ check("⑥m 状态允许回退：done → open（closed_at 归零）", iss1State
 const issueUiRow = await ev("(function(){var r=document.querySelector(" + j("[data-issue-row]") + ");if(r===null){return null;}return {columns:r.querySelectorAll(\"td\").length,editButtons:r.querySelectorAll(" + j("[data-issue-edit-slot] button") + ").length,deleteButtons:r.querySelectorAll(" + j("[data-issue-delete-slot] button") + ").length,text:r.innerText.split(String.fromCharCode(10)).join(\" | \")};})()");
 check("⑥n 问题追踪表 = 七列口径（Push 243 增「问题处理人 / 责任人」+ 行尾动作列 = 8 格）、行尾「编辑 + 删除」两枚在位、三态色签在位", issueUiRow !== null && issueUiRow.columns === 8 && issueUiRow.editButtons === 1 && issueUiRow.deleteButtons === 1 && issueUiRow.text.indexOf("未解决") >= 0 && issueUiRow.text.indexOf("提出人") >= 0, issueUiRow === null ? "-" : String(issueUiRow.text).slice(0, 240));
 
+// ⑥q（Push 244 业务口径「这个负责人要可以编辑」）：问题追踪行「编辑」弹窗里改处理人 / 责任人 → PATCH ownerId 落库。
+const issueRowSelQ = "[data-issue-row=" + Q + iss1.id + Q + "]";
+await clickSelector(issueRowSelQ + " [data-issue-edit-slot] button");
+const ownerModalOpened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
+const ownerModalScope = await ev(modalScopeExpr);
+check("⑥q-1 问题编辑弹窗 = 描述 / 处理人 / 解决方案三字段（Push 244 新增「问题处理人 / 责任人」单选，预填当前值）", ownerModalOpened === true && ownerModalScope !== null && ownerModalScope.fields.join(",") === "title,owner,solution", JSON.stringify(ownerModalScope));
+await clickSelector("[data-record-edit-modal] [data-record-field=owner] button");
+const ownerPickOpened = await waitFor("document.querySelector(" + j("[data-select-popover]") + ")!==null", 6000);
+const ownerPicked = await ev("(function(){var p=document.querySelector(" + j("[data-select-popover]") + ");if(p===null){return false;}var rows=p.querySelectorAll(" + j("[role=option]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(userRow.display_name) + ")>=0){rows[i].click();return true;}}return false;})()");
+await sleep(400);
+await clickSelector("[data-record-edit-submit]");
+const ownerModalClosed = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")===null", 8000);
+await sleep(1200);
+const iss1Owner = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
+check("⑥q-2 弹窗选「" + userRow.display_name + "」保存 → owner_id / owner_name 落库（version 递增）", ownerPickOpened === true && ownerPicked === true && ownerModalClosed === true && iss1Owner.ownerId === userRow.id && iss1Owner.ownerName === userRow.display_name && iss1Owner.version > iss1State3.version, JSON.stringify({ ownerId: iss1Owner.ownerId, ownerName: iss1Owner.ownerName, version: iss1Owner.version }));
+
 
 // 抽屉口径（Push 224 续 · 业务口径「移除图片要加二次确认」——只改抽屉）：点看板卡开抽屉 → × 只出确认条（不落库）→ 确认才摘。
 await pickDailySub("问题看板");
 await sleep(1100);
+// ⑥s（Push 244 业务口径「问题看板怎么有两个滚动条」）：整页不溢出视口（页面滚动条下线，列内滚动仍走 ScrollArea）。
+const boardReady = await waitFor("document.querySelector(" + j("[data-issue-board]") + ")!==null", 15000);
+const boardMetrics = await ev("(function(){return {overflow: document.documentElement.scrollHeight - window.innerHeight, viewport: window.innerHeight};})()");
+check("⑥s 问题看板双滚动条修复：整页 overflow ≤ 0（页面滚动条下线）+ 看板在位", boardReady === true && boardMetrics !== null && boardMetrics.overflow <= 0, JSON.stringify(boardMetrics));
 await clickSelector("[data-issue-card=" + Q + iss1.id + Q + "]");
 const drawerOpened = await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")!==null", 6000);
 const drawerStrip = "[data-issue-drawer] [data-attachment-strip=issuePhotos]";
@@ -650,6 +686,19 @@ await sleep(2000);
 const iss1Drawer = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
 const drawerThumbsAfter = await ev("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s===null?0:s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;})()");
 check("⑥o 抽屉「移除图片」要二次确认（第一下 × 只出确认条 · 图还在；第二下「移除」才真摘并落库）", drawerOpened === true && drawerConfirmShown === true && drawerThumbsBefore === 1 && iss1Drawer.photos.length === 0 && drawerThumbsAfter === 0 && iss1Drawer.version > iss1State3.version, JSON.stringify({ opened: drawerOpened, strip: drawerConfirmShown, before: drawerThumbsBefore, after: drawerThumbsAfter, version: iss1Drawer.version }));
+// ⑥r（Push 244）：抽屉「问题处理人 / 责任人」行内单选 —— 预填当前人，点首行「待分派」清空回缺省。
+await clickSelector("[data-issue-drawer] button[aria-label^=" + Q + "修改问题处理人 / 责任人" + Q + "]");
+const drawerOwnerOpened = await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")!==null", 6000);
+const drawerOwnerBefore = await ev("(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}return {hasOwner:d.querySelector(" + j("[data-issue-owner]") + ")!==null};})()");
+await clickSelector("[data-inline-popover] [data-member-clear]");
+await sleep(2200);
+const iss1Owner2 = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
+const drawerOwnerAfter = await ev("(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}return {hasOwner:d.querySelector(" + j("[data-issue-owner]") + ")!==null};})()");
+const ownerCellSel = "button[aria-label^=" + Q + "修改问题处理人 / 责任人" + Q + "]";
+const headCellSel = "button[aria-label^=" + Q + "修改施工人数" + Q + "]";
+const cellStyle = await ev("(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}var owner=d.querySelector(" + j(ownerCellSel) + ");var head=d.querySelector(" + j(headCellSel) + ");if(owner===null||head===null){return {ownerPresent:owner!==null,headPresent:head!==null};}var cells=d.querySelectorAll(" + j("[data-inline-cell]") + ");var bad=[];for(var i=0;i<cells.length;i++){var c=cells[i];if(c.className!==head.className||c.getAttribute(" + j("data-inline-cell") + ")!==" + j("editor") + "){bad.push(String(c.getAttribute(" + j("aria-label") + ")).slice(0,40));}}return {same:owner.className===head.className,ownerKind:owner.getAttribute(" + j("data-inline-cell") + "),headKind:head.getAttribute(" + j("data-inline-cell") + "),cells:cells.length,bad:bad,ownerText:owner.innerText.trim()};})()");
+check("⑥t 抽屉可编辑行统一为「施工人数」同款小框（Push 244 业务口径「修改的选择区域要统一 都和施工人数一致」+「关联阶段 明日计划也要同理统一」）：全部 9 行 class 全等 + data-inline-cell=editor", cellStyle !== null && cellStyle.same === true && cellStyle.ownerKind === "editor" && cellStyle.headKind === "editor" && cellStyle.cells === 9 && cellStyle.bad.length === 0, JSON.stringify(cellStyle));
+check("⑥r 抽屉行内改处理人：预填「" + userRow.display_name + "」→ 点「待分派」清空 → owner_id 归 null、灰杠回显", drawerOwnerOpened === true && drawerOwnerBefore !== null && drawerOwnerBefore.hasOwner === true && iss1Owner2.ownerId === null && iss1Owner2.ownerName === null && drawerOwnerAfter !== null && drawerOwnerAfter.hasOwner === false, JSON.stringify({ opened: drawerOwnerOpened, before: drawerOwnerBefore, after: drawerOwnerAfter, ownerId: iss1Owner2.ownerId }));
 await pressKey("Escape", "Escape", 27);
 await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")==null", 4000);
 await sleep(600);
@@ -734,6 +783,17 @@ await sleep(1200);
 const afterDelIssue = await reportsOf();
 const repD404 = await api("/api/v1/projects/" + projectId + "/reports/" + repD.id);
 check("⑦d 删问题（界面行尾垃圾桶）→ 来源日报连它一起删（成对删除 · 响应 cascadedReportId）", issDGone === true && afterDelIssue.total === 2 && repD404.status === 404, JSON.stringify({ gone: issDGone, reports: afterDelIssue.total, repD404: repD404.status }));
+
+// ---------- ⑧-0 甘特图层级（Push 244 业务口径「甘特图页面会挡住 日报子页面」）----------
+const ganttTask = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { title: "回放·甘特层级探测", plannedStart: todayIso, plannedEnd: todayIso });
+check("⑧-0a 夹具：建一条有排期的任务（甘特图画出内容 —— 下拉遮挡断言需要页面上真有东西可压）", ganttTask.status === 201, String(ganttTask.status) + " " + ganttTask.text.slice(0, 120));
+await page.send("Page.navigate", { url: "about:blank" });
+await sleep(400);
+await page.send("Page.navigate", { url: FRONTEND + "/#/project/" + projectId + "?view=gantt" });
+await sleep(5200);
+await openDailySubmenu();
+const ganttHit = await ev("(function(){var panel=document.querySelector(" + j("[data-daily-submenu]") + ");if(panel===null){return null;}var items=panel.querySelectorAll(" + j("[data-subnav-item]") + ");if(items.length===0){return null;}var last=items[items.length-1];var r=last.getBoundingClientRect();var x=Math.round(r.left+r.width/2);var y=Math.round(r.top+r.height/2);var hit=document.elementFromPoint(x,y);return {items:items.length,x:x,y:y,inside:hit!==null&&panel.contains(hit),hit:hit===null?null:hit.tagName};})()");
+check("⑧-0b 甘特图页打开「日报及问题」下拉：末项（问题看板）最上层命中仍在子菜单内（甘特左表 z-20 → z-[19] 后不再遮挡）", ganttHit !== null && ganttHit.items === 4 && ganttHit.inside === true, JSON.stringify(ganttHit));
 
 // ---------- ⑧ 收尾：临时项目物理删 + 会话撤销 + 零残留 ----------
 const purgedAtEnd = await purgeProjectFiles(projectId);

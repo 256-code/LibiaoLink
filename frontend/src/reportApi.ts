@@ -195,6 +195,8 @@ export type IssueUpdateInput = {
   categories?: string[];
   solution?: string | null;
   photoFileIds?: string[];
+  /** 问题处理人 / 责任人（Push 244 起可编辑）：null = 回缺省（待分派 / 按归类分派责任部门）。 */
+  ownerId?: string | null;
 };
 
 export function updateIssue(projectId: string, issueId: string, body: IssueUpdateInput): Promise<Issue> {

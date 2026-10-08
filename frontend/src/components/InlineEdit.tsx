@@ -149,6 +149,65 @@ export function InlineMemberMultiCell({ values, options, ariaLabel, onPick, disp
   );
 }
 
+type InlineMemberCellProps = {
+  /** 当前选中成员 id（"" = 未选 / 待分派）。 */
+  value: string;
+  options: readonly Member[];
+  ariaLabel: string;
+  /** 选中一位成员（选完即收浮层）。 */
+  onPick: (member: Member) => void;
+  /** 给了才出「待分派」清空行（Push 244：问题处理人 / 责任人可回缺省）。 */
+  onClear?: () => void;
+  display: ReactNode;
+  /** 裸框模式（Push 134）：不套「液态玻璃」白底小框，底色 / 字色 / 内边距由 triggerClassName 给。 */
+  bare?: boolean;
+  /** 触发器附加类名（表格 / 抽屉里给「悬停才现」的淡色可点提示）。 */
+  triggerClassName?: string;
+};
+
+/** 行内成员单选单元格（Push 244 · 业务口径「这个负责人要可以编辑」）：浮层 = 成员搜索列表
+ *  （与人员下拉同一份版式）+ 首行「待分派」清空项（给了 onClear 才有）；选完即收浮层。 */
+export function InlineMemberCell({ value, options, ariaLabel, onPick, onClear, display, bare = false, triggerClassName }: InlineMemberCellProps) {
+  return (
+    <InlineCell
+      ariaLabel={ariaLabel}
+      title="点击选择成员"
+      width={280}
+      height={onClear === undefined ? 286 : 330}
+      bare={bare}
+      triggerClassName={triggerClassName}
+      display={display}
+      render={(close) => (
+        <div>
+          {onClear === undefined ? null : (
+            <button
+              type="button"
+              data-member-clear=""
+              onClick={() => {
+                onClear();
+                close();
+              }}
+              className="flex w-full items-center gap-2 border-b border-zinc-100 px-3 py-2.5 text-left text-sm text-zinc-500 transition hover:bg-zinc-50"
+            >
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-100 text-xs text-zinc-400">—</span>
+              待分派
+            </button>
+          )}
+          <MemberSearchList
+            options={options}
+            value={value}
+            ariaLabel={ariaLabel}
+            onPick={(member) => {
+              onPick(member);
+              close();
+            }}
+          />
+        </div>
+      )}
+    />
+  );
+}
+
 type InlineOptionCellProps = {
   value: string;
   options: SelectOption[];
