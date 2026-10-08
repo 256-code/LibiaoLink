@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { AuditLog, AuditLogListResponse } from "@libiaolink/contracts";
-import type { AuditAction, AuditObjectType, AuditResult } from "@libiaolink/contracts";
+import type { AuditAction, AuditEntry, AuditObjectType, AuditResult } from "@libiaolink/contracts";
 import type { DeniedAuditInput, AuditSink } from "../../common/audit/audit-sink.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -32,6 +32,8 @@ export interface AuditRecordInput {
   summary: string;
   changes?: AuditChangeEntry[] | null;
   metadata?: Record<string, unknown>;
+  /** 审计入口（audit_logs.entry）：缺省 api；身份侧系统动作（离职回收 / 组织同步）显式传 system。 */
+  entry?: AuditEntry;
 }
 
 /**
@@ -40,6 +42,9 @@ export interface AuditRecordInput {
  * 2) 越权留痕 recordDenied()：全局异常过滤器在 403 / 项目域 404 时调用，独立连接、失败只记日志（不影响响应）；
  * 3) 检索 list()：按对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间（h7 验收项②），occurredAt 降序；
  * 4) 防篡改：只 INSERT / SELECT（库级已收回 UPDATE / DELETE）；保留 ≥6 个月由运维按月清理。
+ *
+ * Push 173：本服务随审计出口迁至 audit 模块（admin 模块依赖 identity 守卫，identity 需写审计 —— 独立模块避免循环）；
+ * admin/index.ts 保持 re-export 兼容既有调用方。
  */
 @Injectable()
 export class AuditService implements AuditSink {
@@ -64,7 +69,7 @@ export class AuditService implements AuditSink {
       objectId: input.objectId,
       projectId: input.projectId ?? null,
       result: input.result ?? "succeeded",
-      entry: "api",
+      entry: input.entry ?? "api",
       summary: input.summary,
       changes: input.changes ?? null,
       metadata: input.metadata ?? {},

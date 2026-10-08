@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { BlueprintViewSchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { DatabaseService } from "../../db/database.service.js";
+import { AuditService, diffRecords } from "../admin/index.js";
 import { PermissionService } from "../permission/index.js";
 import { BlueprintRepository, type BlueprintRow } from "./blueprint.repository.js";
 import { validateBlueprint, type Blueprint } from "./blueprint.validation.js";
@@ -17,12 +19,27 @@ export interface BlueprintSnapshot {
   payload: Blueprint;
 }
 
-/** 蓝图用例（h3）：草稿保存 / 发布 / 导出 / 导入 + 建项目事务取快照；写操作仅管理员（ADR-019 / ADR-020）。 */
+/** 审计字段级留痕快照（Push 173）：名称 + 阶段 / 节点计数（payload 全量 diff 不落 —— 整档文档，可读性差）。 */
+function blueprintSnapshot(blueprint: Blueprint): Record<string, unknown> {
+  return {
+    name: blueprint.name,
+    stageCount: blueprint.stages.length,
+    nodeCount: blueprint.stages.reduce((total, stage) => total + stage.nodes.length, 0),
+  };
+}
+
+/**
+ * 蓝图用例（h3）：草稿保存 / 发布 / 导出 / 导入 + 建项目事务取快照；写操作仅管理员（ADR-019 / ADR-020）。
+ * 留痕（Push 173）：草稿保存 / 导入 / 发布均写审计（objectType = blueprint），与写入同事务；
+ * 发布幂等短路（草稿无变更）不写审计。
+ */
 @Injectable()
 export class BlueprintService {
   constructor(
     private readonly blueprints: BlueprintRepository,
     private readonly permission: PermissionService,
+    private readonly audit: AuditService,
+    private readonly database: DatabaseService,
   ) {}
 
   /** 蓝图写权限：矩阵键 blueprint.manage（种子 #6b 仅授系统管理员 · ADR-019 / ADR-020）。 */
@@ -38,20 +55,51 @@ export class BlueprintService {
 
   /** PUT /blueprint：保存草稿（校验不过 → 422 + 全量 issues；未创建的 projectType 首次保存即建档）。 */
   async saveDraft(projectTypeInput: string | undefined, payload: unknown, actorId: string): Promise<BlueprintView> {
+    return this.saveDraftInternal(projectTypeInput, payload, actorId, "save");
+  }
+
+  /** POST /blueprint/import：外部 JSON 存入草稿（schema + 引用校验；重复导入幂等）。 */
+  async importBlueprint(projectTypeInput: string | undefined, payload: unknown, actorId: string): Promise<BlueprintView> {
+    return this.saveDraftInternal(projectTypeInput, payload, actorId, "import");
+  }
+
+  /** 草稿保存（PUT / import 共用）：找行 → 建 / 改草稿 → 同事务写一条审计（create / update）。 */
+  private async saveDraftInternal(
+    projectTypeInput: string | undefined,
+    payload: unknown,
+    actorId: string,
+    source: "save" | "import",
+  ): Promise<BlueprintView> {
     await this.assertAdmin(actorId);
     const projectType = projectTypeInput ?? DEFAULT_BLUEPRINT_PROJECT_TYPE;
     const blueprint = this.validateOrThrow({ ...(payload as Record<string, unknown>), projectType });
     const at = new Date();
-    const existing = await this.blueprints.findByProjectType(projectType);
-    const row =
-      existing === null
-        ? await this.blueprints.insertDraft(projectType, blueprint.name, blueprint, actorId, at)
-        : await this.blueprints.updateDraft(existing.id, blueprint, actorId, at);
-    if (row === null) throw new AppError("NOT_FOUND", "蓝图不存在：" + projectType);
+    const row = await this.database.db.transaction(async (tx) => {
+      const existing = await this.blueprints.findByProjectType(projectType, tx);
+      const saved =
+        existing === null
+          ? await this.blueprints.insertDraft(projectType, blueprint.name, blueprint, actorId, at, tx)
+          : await this.blueprints.updateDraft(existing.id, blueprint, actorId, at, tx);
+      if (saved === null) throw new AppError("NOT_FOUND", "蓝图不存在：" + projectType);
+      const summaryPrefix = source === "import" ? "导入蓝图：" : existing === null ? "新建蓝图：" : "保存蓝图草稿：";
+      await this.audit.record(tx, {
+        actorId,
+        action: existing === null ? "create" : "update",
+        objectType: "blueprint",
+        objectId: saved.id,
+        summary: summaryPrefix + projectType + "（" + saved.name + "）",
+        changes: diffRecords(
+          existing === null ? null : blueprintSnapshot(existing.draftPayload as Blueprint),
+          blueprintSnapshot(saved.draftPayload as Blueprint),
+        ),
+        metadata: { projectType, source },
+      });
+      return saved;
+    });
     return this.toView(row);
   }
 
-  /** POST /blueprint/publish：草稿无变更 → 幂等返回当前视图（不递增版本）；否则发布新版本。 */
+  /** POST /blueprint/publish：草稿无变更 → 幂等返回当前视图（不递增版本、不写审计）；否则发布新版本 + 审计。 */
   async publish(projectTypeInput: string | undefined, actorId: string): Promise<BlueprintView> {
     await this.assertAdmin(actorId);
     const row = await this.findRowOrFail(projectTypeInput);
@@ -68,7 +116,22 @@ export class BlueprintService {
       blueprintVersion: nextVersion,
       updatedAt: at.toISOString(),
     };
-    await this.blueprints.publishVersion(row.id, nextVersion, payload, [], actorId, at);
+    await this.database.db.transaction(async (tx) => {
+      await this.blueprints.publishVersion(row.id, nextVersion, payload, [], actorId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "blueprint",
+        objectId: row.id,
+        summary: "发布蓝图 v" + nextVersion + "：" + row.projectType + "（" + payload.name + "）",
+        changes: [{ field: "publishedVersion", from: row.publishedVersion, to: nextVersion }],
+        metadata: {
+          projectType: row.projectType,
+          stageCount: payload.stages.length,
+          nodeCount: payload.stages.reduce((total, stage) => total + stage.nodes.length, 0),
+        },
+      });
+    });
     const updated = await this.blueprints.findByProjectType(row.projectType);
     return this.toView(updated ?? row);
   }
@@ -81,11 +144,6 @@ export class BlueprintService {
       if (published !== null) return published.payload as Blueprint;
     }
     return row.draftPayload as Blueprint;
-  }
-
-  /** POST /blueprint/import：外部 JSON 存入草稿（schema + 引用校验；重复导入幂等）。 */
-  async importBlueprint(projectTypeInput: string | undefined, payload: unknown, actorId: string): Promise<BlueprintView> {
-    return this.saveDraft(projectTypeInput, payload, actorId);
   }
 
   /**

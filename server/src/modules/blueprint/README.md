@@ -20,9 +20,10 @@
 - 权限：写接口（`PUT` / `publish` / `import`）要求功能权限 `blueprint.manage`（已随 h6 由「角色码 = admin」改为键位判定；种子 #6b 只把该键授予系统管理员，故实际口径不变，语义改由角色矩阵决定）；读接口登录即可。
 - 种子：`database/seeds/blueprint.mjs`（种子 #7）落 default 模板（9 阶段 19 节点 + 版本 1）；节点清单待业务补全，库内已修订时种子不覆盖（可重跑）。
 - 单测：`test/blueprint-validation.test.ts`（7 例，纯函数：schema / key 唯一 / seq 递增 / docType 引用 / 引用未知分流）。
+- 单测（Push 173）：`test/blueprint-audit.test.ts`（7 例：首存 `create` / 再存 `update`（changes 只含变化字段）/ 导入前缀与 `metadata.source=import` / 发布记 `publishedVersion` / 幂等不写 / 403 与 422 不落痕）。
 
 ## 边界与后续
 
 - 项目升级到新蓝图版本（重生成快照）不在 h3：随 M6 归档 / 升级口径（当前「导入即快照」，蓝图变更不影响已生成项目）。
 - 模板管理员角色细分、审批流：键位已随 h6 就绪（`blueprint.view` / `blueprint.manage`），角色细分与界面随 u 系列。
-- 蓝图审计留痕（谁改了什么）：字段级留痕未接线（当前只有 outbox 业务事件与库内 `updated_by` / `published_by`）；h7 已落 `audit_logs` 通道，`assertAdmin` 的 403 由全局过滤器记 denied —— 蓝图写路径接 `AuditService.record()` 随蓝图维护卡片补。
+- 蓝图审计留痕（谁改了什么）：**已接线（Push 173）** —— 保存草稿（PUT）/ 导入 / 发布三条写路径在**同一业务事务**内写 `audit_logs`（`objectType=blueprint`、对象 id = `blueprints.id`；新建 / 首次导入 `action=create`、其后 `action=update`；`changes` = 名称 / 阶段数 / 节点数快照，不落全量 payload diff；发布记 `publishedVersion` from → to，发布幂等短路不写审计）；`assertAdmin` 的 403 仍由全局过滤器记 denied。

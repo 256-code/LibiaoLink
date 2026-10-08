@@ -17,6 +17,9 @@ import { RoleService } from "../src/modules/identity/role.service.js";
 import { SessionRepository, type SessionRow, type SessionWithUser } from "../src/modules/identity/session.repository.js";
 import { UserRepository, type SsoProfile, type UserRow } from "../src/modules/identity/user.repository.js";
 import { UserPreferenceRepository } from "../src/modules/identity/user-preference.repository.js";
+import { InternalUserService } from "../src/modules/identity/index.js";
+import { AuditRepository } from "../src/modules/audit/audit.repository.js";
+import { AuditService } from "../src/modules/audit/audit.service.js";
 import { CsrfGuard } from "../src/modules/identity/csrf.guard.js";
 import type { ExecutionContext } from "@nestjs/common";
 
@@ -262,6 +265,17 @@ async function createApp(idleMinutes: number): Promise<TestContext> {
     // A24 偏好仓储也在 IdentityModule 里（Push 169）：本用例只跑 /auth/*，给个空替身避免去连库
     .overrideProvider(UserPreferenceRepository)
     .useValue({ find: async (): Promise<null> => null, upsert: async (): Promise<never> => { throw new Error("auth e2e：偏好写入未接线"); } })
+    // Push 173：审计出口迁入 identity 依赖图（离职回收 / 组织同步用）—— /auth/* 不写审计，给替身避免连库
+    .overrideProvider(AuditRepository)
+    .useValue({})
+    .overrideProvider(AuditService)
+    .useValue({
+      record: async (): Promise<never> => { throw new Error("auth e2e：审计写入未接线"); },
+      recordDenied: async (): Promise<never> => { throw new Error("auth e2e：越权留痕未接线"); },
+      list: async (): Promise<never> => { throw new Error("auth e2e：审计查询未接线"); },
+    })
+    .overrideProvider(InternalUserService)
+    .useValue({})
     .compile();
   const app = moduleRef.createNestApplication();
   app.useLogger(false);
