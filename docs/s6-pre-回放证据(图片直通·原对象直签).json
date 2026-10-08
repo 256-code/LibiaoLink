@@ -1,0 +1,116 @@
+{
+  "steps": [
+    {
+      "id": "S0a",
+      "title": "api 可用（/healthz + /readyz：含存储探针）",
+      "expected": "200 / 200",
+      "actual": "200 / 200",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "S0b",
+      "title": "转换器停机态（S6-前置 出口条件）：`PREVIEW_CONVERTER_URL` 无监听",
+      "expected": "0（连接拒绝 / 超时）",
+      "actual": "0（http://127.0.0.1:9900）",
+      "ok": true,
+      "note": "任一 HTTP 响应 = 转换器仍在线，出口条件不满足 —— 先 `cd deploy/preview && docker compose down` 再复跑"
+    },
+    {
+      "id": "P1",
+      "title": "建回放项目（为 file 提供 projectId）",
+      "expected": "201 + 项目可见",
+      "actual": "201 {\"id\":\"f55f7ccd-5b9e-4950-b7a8-a025683cc369\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "F1",
+      "title": "上传 1×1 真 PNG（init → 分片直传 → complete）",
+      "expected": "200 + 版本 v1 + contentHash 与夹具一致",
+      "actual": "{\"status\":200,\"seq\":1,\"hash\":\"c414cd0e204d…\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I1",
+      "title": "图片预览：ready + target=image + url 短时签名（原对象）+ pipelineVersion / generatedAt 空",
+      "expected": "ready + target=image + url 非空 + viewer/reason 空 + 产物字段空 + 窗口 ≈ 300s",
+      "actual": "{\"status\":\"ready\",\"target\":\"image\",\"urlLen\":502,\"viewer\":null,\"pipelineVersion\":null,\"generatedAt\":null,\"ttlSeconds\":300}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I2",
+      "title": "字节直出（非转换件）：url 直取 sha256 = 上传夹具全等 + PNG magic + Content-Type=image/png + 非 attachment",
+      "expected": "200 + sha256=c414cd0e204d… + magic=89504e47 + content-type=image/png",
+      "actual": "{\"status\":200,\"hash\":\"c414cd0e204d…\",\"magic\":\"89504e47\",\"contentType\":\"image/png\",\"disposition\":null}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I3",
+      "title": "签名形状：pathname = /{bucket}/{version.objectKey} + X-Amz-Expires = PREVIEW_URL_TTL_SECONDS + 有签名参数",
+      "expected": "pathname = /libiaolink/{v1 objectKey} + expires = 300",
+      "actual": "{\"pathname\":\"/libiaolink/projects/f55f7ccd-5b9e-4950-b7a8-a025683cc369/files/d6e9fb59-f69a-4fbd-8660-07322183d569/v1/c414cd0e204de974f73753c7e28d7638e7b3691bb8b1a2bab6b25bb7fed7ce77.png\",\"expires\":\"300\",\"hasSignature\":true}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I4",
+      "title": "审计恰一条 preview：metadata {versionId, target:\"image\"}（无 pipelineVersion）+ object_id = fileId",
+      "expected": "1 条 + versionId=v1 + target=image + pipelineVersion 缺省",
+      "actual": "{\"count\":1,\"metadata\":{\"target\":\"image\",\"versionId\":\"24e825f9-4046-4a96-81ba-b3a276cab6e1\"},\"summary\":\"预览文件：回放-现场图-A.png（版本 v1 · 图片直签）\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I5",
+      "title": "零投递 / 零产物行：outbox 无 preview.job、preview_artifacts 0 行（读取不发任务、不落产物行）",
+      "expected": "jobs=0 + artifacts=0",
+      "actual": "{\"jobs\":0,\"artifacts\":0}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "F2",
+      "title": "追加 v2（同文件、新 PNG 蓝点）：draft 期替换 / 追加版本",
+      "expected": "200 + 版本 v2 + hash 与夹具 B 一致",
+      "actual": "{\"status\":200,\"seq\":2,\"hash\":\"6a34118ba2e0…\"}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I6a",
+      "title": "缺省预览 = 当前版本（v2）：签 v2 原对象 + 字节全等（夹具 B）",
+      "expected": "ready + pathname 含 v2 objectKey + sha256(B) + 审计 2 条",
+      "actual": "{\"status\":\"ready\",\"pathname\":\"/libiaolink/projects/f55f7ccd-5b9e-4950-b7a8-a025683cc369/files/d6e9fb59-f69a-4fbd-8660-07322183d569/v2/6a34118ba2e0bf5da5ab14cb63b121e2e8b2987a876668a9b2f9c30e1357470b.png\",\"hash\":\"6a34118ba2e0…\",\"audits\":2}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I6b",
+      "title": "历史版本（?versionId=v1）：签 v1 原对象 + 字节全等（夹具 A）+ 审计记 v1（不串版本）",
+      "expected": "ready + pathname 含 v1 objectKey + sha256(A) + 审计 3 条（末条 versionId=v1）",
+      "actual": "{\"status\":\"ready\",\"pathname\":\"/libiaolink/projects/f55f7ccd-5b9e-4950-b7a8-a025683cc369/files/d6e9fb59-f69a-4fbd-8660-07322183d569/v1/c414cd0e204de974f73753c7e28d7638e7b3691bb8b1a2bab6b25bb7fed7ce77.png\",\"hash\":\"c414cd0e204d…\",\"audits\":3,\"last\":{\"target\":\"image\",\"versionId\":\"24e825f9-4046-4a96-81ba-b3a276cab6e1\"}}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I7",
+      "title": "定档（P1 触发点）后仍零投递 / 零产物行：`previewTargetsFor` 空表 → 预生成循环空转",
+      "expected": "200 + status=final + jobs=0 + artifacts=0",
+      "actual": "{\"status\":200,\"fileStatus\":\"final\",\"jobs\":0,\"artifacts\":0}",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "id": "I8",
+      "title": "PDF 对照（非图片不受影响）：ready + viewer.documentType=pdf（url / target 空 / 无产物无投递）",
+      "expected": "ready + viewer.kind=onlyoffice/pdf + url null + target null + jobs 0 + artifacts 0 + 审计 4 条",
+      "actual": "{\"status\":\"ready\",\"target\":null,\"url\":null,\"viewerKind\":\"onlyoffice\",\"documentType\":\"pdf\",\"jobs\":0,\"artifacts\":0,\"audits\":4}",
+      "ok": true,
+      "note": ""
+    }
+  ]
+}
