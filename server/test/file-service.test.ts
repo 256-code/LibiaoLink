@@ -1760,13 +1760,9 @@ describe("FileService.finalizeFile（定档锁版）", () => {
       dedupeKey: "file.finalized:" + FILE + ":6",
       status: "pending",
     });
-    // M4-05c 定档预生成（P1）：当前版本（.pdf）投一条 preview.job，去重键 = 三元组（内容 + 管线版本 + 通道）
-    expect(h.database.outbox.at(-1)).toMatchObject({
-      topic: "preview.job",
-      dedupeKey: "preview.job:" + HASH + ":1.0.0:pdf",
-      payload: { projectId: PROJECT, fileId: FILE, versionId: VERSION, target: "pdf", trigger: "finalize" },
-      status: "pending",
-    });
+    // M4-05c 定档预生成（P1）：PDF 2026-10-08 并入查看器通道后不再投 preview.job（业务口径「统一用onlyoffice」）——
+    // 本用例只有 file.finalized；预生成覆盖见下方 .png / .zip 用例。
+    expect((h.database.outbox as { topic: string }[]).map((entry) => entry.topic)).toEqual(["file.finalized"]);
   });
 
   it("并发定档（version 不匹配）→ 409 VERSION_CONFLICT（details 带 current / expected）", async () => {

@@ -157,7 +157,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
             onClick={() => { inputRef.current?.click(); }}
             disabled={uploading !== null}
             title="添加文件（关联到本任务）"
-            className="flex items-center gap-1 px-3 py-2 text-left text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
+            className="flex items-center gap-1 px-3 py-2 text-left text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400"
           >
             {uploading === null
               ? "＋ 添加文件"
@@ -190,7 +190,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                   const confirming = pendingDelete === file.id;
                   const previewingThis = previewing === file.id;
                   return (
-                    <li key={file.id} data-task-files-item="true" className="group flex min-w-0 items-center gap-1.5 px-2 py-1">
+                    <li key={file.id} data-task-files-item="true" className="group flex min-w-0 items-center gap-1.5 px-2 py-1 transition-colors hover:bg-zinc-100">
                       <FileTypeIcon name={file.name} />
                       <button
                         type="button"
@@ -198,7 +198,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                         onClick={() => { void openPreview(file.id, file.name); }}
                         disabled={previewingThis}
                         title={"点击预览：" + file.name}
-                        className="min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-xs text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 hover:underline disabled:text-zinc-400"
+                        className="min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                       >
                         {file.name}
                       </button>

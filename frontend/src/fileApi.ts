@@ -8,6 +8,7 @@
  *   与预览浮层区分：下载始终拿原文件、写 download 审计）。
  * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
  *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
+ * 2026-10-08：PDF 并入查看器通道（业务口径「统一用onlyoffice」）—— 服务端返回 viewer，本文件按响应裁决、无分支。
  * 上传链路（D2 分片直传，契约 shared/src/modules/files.ts；参考实现 server/scripts/m4-upload-replay.mjs）：
  *   POST /api/v1/files/uploads（intent=version，contentHash = SHA-256）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/parts 取预签名分片 URL

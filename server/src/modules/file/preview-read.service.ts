@@ -41,7 +41,7 @@ const VIEWER_PERMISSIONS = {
  * - 判不出渲染通道（如 `.zip`）：`failed` + 「暂不支持在线预览」。
  * 两者都返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
  *
- * 查看器通道（S3 · ADR-030）：Office / 文本族 ready 为「无转换产物」形态 —— `viewer` 非空、`target` / `url` 空，
+ * 查看器通道（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF ready 为「无转换产物」形态 —— `viewer` 非空、`target` / `url` 空，
  * 与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置 + 审计。
  *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
@@ -74,7 +74,7 @@ export class PreviewReadService {
 
     const targets = previewTargetsFor({ fileName: file.name, mime: version.mime });
     if (targets.length === 0) {
-      // S3（ADR-030）：Office / 文本族 → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
+      // S3（ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
       const viewerChannel = viewerChannelFor({ fileName: file.name, mime: version.mime });
       if (viewerChannel !== null) {
         return this.serveViewer(file, version, viewerChannel, actorId);

@@ -508,16 +508,19 @@ check("④o2 清单三行 + 「文件」列 = 最新 PDF 名 + 「+2」", drawer
 const pdfPoint = await fileRowPoint(filePdfName, "[data-file-preview-open=true]");
 if (pdfPoint === null || pdfPoint === undefined) await bail("PDF 行没有预览入口（data-file-preview-open）");
 await clickAt(pdfPoint);
-const pdfPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview-kind=pdf]") + ")!==null", 40000);
-const pdfPreviewInfo = pdfPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return {open:false};}var f=el.querySelector(" + j("[data-file-preview-frame=true]") + ");var src=f===null?null:f.getAttribute(" + j("src") + ");var dl=el.querySelector(" + j("[data-file-preview-download=true]") + ");return {open:true,http:src!==null&&src.indexOf(" + j("http") + ")==0,download:dl!==null,drawer:document.querySelector(" + j(DRAWER) + ")!==null};})()") : { open: false, http: false, download: false, drawer: false };
-check("④o3 点「预览」→ PDF 查看器浮层（iframe src = 短时签名 http；caption 带「下载原文件」入口）", pdfPreviewInfo.open === true && pdfPreviewInfo.http === true && pdfPreviewInfo.download === true && pdfPreviewInfo.drawer === true, JSON.stringify(pdfPreviewInfo));
+const pdfPreviewShown = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview-kind=pdf]") + ")!==null&&document.querySelector(" + j("[data-oo-status=ready]") + ")!==null;})()", 60000);
+const pdfPreviewInfo = pdfPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return {open:false};}var v=el.querySelector(" + j("[data-onlyoffice-viewer=true]") + ");var dl=el.querySelector(" + j("[data-file-preview-download=true]") + ");return {open:true,viewer:v!==null,status:v===null?null:v.getAttribute(" + j("data-oo-status") + "),frames:v===null?0:v.querySelectorAll(" + j("iframe") + ").length,download:dl!==null,drawer:document.querySelector(" + j(DRAWER) + ")!==null};})()") : { open: false, viewer: false, status: null, frames: 0, download: false, drawer: false };
+check("④o3 点「预览」→ PDF 走 ONLYOFFICE 查看器（data-oo-status=ready + 编辑器 iframe 在位；caption 带「下载原文件」入口）", pdfPreviewInfo.open === true && pdfPreviewInfo.viewer === true && pdfPreviewInfo.status === "ready" && pdfPreviewInfo.frames >= 1 && pdfPreviewInfo.download === true && pdfPreviewInfo.drawer === true, JSON.stringify(pdfPreviewInfo));
 const pdfShot = await page.send("Page.captureScreenshot", { format: "png" });
 writeFileSync(join(SCREENSHOT_DIR, "m4-07-pdf-preview.png"), Buffer.from(pdfShot.data, "base64"));
 console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-pdf-preview.png"));
-await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
-await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
-const escPdf = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 8000);
-check("④o4 Esc 先关 PDF 浮层、抽屉仍在（「Esc 先关内层」）", escPdf === true, String(escPdf));
+const escPdf = await waitForAsync(async () => {
+  // 编辑器 iframe 会抢焦点：先 blur 回上层文档再发 Esc（与 ④q2 同一对抗手法）
+  await ev("(function(){if(document.activeElement&&document.activeElement.blur){document.activeElement.blur();}return true;})()");
+  await pressKey("Escape", "Escape", 27);
+  return (await ev("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()")) === true;
+}, 20000);
+check("④o4 Esc 先关 PDF 查看器浮层、抽屉仍在（「Esc 先关内层」）", escPdf === true, String(escPdf));
 
 // ⑤（续四）下载 = 原文件（业务口径 2026-09-30「下载为什么都是pdf 你是不是签名调用错了」）
 const downloadDir = mkdtempSync(join(tmpdir(), "pxm4fu-dl-"));
