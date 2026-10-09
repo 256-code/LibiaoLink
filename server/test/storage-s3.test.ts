@@ -11,6 +11,7 @@ import {
   planUpload,
   resolveForcePathStyle,
   toApiError,
+  versionFileName,
 } from "../src/storage/index.js";
 import { loadEnv } from "../src/config/env.js";
 
@@ -72,6 +73,12 @@ describe("对象键（ADR-006：定档不覆盖物理对象，版本与哈希进
     expect(extensionOf(".gitignore")).toBe("bin");
     expect(buildObjectKey({ projectId: PROJECT_ID, fileId: FILE_ID, seq: 1, contentHash: HASH, fileName: "图纸" }))
       .toBe(`projects/${PROJECT_ID}/files/${FILE_ID}/v1/${HASH}.bin`);
+  });
+
+  it("（Push 256）versionFileName：主名取当前文件名、扩展名取版本对象键；无合法扩展名（bin）回落当前文件名", () => {
+    expect(versionFileName("回放-变更后.pptx", `projects/${PROJECT_ID}/files/${FILE_ID}/v1/${HASH}.xls`)).toBe("回放-变更后.xls");
+    expect(versionFileName("回放-变更后.pptx", `projects/${PROJECT_ID}/files/${FILE_ID}/v2/${HASH}.pptx`)).toBe("回放-变更后.pptx");
+    expect(versionFileName("说明.txt", `projects/${PROJECT_ID}/files/${FILE_ID}/v1/${HASH}.bin`)).toBe("说明.txt");
   });
 
   it("拒绝非法输入（路径穿越 / 非法哈希 / 非法版本号）", () => {

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "../src/common/errors/app-error.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
+import type { DatabaseService } from "../src/db/database.service.js";
+import type { DbClient } from "../src/db/db-client.js";
+import type { AuditRecordInput, AuditService } from "../src/modules/audit/index.js";
 import {
   CasdoorDirectorySource,
   normalizeCasdoorGroup,
@@ -91,6 +94,22 @@ class FakeSessionService {
   }
 }
 
+class FakeAuditService {
+  records: AuditRecordInput[] = [];
+  clients: unknown[] = [];
+  async record(client: DbClient, input: AuditRecordInput): Promise<void> {
+    this.clients.push(client);
+    this.records.push(input);
+  }
+}
+
+class FakeDatabase {
+  readonly tx = { kind: "tx" } as unknown as DbClient;
+  readonly db = {
+    transaction: (callback: (tx: DbClient) => Promise<unknown>) => callback(this.tx),
+  } as unknown as DatabaseService["db"];
+}
+
 function expectAppError(fn: () => unknown, code: string): void {
   try {
     fn();
@@ -113,49 +132,99 @@ async function expectAppErrorAsync(fn: () => Promise<unknown>, code: string): Pr
   throw new Error("预期抛出 AppError，但未抛出");
 }
 
-function internalService(rows: UserRow[], affected = 0): { service: InternalUserService; users: FakeUserRepository; sessions: FakeSessionService } {
+function internalService(
+  rows: UserRow[],
+  affected = 0,
+): { service: InternalUserService; users: FakeUserRepository; sessions: FakeSessionService; audit: FakeAuditService; database: FakeDatabase } {
   const users = new FakeUserRepository();
   users.rows = rows;
   const sessions = new FakeSessionService();
   sessions.affected = affected;
-  const service = new InternalUserService(users as unknown as UserRepository, sessions as unknown as SessionService);
-  return { service, users, sessions };
+  const audit = new FakeAuditService();
+  const database = new FakeDatabase();
+  const service = new InternalUserService(
+    users as unknown as UserRepository,
+    sessions as unknown as SessionService,
+    audit as unknown as AuditService,
+    database as unknown as DatabaseService,
+  );
+  return { service, users, sessions, audit, database };
 }
 
 // ---------- 离职回收（/internal/users/* 语义：name 优先 / email 兜底 / 幂等 / 踢线） ----------
 
 describe("InternalUserService（h1 离职回收）", () => {
-  it("disable：置 disabled 并踢掉在线会话", async () => {
-    const { service, users, sessions } = internalService([userRow({ id: "u1", username: "zhangsan", email: "zhangsan@libiaorobot.com" })], 2);
+  it("disable：置 disabled 并踢掉在线会话；同事务写审计（entry=system）", async () => {
+    const { service, users, sessions, audit, database } = internalService([userRow({ id: "u1", username: "zhangsan", email: "zhangsan@libiaorobot.com" })], 2);
     const result = await service.execute("disable", { name: "zhangsan", email: null });
     expect(result).toEqual({ ok: true, name: "zhangsan", action: "disable", affectedSessions: 2 });
     expect(users.rows[0]?.status).toBe("disabled");
     expect(users.rows[0]?.removedAt).toBeNull();
     expect(sessions.revoked).toEqual(["u1"]);
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]).toMatchObject({
+      actorId: null,
+      action: "update",
+      objectType: "user",
+      objectId: "u1",
+      entry: "system",
+      changes: [{ field: "status", from: "active", to: "disabled" }],
+      metadata: { source: "internal_api", internalAction: "disable", matchedBy: "name", affectedSessions: 2 },
+    });
+    expect(audit.clients[0]).toBe(database.tx);
   });
 
-  it("disable：重复调用幂等（已禁用仍清残留会话）", async () => {
-    const { service, users } = internalService([userRow({ id: "u1", username: "zhangsan", status: "disabled" })], 0);
+  it("disable：重复调用幂等（已禁用仍清残留会话）；changes = null（无字段级变化，仍留痕）", async () => {
+    const { service, users, audit } = internalService([userRow({ id: "u1", username: "zhangsan", status: "disabled" })], 0);
     const result = await service.execute("disable", { name: "zhangsan", email: null });
     expect(result.affectedSessions).toBe(0);
     expect(users.rows[0]?.status).toBe("disabled");
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]?.changes).toBeNull();
   });
 
-  it("enable：恢复 active 并清空 removed_at，不恢复旧会话", async () => {
-    const { service, users } = internalService([userRow({ id: "u1", username: "zhangsan", status: "disabled", removedAt: AT })]);
+  it("enable：恢复 active 并清空 removed_at，不恢复旧会话；审计记 status / removedAt 两项变化", async () => {
+    const { service, users, audit } = internalService([userRow({ id: "u1", username: "zhangsan", status: "disabled", removedAt: AT })]);
     const result = await service.execute("enable", { name: "zhangsan", email: null });
     expect(result).toEqual({ ok: true, name: "zhangsan", action: "enable", affectedSessions: 0 });
     expect(users.rows[0]?.status).toBe("active");
     expect(users.rows[0]?.removedAt).toBeNull();
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]).toMatchObject({
+      actorId: null,
+      action: "update",
+      objectType: "user",
+      objectId: "u1",
+      entry: "system",
+      metadata: { source: "internal_api", internalAction: "enable", matchedBy: "name" },
+    });
+    expect(audit.records[0]?.changes).toEqual([
+      { field: "status", from: "disabled", to: "active" },
+      { field: "removedAt", from: AT.toISOString(), to: null },
+    ]);
   });
 
-  it("delete：软删（disabled + removed_at）并踢线，不物理删行", async () => {
-    const { service, users } = internalService([userRow({ id: "u1", username: "zhangsan" })], 1);
+  it("delete：软删（disabled + removed_at）并踢线，不物理删行；审计 action=delete", async () => {
+    const { service, users, audit } = internalService([userRow({ id: "u1", username: "zhangsan" })], 1);
     const result = await service.execute("delete", { name: "zhangsan", email: null });
     expect(result).toEqual({ ok: true, name: "zhangsan", action: "delete", affectedSessions: 1 });
     expect(users.rows).toHaveLength(1);
     expect(users.rows[0]?.status).toBe("disabled");
     expect(users.rows[0]?.removedAt).toBeInstanceOf(Date);
+    const removedAtIso = (users.rows[0]?.removedAt as Date).toISOString();
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]).toMatchObject({
+      actorId: null,
+      action: "delete",
+      objectType: "user",
+      objectId: "u1",
+      entry: "system",
+      metadata: { source: "internal_api", internalAction: "delete", matchedBy: "name", affectedSessions: 1 },
+    });
+    expect(audit.records[0]?.changes).toEqual([
+      { field: "status", from: "active", to: "disabled" },
+      { field: "removedAt", from: null, to: removedAtIso },
+    ]);
   });
 
   it("name 查不到时用 email 兜底（大小写不敏感）", async () => {
@@ -175,10 +244,11 @@ describe("InternalUserService（h1 离职回收）", () => {
     expect(result.name).toBe("zhangsan");
   });
 
-  it("目录中不存在：幂等成功（不报错、0 会话）", async () => {
-    const { service } = internalService([]);
+  it("目录中不存在：幂等成功（不报错、0 会话、不写审计 —— 无变更）", async () => {
+    const { service, audit } = internalService([]);
     const result = await service.execute("delete", { name: "ghost", email: null });
     expect(result).toEqual({ ok: true, name: "ghost", action: "delete", affectedSessions: 0 });
+    expect(audit.records).toEqual([]);
   });
 
   it("name 与 email 都缺：400 VALIDATION_FAILED", async () => {

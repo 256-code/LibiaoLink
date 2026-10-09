@@ -2377,7 +2377,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） */
+                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删） */
                     objectType?: components["schemas"]["AuditObjectType"];
                     /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
                     objectId?: string;
@@ -6943,10 +6943,10 @@ export interface components {
             total: number;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
@@ -7164,6 +7164,8 @@ export interface components {
         ChangeRequestDetail: components["schemas"]["ChangeRequest"] & {
             file: components["schemas"]["File"];
             version: components["schemas"]["FileVersion"];
+            /** @description 变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null） */
+            filePreviousName: string | null;
         };
         ChangeRequestListResponse: {
             items: (components["schemas"]["ChangeRequest"] & unknown)[];
@@ -7900,8 +7902,7 @@ export interface components {
             documentType: components["schemas"]["PreviewViewerDocumentType"];
             document: components["schemas"]["PreviewViewerDocument"];
             editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
-            permissions: components["schemas"]["PreviewViewerPermissions"];
-            /** @description 查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
+            /** @description 查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
             token: string;
         } | null;
         PreviewViewerDocument: {
@@ -7913,6 +7914,7 @@ export interface components {
             fileType: string;
             /** @description 文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效） */
             key: string;
+            permissions: components["schemas"]["PreviewViewerPermissions"];
         };
         /**
          * @description 文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）
@@ -7938,6 +7940,7 @@ export interface components {
          * @enum {string}
          */
         PreviewViewerKind: "onlyoffice";
+        /** @description 查看器权限段（Push 258 起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见、点击由前端命中层接管 → 原文件下载链） */
         PreviewViewerPermissions: {
             edit: boolean;
             download: boolean;
@@ -8807,9 +8810,10 @@ export interface components {
             version: components["schemas"]["FileVersion"];
             changeRequest: components["schemas"]["ChangeRequest"];
         };
-        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效） */
+        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效；name = 变更后文件名称 —— 完成时文件更名为该名称） */
         UploadCreateBody: {
             projectId: components["schemas"]["Uuid"];
+            /** @description 文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称） */
             name: string;
             /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
             sizeBytes: number;
@@ -8823,6 +8827,7 @@ export interface components {
             fileId?: components["schemas"]["Uuid"] & unknown;
         } | {
             projectId: components["schemas"]["Uuid"];
+            /** @description 文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称） */
             name: string;
             /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
             sizeBytes: number;

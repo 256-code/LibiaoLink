@@ -1,5 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { AppError } from "../../common/errors/app-error.js";
+import { DatabaseService } from "../../db/database.service.js";
+import { AuditService } from "../audit/index.js";
 import { SessionService } from "./session.service.js";
 import { UserRepository, type UserRow } from "./user.repository.js";
 
@@ -25,12 +27,16 @@ export interface InternalUserActionResponse {
  * - 幂等：目录中不存在（或已删除）的用户一律 200，affectedSessions = 0（自动化可重试）。
  * - 副作用：disable / delete 必须踢掉该用户全部在线会话；enable 不恢复旧会话（安全默认）。
  * - delete 语义：置 status = disabled + removed_at（软删，不物理删行）；复职走 enable（清 removed_at）。
+ * - 留痕（Push 173）：三动作各写一条审计（objectType = user、entry = system、actorId = null —— 无人类操作人的系统动作），
+ *   状态写入 / 会话撤销 / 审计同事务。
  */
 @Injectable()
 export class InternalUserService {
   constructor(
     private readonly users: UserRepository,
     private readonly sessions: SessionService,
+    private readonly audit: AuditService,
+    private readonly database: DatabaseService,
   ) {}
 
   async execute(action: InternalUserAction, input: InternalUserActionInput): Promise<InternalUserActionResponse> {
@@ -42,16 +48,67 @@ export class InternalUserService {
       return { ok: true, name: input.name ?? "", action, affectedSessions: 0 };
     }
     const now = new Date();
+    const matchedBy = input.name !== null ? "name" : "email";
+    const beforeStatus = target.status;
+    const beforeRemovedAt = target.removedAt;
     if (action === "disable") {
-      await this.users.updateInternalState(target.id, { status: "disabled" }, now);
-      return { ok: true, name: target.username, action, affectedSessions: await this.sessions.revokeAllForUser(target.id) };
+      const affectedSessions = await this.database.db.transaction(async (tx) => {
+        await this.users.updateInternalState(target.id, { status: "disabled" }, now, tx);
+        const sessions = await this.sessions.revokeAllForUser(target.id, tx);
+        await this.audit.record(tx, {
+          actorId: null,
+          action: "update",
+          objectType: "user",
+          objectId: target.id,
+          entry: "system",
+          summary: "离职回收 · 停用用户：" + target.displayName + "（" + target.username + "，撤销会话 " + sessions + " 个）",
+          changes: beforeStatus === "disabled" ? null : [{ field: "status", from: beforeStatus, to: "disabled" }],
+          metadata: { source: "internal_api", internalAction: "disable", matchedBy, affectedSessions: sessions },
+        });
+        return sessions;
+      });
+      return { ok: true, name: target.username, action, affectedSessions };
     }
     if (action === "enable") {
-      await this.users.updateInternalState(target.id, { status: "active", removedAt: null }, now);
+      await this.database.db.transaction(async (tx) => {
+        await this.users.updateInternalState(target.id, { status: "active", removedAt: null }, now, tx);
+        const changes = [
+          ...(beforeStatus === "active" ? [] : [{ field: "status", from: beforeStatus, to: "active" }]),
+          ...(beforeRemovedAt === null ? [] : [{ field: "removedAt", from: beforeRemovedAt.toISOString(), to: null }]),
+        ];
+        await this.audit.record(tx, {
+          actorId: null,
+          action: "update",
+          objectType: "user",
+          objectId: target.id,
+          entry: "system",
+          summary: "离职回收 · 复职启用用户：" + target.displayName + "（" + target.username + "）",
+          changes: changes.length > 0 ? changes : null,
+          metadata: { source: "internal_api", internalAction: "enable", matchedBy },
+        });
+      });
       return { ok: true, name: target.username, action, affectedSessions: 0 };
     }
-    await this.users.updateInternalState(target.id, { status: "disabled", removedAt: now }, now);
-    return { ok: true, name: target.username, action, affectedSessions: await this.sessions.revokeAllForUser(target.id) };
+    const affectedSessions = await this.database.db.transaction(async (tx) => {
+      await this.users.updateInternalState(target.id, { status: "disabled", removedAt: now }, now, tx);
+      const sessions = await this.sessions.revokeAllForUser(target.id, tx);
+      const changes = [
+        ...(beforeStatus === "disabled" ? [] : [{ field: "status", from: beforeStatus, to: "disabled" }]),
+        { field: "removedAt", from: beforeRemovedAt === null ? null : beforeRemovedAt.toISOString(), to: now.toISOString() },
+      ];
+      await this.audit.record(tx, {
+        actorId: null,
+        action: "delete",
+        objectType: "user",
+        objectId: target.id,
+        entry: "system",
+        summary: "离职回收 · 删除用户（软删）：" + target.displayName + "（" + target.username + "，撤销会话 " + sessions + " 个）",
+        changes,
+        metadata: { source: "internal_api", internalAction: "delete", matchedBy, affectedSessions: sessions },
+      });
+      return sessions;
+    });
+    return { ok: true, name: target.username, action, affectedSessions };
   }
 
   private async resolveUser(input: InternalUserActionInput): Promise<UserRow | null> {

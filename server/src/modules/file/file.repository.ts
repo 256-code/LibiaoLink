@@ -147,6 +147,8 @@ export interface FileCompletePatch {
   version: number;
   /** M4-04：变更流完成时置 changed（final → changed）；非变更流不传。 */
   status?: string;
+  /** Push 256：变更流采纳「变更后文件名称」（更名 + 扩展名随上传）；未更名不传。 */
+  name?: string;
   updatedAt: Date;
 }
 
@@ -280,6 +282,7 @@ export class FileRepository {
         currentVersionId: patch.currentVersionId,
         version: patch.version,
         ...(patch.status === undefined ? {} : { status: patch.status }),
+        ...(patch.name === undefined ? {} : { name: patch.name }),
         updatedAt: patch.updatedAt,
       })
       .where(eq(files.id, fileId))

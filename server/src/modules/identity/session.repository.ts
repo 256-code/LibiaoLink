@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { and, eq, isNull } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
+import type { DbClient } from "../../db/db-client.js";
 import { sessions, users } from "../../db/schema/identity.js";
 import type { UserRow } from "./user.repository.js";
 
@@ -47,8 +48,8 @@ export class SessionRepository {
   }
 
   /** 撤销某用户全部在线会话（禁用 / 组织同步踢线；h1 复用）。 */
-  async revokeAllForUser(userId: string, at: Date): Promise<number> {
-    const rows = await this.database.db
+  async revokeAllForUser(userId: string, at: Date, client: DbClient = this.database.db): Promise<number> {
+    const rows = await client
       .update(sessions)
       .set({ revokedAt: at })
       .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))

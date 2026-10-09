@@ -6,6 +6,7 @@ import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOn
 import { stageNameOf, type ApiProjectSummary } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
+import { ChangeDetailModal } from "./ChangeDetailModal";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
@@ -312,6 +313,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     });
   };
 
+  /** 「变更关联」列点击弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：非空 = 中央展示该变更的「变更管理」详情。 */
+  const [changeModalId, setChangeModalId] = useState<string | null>(null);
   /** 「文件」列胶囊内容（Push 226 续二 · 业务口径「应该是文件名字 超出长度后面写+1 +2」；Push 246 起兼作下拉触发器）：
    *  与「输出成果文件」列同套 —— 第一份出名字（截断 + title 全名）、后面还有就「+N」；
    *  文件清单没取到（老数据 / 请求失败）退回「N 份」计数。 */
@@ -618,52 +621,73 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         }
       >
         {task.changes.length === 0 ? null : (
-          <>
-            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">变更</span>
+          <button
+            type="button"
+            data-change-link-open="true"
+            title="点击查看变更详情"
+            onClick={(event) => {
+              event.stopPropagation();
+              setChangeModalId(task.changes[0].id);
+            }}
+            className="flex items-center gap-1"
+          >
+            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200">变更</span>
             {task.changes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.changes.length - 1}</span> : null}
-          </>
+          </button>
         )}
       </span>
     ),
   };
 
   return (
-    <div
-      role="button"
-      data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
-      tabIndex={0}
-      title="点击查看任务详情"
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect();
+    <>
+      <div
+        role="button"
+        data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
+        tabIndex={0}
+        title="点击查看任务详情"
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect();
+          }
+        }}
+        className={
+          "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
+          // 醒目模式（Push 134）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
+          (focusMode
+            ? STATUS_ROW_CLASS[status] + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
+            : selected
+              ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]"
+              : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
         }
-      }}
-      className={
-        "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
-        // 醒目模式（Push 134）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
-        (focusMode
-          ? STATUS_ROW_CLASS[status] + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
-          : selected
-            ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]"
-            : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
-      }
-      style={{ gridTemplateColumns: columns.map((column) => column.width).join(" ") }}
-    >
-      {columns.map((column) => (
-        <Fragment key={column.key}>
-          {column.key === "title" ? (
-            cells[column.key]
-          ) : (
-            // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）。
-            // 左右各留 4px 内衬（业务口径 2026-09-30「这个触碰到了 要优化一下」）：满宽内容（文件名胶囊 / 进展描述胶囊）
-            // 与相邻列不再贴边 —— 两格相邻时天然留出 8px 空隙；内容居中口径不变。
-            <div className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
-          )}
-        </Fragment>
-      ))}
-    </div>
+        style={{ gridTemplateColumns: columns.map((column) => column.width).join(" ") }}
+      >
+        {columns.map((column) => (
+          <Fragment key={column.key}>
+            {column.key === "title" ? (
+              cells[column.key]
+            ) : (
+              // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）。
+              // 左右各留 4px 内衬（业务口径 2026-09-30「这个触碰到了 要优化一下」）：满宽内容（文件名胶囊 / 进展描述胶囊）
+              // 与相邻列不再贴边 —— 两格相邻时天然留出 8px 空隙；内容居中口径不变。
+              <div className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
+            )}
+          </Fragment>
+        ))}
+      </div>
+      {changeModalId === null ? null : (
+        <ChangeDetailModal
+          changeId={changeModalId}
+          linkedTaskTitle={task.title}
+          members={members}
+          deliverableTypes={task.deliverableTypes}
+          onOpenLinkedTask={() => { setChangeModalId(null); onSelect(); }}
+          onClose={() => { setChangeModalId(null); }}
+        />
+      )}
+    </>
   );
 }
 

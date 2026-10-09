@@ -32,6 +32,11 @@ const HASH_HISTORY = "b".repeat(64);
 const NOW = new Date("2026-09-23T08:00:00Z");
 const SOURCE_KEY = "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + ".png";
 const SOURCE_KEY_HISTORY = "projects/" + PROJECT + "/files/" + FILE + "/v2/" + HASH_HISTORY + ".png";
+
+/** 版本对象键（扩展名随文件名 —— Push 256 起预览通道按**版本对象键**扩展名判定：变更更名后历史版本仍按各旧扩展名）。 */
+function sourceKeyOf(ext: string): string {
+  return "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + "." + ext;
+}
 const ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/image";
 const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/1.0.0/image";
 
@@ -356,7 +361,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
   it("判不出渲染通道（.zip）：终态降级 failed，不查产物 / 不登记 / 不投递 / 不写审计", async () => {
     const h = makeService();
     h.repo.file = makeFileRow({ name: "资料包.zip" });
-    h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/zip" }));
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/zip", objectKey: sourceKeyOf("zip") }));
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
 
@@ -426,7 +431,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     const h = makeService();
     // 默认 fixture 为 png（产物通道用例）；这里显式改回 PDF，锁定「PDF 不再走源直通产物」的新口径。
     h.repo.file = makeFileRow({ name: "机械设计图纸.pdf" });
-    h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/pdf" }));
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/pdf", objectKey: sourceKeyOf("pdf") }));
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
 
@@ -448,7 +453,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     h.repo.file = makeFileRow({ name: "方案.docx" });
     h.repo.versions.set(
       VERSION,
-      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }),
     );
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
@@ -473,9 +478,10 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
         url: "http://api.internal:3000/api/v1/files/" + FILE + "/versions/" + VERSION + "/preview-content",
         fileType: "docx",
         key: HASH,
+        // Push 258 错层修正：权限段嵌 document（ONLYOFFICE 只认该位置）。
+        permissions: { edit: false, download: true, print: false, comment: false, chat: false, fillForms: false, protect: true },
       },
       editorConfig: { mode: "view", lang: "zh-CN", user: { id: ACTOR, name: "蓝工" } },
-      permissions: { edit: false, download: false, print: false, comment: false, chat: false, fillForms: false, protect: true },
     });
     expect(h.previews.queries).toHaveLength(0);
     expect(h.previews.ensured).toHaveLength(0);
@@ -490,10 +496,10 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     });
   });
 
-  it("viewer token：HS256 逐字签发四段 + iat/exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS），document.url 不含存储凭证", async () => {
+  it("viewer token：HS256 逐字签发（permissions 嵌 document · Push 258 错层修正）+ iat/exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS），document.url 不含存储凭证", async () => {
     const h = makeService({ ONLYOFFICE_JWT_TTL_SECONDS: 900 });
     h.repo.file = makeFileRow({ name: "说明.txt" });
-    h.repo.versions.set(VERSION, makeVersionRow({ mime: "text/plain" }));
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "text/plain", objectKey: sourceKeyOf("txt") }));
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
 
@@ -503,9 +509,8 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(createHmac("sha256", "unit-test-secret").update(header + "." + payload).digest("base64url")).toBe(signature);
     const claims = JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")) as {
       documentType: string;
-      document: { url: string; key: string };
+      document: { url: string; key: string; permissions: { edit: boolean; download: boolean } };
       editorConfig: { mode: string };
-      permissions: { edit: boolean; download: boolean };
       iat: number;
       exp: number;
     };
@@ -515,6 +520,10 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     );
     expect(claims.document.url).not.toContain("X-Amz-");
     expect(claims.document.key).toBe(HASH);
+    // Push 258 业务口径「原本的下载不要隐藏」：download 保持可见（点击由前端命中层接原文件链）。
+    expect(claims.document.permissions.download).toBe(true);
+    expect(claims.document.permissions.edit).toBe(false);
+    expect((claims as Record<string, unknown>).permissions).toBeUndefined();
     expect(claims.editorConfig.mode).toBe("view");
     expect(claims.exp - claims.iat).toBe(900);
   });
@@ -522,15 +531,43 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
   it("文本族 / Office 映射：csv → cell、无扩展名按 MIME 反推（ms-excel → cell/xls）", async () => {
     const csv = makeService();
     csv.repo.file = makeFileRow({ name: "清单.csv" });
-    csv.repo.versions.set(VERSION, makeVersionRow({ mime: "text/csv" }));
+    csv.repo.versions.set(VERSION, makeVersionRow({ mime: "text/csv", objectKey: sourceKeyOf("csv") }));
     const csvResult = await csv.service.getPreview(FILE, null, ACTOR);
     expect(csvResult.viewer).toMatchObject({ documentType: "cell", document: { fileType: "csv" } });
 
     const byMime = makeService();
     byMime.repo.file = makeFileRow({ name: "无扩展名" });
-    byMime.repo.versions.set(VERSION, makeVersionRow({ mime: "application/vnd.ms-excel" }));
+    byMime.repo.versions.set(VERSION, makeVersionRow({ mime: "application/vnd.ms-excel", objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + ".bin" }));
     const byMimeResult = await byMime.service.getPreview(FILE, null, ACTOR);
     expect(byMimeResult.viewer).toMatchObject({ documentType: "cell", document: { fileType: "xls" } });
+  });
+
+  it("（Push 256）变更更名后按版本对象键扩展名判通道：新版本 .pptx → slide/pptx；历史版本 .xls → cell/xls（旧内容不被当成新扩展名 —— 修 ONLYOFFICE -85「扩展名不一致」）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "回放-变更后.pptx" });
+    h.repo.versions.set(
+      VERSION,
+      makeVersionRow({
+        mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v2/" + HASH + ".pptx",
+      }),
+    );
+    h.repo.versions.set(
+      HISTORY,
+      makeVersionRow({ id: HISTORY, seq: 1, contentHash: HASH_HISTORY, mime: "application/vnd.ms-excel", objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH_HISTORY + ".xls" }),
+    );
+
+    const current = await h.service.getPreview(FILE, null, ACTOR);
+    expect(current.viewer).toMatchObject({
+      documentType: "slide",
+      document: { title: "回放-变更后.pptx", fileType: "pptx" },
+    });
+
+    const history = await h.service.getPreview(FILE, HISTORY, ACTOR);
+    expect(history.viewer).toMatchObject({
+      documentType: "cell",
+      document: { title: "回放-变更后.pptx", fileType: "xls" },
+    });
   });
 
   it("ONLYOFFICE_JWT_SECRET 未配置 → INTERNAL fail closed（不签发、不审计、不落表）", async () => {
@@ -538,7 +575,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     h.repo.file = makeFileRow({ name: "方案.docx" });
     h.repo.versions.set(
       VERSION,
-      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }),
     );
 
     await expect(h.service.getPreview(FILE, null, ACTOR)).rejects.toMatchObject({ code: "INTERNAL" });
@@ -553,7 +590,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     h.repo.file = makeFileRow({ name: "方案.docx" });
     h.repo.versions.set(
       VERSION,
-      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+      makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }),
     );
 
     const result = await h.service.getPreview(FILE, null, ACTOR);

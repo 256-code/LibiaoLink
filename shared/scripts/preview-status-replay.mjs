@@ -15,7 +15,8 @@ const versionId = "33333333-3333-4333-8333-333333333333";
 const at = "2026-09-22T09:00:00.000Z";
 const url = "https://minio.local/previews/abc/p1/out.pdf?sig=1";
 
-const VIEWER = { kind: "onlyoffice", docServerUrl: "http://127.0.0.1:8001", documentType: "word", document: { title: "N1-03 项目周报.docx", url: "http://api.internal:3000/api/v1/files/" + fileId + "/versions/" + versionId + "/preview-content", fileType: "docx", key: "demo-key" }, editorConfig: { mode: "view", lang: "zh-CN", user: { id: "u-preview", name: "查看者" } }, permissions: { edit: false, download: false, print: false, comment: false, chat: false, fillForms: false, protect: true }, token: "eyJhbGciOiJIUzI1NiJ9.demo.token" };
+// Push 258 错层修正：permissions 嵌 document（ONLYOFFICE 只认该位置；顶层不再有 permissions 段）。
+const VIEWER = { kind: "onlyoffice", docServerUrl: "http://127.0.0.1:8001", documentType: "word", document: { title: "N1-03 项目周报.docx", url: "http://api.internal:3000/api/v1/files/" + fileId + "/versions/" + versionId + "/preview-content", fileType: "docx", key: "demo-key", permissions: { edit: false, download: true, print: false, comment: false, chat: false, fillForms: false, protect: true } }, editorConfig: { mode: "view", lang: "zh-CN", user: { id: "u-preview", name: "查看者" } }, token: "eyJhbGciOiJIUzI1NiJ9.demo.token" };
 const base = {
   fileId,
   versionId,
@@ -36,6 +37,7 @@ const responseCases = [
   ["viewer：documentType 白名单外（sheet）", { ...base, viewer: { ...VIEWER, documentType: "sheet" } }, false],
   ["viewer：editorConfig.mode 非 view（edit）", { ...base, viewer: { ...VIEWER, editorConfig: { ...VIEWER.editorConfig, mode: "edit" } } }, false],
   ["viewer：缺 token", { ...base, viewer: { ...VIEWER, token: undefined } }, false],
+  ["viewer：document 缺 permissions（Push 258 起嵌 document · 必填）", { ...base, status: "ready", viewer: { ...VIEWER, document: { ...VIEWER.document, permissions: undefined } } }, false],
   ["ready：pdf 产物 + 短时签名 + generatedAt", { ...base, status: "ready", target: "pdf", url, expiresAt: at, pipelineVersion: "lo-24.8.1-v1", generatedAt: at }, true],
   ["ready：image 通道（矢量 SVG 产物）", { ...base, versionId: null, status: "ready", target: "image", url, expiresAt: at, pipelineVersion: "lo-24.8.1-v1", generatedAt: at }, true],
   ["not_ready：尚未生成（无版本）", base, true],

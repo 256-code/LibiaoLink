@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { readStoredFilters } from "./homePrefs";
+import { AUDIT_ACTIONS, AUDIT_OBJECT_TYPES, AUDIT_RESULTS } from "./auditApi";
 
 /**
  * 列表页筛选态：URL query 是唯一来源（可分享、可收藏、刷新不丢）。
@@ -45,12 +46,32 @@ export type DailySubView = "form" | "records" | "issues" | "board";
  */
 export type WorkspaceTab = "tasks" | "raised" | "plan";
 
+/**
+ * 「操作记录」页（#/audit）的筛选态：与首页列表同一口径 —— 地址即状态（可分享 / 可收藏 / 刷新不丢）。
+ * 取值白名单 = 契约枚举（auditApi.ts 同口径）；缺省（无筛选 + 第 1 页）不落参数。
+ */
+export type AuditQueryState = {
+  actorId: string | null;
+  action: string | null;
+  objectType: string | null;
+  result: string | null;
+  projectId: string | null;
+  /** 时间下界（日，YYYY-MM-DD，Asia/Shanghai）。 */
+  from: string | null;
+  /** 时间上界（日，YYYY-MM-DD，Asia/Shanghai）。 */
+  to: string | null;
+  page: number;
+};
+
+export const EMPTY_AUDIT_QUERY: AuditQueryState = { actorId: null, action: null, objectType: null, result: null, projectId: null, from: null, to: null, page: 1 };
+
 export type Route =
   | { kind: "hub" }
   | { kind: "workspace"; tab: WorkspaceTab }
   | { kind: "list"; filters: ListQueryState }
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
-  | { kind: "placeholder"; page: PlaceholderPage; section: string | null };
+  | { kind: "placeholder"; page: PlaceholderPage; section: string | null }
+  | { kind: "audit"; query: AuditQueryState };
 
 /** 任务模板页地址：当前板块（标签栏选中的阶段）也走 URL —— 与列表页筛选态同一口径，地址即状态。 */
 export const TEMPLATE_BASE_HASH = "#/templates";
@@ -66,6 +87,9 @@ export const PROJECT_BASE_HASH = "#/project/";
 
 /** 工作台「我的任务」页地址（Push 230 转正式）：标签走 `?tab=`，缺省「我的任务」不落参数。 */
 export const WORKSPACE_BASE_HASH = "#/my-tasks";
+
+/** 「操作记录」页地址（头像菜单「退出登录」下方入口；筛选态走 query，缺省不落参数）。 */
+export const AUDIT_BASE_HASH = "#/audit";
 
 const PROJECT_PATH = /^\/project\/([^/]+)$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -400,6 +424,11 @@ export function parseHash(hash: string): Route {
   if (path === "/templates") {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
   }
+  if (path === "/audit") {
+    // 操作记录（C7-04 管理员查询页 · 头像菜单入口）：筛选态走地址（?actor=&action=&objectType=&result=&project=&from=&to=&page=），
+    // 缺省不落参数；页面 = frontend/src/AuditLogPage.tsx，数据 = GET /api/v1/audit-logs（auditApi.ts）。
+    return { kind: "audit", query: parseAuditQuery(search) };
+  }
   if (path === "/my-tasks") {
     // 工作台（系统功能书 A6 我的工作台 · A6-01 / A6-03）：Push 230 起页面正式落地（frontend/src/WorkspacePage.tsx），
     // 标签走地址（`?tab=raised` = 我提出的问题 / `?tab=plan` = 我的计划；缺省「我的任务」不落参数）；数据面 = GET /api/v1/workspace（workspaceApi.ts）。
@@ -412,6 +441,101 @@ export function parseHash(hash: string): Route {
     return { kind: "project", id: safeDecode(match[1] ?? ""), view, sub: view === "daily" ? parseProjectSub(search) : "form" };
   }
   return { kind: "list", filters: parseListQuery(search) };
+}
+
+/** 操作记录页枚举筛选的白名单校验：不认识 / 空值一律丢弃（不阻塞页面）。 */
+function parseAuditEnum(value: string | null, allowed: readonly string[]): string | null {
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return allowed.find((item) => item === trimmed) ?? null;
+}
+
+/** 操作记录页的 id 型筛选（操作人 / 项目）：空值丢弃，只做长度兜底。 */
+function parseAuditId(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" || trimmed.length > 200 ? null : trimmed;
+}
+
+/** 解析操作记录页的 query 串（actor=<id>&action=update&objectType=task&result=denied&project=<id>&from=YYYY-MM-DD&to=YYYY-MM-DD&page=2）。 */
+export function parseAuditQuery(search: string): AuditQueryState {
+  const params = new Map<string, string>();
+  for (const chunk of search.split("&")) {
+    if (chunk === "") {
+      continue;
+    }
+    const separator = chunk.indexOf("=");
+    const key = safeDecode(separator === -1 ? chunk : chunk.slice(0, separator));
+    if (!params.has(key)) {
+      params.set(key, safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)));
+    }
+  }
+  let from = parseDayValue(params.get("from") ?? null);
+  let to = parseDayValue(params.get("to") ?? null);
+  if (from !== null && to !== null && from > to) {
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  const pageRaw = Number(params.get("page") ?? "");
+  return {
+    actorId: parseAuditId(params.get("actor") ?? null),
+    action: parseAuditEnum(params.get("action") ?? null, AUDIT_ACTIONS),
+    objectType: parseAuditEnum(params.get("objectType") ?? null, AUDIT_OBJECT_TYPES),
+    result: parseAuditEnum(params.get("result") ?? null, AUDIT_RESULTS),
+    projectId: parseAuditId(params.get("project") ?? null),
+    from,
+    to,
+    page: Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1,
+  };
+}
+
+/** 操作记录页地址：缺省（无筛选 + 第 1 页）不落参数（与列表筛选态同一口径）。 */
+export function buildAuditHash(query: AuditQueryState): string {
+  const parts: string[] = [];
+  if (query.actorId !== null) {
+    parts.push("actor=" + encodeURIComponent(query.actorId));
+  }
+  if (query.action !== null) {
+    parts.push("action=" + encodeURIComponent(query.action));
+  }
+  if (query.objectType !== null) {
+    parts.push("objectType=" + encodeURIComponent(query.objectType));
+  }
+  if (query.result !== null) {
+    parts.push("result=" + encodeURIComponent(query.result));
+  }
+  if (query.projectId !== null) {
+    parts.push("project=" + encodeURIComponent(query.projectId));
+  }
+  if (query.from !== null) {
+    parts.push("from=" + encodeURIComponent(query.from));
+  }
+  if (query.to !== null) {
+    parts.push("to=" + encodeURIComponent(query.to));
+  }
+  if (query.page > 1) {
+    parts.push("page=" + String(query.page));
+  }
+  return parts.length === 0 ? AUDIT_BASE_HASH : AUDIT_BASE_HASH + "?" + parts.join("&");
+}
+
+/** 更新操作记录页筛选态：同步渲染并写回地址（replace，不新增历史条目）。 */
+export function replaceAuditQuery(query: AuditQueryState): void {
+  if (currentRoute.kind !== "audit") {
+    return;
+  }
+  currentRoute = { kind: "audit", query };
+  emit();
+  try {
+    window.history.replaceState(null, "", buildAuditHash(query));
+  } catch {
+    // URL 只是筛选态的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
+  }
 }
 
 function readHash(): string {

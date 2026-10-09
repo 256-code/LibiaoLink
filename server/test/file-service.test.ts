@@ -288,6 +288,7 @@ class FakeFileRepository {
       currentVersionId: patch.currentVersionId,
       version: patch.version,
       ...(patch.status === undefined ? {} : { status: patch.status }),
+      ...(patch.name === undefined ? {} : { name: patch.name }),
       updatedAt: patch.updatedAt,
     };
     return this.file;
@@ -736,12 +737,13 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     expect(h.repo.insertedFiles).toHaveLength(0);
     expect(h.repo.insertedSessions).toHaveLength(1);
     expect(h.repo.insertedSessions[0]).toMatchObject({ fileId: FILE, intent: "change" });
-    // 变更申请随会话落 change_payload（契约 ChangeIntentBody）：未给字段补空
+    // 变更申请随会话落 change_payload（契约 ChangeIntentBody）：未给字段补空；Push 256 起随带 fileName（变更后文件名称）
     expect(h.repo.insertedSessions[0]!.changePayload).toEqual({
       reason: "设计变更（变更单 CR-2026-0918）",
       beforeSummary: null,
       afterSummary: "按变更单调整孔位",
       stageKey: null,
+      fileName: "机械设计图纸.pdf",
     });
     expect(h.audit.entries.at(-1)).toMatchObject({
       action: "update",
@@ -749,6 +751,36 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
       objectId: FILE,
       changes: [{ field: "pendingChange", from: null, to: "设计变更（变更单 CR-2026-0918）" }],
       metadata: { intent: "change", targetFileId: FILE },
+    });
+  });
+
+  it("intent=change（Push 256 · 业务口径「变更后文件的名字后后缀要用变更选择的」）→ name = 变更后文件名称：与目标不同不再 400，随会话 change_payload.fileName 落库", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", version: 3, currentVersionId: VERSION, docType: "CAD图纸" });
+    const result = await h.service.createUpload(
+      {
+        projectId: PROJECT,
+        name: "回放-变更后.pptx",
+        sizeBytes: MI_B,
+        intent: "change",
+        fileId: FILE,
+        change: { reason: "换扩展名（xls → pptx）" },
+      },
+      ACTOR,
+    );
+
+    expect(result.file.id).toBe(FILE);
+    expect(result.upload.intent).toBe("change");
+    expect(h.repo.insertedFiles).toHaveLength(0);
+    expect(h.repo.insertedSessions[0]!.changePayload).toEqual({
+      reason: "换扩展名（xls → pptx）",
+      beforeSummary: null,
+      afterSummary: null,
+      stageKey: null,
+      fileName: "回放-变更后.pptx",
+    });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      summary: "发起变更上传（定档后变更）：机械设计图纸.pdf → 回放-变更后.pptx",
     });
   });
 
@@ -2055,6 +2087,8 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
 
   it("生效链路：change_requests(applied) + 版本挂 change_request_id + 状态 changed + change 关联 + R01 回写 + 变更审计 + outbox", async () => {
     const h = changeHarness();
+    // Push 255：文件同时挂任务（TASK）—— 归属回写与 R01 结果先去重再写
+    h.repo.file = makeFileRow({ status: "final", nodeId: NODE, taskId: TASK, docType: "CAD图纸", version: 3, currentVersionId: VERSION_A });
     h.repo.deliverableTaskIds = [TASK, OTHER_TASK];
     h.repo.nodeStageKey = "construction";
 
@@ -2089,10 +2123,10 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
       appliedBy: ACTOR,
     });
     expect(h.repo.sessionPatches.at(-1)!.patch.status).toBe("completed");
-    // 多态关联：project / node / change（change 指向本次变更）
-    expect(h.repo.insertedLinks.map((row) => row.objectType)).toEqual(["project", "node", "change"]);
+    // 多态关联：project / node / task（文件挂 TASK，Push 255 用例）/ change（change 指向本次变更）
+    expect(h.repo.insertedLinks.map((row) => row.objectType)).toEqual(["project", "node", "task", "change"]);
     expect(h.repo.insertedLinks.find((row) => row.objectType === "change")!.objectId).toBe(change.id);
-    // R01：docType ∈ deliverable_types（多值命中）的全部任务一律追加 change_refs
+    // 任务关联（Push 255）：① 所属任务（TASK）② R01 docType ∈ deliverable_types 多值命中（TASK / OTHER_TASK）—— 并集去重后写 change_refs
     expect(h.repo.deliverableQueries).toEqual([{ projectId: PROJECT, deliverable: "CAD图纸" }]);
     expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK, OTHER_TASK], changeRequestId: change.id }]);
     // 审计：变更 create（objectType=change）+ 上传 complete（metadata 带 changeRequestId）
@@ -2110,6 +2144,8 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
         stageKey: "construction",
         deliverableType: "CAD图纸",
         matchedTasks: [TASK, OTHER_TASK],
+        ownerTaskId: TASK,
+        linkedTaskIds: [TASK, OTHER_TASK],
         linkedTasks: 2,
       },
     });
@@ -2124,11 +2160,67 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
     expect(h.database.outbox[0]).toMatchObject({
       dedupeKey: "change.applied:" + change.id,
       status: "pending",
-      payload: { changeRequestId: change.id, fileId: FILE, versionId: VERSION, matchedTasks: [TASK, OTHER_TASK] },
+      payload: { changeRequestId: change.id, fileId: FILE, versionId: VERSION, matchedTasks: [TASK, OTHER_TASK], ownerTaskId: TASK },
     });
   });
 
-  it("R01 无匹配（成果类型为空）→ 只记日志、不阻断变更生效", async () => {
+  it("（Push 256）变更后文件名称随上传采纳（业务口径「变更后文件的名字后后缀要用变更选择的」）：完成时 files.name 更名 + 对象键 / 存储元数据用新扩展名 + 审计记 name 变化", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "final", nodeId: NODE, taskId: TASK, docType: "CAD图纸", version: 3, currentVersionId: VERSION_A });
+    h.repo.session = makeSessionRow({
+      intent: "change",
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      changePayload: {
+        reason: "变更后文件后缀随上传",
+        beforeSummary: null,
+        afterSummary: null,
+        stageKey: null,
+        fileName: "回放-变更后.pptx",
+      },
+    });
+    h.repo.deliverableTaskIds = [TASK];
+    h.repo.nodeStageKey = "construction";
+
+    await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+
+    // files.name 更名；新版本对象键 / 存储元数据用变更后扩展名（.pptx）——历史版本对象键不动（假旧名不改写）
+    expect(h.repo.file!.name).toBe("回放-变更后.pptx");
+    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.pptx`);
+    expect(h.storage.copied[0]!.destinationKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.pptx`);
+    expect(h.storage.copied[0]!.metadata).toMatchObject({ "file-name": encodeURIComponent("回放-变更后.pptx") });
+    // 审计：完成变更上传记「旧名 → 新名」；变更 create 审计的 changes 同步带 name 变化
+    const completeAudit = h.audit.entries.at(-1) as { summary: string; changes: { field: string; from: unknown; to: unknown }[] };
+    expect(completeAudit.summary).toContain("机械设计图纸.pdf → 回放-变更后.pptx");
+    expect(completeAudit.changes).toContainEqual({ field: "name", from: "机械设计图纸.pdf", to: "回放-变更后.pptx" });
+    const changeAudit = h.audit.entries.at(-2) as { changes: { field: string }[] };
+    expect(changeAudit.changes).toContainEqual({ field: "name", from: "机械设计图纸.pdf", to: "回放-变更后.pptx" });
+  });
+
+  it("（Push 255）成果类型为空但文件挂了任务 → 所属任务直接回写变更关联（业务反馈「变更记录 / 变更关联没显示」）", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "changed", nodeId: NODE, taskId: TASK, docType: null, version: 4, currentVersionId: VERSION_A });
+    const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
+    try {
+      const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+      expect(result.changeRequest).not.toBeNull();
+      expect(result.file.status).toBe("changed");
+      // 前端上传口不带成果类型（doc_type 空）→ R01 零匹配；但变更发生在 TASK 里 → 该任务必须拿到 change_refs
+      expect(h.repo.deliverableQueries).toHaveLength(0);
+      expect(h.repo.changeRefAppends).toEqual([{ taskIds: [TASK], changeRequestId: result.changeRequest!.id }]);
+      expect(h.audit.entries.at(-2)).toMatchObject({
+        action: "create",
+        objectType: "change",
+        metadata: { matchedTasks: [], ownerTaskId: TASK, linkedTaskIds: [TASK], linkedTasks: 1 },
+      });
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("变更无关联任务"))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("所属任务为空 + R01 无匹配（成果类型为空）→ 只记日志、不阻断变更生效", async () => {
     const h = changeHarness();
     h.repo.file = makeFileRow({ status: "changed", nodeId: NODE, docType: null, version: 4, currentVersionId: VERSION_A });
     const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
@@ -2138,7 +2230,7 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
       expect(result.file.status).toBe("changed");
       expect(h.repo.deliverableQueries).toHaveLength(0);
       expect(h.repo.changeRefAppends).toEqual([{ taskIds: [], changeRequestId: result.changeRequest!.id }]);
-      expect(warn.mock.calls.some((call) => String(call[0]).includes("变更 R01 无匹配任务"))).toBe(true);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("变更无关联任务"))).toBe(true);
     } finally {
       warn.mockRestore();
     }
@@ -2175,17 +2267,27 @@ describe("Push 249 · 任务定档联动与写口闸（业务口径「若是则�
     const h = makeService();
     h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 5, taskId: TASK });
     h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    h.repo.abortedTaskSessionCount = 2;
     await h.service.finalizeFile(FILE, { version: 5 }, ACTOR);
 
     expect(h.repo.finalizedTasks).toEqual([{ taskId: TASK, actorId: ACTOR }]);
+    // 定档兜底：撤销在途 version 上传会话，条数记入任务审计 metadata
+    expect(h.repo.abortedTaskUploadSessions).toEqual([{ taskId: TASK, at: NOW }]);
     expect(h.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file", "task"]);
-    expect(h.audit.entries.at(-1)).toMatchObject({ action: "update", objectType: "task", objectId: TASK, projectId: PROJECT });
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      action: "update",
+      objectType: "task",
+      objectId: TASK,
+      projectId: PROJECT,
+      metadata: { fileId: FILE, fileStatus: "final", abortedUploadSessions: 2 },
+    });
 
     const h2 = makeService();
     h2.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 1, taskId: null });
     h2.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
     await h2.service.finalizeFile(FILE, { version: 1 }, ACTOR);
     expect(h2.repo.finalizedTasks).toEqual([]);
+    expect(h2.repo.abortedTaskUploadSessions).toEqual([]);
     expect(h2.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file"]);
   });
 
@@ -2212,6 +2314,50 @@ describe("Push 249 · 任务定档联动与写口闸（业务口径「若是则�
       httpStatus: 409,
     });
     expect(h.repo.filePatches).toHaveLength(0);
+  });
+
+  it("先开会话、后定档：completeUpload 事务内复核 → 409 TASK_FINALIZED（不落版本、会话不完成）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ taskId: TASK });
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/pdf" });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: FINALIZED_AT };
+    h.storage.parts = [part(1, 8 * MI_B), part(2, 4 * MI_B)];
+    h.storage.head = {
+      objectKey: STAGING_KEY,
+      sizeBytes: 12 * MI_B,
+      etag: "\"merged-etag\"",
+      contentType: "application/pdf",
+      lastModified: NOW,
+    };
+
+    await expect(h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR)).rejects.toMatchObject({
+      code: "TASK_FINALIZED",
+      httpStatus: 409,
+      details: [{ code: "task_finalized", path: "taskId" }],
+    });
+    expect(h.repo.insertedVersions).toHaveLength(0);
+    expect(h.repo.sessionPatches).toHaveLength(0);
+  });
+
+  it("任务已定档：change 意图 completeUpload 照常成功（A4-13 修改走变更，唯一保留通道）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", docType: "CAD图纸", taskId: TASK, currentVersionId: VERSION, version: 1 });
+    h.repo.session = makeSessionRow({
+      intent: "change",
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "application/pdf",
+      changePayload: { reason: "按变更单调整孔位", beforeSummary: null, afterSummary: null, stageKey: null },
+    });
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: FINALIZED_AT };
+    h.repo.deliverableTaskIds = [TASK];
+    h.storage.parts = [part(1, 8 * MI_B), part(2, 4 * MI_B)];
+    h.storage.head = { objectKey: STAGING_KEY, sizeBytes: 12 * MI_B, etag: null, contentType: null, lastModified: NOW };
+
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(result.changeRequest).not.toBeNull();
+    expect(h.repo.insertedVersions).toHaveLength(1);
+    expect(h.repo.sessionPatches.at(-1)!.patch.status).toBe("completed");
   });
 
   it("未定档任务：intent=version 上传照常（对照）", async () => {

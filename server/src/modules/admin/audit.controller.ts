@@ -4,7 +4,7 @@ import type { AuditLogListQuery, AuditLogListResponse } from "@libiaolink/contra
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
-import { AuditService } from "./audit.service.js";
+import { AuditService } from "../audit/index.js";
 
 /**
  * 审计接口（h7 · C7-04 服务端）：按对象（objectType + objectId）/ 操作人（actorId）/ 动作 / 结果 / 项目 / 时间区间检索，

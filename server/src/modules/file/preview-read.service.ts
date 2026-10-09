@@ -4,7 +4,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutboxIfAbsent } from "../../db/outbox.js";
-import { ObjectStorage } from "../../storage/index.js";
+import { ObjectStorage, versionFileName } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import { UserService } from "../identity/index.js";
 import { PermissionService } from "../permission/index.js";
@@ -16,10 +16,15 @@ import { isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } 
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
-/** 查看器权限段（固定只读；S8-2 契约 / 首关 PoC 口径 —— download=false 只约束查看器自身，防直取依赖受控端点鉴权）。 */
+/** 查看器权限段（固定只读；S8-2 契约 / 首关 PoC 口径）。
+ * **Push 258 错层修正**：必须嵌进 document 签发 —— ONLYOFFICE api.js 只认 document.permissions（发顶层会被忽略、
+ * 按默认值渲染）；token 载荷与前端组装配置须逐字一致，否则 DocServer 拒 -20。
+ * **download 保持可见（业务口径「原本的下载不要隐藏」）**：图标原样保留、不再隐藏，点击由浮层透明命中层原位接管 →
+ * 我方 download-url 原文件链 + download 审计；print 维持关闭（只读口径，业务未提）。 */
+
 const VIEWER_PERMISSIONS = {
   edit: false,
-  download: false,
+  download: true,
   print: false,
   comment: false,
   chat: false,
@@ -78,15 +83,21 @@ export class PreviewReadService {
       return this.degrade(file.id, null, "文件尚无任何版本（未完成过上传），请下载查看");
     }
 
+    // Push 256（业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：通道判定的文件名取**该版本**
+    // 的真实名称 —— 主名取当前文件名、扩展名取版本对象键（落库时定下的扩展名）。变更更名（.xls → .pptx）后，
+    // 新版本按新扩展名判通道（否则 ONLYOFFICE 报 -85「扩展名不一致」）；历史版本仍按各自旧扩展名判通道
+    //（否则历史的 xls 内容会被当成 pptx）。
+    const channelName = versionFileName(file.name, version.objectKey);
+
     // S6-前置（D6）：图片 → 原对象短时签名直签（优先于产物通道判定：不投任务 / 不落产物行 / 不经 deploy/preview）。
-    if (isImageFile({ fileName: file.name, mime: version.mime })) {
+    if (isImageFile({ fileName: channelName, mime: version.mime })) {
       return this.serveImageDirect(file, version, actorId);
     }
 
-    const targets = previewTargetsFor({ fileName: file.name, mime: version.mime });
+    const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
     if (targets.length === 0) {
       // S3（ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
-      const viewerChannel = viewerChannelFor({ fileName: file.name, mime: version.mime });
+      const viewerChannel = viewerChannelFor({ fileName: channelName, mime: version.mime });
       if (viewerChannel !== null) {
         return this.serveViewer(file, version, viewerChannel, actorId);
       }
@@ -268,19 +279,21 @@ export class PreviewReadService {
       url: buildPreviewContentUrl(this.config.env.ONLYOFFICE_DOCSERVER_API_BASE_URL, file.id, version.id),
       fileType: channel.fileType,
       key: version.contentHash,
+      // Push 258 错层修正：权限段嵌 document（ONLYOFFICE 只认该位置；token 与响应体同源，逐字一致）。
+      permissions: { ...VIEWER_PERMISSIONS },
     };
     const editorConfig = {
       mode: "view" as const,
       lang: "zh-CN",
       user: { id: actorId, name: await this.displayNameOf(actorId) },
     };
-    // token 载荷 = 四段逐字签发（S8-2）+ iat / exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS，契约不含该字段）。
+    // token 载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发（S8-2 · Push 258 修订）
+    // + iat / exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS，契约不含该字段）。
     const token = signHs256Jwt(
       {
         documentType: channel.documentType,
         document,
         editorConfig,
-        permissions: { ...VIEWER_PERMISSIONS },
         iat: issuedAt,
         exp: issuedAt + this.config.env.ONLYOFFICE_JWT_TTL_SECONDS,
       },
@@ -306,7 +319,6 @@ export class PreviewReadService {
         documentType: channel.documentType,
         document,
         editorConfig,
-        permissions: { ...VIEWER_PERMISSIONS },
         token,
       },
       url: null,

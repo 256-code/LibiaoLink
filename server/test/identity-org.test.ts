@@ -3,6 +3,8 @@ import { PERMISSION_KEYS } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
+import type { DatabaseService } from "../src/db/database.service.js";
+import type { AuditRecordInput, AuditService } from "../src/modules/audit/index.js";
 import { sortDataScopes, widestDataScope } from "../src/modules/identity/data-scope.js";
 import { DepartmentRepository, type DepartmentRow, type DepartmentUpsertInput } from "../src/modules/identity/department.repository.js";
 import { DepartmentService } from "../src/modules/identity/department.service.js";
@@ -137,11 +139,29 @@ class FakeSessionService {
   }
 }
 
-function buildOrgSync(departments: FakeDepartmentRepository, users: FakeUserRepository, sessions: FakeSessionService): OrgSyncService {
+class FakeAuditService {
+  records: AuditRecordInput[] = [];
+  async record(_client: unknown, input: AuditRecordInput): Promise<void> {
+    this.records.push(input);
+  }
+}
+
+class FakeDatabase {
+  readonly db = {} as unknown as DatabaseService["db"];
+}
+
+function buildOrgSync(
+  departments: FakeDepartmentRepository,
+  users: FakeUserRepository,
+  sessions: FakeSessionService,
+  audit: FakeAuditService = new FakeAuditService(),
+): OrgSyncService {
   return new OrgSyncService(
     departments as unknown as DepartmentRepository,
     users as unknown as UserRepository,
     sessions as unknown as SessionService,
+    audit as unknown as AuditService,
+    new FakeDatabase() as unknown as DatabaseService,
   );
 }
 
@@ -400,7 +420,8 @@ describe("OrgSyncService（组织同步差异）", () => {
     const departments = new FakeDepartmentRepository();
     const users = new FakeUserRepository();
     const sessions = new FakeSessionService();
-    const service = buildOrgSync(departments, users, sessions);
+    const audit = new FakeAuditService();
+    const service = buildOrgSync(departments, users, sessions, audit);
     await service.applySnapshot(
       snapshot({
         users: [
@@ -425,13 +446,24 @@ describe("OrgSyncService（组织同步差异）", () => {
     expect(report.users.sessionsRevoked).toBe(1);
     expect(sessions.revokedFor).toEqual(["user-2"]);
     expect(users.rows.find((row) => row.casdoorId === "c2")?.status).toBe("disabled");
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]).toMatchObject({
+      actorId: null,
+      action: "update",
+      objectType: "user",
+      objectId: "user-2",
+      entry: "system",
+      changes: [{ field: "status", from: "active", to: "disabled" }],
+      metadata: { source: "org_sync", reason: "directory_disabled", casdoorId: "c2", sessionsRevoked: 1 },
+    });
   });
 
   it("缺失用户默认只报告（missingUserPolicy=report），不禁用不踢线", async () => {
     const departments = new FakeDepartmentRepository();
     const users = new FakeUserRepository();
     const sessions = new FakeSessionService();
-    const service = buildOrgSync(departments, users, sessions);
+    const audit = new FakeAuditService();
+    const service = buildOrgSync(departments, users, sessions, audit);
     await service.applySnapshot(
       snapshot({ users: [{ casdoorId: "c1", username: "wang", displayName: "王工", email: null, status: "active" }] }),
     );
@@ -441,13 +473,15 @@ describe("OrgSyncService（组织同步差异）", () => {
     expect(report.missing.disabled).toBe(false);
     expect(users.rows[0]?.status).toBe("active");
     expect(sessions.revokedFor).toEqual([]);
+    expect(audit.records).toEqual([]);
   });
 
   it("missingUserPolicy=disable：阈值内禁用缺失用户并踢线（离职回收闭环）", async () => {
     const departments = new FakeDepartmentRepository();
     const users = new FakeUserRepository();
     const sessions = new FakeSessionService();
-    const service = buildOrgSync(departments, users, sessions);
+    const audit = new FakeAuditService();
+    const service = buildOrgSync(departments, users, sessions, audit);
     await service.applySnapshot(
       snapshot({
         users: [
@@ -465,13 +499,24 @@ describe("OrgSyncService（组织同步差异）", () => {
     expect(report.users.disabledUsernames).toEqual(["wang"]);
     expect(report.users.sessionsRevoked).toBe(1);
     expect(users.rows.find((row) => row.casdoorId === "c1")?.status).toBe("disabled");
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]).toMatchObject({
+      actorId: null,
+      action: "update",
+      objectType: "user",
+      objectId: "user-1",
+      entry: "system",
+      changes: [{ field: "status", from: "active", to: "disabled" }],
+      metadata: { source: "org_sync", reason: "missing_from_snapshot", casdoorId: "c1", sessionsRevoked: 1 },
+    });
   });
 
   it("缺失超过安全阀阈值：只报告不执行（防快照故障误伤全员）", async () => {
     const departments = new FakeDepartmentRepository();
     const users = new FakeUserRepository();
     const sessions = new FakeSessionService();
-    const service = buildOrgSync(departments, users, sessions);
+    const audit = new FakeAuditService();
+    const service = buildOrgSync(departments, users, sessions, audit);
     const all = Array.from({ length: 10 }, (_, index) => ({
       casdoorId: "c" + String(index),
       username: "u" + String(index),
@@ -486,13 +531,15 @@ describe("OrgSyncService（组织同步差异）", () => {
     expect(report.users.disabled).toBe(0);
     expect(sessions.revokedFor).toEqual([]);
     expect(users.rows.filter((row) => row.status === "active")).toHaveLength(10);
+    expect(audit.records).toEqual([]);
   });
 
   it("复职：目录恢复 active 时置回并计数（不自动重建会话）", async () => {
     const departments = new FakeDepartmentRepository();
     const users = new FakeUserRepository();
     const sessions = new FakeSessionService();
-    const service = buildOrgSync(departments, users, sessions);
+    const audit = new FakeAuditService();
+    const service = buildOrgSync(departments, users, sessions, audit);
     await service.applySnapshot(
       snapshot({ users: [{ casdoorId: "c1", username: "wang", displayName: "王工", email: null, status: "disabled" }] }),
     );
@@ -502,6 +549,16 @@ describe("OrgSyncService（组织同步差异）", () => {
     expect(report.users.enabled).toBe(1);
     expect(report.users.disabled).toBe(0);
     expect(users.rows[0]?.status).toBe("active");
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]).toMatchObject({
+      actorId: null,
+      action: "update",
+      objectType: "user",
+      objectId: "user-1",
+      entry: "system",
+      changes: [{ field: "status", from: "disabled", to: "active" }],
+      metadata: { source: "org_sync", reason: "directory_enabled", casdoorId: "c1" },
+    });
   });
 
   it("用户快照重复 casdoorId → 400 VALIDATION_FAILED", async () => {

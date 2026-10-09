@@ -24,8 +24,9 @@ export class BlueprintRepository {
     payload: Blueprint,
     actorId: string | null,
     at: Date,
+    client: DbClient = this.database.db,
   ): Promise<BlueprintRow> {
-    const rows = await this.database.db
+    const rows = await client
       .insert(blueprints)
       .values({
         projectType,
@@ -45,8 +46,14 @@ export class BlueprintRepository {
   }
 
   /** 保存草稿（last-write-wins：契约 BlueprintSaveBody 未带 version；version 仅作内部递增）。 */
-  async updateDraft(id: string, payload: Blueprint, actorId: string | null, at: Date): Promise<BlueprintRow | null> {
-    const rows = await this.database.db
+  async updateDraft(
+    id: string,
+    payload: Blueprint,
+    actorId: string | null,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<BlueprintRow | null> {
+    const rows = await client
       .update(blueprints)
       .set({
         name: payload.name,
@@ -92,7 +99,7 @@ export class BlueprintRepository {
     return rows[0] ?? null;
   }
 
-  /** 发布：写不可变版本行 + 递增 published_version（同一事务内原子完成）。 */
+  /** 发布：写不可变版本行 + 递增 published_version；调用方事务内原子完成（Push 173 起审计同事务）。 */
   async publishVersion(
     blueprintId: string,
     blueprintVersion: number,
@@ -100,27 +107,26 @@ export class BlueprintRepository {
     issues: BlueprintIssue[],
     actorId: string | null,
     at: Date,
+    client: DbClient = this.database.db,
   ): Promise<void> {
-    await this.database.db.transaction(async (tx) => {
-      await tx.insert(blueprintVersions).values({
-        blueprintId,
-        blueprintVersion,
-        payload,
-        issues,
-        publishedBy: actorId,
-        publishedAt: at,
-      });
-      await tx
-        .update(blueprints)
-        .set({
-          draftPayload: payload,
-          draftUpdatedAt: at,
-          draftUpdatedBy: actorId,
-          publishedVersion: blueprintVersion,
-          version: sql`${blueprints.version} + 1`,
-          updatedAt: at,
-        })
-        .where(eq(blueprints.id, blueprintId));
+    await client.insert(blueprintVersions).values({
+      blueprintId,
+      blueprintVersion,
+      payload,
+      issues,
+      publishedBy: actorId,
+      publishedAt: at,
     });
+    await client
+      .update(blueprints)
+      .set({
+        draftPayload: payload,
+        draftUpdatedAt: at,
+        draftUpdatedBy: actorId,
+        publishedVersion: blueprintVersion,
+        version: sql`${blueprints.version} + 1`,
+        updatedAt: at,
+      })
+      .where(eq(blueprints.id, blueprintId));
   }
 }
