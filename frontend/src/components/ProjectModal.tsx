@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
 import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type DictItem, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
 import type { Member } from "../data/members";
 import { DictSelect } from "./DictSelect";
+import { ScrollArea } from "./ScrollArea";
 import { MemberMultiSelect } from "./MemberSelect";
 import { RegionSelect } from "./RegionSelect";
+import { PROJECT_STATUS_TEXT, PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
 
 /**
  * 项目地区（Push 195）：点开 = 贴字段弹出的小窗（RegionSelect）——最上方「已有项目地区」（有项目在用的，
@@ -26,7 +28,15 @@ export type ProjectDraft = {
   projectType: string;
   /** 项目地区：字典 region 的码 / 标准国家清单里的中文国名（Push 195 模态窗点选）。 */
   region: string;
+  /** 项目状态（Push 262）：active / paused / done 走 PATCH；archived 走归档端点（见 App.handleUpdateProject）。 */
+  status: ProjectStatusValue;
 };
+
+/** 弹窗提交结果（Push 262）：ok = 成功（父层关窗）；error = 提示文案；archive-confirm = 归档缺项，弹窗内二次确认。 */
+export type ProjectSubmitResult =
+  | { kind: "ok" }
+  | { kind: "error"; message: string }
+  | { kind: "archive-confirm"; missing: string[] };
 
 type ProjectModalProps = {
   mode: "create" | "edit";
@@ -39,9 +49,11 @@ type ProjectModalProps = {
   canManageDicts: boolean;
   /** 项目经理候选（GET /api/v1/users）。 */
   managerOptions: Member[];
+  /** 是否持有 project.archive（Push 262）：决定「已归档」选项的呈现（服务端仍是最终裁决）。 */
+  canArchive?: boolean;
   onClose: () => void;
-  /** 提交：返回 null = 成功（父层负责关窗 / 刷新列表）；返回文案 = 失败提示，窗口保持打开。 */
-  onSubmit: (draft: ProjectDraft) => Promise<string | null>;
+  /** 提交（Push 262 起返回结构化结果）：ok = 成功（父层负责关窗 / 刷新列表）；error = 失败提示；archive-confirm = 归档缺项，弹窗内二次确认。 */
+  onSubmit: (draft: ProjectDraft, options?: { archiveConfirm?: boolean }) => Promise<ProjectSubmitResult>;
 };
 
 const fieldClass =
@@ -64,17 +76,27 @@ function projectTypeContent(name: string, item: DictItem | null): ReactNode {
   );
 }
 
-export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, managerOptions, onClose, onSubmit }: ProjectModalProps) {
+export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, managerOptions, canArchive = false, onClose, onSubmit }: ProjectModalProps) {
   const isEdit = mode === "edit";
+  /** 已归档项目只读（ADR-027）：弹窗只读展示，不给保存（服务端同样 409 PROJECT_ARCHIVED）。 */
+  const archivedLock = isEdit && initial?.status === "archived";
   const [code, setCode] = useState(initial?.code ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [managerIds, setManagerIds] = useState<string[]>(initial?.managerIds ?? []);
   const [projectType, setProjectType] = useState<string>(initial?.projectType ?? dicts.projectType[0]?.code ?? "");
   /** 新建默认不带地区（业务口径「新建项目不要默认英国 默认为空即可」）：占位「请选择地区」，由用户在小窗里点选。 */
   const [region, setRegion] = useState<string>(initial?.region ?? "");
+  /** 项目状态（Push 262）：新建 = active；编辑 = 库里现值（未知值回落 active 兜底）。 */
+  const [status, setStatus] = useState<ProjectStatusValue>(projectStatusOf(initial?.status ?? "active") ?? "active");
   const [regionPopoverOpen, setRegionPopoverOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 归档缺项（Push 262）：非空 = 显示二次确认区（仍要归档 / 取消）。 */
+  const [archiveMissing, setArchiveMissing] = useState<string[] | null>(null);
+  /** 缺项面板出现时滚进视野（Push 262 追订：弹窗内容高过视口时可滚动，面板在折叠区外）。 */
+  const archivePanelRef = useRef<HTMLDivElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   /** Esc：地区小窗开着时由它自己关（usePopover 统一处理），这里放行 —— 再按一次才关整个项目弹窗。 */
   useEffect(() => {
@@ -93,11 +115,87 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     };
   }, [onClose, regionPopoverOpen]);
 
+  useEffect(() => {
+    if (archiveMissing !== null) {
+      archivePanelRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [archiveMissing]);
+
+  /** 弹窗打开期间锁背景滚动（Push 262 追订②）：鼠标在卡片外滚动不许带动后方项目页。 */
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const previous = { html: html.style.overflow, body: body.style.overflow, pad: body.style.paddingRight };
+    // 经典滚动条占位补回来，锁滚动时页面不横向跳动
+    const gap = window.innerWidth - html.clientWidth;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    if (gap > 0) {
+      body.style.paddingRight = String(gap) + "px";
+    }
+    return () => {
+      html.style.overflow = previous.html;
+      body.style.overflow = previous.body;
+      body.style.paddingRight = previous.pad;
+    };
+  }, []);
+
+  /**
+   * 滚轮只滚弹窗：卡片内的滚轮交给 ScrollArea 原生处理；卡片外的滚轮转给弹窗滚动区
+   * （`passive: false` 才能拦下默认行为 —— React 的合成 wheel 监听是被动的，拦不住页面滚动）。
+   */
+  useEffect(() => {
+    const node = overlayRef.current;
+    if (node === null) {
+      return;
+    }
+    const handleWheel = (event: WheelEvent) => {
+      const dialog = dialogRef.current;
+      if (dialog === null) {
+        return;
+      }
+      const viewport = dialog.querySelector("[data-scroll-area=vertical]");
+      if (!(viewport instanceof HTMLElement)) {
+        return;
+      }
+      if (event.target instanceof Node && viewport.contains(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      viewport.scrollTop += event.deltaY;
+    };
+    node.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      node.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+
   const canSubmit =
-    code.trim() !== "" && description.trim() !== "" && managerIds.length > 0 && projectType !== "" && region !== "" && !pending;
+    code.trim() !== "" &&
+    description.trim() !== "" &&
+    managerIds.length > 0 &&
+    projectType !== "" &&
+    region !== "" &&
+    !pending &&
+    archiveMissing === null &&
+    !archivedLock;
   const title = isEdit ? "编辑项目" : "新建项目";
   /** 触发器上的展示名：字典条目给字典名（阿联酋 → 阿拉伯联合酋长国）；否则值本身（标准中文国名）。 */
   const regionLabel = dictLabel(dicts, "region", region);
+
+  const applyResult = (result: ProjectSubmitResult): void => {
+    if (result.kind === "error") {
+      setError(result.message);
+      setArchiveMissing(null);
+      return;
+    }
+    if (result.kind === "archive-confirm") {
+      setError(null);
+      setArchiveMissing(result.missing);
+      return;
+    }
+    // ok：父层负责关窗
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -106,28 +204,40 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     }
     setPending(true);
     setError(null);
-    const message = await onSubmit({ code, description, managerIds, projectType, region });
+    const result = await onSubmit({ code, description, managerIds, projectType, region, status });
     setPending(false);
-    if (message !== null) {
-      setError(message);
+    applyResult(result);
+  };
+
+  /** 归档缺项二次确认（Push 262）：带 confirm=true 重试归档（缺项随归档清单留痕）。 */
+  const handleArchiveConfirm = async (): Promise<void> => {
+    if (pending) {
+      return;
     }
+    setPending(true);
+    setError(null);
+    const result = await onSubmit({ code, description, managerIds, projectType, region, status }, { archiveConfirm: true });
+    setPending(false);
+    applyResult(result);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div ref={overlayRef} className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-zinc-900/40" onClick={onClose} />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
+        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
       >
         <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
         <p className="mt-1 text-sm text-zinc-500">
           {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后按创建时间出现在列表里。"}
         </p>
 
-        <form className="mt-5 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+        <ScrollArea viewportClassName="mt-5 min-h-0 flex-1" className="overscroll-contain space-y-4 px-0.5 pb-1" ariaLabel="项目表单" thumbAlwaysVisible>
+        <form id="project-modal-form" className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目编号</span>
             <input
@@ -201,29 +311,122 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
             />
           </div>
 
+          {isEdit ? (
+            <div className="block">
+              <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目状态</span>
+              <div role="radiogroup" aria-label="项目状态" className="flex flex-wrap gap-2">
+                {PROJECT_STATUS_VALUES.map((value) => {
+                  const archiveOption = value === "archived";
+                  const disabled = archivedLock || (archiveOption && !canArchive);
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={status === value}
+                      data-project-status-option={value}
+                      data-selected={status === value ? "true" : "false"}
+                      disabled={disabled}
+                      title={
+                        disabled
+                          ? archivedLock
+                            ? "项目已归档，处于只读保护（ADR-027）"
+                            : "需要归档权限（项目经理 / 管理员）"
+                          : undefined
+                      }
+                      onClick={() => {
+                        setStatus(value);
+                        setArchiveMissing(null);
+                        setError(null);
+                      }}
+                      className={
+                        "rounded-lg border px-3 py-1.5 text-sm transition " +
+                        (status === value
+                          ? "border-transparent bg-[#feca04] font-medium text-zinc-900 shadow-sm"
+                          : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100") +
+                        (disabled ? " cursor-not-allowed opacity-50" : "")
+                      }
+                    >
+                      {PROJECT_STATUS_TEXT[value]}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="mt-1 block text-[11px] text-zinc-400">
+                {archivedLock
+                  ? "项目已归档：处于只读保护（ADR-027），不能修改。"
+                  : status === "archived"
+                    ? "归档走归档流程：需先完成验收；有缺项时二次确认后带缺项归档（留痕）。"
+                    : "保存后立即生效，并写入操作记录。"}
+              </span>
+            </div>
+          ) : null}
+
+          {archiveMissing === null ? null : (
+            <div
+              ref={archivePanelRef}
+              data-archive-confirm="true"
+              role="alertdialog"
+              aria-label="归档缺项确认"
+              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900"
+            >
+              <p className="font-medium">归档门禁未通过：{archiveMissing.length} 项缺项</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {archiveMissing.map((item, index) => (
+                  <li key={String(index)} data-archive-missing-item="true">{item}</li>
+                ))}
+              </ul>
+              <p className="mt-1.5">确认后带缺项归档，缺项随归档清单留痕。</p>
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  data-archive-cancel-button="true"
+                  onClick={() => {
+                    setArchiveMissing(null);
+                  }}
+                  className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-900 transition hover:bg-amber-100"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  data-archive-confirm-button="true"
+                  disabled={pending}
+                  onClick={() => void handleArchiveConfirm()}
+                  className="rounded-lg bg-[#feca04] px-2.5 py-1 text-xs font-medium text-zinc-900 shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {pending ? "归档中…" : "仍要归档"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {error === null ? null : (
             <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </p>
           )}
 
-          <div className="flex justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {pending ? "提交中…" : isEdit ? "保存修改" : "创建项目"}
-            </button>
-          </div>
         </form>
+        </ScrollArea>
+
+        <div className="mt-4 flex shrink-0 justify-end gap-3 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+          >
+            取消
+          </button>
+          <button
+            type="submit"
+            form="project-modal-form"
+            disabled={!canSubmit}
+            className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {archivedLock ? "已归档只读" : pending ? "提交中…" : isEdit ? "保存修改" : "创建项目"}
+          </button>
+        </div>
       </div>
     </div>
   );

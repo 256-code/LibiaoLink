@@ -15,12 +15,13 @@ import { usePopover } from "./usePopover";
  *    Office·文本 ONLYOFFICE 查看器外壳；R5 降级在同一下拉内出一行灰字提示）；
  *  - 行尾「删除」= 与任务表行删除**同款胶囊**（业务口径 2026-10-08「和胶囊的一样」—— 复用 RowDeleteButton：
  *    随行悬停浮现 24px 幽灵态、悬停按钮展开 48px 红胶囊「删除」，动效一致）→ 行内二次确认「确认删除 / 取消」，
- *    第二下才移入回收站（M4-02）；
+ *    第二下才移入回收站（M4-02）；任务已定档 = 删除入口整体下架（Push 260 · 业务口径「定档后还能删除是bug
+ *    不能删除定档后」—— 服务端 recycle 同闸 409 TASK_FINALIZED，修改走变更）；
  *  - 定档入口（Push 249 → Push 251 改版 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」→
  *    「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」）：顶部并排两钮，
  *    「＋ 添加文件」在前 = 普通 draft 直传、「＋ 添加定档文件」在后 = 直接开选文件框、传完即对该文件定档（files.finalize），
  *    任务随文件定档一并锁定（服务端同事务）：此后任务不支持任何修改、修改走变更（两者都不再出一问、无取消按钮）；
- *    任务已定档（taskFinalized）时两个添加入口关闭并落一行提示、下拉顶出常驻提示；
+ *    任务已定档（taskFinalized）时两个添加入口关闭并落一行提示、下拉顶出常驻提示（文案含「删除」口径）、删除入口下架；
  *  - Push 248 的行尾「替换」入口已在 Push 251 撤销（业务口径「取消这个替换按钮」）：入口与整套替换流程整体撤除 ——
  *    接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）；
  *  - 上传 / 进度 / 删除确认都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉；
@@ -234,7 +235,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
           />
           {taskFinalized ? (
             <p data-task-files-note-finalized="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] leading-4 text-amber-600">
-              任务已定档：不支持新增 / 改名等修改
+              任务已定档：不支持新增 / 改名 / 删除等修改
             </p>
           ) : null}
           <div className="border-t border-zinc-100">
@@ -259,7 +260,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                         {file.name}
                       </button>
                       {previewingThis ? <span className="shrink-0 text-[10px] text-zinc-400">预览中…</span> : null}
-                      {onDelete === undefined ? null : confirming ? (
+                      {onDelete === undefined || taskFinalized ? null : confirming ? (
                         <span data-task-files-delete-confirm="true" className="flex shrink-0 items-center gap-1">
                           <button
                             type="button"

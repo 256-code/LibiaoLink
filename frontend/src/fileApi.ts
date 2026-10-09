@@ -31,7 +31,9 @@
  * 预览：GET /api/v1/files/{fileId}/preview → ready 时短时签名 URL（模块级缓存 + 订阅，供附图懒取）。
  * Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊… 变更记录也要显示 之前是什么文件 这次是什么文件… 文件可以预览在变更里面」）：
  *   变更记录行接版本链 —— fetchFileVersions（GET /files/{id}/versions）+ 版本态预览 / 下载
- *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载）。
+ *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载 * Push 261（业务口径「新增文件库 文件库里面分为 系统现有文件 回收站」）：文件库列表（fetchProjectFileLibrary —— 跨项目聚合的单项目读口，
+ *   按项目分页取满；系统现有文件 = 四档在库状态、回收站 = filter[status]=recycled）与回收站两个写口（restoreFile / purgeFile）在此收口；
+ *   页面见 frontend/src/FileLibraryPage.tsx。
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { apiRequest, apiSend } from "./api";
@@ -509,4 +511,91 @@ export function usePhotoUrl(fileId: string, localUrl: string | null): string | n
     }
   }, [fileId, localUrl]);
   return localUrl ?? remote;
+}
+
+/**
+ * 文件库列表项（M4-03 读面 FileSchema 子集；Push 261「文件库（系统现有文件 / 回收站）」）。
+ * 列表项不带大小（大小在版本链上：FileVersionSchema.sizeBytes）—— 文件库不展示，预览 / 下载走各自入口。
+ * 状态取值：draft（草稿）/ final（已定档）/ changed（已变更）/ archived（已归档）/ recycled（回收站）。
+ */
+export type FileLibraryItem = {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  docType: string | null;
+  name: string;
+  status: string;
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  finalizedAt: string | null;
+  recycledAt: string | null;
+  recycledBy: string | null;
+  recycledFromStatus: string | null;
+};
+
+/**
+ * 文件库单项目查询（契约 FileListQuerySchema 子集）。
+ * statuses 必给：系统现有文件栏 = 四档在库状态（draft / final / changed / archived；服务端缺省虽排除 recycled，
+ * 但显式给全更不容易随口径漂移），回收站栏 = recycled（服务端显式 filter[status]=recycled 才返回回收站行）。
+ */
+export type FileLibraryQuery = {
+  statuses: readonly string[];
+  /** 文件名关键字（服务端 ILIKE 包含命中、大小写不敏感）；空 / 缺省 = 不落参数。 */
+  keyword?: string;
+  /** 成果文件类型（十类字典，中文值）；空 / 缺省 = 不落参数。 */
+  docType?: string;
+  /** 上传人（createdBy）；空 / 缺省 = 不落参数。 */
+  uploadedBy?: string;
+};
+
+/** 单项目文件库一页的请求地址（契约参数命名：filter[...] 键名不编码、多值逗号分隔，与 projectApi.buildListQuery 同口径）。 */
+function fileLibraryPageUrl(projectId: string, query: FileLibraryQuery, page: number): string {
+  const parts = [
+    "limit=200",
+    "page=" + String(page),
+    "filter[status]=" + query.statuses.map((status) => encodeURIComponent(status)).join(","),
+  ];
+  if (query.keyword !== undefined && query.keyword !== "") {
+    parts.push("q=" + encodeURIComponent(query.keyword));
+  }
+  if (query.docType !== undefined && query.docType !== "") {
+    parts.push("filter[docType]=" + encodeURIComponent(query.docType));
+  }
+  if (query.uploadedBy !== undefined && query.uploadedBy !== "") {
+    parts.push("filter[uploadedBy]=" + encodeURIComponent(query.uploadedBy));
+  }
+  return "/api/v1/projects/" + encodeURIComponent(projectId) + "/files?" + parts.join("&");
+}
+
+/**
+ * 单项目文件库全量（Push 261 · 文件库页跨项目聚合的口子）：按项目分页取满（limit 上限 200、最多 20 页，
+ * 与 fetchTaskFiles 同一分页口径）；返回项的服务端序 = 最新在前（默认 createdAt 降序、id 升序兜底）。
+ * 单项目失败（非成员 404 / 网络抖动）向调用方抛 —— 由页面逐项目兜底跳过，不阻断整页（见 FileLibraryPage.tsx）。
+ */
+export async function fetchProjectFileLibrary(projectId: string, query: FileLibraryQuery): Promise<FileLibraryItem[]> {
+  const items: FileLibraryItem[] = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const list = await apiRequest<{ items: FileLibraryItem[]; total: number }>(fileLibraryPageUrl(projectId, query, page));
+    items.push(...list.items);
+    if (items.length >= list.total) {
+      break;
+    }
+  }
+  return items;
+}
+
+/** 回收站恢复（Push 261 · 文件库「回收站」栏 · 任意账号）：POST /files/{id}/restore ——
+ *  回退到进入回收站前的状态（recycledFromStatus，兜底 draft）；乐观锁 version 先读详情取回（同 recycle / rename / finalize 口径）。 */
+export async function restoreFile(fileId: string): Promise<void> {
+  const detail = await apiRequest<{ version: number }>("/api/v1/files/" + encodeURIComponent(fileId));
+  await apiSend<{ id: string }>("/api/v1/files/" + encodeURIComponent(fileId) + "/restore", "POST", { version: detail.version });
+}
+
+/** 彻底删除（Push 261 · 文件库「回收站」栏 · 仅系统管理员 —— 服务端按 roleCodes=admin 硬闸，A4-12）：
+ *  POST /files/{id}/purge —— 对象与元数据一并清理、操作留痕；仅回收站中的文件可彻底删除；乐观锁 version 先读详情取回。 */
+export async function purgeFile(fileId: string): Promise<void> {
+  const detail = await apiRequest<{ version: number }>("/api/v1/files/" + encodeURIComponent(fileId));
+  await apiSend<{ fileId: string }>("/api/v1/files/" + encodeURIComponent(fileId) + "/purge", "POST", { version: detail.version });
 }

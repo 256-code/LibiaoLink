@@ -3,7 +3,7 @@ import type { ListQueryState } from "./useHashRoute";
 /**
  * 首页偏好本地记忆（A1-18「记忆并恢复用户上次选择」：URL 优先、本地次之）。
  *
- * - 记忆范围：地区 / 项目类型 / 项目经理 / 时间区间 / 排序，以及分类筛选侧边栏开合；
+ * - 记忆范围：地区 / 项目类型 / 项目经理 / 项目状态 / 时间区间 / 排序，以及分类筛选侧边栏开合；
  *   关键字（q）属于临时操作，不写入记忆。
  * - 仅在不带任何列表参数的入口（书签 / 直接输域名）下恢复；带参数的链接严格按 URL 展示。
  * - 退出登录时清除（多人共用设备的隔离手段）；存储受限（隐私模式）时静默降级，不影响页面功能。
@@ -12,7 +12,7 @@ import type { ListQueryState } from "./useHashRoute";
  */
 export type HomeFilterPrefs = Pick<
   ListQueryState,
-  "regions" | "projectTypes" | "managerIds" | "timeFrom" | "timeTo" | "sortDesc"
+  "regions" | "projectTypes" | "managerIds" | "statuses" | "timeFrom" | "timeTo" | "sortDesc"
 >;
 
 type StoredPrefs = {
@@ -59,12 +59,15 @@ function sanitizeFilters(value: unknown): HomeFilterPrefs | null {
   const regions = sanitizeList(record.regions);
   const projectTypes = sanitizeList(record.projectTypes);
   const managerIds = sanitizeList(record.managerIds);
+  // Push 262 追订：statuses 为新增维度 —— 旧记忆没有该字段时按「未选状态」兼容（不整条作废）。
+  const statuses = record.statuses === undefined ? [] : sanitizeList(record.statuses);
   const timeFrom = sanitizeDay(record.timeFrom);
   const timeTo = sanitizeDay(record.timeTo);
   if (
     regions === null ||
     projectTypes === null ||
     managerIds === null ||
+    statuses === null ||
     timeFrom === undefined ||
     timeTo === undefined ||
     typeof record.sortDesc !== "boolean"
@@ -72,7 +75,7 @@ function sanitizeFilters(value: unknown): HomeFilterPrefs | null {
     return null;
   }
   // 排序维度（Push 177 起固定创建时间）：旧记忆里的 sortField 字段直接忽略，不做校验（只保留方向）。
-  return { regions, projectTypes, managerIds, timeFrom, timeTo, sortDesc: record.sortDesc };
+  return { regions, projectTypes, managerIds, statuses, timeFrom, timeTo, sortDesc: record.sortDesc };
 }
 
 /** 读取存储；损坏或缺失一律按「无记忆」处理，不抛错。 */
@@ -127,6 +130,7 @@ export function saveFiltersPref(filters: ListQueryState): void {
     regions: filters.regions.slice(),
     projectTypes: filters.projectTypes.slice(),
     managerIds: filters.managerIds.slice(),
+    statuses: filters.statuses.slice(),
     timeFrom: filters.timeFrom,
     timeTo: filters.timeTo,
     sortDesc: filters.sortDesc,

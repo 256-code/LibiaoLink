@@ -9,6 +9,7 @@ import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
+import { Toast } from "./components/Toast";
 import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
@@ -17,7 +18,7 @@ import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
-import { projectManagerText } from "./types";
+import { PROJECT_STATUS_VALUES, projectManagerText, projectStatusText } from "./types";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
@@ -165,11 +166,12 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       const current = requestRef.current;
       setLoading(true);
       try {
-        const [page, regionFacets, typeFacets, managerFacets] = await Promise.all([
+        const [page, regionFacets, typeFacets, managerFacets, statusFacets] = await Promise.all([
           fetchProjectList(current),
           fetchProjectFacets(current, "regions"),
           fetchProjectFacets(current, "projectTypes"),
           fetchProjectFacets(current, "managerIds"),
+          fetchProjectFacets(current, "statuses"),
         ]);
         if (cancelled) {
           return;
@@ -182,7 +184,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           projectType: typeFacets.projectType,
           managerId: managerFacets.managerId,
           stageKey: regionFacets.stageKey,
-          status: regionFacets.status,
+          status: statusFacets.status,
         });
         setLoadError(null);
       } catch (error: unknown) {
@@ -225,6 +227,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               regions: filter.regions,
               projectTypes: filter.projectTypes,
               managerIds: filter.managerIds,
+              statuses: [],
               timeFrom: filter.timeFrom,
               timeTo: filter.timeTo,
               q: "",
@@ -278,6 +281,16 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       ),
     [activeFilters.managerIds, directory, facets.managerId],
   );
+  const statusOptions = useMemo(
+    () =>
+      buildOptions(
+        facets.status,
+        activeFilters.statuses,
+        (status) => projectStatusText(status),
+        PROJECT_STATUS_VALUES.slice(),
+      ),
+    [activeFilters.statuses, facets.status],
+  );
   const newestDay = useMemo(
     () => items.reduce((latest, project) => (project.updatedAt > latest ? project.updatedAt : latest), "").slice(0, 10),
     [items],
@@ -285,7 +298,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const managerChoices = useMemo(() => directoryMemberOptions(directory), [directory]);
 
   const resetFilters = () => {
-    updateFilters({ regions: [], projectTypes: [], managerIds: [], timeFrom: null, timeTo: null });
+    updateFilters({ regions: [], projectTypes: [], managerIds: [], statuses: [], timeFrom: null, timeTo: null });
   };
   // 正在生效的常用筛选：条件与某一组等价即高亮（排序 / 关键字不影响判定）
   const appliedSavedFilterId = useMemo(() => {
@@ -300,6 +313,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       regions: filter.regions.slice(),
       projectTypes: filter.projectTypes.slice(),
       managerIds: filter.managerIds.slice(),
+      // 常用筛选不含项目状态：应用组合时把状态筛选归零，避免「高亮的组合 ≠ 当前视图」
+      statuses: [],
       timeFrom: filter.timeFrom,
       timeTo: filter.timeTo,
     });
@@ -333,6 +348,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       regions: normalized.regions,
       projectTypes: normalized.projectTypes,
       managerIds: normalized.managerIds,
+      statuses: [],
       timeFrom: normalized.timeFrom,
       timeTo: normalized.timeTo,
     });
@@ -348,11 +364,13 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         regions={regionOptions}
         types={typeOptions}
         managers={managerOptions}
+        statuses={statusOptions}
         savedFilterCounts={savedCounts}
         newestDay={newestDay}
         selectedRegions={activeFilters.regions}
         selectedManagerIds={activeFilters.managerIds}
         selectedTypes={activeFilters.projectTypes}
+        selectedStatuses={activeFilters.statuses}
         dateRange={dateRange}
         savedFilters={savedFilters}
         appliedSavedFilterId={appliedSavedFilterId}
@@ -378,6 +396,9 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         }}
         onToggleType={(projectType) => {
           updateFilters({ projectTypes: toggleValue(activeFilters.projectTypes, projectType) });
+        }}
+        onToggleStatus={(status) => {
+          updateFilters({ statuses: toggleValue(activeFilters.statuses, status) });
         }}
         onDateRangeChange={(range) => {
           updateFilters({
@@ -500,33 +521,23 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         )}
 
         {createHint === null ? null : (
-          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <span>{createHint}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setCreateHint(null);
-              }}
-              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-            >
-              关闭
-            </button>
-          </div>
+          <Toast
+            kind="info"
+            text={createHint}
+            onClose={() => {
+              setCreateHint(null);
+            }}
+          />
         )}
 
         {savedFilterError === null ? null : (
-          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <span>{savedFilterError}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setSavedFilterError(null);
-              }}
-              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-            >
-              关闭
-            </button>
-          </div>
+          <Toast
+            kind="error"
+            text={savedFilterError}
+            onClose={() => {
+              setSavedFilterError(null);
+            }}
+          />
         )}
 
         {loading && items.length === 0 ? (
@@ -586,6 +597,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 code={project.code}
                 description={project.description}
                 typeLabel={dictLabel(dicts, "projectType", project.projectType)}
+                status={project.status}
+                statusText={projectStatusText(project.status)}
                 accentColor={typeAccent(dicts, project.projectType).color}
                 accentText={typeAccent(dicts, project.projectType).text}
                 managerNames={projectManagerText(project)}
@@ -634,8 +647,9 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             const message = await onCreate(draft);
             if (message === null) {
               setIsCreateOpen(false);
+              return { kind: "ok" };
             }
-            return message;
+            return { kind: "error", message: message };
           }}
         />
       )}

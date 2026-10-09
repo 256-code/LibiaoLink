@@ -6,6 +6,7 @@ import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
+import { Toast } from "./components/Toast";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
@@ -30,6 +31,7 @@ import {
   statusWriteValue,
   taskWriteMessage,
   toUiTask,
+  unfinalizeTask,
   updateTask,
   updateTaskProgress,
   type ApiProjectSummary,
@@ -403,6 +405,24 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     void (async () => {
       try {
         replaceRow(await finalizeTask(projectId, taskId, row.version));
+        await afterWrite();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
+  };
+  /**
+   * 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：已定档开关再次点击 → 二次确认 →
+   * 清位重开（version+1、留痕「取消定档」；文件级定档不回退，文件修改仍走变更）；未定档 → 服务端幂等原样返回。
+   */
+  const handleUnfinalizeTask = (taskId: string) => {
+    const row = rowOf(taskId);
+    if (projectId === null || row === undefined) {
+      return;
+    }
+    void (async () => {
+      try {
+        replaceRow(await unfinalizeTask(projectId, taskId, row.version));
         await afterWrite();
       } catch (error) {
         reportWriteError(error);
@@ -915,18 +935,13 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         </div>
 
         {toolError === null ? null : (
-          <div role="alert" className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-            <span>{toolError}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setToolError(null);
-              }}
-              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-            >
-              关闭
-            </button>
-          </div>
+          <Toast
+            kind="error"
+            text={toolError}
+            onClose={() => {
+              setToolError(null);
+            }}
+          />
         )}
 
         {dataError === null ? null : (
@@ -951,7 +966,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -983,6 +998,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               onDeleteFile={handleDeleteTaskFile}
               onRenameFile={handleRenameTaskFile}
               onFinalize={handleFinalizeTask}
+              onUnfinalize={handleUnfinalizeTask}
               onChanged={reloadAll}
               actorName={me.user.displayName ?? ""}
               projectId={project.id}

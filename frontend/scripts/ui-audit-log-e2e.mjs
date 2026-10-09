@@ -2,18 +2,22 @@
 /**
  * LibiaoLink 前端 · 回放：操作记录页（C7-04 管理员查询页 · u12）
  *
- * 业务口径（2026-10-08）：「点击右上角头像 退出登录下面加一个操作记录 可以看到所有人的操作记录 可以筛选」。
+ * 业务口径（2026-10-08 / 09）：「点击右上角头像 退出登录下面加一个操作记录 可以看到所有人的操作记录 可以筛选」+「增加搜索功能」。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
  *   ① 头像菜单：「操作记录」在「退出登录」下方、href = #/audit（audit.view 画像在场才渲染）；
  *   ② 点入口 → 地址到 #/audit（缺省无 query）、页面就位；首屏 50 条封顶、时间倒序、右上角「共 N 条」；
  *   ③ 列口径：时间 YYYY-MM-DD HH:mm（Asia/Shanghai）、操作人姓名快照、动作 / 对象类型中文标签、结果签、项目码；
- *   ④ 筛选（地址即状态）：动作 = 修改（action=update）→ 行全为「修改」；结果 = 越权拒绝（result=denied）→ 行全为
- *      「越权拒绝」；操作人 = 潘兴（actor=<id>，叠加 result=denied）→ 行操作人全为潘兴、计数 = 交集；时间 = 今天（from / to，Asia/Shanghai 含端点，
+ *   ④ 筛选（地址即状态 · 多选追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」）：动作 = 修改 + 新增
+ *      （action=update,create，再点取消）、点选不关浮层、触发器 = 筛选名称 + 浅灰数量；结果 = 越权拒绝（result=denied）→ 行全为
+ *      「越权拒绝」（再累加 成功 → result=denied,succeeded）；操作人 = 潘兴（actor=<id>，叠加 result=denied）→ 行操作人全为潘兴、计数 = 交集；时间 = 今天（from / to，Asia/Shanghai 含端点，
  *      请求串里 from = 当天 00:00:00+08 的 ISO，行数 = 库内「今日 ∩ 潘兴 ∩ 越权拒绝」交集对账 —— 当天无记录时断言空态，日期无关）；
  *   ⑤ 分页：下一页 → page=2（请求同步）、首行换行；
  *   ⑥ 清除筛选 → 地址回 #/audit、请求无筛选参数；
- *   ⑦ 控制台零报错；跑完会话撤销、零残留（只读页，不写业务数据）。
+ *   ⑦ 关键字搜索（Push 260）：深链 #/audit?q=… 刷新直接打开同款；输入「定档」→ 250ms 防抖后地址 / 请求同步
+ *      q=（page 重置 1）、计数与首屏 50 条 = 库内「摘要 ∪ 操作人姓名 ∪ 变化明细」三路命中逐一对账；
+ *      无命中 → 空态 + 计数 0；清空（×）→ 地址回 #/audit、请求无 q=、首行还原；
+ *   ⑧ 控制台零报错；跑完会话撤销、零残留（只读页，不写业务数据）。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -164,6 +168,9 @@ async function pickOption(optionText) {
   await clickAt(point);
   return true;
 }
+/** 触发器探针：筛选名称 / 浅灰数量（data-select-trigger-*）+ 浮层是否打开。 */
+const triggerProbe = (selector) =>
+  "(function(){var t=document.querySelector(" + j(selector) + ");var p=document.querySelector(" + j("[data-select-popover]") + ");return {label:t===null?null:t.getAttribute(" + j("data-select-trigger-label") + "),count:t===null?null:t.getAttribute(" + j("data-select-trigger-count") + "),open:p!==null};})()";
 async function bail(message) {
   console.log("中止：" + message);
   checks.push({ name: "中止：" + message, ok: false });
@@ -207,7 +214,7 @@ if (menuReady !== true) { await bail("头像菜单里没有「操作记录」入
 const menuInfo = await ev("(function(){var a=document.querySelector(" + j("[data-account-audit]") + ");var box=a.parentElement;var items=box.querySelectorAll(" + j("[role=menuitem]") + ");var list=[];for(var i=0;i<items.length;i+=1){var it=items[i];var r=it.getBoundingClientRect();list.push({text:String(it.textContent).trim(),href:it.getAttribute(" + j("href") + "),y:Math.round(r.top),h:Math.round(r.height)});}var ra=a.getBoundingClientRect();return {items:list,auditText:String(a.textContent).trim(),auditHref:a.getAttribute(" + j("href") + "),auditY:Math.round(ra.top)};})()");
 const menuShot = await shot("audit-menu", { x: 900, y: 0, width: 600, height: 220, scale: 1 });
 console.log("截图：" + menuShot);
-check("头像菜单：两枚菜单项、首枚 = 退出登录、次枚 = 操作记录（href = #/audit）", menuInfo !== null && menuInfo.items.length === 2 && menuInfo.items[0].text === "退出登录" && menuInfo.auditText === "操作记录" && menuInfo.auditHref === "#/audit", JSON.stringify(menuInfo));
+check("头像菜单：三枚菜单项、首枚 = 退出登录、次枚 = 操作记录（href = #/audit）、三枚 = 文件库（href = #/files）", menuInfo !== null && menuInfo.items.length === 3 && menuInfo.items[0].text === "退出登录" && menuInfo.auditText === "操作记录" && menuInfo.auditHref === "#/audit" && menuInfo.items[2].text === "文件库" && menuInfo.items[2].href === "#/files", JSON.stringify(menuInfo));
 check("「操作记录」在「退出登录」下方（同一菜单内、纵向相邻）", menuInfo !== null && menuInfo.auditY > menuInfo.items[0].y && menuInfo.auditY - menuInfo.items[0].y < 48, menuInfo === null ? "null" : "auditY " + String(menuInfo.auditY) + " / logoutY " + String(menuInfo.items[0].y));
 
 // ② 点入口 → #/audit（缺省无 query）、首屏 50 条封顶 + 总数
@@ -226,6 +233,9 @@ check("时间列口径 YYYY-MM-DD HH:mm（Asia/Shanghai）+ 倒序", first !== n
 check("行口径齐备：操作人 / 动作标签 / 对象 / 结果签 / 项目列非空", first !== null && first.rows.every((row) => row.actor !== "" && row.action !== null && row.actionText !== "" && row.object !== "" && row.result !== null && row.resultText !== "" && row.project !== ""), first === null ? "null" : JSON.stringify(first.rows[0]));
 check("首屏请求无筛选参数（只有 page / limit）", lastReq().indexOf("page=1") !== -1 && lastReq().indexOf("limit=50") !== -1 && lastReq().indexOf("action=") === -1 && lastReq().indexOf("actorId=") === -1 && lastReq().indexOf("objectType=") === -1 && lastReq().indexOf("result=") === -1 && lastReq().indexOf("projectId=") === -1 && lastReq().indexOf("from=") === -1 && lastReq().indexOf("to=") === -1, lastReq());
 const firstRowId = first === null || first.rows.length === 0 ? null : first.rows[0].id;
+
+const auditProjectCell = await ev("(function(){var cs=document.querySelectorAll(" + j("[data-audit-project]") + ");var c=null;for(var i=0;i<cs.length;i+=1){if((cs[i].getAttribute(" + j("data-audit-project-name") + ")||'')!==''&&(cs[i].getAttribute(" + j("data-audit-project-code") + ")||'')!==''){c=cs[i];break;}}if(c===null){return null;}var spans=c.querySelectorAll(" + j("span") + ");return {name:c.getAttribute(" + j("data-audit-project-name") + "),code:c.getAttribute(" + j("data-audit-project-code") + "),rows:spans.length,direction:getComputedStyle(c).flexDirection,first:spans.length>0?String(spans[0].textContent).trim():null,second:spans.length>1?String(spans[1].textContent).trim():null};})()");
+check("项目列排版 = 中文名在上、编号在下（两行；与文件库同款 —— 追订「中文和编号的位置反一下」）", auditProjectCell !== null && auditProjectCell.rows === 2 && auditProjectCell.direction === "column" && auditProjectCell.first === auditProjectCell.name && auditProjectCell.second === auditProjectCell.code, JSON.stringify(auditProjectCell));
 
 // 人话护栏（2026-10-09 业务口径：「不要这种太机器的操作记录 要让人可以看懂的 那些路由还有具体的代码不要显示」）
 const pageText = await ev("(function(){var t=document.querySelector(" + j("[data-audit-page]") + ");if(t===null){return null;}return String(t.textContent);})()");
@@ -254,29 +264,61 @@ const pickedAction = await pickOption("修改");
 const actionReady = await waitFor("window.location.hash.indexOf(" + j("action=update") + ") !== -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 10000);
 await sleep(1000);
 const byAction = await ev(rowExpr);
+const actionUi = await ev(triggerProbe("[data-audit-filter=action] button"));
 const actionShot = await shot("audit-filter-action", { x: 0, y: 0, width: 1500, height: 700, scale: 1 });
 console.log("截图：" + actionShot);
-check("动作筛选 = 修改：菜单选中、地址 action=update", pickedAction === true && actionReady === true && byAction !== null && byAction.hash.indexOf("action=update") !== -1, byAction === null ? "null" : String(byAction.hash));
-check("动作筛选后：行全部为「修改」、计数「共 " + String(totalUpdate) + " 条」", byAction !== null && byAction.rowCount === 50 && byAction.rows.every((row) => row.action === "update" && row.actionText === "修改") && byAction.count === "共 " + String(totalUpdate) + " 条", JSON.stringify({ count: byAction === null ? null : byAction.count, first: byAction === null || byAction.rows.length === 0 ? null : byAction.rows[0].actionText }));
-check("动作筛选请求同步（action=update + page=1）", lastReq().indexOf("action=update") !== -1 && lastReq().indexOf("page=1") !== -1, lastReq());
+check("④ 动作筛选 = 多选第一项（修改）：点选不关浮层 + 触发器「动作 + 浅灰 1」、地址 action=update", pickedAction === true && actionReady === true && actionUi.open === true && actionUi.label === "动作" && actionUi.count === "1" && byAction !== null && byAction.hash.indexOf("action=update") !== -1, byAction === null ? "null" : JSON.stringify({ hash: byAction.hash, ui: actionUi }));
+check("④b 动作筛选后：行全部为「修改」、计数「共 " + String(totalUpdate) + " 条」、请求同步（action=update + page=1）", byAction !== null && byAction.rowCount === Math.min(totalUpdate, 50) && byAction.rows.every((row) => row.action === "update" && row.actionText === "修改") && byAction.count === "共 " + String(totalUpdate) + " 条" && lastReq().indexOf("action=update") !== -1 && lastReq().indexOf("page=1") !== -1, JSON.stringify({ count: byAction === null ? null : byAction.count, req: lastReq() }));
+const pickedCreate = await pickOption("新增");
+const actionMultiReady = await waitFor("window.location.hash.indexOf(" + j("action=update,create") + ") !== -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 10000);
+await sleep(1000);
+const byActionTwo = await ev(rowExpr);
+const actionMultiUi = await ev(triggerProbe("[data-audit-filter=action] button"));
+const totalUpdateCreate = await countOf("select count(*)::int n from audit_logs where action = any($1::text[])", [["update", "create"]]);
+check("④c 动作多选累加（修改 + 新增）：地址 action=update,create、触发器「动作 + 浅灰 2」、行全为「修改 / 新增」、计数 = 两动作并集", pickedCreate === true && actionMultiReady === true && actionMultiUi.label === "动作" && actionMultiUi.count === "2" && byActionTwo !== null && byActionTwo.count === "共 " + String(totalUpdateCreate) + " 条" && byActionTwo.rows.every((row) => (row.action === "update" && row.actionText === "修改") || (row.action === "create" && row.actionText === "新增")), JSON.stringify({ count: byActionTwo === null ? null : byActionTwo.count, db: totalUpdateCreate, ui: actionMultiUi }));
+const unpickUpdate = await pickOption("修改");
+const createOnlyReady = await waitFor("window.location.hash.indexOf(" + j("action=create") + ") !== -1 && window.location.hash.indexOf(" + j("action=update") + ") === -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 10000);
+await sleep(1000);
+const byCreate = await ev(rowExpr);
+const totalCreate = await countOf("select count(*)::int n from audit_logs where action = $1", ["create"]);
+check("④d 再次点击修改 = 取消选择：地址只剩 action=create、行全为「新增」、计数 = 新增", unpickUpdate === true && createOnlyReady === true && byCreate !== null && byCreate.count === "共 " + String(totalCreate) + " 条" && byCreate.rows.every((row) => row.action === "create" && row.actionText === "新增"), JSON.stringify({ count: byCreate === null ? null : byCreate.count, db: totalCreate }));
+await clickSelector("[data-audit-filter=action] button");
+await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
+await sleep(400);
 
-// ⑤ 结果筛选 = 越权拒绝（与动作=修改 交集为空 → 空态；随后清空动作 → 行全为「越权拒绝」）
+// ⑤ 结果筛选 = 多选（与动作=新增 交集为空 → 空态；取消动作 → 只剩「越权拒绝」；再累加 / 取消「成功」）
 await clickSelector("[data-audit-filter=result] button");
 await sleep(400);
 const pickedDenied = await pickOption("越权拒绝");
 const comboReady = await waitFor("window.location.hash.indexOf(" + j("result=denied") + ") !== -1", 10000);
 await sleep(1000);
 const combo = await ev(rowExpr);
-check("结果筛选 = 越权拒绝（与动作=修改 叠加）：命中空集 → 空态文案 + 请求带两参", pickedDenied === true && comboReady === true && combo !== null && combo.rowCount === 0 && combo.empty !== null && combo.empty.indexOf("没有操作记录") !== -1 && lastReq().indexOf("action=update") !== -1 && lastReq().indexOf("result=denied") !== -1, JSON.stringify({ empty: combo === null ? null : combo.empty, req: lastReq() }));
+const comboUi = await ev(triggerProbe("[data-audit-filter=result] button"));
+check("⑤ 结果筛选 = 越权拒绝（与动作=新增 叠加）：触发器「结果 + 浅灰 1」、命中空集 → 空态文案 + 请求带两参", pickedDenied === true && comboReady === true && comboUi.label === "结果" && comboUi.count === "1" && combo !== null && combo.rowCount === 0 && combo.empty !== null && combo.empty.indexOf("没有操作记录") !== -1 && lastReq().indexOf("action=create") !== -1 && lastReq().indexOf("result=denied") !== -1, JSON.stringify({ empty: combo === null ? null : combo.empty, req: lastReq() }));
 await clickSelector("[data-audit-filter=action] button");
 await sleep(400);
-await pickOption("全部动作");
+const unpickCreate = await pickOption("新增");
 const deniedReady = await waitFor("window.location.hash.indexOf(" + j("action=") + ") === -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 10000);
 await sleep(1000);
 const byDenied = await ev(rowExpr);
 const deniedShot = await shot("audit-filter-denied", { x: 0, y: 0, width: 1500, height: 700, scale: 1 });
 console.log("截图：" + deniedShot);
-check("仅结果 = 越权拒绝：行全部为「越权拒绝」、计数「共 " + String(totalDenied) + " 条」", deniedReady === true && byDenied !== null && byDenied.rows.every((row) => row.result === "denied" && row.resultText === "越权拒绝") && byDenied.count === "共 " + String(totalDenied) + " 条", JSON.stringify({ count: byDenied === null ? null : byDenied.count, first: byDenied === null || byDenied.rows.length === 0 ? null : byDenied.rows[0].resultText }));
+check("⑤b 取消动作（再点新增 = 取消选择）后：行全部为「越权拒绝」、计数「共 " + String(totalDenied) + " 条」", unpickCreate === true && deniedReady === true && byDenied !== null && byDenied.rows.every((row) => row.result === "denied" && row.resultText === "越权拒绝") && byDenied.count === "共 " + String(totalDenied) + " 条", JSON.stringify({ count: byDenied === null ? null : byDenied.count, first: byDenied === null || byDenied.rows.length === 0 ? null : byDenied.rows[0].resultText }));
+await clickSelector("[data-audit-filter=action] button");
+await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
+await sleep(400);
+await clickSelector("[data-audit-filter=result] button");
+await sleep(400);
+const pickedSucceeded = await pickOption("成功");
+const resultMultiReady = await waitFor("window.location.hash.indexOf(" + j("result=denied,succeeded") + ") !== -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 10000);
+await sleep(1000);
+const byResultTwo = await ev(rowExpr);
+const resultMultiUi = await ev(triggerProbe("[data-audit-filter=result] button"));
+const totalDeniedSucceeded = await countOf("select count(*)::int n from audit_logs where result = any($1::text[])", [["denied", "succeeded"]]);
+check("⑤c 结果多选累加（越权拒绝 + 成功）：地址 result=denied,succeeded、触发器「结果 + 浅灰 2」、行全为两种结果、计数 = 两结果并集", pickedSucceeded === true && resultMultiReady === true && resultMultiUi.label === "结果" && resultMultiUi.count === "2" && byResultTwo !== null && byResultTwo.count === "共 " + String(totalDeniedSucceeded) + " 条" && byResultTwo.rows.every((row) => (row.result === "denied" && row.resultText === "越权拒绝") || (row.result === "succeeded" && row.resultText === "成功")), JSON.stringify({ count: byResultTwo === null ? null : byResultTwo.count, db: totalDeniedSucceeded, ui: resultMultiUi }));
+const unpickSucceeded = await pickOption("成功");
+const deniedOnlyReady = await waitFor("window.location.hash.indexOf(" + j("result=denied") + ") !== -1 && window.location.hash.indexOf(" + j("result=denied,succeeded") + ") === -1", 10000);
+check("⑤d 再点成功 = 取消选择：地址回 result=denied（只剩越权拒绝）", unpickSucceeded === true && deniedOnlyReady === true, JSON.stringify({}));
 
 // ⑥ 操作人筛选 = 潘兴（actor=<id>）；再叠时间 = 今天（from / to，Asia/Shanghai）
 await clickSelector("[data-audit-filter=actor] button");
@@ -287,9 +329,13 @@ await sleep(1000);
 const byActor = await ev(rowExpr);
 const actorShot = await shot("audit-filter-actor", { x: 0, y: 0, width: 1500, height: 700, scale: 1 });
 console.log("截图：" + actorShot);
-check("操作人筛选 = " + userRow.display_name + "（叠加 result=denied）：行操作人全为本人、计数「共 " + String(totalActor) + " 条」", pickedActor === true && actorReady === true && byActor !== null && byActor.rows.every((row) => row.actor === userRow.display_name) && byActor.count === "共 " + String(totalActor) + " 条", JSON.stringify({ count: byActor === null ? null : byActor.count, first: byActor === null || byActor.rows.length === 0 ? null : byActor.rows[0].actor }));
-check("操作人筛选请求同步（actorId=<id>）", lastReq().indexOf("actorId=" + encodeURIComponent(userRow.id)) !== -1, lastReq());
-check("操作人 / 结果 两筛叠加也同步进请求", lastReq().indexOf("result=denied") !== -1, lastReq());
+const actorUi = await ev(triggerProbe("[data-audit-filter=actor] button"));
+check("⑥ 操作人筛选 = " + userRow.display_name + "（叠加 result=denied）：触发器「操作人 + 浅灰 1」、行操作人全为本人、计数「共 " + String(totalActor) + " 条」", pickedActor === true && actorReady === true && actorUi.label === "操作人" && actorUi.count === "1" && byActor !== null && byActor.rows.every((row) => row.actor === userRow.display_name) && byActor.count === "共 " + String(totalActor) + " 条", JSON.stringify({ count: byActor === null ? null : byActor.count, ui: actorUi }));
+check("⑥b 操作人筛选请求同步（actorId=<id>）", lastReq().indexOf("actorId=" + encodeURIComponent(userRow.id)) !== -1, lastReq());
+check("⑥c 操作人 / 结果 两筛叠加也同步进请求", lastReq().indexOf("result=denied") !== -1, lastReq());
+await clickSelector("[data-audit-filter=actor] button");
+await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
+await sleep(400);
 
 await clickSelector("[data-audit-filter=time] button");
 await sleep(500);
@@ -318,6 +364,45 @@ await sleep(1000);
 const cleared = await ev(rowExpr);
 check("清除筛选：地址回 #/audit、请求无筛选参数、首行还原", clearReady === true && lastReq().indexOf("action=") === -1 && lastReq().indexOf("actorId=") === -1 && lastReq().indexOf("result=") === -1 && lastReq().indexOf("from=") === -1 && cleared !== null && cleared.rows[0].id === firstRowId, JSON.stringify({ req: lastReq(), first: cleared === null || cleared.rows.length === 0 ? null : cleared.rows[0].id }));
 
+// ⑧ 关键字搜索（Push 260 · 业务口径 2026-10-09「增加搜索功能」）：深链（刷新不丢）→ 输入防抖 → 无命中 → 清空
+const KW = "定档";
+const KW_ENC = encodeURIComponent(KW);
+const kwPattern = "%" + KW + "%";
+const kwTotal = await countOf("select count(*)::int n from audit_logs where summary ilike $1 or actor_name ilike $1 or changes::text ilike $1", [kwPattern]);
+const kwIds = (await db.query("select id from audit_logs where summary ilike $1 or actor_name ilike $1 or changes::text ilike $1 order by occurred_at desc, id desc limit 50", [kwPattern])).rows.map((row) => String(row.id));
+console.log("搜索「" + KW + "」库内三路命中：" + String(kwTotal) + " 条（top" + String(kwIds.length) + " 参与对账）");
+await ev("window.location.hash = " + j("#/audit?q=" + KW_ENC));
+await page.send("Page.reload");
+const kwDeepReady = await waitFor("window.location.hash.indexOf(" + j("q=" + KW_ENC) + ") !== -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 20000);
+await sleep(1200);
+const byDeep = await ev(rowExpr);
+const kwShot = await shot("audit-search-keyword", { x: 0, y: 0, width: 1500, height: 700, scale: 1 });
+console.log("截图：" + kwShot);
+check("搜索深链 + 刷新：#/audit?q=「" + KW + "」直接打开 = 请求带 q、计数「共 " + String(kwTotal) + " 条」、首屏行 top50 同序", kwDeepReady === true && byDeep !== null && lastReq().indexOf("q=" + KW_ENC) !== -1 && byDeep.count === "共 " + String(kwTotal) + " 条" && byDeep.rows.map((row) => row.id).join(",") === kwIds.join(","), JSON.stringify({ req: lastReq(), count: byDeep === null ? null : byDeep.count, rows: byDeep === null ? null : byDeep.rows.length }));
+await clickSelector("[data-audit-filter=keyword] button");
+const kwCleared = await waitFor("window.location.hash === " + j("#/audit") + " && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 12000);
+await sleep(1200);
+const afterClear = await ev(rowExpr);
+check("清空搜索（×）：地址回 #/audit、请求无 q=、首行 / 全文计数还原", kwCleared === true && afterClear !== null && lastReq().indexOf("q=") === -1 && afterClear.rows[0].id === firstRowId && afterClear.count === "共 " + String(totalAll) + " 条", JSON.stringify({ req: lastReq(), first: afterClear === null || afterClear.rows.length === 0 ? null : afterClear.rows[0].id }));
+await clickSelector("[data-audit-filter=keyword] input");
+await page.send("Input.insertText", { text: KW });
+const kwReady = await waitFor("window.location.hash.indexOf(" + j("q=" + KW_ENC) + ") !== -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 12000);
+await sleep(1200);
+const byKeyword = await ev(rowExpr);
+check("输入搜索「" + KW + "」：地址 / 请求同步（q= + page=1，防抖后真查）", kwReady === true && byKeyword !== null && byKeyword.hash.indexOf("q=" + KW_ENC) !== -1 && lastReq().indexOf("q=" + KW_ENC) !== -1 && lastReq().indexOf("page=1") !== -1, JSON.stringify({ hash: byKeyword === null ? null : byKeyword.hash, req: lastReq() }));
+check("搜索「" + KW + "」计数 / 首屏行与库内三路命中逐一对账", byKeyword !== null && byKeyword.count === "共 " + String(kwTotal) + " 条" && byKeyword.rows.map((row) => row.id).join(",") === kwIds.join(","), JSON.stringify({ count: byKeyword === null ? null : byKeyword.count, db: kwTotal, rows: byKeyword === null ? null : byKeyword.rows.length }));
+const NO_MATCH = "ZZZ不存在关键字ZZZ";
+const NO_MATCH_ENC = encodeURIComponent(NO_MATCH);
+await clickSelector("[data-audit-filter=keyword] button");
+await sleep(600);
+await clickSelector("[data-audit-filter=keyword] input");
+await page.send("Input.insertText", { text: NO_MATCH });
+const kwEmptyReady = await waitFor("window.location.hash.indexOf(" + j("q=" + NO_MATCH_ENC) + ") !== -1 && document.querySelector(" + j("[data-audit-empty]") + ") !== null", 12000);
+await sleep(800);
+const kwEmpty = await ev(rowExpr);
+check("搜索无命中（" + NO_MATCH + "）：空态「没有匹配」+ 计数 0 + 请求带 q", kwEmptyReady === true && kwEmpty !== null && kwEmpty.count === "共 0 条" && kwEmpty.empty !== null && kwEmpty.empty.indexOf("没有匹配") !== -1 && lastReq().indexOf("q=" + NO_MATCH_ENC) !== -1, JSON.stringify({ empty: kwEmpty === null ? null : kwEmpty.empty, req: lastReq() }));
+await clickSelector("[data-audit-filter=keyword] button");
+await sleep(600);
 check("控制台零报错 / 零异常", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" ;; "));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
 const residue = (await countOf("select count(*)::int n from sessions where token_hash = $1 and revoked_at is null", [sha256(token)]));

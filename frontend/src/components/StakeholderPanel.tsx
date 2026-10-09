@@ -13,6 +13,7 @@ import {
   type StakeholderPatch,
 } from "../stakeholderApi";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { Toast } from "./Toast";
 import { RowEditButton } from "./RowEditButton";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 
@@ -577,18 +578,13 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       )}
 
       {actionError === null ? null : (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-          <span>{actionError}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setActionError(null);
-            }}
-            className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-          >
-            关闭
-          </button>
-        </div>
+        <Toast
+          kind="error"
+          text={actionError}
+          onClose={() => {
+            setActionError(null);
+          }}
+        />
       )}
 
       <div data-stakeholder-table="" className="rounded-xl border border-zinc-200 bg-white">

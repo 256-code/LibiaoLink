@@ -26,7 +26,7 @@
  *   4. 本机装了 Chrome（脚本 headless 起一个调试实例；路径可用 CHROME_PATH 覆盖）
  *
  * 用法：node scripts/m6-06-workspace-e2e.mjs
- *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
+ *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE / SCREENSHOT_DIR
  *
  * 它做什么：用**两条临时会话**（panxing = 我；wmj = 反例提出人；跑完撤销）+ **三个临时项目**
  * （PX-M6WS-*；跑完物理删、零残留）在真机浏览器里跑一遍工作台接线后的读写口径 ——
@@ -39,9 +39,11 @@
  *      逾期未交付 / 输出成果文件 / 文件 / 进展描述 / 开始·实际日期 / 天数 / 人数 / 变更关联；
  *      命中口径 = 负责人含我 或 项目经理含我、不限完成日期（远期照收 + 未排期单列）；他人项目（我既非负责人也非项目经理）与已完成不进；
  *   ⑤ 切标签：真实鼠标点「我提出的问题」→ 地址写回 `?tab=raised`、aria-current 转移；
- *   ⑥ 「我提出的问题」折叠面板：照「问题追踪」的完整六列（日期 / 问题描述 / 问题归类 /
+ *   ⑥ 「我提出的问题」折叠面板：七列（Push 260 补「问题处理人 / 责任人」）——「问题是否处理」是**行内下拉**
+ *      （Push 260：与项目页「问题追踪」共用同一枚 IssueStateCell，点色签改三态、乐观锁 version、失败回滚）；
+ *      照「问题追踪」的（日期 / 问题描述 / 问题归类 /
  *      解决方案或建议 / 问题附图 / 问题是否处理；后两列按项目向源接口回填，真 PNG 直传夹具保证有值）；
- *      未关闭在前、不是我提的不进；Push 242 起行尾「在项目中查看」下架、六列 `table-fixed` 固定列宽（跨面板对齐）；
+ *      未关闭在前、不是我提的不进（Push 260 起「已完成不显示」）；Push 242 起行尾「在项目中查看」下架、六列 `table-fixed` 固定列宽（跨面板对齐）；
  *   ⑦ 深链：`#/my-tasks?tab=raised` 直接打开仍停在该标签；`?tab=` 不认识的值落回「我的任务」；
  *      「进入项目」按钮 =「我的任务」落项目总览、切到「我提出的问题」落该项目「问题追踪」（Push 232 / Push 242 / Push 253），
  *      浏览器后退回工作台；
@@ -53,12 +55,16 @@
  *   ⑪ 「我的计划」标签（Push 234）：第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 登记卡
  *      （导航栏 / 路由已就位、内容待详细设计；无任务 / 问题表）→ 深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 →
  *      点回「我的任务」地址回到不带参数的原口径；
+ *   ⑬ 问题子视图（Push 260）：「提出/负责的问题」标签带下拉子菜单（悬停 / 点击展开，同项目页「日报及问题」；
+ *      面板见 components/WorkspaceIssueSubMenu.tsx）—— 地址 ?tab=raised&sub=、缺省 raised 不落参数；「待我处理的问题」
+ *      页与「我提出的问题」同构（同一张七列表 / 同一套归类色签）；色签与项目页「问题追踪」逐 token 相等；「已完成不显示」= 两栏同一过滤（A2 完成态不出现）；
+ *      深链 ?sub=handling 直达、未知值回落；跑完恢复账号偏好原值（截图：submenu / handling 两张，见 SCREENSHOT_DIR）。
  *   ⑧ 收尾：删三个临时项目（A / B / C，物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
  * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆小节）
  */
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -75,6 +81,8 @@ const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
 /** 反例提出人（「我提出的问题」不认他提的问题）。 */
 const OTHER_USER = process.env.OTHER_USER ?? "wmj";
 const TZ = "Asia/Shanghai";
+/** 截图落盘目录（口径同其它回放脚本：默认系统临时目录，可用 SCREENSHOT_DIR 覆盖）。 */
+const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR ?? tmpdir();
 const Q = String.fromCharCode(34);
 const j = (value) => JSON.stringify(value);
 
@@ -278,7 +286,19 @@ check("夹具：A1 问题补「解决方案或建议 + 问题附图」（PATCH s
 const issueB = await addIssue(projectB, me, "回放问题·B项目我提出的", ["客观原因"], "B 我提出的");
 const issueOther = await addIssue(projectB, other, "回放问题·他人提出的", ["物流原因"], "B 他人提出的");
 const otherRead = await api("/api/v1/projects/" + projectB + "/issues/" + issueOther.issue.id);
-check("夹具：B 的反例问题可读（wmj 提出；本刀只做「我提出的」栏，不作断言依据）", otherRead.status === 200, String(otherRead.status));
+check("夹具：B 的反例问题可读（wmj 提出）", otherRead.status === 200, String(otherRead.status));
+// Push 260（「待我处理的问题」栏夹具）：把三条问题分派给「我」（ownerId = 我）—— A1（我提出 · 未解决）、
+// A2（我提出 · 已完成）、issueOther（wmj 提出）；issueB 故意不派 = 反例（我提出、但处理人不是我 → 只进「我提出的」）。
+async function issueVersionOf(projectId, issueId) {
+  const res = await api("/api/v1/projects/" + projectId + "/issues/" + issueId);
+  return res.json === null ? "" : res.json.version;
+}
+const ownA1 = await api("/api/v1/projects/" + projectA + "/issues/" + issueA1.issue.id, "PATCH", { ownerId: me.id, version: await issueVersionOf(projectA, issueA1.issue.id) });
+check("夹具：A1（我提出 · 未解决）分派给我（PATCH ownerId = 我）", ownA1.status === 200, String(ownA1.status) + " " + ownA1.text.slice(0, 140));
+const ownA2 = await api("/api/v1/projects/" + projectA + "/issues/" + issueA2.issue.id, "PATCH", { ownerId: me.id, version: await issueVersionOf(projectA, issueA2.issue.id) });
+check("夹具：A2（我提出 · 已完成）分派给我", ownA2.status === 200, String(ownA2.status) + " " + ownA2.text.slice(0, 140));
+const ownOther = await api("/api/v1/projects/" + projectB + "/issues/" + issueOther.issue.id, "PATCH", { ownerId: me.id, version: await issueVersionOf(projectB, issueOther.issue.id) });
+check("夹具：B 的 wmj 提出那条分派给我（「我处理的」含、但非我提出 → 不进「我提出的」）", ownOther.status === 200, String(ownOther.status) + " " + ownOther.text.slice(0, 140));
 
 // ---------- ⓪b 展开态偏好（A31 · Push 233）：先记原值 → 归零 ----------
 // Push 233 起折叠面板展开态按账号存服务端（「这个下拉要有记忆」）—— 本脚本的「页面打开 = 全收起 / 点一下 = 展开」口径
@@ -344,6 +364,10 @@ check("①e 反例不进：他人项目任务（C —— 我既非负责人也�
 const raisedTest = idsOf(inTest(ws.myIssues.raised));
 check("①f 「我提出的」测试项目内 = 3 条（A 两条 + B 一条），不含 wmj 提出的那条（历史数据按测试项目收窄）", raisedTest.length === 3 && raisedTest.indexOf(issueA1.issue.id) >= 0 && raisedTest.indexOf(issueA2.issue.id) >= 0 && raisedTest.indexOf(issueB.issue.id) >= 0 && raisedTest.indexOf(issueOther.issue.id) === -1, JSON.stringify(raisedTest));
 check("①g 「我提出的」未关闭在前：A 的未解决排在已完成那条之前", idsOf(ws.myIssues.raised).indexOf(issueA1.issue.id) < idsOf(ws.myIssues.raised).indexOf(issueA2.issue.id), JSON.stringify(idsOf(ws.myIssues.raised)));
+const handlingTest = idsOf(inTest(ws.myIssues.handling));
+const handlingAll = idsOf(ws.myIssues.handling);
+check("①h（Push 260）「我处理的」测试项目内 = 3 条（A1 未解决 + A2 已完成 + B 的 wmj 提出那条），不含「我提出但未分派给我」的 issueB", handlingTest.length === 3 && [issueA1.issue.id, issueA2.issue.id, issueOther.issue.id].every((id) => handlingTest.indexOf(id) >= 0) && handlingTest.indexOf(issueB.issue.id) === -1, JSON.stringify(handlingTest));
+check("①i（Push 260）「我处理的」未关闭在前：A2（已完成）排在 A1 之后（末位收尾）", handlingAll.indexOf(issueA1.issue.id) >= 0 && handlingAll.indexOf(issueA1.issue.id) < handlingAll.indexOf(issueA2.issue.id), JSON.stringify(handlingAll));
 
 // ---------- 真机浏览器 ----------
 const profile = mkdtempSync(join(tmpdir(), "pxm6ws-"));
@@ -433,6 +457,28 @@ async function clickSelector(selector) {
   await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
   await sleep(700);
 }
+/** Push 260：把鼠标停到「提出/负责的问题」标签上（悬停即展开下拉面板 —— 与项目页「日报及问题」同款交互）。 */
+async function hoverRaisedTab() {
+  const point = await rectOf("[data-workspace-tab=" + Q + "raised" + Q + "]");
+  if (point === null || point === undefined) throw new Error("hover 不到 raised 标签");
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
+  await sleep(250);
+}
+/** Push 260：把鼠标挪到页面左侧空白（触发父标签 mouseleave → 下拉面板 160ms 后自动收起），免得面板盖住下一处点击目标。 */
+async function parkMouse() {
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 4, y: 300, button: "none" });
+  await sleep(300);
+}
+/** 截图（Push 260：下拉子菜单 / 「待我处理的问题」页的形态证据；与其它回放脚本同一套落盘口径）。 */
+async function shot(name) {
+  await ev("window.scrollTo(0, 0)");
+  await sleep(250);
+  const result = await page.send("Page.captureScreenshot", { format: "png" });
+  const file = join(SCREENSHOT_DIR, name);
+  writeFileSync(file, Buffer.from(result.data, "base64"));
+  console.log("截图：" + file);
+  return file;
+}
 /** 先把元素滚进视口再点（面板列表长时，目标可能在首屏之外）—— Push 253 新增的「进入项目」点击穿透断言用。 */
 async function scrollSelectorIntoView(selector) {
   await ev("(function(){var node=document.querySelector(" + j(selector) + ");if(node!==null){node.scrollIntoView({block:" + j("center") + "});}})()");
@@ -453,7 +499,16 @@ const taskRowsExpr = (projectId) =>
 /** 问题表读数（按项目面板）。 */
 /** Push 242 列对齐断言用：问题表表头每列的 [left, width]（四舍五入到整数像素）。 */
 const issueHeadRectsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return null;}var heads=table.querySelectorAll(" + j("thead th") + ");var out=[];for(var i=0;i<heads.length;i+=1){var r=heads[i].getBoundingClientRect();out.push([Math.round(r.left),Math.round(r.width)]);}return out;})()";
-const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var link=rows[i].querySelector(" + j("a") + ");var photoNodes=rows[i].querySelectorAll(" + j("[data-issue-photo]") + ");var photoNames=[];for(var p=0;p<photoNodes.length;p+=1){photoNames.push(String(photoNodes[p].getAttribute(" + j("data-issue-photo") + ")));}out.push({id:String(rows[i].getAttribute(" + j("data-workspace-issue") + ")),date:cells[0].textContent.trim(),title:cells[1].textContent.trim(),categories:cells[2].textContent.trim(),solution:cells[3].textContent.trim(),photosText:cells[4].textContent.trim(),photos:photoNodes.length,photoNames:photoNames,state:cells[5].textContent.trim(),href:link===null?" + j("") + ":link.getAttribute(" + j("href") + "),rowClass:String(rows[i].getAttribute(" + j("class") + ")),stateClass:(function(){var n=rows[i].querySelector(" + j("[data-issue-state]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
+const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var link=rows[i].querySelector(" + j("a") + ");var photoNodes=rows[i].querySelectorAll(" + j("[data-issue-photo]") + ");var photoNames=[];for(var p=0;p<photoNodes.length;p+=1){photoNames.push(String(photoNodes[p].getAttribute(" + j("data-issue-photo") + ")));}out.push({id:String(rows[i].getAttribute(" + j("data-workspace-issue") + ")),date:cells[0].textContent.trim(),title:cells[1].textContent.trim(),categories:cells[2].textContent.trim(),owner:cells[3].textContent.trim(),solution:cells[4].textContent.trim(),photosText:cells[5].textContent.trim(),photos:photoNodes.length,photoNames:photoNames,state:cells[6].textContent.trim(),href:link===null?" + j("") + ":link.getAttribute(" + j("href") + "),rowClass:String(rows[i].getAttribute(" + j("class") + ")),stateClass:(function(){var n=rows[i].querySelector(" + j("[data-issue-state]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
+/** Push 260「要居中这个状态」几何读数：「问题是否处理」列表头 / 单元格 text-align + 色签与单元格的水平中心差 / 左右留白差。 */
+const issueStateGeomExpr = (projectId) => "(function(){var panel=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "]") + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var head=heads[6];var headAlign=getComputedStyle(head).textAlign;var headText=String(head.textContent.trim());var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var cell=cells[6];var tag=cell.querySelector(" + j("[data-issue-state]") + ");var cr=cell.getBoundingClientRect();var tr=tag===null?null:tag.getBoundingClientRect();out.push({align:getComputedStyle(cell).textAlign,tag:tag===null?null:String(tag.textContent.trim()),cellCenter:Math.round((cr.left+cr.right)/2*100)/100,tagCenter:tr===null?null:Math.round((tr.left+tr.right)/2*100)/100,leftGap:tr===null?null:Math.round((tr.left-cr.left)*100)/100,rightGap:tr===null?null:Math.round((cr.right-tr.right)*100)/100,tagWidth:tr===null?null:Math.round(tr.width)});}return {table:true,headAlign:headAlign,headText:headText,rows:out};})()";
+/** Push 260：工作台问题表某一行（状态列行内改的断言用）。 */
+const wsIssueRow = (projectId, issueId) => "[data-workspace-panel=" + Q + projectId + Q + "] [data-workspace-issue=" + Q + issueId + Q + "]";
+/** Push 260：「问题是否处理」行内下拉读数（触发器 / 展开态 / 色签 / 列对齐 / 浮层在不在）。 */
+const stateCellExpr = (projectId, issueId) => "(function(){var row=document.querySelector(" + j(wsIssueRow(projectId, issueId)) + ");if(row===null){return null;}var trigger=row.querySelector(" + j("button[data-inline-cell]") + ");var tag=row.querySelector(" + j("[data-issue-state]") + ");var cell=tag===null?null:tag.closest(" + j("td") + ");return {trigger:trigger!==null,bare:trigger===null?null:trigger.getAttribute(" + j("data-inline-cell") + "),aria:trigger===null?null:String(trigger.getAttribute(" + j("aria-label") + ")),expanded:trigger===null?null:trigger.getAttribute(" + j("aria-expanded") + "),tagText:tag===null?null:String(tag.textContent.trim()),tagState:tag===null?null:String(tag.getAttribute(" + j("data-issue-state") + ")),tagClass:tag===null?null:String(tag.getAttribute(" + j("class") + ")),cellAlign:cell===null?null:String(getComputedStyle(cell).textAlign),popover:document.querySelector(" + j("[data-inline-popover]") + ")!==null};})()";
+/** Push 260：行内下拉浮层的选项读数（浮层 portal 到 body）。 */
+const popoverOptionsExpr = () => "(function(){var box=document.querySelector(" + j("[data-inline-popover]") + ");if(box===null){return null;}var items=box.querySelectorAll(" + j("[role=" + Q + "option" + Q + "]") + ");var out=[];for(var i=0;i<items.length;i+=1){out.push({text:String(items[i].textContent.trim()),selected:items[i].getAttribute(" + j("aria-selected") + ")});}return {listbox:box.querySelector(" + j("[role=" + Q + "listbox" + Q + "]") + ")!==null,count:items.length,items:out};})()";
+const openStatePopover = (projectId, issueId) => "(document.querySelector(" + j("[data-inline-popover] [role=" + Q + "listbox" + Q + "]") + ") !== null)";
 /** 空态 / 汇总行读数。 */
 const totalExpr = () => "(function(){var node=document.querySelector(" + j("[data-workspace-task-total]") + ");return node===null?null:node.textContent.trim();})()";
 
@@ -464,7 +519,7 @@ console.log("前置：展开态偏好归零 → " + (memoryResetAtStart === null
 await open("#/my-tasks", "[data-workspace-page]");
 const head0 = await ev(headExpr());
 check("②a 页面渲染出「我的任务」页（data-workspace-page）+ 顶栏页名", head0 !== null && head0.page === true && head0.header.indexOf("我的任务") >= 0, head0 === null ? "null" : JSON.stringify(head0.header.slice(0, 60)));
-check("②b 标签导航栏 = 三枚下划线标签（我的任务 / 我提出的问题 / 我的计划；文字，无图标）", head0 !== null && head0.tabs.length === 3 && head0.tabs.map((item) => item.text).join("|") === "我的任务|我提出的问题|我的计划" && head0.tabs.map((item) => item.key).join("|") === "tasks|raised|plan", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.text), head0.tabs.map((item) => item.key)]));
+check("②b 标签导航栏 = 三枚下划线标签（我的任务 / 提出·负责的问题 / 我的计划 —— 第二枚 Push 260 由「我提出的问题」改名；文字，无图标）", head0 !== null && head0.tabs.length === 3 && head0.tabs.map((item) => item.text).join("|") === "我的任务|提出/负责的问题|我的计划" && head0.tabs.map((item) => item.key).join("|") === "tasks|raised|plan", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.text), head0.tabs.map((item) => item.key)]));
 check("②c 缺省选中「我的任务」、地址不带 ?tab=", head0 !== null && head0.tabs[0].current === "page" && head0.tabs[1].current === null && head0.tabs[2].current === null && head0.hash === "#/my-tasks", head0 === null ? "null" : JSON.stringify([head0.tabs.map((item) => item.current), head0.hash]));
 const total0 = await ev(totalExpr());
 check("②d 汇总行「共 " + String(ambientTotal) + " 项 · 跨 " + String(expectPanelOrder.length) + " 个项目 · 基准日 …」（N / M 与接口读面逐项对账）", typeof total0 === "string" && total0.indexOf("共 " + String(ambientTotal) + " 项") >= 0 && total0.indexOf("跨 " + String(expectPanelOrder.length) + " 个项目") >= 0 && total0.indexOf(cnDate(TODAY)) >= 0, String(total0));
@@ -517,32 +572,60 @@ await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-p
 
 // ---------- ⑤ 切标签 ----------
 await clickSelector('[data-workspace-tab="raised"]');
+await parkMouse(); // Push 260：点父标签顺带展开了下拉面板，先把鼠标挪开（面板自动收起）再做页内点击
 const head1 = await ev(headExpr());
 check("⑤a 点「我提出的问题」→ 地址写回 ?tab=raised（replace，可刷新 / 可分享）", head1 !== null && head1.hash === "#/my-tasks?tab=raised", head1 === null ? "null" : String(head1.hash));
 check("⑤b 选中态转移（aria-current=page 只在「我提出的问题」上）", head1 !== null && head1.tabs[0].current === null && head1.tabs[1].current === "page", head1 === null ? "null" : JSON.stringify(head1.tabs.map((item) => item.current)));
 const panels1 = await ev(panelsExpr());
 const panelsIssues = panels1 === null ? null : panels1.filter((item) => TEST_PROJECTS.indexOf(item.id) >= 0);
-check("⑤c 折回「我提出的问题」：面板按项目分组（A 共 2 条 / B 共 1 条，都在收起态；同日并列的项目序不作断言；历史数据按测试项目收窄）", panelsIssues !== null && panelsIssues.length === 2 && panelsIssues.every((item) => item.open === "false") && panelsIssues.map((item) => item.id).sort().join(",") === [projectA, projectB].sort().join(",") && panelsIssues.some((item) => item.id === projectA && item.text.indexOf("共 2 条") >= 0) && panelsIssues.some((item) => item.id === projectB && item.text.indexOf("共 1 条") >= 0), JSON.stringify(panels1));
+check("⑤c 折回「我提出的问题」：面板按项目分组（A 共 1 条 / B 共 1 条 —— 已完成不显示，A2 不计；同日并列的项目序不作断言；历史数据按测试项目收窄）", panelsIssues !== null && panelsIssues.length === 2 && panelsIssues.every((item) => item.open === "false") && panelsIssues.map((item) => item.id).sort().join(",") === [projectA, projectB].sort().join(",") && panelsIssues.some((item) => item.id === projectA && item.text.indexOf("共 1 条") >= 0) && panelsIssues.some((item) => item.id === projectB && item.text.indexOf("共 1 条") >= 0), JSON.stringify(panels1));
 const issueTotal = await ev("(function(){var node=document.querySelector(" + j("[data-workspace-issue-total]") + ");return node===null?null:node.textContent.trim();})()");
 const raisedAll = idsOf(ws.myIssues.raised);
+const raisedShown = ws.myIssues.raised.filter((item) => item.state !== "done");
+const raisedShownIds = idsOf(raisedShown);
 const raisedProjects = {};
-for (const item of ws.myIssues.raised) { raisedProjects[item.projectId] = true; }
-check("⑤d 汇总行「共 N 条 · 跨 M 个项目 · 未关闭在前」（N / M 与接口读面逐项对账）", typeof issueTotal === "string" && issueTotal.indexOf("共 " + String(raisedAll.length) + " 条") >= 0 && issueTotal.indexOf("跨 " + String(Object.keys(raisedProjects).length) + " 个项目") >= 0 && issueTotal.indexOf("未关闭在前") >= 0, String(issueTotal) + " | api " + String(raisedAll.length) + "/" + String(Object.keys(raisedProjects).length));
+for (const item of raisedShown) { raisedProjects[item.projectId] = true; }
+check("⑤d 汇总行「共 N 条 · 跨 M 个项目 · 已完成不显示」（N / M = 接口读面剔除已完成后逐项对账）", typeof issueTotal === "string" && issueTotal.indexOf("共 " + String(raisedShownIds.length) + " 条") >= 0 && issueTotal.indexOf("跨 " + String(Object.keys(raisedProjects).length) + " 个项目") >= 0 && issueTotal.indexOf("已完成不显示") >= 0, String(issueTotal) + " | api " + String(raisedShownIds.length) + "/" + String(Object.keys(raisedProjects).length));
 
 // ---------- ⑥ 问题表口径（参考「问题追踪」） ----------
 await clickSelector('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]');
 const photoTileOk = await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-issue-photo]') + ") !== null", 25000);
 check("⑥a0 问题附图瓦片懒取预览签名后出现（真 PNG 直传 → 预览就绪）", photoTileOk === true, String(photoTileOk));
 const rowsIssueA = await ev(issueRowsExpr(projectA));
-check("⑥a 表头 = 「问题追踪」完整六列（日期 / 问题描述 / 问题归类 / 解决方案或建议 / 问题附图 / 问题是否处理）· 无行尾动作列（Push 242 下架）", rowsIssueA !== null && rowsIssueA.heads.length === 6 && rowsIssueA.heads.join("|") === "日期|问题描述|问题归类|解决方案或建议|问题附图|问题是否处理", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.heads));
-check("⑥b A 项目 2 条（我提出的），未关闭在前：未解决 → 已完成", rowsIssueA !== null && rowsIssueA.rows.length === 2 && rowsIssueA.rows[0].id === issueA1.issue.id && rowsIssueA.rows[1].id === issueA2.issue.id, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.id)));
+check("⑥a 表头 = 「问题追踪」完整七列（日期 / 问题描述 / 问题归类 / 问题处理人 / 责任人 / 解决方案或建议 / 问题附图 / 问题是否处理；Push 260 补处理人列）· 无行尾动作列（Push 242 下架）", rowsIssueA !== null && rowsIssueA.heads.length === 7 && rowsIssueA.heads.join("|") === "日期|问题描述|问题归类|问题处理人 / 责任人|解决方案或建议|问题附图|问题是否处理", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.heads));
+check("⑥b A 项目只显示 1 条（我提出的；A2 已完成 → 已完成不显示），行的 id = A1", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].id === issueA1.issue.id && rowsIssueA.rows.every((item) => item.id !== issueA2.issue.id), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.id)));
 check("⑥c 日期列 = 提出日（年月日）", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.date === cnDate(TODAY)), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.date)));
-check("⑥d 问题描述列 = 问题原文；归类列 = 多值色签（机械部 / 采购部 · 项目部）", rowsIssueA !== null && rowsIssueA.rows[0].title.indexOf("回放问题·我提出的未解决") >= 0 && rowsIssueA.rows[0].categories.indexOf("机械部") >= 0 && rowsIssueA.rows[1].categories.indexOf("采购部") >= 0 && rowsIssueA.rows[1].categories.indexOf("项目部") >= 0, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.categories)));
-check("⑥e 状态列 = 未解决 / 已完成（三态中文）", rowsIssueA !== null && rowsIssueA.rows[0].state === "未解决" && rowsIssueA.rows[1].state === "已完成", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.state)));
-check("⑥e1 「解决方案或建议」列 = 回填的解决方案原文 / 无值落「—」", rowsIssueA !== null && rowsIssueA.rows[0].solution.indexOf("回放·解决方案") >= 0 && rowsIssueA.rows[1].solution === "—", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.solution)));
-check("⑥e2 「问题附图」列 = A1 一枚真图瓦片（文件名对齐）/ 无图落「—」", rowsIssueA !== null && rowsIssueA.rows[0].photos === 1 && rowsIssueA.rows[0].photoNames[0] === pngName && rowsIssueA.rows[1].photos === 0 && rowsIssueA.rows[1].photosText === "—", rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => [item.photos, item.photoNames, item.photosText])));
+check("⑥d 问题描述列 = 问题原文；归类列 = 色签（机械部）", rowsIssueA !== null && rowsIssueA.rows[0].title.indexOf("回放问题·我提出的未解决") >= 0 && rowsIssueA.rows[0].categories.indexOf("机械部") >= 0, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.categories)));
+check("⑥e 状态列 = 未解决（三态中文）；「已完成」的 A2 整行不显示（已完成不显示）", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].state === "未解决" && rowsIssueA.rows.every((item) => item.id !== issueA2.issue.id), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => [item.id, item.state])));
+check("⑥d2（Push 260）「问题处理人 / 责任人」列 = 分派到人出姓名（A1 由我处理 = " + me.displayName + "）、未分派落灰杠「—」", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].owner === me.displayName, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.owner)));
+check("⑥e0（Push 260）「问题是否处理」色签壳体 = 项目页同一档（rounded-lg + px-3 + py-1.5 + text-[11px]；底色 / 字色 = ISSUE_TAG_CLASS 同源）", rowsIssueA !== null && rowsIssueA.rows[0].stateClass.indexOf("rounded-lg") >= 0 && rowsIssueA.rows[0].stateClass.indexOf("px-3") >= 0 && rowsIssueA.rows[0].stateClass.indexOf("py-1.5") >= 0 && rowsIssueA.rows[0].stateClass.indexOf("text-[11px]") >= 0 && rowsIssueA.rows[0].stateClass.indexOf("bg-sky-100") >= 0 && rowsIssueA.rows[0].stateClass.indexOf("text-sky-700") >= 0 && rowsIssueA.rows.length === 1, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.stateClass)));
+const geomA260 = await ev(issueStateGeomExpr(projectA));
+check("⑥e0b（Push 260）「要居中这个状态」：「问题是否处理」列表头 / 单元格一律 text-align=center，色签水平中心与单元格中心一致（±2px）、左右留白差 ≤4px", geomA260 !== null && geomA260.table === true && geomA260.headAlign === "center" && geomA260.headText === "问题是否处理" && geomA260.rows.length === 1 && geomA260.rows.every((item) => item.align === "center") && geomA260.rows.every((item) => item.tagCenter !== null && Math.abs(item.tagCenter - item.cellCenter) <= 2) && geomA260.rows.every((item) => Math.abs(item.leftGap - item.rightGap) <= 4), JSON.stringify(geomA260));
+// Push 260：状态列行内可改（业务口径「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」）
+const cellIdle260 = await ev(stateCellExpr(projectA, issueA1.issue.id));
+check("⑥e0c（Push 260）「问题是否处理」是行内下拉（与项目页「问题追踪」共用同一枚 IssueStateCell）：色签外套裸框触发器、aria 名 = 「修改问题状态（提出日）」、收起态 aria-expanded=false 且浮层不在 DOM 里；列内仍居中", cellIdle260 !== null && cellIdle260.trigger === true && cellIdle260.bare === "bare" && cellIdle260.aria.indexOf("修改问题状态") >= 0 && cellIdle260.aria.indexOf(cnDate(TODAY)) >= 0 && cellIdle260.expanded === "false" && cellIdle260.popover === false && cellIdle260.tagState === "open" && cellIdle260.tagText === "未解决" && cellIdle260.cellAlign === "center", JSON.stringify(cellIdle260));
+await clickSelector(wsIssueRow(projectA, issueA1.issue.id) + " button[data-inline-cell]");
+const popOpen260 = await waitFor(openStatePopover(projectA, issueA1.issue.id), 15000);
+const popOptions260 = await ev(popoverOptionsExpr());
+check("⑥e0d（Push 260）点状态色签 = 弹三态下拉（未解决 / 处理中 / 已完成，当前项 aria-selected=true）—— 与项目页下拉逐项同款", popOpen260 === true && popOptions260 !== null && popOptions260.listbox === true && popOptions260.count === 3 && popOptions260.items.map((item) => item.text).join("|") === "未解决|处理中|已完成" && popOptions260.items.map((item) => item.selected).join("|") === "true|false|false", JSON.stringify(popOptions260));
+await shot("m6-06-workspace-state-dropdown.png");
+const version260Before = await issueVersionOf(projectA, issueA1.issue.id);
+await clickSelector("[data-inline-popover] [role=" + Q + "option" + Q + "]:nth-child(2)");
+const moved260 = await waitFor("(function(){var row=document.querySelector(" + j(wsIssueRow(projectA, issueA1.issue.id)) + ");if(row===null){return false;}var tag=row.querySelector(" + j("[data-issue-state]") + ");return tag!==null&&String(tag.textContent.trim())===" + j("处理中") + "&&String(tag.getAttribute(" + j("class") + ")).indexOf(" + j("bg-amber-100") + ")>=0&&document.querySelector(" + j("[data-inline-popover]") + ")===null;})()", 20000);
+const issuesAfter260 = await api("/api/v1/projects/" + projectA + "/issues");
+const issueA1After260 = issuesAfter260.json === null ? undefined : (issuesAfter260.json.items === undefined ? [] : issuesAfter260.json.items).filter((item) => item.id === issueA1.issue.id)[0];
+check("⑥e0e（Push 260）选「处理中」→ 色签当场翻 amber（乐观更新）、浮层关掉；接口回读已落库（state=in_progress、version 涨 1）", moved260 === true && issueA1After260 !== undefined && issueA1After260.state === "in_progress" && issueA1After260.version === version260Before + 1, JSON.stringify([moved260, issueA1After260 === undefined ? null : [issueA1After260.state, issueA1After260.version, version260Before]]));
+await clickSelector(wsIssueRow(projectA, issueA1.issue.id) + " button[data-inline-cell]");
+await waitFor(openStatePopover(projectA, issueA1.issue.id), 15000);
+await clickSelector("[data-inline-popover] [role=" + Q + "option" + Q + "]:nth-child(1)");
+const back260 = await waitFor("(function(){var row=document.querySelector(" + j(wsIssueRow(projectA, issueA1.issue.id)) + ");if(row===null){return false;}var tag=row.querySelector(" + j("[data-issue-state]") + ");return tag!==null&&String(tag.textContent.trim())===" + j("未解决") + "&&String(tag.getAttribute(" + j("class") + ")).indexOf(" + j("bg-sky-100") + ")>=0;})()", 20000);
+const restoredRes260 = await api("/api/v1/projects/" + projectA + "/issues");
+const issueA1Restored260 = restoredRes260.json === null ? undefined : (restoredRes260.json.items === undefined ? [] : restoredRes260.json.items).filter((item) => item.id === issueA1.issue.id)[0];
+check("⑥e0f（Push 260）选回「未解决」→ 色签回 sky、接口回读 state=open（夹具复位，后面的断言基线不变）", back260 === true && issueA1Restored260 !== undefined && issueA1Restored260.state === "open", JSON.stringify([back260, issueA1Restored260 === undefined ? null : issueA1Restored260.state]));
+check("⑥e1 「解决方案或建议」列 = 回填的解决方案原文", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].solution.indexOf("回放·解决方案") >= 0, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.solution)));
+check("⑥e2 「问题附图」列 = A1 一枚真图瓦片（文件名对齐）", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].photos === 1 && rowsIssueA.rows[0].photoNames[0] === pngName, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => [item.photos, item.photoNames, item.photosText])));
 const partialBanner = await ev("document.querySelector(" + j("[data-workspace-issue-partial]") + ") !== null");
-check("⑥e3 六列回填没有 partial 降级横幅（两个项目的问题源接口都取到）", partialBanner === false, String(partialBanner));
+check("⑥e3 七列回填没有 partial 降级横幅（两个项目的问题源接口都取到）", partialBanner === false, String(partialBanner));
 const issuePanelLink = await ev("(function(){var a=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-project-link]') + ");return a===null?null:String(a.getAttribute(" + j("href") + "));})()");
 check("⑥f（Push 242 / Push 253）行尾「在项目中查看」下架（行内无链接）+ 入口 = 面板头「进入项目」→ 该项目「问题追踪」深链", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.href === "") && issuePanelLink === "#/project/" + projectA + "?view=daily&sub=issues", JSON.stringify({ rowHref: rowsIssueA === null ? "null" : rowsIssueA.rows[0].href, panelLink: issuePanelLink }));
 check("⑥g 不是我提出的（wmj 提的）不进这张表", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.id !== issueOther.issue.id), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.id)));
@@ -550,8 +633,24 @@ await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-p
 const rowsIssueB = await ev(issueRowsExpr(projectB));
 const headRectsA = await ev(issueHeadRectsExpr(projectA));
 const headRectsB = await ev(issueHeadRectsExpr(projectB));
-check("⑥i（Push 242）列对齐：两个项目面板的问题表六列逐列同 x 同宽（table-fixed + colgroup）", headRectsA !== null && headRectsB !== null && headRectsA.length === 6 && JSON.stringify(headRectsA) === JSON.stringify(headRectsB), JSON.stringify({ a: headRectsA, b: headRectsB }));
-check("⑥h 跨项目：B 面板 1 条（我提出的；无解决方案 / 无附图落「—」）", rowsIssueB !== null && rowsIssueB.rows.length === 1 && rowsIssueB.rows[0].id === issueB.issue.id && rowsIssueB.rows[0].categories.indexOf("客观原因") >= 0 && rowsIssueB.rows[0].solution === "—" && rowsIssueB.rows[0].photos === 0 && rowsIssueB.rows[0].photosText === "—", rowsIssueB === null ? "null" : JSON.stringify(rowsIssueB.rows));
+check("⑥i（Push 242 / Push 260）列对齐：两个项目面板的问题表七列逐列同 x 同宽（table-fixed + colgroup）", headRectsA !== null && headRectsB !== null && headRectsA.length === 7 && JSON.stringify(headRectsA) === JSON.stringify(headRectsB), JSON.stringify({ a: headRectsA, b: headRectsB }));
+check("⑥h 跨项目：B 面板 1 条（我提出的；处理人未分派落「—」、无解决方案 / 无附图落「—」）", rowsIssueB !== null && rowsIssueB.rows.length === 1 && rowsIssueB.rows[0].id === issueB.issue.id && rowsIssueB.rows[0].categories.indexOf("客观原因") >= 0 && rowsIssueB.rows[0].owner === "—" && rowsIssueB.rows[0].solution === "—" && rowsIssueB.rows[0].photos === 0 && rowsIssueB.rows[0].photosText === "—", rowsIssueB === null ? "null" : JSON.stringify(rowsIssueB.rows));
+
+// Push 260：乐观锁冲突路径 —— 页内 version 落后时（别处刚改过）改状态要「失败 + 回滚 + 出提示条」，不静默丢
+// 服务端「空更新」守卫：patch 无实际变化 → 400（issue.service.ts）—— 顶 version 要走一次真变化：
+// open → in_progress → open（净状态仍是未解决、version +2，页面手里还是旧 version）。
+const bump260a = await api("/api/v1/projects/" + projectA + "/issues/" + issueA1.issue.id, "PATCH", { state: "in_progress", version: await issueVersionOf(projectA, issueA1.issue.id) });
+const bump260b = await api("/api/v1/projects/" + projectA + "/issues/" + issueA1.issue.id, "PATCH", { state: "open", version: await issueVersionOf(projectA, issueA1.issue.id) });
+check("⑥j（Push 260）夹具：经接口把 A1 的 version 顶两格（先→处理中、再→未解决；模拟别处改过、页内 version 落后）", bump260a.status === 200 && bump260b.status === 200, String(bump260a.status) + "/" + String(bump260b.status));
+await clickSelector(wsIssueRow(projectA, issueA1.issue.id) + " button[data-inline-cell]");
+await waitFor(openStatePopover(projectA, issueA1.issue.id), 15000);
+await clickSelector("[data-inline-popover] [role=" + Q + "option" + Q + "]:nth-child(2)");
+const conflict260 = await waitFor("document.querySelector(" + j("[data-workspace-issue-error]") + ") !== null", 20000);
+const cellAfterConflict260 = await ev(stateCellExpr(projectA, issueA1.issue.id));
+const errorText260 = await ev("(function(){var n=document.querySelector(" + j("[data-workspace-issue-error]") + ");return n===null?null:String(n.textContent.trim());})()");
+const stillRes260 = await api("/api/v1/projects/" + projectA + "/issues");
+const issueA1Still260 = stillRes260.json === null ? undefined : (stillRes260.json.items === undefined ? [] : stillRes260.json.items).filter((item) => item.id === issueA1.issue.id)[0];
+check("⑥k（Push 260）乐观锁冲突（409）：页面回滚成「未解决」（色签不假改）+ 出提示条（服务端文案）+ 接口回读没被改掉（state 仍 open）", conflict260 === true && cellAfterConflict260 !== null && cellAfterConflict260.tagText === "未解决" && cellAfterConflict260.tagState === "open" && cellAfterConflict260.popover === false && typeof errorText260 === "string" && errorText260.length > 0 && issueA1Still260 !== undefined && issueA1Still260.state === "open", JSON.stringify([conflict260, errorText260, cellAfterConflict260 === null ? null : cellAfterConflict260.tagText, issueA1Still260 === undefined ? null : issueA1Still260.state]));
 
 // ---------- ⑦ 深链 / 未知参数 ----------
 await open("#/my-tasks?tab=raised", "[data-workspace-page]");
@@ -628,11 +727,11 @@ await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA
 await ensurePanelOpen(projectA, true);
 await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-issue]') + ") !== null", 25000);
 const focusIssueRows = await ev(issueRowsExpr(projectA));
-check("⑨e 切「我提出的问题」同款：未解决行 sky / 已完成行 emerald（6% 档）+ 状态签收口成深色字", focusIssueRows !== null && focusIssueRows.rows[0].rowClass.indexOf("bg-sky-500/[0.06]") >= 0 && focusIssueRows.rows[1].rowClass.indexOf("bg-emerald-500/[0.06]") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("text-sky-700") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("bg-sky-100") < 0, focusIssueRows === null ? "null" : JSON.stringify([focusIssueRows.rows.map((item) => item.rowClass), focusIssueRows.rows.map((item) => item.stateClass)]));
+check("⑨e 切「我提出的问题」同款：未解决行 sky（6% 档）+ 状态签收口成深色字；已完成行不出现（已完成不显示）", focusIssueRows !== null && focusIssueRows.rows.length === 1 && focusIssueRows.rows[0].id === issueA1.issue.id && focusIssueRows.rows[0].rowClass.indexOf("bg-sky-500/[0.06]") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("text-sky-700") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("bg-sky-100") < 0, focusIssueRows === null ? "null" : JSON.stringify([focusIssueRows.rows.map((item) => [item.id, item.rowClass]), focusIssueRows.rows.map((item) => item.stateClass)]));
 await clickSelector("[data-workspace-focus-toggle]");
 const focusOffAttr = await waitFor("(function(){var t=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-issue-table]') + ");return t!==null&&t.getAttribute(" + j("data-workspace-issue-focus") + ")===" + j("false") + ";})()", 20000);
 const focusOffRows2 = await ev(issueRowsExpr(projectA));
-check("⑨f 关：问题表回到白底行 + 状态签原样", focusOffAttr === true && focusOffRows2 !== null && focusOffRows2.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && focusOffRows2.rows[0].stateClass.indexOf("bg-sky-100") >= 0, focusOffRows2 === null ? "null" : JSON.stringify([focusOffRows2.rows[0].rowClass, focusOffRows2.rows[0].stateClass]));
+check("⑨f 关：问题表回到白底行 + 状态签原样（仍只 1 行）", focusOffAttr === true && focusOffRows2 !== null && focusOffRows2.rows.length === 1 && focusOffRows2.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && focusOffRows2.rows[0].stateClass.indexOf("bg-sky-100") >= 0, focusOffRows2 === null ? "null" : JSON.stringify([focusOffRows2.rows[0].rowClass, focusOffRows2.rows[0].stateClass]));
 // 恢复账号偏好原值（回放不留痕）
 if (prefStart === true) {
   await clickSelector("[data-workspace-focus-toggle]");
@@ -729,11 +828,12 @@ await ensurePanelOpen(projectA, true);
 const navSlot0 = await ev(stickyRect("[data-workspace-tabs]"));
 check("⑫b 标签导航栏 = sticky / z 20 / 站灰底（α 0.95）+ 毛玻璃 / 自然位在顶栏下沿（top 64~65.5，滚动后钉到 64）", navSlot0 !== null && navSlot0.position === "sticky" && navSlot0.top >= 64 && navSlot0.top <= 65.5 && navSlot0.zIndex === "20" && navSlot0.bg.indexOf("0.95") >= 0 && navSlot0.blur.indexOf("blur") >= 0, navSlot0 === null ? "null" : JSON.stringify(navSlot0));
 const room235 = await ev("(function(){return Math.round((document.documentElement.scrollHeight - window.innerHeight)*100)/100;})()");
-check("⑫c 页面可滚动量足够（≥ 400px —— 吸顶要真滚起来才验得到）", typeof room235 === "number" && room235 >= 400, String(room235));
-await ev("window.scrollTo(0, 420)");
+check("⑫c 页面可滚动量足够（≥ 300px —— 吸顶要真滚起来才验得到；可滚量随夹具条数浮动，Push 260 起按实际可滚量滚）", typeof room235 === "number" && room235 >= 300, String(room235));
+const scrollTarget235 = Math.max(0, Math.min(420, Math.round(room235) - 20));
+await ev("window.scrollTo(0, " + String(scrollTarget235) + ")");
 await sleep(400);
 const scrolled235 = await ev("window.scrollY");
-check("⑫d 滚动实际发生（scrollY ≥ 400）", scrolled235 >= 400, String(scrolled235));
+check("⑫d 滚动实际发生（scrollY ≥ 300）", scrolled235 >= 300, String(scrolled235));
 const navSlot1 = await ev(stickyRect("[data-workspace-tabs]"));
 check("⑫e 滚动后导航栏钉在顶栏正下方（top = 64；栏高 = 59 = pt-3 12 + 标签 46 + 底边 1）", navSlot1 !== null && Math.abs(navSlot1.top - 64) <= 0.5 && Math.abs(navSlot1.height - 59) <= 1, navSlot1 === null ? "null" : JSON.stringify([navSlot1.top, navSlot1.height]));
 const clientW235 = await ev("document.documentElement.clientWidth");
@@ -747,8 +847,10 @@ await waitFor("window.location.hash === " + j("#/my-tasks?tab=raised"), 15000);
 check("⑫i 吸顶状态下点「我提出的问题」→ 路由照常写回（点击穿透到按钮本体）", (await ev("window.location.hash")) === "#/my-tasks?tab=raised", String(await ev("window.location.hash")));
 await clickSelector('[data-workspace-tab="tasks"]');
 await waitFor("window.location.hash === " + j("#/my-tasks"), 15000);
-await waitFor("(function(){return document.documentElement.scrollHeight - window.innerHeight >= 400;})()", 20000);
-await ev("window.scrollTo(0, 420)");
+await waitFor("(function(){return document.documentElement.scrollHeight - window.innerHeight >= 300;})()", 20000);
+const roomBack235 = await ev("(function(){return Math.round((document.documentElement.scrollHeight - window.innerHeight)*100)/100;})()");
+const scrollTargetBack235 = Math.max(0, Math.min(420, Math.round(roomBack235) - 20));
+await ev("window.scrollTo(0, " + String(scrollTargetBack235) + ")");
 await sleep(400);
 const scrolledBack = await ev("window.scrollY");
 const navSlot3 = await ev(stickyRect("[data-workspace-tabs]"));
@@ -760,9 +862,101 @@ check("⑫k 滚回顶部：导航栏回到自然位（top 64~65.5，滚动全程
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
 const restored235 = await patchOpenProjects(memoryOriginal);
 check("⑫l 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（⑫ 的展开操作不留痕）", restored235 !== null && JSON.stringify(restored235.json.workspaceOpenProjects) === JSON.stringify(memoryOriginal), restored235 === null ? "null" : JSON.stringify(restored235.json.workspaceOpenProjects));
+// ---------- ⑬（Push 260）「提出/负责的问题」下拉子菜单 + 「待我处理的问题」页 ----------
+// 业务口径 2026-10-09「在我提出的问题增加子标签导航栏 和日报那样 增加待我处理的问题」+「页面中的信息要包括图二的人员信息」
+// +「问题是否解决的颜色要统一和项目里面的一致」+「我处理的问题就是提出问题里面分类的问题」+「改成 提出/负责的问题」
+// +「要居中这个状态」+「然后导航栏还是改成这样的吧」（图 = 项目页「日报及问题」的下拉子菜单）：两枚子视图收进主标签
+// 「提出/负责的问题」的下拉面板（components/WorkspaceIssueSubMenu.tsx），地址口径仍是 ?tab=raised&sub=。
+const subMenuExpr = () => "(function(){var panel=document.querySelector(" + j("[data-workspace-submenu]") + ");var items=panel===null?[]:panel.querySelectorAll(" + j("[data-workspace-subtab]") + ");var picked=[];for(var i=0;i<items.length;i+=1){picked.push({key:String(items[i].getAttribute(" + j("data-workspace-subtab") + ")),text:String(items[i].textContent.trim()),current:items[i].getAttribute(" + j("aria-current") + ")});}var nodes=document.querySelectorAll(" + j("[data-workspace-tab]") + ");var main={};var tabs=[];var raisedTab=null;for(var m=0;m<nodes.length;m+=1){var node=nodes[m];var key=String(node.getAttribute(" + j("data-workspace-tab") + "));main[key]=node.getAttribute(" + j("aria-current") + ");tabs.push({key:key,text:String(node.textContent.trim()),current:node.getAttribute(" + j("aria-current") + "),haspopup:node.getAttribute(" + j("aria-haspopup") + "),isParent:node.getAttribute(" + j("data-workspace-tab-parent") + "),expanded:node.getAttribute(" + j("aria-expanded") + "),chevron:node.querySelector(" + j("svg") + ")!==null});if(key===" + j("raised") + "){raisedTab=node;}}var view=document.querySelector(" + j("[data-workspace-issues]") + ");var head=view===null?null:view.querySelector(" + j("h2") + ");var total=document.querySelector(" + j("[data-workspace-issue-total]") + ");var geom=null;if(panel!==null&&raisedTab!==null){var pr=panel.getBoundingClientRect();var tr=raisedTab.getBoundingClientRect();var cs=getComputedStyle(panel);geom={inNav:panel.closest(" + j("[data-workspace-tabs]") + ")!==null,role:panel.getAttribute(" + j("role") + "),leftGap:Math.round((pr.left-tr.left)*100)/100,topGap:Math.round((pr.top-tr.bottom)*100)/100,width:Math.round(pr.width),height:Math.round(pr.height),bg:String(cs.backgroundColor),radius:String(cs.borderRadius),itemCount:items.length};}return {open:panel!==null,items:picked,tabs:tabs,main:main,geom:geom,hash:window.location.hash,view:view===null?null:String(view.getAttribute(" + j("data-workspace-issues-view") + ")),title:head===null?null:String(head.textContent.trim()),total:total===null?null:String(total.textContent.trim())};})()";
+const chipClassExpr = (selector) => "(function(){var n=document.querySelector(" + j(selector) + ");return n===null?null:String(n.getAttribute(" + j("class") + "));})()";
+const classTokensOf = (value) => (value === null ? [] : value.trim().split(/\s+/).sort());
+const tabOf = (snapshot, key) => (snapshot === null ? null : snapshot.tabs.filter((item) => item.key === key)[0]);
+// 前置：展开态归零（本节「页面打开 = 全收起」断言的基线；跑完 ⑬n 恢复原值）
+const memoryReset260 = await patchOpenProjects({ tasks: [], raised: [] });
+check("⑬a0 前置：展开态偏好归零", memoryReset260 !== null, memoryReset260 === null ? "null" : JSON.stringify(memoryReset260.json.workspaceOpenProjects));
+await parkMouse();
+await open("#/my-tasks?tab=raised", "[data-workspace-page]");
+const closed260 = await ev(subMenuExpr());
+const closedTab260 = tabOf(closed260, "raised");
+check("⑬a 页面打开：下拉面板默认收起（主标签「提出/负责的问题」带 ▾、aria-haspopup=menu、aria-expanded=false）；标题 / 数据栏 = raised、地址不带 ?sub=", closed260 !== null && closed260.open === false && closedTab260 !== null && closedTab260.text.indexOf("提出/负责的问题") >= 0 && closedTab260.current === "page" && closedTab260.haspopup === "menu" && closedTab260.isParent === "true" && closedTab260.expanded === "false" && closedTab260.chevron === true && closed260.view === "raised" && closed260.title === "我提出的问题" && closed260.hash === "#/my-tasks?tab=raised", JSON.stringify(closed260));
+await hoverRaisedTab();
+const hover260 = await ev(subMenuExpr());
+check("⑬b 悬停父标签即展开（同项目页「日报及问题」）：白色圆角面板挂在主标签栏内、左缘对齐父标签、两枚子项（我提出的问题 / 待我处理的问题）、缺省选中「我提出的问题」", hover260 !== null && hover260.open === true && hover260.geom !== null && hover260.geom.inNav === true && hover260.geom.role === "menu" && Math.abs(hover260.geom.leftGap) <= 2 && hover260.geom.topGap >= 0 && hover260.geom.topGap <= 16 && hover260.geom.bg === "rgb(255, 255, 255)" && hover260.geom.itemCount === 2 && hover260.items.map((item) => item.text).join("|") === "我提出的问题|待我处理的问题" && hover260.items.map((item) => item.key).join("|") === "raised|handling" && hover260.items[0].current === "page" && hover260.items[1].current === null && tabOf(hover260, "raised").expanded === "true" && hover260.main.raised === "page", JSON.stringify(hover260));
+await shot("m6-06-workspace-submenu.png");
+await parkMouse();
+const parked260 = await ev(subMenuExpr());
+check("⑬c 鼠标移开：面板自动收起（160ms 延迟），页面回到无面板态、aria-expanded=false", parked260 !== null && parked260.open === false && tabOf(parked260, "raised").expanded === "false", JSON.stringify([parked260 === null ? null : parked260.open, parked260 === null ? null : tabOf(parked260, "raised").expanded]));
+// 下拉只挂在「提出/负责的问题」这枚标签上（「我的任务」/「我的计划」没有 ▾、没有面板）
+await clickSelector("[data-workspace-tab=" + Q + "tasks" + Q + "]");
+await waitFor("window.location.hash === " + j("#/my-tasks") + " && document.querySelector(" + j("[data-workspace-tasks]") + ") !== null", 25000);
+const tasks260 = await ev(subMenuExpr());
+await clickSelector("[data-workspace-tab=" + Q + "plan" + Q + "]");
+await waitFor("window.location.hash === " + j("#/my-tasks?tab=plan") + " && document.querySelector(" + j("[data-workspace-plan]") + ") !== null", 25000);
+const plan260 = await ev(subMenuExpr());
+const withPopups260 = (snapshot) => (snapshot === null ? null : snapshot.tabs.filter((item) => item.haspopup !== null).map((item) => item.key).join("|"));
+const withChevrons260 = (snapshot) => (snapshot === null ? null : snapshot.tabs.filter((item) => item.chevron).length);
+check("⑬d 下拉只在「提出/负责的问题」标签上挂：「我的任务」/「我的计划」没有 aria-haspopup、没有 ▾、DOM 里没有面板（haspopup 全栏只有 raised 一枚）", tasks260 !== null && tasks260.open === false && plan260 !== null && plan260.open === false && withPopups260(tasks260) === "raised" && withPopups260(plan260) === "raised" && withChevrons260(tasks260) === 1 && tabOf(tasks260, "tasks").haspopup === null && tabOf(tasks260, "plan").haspopup === null && tabOf(plan260, "tasks").haspopup === null && tabOf(plan260, "plan").haspopup === null, JSON.stringify([tasks260 === null ? null : withPopups260(tasks260), plan260 === null ? null : withPopups260(plan260)]));
+// 点父标签 = 切回 raised 并展开面板；再点子项「待我处理的问题」→ 地址 + 数据栏切换 + 自动收起
+await clickSelector("[data-workspace-tab=" + Q + "raised" + Q + "]");
+const raisedOn260 = await waitFor("window.location.hash === " + j("#/my-tasks?tab=raised") + " && document.querySelector(" + j("[data-workspace-submenu]") + ") !== null", 25000);
+const reopened260 = await ev(subMenuExpr());
+check("⑬e 点父标签 = 切回「提出/负责的问题」并保持展开（鼠标先到必然先 hover，点击不切换成收起）", raisedOn260 === true && reopened260 !== null && reopened260.open === true && tabOf(reopened260, "raised").expanded === "true" && tabOf(reopened260, "raised").current === "page" && reopened260.view === "raised", JSON.stringify(reopened260));
+const handlingShown = ws.myIssues.handling.filter((item) => item.state !== "done");
+const handlingShownIds = idsOf(handlingShown);
+const handlingProjects = {};
+for (const item of handlingShown) { handlingProjects[item.projectId] = true; }
+await clickSelector("[data-workspace-submenu] [data-workspace-subtab=" + Q + "handling" + Q + "]");
+const handlingOn = await waitFor("window.location.hash === " + j("#/my-tasks?tab=raised&sub=handling") + " && document.querySelector(" + j("[data-workspace-issues-view=" + Q + "handling" + Q + "]") + ") !== null", 25000);
+const handling260 = await ev(subMenuExpr());
+check("⑬f 选「待我处理的问题」→ 地址写回 ?tab=raised&sub=handling、面板自动收起、标题切「待我处理的问题」、汇总行与接口 handling 栏（剔已完成）逐项对账（共 N 条 · 跨 M 个项目 · 已完成不显示）", handlingOn === true && handling260 !== null && handling260.open === false && handling260.view === "handling" && handling260.title === "待我处理的问题" && handling260.main.raised === "page" && typeof handling260.total === "string" && handling260.total.indexOf("共 " + String(handlingShownIds.length) + " 条") >= 0 && handling260.total.indexOf("跨 " + String(Object.keys(handlingProjects).length) + " 个项目") >= 0 && handling260.total.indexOf("已完成不显示") >= 0, JSON.stringify([handlingOn, handling260]));
+await parkMouse();
+const panelsHandling = await ev(panelsExpr());
+const panelsHandlingTest = panelsHandling === null ? null : panelsHandling.filter((item) => TEST_PROJECTS.indexOf(item.id) >= 0);
+check("⑬g 「待我处理的问题」按项目分组（A / B 两个面板；归零后默认全收起 —— 两枚子视图共用同一组展开记忆）", panelsHandlingTest !== null && panelsHandlingTest.length === 2 && panelsHandlingTest.every((item) => item.open === "false") && panelsHandlingTest.map((item) => item.id).sort().join(",") === [projectA, projectB].sort().join(","), JSON.stringify(panelsHandling));
+await clickSelector("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-panel-toggle]");
+const rowsHandlingA = await ev(issueRowsExpr(projectA));
+check("⑬h 「待我处理的问题」表 = 与「我提出的问题」同一张表（七列同构、同一套问题归类色签）：A 面板 1 条（A1 未解决；A2 已完成 → 不显示）、处理人列 = 我（" + me.displayName + "）、未解决 sky 色签", rowsHandlingA !== null && rowsHandlingA.table === true && rowsHandlingA.heads.length === 7 && rowsHandlingA.rows.length === 1 && rowsHandlingA.rows[0].id === issueA1.issue.id && rowsHandlingA.rows.every((item) => item.id !== issueA2.issue.id) && rowsHandlingA.rows[0].owner === me.displayName && rowsHandlingA.rows[0].categories.indexOf("机械部") >= 0 && rowsHandlingA.rows[0].state === "未解决" && rowsHandlingA.rows[0].stateClass.indexOf("bg-sky-100") >= 0, rowsHandlingA === null ? "null" : JSON.stringify(rowsHandlingA.rows));
+await shot("m6-06-workspace-handling.png");
+await clickSelector("[data-workspace-panel=" + Q + projectB + Q + "] [data-workspace-panel-toggle]");
+const rowsHandlingB = await ev(issueRowsExpr(projectB));
+check("⑬i 跨项目：B 面板 1 条 = wmj 提出、处理人是我那条（「我处理的」含、「我提出的」不含 —— 两栏口径互不串台）", rowsHandlingB !== null && rowsHandlingB.table === true && rowsHandlingB.rows.length === 1 && rowsHandlingB.rows[0].id === issueOther.issue.id && rowsHandlingB.rows[0].owner === me.displayName, rowsHandlingB === null ? "null" : JSON.stringify(rowsHandlingB.rows));
+// 共用展开记忆：从下拉切回「我提出的问题」，刚才展开的 A / B 仍展开（偏好键 workspaceOpenProjects.raised）
+await clickSelector("[data-workspace-tab=" + Q + "raised" + Q + "]");
+const submenuBack260 = await waitFor("document.querySelector(" + j("[data-workspace-submenu]") + ") !== null", 15000);
+await clickSelector("[data-workspace-submenu] [data-workspace-subtab=" + Q + "raised" + Q + "]");
+const raisedBack = await waitFor("window.location.hash === " + j("#/my-tasks?tab=raised") + " && document.querySelector(" + j("[data-workspace-issues-view=" + Q + "raised" + Q + "]") + ") !== null", 25000);
+const panelsBack = await ev(panelsExpr());
+const panelsBackTest = panelsBack === null ? null : panelsBack.filter((item) => TEST_PROJECTS.indexOf(item.id) >= 0);
+check("⑬j 两枚子视图共用同一组展开记忆：从下拉切回「我提出的问题」刚才展开的 A / B 仍展开（偏好键 workspaceOpenProjects.raised）", submenuBack260 === true && raisedBack === true && panelsBackTest !== null && panelsBackTest.length === 2 && panelsBackTest.every((item) => item.open === "true") && panelsBackTest.every((item) => item.rows > 0), JSON.stringify(panelsBack));
+await parkMouse();
+// 色签硬核对：工作台问题表 ↔ 项目页「问题追踪」逐 token 相等（业务口径「问题是否解决的颜色要统一和项目里面的一致」）
+const wsChipClass = await ev(chipClassExpr("[data-workspace-issue=" + Q + issueA1.issue.id + Q + "] [data-issue-state]"));
+await open("#/project/" + projectA + "?view=daily&sub=issues", "[data-issue-search]");
+const projChipOk = await waitFor("document.querySelector(" + j("[data-issue-row=" + Q + issueA1.issue.id + Q + "] [data-issue-state]") + ") !== null", 25000);
+const projChipClass = await ev(chipClassExpr("[data-issue-row=" + Q + issueA1.issue.id + Q + "] [data-issue-state]"));
+const wsChipTokens = classTokensOf(wsChipClass);
+check("⑬k 色签统一硬核对：工作台「问题是否处理」与项目页「问题追踪」class token 集合完全相等（壳体 rounded-lg / px-3 / py-1.5 / text-[11px] + 底色 / 字色）", projChipOk === true && wsChipClass !== null && projChipClass !== null && wsChipTokens.length > 0 && JSON.stringify(wsChipTokens) === JSON.stringify(classTokensOf(projChipClass)) && wsChipTokens.indexOf("rounded-lg") >= 0 && wsChipTokens.indexOf("px-3") >= 0 && wsChipTokens.indexOf("py-1.5") >= 0, JSON.stringify([wsChipClass, projChipClass]));
+// 深链 / 未知子视图：?sub=handling 直接打开停在该子视图（下拉里选中态跟着走）；不认识的值落回缺省 raised（地址不纠正）
+await parkMouse();
+await open("#/my-tasks?tab=raised&sub=handling", "[data-workspace-page]");
+await hoverRaisedTab();
+const deepHandling = await ev(subMenuExpr());
+check("⑬l 深链 #/my-tasks?tab=raised&sub=handling 直接打开 = 「待我处理的问题」选中（下拉点开即见 aria-current=page；刷新 / 收藏 / 分享同款）", deepHandling !== null && deepHandling.hash === "#/my-tasks?tab=raised&sub=handling" && deepHandling.open === true && deepHandling.items[1].current === "page" && deepHandling.items[0].current === null && deepHandling.view === "handling", JSON.stringify(deepHandling));
+await parkMouse();
+await open("#/my-tasks?tab=raised&sub=zzz", "[data-workspace-page]");
+await hoverRaisedTab();
+const deepUnknown = await ev(subMenuExpr());
+check("⑬m ?sub= 不认识的值落回缺省「我提出的问题」（下拉里选中第一枚；地址不纠正，与 ?tab= / ?view= 同口径）", deepUnknown !== null && deepUnknown.open === true && deepUnknown.items[0].current === "page" && deepUnknown.items[1].current === null && deepUnknown.view === "raised", JSON.stringify(deepUnknown));
+await parkMouse();
+const restored260 = await patchOpenProjects(memoryOriginal);
+check("⑬n 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（⑬ 的展开操作不留痕）", restored260 !== null && JSON.stringify(restored260.json.workspaceOpenProjects) === JSON.stringify(memoryOriginal), restored260 === null ? "null" : JSON.stringify(restored260.json.workspaceOpenProjects));
 // ---------- ⑧ 收尾：清理 + 控制台 ----------
+// ⑥k 的乐观锁冲突（409）是刻意造的：浏览器把这次失败请求记一条 network error —— 精确豁免这一条
+// （文案含「status of 409」；至多 1 条，多出来的 / 别的一律照旧判失败），其余控制台 / 未捕获异常必须 0 条。
 const consoleLines = page.events.filter((line) => line.indexOf("EVT Runtime.exceptionThrown") >= 0 || line.indexOf("EVT Log.entryAdded") >= 0);
-check("⑧a 页面控制台 / 未捕获异常 0 条", consoleLines.length === 0, consoleLines.length === 0 ? "0" : JSON.stringify(consoleLines.slice(0, 3)));
+const conflictNoise260 = consoleLines.filter((line) => line.indexOf("status of 409") >= 0);
+const consoleLinesReal = consoleLines.filter((line) => line.indexOf("status of 409") < 0);
+check("⑧a 页面控制台 / 未捕获异常 0 条（⑥k 刻意造的 409 冲突响应记 1 条 network error，属预期、豁免）", consoleLinesReal.length === 0 && conflictNoise260.length <= 1, JSON.stringify([consoleLinesReal.slice(0, 3), conflictNoise260.length]));
 
 page.ws.close();
 chrome.kill();

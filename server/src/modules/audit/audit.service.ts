@@ -6,15 +6,18 @@ import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import type { AuditChangeEntry } from "../../db/schema/admin.js";
 import { AuditRepository, type AuditListFilter, type AuditRow } from "./audit.repository.js";
+import { parseAuditListFilters } from "./audit.query.js";
 
-/** 审计查询入参（契约 AuditLogListQuery 的 infer 结果）。 */
+/** 审计查询入参（契约 AuditLogListQuery 的 infer 结果；多值筛选为逗号分隔字符串，见 audit.query.ts）。 */
 export interface AuditListQueryInput {
-  objectType?: AuditObjectType;
+  objectType?: string;
   objectId?: string;
   actorId?: string;
-  action?: AuditAction;
-  result?: AuditResult;
+  action?: string;
+  result?: string;
   projectId?: string;
+  /** 关键字（Push 260 · C7-04 搜索）：操作内容（摘要 / 字段级修改明细）/ 操作人姓名快照。 */
+  q?: string;
   from?: string;
   to?: string;
   page: number;
@@ -40,7 +43,7 @@ export interface AuditRecordInput {
  * 审计服务（h7 · C7-01 / C7-02 / C7-03 / C7-05）：
  * 1) 业务留痕 record()：由业务用例在**同一事务**内调用（谁、何时、对什么、从什么改成什么）；
  * 2) 越权留痕 recordDenied()：全局异常过滤器在 403 / 项目域 404 时调用，独立连接、失败只记日志（不影响响应）；
- * 3) 检索 list()：按对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间（h7 验收项②），occurredAt 降序；
+ * 3) 检索 list()：按对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间 + 关键字 q（Push 260：摘要 / 操作人姓名 / 变化明细 ILIKE）（h7 验收项②），occurredAt 降序；
  * 4) 防篡改：只 INSERT / SELECT（库级已收回 UPDATE / DELETE）；保留 ≥6 个月由运维按月清理。
  *
  * Push 173：本服务随审计出口迁至 audit 模块（admin 模块依赖 identity 守卫，identity 需写审计 —— 独立模块避免循环）；
@@ -100,13 +103,16 @@ export class AuditService implements AuditSink {
 
   /** 审计检索（C7-04 的服务端口径：多条件筛选；导出随 u12）。 */
   async list(query: AuditListQueryInput): Promise<AuditLogListResponse> {
+    const keyword = query.q?.trim() ?? "";
+    const multi = parseAuditListFilters(query);
     const filter: AuditListFilter = {
-      objectType: query.objectType,
+      objectTypes: multi.objectTypes,
       objectId: query.objectId,
-      actorId: query.actorId,
-      action: query.action,
-      result: query.result,
-      projectId: query.projectId,
+      actorIds: multi.actorIds,
+      actions: multi.actions,
+      results: multi.results,
+      projectIds: multi.projectIds,
+      keyword: keyword === "" ? undefined : keyword,
       from: query.from === undefined ? undefined : new Date(query.from),
       to: query.to === undefined ? undefined : new Date(query.to),
     };
