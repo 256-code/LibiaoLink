@@ -116,7 +116,7 @@ export const RECYCLE_SWEEP_BATCH = 100;
  * 不可见资源统一 404（防 IDOR）。
  *
  * M4-02 增补（版本 / 定档 / 回溯 / 回收站 + 到期清理）：
- * - 状态机：draft → final（定档锁版）→ changed（M4-04 变更）→ archived；任意态可 recycled（回收站，保留 30 天可恢复）；
+ * - 状态机：draft → final（定档锁版）→ changed（M4-04 变更）→ archived；任意态可 recycled（回收站，保留 30 天可恢复；挂接任务已定档除外 —— 409 TASK_FINALIZED，Push 260）；
  * - 放开 `intent=version` + `fileId`（Push 130 定案）：对既有 draft 文件追加 / 替换版本（版本链只追加，当前版本指向新版本）；
  * - 生命周期写操作一律带乐观锁 `version`（409 VERSION_CONFLICT；「并发定档 409」为 M4 出口标准）；
  * - 回溯生成新版本（复制目标版对象到新版本契约键），不删历史；定档后回溯走变更流（M4-04 起落地）；
@@ -782,8 +782,9 @@ export class FileService {
   }
 
   /**
-   * 任务定档闸（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：文件挂接的任务已定档时，
-   * 新增 / 直接替换 / 追加版本 / 改名 / 普通回溯（draft）一律 409 TASK_FINALIZED；修改走变更（A2-10 / A4-13）。
+   * 任务定档闸（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」；Push 260 补漏 · 业务口径
+   * 「定档后还能删除是bug 不能删除定档后」+ 删除 / 移入回收站）：文件挂接的任务已定档时，
+   * 新增 / 直接替换 / 追加版本 / 改名 / 删除（移入回收站）/ 普通回溯（draft）一律 409 TASK_FINALIZED；修改走变更（A2-10 / A4-13）。
    * 定档绕过补漏：`completeUpload` 事务内复核（会话早于定档发起时，状态门禁不够）；
    * 定档侧同时撤销在途 version 会话（finalizeFile / task.finalize）。
    */
@@ -855,7 +856,8 @@ export class FileService {
   }
 
   /**
-   * POST /files/{id}/recycle：移入回收站（任意状态可删）。记 `recycled_from_status` 供恢复回退，
+   * POST /files/{id}/recycle：移入回收站（文件状态任意可删 —— 唯一例外：挂接任务已定档，409 TASK_FINALIZED，
+   * Push 260 补漏 · 业务口径「定档后还能删除是bug 不能删除定档后」）。记 `recycled_from_status` 供恢复回退，
    * `purge_after = recycled_at + FILE_RECYCLE_RETENTION_DAYS`（默认 30 天，到期由 worker 彻底删除）。
    */
   async recycleFile(fileId: string, body: FileRecycleBody, actorId: string): Promise<FileView> {
@@ -868,6 +870,9 @@ export class FileService {
       this.assertOptimisticVersion(body.version, locked.version);
       if (locked.status === "recycled") {
         throw new AppError("FILE_STATE_INVALID", "文件已在回收站，不能重复回收");
+      }
+      if (locked.taskId !== null) {
+        await this.assertTaskNotFinalized(locked.taskId, tx);
       }
       const updated = await this.repository.updateFileState(
         fileId,

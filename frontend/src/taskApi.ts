@@ -322,6 +322,15 @@ export function finalizeTask(projectId: string, taskId: string, version: number)
   );
 }
 
+/** 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：抽屉「已」开关再次点击 → 二次确认后调用；已定档 → 清位重开（此后可修改）；未定档 → 幂等原样返回。 */
+export function unfinalizeTask(projectId: string, taskId: string, version: number): Promise<ApiTask> {
+  return apiSend<ApiTask>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks/" + encodeURIComponent(taskId) + "/unfinalize",
+    "POST",
+    { version },
+  );
+}
+
 /** 删除任务（软删）：版本走 If-Match 请求头；响应只回标记。 */
 export function deleteTask(projectId: string, taskId: string, version: number): Promise<{ id: string; deleted: boolean }> {
   return apiRequest<{ id: string; deleted: boolean }>(

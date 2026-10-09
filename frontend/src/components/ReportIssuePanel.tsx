@@ -397,10 +397,15 @@ const categoryChip = (name: string) => tagChip(name, ISSUE_CATEGORY_CLASS[name] 
 
 /** 关联阶段的小色签（浮层用）。 */
 const stageChip = (name: string) => tagChip(name, STAGE_TAG_CLASS[name] ?? "bg-zinc-100");
+/** 三态色签壳体（「问题追踪」与工作台问题表共用一处）：与「项目总览」任务状态胶囊同款 —— rounded-lg +
+ *  px-3 py-1.5 + text-[11px] font-medium。Push 260 抽出：工作台问题表原先自带一档更小的壳（rounded + px-1.5 +
+ *  py-0.5），业务口径「问题是否解决的颜色要统一和项目里面的一致」收口到本常量，两处不再各写各的。 */
+export const ISSUE_TAG_SHELL = "rounded-lg px-3 py-1.5 text-[11px] font-medium";
+
 /** 问题状态色签（一处出签：追踪表「问题是否处理」列 + 看板卡片 / 列头共用）。Push 207 追加：壳体与「项目总览」
- *  任务状态胶囊同款（rounded-lg + px-3 py-1.5 + text-[11px] font-medium —— 项目总览侧是可点下拉、悬停深一档；
- *  静态签不挂悬停加深，其余逐项对齐）。`focus` = 醒目模式（仅追踪表传 true）：整行已铺状态底色，色签收口成
- *  只留深色字（透明底 + 加粗 —— 同 TaskBoard 醒目模式状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
+ *  任务状态胶囊同款（壳 = ISSUE_TAG_SHELL，见上；项目总览侧是可点下拉、悬停深一档；静态签不挂悬停加深，其余逐项对齐）。
+ *  `focus` = 醒目模式（仅追踪表传 true）：整行已铺状态底色，色签收口成只留深色字（透明底 + 加粗 —— 同 TaskBoard
+ *  醒目模式状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
 function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: boolean }) {
   return (
     <span
@@ -409,7 +414,7 @@ function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: bo
         "inline-block " +
         (focus
           ? "text-xs font-semibold " + ISSUE_TAG_TEXT_CLASS[state]
-          : "rounded-lg px-3 py-1.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state])
+          : ISSUE_TAG_SHELL + " " + ISSUE_TAG_CLASS[state])
       }
     >
       {ISSUE_STATE_NAMES[state]}
@@ -479,6 +484,32 @@ const FORM_LABEL = "text-xs font-bold text-zinc-500";
 
 /** 行内编辑触发器 · 色签列（Push 208）：问题归类 / 问题状态用 —— 触发器贴着内容（不满宽），四周留 2px 可点外沿。 */
 const CELL_EDIT_CHIP = "-m-0.5 rounded-lg p-0.5 hover:bg-zinc-900/[0.04]";
+
+/** 行内可改的「问题是否处理」单元格（Push 260）：项目页「问题追踪」与工作台问题表**共用同一枚** ——
+ *  显示器 = IssueStateTag（三态色签 / 醒目模式只留深色字），点色签弹三态下拉（每项 = 该状态色签胶囊），
+ *  选中即落值（onPick）并关掉浮层。原先这段内联在追踪表里；抽出本组件的口径 = 业务口径 2026-10-09
+ *  「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」—— 两处壳 / 触发器 / aria 名一处出、不走样。 */
+export function IssueStateCell({ state, focus = false, ariaLabel, onPick }: {
+  state: IssueState;
+  /** 醒目模式（整行已铺状态底色）：色签收口成只留深色字 —— 同追踪表口径。 */
+  focus?: boolean;
+  ariaLabel: string;
+  onPick: (next: IssueState) => void;
+}) {
+  return (
+    <InlineOptionCell
+      bare
+      value={state}
+      options={ISSUE_STATE_OPTIONS}
+      ariaLabel={ariaLabel}
+      triggerClassName={CELL_EDIT_CHIP}
+      display={<IssueStateTag state={state} focus={focus} />}
+      onPick={(value) => {
+        onPick(value as IssueState);
+      }}
+    />
+  );
+}
 
 
 /** 行首序号（自动序号用：1: / 2. / 3、/ 4：都算 —— 重排时先剥掉，再统一按 1: / 2: / 3: 编）。 */
@@ -1846,16 +1877,14 @@ function IssueTable({ issues, focus, onEdit, onPatch, onDelete }: {
               <td className="whitespace-nowrap px-4 py-4 text-center">
                 {/* Push 217 续（业务口径「这个在表格里面始终居中」）：text-center —— 触发器是行内级盒（inline-flex），
                     状态色签在列内**始终水平居中**（三态 / 醒目模式 / 行内改后同款；列宽再变也不贴左沿）。 */}
-                {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚），色签壳直接复用 IssueStateTag */}
-                <InlineOptionCell
-                  bare
-                  value={issue.state}
-                  options={ISSUE_STATE_OPTIONS}
+                {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚）。
+                    Push 260：抽成 IssueStateCell 与工作台问题表共用（那边要「和项目内部一样可以点击」）。 */}
+                <IssueStateCell
+                  state={issue.state}
+                  focus={focus}
                   ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
-                  triggerClassName={CELL_EDIT_CHIP}
-                  display={<IssueStateTag state={issue.state} focus={focus} />}
-                  onPick={(value) => {
-                    onPatch(issue.id, { state: value as IssueState });
+                  onPick={(next) => {
+                    onPatch(issue.id, { state: next });
                   }}
                 />
               </td>

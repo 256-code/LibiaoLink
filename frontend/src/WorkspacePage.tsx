@@ -39,31 +39,57 @@
  * - 任务表 15 列里聚合读面只带 9 列：项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 按时交付（onTime）/
  *   变更关联**不在 A31 第一刀里** —— 按项目向源接口（GET /projects/{id}/tasks + GET /projects/{id}）回填，
  *   按任务 / 项目 id 对齐（任务表要全，见 useTaskFull）。
- * - 「我提出的问题」四列（日期 / 描述 / 归类 / 状态）来自聚合读面；**「解决方案或建议 / 问题附图」不在 A31 第一刀里** ——
- *   按项目向源接口（GET /api/v1/projects/{id}/issues）回填，按问题 id 对齐（问题表要全，见 useIssueFull）。
+ * - 「我提出的问题 / 待我处理的问题」五列（日期 / 描述 / 归类 / 处理人 / 状态）来自聚合读面；**「解决方案或建议 /
+ *   问题附图」不在 A31 第一刀里** —— 按项目向源接口（GET /api/v1/projects/{id}/issues）回填，按问题 id 对齐
+ *   （问题表要全，见 useIssueFull）。
  *
- * 标签走地址（`#/my-tasks?tab=raised`，缺省「我的任务」不落参数）—— 与列表筛选态 / 详情页子视图同一口径。
- * 待办（下一刀，业务未提）：「我处理的问题」栏（契约 myIssues.handling 已下发）、工作台内问题快速流转 / 关闭
- * （契约保留 version 正是为此）、任务级深链 `?task=`（一键开任务详情抽屉）。
+ * Push 260（业务口径 2026-10-09「在我提出的问题增加子标签导航栏 和日报那样 增加待我处理的问题」+「页面中的信息
+ * 要包括图二的人员信息」+「问题是否解决的颜色要统一和项目里面的一致」+「我处理的问题就是提出问题里面分类的问题」
+ * +「改成 提出/负责的问题」+「要居中这个状态」+「然后导航栏还是改成这样的吧」）：
+ * ① 第二枚主标签由「我提出的问题」改**「提出/负责的问题」**（tab key 不变 `?tab=raised`），标签下挂两枚子视图
+ * （我提出的问题 / 待我处理的问题）—— 形态按业务口径「然后导航栏还是改成这样的吧」（图 = 项目页「日报及问题」的
+ * 下拉子菜单）收进**主标签栏的下拉面板**（Push 260 第一稿的另一排下划线子标签栏本刀撤掉；面板见
+ * components/WorkspaceIssueSubMenu.tsx），地址口径不变：`?tab=raised&sub=`（缺省 raised 不落参数、
+ * `?sub=handling` = 待我处理的问题；与「日报及问题」的 `?view=daily&sub=` 同一套「地址即状态」）；
+ * ② 新页「待我处理的问题」= 契约 myIssues.handling（ownerId 我），页面结构与「我提出的问题」完全同构（同一张表、
+ * 同一套问题归类色签 —— 业务口径「我处理的问题就是提出问题里面分类的问题」，不另立分类）；③ 问题表补第七列
+ * **问题处理人 / 责任人**（ownerName，空「—」，与「问题追踪」同列）；④「问题是否处理」色签壳体收口到项目页
+ * 同一档（ISSUE_TAG_SHELL）—— 底色 / 字色本就同源，本刀把壳也统一；⑤「问题是否处理」列**整列居中**
+ * （业务口径「要居中这个状态」：表头 + 单元格 + 色签一处不落）；⑥「问题是否处理」**行内可改**（业务口径
+ * 「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」）—— 与项目页「问题追踪」共用同一枚行内下拉
+ * （ReportIssuePanel 的 IssueStateCell），乐观更新 + PATCH（乐观锁 version）+ 失败回滚并出提示条；
+ * 本地改完就地生效、不重排（刷新后按服务端「未关闭在前」口径回归）；⑦「已完成则不显示」（业务口径 2026-10-09）——
+ * 两枚子视图同一口径：状态为「已完成」的问题不进这两张表（行内刚改成「已完成」的行即时消失、改失败回滚后重新出现并出
+ * 提示条）；面板计数 / 汇总行（共 N 条）只算未完成的，项目全完成则该面板不出现；项目页「问题追踪」不受影响
+ * （仍是全量展示）。
+ *
+ * 标签走地址（`#/my-tasks?tab=raised&sub=handling`，缺省「我的任务」/ 缺省子标签 raised 不落参数）—— 与列表筛选态 /
+ * 详情页子视图同一口径。两个子视图共用同一组「已展开项目」记忆（workspaceOpenProjects.raised；同一标签下的两个问题
+ * 视图，若后续要各记一组需契约扩键，随下一刀对齐 wmj 线）。
+ * 待办（下一刀，业务未提）：任务级深链 `?task=`
+ * （一键开任务详情抽屉）。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
+import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
+import { Toast } from "./components/Toast";
 import { FocusModeToggle } from "./components/FocusModeToggle";
-import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS } from "./components/ReportIssuePanel";
+import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
+import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
 import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
 import { TrackerDots } from "./components/Tracker";
 import { docTypeCapsule } from "./components/DeliverablePicker";
 import { dateOnlyText, daysBetweenInclusive } from "./data/tasks";
-import type { ReportPhoto } from "./data/reports";
+import type { IssueState, ReportPhoto } from "./data/reports";
 import { usePhotoUrl } from "./fileApi";
 import { fetchProject } from "./projectApi";
-import { fetchProjectIssues, ISSUE_STATE_NAMES } from "./reportApi";
+import { fetchProjectIssues, ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
 import { displayStatusLabel, fetchProjectTasks, stageNameOf, type ApiTaskListItem } from "./taskApi";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
 import type { WorkspaceOpenProjects } from "./preferencesApi";
-import { projectViewHref, type WorkspaceTab } from "./useHashRoute";
+import { projectViewHref, type WorkspaceIssueView, type WorkspaceTab } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 type WorkspacePageProps = {
@@ -72,6 +98,10 @@ type WorkspacePageProps = {
   tab: WorkspaceTab;
   /** 切标签：同步渲染并写回地址（replace，不新增历史条目）。 */
   onChangeTab: (tab: WorkspaceTab) => void;
+  /** 「我提出的问题」下的子标签（Push 260 · 地址派生：`?tab=raised&sub=handling` = 待我处理的问题；缺省 raised 不落参数）。 */
+  sub: WorkspaceIssueView;
+  /** 切子标签（replace，不新增历史条目）：只在「我提出的问题」标签下有意义。 */
+  onChangeSub: (sub: WorkspaceIssueView) => void;
   /** 醒目模式（Push 232 · 业务口径「同样增加醒目模式」）：与项目总览 / 问题追踪同一个账号偏好；null / 缺省 = 偏好尚未取到（按默认「关」渲染，不回写）。 */
   focusMode?: boolean | null;
   /** 保存醒目模式（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。不传 = 开关只读（偏好落库仍走服务端）。 */
@@ -693,18 +723,32 @@ function IssuePhotos({ photos }: { photos: readonly ReportPhoto[] }) {
   );
 }
 
-/** 展开区 ② 我提出的问题表（列口径照「问题追踪」完整六列）：日期 / 问题描述 / 问题归类 / 解决方案或建议 /
- *  问题附图 / 问题是否处理（窄屏横向滚动）。
+/** 「问题是否处理」行内改的本地覆盖（Push 260）：乐观写入（state 立即生效、version 沿用服务器已知值），
+ *  PATCH 回包后用服务器的新 version 覆盖；失败回滚（原先没有覆盖 → 删掉这条）。 */
+type IssueStateOverride = { state: IssueState; version: number };
+
+/** 聚合读面的 state 是宽类型（string）：三态之外的值按「未解决」兜底（与 issueStateOf 的兜底同一口径）。 */
+function toIssueState(state: string): IssueState {
+  return state === "in_progress" || state === "done" ? state : "open";
+}
+
+/** 展开区 ② 我提出的问题 / 待我处理的问题表（列口径照「问题追踪」完整七列）：日期 / 问题描述 / 问题归类 /
+ *  问题处理人 · 责任人 / 解决方案或建议 / 问题附图 / 问题是否处理（窄屏横向滚动）。
  *  Push 242：① `table-fixed` + `<colgroup>` 定死列宽（见 ISSUE_COL_WIDTHS）—— 各项目面板的同名列一一对齐
  *  （原 `table-auto` 各自按内容算宽、换一个项目列就飘；业务口径「这个页面的列要对齐吧 不然不美观」）；
- *  ② 行尾「在项目中查看」下架 —— 进项目的入口收敛到面板头「进入项目」（Push 253 起定标 = 该项目「问题追踪」）。 */
-const ISSUE_COL_WIDTHS = ["10%", "21%", "10%", "21%", "27%", "11%"] as const;
-
-function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; focus: boolean }) {
+ *  ② 行尾「在项目中查看」下架 —— 进项目的入口收敛到面板头「进入项目」（Push 253 起定标 = 该项目「问题追踪」）。
+ *  Push 260（业务口径「页面中的信息要包括图二的人员信息」+「问题是否解决的颜色要统一和项目里面的一致」）：
+ *  ③ 在「问题归类」后补第七列「问题处理人 / 责任人」（ownerName；空 = 「—」，与「问题追踪」同列同口径）；
+ *  ④ 「问题是否处理」色签改用项目页同一档壳体 ISSUE_TAG_SHELL（原先自带一档更小的壳 `rounded + px-1.5 + py-0.5`，
+ *  底色 / 字色本就同源 ISSUE_TAG_CLASS，本刀把壳也收口 —— 业务口径「和项目里面的一致」）；
+ *  ⑤ 「问题是否处理」列**整列居中**（业务口径「要居中这个状态」）：表头补 text-center（单元格本就是 text-center，色签在列内
+ *  水平居中）—— 单元格保持 align-top 不动（与其它列同一条基线，只收水平向）。 */
+const ISSUE_COL_WIDTHS = ["8%", "19%", "9%", "10%", "18%", "26%", "10%"] as const;
+function IssueTable({ issues, full, focus, overrides, onChangeState }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; focus: boolean; /** 行内改状态的本地覆盖（Push 260）：按问题 id 取，同一问题在两个子视图里共用。 */ overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
   return (
     <div data-workspace-issue-table="" data-workspace-issue-focus={focus ? "true" : "false"} className="overflow-x-auto rounded-lg border border-zinc-200">
-      <table className="w-full min-w-[1280px] table-fixed border-collapse text-left text-sm">
-        {/* 定死六列宽度：跨面板同名列的 x 坐标逐列一致；长文本按列宽换行、不再把列撑开 */}
+      <table className="w-full min-w-[1400px] table-fixed border-collapse text-left text-sm">
+        {/* 定死七列宽度：跨面板同名列的 x 坐标逐列一致；长文本按列宽换行、不再把列撑开 */}
         <colgroup>
           {ISSUE_COL_WIDTHS.map((width, index) => (
             <col key={String(index)} style={{ width }} />
@@ -715,14 +759,15 @@ function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssu
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">日期</th>
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题描述</th>
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题归类</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题处理人 / 责任人</th>
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">解决方案或建议</th>
             <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题附图</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题是否处理</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 text-center font-medium">问题是否处理</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => {
-            const state = issueStateOf(issue.state);
+            const state = issueStateOf(overrides.get(issue.id)?.state ?? toIssueState(issue.state));
             const detail = full.get(issue.id);
             return (
               <tr key={issue.id} data-workspace-issue={issue.id} className={"align-top transition-colors " + (focus ? state.focusRowClass : "hover:bg-zinc-50/80")}>
@@ -733,6 +778,12 @@ function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssu
                 <td className="px-4 py-3">
                   <CategoryTags values={issue.categories} />
                 </td>
+                <td className="px-4 py-3 text-zinc-700">
+                  {/* Push 260：问题处理人 / 责任人（ownerName；空 = 灰杠「—」，与「问题追踪」同列） */}
+                  <span data-workspace-issue-owner="" className="block break-words">
+                    {issue.ownerName === null || issue.ownerName === "" ? <span className="text-zinc-300">—</span> : issue.ownerName}
+                  </span>
+                </td>
                 <td className="px-4 py-3">
                   <span data-workspace-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">
                     {detail === undefined || detail.solution === "" ? "—" : detail.solution}
@@ -742,15 +793,17 @@ function IssueTable({ issues, full, focus }: { issues: readonly ApiWorkspaceIssu
                   <IssuePhotos photos={detail === undefined ? [] : detail.photos} />
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-center">
-                  <span
-                    data-issue-state={issue.state}
-                    className={
-                      "inline-block " +
-                      (focus ? "text-xs font-semibold " + state.focusTagClass : "rounded px-1.5 py-0.5 text-[11px] font-medium " + state.className)
-                    }
-                  >
-                    {state.label}
-                  </span>
+                  {/* Push 260：状态列行内可改（业务口径「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」）——
+                      与项目页「问题追踪」同一枚 IssueStateCell（点色签弹三态下拉、选中即落库）；显示器仍是 IssueStateTag，
+                      列内水平居中口径不变。 */}
+                  <IssueStateCell
+                    state={overrides.get(issue.id)?.state ?? toIssueState(issue.state)}
+                    focus={focus}
+                    ariaLabel={"修改问题状态（" + cnDateFull(issue.raisedAt) + "）"}
+                    onPick={(next) => {
+                      onChangeState(issue, next);
+                    }}
+                  />
                 </td>
               </tr>
             );
@@ -771,10 +824,13 @@ function EmptyCard({ text, hint }: { text: string; hint: string }) {
   );
 }
 
-/** 三枚标签（业务口径「我的任务 我提出的问题先做这两个」→ Push 234「增加一个我的计划页面」；样式 = 任务模板页的下划线标签栏，文字 + 选中下划线）。 */
+/** 三枚标签（业务口径「我的任务 我提出的问题先做这两个」→ Push 234「增加一个我的计划页面」；样式 = 任务模板页的下划线标签栏，文字 + 选中下划线）。
+ *  Push 260：第二枚标签由「我提出的问题」改**「提出/负责的问题」**（业务口径 2026-10-09「改成 提出/负责的问题」）—— 该标签下挂两枚子视图
+ *  （我提出的问题 / 待我处理的问题；下拉子菜单 = 业务口径「然后导航栏还是改成这样的吧」，见 components/WorkspaceIssueSubMenu.tsx），
+ *  父标签用「提出 / 负责」这组口径统住两栏；tab key 不变（`?tab=raised`）。 */
 const TABS: ReadonlyArray<{ key: WorkspaceTab; label: string }> = [
   { key: "tasks", label: "我的任务" },
-  { key: "raised", label: "我提出的问题" },
+  { key: "raised", label: "提出/负责的问题" },
   { key: "plan", label: "我的计划" },
 ];
 
@@ -822,16 +878,31 @@ function MyTasksView({ data, focus, openIds, onToggleProject }: { data: ApiWorks
   );
 }
 
-/** 标签 ② 我提出的问题：按项目的折叠面板 + 照「问题追踪」六列的问题表。 */
-function RaisedIssuesView({ issues, focus, openIds, onToggleProject }: { issues: readonly ApiWorkspaceIssue[]; focus: boolean; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void }) {
-  const projects = groupIssuesByProject(issues);
+/** 「提出/负责的问题」标签下的两枚子视图（Push 260）—— 本刀按业务口径「然后导航栏还是改成这样的吧」收进主标签栏的
+ *  下拉子菜单（子项定义与面板都在 components/WorkspaceIssueSubMenu.tsx，与项目页「日报及问题」同款；本文件只剩挂载与
+ *  悬停 / 点击展开逻辑）：地址仍是 `?tab=raised&sub=`（缺省 raised 不落参数、`?sub=handling` = 待我处理的问题）。 */
+
+/** 标签 ②「我提出的问题」/「待我处理的问题」（两枚子标签共用本视图）：按项目的折叠面板 + 照「问题追踪」七列的问题表。
+ *  - 数据两栏不同源：raised = 我提出的（reporterId 我）、handling = 我处理的（ownerId 我）；同一问题两边都命中时两栏都出现
+ *  （服务端口径，未关闭在前 —— 已完成也收；页面展示再按「已完成不显示」过滤，见下条）；
+ *  - 「已完成则不显示」（Push 260 · 业务口径 2026-10-09）：状态为「已完成」的问题两栏都不进表 —— 过滤取「行内覆盖值 ??
+ *  接口值」的有效状态（visibleIssues），行内刚改成「已完成」的行即时消失、改失败回滚后重新出现；面板计数 / 汇总行
+ *  （共 N 条）只算未完成的，项目全完成则该面板不出现；项目页「问题追踪」不受影响（全量口径）；
+ *  - 表 / 归类色签两栏完全同构（业务口径「我处理的问题就是提出问题里面分类的问题」—— 同一套「问题归类」，不另立分类）；
+ *  - 「进入项目」落点两栏一致 = 该项目「问题追踪」（`?view=daily&sub=issues`；Push 253 口径）；折叠面板展开态两栏共用
+ *  同一组「已展开项目」记忆（openedIds，见页面级说明）。 */
+function IssuesView({ view, issues, focus, openIds, onToggleProject, overrides, onChangeState }: { view: WorkspaceIssueView; issues: readonly ApiWorkspaceIssue[]; focus: boolean; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
+  // 已完成不显示（Push 260 · 第七项）：按「覆盖值 ?? 接口值」的有效状态过滤；useIssueFull 仍吃全量 issues（数组身份稳定，不触发多余重取）。
+  const visibleIssues = issues.filter((issue) => (overrides.get(issue.id)?.state ?? toIssueState(issue.state)) !== "done");
+  const projects = groupIssuesByProject(visibleIssues);
   const { full, partial } = useIssueFull(issues);
+  const raised = view === "raised";
   return (
-    <section data-workspace-issues="" className="space-y-3">
+    <section data-workspace-issues="" data-workspace-issues-view={view} className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h2 className="text-sm font-semibold text-zinc-900">我提出的问题</h2>
+        <h2 className="text-sm font-semibold text-zinc-900">{raised ? "我提出的问题" : "待我处理的问题"}</h2>
         <span data-workspace-issue-total="" className="text-xs text-zinc-400">
-          {"共 " + String(issues.length) + " 条 · 跨 " + String(projects.length) + " 个项目 · 未关闭在前"}
+          {"共 " + String(visibleIssues.length) + " 条 · 跨 " + String(projects.length) + " 个项目 · 已完成不显示"}
         </span>
         {partial ? (
           <span data-workspace-issue-partial="" className="text-xs text-amber-600">
@@ -840,7 +911,11 @@ function RaisedIssuesView({ issues, focus, openIds, onToggleProject }: { issues:
         ) : null}
       </div>
       {projects.length === 0 ? (
-        <EmptyCard text="还没有你提出的问题。" hint="在项目「日报及问题 → 问题追踪」里由你记录的问题（reporterId = 我）会出现在这里。" />
+        raised ? (
+          <EmptyCard text="当前没有你提出的未完成问题。" hint="口径：问题提出人（reporterId）是你 —— 在项目「日报及问题 → 问题追踪」里由你记录的问题会出现在这里；已完成的不再显示（在项目「问题追踪」里可查）。" />
+        ) : (
+          <EmptyCard text="当前没有待你处理的问题。" hint="口径：问题处理人（ownerId）是你 —— 在项目「日报及问题 → 问题追踪」里分派给你的问题会出现在这里；已完成的不再显示（在项目「问题追踪」里可查）。" />
+        )
       ) : (
         <div className="space-y-2">
           {projects.map((project) => (
@@ -856,7 +931,7 @@ function RaisedIssuesView({ issues, focus, openIds, onToggleProject }: { issues:
                 onToggleProject(project.projectId);
               }}
             >
-              <IssueTable issues={project.issues} full={full} focus={focus} />
+              <IssueTable issues={project.issues} full={full} focus={focus} overrides={overrides} onChangeState={onChangeState} />
             </ProjectPanel>
           ))}
         </div>
@@ -882,8 +957,11 @@ function MyPlanView() {
 
 /** 工作台「我的任务」页：三枚标签（我的任务 / 我提出的问题 / 我的计划）共用一份 GET /api/v1/workspace 聚合数据。
  *  Push 233：折叠面板展开态接账号偏好（workspaceOpenProjects，按标签各记一组项目 id）——「这个下拉要有记忆」。
- *  Push 234：第三枚标签「我的计划」就位（页面内容待详细设计）。 */
-export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocusModeChange, workspaceOpenProjects, onWorkspaceOpenProjectsChange }: WorkspacePageProps) {
+ *  Push 234：第三枚标签「我的计划」就位（页面内容待详细设计）。
+ *  Push 260：「我提出的问题」标签下再分两枚子标签（我提出的问题 / 待我处理的问题，`?sub=`，见 ISSUE_VIEW_TABS）——
+ *  两枚子标签共用同一份读面（myIssues.raised / myIssues.handling）与同一组展开态记忆，只换数据栏与标题；
+ *  展示口径 = 「已完成不显示」（Push 260 第七项 —— 见 IssuesView 的 visibleIssues 过滤）。 */
+export default function WorkspacePage({ me, tab, onChangeTab, sub, onChangeSub, focusMode, onFocusModeChange, workspaceOpenProjects, onWorkspaceOpenProjectsChange }: WorkspacePageProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: "loading" });
   /** 重新加载令牌：bump 一次重新取数（错误态的「重新加载」用）。 */
   const [reloadToken, setReloadToken] = useState(0);
@@ -916,7 +994,110 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
     })();
   };
   const taskOpenIds = new Set(openProjects.tasks);
+  /** 两个问题子视图（我提出的 / 待我处理的）共用同一组「已展开项目」记忆（偏好键 workspaceOpenProjects.raised）。 */
   const raisedOpenIds = new Set(openProjects.raised);
+
+  /** 「问题是否处理」行内改的本地覆盖（Push 260 · 业务口径「我提出 我处理的问题这里的状态都要和项目内部一样
+   *  可以点击」）：与项目页「问题追踪」同一枚行内下拉 —— 乐观更新 + PATCH（乐观锁 version）+ 失败回滚、
+   *  回包用服务器的新 version 覆盖；改完就地生效不重排（刷新后按服务端「未关闭在前」口径回归）。 */
+  const [issueOverrides, setIssueOverrides] = useState<Map<string, IssueStateOverride>>(new Map());
+  /** 状态改动失败文案（null = 无提示）：失败已回滚，这里只出提示条。 */
+  const [issueError, setIssueError] = useState<string | null>(null);
+  const handleChangeIssueState = (issue: ApiWorkspaceIssue, next: IssueState): void => {
+    const known = issueOverrides.get(issue.id);
+    const from = known ?? { state: toIssueState(issue.state), version: issue.version };
+    if (from.state === next) {
+      return;
+    }
+    setIssueOverrides((previous) => new Map(previous).set(issue.id, { state: next, version: from.version }));
+    void updateIssue(issue.projectId, issue.id, { version: from.version, state: next })
+      .then((updated) => {
+        setIssueOverrides((previous) => new Map(previous).set(issue.id, { state: updated.state, version: updated.version }));
+        setIssueError(null);
+      })
+      .catch((error: unknown) => {
+        setIssueOverrides((previous) => {
+          const rolled = new Map(previous);
+          if (known === undefined) {
+            rolled.delete(issue.id);
+          } else {
+            rolled.set(issue.id, known);
+          }
+          return rolled;
+        });
+        setIssueError(error instanceof ApiError ? error.message : "问题状态修改失败。");
+      });
+  };
+
+  /**
+   * 「提出/负责的问题」子菜单（业务口径 2026-10-09「然后导航栏还是改成这样的吧」= 项目页「日报及问题」那套
+   * 「子视图集成到页面导航栏」）：两枚问题子视图收进主标签的下拉面板（面板见 components/WorkspaceIssueSubMenu.tsx）——
+   * 悬停 / 点击父标签展开；面板左缘对齐父标签（展开时量一次）：标签栏可横向滚动，滚动即收起，避免锚点漂移。
+   */
+  const [submenuOpen, setSubmenuOpen] = useState(false);
+  const [submenuLeft, setSubmenuLeft] = useState(0);
+  const maintabsRef = useRef<HTMLElement | null>(null);
+  const raisedTabRef = useRef<HTMLButtonElement | null>(null);
+  const submenuTimer = useRef<number | null>(null);
+
+  const cancelSubmenuClose = (): void => {
+    if (submenuTimer.current !== null) {
+      window.clearTimeout(submenuTimer.current);
+      submenuTimer.current = null;
+    }
+  };
+
+  const openSubmenu = (): void => {
+    cancelSubmenuClose();
+    const raisedTab = raisedTabRef.current;
+    const bar = maintabsRef.current;
+    if (raisedTab !== null && bar !== null) {
+      setSubmenuLeft(Math.max(0, Math.round(raisedTab.getBoundingClientRect().left - bar.getBoundingClientRect().left)));
+    }
+    setSubmenuOpen(true);
+  };
+
+  const closeSubmenu = (): void => {
+    cancelSubmenuClose();
+    setSubmenuOpen(false);
+  };
+
+  /** 鼠标离开父标签 / 面板后延迟收起：给指针从标签移到面板（下移 8px）留一条过道。 */
+  const scheduleSubmenuClose = (): void => {
+    cancelSubmenuClose();
+    submenuTimer.current = window.setTimeout(() => {
+      submenuTimer.current = null;
+      setSubmenuOpen(false);
+    }, 160);
+  };
+
+  useEffect(() => {
+    if (!submenuOpen) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSubmenu();
+      }
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      if (maintabsRef.current !== null && !maintabsRef.current.contains(event.target as Node)) {
+        closeSubmenu();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [submenuOpen]);
+
+  useEffect(() => () => {
+    if (submenuTimer.current !== null) {
+      window.clearTimeout(submenuTimer.current);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -946,52 +1127,113 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
         <div data-workspace-page="" className="w-full space-y-5">
           {/* 标签导航栏（Push 230：与任务模板页的下划线标签栏同一套材质 —— 文字 + 选中下划线）。
               Push 235 吸顶（业务口径「任务模版和我的任务都要做吸顶效果」）：滚动时停在应用顶栏（h-16 = 64px）正下方，
-              站灰底 + 毛玻璃兜住滚动内容；-mx-6 -mt-3 + 同值内衬抵消：横幅铺满行宽、三枚标签与醒目模式开关位置与原来一致。 */}
-          <nav data-workspace-tabs="" aria-label="工作台标签" className="sticky top-16 z-20 -mx-6 -mt-3 flex items-center gap-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
-            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {TABS.map((item) => {
-                const active = item.key === tab;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    data-workspace-tab={item.key}
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => {
-                      onChangeTab(item.key);
-                    }}
-                    className={
-                      "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
-                      (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
-                    }
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
+              站灰底 + 毛玻璃兜住滚动内容；-mx-6 -mt-3 + 同值内衬抵消：横幅铺满行宽、三枚标签与醒目模式开关位置与原来一致。
+              Push 260：「提出/负责的问题」标签下挂**下拉子菜单**（业务口径 2026-10-09「然后导航栏还是改成这样的吧」，
+              = 项目页「日报及问题」那套「子视图集成到页面导航栏」；面板见 components/WorkspaceIssueSubMenu.tsx）——
+              两枚子视图（我提出的问题 / 待我处理的问题）不占另一排子标签栏，收在主标签的下拉里；栏高回到单排 59px。 */}
+          <nav data-workspace-tabs="" ref={maintabsRef} aria-label="工作台标签" className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
+            <div className="flex items-center gap-3">
+              <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onScroll={submenuOpen ? closeSubmenu : undefined}>
+                {TABS.map((item) => {
+                  const active = item.key === tab;
+                  // 子菜单父项（业务口径 2026-10-09「然后导航栏还是改成这样的吧」·图 = 项目页「日报及问题」的下拉）：
+                  // 两枚问题子视图收进这枚标签的下拉面板；悬停即展开；点击时已在该标签 = 保持展开，否则照旧先切标签。
+                  const withSubmenu = item.key === "raised";
+                  return (
+                    <button
+                      key={item.key}
+                      ref={withSubmenu ? raisedTabRef : undefined}
+                      type="button"
+                      data-workspace-tab={item.key}
+                      data-workspace-tab-parent={withSubmenu ? "true" : undefined}
+                      onMouseEnter={withSubmenu ? openSubmenu : undefined}
+                      onMouseLeave={withSubmenu ? scheduleSubmenuClose : undefined}
+                      onClick={() => {
+                        if (!withSubmenu) {
+                          closeSubmenu();
+                          onChangeTab(item.key);
+                          return;
+                        }
+                        // 悬停已经展开时点击**保持展开**（不切换成收起：鼠标先到必然先 hover，切换会让「点开」永远点不开）
+                        openSubmenu();
+                        if (!active) {
+                          onChangeTab(item.key);
+                        }
+                      }}
+                      aria-current={active ? "page" : undefined}
+                      aria-haspopup={withSubmenu ? "menu" : undefined}
+                      aria-expanded={withSubmenu ? submenuOpen : undefined}
+                      className={
+                        "inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
+                        (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
+                      }
+                    >
+                      {item.label}
+                      {withSubmenu ? (
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                          className={"h-3.5 w-3.5 transition-transform " + (submenuOpen ? "rotate-180" : "")}
+                        >
+                          <path d="M5.5 8l4.5 4.5L14.5 8" />
+                        </svg>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* 醒目模式（Push 232 · 业务口径「同样增加醒目模式」）：开关落在标签导航栏最右侧
+                  （同项目总览 / 问题追踪口径「醒目模式放在标签导航栏的最右侧」） */}
+              <span data-workspace-focus-toggle="" className="shrink-0">
+                <FocusModeToggle
+                  checked={focus}
+                  onToggle={(checked) => {
+                    void handleToggleFocusMode(checked);
+                  }}
+                />
+              </span>
             </div>
-            {/* 醒目模式（Push 232 · 业务口径「同样增加醒目模式」）：开关落在标签导航栏最右侧
-                （同项目总览 / 问题追踪口径「醒目模式放在标签导航栏的最右侧」） */}
-            <span data-workspace-focus-toggle="" className="shrink-0">
-              <FocusModeToggle
-                checked={focus}
-                onToggle={(checked) => {
-                  void handleToggleFocusMode(checked);
-                }}
-              />
-            </span>
+
+            {/* 「提出/负责的问题」子菜单面板（材质 = 项目页「日报及问题」下拉：白色圆角面板 + 图标 + 子项）——
+                左缘对齐父标签（展开时量一次），面板自己在鼠标进出时续命 / 延迟收起，避免指针过道断开；
+                选完 = 收起面板 + 写回地址 ?tab=raised&sub=（已在 raised 标签下时只写 sub）。 */}
+            {submenuOpen ? (
+              <div
+                data-workspace-submenu-anchor="true"
+                className="absolute top-full z-30 mt-2"
+                style={{ left: submenuLeft }}
+                onMouseEnter={cancelSubmenuClose}
+                onMouseLeave={scheduleSubmenuClose}
+              >
+                <WorkspaceIssueSubMenu
+                  active={sub}
+                  onSelect={(next) => {
+                    closeSubmenu();
+                    if (tab !== "raised") {
+                      onChangeTab("raised");
+                    }
+                    onChangeSub(next);
+                  }}
+                />
+              </div>
+            ) : null}
           </nav>
 
           {focusError === null ? null : (
-            <p role="alert" data-workspace-focus-error="" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              {focusError}
-            </p>
+            <Toast kind="error" text={focusError} onClose={() => { setFocusError(null); }} anchor={{ name: "data-workspace-focus-error", value: "" }} />
           )}
 
           {panelError === null ? null : (
-            <p role="alert" data-workspace-panel-error="" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              {panelError}
-            </p>
+            <Toast kind="error" text={panelError} onClose={() => { setPanelError(null); }} anchor={{ name: "data-workspace-panel-error", value: "" }} />
+          )}
+
+          {issueError === null ? null : (
+            <Toast kind="error" text={issueError} onClose={() => { setIssueError(null); }} anchor={{ name: "data-workspace-issue-error", value: "" }} />
           )}
 
           {state.kind === "loading" ? (
@@ -1011,13 +1253,16 @@ export default function WorkspacePage({ me, tab, onChangeTab, focusMode, onFocus
               </button>
             </div>
           ) : tab === "raised" ? (
-            <RaisedIssuesView
-              issues={state.data.myIssues.raised}
+            <IssuesView
+              view={sub}
+              issues={sub === "handling" ? state.data.myIssues.handling : state.data.myIssues.raised}
               focus={focus}
               openIds={raisedOpenIds}
               onToggleProject={(projectId) => {
                 handleToggleProject("raised", projectId);
               }}
+              overrides={issueOverrides}
+              onChangeState={handleChangeIssueState}
             />
           ) : tab === "plan" ? (
             <MyPlanView />

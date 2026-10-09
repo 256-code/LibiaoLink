@@ -1,7 +1,8 @@
 /**
  * 操作记录（C7 审计 · 管理员查询页 · 2026-10-08）读取面：GET /api/v1/audit-logs（仅 audit.view）。
- * 契约 shared/src/modules/audits.ts：occurredAt 降序（同毫秒按 id 降序）；筛选 = 对象类型 / 对象 id / 操作人 /
- * 动作 / 结果 / 项目 / 时间区间（from / to 含端点）+ 分页（page / limit，上限 200）。
+ * 契约 shared/src/modules/audits.ts：occurredAt 降序（同毫秒按 id 降序）；筛选 = 关键字 q / 对象类型 / 对象 id / 操作人 /
+ * 动作 / 结果 / 项目 / 时间区间（from / to 含端点）+ 分页（page / limit，上限 200）；除对象 id / 时间外均为**多选**
+ * （2026-10-09 追订，逗号分隔、去重保序，服务端逐值校验白名单）。
  * 本页只读：越权尝试用 result=denied 筛出（C7-03）；写入（谁、何时、从什么改成什么）由服务端各业务用例同事务落库。
  */
 import { apiRequest } from "./api";
@@ -86,11 +87,14 @@ export type AuditLogListResult = { items: AuditLogItem[]; page: number; limit: n
 export const AUDIT_PAGE_LIMIT = 50;
 
 export type AuditApiQuery = {
-  actorId: string | null;
-  action: string | null;
-  objectType: string | null;
-  result: string | null;
-  projectId: string | null;
+  /** 关键字（Push 260 搜索，契约 q max(200)）：操作内容（摘要 / 变化明细）/ 操作人姓名快照；null = 不落参数。 */
+  keyword: string | null;
+  /** 以下五项 = 多选（2026-10-09 追订）：空数组 = 不落参数；多值以逗号分隔（契约同口径）。 */
+  actorIds: string[];
+  actions: string[];
+  objectTypes: string[];
+  results: string[];
+  projectIds: string[];
   /** 时间下界（日，YYYY-MM-DD，Asia/Shanghai，含当日 00:00:00）。 */
   from: string | null;
   /** 时间上界（日，YYYY-MM-DD，Asia/Shanghai，含当日 23:59:59.999）。 */
@@ -111,20 +115,23 @@ export function auditDayEndIso(day: string): string {
 /** 组装审计查询串（契约参数命名；空筛选不落参数）。 */
 export function buildAuditApiQuery(query: AuditApiQuery): string {
   const parts: string[] = [];
-  if (query.objectType !== null) {
-    parts.push("objectType=" + encodeURIComponent(query.objectType));
+  if (query.keyword !== null) {
+    parts.push("q=" + encodeURIComponent(query.keyword));
   }
-  if (query.actorId !== null) {
-    parts.push("actorId=" + encodeURIComponent(query.actorId));
+  if (query.objectTypes.length > 0) {
+    parts.push("objectType=" + query.objectTypes.map((type) => encodeURIComponent(type)).join(","));
   }
-  if (query.action !== null) {
-    parts.push("action=" + encodeURIComponent(query.action));
+  if (query.actorIds.length > 0) {
+    parts.push("actorId=" + query.actorIds.map((id) => encodeURIComponent(id)).join(","));
   }
-  if (query.result !== null) {
-    parts.push("result=" + encodeURIComponent(query.result));
+  if (query.actions.length > 0) {
+    parts.push("action=" + query.actions.map((action) => encodeURIComponent(action)).join(","));
   }
-  if (query.projectId !== null) {
-    parts.push("projectId=" + encodeURIComponent(query.projectId));
+  if (query.results.length > 0) {
+    parts.push("result=" + query.results.map((result) => encodeURIComponent(result)).join(","));
+  }
+  if (query.projectIds.length > 0) {
+    parts.push("projectId=" + query.projectIds.map((id) => encodeURIComponent(id)).join(","));
   }
   if (query.from !== null) {
     parts.push("from=" + encodeURIComponent(auditDayStartIso(query.from)));

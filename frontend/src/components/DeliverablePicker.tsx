@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { InlineCell } from "./InlineEdit";
+import { DOC_TYPE_OPTIONS } from "../docTypes";
 
 /**
  * 输出成果文件（deliverableTypes）选择器（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：
@@ -10,19 +11,6 @@ import { InlineCell } from "./InlineEdit";
  * 任务表「输出成果文件」列与任务详情抽屉「输出成果文件」行共用（DeliverableCell）。
  */
 
-/** 十类成果文件（顺序 = 契约 DOC_TYPES；不进字典接口）。 */
-export const DOC_TYPE_OPTIONS = [
-  "CAD图纸",
-  "技术协议",
-  "合同",
-  "评审单",
-  "设备清单",
-  "物料总清单",
-  "发货装箱单",
-  "到货单",
-  "安装完成证明",
-  "验收单",
-] as const;
 
 /** 彩签色表（十类色相：CAD图纸粉 / 技术协议蓝 / 合同青 / 评审单绿 / 设备清单红 / 物料总清单橙 /
  *  发货装箱单黄 / 到货单紫 / 安装完成证明黄 / 验收单橙）：50 档浅彩底 + 同色系深字（同「是否按时交付」徽标口径，2026-10-08 业务口径「和这个相同即可 简约一点」）。 */

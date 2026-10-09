@@ -47,6 +47,30 @@ export type Project = {
   status: string;
 };
 
+/** 项目状态取值（契约 projects.status：active / paused / done / archived）。 */
+export type ProjectStatusValue = "active" | "paused" | "done" | "archived";
+
+/** 项目状态顺序（卡片状态字 / 编辑弹窗四选一 / 地图图例共用同一套口径）。 */
+export const PROJECT_STATUS_VALUES: readonly ProjectStatusValue[] = ["active", "paused", "done", "archived"];
+
+/** 项目状态中文（Push 262：卡片状态字与编辑弹窗同源；与地图图例/操作记录口径一致）。 */
+export const PROJECT_STATUS_TEXT: Record<ProjectStatusValue, string> = {
+  active: "进行中",
+  paused: "已暂停",
+  done: "已完成",
+  archived: "已归档",
+};
+
+/** 契约 status（string）→ 已知取值；未知值回落 null（调用方决定兜底展示 / 收敛）。 */
+export function projectStatusOf(value: string): ProjectStatusValue | null {
+  return (PROJECT_STATUS_VALUES as readonly string[]).includes(value) ? (value as ProjectStatusValue) : null;
+}
+
+/** 状态展示文案：已知取值走中文，未知值回落原文（不吞信息）。 */
+export function projectStatusText(value: string): string {
+  return (PROJECT_STATUS_TEXT as Record<string, string>)[value] ?? value;
+}
+
 /** 项目经理展示文本（多位按「、」连接；某位取不到姓名显示「—」）。 */
 export function projectManagerText(project: Project): string {
   return project.managerNames.map((name) => (name === null || name === "" ? "—" : name)).join("、");

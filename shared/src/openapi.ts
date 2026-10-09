@@ -28,6 +28,7 @@ import {
   TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskFinalizeBodySchema,
+  TaskUnfinalizeBodySchema,
   TaskListItemSchema,
   TaskListQuerySchema,
   TaskLockedFieldsAdjustBodySchema,
@@ -442,6 +443,20 @@ export function buildOpenApiDocument() {
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskFinalizeBodySchema) },
     responses: {
       200: { description: "定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/tasks/{taskId}/unfinalize",
+    tags: ["tasks"],
+    summary: "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+    request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskUnfinalizeBodySchema) },
+    responses: {
+      200: { description: "取消定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],

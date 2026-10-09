@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { RowDeleteButton } from "./components/RowDeleteButton";
+import { Toast } from "./components/Toast";
 import { TaskNodeCard } from "./components/TaskNodeCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { ApiError } from "./api";
@@ -1130,8 +1131,8 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
               </div>
             </div>
           </div>
-          {/* 节点库 / 模板写入的第二下与失败提示（Fixed 底栏，与首页「删除项目」确认条同款 —— 非阻断） */}
-          {pendingDeleteNode === null && nodeNotice === null && pendingDeleteTemplate === null && templateNotice === null ? null : (
+          {/* 节点库 / 模板删除的第二下确认条（Fixed 底栏，与首页「删除项目」确认条同款 —— 非阻断）；失败提示改上方浮动 Toast（Push 261 追订） */}
+          {pendingDeleteNode === null && pendingDeleteTemplate === null ? null : (
             <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
               {pendingDeleteNode === null ? null : (
                 <div
@@ -1155,21 +1156,6 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                     className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
                   >
                     删除
-                  </button>
-                </div>
-              )}
-              {nodeNotice === null ? null : (
-                <div
-                  role="alert"
-                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg"
-                >
-                  <span>{nodeNotice}</span>
-                  <button
-                    type="button"
-                    onClick={() => { setNodeNotice(null); }}
-                    className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
-                  >
-                    关闭
                   </button>
                 </div>
               )}
@@ -1198,22 +1184,21 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                   </button>
                 </div>
               )}
-              {templateNotice === null ? null : (
-                <div
-                  role="alert"
-                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg"
-                >
-                  <span>{templateNotice}</span>
-                  <button
-                    type="button"
-                    onClick={() => { setTemplateNotice(null); }}
-                    className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
-                  >
-                    关闭
-                  </button>
-                </div>
-              )}
             </div>
+          )}
+          {nodeNotice === null ? null : (
+            <Toast
+              kind="error"
+              text={nodeNotice}
+              onClose={() => { setNodeNotice(null); }}
+            />
+          )}
+          {templateNotice === null ? null : (
+            <Toast
+              kind="error"
+              text={templateNotice}
+              onClose={() => { setTemplateNotice(null); }}
+            />
           )}
         </main>
         {dragNode === null || drag === null ? null : (

@@ -17,6 +17,7 @@ import {
   TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskFinalizeBodySchema,
+  TaskUnfinalizeBodySchema,
   TaskGateMissingSchema,
   TaskGateWarningSchema,
   TaskListItemSchema,
@@ -62,6 +63,7 @@ import { TaskGateRepository, type TaskGateDocCountRow, type TaskGateScope } from
 type Task = z.infer<typeof TaskSchema>;
 type TaskDetail = z.infer<typeof TaskDetailSchema>;
 type TaskFinalizeBody = z.infer<typeof TaskFinalizeBodySchema>;
+type TaskUnfinalizeBody = z.infer<typeof TaskUnfinalizeBodySchema>;
 type TaskListItem = z.infer<typeof TaskListItemSchema>;
 type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
 type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
@@ -1023,6 +1025,61 @@ export class TaskService {
         summary: "任务定档：" + updated.title + "（此后不支持任何修改；文件修改走变更）",
         changes: [{ field: "finalizedAt", from: null, to: at.toISOString() }],
         metadata: { abortedUploadSessions },
+      });
+      return updated;
+    });
+    return toTaskView(row, today, await this.changeLinksOf(row));
+  }
+
+  /**
+   * POST /projects/{id}/tasks/{taskId}/unfinalize：任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）。
+   * 口径：已定档 → 清空 finalized_at / finalized_by（version+1、留痕「取消定档」、outbox task.unfinalized、项目触点），
+   * 任务重新开放修改（编辑 / 删除 / 文件写口恢复）；文件级定档（files.status=final）不回退 —— 文件修改仍走变更（A4-13）。
+   * 未定档 → 幂等短路（200 原样返回，不写库 / 不递增版本）；version 不匹配 → 409 VERSION_CONFLICT。
+   * 操作记录（业务口径「点击定档按钮应该也要计入操作记录」）：定档 / 取消定档各留一条「任务」记录（action=update，摘要前缀「任务定档」/「取消定档」）。
+   */
+  async unfinalize(projectId: string, taskId: string, body: TaskUnfinalizeBody, actorId: string): Promise<Task> {
+    await this.loadProjectForWrite(projectId);
+    const at = new Date();
+    const today = shanghaiToday(at);
+    const row = await this.database.db.transaction(async (tx) => {
+      const before = await this.requireActiveTask(tx, projectId, taskId);
+      if (before.finalizedAt === null) {
+        return before;
+      }
+      if (before.version !== body.version) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      const updated = await this.repository.updateWithVersion(
+        taskId,
+        body.version,
+        { finalizedAt: null, finalizedBy: null },
+        at,
+        tx,
+      );
+      if (updated === null) {
+        throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      await appendOutbox(tx, {
+        topic: "task.unfinalized",
+        dedupeKey: "task.unfinalized:" + taskId + ":" + updated.version,
+        payload: {
+          projectId,
+          taskId,
+          unfinalizedAt: at.toISOString(),
+          actorId,
+          at: at.toISOString(),
+        },
+      });
+      await this.repository.touchProject(projectId, at, tx);
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "task",
+        objectId: taskId,
+        projectId,
+        summary: "取消定档：" + updated.title + "（任务重新开放修改；文件修改仍走变更）",
+        changes: [{ field: "finalizedAt", from: before.finalizedAt.toISOString(), to: null }],
       });
       return updated;
     });

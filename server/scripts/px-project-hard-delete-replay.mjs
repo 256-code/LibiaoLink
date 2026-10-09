@@ -5,7 +5,7 @@
  *
  * 真机（真 PG + 真 api）验到的部分：
  *   ① 删除主路径：DELETE /api/v1/projects/{id}（If-Match = version）→ 200 返回删除前快照；
- *      库内 projects 行不存在；聚合子表（tasks / project_nodes / project_stages / project_members …）零残留。
+ *      库内 projects 行不存在；聚合子表（tasks / project_nodes / project_stages / project_members …）零残留。 项目内文件（files + file_versions + current_version_id）同事务清空（回归夹具：删版本行前不先解环会撞 fk_files_current_version → 500）。
  *   ② 审计留痕：action=project.delete、metadata.hardDelete=true、metadata.children = 删除前子表行数（行没了、留痕在）。
  *   ③ 编号释放：同编号可再建（Push 190 前是 409 PROJECT_CODE_EXISTS）；seq_no 不回收（再建拿新序号）。
  *   ④ 边界：版本不匹配 409 VERSION_CONFLICT（整事务回滚、项目还在）、已删项目详情 404、归档项目 409 PROJECT_ARCHIVED。
@@ -90,6 +90,8 @@ async function purgeProjects(ids) {
   const stmts = [
     "delete from issue_events where issue_id in (select id from issues where project_id = any($1::uuid[]))",
     "delete from task_events where task_id in (select id from tasks where project_id = any($1::uuid[]))",
+    // 解环（回归夹具含「带当前版本的文件」）：files.current_version_id → file_versions 为 NO ACTION 外键。
+    "update files set current_version_id = null where project_id = any($1::uuid[])",
     "delete from file_versions where file_id in (select id from files where project_id = any($1::uuid[]))",
     "delete from files where project_id = any($1::uuid[])",
     "delete from change_requests where project_id = any($1::uuid[])",
@@ -142,6 +144,12 @@ try {
   const taskRes = await call("POST", "/api/v1/projects/" + projectA.id + "/tasks", { title: "硬删回放任务 " + stamp, stageKey: "presale" });
   const countsA2 = (await db.query("select (select count(*)::int from tasks where project_id = $1 and deleted_at is null) tasks, (select count(*)::int from project_members where project_id = $1) members", [projectA.id])).rows[0];
   check("A3", "聚合子表写入：加成员 200 + 加任务 201 → 库内各 1 行", "200 / 201 / tasks=1 / members=1", memberRes.status + " / " + taskRes.status + " / " + truncate(countsA2), memberRes.status === 200 && taskRes.status === 201 && countsA2.tasks === 1 && countsA2.members === 1);
+  // 回归夹具：项目内造 1 个带当前版本的文件（files ⇄ file_versions 循环外键）——旧序在 A4 撞 fk_files_current_version → 500。
+  const replayFile = (await db.query("insert into files (project_id, name, status, created_by) values ($1, $2, $3, $4) returning id", [projectA.id, "硬删回放文件 " + stamp + ".txt", "draft", admin.id])).rows[0];
+  const replayVersion = (await db.query("insert into file_versions (file_id, seq, object_key, size_bytes, content_hash, uploaded_by) values ($1, 1, $2, 5, $3, $4) returning id", [replayFile.id, "replay/" + replayFile.id + "/v1/hello.txt", sha256("hello"), admin.id])).rows[0];
+  await db.query("update files set current_version_id = $2, version = 1 where id = $1", [replayFile.id, replayVersion.id]);
+  const seededFile = (await db.query("select (select count(*)::int from files where id = $1) files, (select count(*)::int from file_versions where file_id = $1) versions, (select current_version_id is not null from files where id = $1) has_current", [replayFile.id])).rows[0];
+  check("A3b", "回归夹具：项目内 1 个文件带当前版本（current_version_id 非空）", "files=1 / versions=1 / has_current=true", truncate(seededFile), seededFile.files === 1 && seededFile.versions === 1 && seededFile.has_current === true);
 
   const delA = await call("DELETE", "/api/v1/projects/" + projectA.id, undefined, { "If-Match": String(projectA.version) });
   check("A4", "DELETE（If-Match = version）→ 200 + 返回删除前快照", "200 + code 一致 + version = 删除前 version", delA.status + " " + truncate({ code: delA.body?.code, version: delA.body?.version }), delA.status === 200 && delA.body?.code === codeA && delA.body?.version === projectA.version);
@@ -149,12 +157,12 @@ try {
   const goneA = (await db.query("select count(*)::int n from projects where id = $1", [projectA.id])).rows[0].n;
   check("A5", "物理删行：库内 projects 该行不存在", "0", String(goneA), goneA === 0);
 
-  const residueA = (await db.query("select (select count(*)::int from tasks where project_id = $1) tasks, (select count(*)::int from project_nodes where project_id = $1) nodes, (select count(*)::int from project_stages where project_id = $1) stages, (select count(*)::int from project_members where project_id = $1) members, (select count(*)::int from project_stakeholders where project_id = $1) stakeholders, (select count(*)::int from daily_reports where project_id = $1) reports, (select count(*)::int from issues where project_id = $1) issues, (select count(*)::int from change_requests where project_id = $1) changes, (select count(*)::int from files where project_id = $1) files", [projectA.id])).rows[0];
-  check("A6", "聚合子表零残留（9 张表按 project_id）", "全 0", truncate(residueA), Object.values(residueA).every((value) => value === 0));
+  const residueA = (await db.query("select (select count(*)::int from tasks where project_id = $1) tasks, (select count(*)::int from project_nodes where project_id = $1) nodes, (select count(*)::int from project_stages where project_id = $1) stages, (select count(*)::int from project_members where project_id = $1) members, (select count(*)::int from project_stakeholders where project_id = $1) stakeholders, (select count(*)::int from daily_reports where project_id = $1) reports, (select count(*)::int from issues where project_id = $1) issues, (select count(*)::int from change_requests where project_id = $1) changes, (select count(*)::int from files where project_id = $1) files, (select count(*)::int from file_versions where file_id = $2) file_versions", [projectA.id, replayFile.id])).rows[0];
+  check("A6", "聚合子表零残留（9 张表按 project_id + file_versions 按 file_id）", "全 0", truncate(residueA), Object.values(residueA).every((value) => value === 0));
 
   const auditA = (await db.query("select action, metadata, changes from audit_logs where project_id = $1 and object_type = $$project$$ and action = $$delete$$ order by id", [projectA.id])).rows;
   const metaA = auditA[0]?.metadata ?? {};
-  check("A7", "审计留痕：project.delete + metadata.hardDelete + children 计数", "1 行 + hardDelete=true + children.tasks=1 / members=1 / nodes>=1 / stages>=1", auditA.length + " 行 / " + truncate(metaA), auditA.length === 1 && metaA.hardDelete === true && metaA.children?.tasks === 1 && metaA.children?.members === 1 && metaA.children?.nodes >= 1 && metaA.children?.stages >= 1);
+  check("A7", "审计留痕：project.delete + metadata.hardDelete + children 计数", "1 行 + hardDelete=true + children.tasks=1 / members=1 / files=1 / nodes>=1 / stages>=1", auditA.length + " 行 / " + truncate(metaA), auditA.length === 1 && metaA.hardDelete === true && metaA.children?.tasks === 1 && metaA.children?.members === 1 && metaA.children?.nodes >= 1 && metaA.children?.stages >= 1 && metaA.children?.files === 1);
   const changesA = auditA[0]?.changes ?? [];
   check("A8", "审计字段级快照：changes 每条 to=null（行已删、快照留痕）", ">= 7 条且 to 全 null", changesA.length + " 条", Array.isArray(changesA) && changesA.length >= 7 && changesA.every((item) => item.to === null));
 
@@ -177,12 +185,12 @@ try {
 
   // Push 167 契约收紧：PATCH 项目不再接受 status=archived（归档走 POST /projects/{id}/archive，见 m6-replay 证据七 A1 ~ A7）。
   // 本处为「归档项目禁删」反证，直接 SQL 造归档态（请 px 复核）。
-  await db.query("update projects set status = $archived$, archived_at = now(), archived_by = $2 where id = $1", [projectB.id, admin.id]);
+  await db.query("update projects set status = $$archived$$, archived_at = now(), archived_by = $2 where id = $1", [projectB.id, admin.id]);
   const archived = await call("GET", "/api/v1/projects/" + projectB.id);
   const delArchived = await call("DELETE", "/api/v1/projects/" + projectB.id, undefined, { "If-Match": String(projectB.version) });
   check("B3", "归档项目禁删（ADR-027；归档态 SQL 造态，PATCH 已不接 archived）", "GET 200 status=archived + DELETE 409 PROJECT_ARCHIVED", archived.status + " " + truncate(archived.body?.status, 60) + " / " + delArchived.status + " " + truncate(delArchived.body, 120), archived.status === 200 && archived.body?.status === "archived" && delArchived.status === 409 && delArchived.body?.code === "PROJECT_ARCHIVED");
 
-  await db.query("update projects set status = $active$, archived_at = null, archived_by = null where id = $1", [projectB.id]);
+  await db.query("update projects set status = $$active$$, archived_at = null, archived_by = null where id = $1", [projectB.id]);
   const delB = await call("DELETE", "/api/v1/projects/" + projectB.id, undefined, { "If-Match": String(projectB.version) });
   check("C1", "复位归档后删除 → 200（清理临时项目）", "200", delB.status + " " + truncate(delB.body, 120), delB.status === 200);
 

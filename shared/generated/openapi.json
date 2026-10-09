@@ -6221,7 +6221,7 @@
                   "string",
                   "null"
                 ],
-                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档"
+                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260（业务口径「把现在的定档改成 再次点击取消定档吧」）：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）"
               }
             ]
           },
@@ -7482,6 +7482,25 @@
           "version"
         ],
         "description": "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）"
+      },
+      "TaskUnfinalizeBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "description": "乐观锁版本（已定档路径必校验；未定档幂等短路不校验）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "任务取消定档提交（version = 抽屉当前行版本）"
       },
       "TaskUpdateBody": {
         "type": "object",
@@ -10298,6 +10317,85 @@
         }
       }
     },
+    "/api/v1/projects/{id}/tasks/{taskId}/unfinalize": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskUnfinalizeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "取消定档后的任务（Task 同形；幂等路径原样返回）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{id}/tasks/batch": {
       "patch": {
         "tags": [
@@ -11580,10 +11678,11 @@
         "parameters": [
           {
             "schema": {
-              "$ref": "#/components/schemas/AuditObjectType"
+              "type": "string",
+              "description": "对象类型（多值逗号分隔，取值见 AuditObjectType）"
             },
             "required": false,
-            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）",
+            "description": "对象类型（多值逗号分隔，取值见 AuditObjectType）",
             "name": "objectType",
             "in": "query"
           },
@@ -11601,52 +11700,53 @@
           },
           {
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/Uuid"
-                },
-                {
-                  "description": "操作人（按人检索 —— h7 验收项②）"
-                }
-              ]
+              "type": "string",
+              "description": "操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②）"
             },
             "required": false,
-            "description": "操作人（按人检索 —— h7 验收项②）",
+            "description": "操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②）",
             "name": "actorId",
             "in": "query"
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/AuditAction"
+              "type": "string",
+              "description": "审计动作（多值逗号分隔，取值见 AuditAction）"
             },
             "required": false,
-            "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝",
+            "description": "审计动作（多值逗号分隔，取值见 AuditAction）",
             "name": "action",
             "in": "query"
           },
           {
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/AuditResult"
-                },
-                {
-                  "description": "result=denied 即越权尝试（C7-03）"
-                }
-              ]
+              "type": "string",
+              "description": "审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03）"
             },
             "required": false,
-            "description": "result=denied 即越权尝试（C7-03）",
+            "description": "审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03）",
             "name": "result",
             "in": "query"
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/Uuid"
+              "type": "string",
+              "description": "所属项目（多值逗号分隔）"
             },
             "required": false,
-            "description": "UUID（主键与关联 ID）",
+            "description": "所属项目（多值逗号分隔）",
             "name": "projectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感）"
+            },
+            "required": false,
+            "description": "关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感）",
+            "name": "q",
             "in": "query"
           },
           {
