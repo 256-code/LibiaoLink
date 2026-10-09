@@ -478,9 +478,10 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
         url: "http://api.internal:3000/api/v1/files/" + FILE + "/versions/" + VERSION + "/preview-content",
         fileType: "docx",
         key: HASH,
+        // Push 258 错层修正：权限段嵌 document（ONLYOFFICE 只认该位置）。
+        permissions: { edit: false, download: true, print: false, comment: false, chat: false, fillForms: false, protect: true },
       },
       editorConfig: { mode: "view", lang: "zh-CN", user: { id: ACTOR, name: "蓝工" } },
-      permissions: { edit: false, download: false, print: false, comment: false, chat: false, fillForms: false, protect: true },
     });
     expect(h.previews.queries).toHaveLength(0);
     expect(h.previews.ensured).toHaveLength(0);
@@ -495,7 +496,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     });
   });
 
-  it("viewer token：HS256 逐字签发四段 + iat/exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS），document.url 不含存储凭证", async () => {
+  it("viewer token：HS256 逐字签发（permissions 嵌 document · Push 258 错层修正）+ iat/exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS），document.url 不含存储凭证", async () => {
     const h = makeService({ ONLYOFFICE_JWT_TTL_SECONDS: 900 });
     h.repo.file = makeFileRow({ name: "说明.txt" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: "text/plain", objectKey: sourceKeyOf("txt") }));
@@ -508,9 +509,8 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(createHmac("sha256", "unit-test-secret").update(header + "." + payload).digest("base64url")).toBe(signature);
     const claims = JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")) as {
       documentType: string;
-      document: { url: string; key: string };
+      document: { url: string; key: string; permissions: { edit: boolean; download: boolean } };
       editorConfig: { mode: string };
-      permissions: { edit: boolean; download: boolean };
       iat: number;
       exp: number;
     };
@@ -520,6 +520,10 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     );
     expect(claims.document.url).not.toContain("X-Amz-");
     expect(claims.document.key).toBe(HASH);
+    // Push 258 业务口径「原本的下载不要隐藏」：download 保持可见（点击由前端命中层接原文件链）。
+    expect(claims.document.permissions.download).toBe(true);
+    expect(claims.document.permissions.edit).toBe(false);
+    expect((claims as Record<string, unknown>).permissions).toBeUndefined();
     expect(claims.editorConfig.mode).toBe("view");
     expect(claims.exp - claims.iat).toBe(900);
   });

@@ -4035,12 +4035,9 @@
           "editorConfig": {
             "$ref": "#/components/schemas/PreviewViewerEditorConfig"
           },
-          "permissions": {
-            "$ref": "#/components/schemas/PreviewViewerPermissions"
-          },
           "token": {
             "type": "string",
-            "description": "查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）"
+            "description": "查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）"
           }
         },
         "required": [
@@ -4049,7 +4046,6 @@
           "documentType",
           "document",
           "editorConfig",
-          "permissions",
           "token"
         ],
         "description": "在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发）"
@@ -4072,13 +4068,17 @@
           "key": {
             "type": "string",
             "description": "文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效）"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PreviewViewerPermissions"
           }
         },
         "required": [
           "title",
           "url",
           "fileType",
-          "key"
+          "key",
+          "permissions"
         ]
       },
       "PreviewViewerDocumentType": {
@@ -4168,7 +4168,8 @@
           "chat",
           "fillForms",
           "protect"
-        ]
+        ],
+        "description": "查看器权限段（Push 258 起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见、点击由前端命中层接管 → 原文件下载链）"
       },
       "Priority": {
         "type": [

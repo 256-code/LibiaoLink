@@ -8,7 +8,11 @@ import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
  *  （OnlyOfficeViewer；加载 → 就绪 / 超时 / 失败降级，重试自增 nonce 重建）。
  *  短时签名地址（D2-04 禁止匿名读取）。Esc / 点浮层关闭；capture 阶段拦 keydown，避免同一按 Esc
  *  连带把外层（详情抽屉 / 文件下拉）关掉（「Esc 先关内层」口径）。
- *  Push 226 续四：caption 挂「下载原文件」—— 查看器自带的下载拿的是**转换产物**，这里直取原文件。 */
+ *  Push 226 续四：caption 挂「下载原文件」—— 查看器自带的下载拿的是**转换产物**，这里直取原文件。
+ *  Push 258（业务口径「原本的下载不要隐藏 / 点击右上角下载给原文件」）：查看器工具栏的 download 图标保持可见（服务端
+ *  document.permissions.download=true），在其原位盖一层**透明命中层**（data-file-preview-native-download）——
+ *  点它走同一 onDownload（原格式字节 + download 审计）。DocServer 内置下载是跨域 iframe 原生控件、逻辑改不了，
+ *  只能原位接管；命中层挡掉原生 hover 反馈 → 悬停自补与邻近按钮一致的原生观感（hover 用黑 8% 遮罩：白底上合成 ≈ #EAEAEA，且底下图标透出；圆角 4px + pointer 小手、无阴影；业务口径「鼠标变小手 / 效果和旁边搜索一致」）；命中层几何 = 下载子按钮盒（距右 92 / top 4 / 24×24，按 DocServer 9.4.0-cca10593 实测，升级 DocServer 须重新量）。 */
 export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]", onRetry, onDownload, onClose }: {
   pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
   name: string;
@@ -44,7 +48,21 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
       }}
       className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 p-6"}
     >
-      <figure className="flex max-h-full max-w-full flex-col items-center">
+      <figure className="relative flex max-h-full max-w-full flex-col items-center">
+        {pane.mode === "viewer" ? (
+          <button
+            type="button"
+            data-file-preview-native-download="true"
+            title="下载原文件"
+            aria-label="下载原文件"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDownload();
+            }}
+            className="absolute z-20 cursor-pointer rounded border-0 bg-transparent p-0 hover:bg-black/[0.08]"
+            style={{ right: 92, top: 4, width: 24, height: 24 }}
+          />
+        ) : null}
         {pane.mode === "viewer" ? (
           <OnlyOfficeViewer key={nonce} viewer={pane.viewer} onRetry={onRetry} />
         ) : kind === "pdf" ? (

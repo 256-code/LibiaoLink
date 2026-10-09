@@ -122,8 +122,12 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
     if (detail === null) {
       return;
     }
-    const signed = await fetchDownloadUrl(detail.file.id, detail.versionId);
-    triggerDownload(signed.url, signed.fileName);
+    try {
+      const signed = await fetchDownloadUrl(detail.file.id, detail.versionId);
+      await triggerDownload(signed.url, signed.fileName);
+    } catch (error) {
+      setPreviewNote(error instanceof Error && error.message !== "" ? error.message : "下载失败，请稍后再试");
+    }
   };
 
   return createPortal(

@@ -25,10 +25,9 @@
     "kind": "onlyoffice",
     "docServerUrl": "https://docs.example.com",
     "documentType": "word",
-    "document": { "title": "N1-03 项目周报.docx", "url": "https://api.internal/api/v1/files/{id}/versions/{vid}/preview-content", "fileType": "docx", "key": "…" },
+    "document": { "title": "N1-03 项目周报.docx", "url": "https://api.internal/api/v1/files/{id}/versions/{vid}/preview-content", "fileType": "docx", "key": "…", "permissions": { "edit": false, "download": true, "print": false, "comment": false, "chat": false, "fillForms": false, "protect": true } },
     "editorConfig": { "mode": "view", "lang": "zh-CN", "user": { "id": "…", "name": "…" } },
-    "permissions": { "edit": false, "download": false, "print": false, "comment": false, "chat": false, "fillForms": false, "protect": true },
-    "token": "eyJ…（HS256；对 documentType / document / editorConfig / permissions 逐字签发）"
+    "token": "eyJ…（HS256；对 documentType / document（含 permissions）/ editorConfig 逐字签发）"
   },
   "url": null, "expiresAt": null, "pipelineVersion": null, "reason": null, "generatedAt": null
 }
@@ -41,6 +40,7 @@
 - 三级校验（签名 / `payload.url` 逐字绑定 / `exp` ≤ 300s + 容差）与统一 401 不区分原因、仅 GET（405）、无重定向 —— **S3 实现**（契约面以响应码 + 描述承载）。
 - `token` 由 S3 签发（HS256，共享密钥 = DocServer `JWT_SECRET`，随部署注入）；TTL 对齐 PoC（900s）可调 —— 契约不含 TTL 字段。
 - `docServerUrl` = **浏览器侧** DocServer 基址（S4 据此加载 `/web-apps/apps/api/documents/api.js`）；与 `document.url` 的「DocServer 视角基址」是两个地址面，均服务端配置下发。
+- **Push 258 修订（2026-10-09 · 查看器下载收口）**：`permissions` 自顶层**嵌入 `document`**（与 DocEditor 入参 1:1）；`download` 由 false 改 **true**（下载图标保持可见，点击由浮层原位透明命中层接管 → 原文件格式 + `download` 审计）；token 载荷同步。*（服务端 / 契约改动属 wmj / lan 线，本刀按业务授权代扩，请复核。）*
 
 
 ## 三、定案记录（wmj · 2026-09-30 · lan 代行登记）

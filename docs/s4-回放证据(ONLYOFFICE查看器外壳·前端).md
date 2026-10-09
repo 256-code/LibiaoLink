@@ -1,7 +1,7 @@
 # S4 回放证据（ONLYOFFICE 查看器外壳 · 前端）
 
 > 卡片：ONLYOFFICE 替换实施切片 **S4**（主责 px）｜口径来源：`docs/ONLYOFFICE替换执行计划(Office预览).md` §4（S4 出口 = 回放证据）｜`docs/契约切片草案(S8-2-ONLYOFFICE查看器).md` §三（查看器四段）｜**R5**（前端错误 UX：超时 / 重试 / 文案 + 降级「请下载」）。
-> 结论：**21 / 21 断言全过 + 零残留 + 页面控制台 0 异常**。
+> 结论：**21 / 21 断言全过 + 零残留 + 页面控制台 0 异常**（S4 首跑 · 2026-10-08）；**Push 258 复跑 23 / 23 全过**（2026-10-09）—— 查看器「右上角下载 → 原文件」收口，增量见「Push 258 复跑」。
 
 | 项 | 值 |
 |---|---|
@@ -13,7 +13,7 @@
 | 对象存储 | SeaweedFS 沙箱（容器 `libiaolink-s3` @127.0.0.1:9000；仅沙箱、不代表生产选型 —— 沿用 S2 / S3 口径） |
 | 夹具 | `server/scripts/poc10/fixtures/n1-01-fee-summary.xlsx`（12,965B）/ `n1-03-weekly-report.docx`（57,166B）—— 脚本复制为「回放-S4-费用表.xlsx / 回放-S4-周报.docx」经抽屉真选上传 |
 | 脚本 | `frontend/scripts/s4-onlyoffice-preview-e2e.mjs`（临时会话 `px-s4-oo-e2e` + 临时项目 `PX-S4OO-xxxxxx`，跑完零残留） |
-| 截图 | `s4-onlyoffice-error.png`（降级态）/ `s4-onlyoffice-ready-xlsx.png`（解除阻断 → 重试后就绪）/ `s4-onlyoffice-ready-docx.png`（DOCX 就绪）；均在 `%TEMP%` |
+| 截图 | `s4-onlyoffice-error.png`（降级态）/ `s4-onlyoffice-ready-xlsx.png`（解除阻断 → 重试后就绪）/ `s4-onlyoffice-ready-docx.png`（DOCX 就绪）；Push 258 复跑增 `s4-onlyoffice-native-hit.png`（命中层在位 · 悬停态）/ `s4-onlyoffice-native-hit-hover.png`；均在 `%TEMP%` |
 
 ## 断言明细
 
@@ -86,6 +86,23 @@
 - 合计 **21 项：21 通过 / 0 失败**；零残留；页面控制台 0 异常（含阻断注入也是 0 条）。
 - R5 三条覆盖：降级（①c：「暂无在线预览」+ 原因副行 +「重试」+ 浮层 caption「下载原文件」）、重试（②a：解除阻断点「重试」→ 重取配置（token 刷新）+ nonce 重建 → ready 闭环）、超时（20s 常量 `READY_TIMEOUT_MS` + 同款降级 UI；本次未真机注入，见下）。
 
+## Push 258 复跑（2026-10-09 · 查看器下载收口）
+
+业务口径（2026-10-09）：「onlyoffice 点击右上角下载都是 pdf 格式…我要文件本身格式」→「不要隐藏原本的下载」→「触碰也要有阴影效果 / 鼠标也要变成小手，效果和旁边的搜索一样」→「现在的是我们下载原文件的按钮，是没问题的」。
+
+环境与首跑同（api 127.0.0.1:3001 / DocServer 10.1.7.169:8001 / PG 5433 / SeaweedFS 9000），差别：前端 = 主仓 dev `http://10.1.7.169:3000`（真机 LAN 地址，非安全源）。
+
+修订 / 新增断言：
+
+- ①b 入口断言改「`data-file-preview-open` · 文案『预览』」+ 轮询（原 title 断言随 UI 演进失效）；
+- ③b 增 `nativeDownload`：查看器就绪时原位命中层在位（`data-file-preview-native-download`，几何 = 原生下载子按钮盒：距右 92 / top 4 / 24×24）；
+- ③c 悬停反馈对齐原生：pointer 小手 + 灰底（8% 黑遮罩、白底合成 ≈ `#EAEAEA`、图标透出、圆角 4px、无阴影）；截图 `s4-onlyoffice-native-hit-hover.png`；
+- ③d（新）命中层真点击 → **原文件字节落盘**：`Browser.setDownloadBehavior` 定向临时目录 + 20s 轮询 —— 落盘名 = 夹具原名（`回放-S4-周报.docx`）、sha256 与夹具逐字节一致、无 `.crdownload` 残留，且 `download` 审计 +1；
+- ④a / ④c 改口径：`document.permissions.download=true`（图标保持可见；点击由命中层接管）+ `permissions` 嵌 `document`（顶层无；token 载荷同步）。
+
+结果：**23 / 23 全过 + 零残留 + 控制台 0 异常**（①–⑧ 与首跑同口径，新增 ③d）。
+
+**真机行为实测（有头 Chrome 154 · 回放脚本之外）**：页面的源是 http 内网（非安全源）时，Chrome 对从该页发起的**一切**下载（http 直链与 `blob:` 都在内）都标「不安全下载 → 未确认 *.crdownload」等用户「保留」；对照实验（同一 `blob:` 流程换安全源 `http://127.0.0.1:3000`）干净落盘 `px-blob.docx` —— 判定看**发起页面的源**，blob 不豁免。结论：应用侧保证「字节 = 原文件、文件名 = 原名」；彻底消除「保留」提示归部署侧（①站点升 https（下载字节需同源化，避免混合内容）；②Chrome 策略把该源标记为安全（`OverrideSecurityRestrictionsOnInsecureOrigin` / chrome://flags）。
 ## 未覆盖 / 风险登记
 
 - **超时分支未真机注入**：需 DocServer 半连不响应才触发，本次以「阻断 → api.js onerror → error」为主路径；timeout 与 error 走同一降级 UI，记 S5 真实终端复测的可选注入项。

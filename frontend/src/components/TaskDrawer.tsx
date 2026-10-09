@@ -640,7 +640,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     setPreviewNote(null);
     try {
       const signed = await fetchDownloadUrl(fileId, versionId);
-      triggerDownload(signed.url, signed.fileName);
+      await triggerDownload(signed.url, signed.fileName);
     } catch (error) {
       setPreviewNote(error instanceof Error && error.message !== "" ? error.message : "下载失败，请稍后再试");
     } finally {
