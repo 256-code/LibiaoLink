@@ -340,7 +340,9 @@ export const FilePreviewQuerySchema = z
 
 /**
  * 在线查看器（ONLYOFFICE 查看通道 · S1 契约切片 · 安全定稿 §3.2）：ready 且走查看器通道时下发（无转换产物）。
- * docServerUrl + 四段配置 + token 直接交给 DocServer 的 api.js 初始化 DocEditor（查看器行为面）；
+ * docServerUrl + document（含 permissions）/ editorConfig + token 直接交给 DocServer 的 api.js 初始化 DocEditor（查看器行为面）；
+ * Push 258 错层修正：permissions 嵌 document 下发 —— ONLYOFFICE api.js 只认 document.permissions（顶层会被忽略、按默认值渲染）。
+ * download 保持可见（业务口径「原本的下载不要隐藏」）：图标原样保留，点击由浮层透明命中层接管 → 我方原文件下载链 + download 审计。
  * 安全语义在服务端受控端点（document.url 无存储凭证；鉴权 = DocServer outbox Bearer JWT，随 S3 落地）。
  */
 export const PREVIEW_VIEWER_KINDS = ["onlyoffice"] as const;
@@ -348,26 +350,12 @@ export const PreviewViewerKindSchema = z.enum(PREVIEW_VIEWER_KINDS).openapi("Pre
   description: "在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）",
 });
 
-/** 查看器文档段（DocEditor 配置的 document；url = 受控预览内容端点绝对 URL —— C1：同源生成、不信任 Host 头）。 */
-export const PreviewViewerDocumentSchema = z
-  .object({
-    title: z.string().openapi({ description: "文档标题（展示用；取文件名）" }),
-    url: z.string().openapi({ description: "受控预览内容端点绝对 URL（DocServer 视角；无存储凭证；浏览器直取 401、外网入口 404）" }),
-    fileType: z.string().openapi({ description: "文件类型（扩展名小写，如 docx / xlsx / pptx）" }),
-    key: z.string().openapi({ description: "文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效）" }),
-  })
-  .openapi("PreviewViewerDocument");
-
-/** 查看器编辑器配置段（固定只读：mode = view；D1：不做在线编辑）。 */
-export const PreviewViewerEditorConfigSchema = z
-  .object({
-    mode: z.literal("view").openapi({ description: "固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）" }),
-    lang: z.string().openapi({ description: "界面语言（如 zh-CN）" }),
-    user: z.object({ id: z.string(), name: z.string() }).openapi({ description: "会话标识（展示用；查看会话不落用户审计 —— 审计在签发查看器配置时点）" }),
-  })
-  .openapi("PreviewViewerEditorConfig");
-
-/** 查看器权限段（行为面；download=false 只约束查看器自身 —— 防直取依赖受控端点鉴权，R1 不变量）。 */
+/**
+ * 查看器权限段（行为面；Push 258 起 download=true —— 业务口径「原本的下载不要隐藏」，图标保持可见、点击由前端
+ * 透明命中层接管 → 原文件下载链；R1 不变量在受控端点侧，不靠该字段）。
+ * Push 258 错层修正：本段必须嵌在 document 内随 token 一并签发（ONLYOFFICE api.js 只认 document.permissions；
+ * 发在顶层会被忽略、按默认值渲染）。签发侧（server）与组装侧（前端文档里）逐字一致，否则 DocServer 拒 -20。
+ */
 export const PreviewViewerPermissionsSchema = z
   .object({
     edit: z.boolean(),
@@ -380,7 +368,29 @@ export const PreviewViewerPermissionsSchema = z
   })
   .openapi("PreviewViewerPermissions");
 
-/** 在线查看器配置（FilePreviewResponse.viewer；token = 对 documentType / document / editorConfig / permissions 逐字签发）。 */
+/** 查看器文档段（DocEditor 配置的 document；url = 受控预览内容端点绝对 URL —— C1：同源生成、不信任 Host 头）。 */
+export const PreviewViewerDocumentSchema = z
+  .object({
+    title: z.string().openapi({ description: "文档标题（展示用；取文件名）" }),
+    url: z.string().openapi({ description: "受控预览内容端点绝对 URL（DocServer 视角；无存储凭证；浏览器直取 401、外网入口 404）" }),
+    fileType: z.string().openapi({ description: "文件类型（扩展名小写，如 docx / xlsx / pptx）" }),
+    key: z.string().openapi({ description: "文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效）" }),
+    permissions: PreviewViewerPermissionsSchema.openapi({
+      description: "查看器权限段（Push 258 起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见、点击由前端命中层接管 → 原文件下载链）",
+    }),
+  })
+  .openapi("PreviewViewerDocument");
+
+/** 查看器编辑器配置段（固定只读：mode = view；D1：不做在线编辑）。 */
+export const PreviewViewerEditorConfigSchema = z
+  .object({
+    mode: z.literal("view").openapi({ description: "固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）" }),
+    lang: z.string().openapi({ description: "界面语言（如 zh-CN）" }),
+    user: z.object({ id: z.string(), name: z.string() }).openapi({ description: "会话标识（展示用；查看会话不落用户审计 —— 审计在签发查看器配置时点）" }),
+  })
+  .openapi("PreviewViewerEditorConfig");
+
+/** 在线查看器配置（FilePreviewResponse.viewer；token = 对 documentType / document（含 permissions）/ editorConfig 逐字签发 + 服务端 iat / exp）。 */
 export const PreviewViewerSchema = z
   .object({
     kind: PreviewViewerKindSchema,
@@ -390,8 +400,7 @@ export const PreviewViewerSchema = z
     }),
     document: PreviewViewerDocumentSchema,
     editorConfig: PreviewViewerEditorConfigSchema,
-    permissions: PreviewViewerPermissionsSchema,
-    token: z.string().openapi({ description: "查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）" }),
+    token: z.string().openapi({ description: "查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）" }),
   })
   .openapi("PreviewViewer", {
     description: "在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名）",

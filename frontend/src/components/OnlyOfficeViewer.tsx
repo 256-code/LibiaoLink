@@ -41,9 +41,11 @@ function loadDocsApi(scriptUrl: string): Promise<void> {
 }
 
 /**
- * ONLYOFFICE 查看器外壳（计划 S4 · R5）：加载 api.js → 以服务端下发的四段 + token 逐字初始化 DocEditor。
+ * ONLYOFFICE 查看器外壳（计划 S4 · R5）：加载 api.js → 以服务端下发的 document（含 permissions · Push 258 错层修正）/ editorConfig + token 逐字初始化 DocEditor。
  * 状态机（data-oo-status，供回放探测）：loading → ready / error / timeout。
- * - 只读：documentType / document / editorConfig / permissions / token 逐字传（JWT 绑定字段不改写；events 是本地回调、不参与签名）；
+ * - 只读：documentType / document（含 permissions）/ editorConfig / token 逐字传（JWT 绑定字段不改写；events 是本地回调、不参与签名）；
+ *   权限段嵌 document —— ONLYOFFICE api.js 只认该位置（顶层会被忽略、按默认值渲染）；download 图标保持可见、不加新按钮，
+ *   点击由浮层透明命中层在原位接管 → 我方原文件下载链（DocServer 内置下载对 .doc/.xls 只能转 PDF，跨域改不了其逻辑）；
  * - 降级（R5）：加载失败 / onError / 超时 → 「暂无在线预览」+「重试」（父级重取配置 + nonce 自增重建）；「下载原文件」由浮层 caption 提供；
  * - 卸载（含重试重建）：destroyEditor —— 不留 DocServer 侧会话。
  */
@@ -74,7 +76,6 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: PreviewViewerCon
           documentType: viewer.documentType,
           document: viewer.document,
           editorConfig: viewer.editorConfig,
-          permissions: viewer.permissions,
           token: viewer.token,
           events: {
             onDocumentReady: () => {

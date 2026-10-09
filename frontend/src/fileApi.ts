@@ -6,6 +6,13 @@
  * Push 226 续三：PDF / Office / 文本点击预览（previewKindOf —— 与 server preview.targets.ts 同口径）。
  * Push 226 续四：原文件下载（fetchDownloadUrl + triggerDownload —— 版本短时签名 attachment + 原文件名；
  *   与预览浮层区分：下载始终拿原文件、写 download 审计）。
+ * Push 258 续：下载改「fetch 字节 → Blob objectURL 落盘」（download 属性精确落原名、不依赖对象存储的 Content-Disposition）。
+ *   实测口径（Chrome 154）：http 内网源（10.1.7.169）下直链与 Blob **都会**被标「未确认 *.crdownload」等用户「保留」
+ *   （判定看发起页面的源；同一 blob 流程在安全源 127.0.0.1 下干净落盘）—— 彻底无提示需站点做成安全源（https / 浏览器策略
+ *   白名单），部署侧另行处理；应用侧保证「拿到的字节 = 原文件」。配套查看器「右上角下载 → 原文件」：document.permissions.download=true
+ *   （图标保持可见）+ FilePreviewOverlay 原位透明命中层接管点击。
+ * Push 258 续二：上传 contentHash 的 WebCrypto 取法补纯 JS 回退（sha256.ts）—— 内网 http 明文访问（10.1.7.169）属
+ *   非安全源、crypto.subtle 为 undefined，取哈希抛错会让上传表现为「点了没反应」；回退输出与 WebCrypto 一致。
  * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
  *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
  * 2026-10-08：PDF 并入查看器通道（业务口径「统一用onlyoffice」）—— 服务端返回 viewer，本文件按响应裁决、无分支。
@@ -28,6 +35,7 @@
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { apiRequest, apiSend } from "./api";
+import { sha256Hex } from "./sha256";
 
 type UploadCreateResponse = {
   file: { id: string; name: string };
@@ -38,14 +46,20 @@ type UploadPartsResponse = { parts: Array<{ partNumber: number; url: string }> }
 
 type UploadCompleteResponse = { file: { id: string; name: string } };
 
-/** ONLYOFFICE 查看器配置（契约 PreviewViewer 子集 · S4 直接组装 DocEditor 配置；token = 四段逐字签发）。 */
+/** ONLYOFFICE 查看器配置（契约 PreviewViewer 子集 · S4 直接组装 DocEditor 配置；token = documentType / document（含 permissions）/ editorConfig 逐字签发）。 */
 export type PreviewViewerConfig = {
   kind: string;
   docServerUrl: string;
   documentType: "word" | "cell" | "slide";
-  document: { title: string; url: string; fileType: string; key: string };
+  document: {
+    title: string;
+    url: string;
+    fileType: string;
+    key: string;
+    /** 查看器权限段（Push 258 错层修正起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见 · 点击由浮层命中层接管 → 原文件）。 */
+    permissions: { edit: boolean; download: boolean; print: boolean; comment: boolean; chat: boolean; fillForms: boolean; protect: boolean };
+  };
   editorConfig: { mode: "view"; lang: string; user: { id: string; name: string } };
-  permissions: { edit: boolean; download: boolean; print: boolean; comment: boolean; chat: boolean; fillForms: boolean; protect: boolean };
   token: string;
 };
 
@@ -56,13 +70,6 @@ type FilePreviewResponse = {
   viewer: PreviewViewerConfig | null;
   reason: string | null;
 };
-
-async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 /** 上传文件的可选关联（taskId 给出时文件挂到该任务；file_links 同事务建立）。 */
 export type UploadFileOptions = {
@@ -347,15 +354,27 @@ export async function fetchFileVersions(fileId: string): Promise<FileVersionBrie
   return list.items.map((item) => ({ id: item.id, seq: item.seq, sizeBytes: item.sizeBytes, uploadedAt: item.uploadedAt }));
 }
 
-/** 触发一次浏览器下载（attachment 签名地址 —— 地址失效时页面不跳走；原文件名由 Content-Disposition 落盘）。 */
-export function triggerDownload(url: string, fileName: string): void {
+/** 触发一次浏览器下载（Push 258 续）：先 fetch 成 Blob 再走 objectURL 落盘 —— download 属性必生效（原文件名精确落盘），
+ *  不依赖对象存储的 Content-Disposition；注意：http 内网源下 Chrome 对**任何**下载（含 blob:）都会标「未确认 *.crdownload」
+ *  等用户点「保留」（实测对照：安全源 127.0.0.1 干净落盘）—— 这一步是浏览器对非安全源的限制，站点升 https / 策略白名单后即消失。
+ *  失败抛错，由调用方提示。 */
+export async function triggerDownload(url: string, fileName: string): Promise<void> {
+  const response = await fetch(url, { credentials: "omit" });
+  if (response.ok !== true) {
+    throw new Error("下载失败（HTTP " + String(response.status) + "），请稍后再试");
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = url;
+  anchor.href = objectUrl;
   anchor.download = fileName;
   anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl);
+  }, 10000);
 }
 
 /** 任务文件引用（Push 246；2026-10-08 携 status 供「替换」裁决）：任务列表「文件」列下拉与单元格展示共用 ——

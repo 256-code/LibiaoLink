@@ -7902,8 +7902,7 @@ export interface components {
             documentType: components["schemas"]["PreviewViewerDocumentType"];
             document: components["schemas"]["PreviewViewerDocument"];
             editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
-            permissions: components["schemas"]["PreviewViewerPermissions"];
-            /** @description 查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
+            /** @description 查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
             token: string;
         } | null;
         PreviewViewerDocument: {
@@ -7915,6 +7914,7 @@ export interface components {
             fileType: string;
             /** @description 文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效） */
             key: string;
+            permissions: components["schemas"]["PreviewViewerPermissions"];
         };
         /**
          * @description 文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）
@@ -7940,6 +7940,7 @@ export interface components {
          * @enum {string}
          */
         PreviewViewerKind: "onlyoffice";
+        /** @description 查看器权限段（Push 258 起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见、点击由前端命中层接管 → 原文件下载链） */
         PreviewViewerPermissions: {
             edit: boolean;
             download: boolean;
