@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AuditLogPage } from "./AuditLogPage";
 import Hub from "./Hub";
 import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
@@ -23,7 +24,7 @@ import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./dir
 import { createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
-import { replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
+import { replaceAuditQuery, replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
 import type { MeResponse, Project } from "./types";
 
 type ViewState =
@@ -605,6 +606,17 @@ export default function App() {
           canManageStakeholders={canManageStakeholders}
         />
         {editModal}
+        {bottomBars}
+      </>
+    );
+  }
+
+  if (route.kind === "audit") {
+    // 操作记录（C7-04 管理员查询页 · u12）：入口 = 头像菜单「操作记录」（AppHeader · audit.view）；
+    // 数据 = GET /api/v1/audit-logs（AuditLogPage + auditApi）；筛选态走地址（replaceAuditQuery，地址即状态）。
+    return (
+      <>
+        <AuditLogPage me={state.me} query={route.query} onChangeQuery={replaceAuditQuery} directory={directory} />
         {bottomBars}
       </>
     );
