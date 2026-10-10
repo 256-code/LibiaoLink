@@ -78,6 +78,7 @@ import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
+import { MyPlanBoard } from "./components/MyPlanBoard";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
 import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, tableGridTemplate, tableMinWidth, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
 import { TrackerDots } from "./components/Tracker";
@@ -945,20 +946,11 @@ function IssuesView({ view, issues, focus, openIds, onToggleProject, overrides, 
   );
 }
 
-/** 标签 ③ 我的计划（Push 234 · 业务口径「增加一个我的计划页面」→「你只要把导航栏设计好 后续详细设计再说」）：
- *  导航栏（第三枚标签）与路由（`?tab=plan`）本刀就位；页面内容（数据口径 / 布局）随后续详细设计再做 —— 本刀只落登记卡。
+/** 标签 ③ 我的计划（Push 234 标签与路由就位 → Push 266 页面落地；页面形态照 MiniMemo 参考页照搬 —— 奶白背景 / 左侧分类栏 / 198 高圆角卡片）：
+ *  便签墙本体在 components/MyPlanBoard.tsx（数据 / 存储口径见 src/myPlan.ts）——
+ *  与其它两枚标签不同，它是纯本机数据（localStorage），不依赖 GET /api/v1/workspace：
+ *  即使工作台聚合读面加载中 / 失败，便签墙照常可用（渲染分支把它排在加载 / 失败态之前）。
  *  锚点 data-workspace-plan 供回放断言「切到该标签」用。 */
-function MyPlanView() {
-  return (
-    <section data-workspace-plan="" className="space-y-3">
-      <div className="flex flex-wrap items-baseline gap-2">
-        <h2 className="text-sm font-semibold text-zinc-900">我的计划</h2>
-        <span className="text-xs text-zinc-400">导航栏与路由已就位 · 页面内容待详细设计</span>
-      </div>
-      <EmptyCard text="「我的计划」页面还没开工。" hint="本刀只落导航栏与路由（#/my-tasks?tab=plan）；数据口径与布局随后续详细设计再做。" />
-    </section>
-  );
-}
 
 /** 工作台「我的任务」页：三枚标签（我的任务 / 我提出的问题 / 我的计划）共用一份 GET /api/v1/workspace 聚合数据。
  *  Push 233：折叠面板展开态接账号偏好（workspaceOpenProjects，按标签各记一组项目 id）——「这个下拉要有记忆」。
@@ -1241,7 +1233,9 @@ export default function WorkspacePage({ me, tab, onChangeTab, sub, onChangeSub, 
             <Toast kind="error" text={issueError} onClose={() => { setIssueError(null); }} anchor={{ name: "data-workspace-issue-error", value: "" }} />
           )}
 
-          {state.kind === "loading" ? (
+          {tab === "plan" ? (
+            <MyPlanBoard />
+          ) : state.kind === "loading" ? (
             <EmptyCard text="加载中…" hint="正在拉取工作台聚合数据（GET /api/v1/workspace）。" />
           ) : state.kind === "error" ? (
             <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-white/50 px-6 py-12 text-center">
@@ -1269,8 +1263,6 @@ export default function WorkspacePage({ me, tab, onChangeTab, sub, onChangeSub, 
               overrides={issueOverrides}
               onChangeState={handleChangeIssueState}
             />
-          ) : tab === "plan" ? (
-            <MyPlanView />
           ) : (
             <MyTasksView
               data={state.data}
