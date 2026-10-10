@@ -42,7 +42,7 @@ const FRONTEND = process.env.FRONTEND_BASE ?? "http://localhost:3000";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9416);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const SHOTS = process.env.SHOT_DIR ?? join(tmpdir(), "px-audit-shots");
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const j = (value) => JSON.stringify(value);

@@ -47,7 +47,7 @@
  * 用法：node scripts/m6-06-workspace-e2e.mjs
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE / SCREENSHOT_DIR
  *
- * 它做什么：用**两条临时会话**（panxing = 我；wmj = 反例提出人；跑完撤销）+ **三个临时项目**
+ * 它做什么：用**两条临时会话**（px-replay = 我；wmj-replay = 反例提出人；跑完撤销）+ **三个临时项目**
  * （PX-M6WS-*；跑完物理删、零残留）在真机浏览器里跑一遍工作台接线后的读写口径 ——
  *   ① 接口先行对账（夹具落库后 GET /api/v1/workspace）：跨项目四组任务 + 「我提出的」不含他人提的问题；
  *   ② 页面骨架：两枚下划线标签（我的任务 / 我提出的问题；文字 + 选中下划线）+ 默认选中「我的任务」+ 地址不带 `?tab=`；
@@ -103,9 +103,9 @@ const API = process.env.API_BASE ?? "http://127.0.0.1:3001";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9414);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 /** 反例提出人（「我提出的问题」不认他提的问题）。 */
-const OTHER_USER = process.env.OTHER_USER ?? "wmj";
+const OTHER_USER = process.env.OTHER_USER ?? "wmj-replay";
 const TZ = "Asia/Shanghai";
 /** 截图落盘目录（口径同其它回放脚本：默认系统临时目录，可用 SCREENSHOT_DIR 覆盖）。 */
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR ?? tmpdir();
@@ -586,12 +586,12 @@ check("④e 日期三列 = 项目页同款短日期胶囊（开始 / 预计 / �
 check("④f 四格进度点 = 项目页同款（0 / 0 / 0.5 —— 即将任务 50% 档）", rowsA !== null && rowsA.rows.map((item) => item.dots).join("|") === "0|0|0.5|0|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.dots)));
 check("④g 紧急重要度列 = 高 / 中 / 低", rowsA !== null && rowsA.rows.map((item) => item.priority).join("|") === "高|中|低|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.priority)));
 check("④h 任务主列 = 名称 + 阶段 / 英文名小行（B 项目面板块段落不串行）", rowsA !== null && rowsA.rows[0].titleText === "回放·逾期任务" && rowsA.rows[0].title.indexOf("设计开发") >= 0 && rowsA.rows[2].title.indexOf("临时任务") >= 0 && rowsA.rows[3].titleText === "回放·远期任务" && rowsA.rows[3].title.indexOf("设计开发") >= 0 && rowsA.rows[4].titleText === "回放·未排期任务", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.titleText)));
-check("④j 任务负责人列 = 潘兴（远期那条为项目经理口径带入的 " + other.displayName + "）", rowsA !== null && rowsA.rows.map((item) => item.owners).join("|") === ["潘兴", "潘兴", "潘兴", other.displayName, "潘兴"].join("|"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.owners)));
+check("④j 任务负责人列 = 我（" + me.displayName + "；远期那条为项目经理口径带入的 " + other.displayName + "）", rowsA !== null && rowsA.rows.map((item) => item.owners).join("|") === [me.displayName, me.displayName, me.displayName, other.displayName, me.displayName].join("|"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.owners)));
 check("④k 「是否按时交付」列 = 逾期未交付 / — / —（displayStatus=overdue 的红签）", rowsA !== null && rowsA.rows.map((item) => item.onTime).join("|") === "逾期未交付|—|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.onTime)));
 check("④i 反例不出现：他人项目任务（C）与已完成任务不进；远期 / 未排期按新口径照进（服务端裁决，页面照单渲染）", rowsA !== null && [tStranger.id, tDone.id].every((id) => rowsA.rows.every((item) => item.id !== id)) && rowsA.rows.some((item) => item.id === tFar.id) && rowsA.rows.some((item) => item.id === tUnscheduled.id), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
 // —— Push 231 扩列（业务口径「这些字段一个不能少」）：表头 15 列与项目页 TABLE_COLUMNS 全对齐 + 新列逐列对账
 check("④l 表头 = 项目页任务表全 15 列（同序；「预计所需天数」窄列表头为空）", rowsA !== null && rowsA.heads.join("|") === TASK_HEAD_EXPECTED.join("|"), rowsA === null ? "null" : JSON.stringify(rowsA.heads));
-check("④m 项目经理列 = 项目主数据责任人（A 项目 = 潘兴）", rowsA !== null && rowsA.rows.every((item) => item.manager === "潘兴"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.manager)));
+check("④m 项目经理列 = 项目主数据责任人（A 项目 = 我 —— " + me.displayName + "）", rowsA !== null && rowsA.rows.every((item) => item.manager === me.displayName), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.manager)));
 check("④n 输出成果文件列 = 首枚名 + 「+N」（CAD图纸+1 / 验收单 / —）", rowsA !== null && rowsA.rows.map((item) => item.deliverable).join("|") === "CAD图纸+1|验收单|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.deliverable)));
 check("④o 文件列 = 「N 份 + 未定档 N」（逾期任务直传 1 份 draft；无文件落「—」）", rowsA !== null && rowsA.rows[0].files.indexOf("1 份") >= 0 && rowsA.rows[0].files.indexOf("未定档 1") >= 0 && rowsA.rows.slice(1).every((item) => item.files === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.files)));
 check("④p 项目进展描述列 = note 原文 / 「—」", rowsA !== null && rowsA.rows[0].note === "回放·进展描述：图纸已出，等待评审" && rowsA.rows.slice(1).every((item) => item.note === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.note)));
@@ -601,7 +601,7 @@ check("④s 变更关联列 = 空单元格 / 「变更」琥珀签（今日任�
 check("④t 扩列降级横幅不出现（两个项目的源接口都取到）", (await ev("document.querySelector(" + j("[data-workspace-task-partial]") + ") !== null")) === false, "partial=false");
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 const rowsB = await ev(taskRowsExpr(projectB));
-check("④u 跨项目 B：1 行、项目经理 = 潘兴、吴孟杰（多值「、」连接）、其余扩列落「—」", rowsB !== null && rowsB.table === true && rowsB.rows.length === 1 && rowsB.rows[0].id === tB.id && rowsB.rows[0].manager === "潘兴、吴孟杰" && rowsB.rows[0].deliverable === "—" && rowsB.rows[0].files === "—" && rowsB.rows[0].note === "—" && rowsB.rows[0].headcount === "—" && rowsB.rows[0].changeCount === "0", rowsB === null ? "null" : JSON.stringify(rowsB.rows));
+check("④u 跨项目 B：1 行、项目经理 = " + me.displayName + "、" + other.displayName + "（多值「、」连接）、其余扩列落「—」", rowsB !== null && rowsB.table === true && rowsB.rows.length === 1 && rowsB.rows[0].id === tB.id && rowsB.rows[0].manager === me.displayName + "、" + other.displayName && rowsB.rows[0].deliverable === "—" && rowsB.rows[0].files === "—" && rowsB.rows[0].note === "—" && rowsB.rows[0].headcount === "—" && rowsB.rows[0].changeCount === "0", rowsB === null ? "null" : JSON.stringify(rowsB.rows));
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 
 // ---------- ⑤ 切标签 ----------
@@ -1353,7 +1353,7 @@ check("⑬h 「待我处理的问题」表 = 与「我提出的问题」同一�
 await shot("m6-06-workspace-handling.png");
 await clickSelector("[data-workspace-panel=" + Q + projectB + Q + "] [data-workspace-panel-toggle]");
 const rowsHandlingB = await ev(issueRowsExpr(projectB));
-check("⑬i 跨项目：B 面板 1 条 = wmj 提出、处理人是我那条（「我处理的」含、「我提出的」不含 —— 两栏口径互不串台）", rowsHandlingB !== null && rowsHandlingB.table === true && rowsHandlingB.rows.length === 1 && rowsHandlingB.rows[0].id === issueOther.issue.id && rowsHandlingB.rows[0].owner === me.displayName, rowsHandlingB === null ? "null" : JSON.stringify(rowsHandlingB.rows));
+check("⑬i 跨项目：B 面板 1 条 = 反例用户提出、处理人是我那条（「我处理的」含、「我提出的」不含 —— 两栏口径互不串台）", rowsHandlingB !== null && rowsHandlingB.table === true && rowsHandlingB.rows.length === 1 && rowsHandlingB.rows[0].id === issueOther.issue.id && rowsHandlingB.rows[0].owner === me.displayName, rowsHandlingB === null ? "null" : JSON.stringify(rowsHandlingB.rows));
 // 共用展开记忆：从下拉切回「我提出的问题」，刚才展开的 A / B 仍展开（偏好键 workspaceOpenProjects.raised）
 await clickSelector("[data-workspace-tab=" + Q + "raised" + Q + "]");
 const submenuBack260 = await waitFor("document.querySelector(" + j("[data-workspace-submenu]") + ") !== null", 15000);
