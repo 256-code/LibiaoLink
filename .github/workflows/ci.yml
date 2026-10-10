@@ -200,6 +200,8 @@ jobs:
           PORT: "3011"
           LOG_LEVEL: warn
           DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+          # SSE 心跳周期收紧（M5-04-1 回放 S6 断言；生产缺省 25s —— S8-3 定案 §三-4）
+          NOTIFY_STREAM_HEARTBEAT_MS: "1500"
         run: |
           set -euo pipefail
           setsid nohup node dist/entry/api.js > api.log 2>&1 < /dev/null &
@@ -261,3 +263,10 @@ jobs:
         env:
           S7_4_WIRING_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
         run: node scripts/s7-4-automation-wiring-replay.mjs
+      # M5-04-1（SSE 实时推送：notification / unread 事件扇出 + 每用户连接上限 + 心跳 · S8-3 · lan 线，Push 211）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: M5-04-1 SSE replay (stream fan-out + per-user limit + heartbeat)
+        working-directory: server
+        env:
+          M5_04_1_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M5_04_1_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m5-04-1-sse-replay.mjs

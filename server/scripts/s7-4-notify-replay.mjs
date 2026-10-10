@@ -88,13 +88,14 @@ async function loadRuntime() {
   await import("reflect-metadata");
   const load = (relative) => import(pathToFileURL(join(HERE, "..", "dist", relative)).href);
   try {
-    const [envModule, configModule, databaseModule, clockModule, repositoryModule, serviceModule] = await Promise.all([
+    const [envModule, configModule, databaseModule, clockModule, repositoryModule, serviceModule, publisherModule] = await Promise.all([
       load("config/env.js"),
       load("config/config.module.js"),
       load("db/database.service.js"),
       load("common/clock/clock.service.js"),
       load("modules/notify/notify.repository.js"),
       load("modules/notify/notify.service.js"),
+      load("modules/notify/notify.stream.publisher.js"),
     ]);
     return {
       loadEnv: envModule.loadEnv,
@@ -103,6 +104,7 @@ async function loadRuntime() {
       ClockService: clockModule.ClockService,
       NotifyRepository: repositoryModule.NotifyRepository,
       NotifyService: serviceModule.NotifyService,
+      NotifyStreamPublisher: publisherModule.NotifyStreamPublisher,
     };
   } catch (error) {
     process.stderr.write("S7-4：无法加载 server/dist（先执行 cd server && npm run build）：" + String(error) + "\n");
@@ -138,7 +140,8 @@ async function main() {
   const config = new runtime.AppConfig(env);
   const database = new runtime.DatabaseService(config);
   const repository = new runtime.NotifyRepository(database);
-  const notify = new runtime.NotifyService(repository, database, config, clock);
+  // S8-3（M5-04-1）：投递在事务内 pg_notify 广播（本回放无 SSE 连接 → 事件静默丢弃，不影响投递断言）。
+  const notify = new runtime.NotifyService(repository, database, config, clock, new runtime.NotifyStreamPublisher());
 
   const row = (payload, id = 1, dedupeKey = dedupe("m" + id)) => ({
     id,
