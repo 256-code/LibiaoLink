@@ -14,7 +14,11 @@
  *   （Push 266：便签墙页面落地并照 MiniMemo 参考页照搬 —— 奶白背景 / 左侧分类栏 / 198 高圆角卡片 / 7 色 hex 调色板；
  *   新建 / 编辑 / 删除 / 搜索 / 分类 / 排序，本机 localStorage 保存；导出 / 导入不做）→「填写也要一样」
  *   （Push 267：编辑（填写）弹窗照参考页 NoteEditor 照搬 —— 便签底色整卡铺底 / 顶栏关闭 X + 7 色圆点 + 字体 Aa 分段器 /
- *   大标题 + 记录区 / 分类胶囊（＋ 新分类）/ 底栏「更新于」+ 删除 + 保存；本脚本「⑪」段含两道弹窗照搬对账）。
+ *   大标题 + 记录区 / 分类胶囊（＋ 新分类）/ 底栏「更新于」+ 删除 + 保存；本脚本「⑪」段含两道弹窗照搬对账）→
+ *   「这个也不需要（排序）· 背景换成白色 · 数据接入数据库 · 新增完成按钮 · 完成后只显示在已完成里面」
+ *   （Push 268：页面底改纯白、排序下架；便签墙整面按账号存 user_preferences.prefs.myPlanBoard（跨设备可见）；
+ *   旧 localStorage 键首次打开自动迁移上云；编辑弹窗底栏加「完成 / 恢复」+ 侧栏「已完成」视图（完成后只出现在其中）；
+ *   本脚本「⑪」段另含 落库 / 首次预置 / 旧键迁移 / 完成态 对账）。
  *
  * 口径复评（2026-09-30 · 业务：「明明有四个 为什么只显示了两个」→「不能有 7 天内时间限制」→「时间不限制 另外
  *   项目经理是我也要算在我的任务」）：我的任务 = 任务负责人含我 或 项目项目经理含我 + 未完成、不限完成日期窗口；
@@ -58,19 +62,21 @@
  *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
  *      收起 A → 刷新仍全收起 → GET preferences 逐段落库核对 → 收尾恢复账号偏好原值（不留痕）；
  *   ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 · 2026-10-10「照 minimemo3 便签页融入系统」+
- *       「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」→「填写也要一样」（Push 267 编辑（填写）弹窗照搬））：
- *      第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 便签墙（照 MiniMemo 参考页照搬：奶白背景 +
- *      暖色径向渐变 / 左侧分类栏 / 198 高圆角卡片 / 7 色 hex 调色板；首次进入预置 6 条示例；本机保存、不依赖
- *      GET /workspace —— 工作台读面加载中 / 失败也照常可用）：照搬口径对账（背景 / 卡片尺寸 / 网格）→ 新建（标题与
- *      内容都空时保存置灰）/ 编辑 / 搜索 / 分类过滤 / 排序（标题 A→Z）/ 删除（二次确认）/ 刷新持久化 →
- *      深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 → 点回「我的任务」地址回到不带参数的原口径；
+ *       「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」→「填写也要一样」（Push 267 编辑（填写）弹窗照搬）→
+ *       Push 268「这个也不需要（排序）· 背景换成白色 · 数据接入数据库 · 新增完成按钮 · 完成后只显示在已完成里面」）：
+ *      第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 便签墙（照 MiniMemo 参考页照搬：Push 268 起纯白背景 +
+ *      左侧分类栏（全部便签 / 已完成 / 各分类）/ 198 高圆角卡片 / 7 色 hex 调色板；账号落库 —— 首次进入预置 6 条示例并上云，
+ *      旧 localStorage 键首次打开自动迁移上云）：照搬口径对账（白底 / 卡片尺寸 / 网格 / 无排序）→ 新建（标题与
+ *      内容都空时保存置灰）/ 编辑 / 搜索 / 分类过滤 / 完成 →「已完成」（只显示在这里）/ 恢复 / 删除（二次确认）/
+ *      刷新持久化（GET preferences 对账）/ 首次预置 / 旧键迁移 → 深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 →
+ *      点回「我的任务」地址回到不带参数的原口径 → 收尾账号偏好恢复原值（不留痕）；
  *   ⑬ 问题子视图（Push 260）：「提出/负责的问题」标签带下拉子菜单（悬停 / 点击展开，同项目页「日报及问题」；
  *      面板见 components/WorkspaceIssueSubMenu.tsx）—— 地址 ?tab=raised&sub=、缺省 raised 不落参数；「待我处理的问题」
  *      页与「我提出的问题」同构（同一张七列表 / 同一套归类色签）；色签与项目页「问题追踪」逐 token 相等；「已完成不显示」= 两栏同一过滤（A2 完成态不出现）；
  *      深链 ?sub=handling 直达、未知值回落；跑完恢复账号偏好原值（截图：submenu / handling 两张，见 SCREENSHOT_DIR）。
  *   ⑧ 收尾：删三个临时项目（A / B / C，物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
  * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆 +
- *   Push 266 便签墙小节）
+ *   Push 266 便签墙 / Push 268 便签墙落库 + 完成态小节）
  */
 
 import { spawn } from "node:child_process";
@@ -803,12 +809,31 @@ check("⑩j 收起后刷新：两面板保持全收起（空数组 = 全收起�
 const memoryRestored = await patchOpenProjects(memoryOriginal);
 check("⑩k 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（不留痕）", memoryRestored !== null && JSON.stringify(memoryRestored.json.workspaceOpenProjects) === JSON.stringify(memoryOriginal), memoryRestored === null ? "null" : JSON.stringify([memoryRestored.json.workspaceOpenProjects, memoryOriginal]));
 
-// ---------- ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 · 2026-10-10「照 minimemo3 便签页融入系统」） ----------
-// 本刀验：第三枚标签 / 点击 / 深链照旧；页内 = 便签墙（首次进入预置 6 条示例；本机 localStorage 保存，不依赖 GET /workspace）——
-// 照搬口径（背景 / 卡片尺寸 / 调色板 + 编辑（填写）弹窗：⑪c3 新建态 / ⑪g2 编辑态 / ⑪n2 关闭 X）对账 + 新建（空标题 / 空内容保存置灰）/ 编辑 / 搜索 / 分类过滤 / 排序 / 删除（二次确认）/ 刷新持久化；导出 / 导入不做。
+// ---------- ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 → Push 268 纯白底 + 排序下架 + 完成态 + 账号落库） ----------
+// 本刀验：第三枚标签 / 点击 / 深链照旧；页内 = 便签墙（账号落库：GET/PATCH prefs.myPlanBoard —— 前置重置为确定性 6 条示例、收尾恢复账号快照）——
+// 照搬口径（白底 / 卡片尺寸 / 调色板 + 编辑（填写）弹窗：⑪c3 新建态 / ⑪g2 编辑态 / ⑪n2 关闭 X）对账 + 新建（空标题 / 空内容保存置灰）/ 编辑 /
+// 搜索 / 分类过滤 / 完成 + 「已完成」视图 / 恢复 / 删除（二次确认）/ 刷新持久化（GET preferences 对账）/ 首次预置上云 / 旧键迁移；导出 / 导入不做。
 const NOTE_CREATED_TITLE = "回放·便签甲改";
+const LEGACY_PLAN_KEY = "libiaolink.plan.board.v1";
+// Push 268 前置：便签墙已落库 —— 先快照账号偏好整行（收尾原样放回，⑪ 段不留痕），再把 myPlanBoard 重置为确定性 6 条示例 + 默认六类；
+// 页面读的就是这份确定性数据（时间固定 → 固定「最近更新」序 = 本周重点 → 随手记 稳定）。
+const planPrefSnapshot = (await db.query("select prefs, updated_at, (prefs -> 'myPlanBoard') as board from user_preferences where user_id = $1", [me.id])).rows[0] ?? null;
+const planBoardBefore = planPrefSnapshot === null || planPrefSnapshot.board === null ? null : planPrefSnapshot.board;
+const PLAN_FIXED_SEEDS = {
+  notes: [
+    { id: "pn-seed-1", title: "本周重点", content: "1: 跟进印度项目的任务排期；2: 整理周五评审材料", category: "待办", colorId: "yellow", fontId: "sans", done: false, createdAt: "2026-10-10T02:00:00.000Z", updatedAt: "2026-10-10T07:00:00.000Z" },
+    { id: "pn-seed-2", title: "想法速记", content: "便签墙：颜色分类 + 搜索；做完的收进「已完成」。", category: "想法", colorId: "blue", fontId: "sans", done: false, createdAt: "2026-10-09T06:00:00.000Z", updatedAt: "2026-10-10T05:00:00.000Z" },
+    { id: "pn-seed-3", title: "会议要点", content: "周一例会：验收节点提前到月底。", category: "工作", colorId: "white", fontId: "sans", done: false, createdAt: "2026-10-08T06:00:00.000Z", updatedAt: "2026-10-09T10:00:00.000Z" },
+    { id: "pn-seed-4", title: "采购清单", content: "A4 打印纸 / 标签机色带 / 白板笔", category: "采购", colorId: "green", fontId: "mono", done: false, createdAt: "2026-10-07T06:00:00.000Z", updatedAt: "2026-10-09T02:00:00.000Z" },
+    { id: "pn-seed-5", title: "读书清单", content: "《人月神话》《凤凰项目》《持续交付》", category: "个人", colorId: "pink", fontId: "serif", done: false, createdAt: "2026-10-06T06:00:00.000Z", updatedAt: "2026-10-08T02:00:00.000Z" },
+    { id: "pn-seed-6", title: "随手记", content: "便签跟着账号走；重要内容自己留个底。", category: "其他", colorId: "purple", fontId: "sans", done: false, createdAt: "2026-10-05T06:00:00.000Z", updatedAt: "2026-10-07T02:00:00.000Z" },
+  ],
+  categories: ["待办", "工作", "想法", "采购", "个人", "其他"],
+};
+const planReset = await api("/api/v1/users/me/preferences", "PATCH", { myPlanBoard: PLAN_FIXED_SEEDS });
+check("⑪a0 前置：便签墙重置为确定性 6 条示例 + 默认六类（账号已落库；快照已存、收尾恢复）", planReset !== null && planReset.status === 200 && planReset.json !== null && planReset.json.myPlanBoard.notes.length === 6 && planReset.json.myPlanBoard.updatedAt !== null, planReset === null ? "null" : JSON.stringify([planReset.status, planReset.json === null ? null : planReset.json.myPlanBoard.notes.length]));
 /** 便签墙读数：计数文案 + 卡片（DOM 顺序 = 当前排序；带卡片 class 供颜色 / 字体对账）+ 网格 / 空态 / 任务·问题表 + 提示条文案。 */
-const planExpr = () => "(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var count=root.querySelector(" + j("[data-plan-count]") + ");var cards=root.querySelectorAll(" + j("[data-plan-note]") + ");var out=[];for(var i=0;i<cards.length;i+=1){var t=cards[i].querySelector(" + j("[data-plan-note-title]") + ");var c=cards[i].querySelector(" + j("[data-plan-note-category]") + ");out.push({id:String(cards[i].getAttribute(" + j("data-plan-note") + ")),title:t===null?String(" + j("") + "):t.textContent.trim(),category:c===null?String(" + j("") + "):c.textContent.trim(),className:String(cards[i].getAttribute(" + j("class") + ")),bg:String(cards[i].style.backgroundColor)});}var toast=document.querySelector(" + j("[data-plan-toast]") + ");return {count:count===null?String(" + j("") + "):count.textContent.trim(),cards:out,grid:root.querySelector(" + j("[data-plan-grid]") + ")!==null,empty:root.querySelector(" + j("[data-plan-empty]") + ")!==null,tables:root.querySelectorAll(" + j("[data-workspace-task-table],[data-workspace-issue-table]") + ").length,toast:toast===null?String(" + j("") + "):toast.textContent.trim()};})()";
+const planExpr = () => "(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var count=root.querySelector(" + j("[data-plan-count]") + ");var cards=root.querySelectorAll(" + j("[data-plan-note]") + ");var out=[];for(var i=0;i<cards.length;i+=1){var t=cards[i].querySelector(" + j("[data-plan-note-title]") + ");var c=cards[i].querySelector(" + j("[data-plan-note-category]") + ");out.push({id:String(cards[i].getAttribute(" + j("data-plan-note") + ")),title:t===null?String(" + j("") + "):t.textContent.trim(),category:c===null?String(" + j("") + "):c.textContent.trim(),className:String(cards[i].getAttribute(" + j("class") + ")),bg:String(cards[i].style.backgroundColor),done:cards[i].querySelector(" + j("[data-plan-note-done]") + ")!==null});}var toast=document.querySelector(" + j("[data-plan-toast]") + ");return {count:count===null?String(" + j("") + "):count.textContent.trim(),cards:out,grid:root.querySelector(" + j("[data-plan-grid]") + ")!==null,empty:root.querySelector(" + j("[data-plan-empty]") + ")!==null,tables:root.querySelectorAll(" + j("[data-workspace-task-table],[data-workspace-issue-table]") + ").length,toast:toast===null?String(" + j("") + "):toast.textContent.trim()};})()";
 /** 按表达式点元素（下拉选项这类没有稳定选择器的目标用；找不到 / 不可见即抛错）。 */
 async function clickExpr(expression, what) {
   const point = await ev("(function(){var node=" + expression + ";if(node===null||node===undefined){return null;}var box=node.getBoundingClientRect();if(box.width<=0||box.height<=0){return null;}return {x:Math.round(box.left+box.width/2),y:Math.round(box.top+box.height/2)};})()");
@@ -847,13 +872,16 @@ await waitFor("document.querySelector(" + j("[data-workspace-panel=\"" + project
 const headPlan0 = await ev(headExpr());
 check("⑪a 「我的计划」是第三枚标签（三枚都在：我的任务 / 提出·负责的问题 / 我的计划；无图标）", headPlan0 !== null && headPlan0.tabs.length === 3 && headPlan0.tabs[2].key === "plan" && headPlan0.tabs[2].text === "我的计划", headPlan0 === null ? "null" : JSON.stringify([headPlan0.tabs.length, headPlan0.tabs[2].text]));
 await clickSelector("[data-workspace-tab=" + Q + "plan" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-plan-grid]") + ") !== null", 15000);
 const headPlan1 = await ev(headExpr());
 check("⑪b 点「我的计划」→ 地址写回 ?tab=plan + 选中态转移（replace、可刷新 / 可分享）", headPlan1 !== null && headPlan1.hash === "#/my-tasks?tab=plan" && headPlan1.tabs[2].current === "page" && headPlan1.tabs[0].current === null && headPlan1.tabs[1].current === null, headPlan1 === null ? "null" : JSON.stringify([headPlan1.hash, headPlan1.tabs.map((item) => item.current)]));
 const plan0 = await ev(planExpr());
-check("⑪c 「我的计划」页 = 便签墙（不是登记卡）：首次进入预置 6 条示例、本机计数「共 6 条便签」、有网格无空态、无任务 / 问题表；「最近更新」序首尾 =「本周重点」/「随手记」", plan0 !== null && plan0.cards.length === 6 && plan0.count === "共 6 条便签" && plan0.grid === true && plan0.empty === false && plan0.tables === 0 && plan0.cards[0] !== undefined && plan0.cards[0].title === "本周重点" && plan0.cards[5] !== undefined && plan0.cards[5].title === "随手记", plan0 === null ? "null" : JSON.stringify([plan0.count, plan0.cards.map((item) => item.title)]));
+check("⑪c 「我的计划」页 = 便签墙（不是登记卡）：账号里 6 条示例、侧栏计数「共 6 条便签」、有网格无空态、无任务 / 问题表；固定「最近更新」序首尾 =「本周重点」/「随手记」", plan0 !== null && plan0.cards.length === 6 && plan0.count === "共 6 条便签" && plan0.grid === true && plan0.empty === false && plan0.tables === 0 && plan0.cards[0] !== undefined && plan0.cards[0].title === "本周重点" && plan0.cards[5] !== undefined && plan0.cards[5].title === "随手记", plan0 === null ? "null" : JSON.stringify([plan0.count, plan0.cards.map((item) => item.title)]));
 const planSkin = await ev("(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var card=root.querySelector(" + j("[data-plan-note]") + ");var grid=root.querySelector(" + j("[data-plan-grid]") + ");if(card===null||grid===null){return null;}var rs=getComputedStyle(root);var cs=getComputedStyle(card);return {bgImage:rs.backgroundImage,bgColor:rs.backgroundColor,radius:cs.borderTopLeftRadius,padding:cs.paddingTop,minHeight:cs.minHeight,cols:getComputedStyle(grid).gridTemplateColumns};})()");
 const planSkinCols = planSkin === null ? [] : planSkin.cols.split(" ").map((item) => Math.round(parseFloat(item)));
-check("⑪c2 照搬口径对账：页面背景 = 奶白 #fdfbf7 + 暖色径向渐变；卡片圆角 18 / 内衬 18 / 最小高 198、网格列宽 ≥ 228（auto-fill）", planSkin !== null && planSkin.bgImage.indexOf("radial-gradient") >= 0 && planSkin.bgColor === "rgb(253, 251, 247)" && planSkin.radius === "18px" && planSkin.padding === "18px" && planSkin.minHeight === "198px" && planSkinCols.length >= 3 && Math.min.apply(null, planSkinCols) >= 228, planSkin === null ? "null" : JSON.stringify({ bgColor: planSkin.bgColor, radius: planSkin.radius, padding: planSkin.padding, minHeight: planSkin.minHeight, cols: planSkinCols }));
+check("⑪c2 照搬口径对账（Push 268：页面底改纯白）：页面背景 = 纯白 #ffffff、无径向渐变；卡片圆角 18 / 内衬 18 / 最小高 198、网格列宽 ≥ 228（auto-fill）", planSkin !== null && planSkin.bgImage === "none" && planSkin.bgColor === "rgb(255, 255, 255)" && planSkin.radius === "18px" && planSkin.padding === "18px" && planSkin.minHeight === "198px" && planSkinCols.length >= 3 && Math.min.apply(null, planSkinCols) >= 228, planSkin === null ? "null" : JSON.stringify({ bgColor: planSkin.bgColor, radius: planSkin.radius, padding: planSkin.padding, minHeight: planSkin.minHeight, cols: planSkinCols }));
+const planToolbar = await ev("(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var done=root.querySelector(" + j("[data-plan-category=" + Q + "done" + Q + "]") + ");var doneCount=done===null?null:done.querySelector(" + j("span:last-child") + ");return {hasSort:root.querySelector(" + j("[data-plan-sort]") + ")!==null,hasDone:done!==null,doneCount:doneCount===null?null:doneCount.textContent.trim()};})()");
+check("⑪c4 排序已下架（「最近更新」按钮不在 DOM）+ 侧栏有「已完成」入口（当前计数 0）", planToolbar !== null && planToolbar.hasSort === false && planToolbar.hasDone === true && planToolbar.doneCount === "0", planToolbar === null ? "null" : JSON.stringify(planToolbar));
 // ⑪c3 「填写」弹窗照搬（新建态 · 2026-10-10「填写也要一样」）：整卡 = 便签底色（缺省黄）+ 24 圆角 / 680 宽；
 // 顶栏 = 关闭 X + 7 色圆点（选中 = 墨色描边）+ 3 枚字体 Aa（选中 = 墨底奶白字）；底栏 =「新建便签」+ 墨黑「保存」（空内容置灰）+ 删除缺席；
 // 对账复用 ⑪d 打开的新建弹窗（不关不合、数据不动）；关闭 X 另由 ⑪n2 覆盖。
@@ -904,12 +932,34 @@ const planCat = await ev(planExpr());
 check("⑪k 分类过滤「想法」→ 2 张卡（新便签 + 预置「想法速记」）", planCat !== null && planCat.cards.length === 2 && planCat.cards.every((item) => item.category === "想法"), planCat === null ? "null" : JSON.stringify(planCat.cards.map((item) => item.title)));
 await clickSelector("[data-plan-category=" + Q + "all" + Q + "]");
 await sleep(250);
-await clickSelector("[data-plan-sort] button");
-await waitFor("document.querySelector(" + j("[data-plan-sort-popover] [role=option]") + ") !== null", 8000);
-await clickExpr("(function(){var list=document.querySelectorAll(" + j("[data-plan-sort-popover] [role=option]") + ");for(var i=0;i<list.length;i+=1){if(list[i].textContent.trim()===" + j("标题 A→Z") + "){return list[i];}}return null;})()", "排序选项「标题 A→Z」");
-await sleep(400);
-const planSorted = await ev(planExpr());
-check("⑪l 排序「标题 A→Z」→ 7 张卡按标题重排（首 =「本周重点」、尾 =「想法速记」，中文按拼音）", planSorted !== null && planSorted.cards.length === 7 && planSorted.cards[0] !== undefined && planSorted.cards[0].title === "本周重点" && planSorted.cards[6] !== undefined && planSorted.cards[6].title === "想法速记", planSorted === null ? "null" : JSON.stringify(planSorted.cards.map((item) => item.title)));
+// ⑪l 完成按钮（Push 268）：编辑弹窗底栏「完成」→ 便签收进「已完成」（便签墙 7 → 6、侧栏「已完成」计数 1）
+await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
+const doneBtnPre = await ev("(function(){var b=document.querySelector(" + j("[data-plan-editor-done]") + ");return b===null?null:{text:b.textContent.trim(),title:b.getAttribute(" + j("title") + ")};})()");
+await clickSelector("[data-plan-editor-done]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
+const planDone = await ev(planExpr());
+const planDoneCountText = await ev("(function(){var b=document.querySelector(" + j("[data-plan-category=" + Q + "done" + Q + "]") + ");if(b===null){return null;}var n=b.querySelector(" + j("span:last-child") + ");return n===null?null:n.textContent.trim();})()");
+check("⑪l 完成按钮：编辑弹窗底栏「完成」→ 点后弹窗关、便签墙 6 条（该便签离开便签墙）、侧栏「已完成」计数 1", doneBtnPre !== null && doneBtnPre.text === "完成" && planDone !== null && planDone.cards.length === 6 && !planDone.cards.some((item) => item.id === createdId) && planDoneCountText === "1", JSON.stringify([doneBtnPre, planDone === null ? null : planDone.cards.length, planDoneCountText]));
+// ⑪l2 「已完成」视图：只见完成态（右上角常显绿勾；未完成卡仍是悬停铅笔）+ 标题「已完成」
+await clickSelector("[data-plan-category=" + Q + "done" + Q + "]");
+await sleep(300);
+const planDoneView = await ev(planExpr());
+const planDoneHeading = await ev("(function(){var h=document.querySelector(" + j("[data-workspace-plan] h1") + ");return h===null?null:h.textContent.trim();})()");
+check("⑪l2 点侧栏「已完成」= 只显示完成态（1 张卡 = 刚完成的便签、[data-plan-note-done] 绿勾在场）+ 标题「已完成」", planDoneView !== null && planDoneView.cards.length === 1 && planDoneView.cards[0] !== undefined && planDoneView.cards[0].id === createdId && planDoneView.cards[0].done === true && planDoneHeading !== null && planDoneHeading.indexOf("已完成") === 0, planDoneView === null ? "null" : JSON.stringify([planDoneView.cards.length, planDoneHeading]));
+await shot("18-我的计划-已完成.png");
+// ⑪l3 「已完成」里点开 = 底栏「恢复」→ 回到未完成（本视图空态；切回「全部便签」7 条）
+await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
+const restoreBtnText = await ev("(function(){var b=document.querySelector(" + j("[data-plan-editor-done]") + ");return b===null?null:b.textContent.trim();})()");
+await clickSelector("[data-plan-editor-done]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
+const planDoneEmpty = await ev(planExpr());
+check("⑪l3 「已完成」里点开 = 底栏「恢复」→ 点后回到未完成：本视图空态（0 张卡 + 空态卡）", restoreBtnText === "恢复" && planDoneEmpty !== null && planDoneEmpty.cards.length === 0 && planDoneEmpty.empty === true, JSON.stringify([restoreBtnText, planDoneEmpty === null ? null : planDoneEmpty.cards.length]));
+await clickSelector("[data-plan-category=" + Q + "all" + Q + "]");
+await sleep(300);
+const planBackAll = await ev(planExpr());
+check("⑪l4 切回「全部便签」：7 条全回来（恢复的便签在场）", planBackAll !== null && planBackAll.cards.length === 7 && planBackAll.cards.some((item) => item.id === createdId), planBackAll === null ? "null" : JSON.stringify(planBackAll.cards.map((item) => item.title)));
 await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
 await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
 await clickSelector("[data-plan-editor-delete]");
@@ -933,12 +983,69 @@ check("⑪n2 「填写」弹窗关闭 X：点 X = 直接关（无删除确认、
 await open("#/my-tasks?tab=plan", "[data-workspace-plan]");
 await waitFor("document.querySelector(" + j("[data-plan-grid]") + ") !== null", 15000);
 const plan4 = await ev(planExpr());
-check("⑪o 刷新 / 深链重开（#/my-tasks?tab=plan）→ 仍是本机 6 条（新建再删除的那条不复现；便签墙不依赖 GET /workspace）", plan4 !== null && plan4.cards.length === 6 && !plan4.cards.some((item) => item.id === createdId), plan4 === null ? "null" : JSON.stringify(plan4.cards.map((item) => item.title)));
+let prefsAfterPlan = null;
+for (let i = 0; i < 20; i += 1) {
+  const res = await api("/api/v1/users/me/preferences");
+  prefsAfterPlan = res.json === null ? null : res.json.myPlanBoard;
+  if (prefsAfterPlan !== null && prefsAfterPlan.notes.length === 6) break;
+  await sleep(300);
+}
+check("⑪o 刷新 / 深链重开（#/my-tasks?tab=plan）→ 仍是账号里那 6 条（新建再删除的不复现；GET preferences.myPlanBoard 落库对账 6 条 / updatedAt 非 null）", plan4 !== null && plan4.cards.length === 6 && !plan4.cards.some((item) => item.id === createdId) && prefsAfterPlan !== null && prefsAfterPlan.notes.length === 6 && prefsAfterPlan.updatedAt !== null, plan4 === null ? "null" : JSON.stringify([plan4.cards.length, prefsAfterPlan === null ? null : prefsAfterPlan.notes.length]));
 const headPlan2 = await ev(headExpr());
 check("⑪p 深链直接打开 = 「我的计划」选中（刷新 / 收藏 / 分享同款）", headPlan2 !== null && headPlan2.tabs[2].current === "page" && headPlan2.hash === "#/my-tasks?tab=plan", headPlan2 === null ? "null" : JSON.stringify([headPlan2.tabs.map((item) => item.current), headPlan2.hash]));
 await clickSelector("[data-workspace-tab=" + Q + "tasks" + Q + "]");
 const headPlan3 = await ev(headExpr());
 check("⑪q 点回「我的任务」→ 地址回到不带参数的 #/my-tasks（原口径不变）", headPlan3 !== null && headPlan3.hash === "#/my-tasks" && headPlan3.tabs[0].current === "page", headPlan3 === null ? "null" : JSON.stringify([headPlan3.hash, headPlan3.tabs.map((item) => item.current)]));
+
+// ⑪r 首次进入（账号里从未保存过 myPlanBoard）：SQL 摘键 → 重开页 → 预置 6 条示例并上云（updatedAt 非 null）、本机不落旧键
+await db.query("update user_preferences set prefs = prefs - 'myPlanBoard' where user_id = $1", [me.id]);
+await open("#/my-tasks?tab=plan", "[data-workspace-plan]");
+await waitFor("document.querySelector(" + j("[data-plan-grid]") + ") !== null", 15000);
+const planFresh = await ev(planExpr());
+let freshPrefs = null;
+for (let i = 0; i < 20; i += 1) {
+  const res = await api("/api/v1/users/me/preferences");
+  freshPrefs = res.json === null ? null : res.json.myPlanBoard;
+  if (freshPrefs !== null && freshPrefs.updatedAt !== null) break;
+  await sleep(300);
+}
+const legacyAfterFresh = await ev("window.localStorage.getItem(" + j(LEGACY_PLAN_KEY) + ")");
+check("⑪r 首次进入（账号里从未保存）：预置 6 条示例并上云（updatedAt 非 null / 6 条）+ 本机不落旧键", planFresh !== null && planFresh.cards.length === 6 && freshPrefs !== null && freshPrefs.updatedAt !== null && freshPrefs.notes.length === 6 && legacyAfterFresh === null, JSON.stringify([planFresh === null ? null : planFresh.cards.length, freshPrefs === null ? null : freshPrefs.updatedAt]));
+// ⑪s 本机旧键（Push ≤ 267 的 localStorage）迁移：SQL 摘键 + 往页面 localStorage 塞 2 条旧便签 → 重开页 → 迁移上云、旧键清除、页面 = 迁移后 2 条
+const legacyBoard = {
+  v: 1,
+  notes: [
+    { id: "pn-legacy-1", title: "回放·旧键甲", content: "从本机迁上去", category: "待办", colorId: "green", fontId: "sans", createdAt: "2026-10-09T01:00:00.000Z", updatedAt: "2026-10-09T02:00:00.000Z" },
+    { id: "pn-legacy-2", title: "回放·旧键乙", content: "迁移后清键", category: "想法", colorId: "orange", fontId: "mono", createdAt: "2026-10-08T01:00:00.000Z", updatedAt: "2026-10-08T02:00:00.000Z" },
+  ],
+  categories: ["待办", "想法"],
+};
+await db.query("update user_preferences set prefs = prefs - 'myPlanBoard' where user_id = $1", [me.id]);
+await ev("window.localStorage.setItem(" + j(LEGACY_PLAN_KEY) + ", " + j(JSON.stringify(legacyBoard)) + ")");
+await open("#/my-tasks?tab=plan", "[data-workspace-plan]");
+await waitFor("document.querySelector(" + j("[data-plan-grid]") + ") !== null", 15000);
+const planMigrated = await ev(planExpr());
+let migratedPrefs = null;
+for (let i = 0; i < 20; i += 1) {
+  const res = await api("/api/v1/users/me/preferences");
+  migratedPrefs = res.json === null ? null : res.json.myPlanBoard;
+  if (migratedPrefs !== null && migratedPrefs.updatedAt !== null && migratedPrefs.notes.length === 2) break;
+  await sleep(300);
+}
+const legacyAfterMigrate = await ev("window.localStorage.getItem(" + j(LEGACY_PLAN_KEY) + ")");
+check("⑪s 本机旧键迁移（Push ≤ 267 的 localStorage 便签）：重开页自动上云（2 条、标题甲 / 乙）+ 旧键清除 + 页面 = 迁移后数据", planMigrated !== null && planMigrated.cards.length === 2 && planMigrated.cards[0] !== undefined && planMigrated.cards[0].title === "回放·旧键甲" && planMigrated.cards[1] !== undefined && planMigrated.cards[1].title === "回放·旧键乙" && migratedPrefs !== null && migratedPrefs.notes.length === 2 && legacyAfterMigrate === null, JSON.stringify([planMigrated === null ? null : planMigrated.cards.map((item) => item.title), migratedPrefs === null ? null : migratedPrefs.notes.length, legacyAfterMigrate]));
+// ⑪t 收尾：账号偏好快照原样放回（⑪ 段不留痕）
+const canonPlanNotes = (list) => JSON.stringify(list.map((note) => [note.id, note.title, note.content, note.category, note.colorId, note.fontId, note.done === true, note.createdAt, note.updatedAt]));
+if (planPrefSnapshot === null) {
+  await db.query("delete from user_preferences where user_id = $1", [me.id]);
+} else {
+  await db.query("update user_preferences set prefs = $2::jsonb, updated_at = $3::timestamptz where user_id = $1", [me.id, JSON.stringify(planPrefSnapshot.prefs), planPrefSnapshot.updated_at.toISOString()]);
+}
+const planRestoredPrefs = await api("/api/v1/users/me/preferences");
+const planRestoredBoard = planRestoredPrefs.json === null ? null : planRestoredPrefs.json.myPlanBoard;
+const planExpectBoard = planBoardBefore === null ? { notes: [], categories: [], updatedAt: null } : { notes: planBoardBefore.notes, categories: planBoardBefore.categories, updatedAt: planBoardBefore.updatedAt ?? null };
+check("⑪t 回放收尾：账号偏好恢复快照（myPlanBoard 原样放回 / 原不存在 = 空 + updatedAt null；⑪ 段不留痕）", planRestoredBoard !== null && canonPlanNotes(planRestoredBoard.notes) === canonPlanNotes(planExpectBoard.notes) && JSON.stringify(planRestoredBoard.categories) === JSON.stringify(planExpectBoard.categories) && planRestoredBoard.updatedAt === planExpectBoard.updatedAt, planRestoredBoard === null ? "null" : JSON.stringify([planRestoredBoard.notes.length, planRestoredBoard.updatedAt]));
+await parkMouse();
 
 // ---------- ⑫ 标签导航栏吸顶（Push 235 · 业务口径「任务模版和我的任务都要做吸顶效果」） ----------
 // 工作台默认内容不足一屏、吸顶滚不起来 —— 先补 16 条「今日」任务把 A 面板撑高，再把视口压到 560 当滚动空间；

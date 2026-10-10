@@ -1,47 +1,40 @@
-import { useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { OptionList } from "./SelectMenu";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Toast } from "./Toast";
-import { usePopover } from "./usePopover";
+import { Loader } from "./Loader";
 import { PlanNoteCard } from "./PlanNoteCard";
 import { PlanNoteEditor, type PlanNoteDraft } from "./PlanNoteEditor";
+import { loadMyPreferences, saveMyPlanBoard } from "../preferencesApi";
 import {
   PLAN_CATEGORY_MAX,
   PLAN_CATEGORY_NAME_MAX,
   PLAN_NOTE_LIMIT,
-  PLAN_SORT_LABELS,
+  clearLegacyPlanBoard,
   filterPlanNotes,
-  loadPlanBoard,
   newPlanNoteId,
   normalizePlanCategoryName,
+  orderPlanNotes,
   planGreeting,
-  savePlanBoard,
-  sortPlanNotes,
+  readLegacyPlanBoard,
+  seedPlanBoard,
   type PlanBoard,
   type PlanNote,
-  type PlanSortKey,
 } from "../myPlan";
 
 /**
  * 工作台「我的计划」便签墙（第三枚标签 · 业务口径 2026-10-10「照 minimemo3 便签页融入系统」→
- * 「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」→「导出导入功能不要」）：
- * 页面形态照 MiniMemo 参考页照搬 —— 奶白背景（#fdfbf7 + 左上暖色径向渐变）+ 左侧分类栏 +
- * 「问候 + 大标题 + 计数」头部 + 228px 起跳的 auto-fill 网格 + 198 高圆角卡片（配色 = 同一套 7 色 hex 调色板）；
- * 工具条 = 搜索 / 排序 / 新建便签（不做导出 / 导入）。
+ * 「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」→「导出导入功能不要」→「填写也要一样」→
+ * Push 268「这个也不需要（排序）· 背景换成白色 · 数据接入数据库 · 新增完成按钮 · 完成后只显示在已完成里面」）：
+ * 页面形态照 MiniMemo 参考页照搬 —— 纯白背景 + 左侧分类栏（全部便签 / 已完成 / 各分类）+ 「问候 + 大标题 + 计数」头部 +
+ * 228px 起跳的 auto-fill 网格 + 198 高圆角卡片（配色 = 同一套 7 色 hex 调色板）；工具条 = 搜索 + 新建便签（排序已下架；不做导出 / 导入）。
  *
- * 存储口径见 frontend/src/myPlan.ts（本机浏览器保存、退出登录清除；服务端同步待 wmj 线契约扩键）。
+ * 存储（Push 268 起 · 账号落库）：整面便签墙按账号存服务端偏好（user_preferences.prefs.myPlanBoard，见 preferencesApi.ts）——
+ * 首次打开（账号里从未保存）预置 6 条示例并上云；本机旧键（libiaolink.plan.board.v1）自动迁移上云再清键（迁移失败保留旧键、本机数据兜底、下轮重试）。
+ * 保存 = 乐观更新 + 单键 PATCH（串行）；失败保留界面改动并出提示（刷新回滚到账号里最后一次保存）。
+ * 完成态：编辑弹窗底栏「完成 / 恢复」——完成后只出现在「已完成」视图（便签墙与分类视图不再显示）。
  */
-
-const BTN_GHOST =
-  "inline-flex items-center gap-[7px] rounded-[11px] border border-[#e8e3da] bg-white px-3.5 py-[9px] text-[13px] font-medium text-[#44403c] transition hover:border-[#d5cdbd] hover:bg-[#faf9f7] hover:text-[#1c1917]";
 
 const BTN_PRIMARY =
   "inline-flex items-center gap-[7px] rounded-[11px] border border-[#1c1917] bg-[#1c1917] px-3.5 py-[9px] text-[13px] font-medium text-[#fdfbf7] shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] transition hover:-translate-y-px hover:bg-[#292524] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0";
-
-const SORT_OPTIONS = (["updated_desc", "created_desc", "created_asc", "title_asc"] as const).map((key) => ({
-  value: key,
-  label: PLAN_SORT_LABELS[key],
-}));
 
 /* ----- 图标（照参考页同款的细线性图标；系统内联 SVG 口径） ----- */
 
@@ -74,22 +67,20 @@ function TagIcon() {
   );
 }
 
+function CheckCircleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+      <path d="m8.4 12.3 2.5 2.5 4.7-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0" aria-hidden="true">
       <path d="M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
       <path d="M12 5v14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function SortIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0" aria-hidden="true">
-      <path d="m21 16-4 4-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M17 20V4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="m3 8 4-4 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M7 4v16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
@@ -115,7 +106,7 @@ function NoteIcon() {
   );
 }
 
-/* ----- 分类栏条目（「全部便签」+ 各分类；选中 = 墨黑底、右侧带条数） ----- */
+/* ----- 分类栏条目（「全部便签」/「已完成」+ 各分类；选中 = 墨黑底、右侧带条数） ----- */
 
 function CategoryItem({
   value,
@@ -191,102 +182,127 @@ function BoardSearch({ value, onChange }: { value: string; onChange: (next: stri
   );
 }
 
-/* ----- 工具条：排序（照参考页的幽灵按钮 + 下拉） ----- */
-
-function SortMenu({ value, onChange }: { value: PlanSortKey; onChange: (next: PlanSortKey) => void }) {
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(180, SORT_OPTIONS.length * 34 + 12);
-  const selected = SORT_OPTIONS.find((option) => option.value === value) ?? SORT_OPTIONS[0];
-  return (
-    <div data-plan-sort="" className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="排序方式"
-        onClick={() => {
-          setOpen(!open);
-        }}
-        className={BTN_GHOST}
-      >
-        <SortIcon />
-        {selected.label}
-      </button>
-      {open && position !== null
-        ? createPortal(
-            <div
-              ref={popoverRef}
-              data-plan-sort-popover=""
-              className="fixed z-50 overflow-hidden rounded-[14px] border border-[#e8e3da] bg-white shadow-[0_24px_48px_-24px_rgba(28,25,23,0.45)]"
-              style={{ top: position.top, left: position.left, width: position.width }}
-            >
-              <OptionList
-                options={SORT_OPTIONS}
-                value={value}
-                ariaLabel="排序方式"
-                onPick={(next) => {
-                  onChange(next as PlanSortKey);
-                  setOpen(false);
-                }}
-              />
-            </div>,
-            document.body,
-          )
-        : null}
-    </div>
-  );
-}
-
 /* ----- 空态（照参考页：虚线圆角容器 + 圆形图标 + 新建按钮） ----- */
 
-function BoardEmpty({ title, text, onNew }: { title: string; text: string; onNew: () => void }) {
+function BoardEmpty({ title, text, onNew }: { title: string; text: string; onNew?: () => void }) {
   return (
     <div
       data-plan-empty=""
-      className="flex flex-col items-center gap-2.5 rounded-[22px] border-[1.5px] border-dashed border-[#e8e3da] bg-white/60 px-5 py-[90px] text-center"
+      className="flex flex-col items-center gap-2.5 rounded-[22px] border-[1.5px] border-dashed border-[#e8e3da] bg-[#faf9f7] px-5 py-[90px] text-center"
     >
       <span className="grid h-[62px] w-[62px] place-items-center rounded-full bg-[#f1ece3] text-[#a8a29e]">
         <NoteIcon />
       </span>
       <p className="mt-1.5 text-base font-semibold text-[#1c1917]">{title}</p>
       <p className="mb-2.5 text-[13px] text-[#78716c]">{text}</p>
-      <button type="button" data-plan-empty-new="" onClick={onNew} className={BTN_PRIMARY}>
-        <PlusIcon />
-        新建便签
-      </button>
+      {onNew === undefined ? null : (
+        <button type="button" data-plan-empty-new="" onClick={onNew} className={BTN_PRIMARY}>
+          <PlusIcon />
+          新建便签
+        </button>
+      )}
     </div>
   );
 }
 
 /**
- * 便签墙主体：工具条（搜索 / 排序 / 新建）+ 左侧分类栏 + 「问候 + 标题 + 计数」头部 + 便签网格；
- * 点卡片进编辑弹窗（PlanNoteEditor —— 2026-10-10「填写也要一样」照 MiniMemo 参考页 NoteEditor 照搬：便签底色整卡铺底 + 顶栏关闭 X / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 底栏「更新于」+ 删除 / 保存）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
+ * 便签墙主体：工具条（搜索 / 新建便签 —— 排序已下架）+ 左侧分类栏（全部便签 / 已完成 / 各分类）+「问候 + 标题 + 计数」头部 + 便签网格；
+ * 点卡片进编辑弹窗（PlanNoteEditor —— 便签底色整卡铺底 + 顶栏关闭 X / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 +
+ * 底栏「更新于」+ 删除 + 完成 / 恢复 + 保存）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
  */
 export function MyPlanBoard() {
-  const [board, setBoard] = useState<PlanBoard>(() => loadPlanBoard());
+  const [board, setBoard] = useState<PlanBoard | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState<string | null>(null);
-  const [sort, setSort] = useState<PlanSortKey>("updated_desc");
+  const [doneOnly, setDoneOnly] = useState(false);
   /** 编辑弹窗：null = 关着；note null = 新建。 */
   const [editor, setEditor] = useState<{ note: PlanNote | null } | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState("");
+  /** 上云串行链：多笔提交按顺序落库（每笔都是整面便签墙，顺序错乱会互相覆盖）。 */
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
 
-  /** 整体写回：先更新界面，再落本机；存储不可用时出提示（改动留在界面上，用户可重试）。 */
+  /**
+   * 打开读面：GET 偏好 → 首次（账号里从未保存）预置示例上云；本机旧键（Push ≤ 267 的 localStorage）
+   * 在账号没数据（或账号为空板而旧键有便签）时迁移上云再清键；迁移失败保留旧键、本机数据兜底展示、下轮打开重试。
+   */
+  useEffect(() => {
+    let alive = true;
+    setBoard(null);
+    setLoadFailed(false);
+    void (async () => {
+      try {
+        const prefs = await loadMyPreferences();
+        if (!alive) {
+          return;
+        }
+        const remote = prefs.myPlanBoard;
+        const legacy = readLegacyPlanBoard();
+        if (legacy !== null) {
+          const shouldMigrate = remote.updatedAt === null || (remote.notes.length === 0 && legacy.notes.length > 0);
+          if (shouldMigrate) {
+            try {
+              const saved = await saveMyPlanBoard(legacy);
+              if (!alive) {
+                return;
+              }
+              clearLegacyPlanBoard();
+              setBoard({ notes: saved.myPlanBoard.notes, categories: saved.myPlanBoard.categories });
+              return;
+            } catch {
+              if (!alive) {
+                return;
+              }
+              setBoard(legacy);
+              return;
+            }
+          }
+          clearLegacyPlanBoard();
+          setBoard({ notes: remote.notes, categories: remote.categories });
+          return;
+        }
+        if (remote.updatedAt === null) {
+          const seeded = seedPlanBoard();
+          setBoard(seeded);
+          try {
+            await saveMyPlanBoard(seeded);
+          } catch {
+            // 预置上云失败静默：本次照常可用，之后任何一次保存都会把整面便签墙带上云
+          }
+          return;
+        }
+        setBoard({ notes: remote.notes, categories: remote.categories });
+      } catch {
+        if (alive) {
+          setLoadFailed(true);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [reloadToken]);
+
+  /** 乐观提交：先更新界面，再整面 PATCH 上云（串行）；失败保留界面改动 + 出错误提示。 */
   const commit = (next: PlanBoard, okText?: string): void => {
     setBoard(next);
-    if (!savePlanBoard(next)) {
-      setNotice({ kind: "error", text: "本机存储不可用（隐私模式 / 配额已满）—— 本次改动没有保存，刷新会丢。" });
-      return;
-    }
-    if (okText !== undefined) {
-      setNotice({ kind: "ok", text: okText });
-    }
+    saveChain.current = saveChain.current
+      .then(() => saveMyPlanBoard(next))
+      .then(() => {
+        if (okText !== undefined) {
+          setNotice({ kind: "ok", text: okText });
+        }
+      })
+      .catch(() => {
+        setNotice({ kind: "error", text: "保存失败（网络或服务不可用）—— 改动只在本页，刷新会回滚到账号里最后一次保存。" });
+      });
   };
 
   const handleSaveNote = (draft: PlanNoteDraft): void => {
-    if (editor === null) {
+    if (editor === null || board === null) {
       return;
     }
     const now = new Date().toISOString();
@@ -297,8 +313,11 @@ export function MyPlanBoard() {
         setNotice({ kind: "error", text: "便签已达上限（" + String(PLAN_NOTE_LIMIT) + " 条）—— 先删掉一些再新建。" });
         return;
       }
-      const note: PlanNote = { id: newPlanNoteId(), title: draft.title, content: draft.content, category: draft.category, colorId: draft.colorId, fontId: draft.fontId, createdAt: now, updatedAt: now };
+      const note: PlanNote = { id: newPlanNoteId(), title: draft.title, content: draft.content, category: draft.category, colorId: draft.colorId, fontId: draft.fontId, done: false, createdAt: now, updatedAt: now };
       commit({ notes: [note].concat(board.notes), categories: board.categories });
+      if (doneOnly) {
+        setDoneOnly(false);
+      }
     } else {
       const notes = board.notes.map((item) => (item.id === existing.id ? { ...item, ...draft, updatedAt: now } : item));
       commit({ notes, categories: board.categories });
@@ -307,7 +326,7 @@ export function MyPlanBoard() {
   };
 
   const handleDeleteNote = (): void => {
-    if (editor === null || editor.note === null) {
+    if (editor === null || editor.note === null || board === null) {
       return;
     }
     const target = editor.note;
@@ -315,7 +334,24 @@ export function MyPlanBoard() {
     setEditor(null);
   };
 
+  /** 完成 / 恢复（Push 268）：编辑弹窗底栏按钮 —— 连同当前草稿一起落一次（草稿为空时保留原内容）。 */
+  const handleToggleDone = (draft: { title: string; content: string } | null): void => {
+    if (editor === null || editor.note === null || board === null) {
+      return;
+    }
+    const target = editor.note;
+    const now = new Date().toISOString();
+    const notes = board.notes.map((item) =>
+      item.id === target.id ? { ...item, ...(draft ?? {}), done: !target.done, updatedAt: now } : item,
+    );
+    commit({ notes, categories: board.categories }, target.done ? "已恢复为未完成便签。" : "已完成，收进「已完成」。");
+    setEditor(null);
+  };
+
   const handleAddCategory = (name: string): void => {
+    if (board === null) {
+      return;
+    }
     const normalized = normalizePlanCategoryName(name);
     if (normalized === "" || board.categories.includes(normalized) || board.categories.length >= PLAN_CATEGORY_MAX) {
       return;
@@ -328,7 +364,7 @@ export function MyPlanBoard() {
     const name = normalizePlanCategoryName(newCategory);
     setAddingCategory(false);
     setNewCategory("");
-    if (name === "") {
+    if (name === "" || board === null) {
       return;
     }
     if (board.categories.includes(name)) {
@@ -342,20 +378,52 @@ export function MyPlanBoard() {
     setCategory(name);
   };
 
-  const visible = sortPlanNotes(filterPlanNotes(board.notes, keyword, category), sort);
-  const heading = category === null ? "全部便签" : category;
+  if (board === null) {
+    return (
+      <section
+        data-workspace-plan=""
+        className="-mx-6 -mb-10 -mt-5 min-h-[calc(100dvh-8rem)] bg-white px-6 pb-10 pt-6"
+      >
+        <div className="mx-auto w-full max-w-[1240px]">
+          {loadFailed ? (
+            <div data-plan-load-failed="" className="rounded-[18px] border border-dashed border-[#e8e3da] bg-white px-6 py-12 text-center">
+              <p className="text-sm text-[#57534e]">便签加载失败。</p>
+              <p className="mt-1.5 text-xs text-[#a8a29e]">请检查网络后重试；持续失败请联系运维排查接口 GET /api/v1/users/me/preferences。</p>
+              <button
+                type="button"
+                data-plan-load-retry=""
+                onClick={() => {
+                  setReloadToken((token) => token + 1);
+                }}
+                className={BTN_PRIMARY + " mt-4"}
+              >
+                重新加载
+              </button>
+            </div>
+          ) : (
+            <div data-plan-loading="" className="flex justify-center py-[120px]">
+              <Loader />
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  const visible = orderPlanNotes(filterPlanNotes(board.notes.filter((note) => note.done === doneOnly), keyword, doneOnly ? null : category));
+  const activeCount = board.notes.filter((note) => !note.done).length;
+  const doneCount = board.notes.filter((note) => note.done).length;
+  const heading = doneOnly ? "已完成" : category === null ? "全部便签" : category;
 
   return (
     <section
       data-workspace-plan=""
-      style={{ background: "radial-gradient(1200px 480px at 12% -8%, #f6eddc 0%, rgba(246, 237, 220, 0) 62%), #fdfbf7" }}
-      className="-mx-6 -mb-10 -mt-5 min-h-[calc(100dvh-8rem)] px-6 pb-10 pt-6"
+      className="-mx-6 -mb-10 -mt-5 min-h-[calc(100dvh-8rem)] bg-white px-6 pb-10 pt-6"
     >
       <div className="mx-auto w-full max-w-[1240px]">
         <div className="flex flex-wrap items-center gap-3">
           <BoardSearch value={keyword} onChange={setKeyword} />
           <span className="ml-auto flex items-center gap-2">
-            <SortMenu value={sort} onChange={setSort} />
             <button
               type="button"
               data-plan-new=""
@@ -377,9 +445,21 @@ export function MyPlanBoard() {
               value="all"
               label="全部便签"
               icon={<FolderOpenIcon />}
-              count={board.notes.length}
-              active={category === null}
+              count={activeCount}
+              active={!doneOnly && category === null}
               onClick={() => {
+                setDoneOnly(false);
+                setCategory(null);
+              }}
+            />
+            <CategoryItem
+              value="done"
+              label="已完成"
+              icon={<CheckCircleIcon />}
+              count={doneCount}
+              active={doneOnly}
+              onClick={() => {
+                setDoneOnly(true);
                 setCategory(null);
               }}
             />
@@ -389,9 +469,10 @@ export function MyPlanBoard() {
                 value={item}
                 label={item}
                 icon={<TagIcon />}
-                count={board.notes.filter((note) => note.category === item).length}
-                active={category === item}
+                count={board.notes.filter((note) => !note.done && note.category === item).length}
+                active={!doneOnly && category === item}
                 onClick={() => {
+                  setDoneOnly(false);
                   setCategory(category === item ? null : item);
                 }}
               />
@@ -435,8 +516,8 @@ export function MyPlanBoard() {
               </button>
             )}
             <div className="mt-2 hidden gap-[3px] border-t border-dashed border-[#e8e3da] px-2 pb-1 pt-3 text-[11.5px] text-[#a8a29e] lg:grid">
-              <p>数据保存在浏览器本地</p>
-              <p data-plan-count="">{"共 " + String(board.notes.length) + " 条便签"}</p>
+              <p>数据保存在账号里（换设备可见）</p>
+              <p data-plan-count="">{"共 " + String(activeCount) + " 条便签"}</p>
             </div>
           </aside>
 
@@ -460,6 +541,8 @@ export function MyPlanBoard() {
                   setEditor({ note: null });
                 }}
               />
+            ) : doneOnly && doneCount === 0 ? (
+              <BoardEmpty title="还没有已完成的便签" text="把做完的便签点开、按「完成」，它就会收进这里。" />
             ) : visible.length === 0 ? (
               <BoardEmpty
                 title="没有找到匹配的便签"
@@ -502,6 +585,7 @@ export function MyPlanBoard() {
           categories={board.categories}
           onSave={handleSaveNote}
           onDelete={handleDeleteNote}
+          onToggleDone={handleToggleDone}
           onAddCategory={handleAddCategory}
           onClose={() => {
             setEditor(null);

@@ -5,6 +5,7 @@ import { formatPlanRelative, planColorOf, planFontOf, type PlanNote } from "../m
  * 整卡是一个按钮 —— 点击进编辑弹窗；键盘 Tab 聚焦、Enter / Space 同款，悬停轻微抬起 + 右上角浮现铅笔。
  * 照搬口径：min-height 198 / 内衬 18 / 圆角 18；卡片 = 调色板底色 + 描边 + 字色（7 色 hex，
  * 编辑弹窗同源）；标题 16.5px（单行截断）+ 内容 13px（5 行截断、保留换行）+ 底行 = 分类签（swatch 底）+ 相对时间。
+ * Push 268：完成态右上角常显绿勾（替换悬停铅笔）—— 「已完成」视图里的卡片一眼可辨；未完成卡片照旧悬停浮现铅笔。
  */
 export function PlanNoteCard({ note, onOpen }: { note: PlanNote; onOpen: () => void }) {
   const color = planColorOf(note.colorId);
@@ -40,17 +41,29 @@ export function PlanNoteCard({ note, onOpen }: { note: PlanNote; onOpen: () => v
         </span>
         <span className="shrink-0 font-medium opacity-[0.55]">{formatPlanRelative(note.updatedAt)}</span>
       </span>
-      <span className="pointer-events-none absolute right-3 top-3 grid h-[26px] w-[26px] place-items-center rounded-full bg-white/70 backdrop-blur-[2px] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-        <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3" aria-hidden="true">
-          <path
-            d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </span>
+      {note.done ? (
+        <span
+          data-plan-note-done=""
+          title="已完成"
+          className="pointer-events-none absolute right-3 top-3 grid h-[26px] w-[26px] place-items-center rounded-full bg-emerald-600 text-white shadow-[0_8px_18px_-8px_rgba(5,150,105,0.8)]"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+            <path d="M5 12.5 10 17.5 19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      ) : (
+        <span className="pointer-events-none absolute right-3 top-3 grid h-[26px] w-[26px] place-items-center rounded-full bg-white/70 backdrop-blur-[2px] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+          <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3" aria-hidden="true">
+            <path
+              d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
+      )}
     </button>
   );
 }

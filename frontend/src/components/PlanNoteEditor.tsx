@@ -33,7 +33,7 @@ export type PlanNoteDraft = {
  * 便签编辑（填写）弹窗 —— 形态照参考页 MiniMemo 的 NoteEditor 照搬（业务口径 2026-10-10「填写也要一样」）：
  * 整卡 = 所选便签底色铺底（描边 / 字色跟同一套色板，换色即时换底）；顶栏 = 关闭 X + 7 色圆点（选中 = 墨色描边）+ 字体 Aa 分段器（选中 = 墨底奶白）；
  * 正文 = 大标题（25px）+ 记录区（字型随手选字体档切换）；分类 = 胶囊行（选中 = 墨底，尾随「＋ 新分类」，可加至 12 类）；
- * 底栏 = 「更新于 YYYY年M月D日 HH:MM」（新建 = 「新建便签」）+ 删除（白底红图标）+ 墨黑「保存」（标题 / 内容都空 = 置灰）。
+ * 底栏 = 「更新于 YYYY年M月D日 HH:MM」（新建 = 「新建便签」）+ 删除（白底红图标）+ 「完成 / 恢复」（Push 268：完成后收进「已完成」）+ 墨黑「保存」（标题 / 内容都空 = 置灰）。
  * 系统收口保留：Esc / 点遮罩 / 关闭 X = 放弃改动；键盘焦点陷阱（useFocusTrapFor）；背景滚动锁（lockBodyScroll）；删除二次确认；Ctrl / Cmd + Enter = 保存。
  */
 export function PlanNoteEditor({
@@ -41,6 +41,7 @@ export function PlanNoteEditor({
   categories,
   onSave,
   onDelete,
+  onToggleDone,
   onAddCategory,
   onClose,
 }: {
@@ -49,6 +50,8 @@ export function PlanNoteEditor({
   categories: readonly string[];
   onSave: (draft: PlanNoteDraft) => void;
   onDelete: () => void;
+  /** 完成 / 恢复（Push 268）：draft = 当前草稿（标题 / 内容都空 = null，保留原内容）。 */
+  onToggleDone: (draft: { title: string; content: string } | null) => void;
   onAddCategory: (name: string) => void;
   onClose: () => void;
 }) {
@@ -91,6 +94,14 @@ export function PlanNoteEditor({
       colorId,
       fontId,
     });
+  };
+
+  /** 完成 / 恢复（Push 268）：连同当前草稿一起落（草稿为空 = 保留原内容）。 */
+  const handleToggleDone = () => {
+    if (note === null) {
+      return;
+    }
+    onToggleDone(canSave ? { title: normalizePlanTitle(title), content: normalizePlanContent(content) } : null);
   };
 
   /** 新建分类：回车 / 失焦提交（空 = 放弃）；已在表里 = 直接选中；到 12 类上限 = 不加也不选。 */
@@ -303,6 +314,28 @@ export function PlanNoteEditor({
                     <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                       <path d="M4 7h16M10 11v5M14 11v5M6.5 7l.8 11a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-11M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
+                  </button>
+                )}
+                {note === null ? null : (
+                  <button
+                    type="button"
+                    data-plan-editor-done=""
+                    onClick={handleToggleDone}
+                    title={note.done ? "恢复为未完成" : "标记完成（收进「已完成」）"}
+                    className="inline-flex items-center gap-1.5 rounded-[11px] border border-black/[0.16] bg-white/70 px-3.5 py-2 text-[13px] font-medium text-[#1c1917] transition hover:bg-white"
+                  >
+                    {note.done ? (
+                      <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                        <path d="M9 14 4 9l5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M4 9h9.5a6.5 6.5 0 0 1 0 13H11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+                        <path d="m8.4 12.3 2.5 2.5 4.7-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                    {note.done ? "恢复" : "完成"}
                   </button>
                 )}
                 <button
