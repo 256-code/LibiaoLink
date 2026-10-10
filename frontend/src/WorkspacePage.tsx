@@ -78,7 +78,7 @@ import { Toast } from "./components/Toast";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
-import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
+import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, tableGridTemplate, tableMinWidth, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
 import { TrackerDots } from "./components/Tracker";
 import { docTypeCapsule } from "./components/DeliverablePicker";
 import { dateOnlyText, daysBetweenInclusive } from "./data/tasks";
@@ -442,8 +442,9 @@ function TaskTable({ projectId, items, full, ready, focus }: {
   /** 醒目模式（Push 232）：整行铺任务状态底色 + 状态胶囊收口成深色字（口径 = 项目页 TaskBoard）。 */
   focus: boolean;
 }) {
-  const gridTemplate = TASK_COLUMNS.map((column) => column.width).join(" ");
-  const minWidth = TASK_COLUMNS.reduce((total, column) => total + column.min, 0);
+  // 与项目页任务表同一套列宽口径（2026-10-10）：`fr` 列带 minmax 硬下限 + 最小宽算上行内衬 —— 窄窗下横向滚动、不压列。
+  const gridTemplate = tableGridTemplate(TASK_COLUMNS);
+  const minWidth = tableMinWidth(TASK_COLUMNS);
   const managerText = (full.managers.get(projectId) ?? []).join("、");
   return (
     <div data-workspace-task-table="" data-workspace-task-full={ready ? "true" : "false"} data-workspace-task-focus={focus ? "true" : "false"} className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
