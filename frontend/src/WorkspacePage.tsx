@@ -75,6 +75,7 @@ import type { ReactNode } from "react";
 import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
 import { Toast } from "./components/Toast";
+import { useFocusTrap } from "./components/useFocusTrap";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
@@ -657,8 +658,11 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
       document.removeEventListener("keydown", onKey, true);
     };
   }, [onClose]);
+  /** 键盘焦点陷阱（Push 264 追订）：预览层打开时焦点进层内、Tab 在层内循环、关闭还原到缩略图。 */
+  const trapRef = useFocusTrap<HTMLDivElement>();
   return createPortal(
     <div
+      ref={trapRef}
       data-photo-preview=""
       role="dialog"
       aria-label={"预览 " + name}

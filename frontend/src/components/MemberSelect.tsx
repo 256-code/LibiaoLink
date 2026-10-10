@@ -354,6 +354,7 @@ export function MemberMultiSelect({ values, onChange, options, placeholder = "é€
         ? createPortal(
             <div
               ref={popoverRef}
+              data-focus-scope="true"
               className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
               style={{ top: position.top, left: position.left, width: position.width }}
             >

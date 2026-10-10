@@ -8,6 +8,7 @@ import { DictSelect } from "./DictSelect";
 import { ScrollArea } from "./ScrollArea";
 import { MemberMultiSelect } from "./MemberSelect";
 import { RegionSelect } from "./RegionSelect";
+import { useFocusTrapFor } from "./useFocusTrap";
 import { PROJECT_STATUS_TEXT, PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
 
 /**
@@ -97,6 +98,8 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const archivePanelRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  // 键盘焦点陷阱（Push 264 追订）：打开时焦点进弹窗（已有 autoFocus 的输入框就不抢）、Tab 在弹窗内循环、关闭还原到触发按钮
+  useFocusTrapFor(dialogRef);
 
   /** Esc：地区小窗开着时由它自己关（usePopover 统一处理），这里放行 —— 再按一次才关整个项目弹窗。 */
   useEffect(() => {
