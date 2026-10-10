@@ -1,6 +1,6 @@
 /**
  * 「我的计划」便签墙（工作台第三枚标签 · 业务口径 2026-10-10「照 minimemo3 的便签页融入系统」）：
- * 个人便签墙 —— 新建 / 编辑 / 删除便签，支持颜色、字体、分类（可自定义）、搜索、排序；页面形态与配色照 MiniMemo 参考页照搬（奶白背景 / 198 高圆角卡片 / 7 色 hex 调色板），不做导出 / 导入。
+ * 个人便签墙 —— 新建 / 编辑 / 删除便签，支持颜色、字体、分类（可自定义）、搜索、排序；页面形态与配色照 MiniMemo 参考页照搬（奶白背景 / 198 高圆角卡片 / 7 色 hex 调色板），编辑（填写）弹窗亦照搬（便签底色整卡铺底 + 顶栏关闭 / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 「更新于」底栏；业务口径 2026-10-10「填写也要一样」），不做导出 / 导入。
  *
  * 存储（本刀 · 纯前端）：按浏览器本机保存，键 libiaolink.plan.board.v1（版本化 JSON，形状 = PlanBoard）；
  * 退出登录时随其它本机记忆一起清除（AppHeader，多人共用设备的隔离手段），换账号互不可见。
@@ -8,7 +8,7 @@
  *
  * 口径：
  * - 首次打开（本机无记录）预置 6 条示例便签（可删）—— 与参考页 minimemo3 的初始数据同一做法，便签墙一进来不是空的；
- * - 单条：标题（≤ 40 字）/ 内容（≤ 2000 字）/ 分类（默认六类，可加至 12 类、每类名 ≤ 10 字）/ 颜色（7 色）/ 字体（清晰 / 优雅 / 等宽）；
+ * - 单条：标题（≤ 40 字）/ 内容（≤ 2000 字）/ 分类（默认六类，可加至 12 类、每类名 ≤ 10 字）/ 颜色（7 色）/ 字体（简约 / 优雅 / 等宽）；
  * - 便签数上限 300 条（超出时「新建便签」出提示，不静默丢）；
  * - 读取时逐条收敛（不合法整条丢弃），不抛错、不半读半写；损坏不覆盖原始值（等人工排查）；
  * - 导出 / 导入不做（业务口径 2026-10-10「导出导入功能不要」）；本机数据自己留底，清浏览器数据会丢。
@@ -174,7 +174,7 @@ function seedNotes(now: Date): PlanNote[] {
   const at = (hoursAgo: number): string => new Date(now.getTime() - hoursAgo * 3600000).toISOString();
   return [
     { id: "pn-seed-1", title: "本周重点", content: "1: 跟进印度项目的任务排期\n2: 整理周五评审要用的材料\n3: 给新同事开通账号", category: "待办", colorId: "yellow", fontId: "sans", createdAt: at(6), updatedAt: at(1) },
-    { id: "pn-seed-2", title: "想法速记", content: "把「我的计划」做成便签墙：颜色分类 + 搜索排序。\n先本机保存，用导出做备份。", category: "想法", colorId: "blue", fontId: "sans", createdAt: at(26), updatedAt: at(3) },
+    { id: "pn-seed-2", title: "想法速记", content: "把「我的计划」做成便签墙：颜色分类 + 搜索排序。\n先本机保存，重要内容自己留个底。", category: "想法", colorId: "blue", fontId: "sans", createdAt: at(26), updatedAt: at(3) },
     { id: "pn-seed-3", title: "会议要点", content: "周一例会：\n- 验收节点提前到月底\n- 甘特图按负责人筛选\n- 日报必填项已上线", category: "工作", colorId: "white", fontId: "sans", createdAt: at(50), updatedAt: at(22) },
     { id: "pn-seed-4", title: "采购清单", content: "- A4 打印纸\n- 标签机色带\n- 白板笔（黑 / 红）", category: "采购", colorId: "green", fontId: "mono", createdAt: at(74), updatedAt: at(30) },
     { id: "pn-seed-5", title: "读书清单", content: "《人月神话》\n《凤凰项目》\n《持续交付》", category: "个人", colorId: "pink", fontId: "serif", createdAt: at(98), updatedAt: at(50) },
@@ -301,6 +301,19 @@ export function formatPlanRelative(iso: string, now: Date = new Date()): string 
     return month + "月" + dayText + "日";
   }
   return String(at.getFullYear()) + "年" + month + "月" + dayText + "日";
+}
+
+/** 编辑弹窗底栏「更新于」：2026年10月10日 18:20（与参考页 formatFull 同口径：年 / 月 / 日原样、时 / 分补零）。 */
+export function formatPlanFull(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) {
+    return iso;
+  }
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return (
+    String(at.getFullYear()) + "年" + String(at.getMonth() + 1) + "月" + String(at.getDate()) + "日 " +
+    pad(at.getHours()) + ":" + pad(at.getMinutes())
+  );
 }
 
 /** 时段问候（Push 266 照 MiniMemo 参考页）：夜深了 / 早上好 / 中午好 / 下午好 / 晚上好。 */
