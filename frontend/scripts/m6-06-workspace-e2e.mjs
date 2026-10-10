@@ -9,7 +9,10 @@
  *   「增加进入项目按钮」（Push 232：折叠面板头常驻「进入项目」深链 → 项目详情缺省标签「项目总览」）→
  *   「这个下拉要有记忆」（Push 233：折叠面板展开态按账号存偏好 workspaceOpenProjects，刷新 / 换标签保持）→
  *   「增加一个我的计划页面」+「你只要把导航栏设计好 后续详细设计再说」（Push 234：导航栏第三枚标签「我的计划」+
- *   路由 `?tab=plan` 就位；页面内容待详细设计，暂落登记卡 —— 数据面 / 契约本刀不动）。
+ *   路由 `?tab=plan` 就位；页面内容待详细设计，暂落登记卡 —— 数据面 / 契约本刀不动）→
+ *   2026-10-10「照 minimemo3 便签页融入系统」+「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」
+ *   （Push 266：便签墙页面落地并照 MiniMemo 参考页照搬 —— 奶白背景 / 左侧分类栏 / 198 高圆角卡片 / 7 色 hex 调色板；
+ *   新建 / 编辑 / 删除 / 搜索 / 分类 / 排序，本机 localStorage 保存；导出 / 导入不做；本脚本「⑪」段扩为便签墙全流程）。
  *
  * 口径复评（2026-09-30 · 业务：「明明有四个 为什么只显示了两个」→「不能有 7 天内时间限制」→「时间不限制 另外
  *   项目经理是我也要算在我的任务」）：我的任务 = 任务负责人含我 或 项目项目经理含我 + 未完成、不限完成日期窗口；
@@ -52,15 +55,20 @@
  *   ⑩ 折叠面板展开态记忆（Push 233 ·「这个下拉要有记忆」）：偏好归零 = 全收起 → 展开 A → 刷新仍展开 / B 仍收起 →
  *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
  *      收起 A → 刷新仍全收起 → GET preferences 逐段落库核对 → 收尾恢复账号偏好原值（不留痕）；
- *   ⑪ 「我的计划」标签（Push 234）：第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 登记卡
- *      （导航栏 / 路由已就位、内容待详细设计；无任务 / 问题表）→ 深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 →
- *      点回「我的任务」地址回到不带参数的原口径；
+ *   ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 · 2026-10-10「照 minimemo3 便签页融入系统」+
+ *       「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」）：
+ *      第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 便签墙（照 MiniMemo 参考页照搬：奶白背景 +
+ *      暖色径向渐变 / 左侧分类栏 / 198 高圆角卡片 / 7 色 hex 调色板；首次进入预置 6 条示例；本机保存、不依赖
+ *      GET /workspace —— 工作台读面加载中 / 失败也照常可用）：照搬口径对账（背景 / 卡片尺寸 / 网格）→ 新建（标题与
+ *      内容都空时保存置灰）/ 编辑 / 搜索 / 分类过滤 / 排序（标题 A→Z）/ 删除（二次确认）/ 刷新持久化 →
+ *      深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 → 点回「我的任务」地址回到不带参数的原口径；
  *   ⑬ 问题子视图（Push 260）：「提出/负责的问题」标签带下拉子菜单（悬停 / 点击展开，同项目页「日报及问题」；
  *      面板见 components/WorkspaceIssueSubMenu.tsx）—— 地址 ?tab=raised&sub=、缺省 raised 不落参数；「待我处理的问题」
  *      页与「我提出的问题」同构（同一张七列表 / 同一套归类色签）；色签与项目页「问题追踪」逐 token 相等；「已完成不显示」= 两栏同一过滤（A2 完成态不出现）；
  *      深链 ?sub=handling 直达、未知值回落；跑完恢复账号偏好原值（截图：submenu / handling 两张，见 SCREENSHOT_DIR）。
  *   ⑧ 收尾：删三个临时项目（A / B / C，物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
- * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆小节）
+ * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆 +
+ *   Push 266 便签墙小节）
  */
 
 import { spawn } from "node:child_process";
@@ -793,23 +801,126 @@ check("⑩j 收起后刷新：两面板保持全收起（空数组 = 全收起�
 const memoryRestored = await patchOpenProjects(memoryOriginal);
 check("⑩k 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（不留痕）", memoryRestored !== null && JSON.stringify(memoryRestored.json.workspaceOpenProjects) === JSON.stringify(memoryOriginal), memoryRestored === null ? "null" : JSON.stringify([memoryRestored.json.workspaceOpenProjects, memoryOriginal]));
 
-// ---------- ⑪ 「我的计划」标签：导航栏 + 路由就位（Push 234 · 业务口径「增加一个我的计划页面」→「你只要把导航栏设计好 后续详细设计再说」） ----------
-// 本刀只验三件：第三枚标签在导航栏、点击 / 深链走 `?tab=plan`、页内 = 登记卡（内容待详细设计，数据面 / 契约本刀不动）。
+// ---------- ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 · 2026-10-10「照 minimemo3 便签页融入系统」） ----------
+// 本刀验：第三枚标签 / 点击 / 深链照旧；页内 = 便签墙（首次进入预置 6 条示例；本机 localStorage 保存，不依赖 GET /workspace）——
+// 照搬口径（背景 / 卡片尺寸 / 调色板）对账 + 新建（空标题 / 空内容保存置灰）/ 编辑 / 搜索 / 分类过滤 / 排序 / 删除（二次确认）/ 刷新持久化；导出 / 导入不做。
+const NOTE_CREATED_TITLE = "回放·便签甲改";
+/** 便签墙读数：计数文案 + 卡片（DOM 顺序 = 当前排序；带卡片 class 供颜色 / 字体对账）+ 网格 / 空态 / 任务·问题表 + 提示条文案。 */
+const planExpr = () => "(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var count=root.querySelector(" + j("[data-plan-count]") + ");var cards=root.querySelectorAll(" + j("[data-plan-note]") + ");var out=[];for(var i=0;i<cards.length;i+=1){var t=cards[i].querySelector(" + j("[data-plan-note-title]") + ");var c=cards[i].querySelector(" + j("[data-plan-note-category]") + ");out.push({id:String(cards[i].getAttribute(" + j("data-plan-note") + ")),title:t===null?String(" + j("") + "):t.textContent.trim(),category:c===null?String(" + j("") + "):c.textContent.trim(),className:String(cards[i].getAttribute(" + j("class") + ")),bg:String(cards[i].style.backgroundColor)});}var toast=document.querySelector(" + j("[data-plan-toast]") + ");return {count:count===null?String(" + j("") + "):count.textContent.trim(),cards:out,grid:root.querySelector(" + j("[data-plan-grid]") + ")!==null,empty:root.querySelector(" + j("[data-plan-empty]") + ")!==null,tables:root.querySelectorAll(" + j("[data-workspace-task-table],[data-workspace-issue-table]") + ").length,toast:toast===null?String(" + j("") + "):toast.textContent.trim()};})()";
+/** 按表达式点元素（下拉选项这类没有稳定选择器的目标用；找不到 / 不可见即抛错）。 */
+async function clickExpr(expression, what) {
+  const point = await ev("(function(){var node=" + expression + ";if(node===null||node===undefined){return null;}var box=node.getBoundingClientRect();if(box.width<=0||box.height<=0){return null;}return {x:Math.round(box.left+box.width/2),y:Math.round(box.top+box.height/2)};})()");
+  if (point === null || point === undefined) throw new Error("点不到（表达式定位失败）：" + what);
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await sleep(500);
+}
+async function pressKey(key, code, vk, modifiers = 0) {
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
+  await sleep(120);
+}
+/** 覆盖式输入（先 Ctrl+A 再插字；换行 = 真回车键）—— 便签标题 / 内容 / 搜索都用它。 */
+async function typeInto(selector, text) {
+  await clickSelector(selector);
+  await pressKey("a", "KeyA", 65, 2);
+  const parts = String(text).split("\n");
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i > 0) {
+      await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: String.fromCharCode(13), unmodifiedText: String.fromCharCode(13) });
+      await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+      await sleep(160);
+    }
+    if (parts[i] !== "") {
+      await page.send("Input.insertText", { text: parts[i] });
+    }
+    await sleep(160);
+  }
+  await sleep(360);
+}
+
 await open("#/my-tasks", "[data-workspace-page]");
-await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"]') + ") !== null", 25000);
+await waitFor("document.querySelector(" + j("[data-workspace-panel=\"" + projectA + "\"]") + ") !== null", 25000);
 const headPlan0 = await ev(headExpr());
-check("⑪a 「我的计划」是第三枚标签（三枚都在：我的任务 / 我提出的问题 / 我的计划；无图标）", headPlan0 !== null && headPlan0.tabs.length === 3 && headPlan0.tabs[2].key === "plan" && headPlan0.tabs[2].text === "我的计划", headPlan0 === null ? "null" : JSON.stringify([headPlan0.tabs.length, headPlan0.tabs[2]?.text ?? null]));
-await clickSelector('[data-workspace-tab="plan"]');
+check("⑪a 「我的计划」是第三枚标签（三枚都在：我的任务 / 提出·负责的问题 / 我的计划；无图标）", headPlan0 !== null && headPlan0.tabs.length === 3 && headPlan0.tabs[2].key === "plan" && headPlan0.tabs[2].text === "我的计划", headPlan0 === null ? "null" : JSON.stringify([headPlan0.tabs.length, headPlan0.tabs[2].text]));
+await clickSelector("[data-workspace-tab=" + Q + "plan" + Q + "]");
 const headPlan1 = await ev(headExpr());
 check("⑪b 点「我的计划」→ 地址写回 ?tab=plan + 选中态转移（replace、可刷新 / 可分享）", headPlan1 !== null && headPlan1.hash === "#/my-tasks?tab=plan" && headPlan1.tabs[2].current === "page" && headPlan1.tabs[0].current === null && headPlan1.tabs[1].current === null, headPlan1 === null ? "null" : JSON.stringify([headPlan1.hash, headPlan1.tabs.map((item) => item.current)]));
-const planCard = await ev("(function(){var n=document.querySelector(" + j("[data-workspace-plan]") + ");if(n===null){return null;}return {text:n.textContent.trim(),tables:n.querySelectorAll(" + j("[data-workspace-task-table],[data-workspace-issue-table]") + ").length};})()");
-check("⑪c 「我的计划」页 = 登记卡（「还没开工 / 待详细设计」；无任务 / 问题表 —— 详细设计后放）", planCard !== null && planCard.text.indexOf("还没开工") >= 0 && planCard.text.indexOf("详细设计") >= 0 && planCard.tables === 0, planCard === null ? "null" : JSON.stringify(planCard));
+const plan0 = await ev(planExpr());
+check("⑪c 「我的计划」页 = 便签墙（不是登记卡）：首次进入预置 6 条示例、本机计数「共 6 条便签」、有网格无空态、无任务 / 问题表；「最近更新」序首尾 =「本周重点」/「随手记」", plan0 !== null && plan0.cards.length === 6 && plan0.count === "共 6 条便签" && plan0.grid === true && plan0.empty === false && plan0.tables === 0 && plan0.cards[0] !== undefined && plan0.cards[0].title === "本周重点" && plan0.cards[5] !== undefined && plan0.cards[5].title === "随手记", plan0 === null ? "null" : JSON.stringify([plan0.count, plan0.cards.map((item) => item.title)]));
+const planSkin = await ev("(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var card=root.querySelector(" + j("[data-plan-note]") + ");var grid=root.querySelector(" + j("[data-plan-grid]") + ");if(card===null||grid===null){return null;}var rs=getComputedStyle(root);var cs=getComputedStyle(card);return {bgImage:rs.backgroundImage,bgColor:rs.backgroundColor,radius:cs.borderTopLeftRadius,padding:cs.paddingTop,minHeight:cs.minHeight,cols:getComputedStyle(grid).gridTemplateColumns};})()");
+const planSkinCols = planSkin === null ? [] : planSkin.cols.split(" ").map((item) => Math.round(parseFloat(item)));
+check("⑪c2 照搬口径对账：页面背景 = 奶白 #fdfbf7 + 暖色径向渐变；卡片圆角 18 / 内衬 18 / 最小高 198、网格列宽 ≥ 228（auto-fill）", planSkin !== null && planSkin.bgImage.indexOf("radial-gradient") >= 0 && planSkin.bgColor === "rgb(253, 251, 247)" && planSkin.radius === "18px" && planSkin.padding === "18px" && planSkin.minHeight === "198px" && planSkinCols.length >= 3 && Math.min.apply(null, planSkinCols) >= 228, planSkin === null ? "null" : JSON.stringify({ bgColor: planSkin.bgColor, radius: planSkin.radius, padding: planSkin.padding, minHeight: planSkin.minHeight, cols: planSkinCols }));
+await clickSelector("[data-plan-new]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
+const editor0 = await ev("(function(){var root=document.querySelector(" + j("[data-plan-editor]") + ");if(root===null){return null;}var save=root.querySelector(" + j("[data-plan-editor-save]") + ");var title=root.querySelector(" + j("[data-plan-editor-title]") + ");return {saveDisabled:save===null?null:save.disabled,titleValue:title===null?null:title.value};})()");
+check("⑪d 新建便签弹窗：标题 / 内容都空时「保存便签」置灰（至少填一项才可保存）", editor0 !== null && editor0.saveDisabled === true && editor0.titleValue === "", editor0 === null ? "null" : JSON.stringify(editor0));
+await typeInto("[data-plan-editor-title]", "回放·便签甲");
+await typeInto("[data-plan-editor-content]", "第一行\n第二行");
+await clickSelector("[data-plan-editor-category=" + Q + "想法" + Q + "]");
+await clickSelector("[data-plan-color=" + Q + "blue" + Q + "]");
+await clickSelector("[data-plan-font=" + Q + "mono" + Q + "]");
+const editor1 = await ev("(function(){var root=document.querySelector(" + j("[data-plan-editor]") + ");if(root===null){return null;}var save=root.querySelector(" + j("[data-plan-editor-save]") + ");return {saveDisabled:save===null?null:save.disabled,colorPressed:String(root.querySelector(" + j("[data-plan-color=" + Q + "blue" + Q + "]") + ").getAttribute(" + j("aria-pressed") + ")),fontPressed:String(root.querySelector(" + j("[data-plan-font=" + Q + "mono" + Q + "]") + ").getAttribute(" + j("aria-pressed") + ")),categoryPressed:String(root.querySelector(" + j("[data-plan-editor-category=" + Q + "想法" + Q + "]") + ").getAttribute(" + j("aria-pressed") + "))};})()");
+check("⑪e 选项联动：标题 / 内容有了 → 保存可点；分类「想法」、颜色「蓝色」、字体「等宽」选中（aria-pressed=true）", editor1 !== null && editor1.saveDisabled === false && editor1.colorPressed === "true" && editor1.fontPressed === "true" && editor1.categoryPressed === "true", editor1 === null ? "null" : JSON.stringify(editor1));
+await clickSelector("[data-plan-editor-save]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
+const plan1 = await ev(planExpr());
+const createdCard = plan1 === null ? undefined : plan1.cards.find((item) => item.title === "回放·便签甲");
+const createdId = createdCard === undefined ? "" : createdCard.id;
+check("⑪f 保存 → 弹窗关、便签墙 +1（共 7 条）：新卡按「最近更新」排第一，带蓝色底（#e3eefe）+ 等宽字体（font-mono）+ 分类「想法」", plan1 !== null && plan1.cards.length === 7 && plan1.count === "共 7 条便签" && plan1.cards[0] !== undefined && plan1.cards[0].title === "回放·便签甲" && createdCard !== undefined && createdCard.bg === "rgb(227, 238, 254)" && createdCard.className.indexOf("font-mono") >= 0 && createdCard.category === "想法", plan1 === null ? "null" : JSON.stringify([plan1.count, createdCard === undefined ? null : createdCard.bg]));
+await shot("16-我的计划-便签墙（新建后7条）.png");
+await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
+const editPrefill = await ev("(function(){var t=document.querySelector(" + j("[data-plan-editor-title]") + ");return t===null?null:t.value;})()");
+check("⑪g 点卡片 = 编辑弹窗且已带出现值（标题「回放·便签甲」）", editPrefill === "回放·便签甲", String(editPrefill));
+await shot("17-我的计划-编辑弹窗.png");
+await typeInto("[data-plan-editor-title]", NOTE_CREATED_TITLE);
+await clickSelector("[data-plan-editor-save]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
+const plan2 = await ev(planExpr());
+check("⑪h 改名保存 → 卡片标题即时更新，且因「最近更新」仍排第一（共 7 条不变）", plan2 !== null && plan2.cards.length === 7 && plan2.cards[0] !== undefined && plan2.cards[0].title === NOTE_CREATED_TITLE, plan2 === null ? "null" : JSON.stringify([plan2.count, plan2.cards[0] === undefined ? null : plan2.cards[0].title]));
+await typeInto("[data-plan-search] input", "甲改");
+await sleep(300);
+const planSearch = await ev(planExpr());
+check("⑪i 搜索「甲改」→ 只剩 1 张卡（标题命中）", planSearch !== null && planSearch.cards.length === 1 && planSearch.cards[0] !== undefined && planSearch.cards[0].title === NOTE_CREATED_TITLE, planSearch === null ? "null" : JSON.stringify(planSearch.cards.map((item) => item.title)));
+await clickSelector("[aria-label=" + Q + "清空搜索" + Q + "]");
+await sleep(300);
+const planSearchCleared = await ev(planExpr());
+check("⑪j 清空搜索 → 7 张卡全回来", planSearchCleared !== null && planSearchCleared.cards.length === 7, planSearchCleared === null ? "null" : String(planSearchCleared.cards.length));
+await clickSelector("[data-plan-category=" + Q + "想法" + Q + "]");
+await sleep(250);
+const planCat = await ev(planExpr());
+check("⑪k 分类过滤「想法」→ 2 张卡（新便签 + 预置「想法速记」）", planCat !== null && planCat.cards.length === 2 && planCat.cards.every((item) => item.category === "想法"), planCat === null ? "null" : JSON.stringify(planCat.cards.map((item) => item.title)));
+await clickSelector("[data-plan-category=" + Q + "all" + Q + "]");
+await sleep(250);
+await clickSelector("[data-plan-sort] button");
+await waitFor("document.querySelector(" + j("[data-plan-sort-popover] [role=option]") + ") !== null", 8000);
+await clickExpr("(function(){var list=document.querySelectorAll(" + j("[data-plan-sort-popover] [role=option]") + ");for(var i=0;i<list.length;i+=1){if(list[i].textContent.trim()===" + j("标题 A→Z") + "){return list[i];}}return null;})()", "排序选项「标题 A→Z」");
+await sleep(400);
+const planSorted = await ev(planExpr());
+check("⑪l 排序「标题 A→Z」→ 7 张卡按标题重排（首 =「本周重点」、尾 =「想法速记」，中文按拼音）", planSorted !== null && planSorted.cards.length === 7 && planSorted.cards[0] !== undefined && planSorted.cards[0].title === "本周重点" && planSorted.cards[6] !== undefined && planSorted.cards[6].title === "想法速记", planSorted === null ? "null" : JSON.stringify(planSorted.cards.map((item) => item.title)));
+await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
+await clickSelector("[data-plan-editor-delete]");
+const delConfirmShown = await ev("document.querySelector(" + j("[data-plan-editor-delete-confirm]") + ") !== null");
+await clickSelector("[data-plan-editor-delete-cancel]");
+const delCancelled = await ev("(function(){return {confirm:document.querySelector(" + j("[data-plan-editor-delete-confirm]") + ")!==null,editor:document.querySelector(" + j("[data-plan-editor]") + ")!==null};})()");
+check("⑪m 删除要二次确认：第一下只出确认条 → 点「取消」回到普通底栏、弹窗仍在（便签没删）", delConfirmShown === true && delCancelled !== null && delCancelled.confirm === false && delCancelled.editor === true, delCancelled === null ? "null" : JSON.stringify(delCancelled));
+await clickSelector("[data-plan-editor-delete]");
+await clickSelector("[data-plan-editor-delete-do]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
+const plan3 = await ev(planExpr());
+check("⑪n 再删一次 + 「确认删除」→ 弹窗关、回到 6 条（真删该便签）+ 出「已删除便签。」提示条", plan3 !== null && plan3.cards.length === 6 && !plan3.cards.some((item) => item.id === createdId) && plan3.toast.indexOf("已删除便签") >= 0, plan3 === null ? "null" : JSON.stringify([plan3.count, plan3.toast]));
 await open("#/my-tasks?tab=plan", "[data-workspace-plan]");
+await waitFor("document.querySelector(" + j("[data-plan-grid]") + ") !== null", 15000);
+const plan4 = await ev(planExpr());
+check("⑪o 刷新 / 深链重开（#/my-tasks?tab=plan）→ 仍是本机 6 条（新建再删除的那条不复现；便签墙不依赖 GET /workspace）", plan4 !== null && plan4.cards.length === 6 && !plan4.cards.some((item) => item.id === createdId), plan4 === null ? "null" : JSON.stringify(plan4.cards.map((item) => item.title)));
 const headPlan2 = await ev(headExpr());
-check("⑪d 深链 #/my-tasks?tab=plan 直接打开 = 「我的计划」选中（刷新 / 收藏 / 分享同款）", headPlan2 !== null && headPlan2.tabs[2].current === "page" && headPlan2.hash === "#/my-tasks?tab=plan", headPlan2 === null ? "null" : JSON.stringify([headPlan2.tabs.map((item) => item.current), headPlan2.hash]));
-await clickSelector('[data-workspace-tab="tasks"]');
+check("⑪p 深链直接打开 = 「我的计划」选中（刷新 / 收藏 / 分享同款）", headPlan2 !== null && headPlan2.tabs[2].current === "page" && headPlan2.hash === "#/my-tasks?tab=plan", headPlan2 === null ? "null" : JSON.stringify([headPlan2.tabs.map((item) => item.current), headPlan2.hash]));
+await clickSelector("[data-workspace-tab=" + Q + "tasks" + Q + "]");
 const headPlan3 = await ev(headExpr());
-check("⑪e 点回「我的任务」→ 地址回到不带参数的 #/my-tasks（原两标签口径不变）", headPlan3 !== null && headPlan3.hash === "#/my-tasks" && headPlan3.tabs[0].current === "page", headPlan3 === null ? "null" : JSON.stringify([headPlan3.hash, headPlan3.tabs.map((item) => item.current)]));
+check("⑪q 点回「我的任务」→ 地址回到不带参数的 #/my-tasks（原口径不变）", headPlan3 !== null && headPlan3.hash === "#/my-tasks" && headPlan3.tabs[0].current === "page", headPlan3 === null ? "null" : JSON.stringify([headPlan3.hash, headPlan3.tabs.map((item) => item.current)]));
 
 // ---------- ⑫ 标签导航栏吸顶（Push 235 · 业务口径「任务模版和我的任务都要做吸顶效果」） ----------
 // 工作台默认内容不足一屏、吸顶滚不起来 —— 先补 16 条「今日」任务把 A 面板撑高，再把视口压到 560 当滚动空间；
