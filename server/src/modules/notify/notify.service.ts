@@ -320,6 +320,8 @@ function toContract(row: NotifyMessageRow): Notification {
     refId: row.refId,
     templateCode: row.templateCode,
     mergedCount: row.mergedCount,
+    // S8-3 契约扩字段（稍后提醒）：实现刀 M5-04-2（迁移 0045）落地前恒 null。
+    snoozeUntil: null,
     deliveredAt: (row.deliveredAt ?? row.deliverAt).toISOString(),
     createdAt: row.createdAt.toISOString(),
   };

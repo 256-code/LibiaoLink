@@ -106,6 +106,8 @@ import {
   NotificationMarkAllReadResponseSchema,
   NotificationMarkBodySchema,
   NotificationSchema,
+  NotificationSnoozeBodySchema,
+  NotificationSnoozeListResponseSchema,
   NotifyPrefsSchema,
   NotifyPrefsUpdateBodySchema,
 } from "./modules/notifications.ts";
@@ -1796,6 +1798,67 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- S8-3（M5-04 余项 · 代 wmj 落地）：SSE 实时流 + 稍后提醒（C5-05）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications/stream",
+    tags: ["notifications"],
+    summary:
+      "通知实时流（SSE · S8-3）：事件 notification（单条通知）/ unread（未读角标）；心跳注释行不入契约；" +
+      "重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期）",
+    responses: {
+      200: {
+        description:
+          "SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；" +
+          "心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连）",
+        content: { "text/event-stream": { schema: { type: "string" } } },
+      },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/notifications/{id}/snooze",
+    tags: ["notifications"],
+    summary:
+      "设置稍后提醒（C5-05）：绝对时刻（now + 5 分钟 ~ now + 30 天）；设置即置读；" +
+      "重复设置 = 覆盖（旧记录标 cancelledAt + 写新记录）",
+    request: { params: notificationIdParams, body: json(NotificationSnoozeBodySchema) },
+    responses: {
+      200: { description: "设置后的通知（snoozeUntil 已更新、该行置读）", ...json(NotificationSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/notifications/{id}/snooze",
+    tags: ["notifications"],
+    summary: "取消稍后提醒（C5-05）：幂等（无未触发稍后提醒也 200）；返回更新后的通知（snoozeUntil = null）",
+    request: { params: notificationIdParams },
+    responses: {
+      200: { description: "取消后的通知（snoozeUntil = null）", ...json(NotificationSchema) },
+      401: commonErrors[401],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications/{id}/snoozes",
+    tags: ["notifications"],
+    summary: "稍后提醒记录（C5-05「设置与触发记录可查」）：一次设置一条（触发 / 取消回填时刻）；按 id 降序，不翻页",
+    request: { params: notificationIdParams },
+    responses: {
+      200: { description: "稍后提醒记录清单", ...json(NotificationSnoozeListResponseSchema) },
+      401: commonErrors[401],
+      404: commonErrors[404],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1824,7 +1887,7 @@ export function buildOpenApiDocument() {
       { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
       { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
       { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },
-      { name: "notifications", description: "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好" },
+      { name: "notifications", description: "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流与稍后提醒（S8-3）" },
     ],
   });
 }
