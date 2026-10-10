@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from "react";
 import { Toast } from "./Toast";
 import { Loader } from "./Loader";
 import { PlanNoteCard } from "./PlanNoteCard";
@@ -13,6 +13,7 @@ import {
   newPlanNoteId,
   normalizePlanCategoryName,
   orderPlanNotes,
+  planColorOf,
   planGreeting,
   readLegacyPlanBoard,
   seedPlanBoard,
@@ -30,11 +31,16 @@ import {
  * 存储（Push 268 起 · 账号落库）：整面便签墙按账号存服务端偏好（user_preferences.prefs.myPlanBoard，见 preferencesApi.ts）——
  * 首次打开（账号里从未保存）预置 6 条示例并上云；本机旧键（libiaolink.plan.board.v1）自动迁移上云再清键（迁移失败保留旧键、本机数据兜底、下轮重试）。
  * 保存 = 乐观更新 + 单键 PATCH（串行）；失败保留界面改动并出提示（刷新回滚到账号里最后一次保存）。
- * 完成态：编辑弹窗底栏「完成 / 恢复」——完成后只出现在「已完成」视图（便签墙与分类视图不再显示）。
+ * 完成态（Push 269 改拖拽 · 业务口径 2026-10-10「不要这个完成 在这个分类旁边增加完成区域 拖动便签到完成区域则完成」）：
+ * 编辑弹窗不再有完成键 —— 侧栏分类卡下方新增「完成」拖放区：把便签拖进去即完成；「已完成」视图里的便签拖回「全部便签」即恢复。
+ * 完成后只出现在「已完成」视图（便签墙与分类视图不再显示）。
  */
 
 const BTN_PRIMARY =
   "inline-flex items-center gap-[7px] rounded-[11px] border border-[#1c1917] bg-[#1c1917] px-3.5 py-[9px] text-[13px] font-medium text-[#fdfbf7] shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] transition hover:-translate-y-px hover:bg-[#292524] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0";
+
+/** 拖拽落点（Push 269）：done = 侧栏「完成」区域；all =「全部便签」（把已完成的拖回来恢复）。 */
+type PlanDragState = { noteId: string; done: boolean; x: number; y: number; over: "done" | "all" | null };
 
 /* ----- 图标（照参考页同款的细线性图标；系统内联 SVG 口径） ----- */
 
@@ -115,6 +121,8 @@ function CategoryItem({
   count,
   active,
   onClick,
+  buttonRef,
+  dropActive,
 }: {
   value: string;
   label: string;
@@ -122,16 +130,22 @@ function CategoryItem({
   count: number;
   active: boolean;
   onClick: () => void;
+  /** 拖拽落点（Push 269）：仅「全部便签」用（把已完成的便签拖回来恢复）。 */
+  buttonRef?: Ref<HTMLButtonElement>;
+  dropActive?: boolean;
 }) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       data-plan-category={value}
+      data-plan-drop-active={dropActive === true ? "true" : undefined}
       aria-pressed={active}
       onClick={onClick}
       className={
         "flex items-center justify-between gap-2.5 rounded-full border border-[#e8e3da] px-3 py-1.5 text-[13.5px] transition lg:rounded-[11px] lg:border-0 lg:px-2.5 lg:py-[9px] " +
-        (active ? "bg-[#1c1917] text-[#fdfbf7]" : "text-[#57534e] hover:bg-[#faf9f7]")
+        (active ? "bg-[#1c1917] text-[#fdfbf7]" : "text-[#57534e] hover:bg-[#faf9f7]") +
+        (dropActive === true ? " ring-2 ring-[#1c1917]/35" : "")
       }
     >
       <span className="inline-flex items-center gap-2">
@@ -208,7 +222,7 @@ function BoardEmpty({ title, text, onNew }: { title: string; text: string; onNew
 /**
  * 便签墙主体：工具条（搜索 / 新建便签 —— 排序已下架）+ 左侧分类栏（全部便签 / 已完成 / 各分类）+「问候 + 标题 + 计数」头部 + 便签网格；
  * 点卡片进编辑弹窗（PlanNoteEditor —— 便签底色整卡铺底 + 顶栏关闭 X / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 +
- * 底栏「更新于」+ 删除 + 完成 / 恢复 + 保存）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
+ * 底栏「更新于」+ 删除 + 保存）；完成 / 恢复 = 拖拽（Push 269：便签拖进「完成」区 / 「已完成」里拖回「全部便签」）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
  */
 export function MyPlanBoard() {
   const [board, setBoard] = useState<PlanBoard | null>(null);
@@ -224,6 +238,13 @@ export function MyPlanBoard() {
   const [newCategory, setNewCategory] = useState("");
   /** 上云串行链：多笔提交按顺序落库（每笔都是整面便签墙，顺序错乱会互相覆盖）。 */
   const saveChain = useRef<Promise<void>>(Promise.resolve());
+
+  /** 拖拽（Push 269）：便签卡按下后交给这里（超 6px 阈值才算拖）；中途高亮落点，松手落点决定完成 / 恢复。 */
+  const [drag, setDrag] = useState<PlanDragState | null>(null);
+  const doneZoneRef = useRef<HTMLDivElement | null>(null);
+  const allItemRef = useRef<HTMLButtonElement | null>(null);
+  /** 拖完松手会顺带触发一次 click —— 用时间戳挡掉，避免误开编辑弹窗。 */
+  const suppressOpenAtRef = useRef(0);
 
   /**
    * 打开读面：GET 偏好 → 首次（账号里从未保存）预置示例上云；本机旧键（Push ≤ 267 的 localStorage）
@@ -334,19 +355,92 @@ export function MyPlanBoard() {
     setEditor(null);
   };
 
-  /** 完成 / 恢复（Push 268）：编辑弹窗底栏按钮 —— 连同当前草稿一起落一次（草稿为空时保留原内容）。 */
-  const handleToggleDone = (draft: { title: string; content: string } | null): void => {
-    if (editor === null || editor.note === null || board === null) {
+  /** 完成 / 恢复（Push 269 · 拖拽）：落一次整面 PATCH（乐观更新 + 串行上云）。 */
+  const setNoteDone = (noteId: string, done: boolean): void => {
+    if (board === null) {
       return;
     }
-    const target = editor.note;
     const now = new Date().toISOString();
-    const notes = board.notes.map((item) =>
-      item.id === target.id ? { ...item, ...(draft ?? {}), done: !target.done, updatedAt: now } : item,
-    );
-    commit({ notes, categories: board.categories }, target.done ? "已恢复为未完成便签。" : "已完成，收进「已完成」。");
-    setEditor(null);
+    const notes = board.notes.map((item) => (item.id === noteId ? { ...item, done, updatedAt: now } : item));
+    commit({ notes, categories: board.categories }, done ? "已完成，收进「已完成」。" : "已恢复为未完成便签。");
   };
+
+  /** 命中测试：当前指针落在哪个落点上（拖未完成便签 → 只认「完成」区；拖已完成便签 → 只认「全部便签」）。 */
+  const dragHit = (x: number, y: number, fromDone: boolean): "done" | "all" | null => {
+    const inside = (node: HTMLElement | null): boolean => {
+      if (node === null) {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+    if (!fromDone && inside(doneZoneRef.current)) {
+      return "done";
+    }
+    if (fromDone && inside(allItemRef.current)) {
+      return "all";
+    }
+    return null;
+  };
+
+  /** 拖拽起点（Push 269）：按住便签卡 —— 超过 6px 才算拖（否则仍是点开编辑）；松手落在落点上即完成 / 恢复。 */
+  const handleNotePointerDown = (note: PlanNote, event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (event.button !== 0) {
+      return;
+    }
+    suppressOpenAtRef.current = 0;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let active = false;
+    const handleMove = (moveEvent: PointerEvent): void => {
+      if (!active) {
+        if (Math.abs(moveEvent.clientX - startX) < 6 && Math.abs(moveEvent.clientY - startY) < 6) {
+          return;
+        }
+        active = true;
+      }
+      setDrag({ noteId: note.id, done: note.done, x: moveEvent.clientX, y: moveEvent.clientY, over: dragHit(moveEvent.clientX, moveEvent.clientY, note.done) });
+    };
+    const handleUp = (upEvent: PointerEvent): void => {
+      cleanup();
+      setDrag(null);
+      if (!active) {
+        return;
+      }
+      suppressOpenAtRef.current = Date.now();
+      const over = dragHit(upEvent.clientX, upEvent.clientY, note.done);
+      if (over === "done") {
+        setNoteDone(note.id, true);
+      } else if (over === "all") {
+        setNoteDone(note.id, false);
+      }
+    };
+    const handleCancel = (): void => {
+      cleanup();
+      setDrag(null);
+    };
+    function cleanup(): void {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleCancel);
+    }
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleCancel);
+  };
+
+  /** 拖动期间禁掉正文选中（松手 / 取消即恢复）。 */
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) {
+      return;
+    }
+    const previous = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.userSelect = previous;
+    };
+  }, [dragging]);
 
   const handleAddCategory = (name: string): void => {
     if (board === null) {
@@ -414,6 +508,19 @@ export function MyPlanBoard() {
   const activeCount = board.notes.filter((note) => !note.done).length;
   const doneCount = board.notes.filter((note) => note.done).length;
   const heading = doneOnly ? "已完成" : category === null ? "全部便签" : category;
+  const dragFromDone = drag !== null && drag.done;
+  const overDone = drag !== null && drag.over === "done";
+  const overAll = drag !== null && drag.over === "all";
+  const dragNote = drag === null ? null : board.notes.find((item) => item.id === drag.noteId) ?? null;
+  const zoneClass =
+    "flex items-center gap-2.5 rounded-[18px] border-[1.5px] px-3.5 py-3 transition " +
+    (overDone
+      ? "border-solid border-[#1c1917] bg-[#1c1917] text-[#fdfbf7] shadow-[0_10px_26px_-16px_rgba(28,25,23,0.5)]"
+      : dragging
+        ? dragFromDone
+          ? "border-dashed border-[#d5cdbd] bg-[#faf9f7] text-[#78716c] opacity-45"
+          : "border-solid border-[#1c1917] bg-white text-[#1c1917]"
+        : "border-dashed border-[#d5cdbd] bg-[#faf9f7] text-[#78716c]");
 
   return (
     <section
@@ -439,7 +546,8 @@ export function MyPlanBoard() {
         </div>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[252px_minmax(0,1fr)]">
-          <aside className="flex flex-wrap content-start items-center gap-1.5 rounded-[18px] border border-[#e8e3da] bg-white p-3.5 shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] lg:sticky lg:top-[124px] lg:flex-col lg:flex-nowrap lg:items-stretch lg:gap-[3px] lg:self-start">
+          <div className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-[124px] lg:self-start">
+          <aside className="flex flex-wrap content-start items-center gap-1.5 rounded-[18px] border border-[#e8e3da] bg-white p-3.5 shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] lg:flex-col lg:flex-nowrap lg:items-stretch lg:gap-[3px]">
             <p className="mb-2 hidden px-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a8a29e] lg:block">分类</p>
             <CategoryItem
               value="all"
@@ -451,6 +559,8 @@ export function MyPlanBoard() {
                 setDoneOnly(false);
                 setCategory(null);
               }}
+              buttonRef={allItemRef}
+              dropActive={overAll}
             />
             <CategoryItem
               value="done"
@@ -521,6 +631,22 @@ export function MyPlanBoard() {
             </div>
           </aside>
 
+          <div
+            ref={doneZoneRef}
+            data-plan-done-zone=""
+            data-plan-done-zone-over={overDone ? "true" : "false"}
+            className={zoneClass}
+          >
+            <span className={"grid h-9 w-9 shrink-0 place-items-center rounded-full " + (overDone ? "bg-white/[0.14]" : "bg-[#efeae1]")}>
+              <CheckCircleIcon />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[13.5px] font-semibold">完成</span>
+              <span className="block text-[11.5px] opacity-80">{overDone ? "松手，收进「已完成」" : "拖动便签到此处完成"}</span>
+            </span>
+          </div>
+          </div>
+
           <div className="flex min-w-0 flex-col gap-[18px]">
             <div className="flex items-end justify-between gap-4">
               <div>
@@ -529,6 +655,9 @@ export function MyPlanBoard() {
                   {heading}
                   <span className="rounded-full bg-[#efeae1] px-2.5 py-[3px] text-xs font-semibold text-[#57534e]">{visible.length}</span>
                 </h1>
+                {doneOnly ? (
+                  <p data-plan-done-hint="" className="mb-0.5 mt-1.5 text-[12.5px] text-[#a8a29e]">把便签拖回「全部便签」即可恢复</p>
+                ) : null}
               </div>
               {keyword.trim() === "" ? null : <p className="pb-1 text-[12.5px] text-[#78716c]">{"正在搜索：" + keyword.trim()}</p>}
             </div>
@@ -542,7 +671,7 @@ export function MyPlanBoard() {
                 }}
               />
             ) : doneOnly && doneCount === 0 ? (
-              <BoardEmpty title="还没有已完成的便签" text="把做完的便签点开、按「完成」，它就会收进这里。" />
+              <BoardEmpty title="还没有已完成的便签" text="把便签拖到左侧「完成」区域，它就会收进这里。" />
             ) : visible.length === 0 ? (
               <BoardEmpty
                 title="没有找到匹配的便签"
@@ -558,7 +687,13 @@ export function MyPlanBoard() {
                     key={note.id}
                     note={note}
                     onOpen={() => {
+                      if (Date.now() - suppressOpenAtRef.current < 350) {
+                        return;
+                      }
                       setEditor({ note });
+                    }}
+                    onPointerDown={(event) => {
+                      handleNotePointerDown(note, event);
                     }}
                   />
                 ))}
@@ -567,6 +702,17 @@ export function MyPlanBoard() {
           </div>
         </div>
       </div>
+
+      {drag === null || dragNote === null ? null : (
+        <div
+          data-plan-drag-ghost=""
+          style={{ left: drag.x, top: drag.y, backgroundColor: planColorOf(dragNote.colorId).bg, borderColor: planColorOf(dragNote.colorId).border, color: planColorOf(dragNote.colorId).ink }}
+          className="pointer-events-none fixed z-[60] w-[232px] -translate-x-1/2 -translate-y-1/2 rotate-[-3deg] rounded-[14px] border px-3.5 py-2.5 shadow-[0_18px_36px_-18px_rgba(28,25,23,0.55)]"
+        >
+          <span className="block truncate text-[13px] font-semibold">{dragNote.title === "" ? "无标题" : dragNote.title}</span>
+          <span className="mt-0.5 block text-[11px] opacity-70">{drag.over === "done" ? "松手，收进「已完成」" : drag.over === "all" ? "松手，恢复为未完成" : dragNote.done ? "拖到「全部便签」可恢复" : "拖到「完成」区域即可完成"}</span>
+        </div>
+      )}
 
       {notice === null ? null : (
         <Toast
@@ -585,7 +731,6 @@ export function MyPlanBoard() {
           categories={board.categories}
           onSave={handleSaveNote}
           onDelete={handleDeleteNote}
-          onToggleDone={handleToggleDone}
           onAddCategory={handleAddCategory}
           onClose={() => {
             setEditor(null);
