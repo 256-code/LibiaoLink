@@ -1,3 +1,4 @@
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { formatPlanRelative, planColorOf, planFontOf, type PlanNote } from "../myPlan";
 
 /**
@@ -6,8 +7,19 @@ import { formatPlanRelative, planColorOf, planFontOf, type PlanNote } from "../m
  * 照搬口径：min-height 198 / 内衬 18 / 圆角 18；卡片 = 调色板底色 + 描边 + 字色（7 色 hex，
  * 编辑弹窗同源）；标题 16.5px（单行截断）+ 内容 13px（5 行截断、保留换行）+ 底行 = 分类签（swatch 底）+ 相对时间。
  * Push 268：完成态右上角常显绿勾（替换悬停铅笔）—— 「已完成」视图里的卡片一眼可辨；未完成卡片照旧悬停浮现铅笔。
+ * Push 269：卡片可拖拽（指针事件）—— 按住拖动超 6px 进入拖拽态（拖进「完成」区即完成、已完成的拖回「全部便签」即恢复）；
+ * 没拖出阈值仍是点击打开编辑弹窗（便签墙按时间戳挡掉拖完松手那一下 click）。
  */
-export function PlanNoteCard({ note, onOpen }: { note: PlanNote; onOpen: () => void }) {
+export function PlanNoteCard({
+  note,
+  onOpen,
+  onPointerDown,
+}: {
+  note: PlanNote;
+  onOpen: () => void;
+  /** 拖拽起点（Push 269）：按下交给便签墙统一处理（超阈值才算拖；松手落点决定完成 / 恢复）。 */
+  onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+}) {
   const color = planColorOf(note.colorId);
   const font = planFontOf(note.fontId);
   return (
@@ -15,11 +27,12 @@ export function PlanNoteCard({ note, onOpen }: { note: PlanNote; onOpen: () => v
       type="button"
       data-plan-note={note.id}
       onClick={onOpen}
+      onPointerDown={onPointerDown}
       title="点开编辑"
       aria-label={"编辑便签：" + (note.title === "" ? "未命名" : note.title)}
       style={{ backgroundColor: color.bg, borderColor: color.border, color: color.ink }}
       className={
-        "group relative flex min-h-[198px] w-full flex-col justify-between gap-3.5 rounded-[18px] border p-[18px] text-left shadow-[0_1px_2px_rgba(28,25,23,0.04)] transition duration-[180ms] ease-out hover:-translate-y-[3px] hover:shadow-[0_18px_36px_-20px_rgba(28,25,23,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1c1917]/25 " +
+        "group relative flex min-h-[198px] w-full cursor-grab select-none flex-col active:cursor-grabbing justify-between gap-3.5 rounded-[18px] border p-[18px] text-left shadow-[0_1px_2px_rgba(28,25,23,0.04)] transition duration-[180ms] ease-out hover:-translate-y-[3px] hover:shadow-[0_18px_36px_-20px_rgba(28,25,23,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1c1917]/25 " +
         font.className
       }
     >

@@ -19,6 +19,9 @@
  *   （Push 268：页面底改纯白、排序下架；便签墙整面按账号存 user_preferences.prefs.myPlanBoard（跨设备可见）；
  *   旧 localStorage 键首次打开自动迁移上云；编辑弹窗底栏加「完成 / 恢复」+ 侧栏「已完成」视图（完成后只出现在其中）；
  *   本脚本「⑪」段另含 落库 / 首次预置 / 旧键迁移 / 完成态 对账）。
+ *   「不要这个完成 在这个分类旁边增加完成区域 拖动便签到完成区域则完成」
+ *   （Push 269：编辑弹窗底栏撤「完成 / 恢复」（改拖拽完成）；侧栏分类卡下方新增「完成」拖放区 —— 把便签拖进去即完成（拖动中悬浮小卡 + 落点高亮）；
+ *   「已完成」视图里的便签拖回「全部便签」即恢复；本脚本「⑪」段含 拖拽完成 / 拖拽恢复 对账）。
  *
  * 口径复评（2026-09-30 · 业务：「明明有四个 为什么只显示了两个」→「不能有 7 天内时间限制」→「时间不限制 另外
  *   项目经理是我也要算在我的任务」）：我的任务 = 任务负责人含我 或 项目项目经理含我 + 未完成、不限完成日期窗口；
@@ -812,7 +815,7 @@ check("⑩k 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（不
 // ---------- ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 → Push 268 纯白底 + 排序下架 + 完成态 + 账号落库） ----------
 // 本刀验：第三枚标签 / 点击 / 深链照旧；页内 = 便签墙（账号落库：GET/PATCH prefs.myPlanBoard —— 前置重置为确定性 6 条示例、收尾恢复账号快照）——
 // 照搬口径（白底 / 卡片尺寸 / 调色板 + 编辑（填写）弹窗：⑪c3 新建态 / ⑪g2 编辑态 / ⑪n2 关闭 X）对账 + 新建（空标题 / 空内容保存置灰）/ 编辑 /
-// 搜索 / 分类过滤 / 完成 + 「已完成」视图 / 恢复 / 删除（二次确认）/ 刷新持久化（GET preferences 对账）/ 首次预置上云 / 旧键迁移；导出 / 导入不做。
+// 搜索 / 分类过滤 / 拖拽完成 + 「已完成」视图 / 拖拽恢复 / 删除（二次确认）/ 刷新持久化（GET preferences 对账）/ 首次预置上云 / 旧键迁移；导出 / 导入不做。
 const NOTE_CREATED_TITLE = "回放·便签甲改";
 const LEGACY_PLAN_KEY = "libiaolink.plan.board.v1";
 // Push 268 前置：便签墙已落库 —— 先快照账号偏好整行（收尾原样放回，⑪ 段不留痕），再把 myPlanBoard 重置为确定性 6 条示例 + 默认六类；
@@ -842,6 +845,32 @@ async function clickExpr(expression, what) {
   await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
   await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
   await sleep(500);
+}
+/** 拖拽（Push 269）：按住源元素中心，按步长移到目标中心（不松手）—— 超过 6px 才进入拖拽态。 */
+async function dragHold(sourceSelector, targetSelector, steps = 10) {
+  const from = await ev("(function(){var node=document.querySelector(" + j(sourceSelector) + ");if(node===null){return null;}var box=node.getBoundingClientRect();if(box.width<=0||box.height<=0){return null;}return {x:Math.round(box.left+box.width/2),y:Math.round(box.top+box.height/2)};})()");
+  const to = await ev("(function(){var node=document.querySelector(" + j(targetSelector) + ");if(node===null){return null;}var box=node.getBoundingClientRect();if(box.width<=0||box.height<=0){return null;}return {x:Math.round(box.left+box.width/2),y:Math.round(box.top+box.height/2)};})()");
+  if (from === null || to === null) throw new Error("拖拽定位失败：" + sourceSelector + " → " + targetSelector);
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y, button: "none" });
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", clickCount: 1 });
+  await sleep(120);
+  for (let i = 1; i <= steps; i += 1) {
+    const x = Math.round(from.x + ((to.x - from.x) * i) / steps);
+    const y = Math.round(from.y + ((to.y - from.y) * i) / steps);
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left", buttons: 1 });
+    await sleep(45);
+  }
+  await sleep(220);
+  return { from, to };
+}
+/** 拖拽松手（落点 = 目标中心）。 */
+async function dragRelease(targetSelector) {
+  const to = await ev("(function(){var node=document.querySelector(" + j(targetSelector) + ");if(node===null){return null;}var box=node.getBoundingClientRect();if(box.width<=0||box.height<=0){return null;}return {x:Math.round(box.left+box.width/2),y:Math.round(box.top+box.height/2)};})()");
+  if (to === null) throw new Error("松手落点定位失败：" + targetSelector);
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: to.x, y: to.y, button: "left", buttons: 1 });
+  await sleep(140);
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", clickCount: 1 });
+  await sleep(560);
 }
 async function pressKey(key, code, vk, modifiers = 0) {
   await page.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
@@ -880,15 +909,15 @@ check("⑪c 「我的计划」页 = 便签墙（不是登记卡）：账号里 6
 const planSkin = await ev("(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var card=root.querySelector(" + j("[data-plan-note]") + ");var grid=root.querySelector(" + j("[data-plan-grid]") + ");if(card===null||grid===null){return null;}var rs=getComputedStyle(root);var cs=getComputedStyle(card);return {bgImage:rs.backgroundImage,bgColor:rs.backgroundColor,radius:cs.borderTopLeftRadius,padding:cs.paddingTop,minHeight:cs.minHeight,cols:getComputedStyle(grid).gridTemplateColumns};})()");
 const planSkinCols = planSkin === null ? [] : planSkin.cols.split(" ").map((item) => Math.round(parseFloat(item)));
 check("⑪c2 照搬口径对账（Push 268：页面底改纯白）：页面背景 = 纯白 #ffffff、无径向渐变；卡片圆角 18 / 内衬 18 / 最小高 198、网格列宽 ≥ 228（auto-fill）", planSkin !== null && planSkin.bgImage === "none" && planSkin.bgColor === "rgb(255, 255, 255)" && planSkin.radius === "18px" && planSkin.padding === "18px" && planSkin.minHeight === "198px" && planSkinCols.length >= 3 && Math.min.apply(null, planSkinCols) >= 228, planSkin === null ? "null" : JSON.stringify({ bgColor: planSkin.bgColor, radius: planSkin.radius, padding: planSkin.padding, minHeight: planSkin.minHeight, cols: planSkinCols }));
-const planToolbar = await ev("(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var done=root.querySelector(" + j("[data-plan-category=" + Q + "done" + Q + "]") + ");var doneCount=done===null?null:done.querySelector(" + j("span:last-child") + ");return {hasSort:root.querySelector(" + j("[data-plan-sort]") + ")!==null,hasDone:done!==null,doneCount:doneCount===null?null:doneCount.textContent.trim()};})()");
-check("⑪c4 排序已下架（「最近更新」按钮不在 DOM）+ 侧栏有「已完成」入口（当前计数 0）", planToolbar !== null && planToolbar.hasSort === false && planToolbar.hasDone === true && planToolbar.doneCount === "0", planToolbar === null ? "null" : JSON.stringify(planToolbar));
+const planToolbar = await ev("(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var done=root.querySelector(" + j("[data-plan-category=" + Q + "done" + Q + "]") + ");var doneCount=done===null?null:done.querySelector(" + j("span:last-child") + ");var zone=root.querySelector(" + j("[data-plan-done-zone]") + ");return {hasSort:root.querySelector(" + j("[data-plan-sort]") + ")!==null,hasDone:done!==null,doneCount:doneCount===null?null:doneCount.textContent.trim(),hasZone:zone!==null,zoneText:zone===null?null:zone.textContent.trim()};})()");
+check("⑪c4 排序已下架（「最近更新」按钮不在 DOM）+ 侧栏有「已完成」入口（当前计数 0）+ 有「完成」拖放区（文案「拖动便签到此处完成」）", planToolbar !== null && planToolbar.hasSort === false && planToolbar.hasDone === true && planToolbar.doneCount === "0" && planToolbar.hasZone === true && planToolbar.zoneText !== null && planToolbar.zoneText.indexOf("拖动便签") >= 0, planToolbar === null ? "null" : JSON.stringify(planToolbar));
 // ⑪c3 「填写」弹窗照搬（新建态 · 2026-10-10「填写也要一样」）：整卡 = 便签底色（缺省黄）+ 24 圆角 / 680 宽；
 // 顶栏 = 关闭 X + 7 色圆点（选中 = 墨色描边）+ 3 枚字体 Aa（选中 = 墨底奶白字）；底栏 =「新建便签」+ 墨黑「保存」（空内容置灰）+ 删除缺席；
 // 对账复用 ⑪d 打开的新建弹窗（不关不合、数据不动）；关闭 X 另由 ⑪n2 覆盖。
 await clickSelector("[data-plan-new]");
 await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
-const editSkinNew = await ev("(function(){var overlay=document.querySelector(" + j("[data-plan-editor]") + ");if(overlay===null){return null;}var card=overlay.firstElementChild;var cs=getComputedStyle(card);var activeSwatch=card.querySelector(" + j("[data-plan-color][aria-pressed=true]") + ");var activeFont=card.querySelector(" + j("[data-plan-font][aria-pressed=true]") + ");var title=card.querySelector(" + j("[data-plan-editor-title]") + ");var save=card.querySelector(" + j("[data-plan-editor-save]") + ");var meta=card.querySelector(" + j("footer span") + ");return {bg:cs.backgroundColor,border:cs.borderTopColor,radius:cs.borderTopLeftRadius,width:Math.round(card.getBoundingClientRect().width),headX:card.querySelector(" + j("[data-plan-editor-close]") + ")!==null,swatchCount:card.querySelectorAll(" + j("[data-plan-color]") + ").length,activeSwatchBg:activeSwatch===null?null:getComputedStyle(activeSwatch).backgroundColor,activeSwatchBorder:activeSwatch===null?null:getComputedStyle(activeSwatch).borderTopColor,fontCount:card.querySelectorAll(" + j("[data-plan-font]") + ").length,activeFontBg:activeFont===null?null:getComputedStyle(activeFont).backgroundColor,activeFontColor:activeFont===null?null:getComputedStyle(activeFont).color,titleSize:getComputedStyle(title).fontSize,titlePlaceholder:title.getAttribute(" + j("placeholder") + "),saveBg:getComputedStyle(save).backgroundColor,saveText:save.textContent.trim(),saveDisabled:save.disabled,hasDelete:card.querySelector(" + j("[data-plan-editor-delete]") + ")!==null,metaText:meta===null?null:meta.textContent.trim()};})()");
-check("⑪c3 「填写」弹窗照搬（新建态）：整卡 = 便签底色（缺省黄 #fef8d5 / 描边 #f2e3a4）+ 24 圆角 / 680 宽；顶栏 = 关闭 X + 7 色圆点（选中 = 墨色描边）+ 3 枚字体 Aa（选中 = 墨底奶白）；底栏 =「新建便签」+ 墨黑「保存」（空内容置灰）+ 删除缺席", editSkinNew !== null && editSkinNew.bg === "rgb(254, 248, 213)" && editSkinNew.border === "rgb(242, 227, 164)" && editSkinNew.radius === "24px" && editSkinNew.width === 680 && editSkinNew.headX === true && editSkinNew.swatchCount === 7 && editSkinNew.activeSwatchBg === "rgb(253, 230, 138)" && editSkinNew.activeSwatchBorder === "rgb(28, 25, 23)" && editSkinNew.fontCount === 3 && editSkinNew.activeFontBg === "rgb(28, 25, 23)" && editSkinNew.activeFontColor === "rgb(253, 251, 247)" && editSkinNew.titleSize === "25px" && editSkinNew.titlePlaceholder === "标题" && editSkinNew.saveBg === "rgb(28, 25, 23)" && editSkinNew.saveText === "保存" && editSkinNew.saveDisabled === true && editSkinNew.hasDelete === false && editSkinNew.metaText === "新建便签", editSkinNew === null ? "null" : JSON.stringify(editSkinNew));
+const editSkinNew = await ev("(function(){var overlay=document.querySelector(" + j("[data-plan-editor]") + ");if(overlay===null){return null;}var card=overlay.firstElementChild;var cs=getComputedStyle(card);var activeSwatch=card.querySelector(" + j("[data-plan-color][aria-pressed=true]") + ");var activeFont=card.querySelector(" + j("[data-plan-font][aria-pressed=true]") + ");var title=card.querySelector(" + j("[data-plan-editor-title]") + ");var save=card.querySelector(" + j("[data-plan-editor-save]") + ");var meta=card.querySelector(" + j("footer span") + ");return {bg:cs.backgroundColor,border:cs.borderTopColor,radius:cs.borderTopLeftRadius,width:Math.round(card.getBoundingClientRect().width),headX:card.querySelector(" + j("[data-plan-editor-close]") + ")!==null,swatchCount:card.querySelectorAll(" + j("[data-plan-color]") + ").length,activeSwatchBg:activeSwatch===null?null:getComputedStyle(activeSwatch).backgroundColor,activeSwatchBorder:activeSwatch===null?null:getComputedStyle(activeSwatch).borderTopColor,fontCount:card.querySelectorAll(" + j("[data-plan-font]") + ").length,activeFontBg:activeFont===null?null:getComputedStyle(activeFont).backgroundColor,activeFontColor:activeFont===null?null:getComputedStyle(activeFont).color,titleSize:getComputedStyle(title).fontSize,titlePlaceholder:title.getAttribute(" + j("placeholder") + "),saveBg:getComputedStyle(save).backgroundColor,saveText:save.textContent.trim(),saveDisabled:save.disabled,hasDelete:card.querySelector(" + j("[data-plan-editor-delete]") + ")!==null,hasDone:card.querySelector(" + j("[data-plan-editor-done]") + ")!==null,metaText:meta===null?null:meta.textContent.trim()};})()");
+check("⑪c3 「填写」弹窗照搬（新建态）：整卡 = 便签底色（缺省黄 #fef8d5 / 描边 #f2e3a4）+ 24 圆角 / 680 宽；顶栏 = 关闭 X + 7 色圆点（选中 = 墨色描边）+ 3 枚字体 Aa（选中 = 墨底奶白）；底栏 =「新建便签」+ 墨黑「保存」（空内容置灰）+ 删除缺席 + 完成键缺席（Push 269：完成改拖拽）", editSkinNew !== null && editSkinNew.bg === "rgb(254, 248, 213)" && editSkinNew.border === "rgb(242, 227, 164)" && editSkinNew.radius === "24px" && editSkinNew.width === 680 && editSkinNew.headX === true && editSkinNew.swatchCount === 7 && editSkinNew.activeSwatchBg === "rgb(253, 230, 138)" && editSkinNew.activeSwatchBorder === "rgb(28, 25, 23)" && editSkinNew.fontCount === 3 && editSkinNew.activeFontBg === "rgb(28, 25, 23)" && editSkinNew.activeFontColor === "rgb(253, 251, 247)" && editSkinNew.titleSize === "25px" && editSkinNew.titlePlaceholder === "标题" && editSkinNew.saveBg === "rgb(28, 25, 23)" && editSkinNew.saveText === "保存" && editSkinNew.saveDisabled === true && editSkinNew.hasDelete === false && editSkinNew.hasDone === false && editSkinNew.metaText === "新建便签", editSkinNew === null ? "null" : JSON.stringify(editSkinNew));
 await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
 const editor0 = await ev("(function(){var root=document.querySelector(" + j("[data-plan-editor]") + ");if(root===null){return null;}var save=root.querySelector(" + j("[data-plan-editor-save]") + ");var title=root.querySelector(" + j("[data-plan-editor-title]") + ");return {saveDisabled:save===null?null:save.disabled,titleValue:title===null?null:title.value};})()");
 check("⑪d 新建便签弹窗：标题 / 内容都空时「保存便签」置灰（至少填一项才可保存）", editor0 !== null && editor0.saveDisabled === true && editor0.titleValue === "", editor0 === null ? "null" : JSON.stringify(editor0));
@@ -910,8 +939,8 @@ await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
 await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
 const editPrefill = await ev("(function(){var t=document.querySelector(" + j("[data-plan-editor-title]") + ");return t===null?null:t.value;})()");
 check("⑪g 点卡片 = 编辑弹窗且已带出现值（标题「回放·便签甲」）", editPrefill === "回放·便签甲", String(editPrefill));
-const editSkinEdit = await ev("(function(){var overlay=document.querySelector(" + j("[data-plan-editor]") + ");if(overlay===null){return null;}var card=overlay.firstElementChild;var cs=getComputedStyle(card);var foot=card.querySelector(" + j("footer") + ");var spans=foot===null?[]:foot.querySelectorAll(" + j("span") + ");var meta=spans.length>0?spans[0].textContent.trim():null;var del=card.querySelector(" + j("[data-plan-editor-delete]") + ");return {bg:cs.backgroundColor,border:cs.borderTopColor,meta:meta,metaColor:spans.length>0?getComputedStyle(spans[0]).color:null,hasDelete:del!==null,deleteColor:del===null?null:getComputedStyle(del).color};})()");
-check("⑪g2 「填写」弹窗跟着便签色（编辑态）：整卡 = 蓝 #e3eefe / 描边 #c5daf7 + 底栏「更新于 YYYY年M月D日 HH:MM」（灰）+ 白底红图标删除键在场", editSkinEdit !== null && editSkinEdit.bg === "rgb(227, 238, 254)" && editSkinEdit.border === "rgb(197, 218, 247)" && editSkinEdit.meta !== null && /^更新于 \d{4}年\d{1,2}月\d{1,2}日 \d{2}:\d{2}$/.test(editSkinEdit.meta) && editSkinEdit.metaColor === "rgb(120, 113, 108)" && editSkinEdit.hasDelete === true && editSkinEdit.deleteColor === "rgb(220, 38, 38)", editSkinEdit === null ? "null" : JSON.stringify(editSkinEdit));
+const editSkinEdit = await ev("(function(){var overlay=document.querySelector(" + j("[data-plan-editor]") + ");if(overlay===null){return null;}var card=overlay.firstElementChild;var cs=getComputedStyle(card);var foot=card.querySelector(" + j("footer") + ");var spans=foot===null?[]:foot.querySelectorAll(" + j("span") + ");var meta=spans.length>0?spans[0].textContent.trim():null;var del=card.querySelector(" + j("[data-plan-editor-delete]") + ");return {bg:cs.backgroundColor,border:cs.borderTopColor,meta:meta,metaColor:spans.length>0?getComputedStyle(spans[0]).color:null,hasDelete:del!==null,deleteColor:del===null?null:getComputedStyle(del).color,hasDone:card.querySelector(" + j("[data-plan-editor-done]") + ")!==null};})()");
+check("⑪g2 「填写」弹窗跟着便签色（编辑态）：整卡 = 蓝 #e3eefe / 描边 #c5daf7 + 底栏「更新于 YYYY年M月D日 HH:MM」（灰）+ 白底红图标删除键在场 + 完成键缺席（Push 269：完成改拖拽）", editSkinEdit !== null && editSkinEdit.bg === "rgb(227, 238, 254)" && editSkinEdit.border === "rgb(197, 218, 247)" && editSkinEdit.meta !== null && /^更新于 \d{4}年\d{1,2}月\d{1,2}日 \d{2}:\d{2}$/.test(editSkinEdit.meta) && editSkinEdit.metaColor === "rgb(120, 113, 108)" && editSkinEdit.hasDelete === true && editSkinEdit.deleteColor === "rgb(220, 38, 38)" && editSkinEdit.hasDone === false, editSkinEdit === null ? "null" : JSON.stringify(editSkinEdit));
 await shot("17-我的计划-编辑弹窗.png");
 await typeInto("[data-plan-editor-title]", NOTE_CREATED_TITLE);
 await clickSelector("[data-plan-editor-save]");
@@ -932,30 +961,40 @@ const planCat = await ev(planExpr());
 check("⑪k 分类过滤「想法」→ 2 张卡（新便签 + 预置「想法速记」）", planCat !== null && planCat.cards.length === 2 && planCat.cards.every((item) => item.category === "想法"), planCat === null ? "null" : JSON.stringify(planCat.cards.map((item) => item.title)));
 await clickSelector("[data-plan-category=" + Q + "all" + Q + "]");
 await sleep(250);
-// ⑪l 完成按钮（Push 268）：编辑弹窗底栏「完成」→ 便签收进「已完成」（便签墙 7 → 6、侧栏「已完成」计数 1）
-await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
-await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
-const doneBtnPre = await ev("(function(){var b=document.querySelector(" + j("[data-plan-editor-done]") + ");return b===null?null:{text:b.textContent.trim(),title:b.getAttribute(" + j("title") + ")};})()");
-await clickSelector("[data-plan-editor-done]");
-await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
-const planDone = await ev(planExpr());
+// ⑪l 拖拽完成（Push 269）：把便签卡拖到侧栏「完成」拖放区 → 便签收进「已完成」（便签墙 7 → 6、侧栏「已完成」计数 1）
+await ev("window.scrollTo(0, 0)");
+await sleep(250);
+await dragHold("[data-plan-note=" + Q + createdId + Q + "]", "[data-plan-done-zone]");
+const dragMid = await ev("(function(){var zone=document.querySelector(" + j("[data-plan-done-zone]") + ");var ghost=document.querySelector(" + j("[data-plan-drag-ghost]") + ");return {over:zone===null?null:zone.getAttribute(" + j("data-plan-done-zone-over") + "),hint:zone===null?null:zone.textContent.trim(),ghost:ghost!==null,ghostText:ghost===null?null:ghost.textContent.trim(),editor:document.querySelector(" + j("[data-plan-editor]") + ")!==null};})()");
+check("⑪l0 拖动中态：拖到「完成」区上方 = 完成区高亮（over=true / 文案「松手，收进「已完成」」）+ 悬浮小卡在场 + 编辑弹窗不弹", dragMid !== null && dragMid.over === "true" && dragMid.hint !== null && dragMid.hint.indexOf("松手") >= 0 && dragMid.ghost === true && dragMid.editor === false, dragMid === null ? "null" : JSON.stringify([dragMid.over, dragMid.hint, dragMid.ghost, dragMid.editor]));
+await shot("19-我的计划-拖动完成.png");
+await dragRelease("[data-plan-done-zone]");
+await sleep(900);
+let planDone = await ev(planExpr());
+for (let i = 0; i < 15 && (planDone === null || planDone.toast.indexOf("已完成") < 0); i += 1) {
+  await sleep(200);
+  planDone = await ev(planExpr());
+}
 const planDoneCountText = await ev("(function(){var b=document.querySelector(" + j("[data-plan-category=" + Q + "done" + Q + "]") + ");if(b===null){return null;}var n=b.querySelector(" + j("span:last-child") + ");return n===null?null:n.textContent.trim();})()");
-check("⑪l 完成按钮：编辑弹窗底栏「完成」→ 点后弹窗关、便签墙 6 条（该便签离开便签墙）、侧栏「已完成」计数 1", doneBtnPre !== null && doneBtnPre.text === "完成" && planDone !== null && planDone.cards.length === 6 && !planDone.cards.some((item) => item.id === createdId) && planDoneCountText === "1", JSON.stringify([doneBtnPre, planDone === null ? null : planDone.cards.length, planDoneCountText]));
+check("⑪l 拖拽完成：便签卡拖进侧栏「完成」区 → 便签墙 6 条（该便签离开便签墙）、侧栏「已完成」计数 1、拖完不误触编辑弹窗", planDone !== null && planDone.cards.length === 6 && !planDone.cards.some((item) => item.id === createdId) && planDoneCountText === "1" && planDone.toast.indexOf("已完成") >= 0, JSON.stringify([planDone === null ? null : planDone.cards.length, planDoneCountText, planDone === null ? null : planDone.toast]));
 // ⑪l2 「已完成」视图：只见完成态（右上角常显绿勾；未完成卡仍是悬停铅笔）+ 标题「已完成」
 await clickSelector("[data-plan-category=" + Q + "done" + Q + "]");
 await sleep(300);
 const planDoneView = await ev(planExpr());
 const planDoneHeading = await ev("(function(){var h=document.querySelector(" + j("[data-workspace-plan] h1") + ");return h===null?null:h.textContent.trim();})()");
-check("⑪l2 点侧栏「已完成」= 只显示完成态（1 张卡 = 刚完成的便签、[data-plan-note-done] 绿勾在场）+ 标题「已完成」", planDoneView !== null && planDoneView.cards.length === 1 && planDoneView.cards[0] !== undefined && planDoneView.cards[0].id === createdId && planDoneView.cards[0].done === true && planDoneHeading !== null && planDoneHeading.indexOf("已完成") === 0, planDoneView === null ? "null" : JSON.stringify([planDoneView.cards.length, planDoneHeading]));
+const planDoneHint = await ev("(function(){var h=document.querySelector(" + j("[data-plan-done-hint]") + ");return h===null?null:h.textContent.trim();})()");
+check("⑪l2 点侧栏「已完成」= 只显示完成态（1 张卡 = 刚完成的便签、[data-plan-note-done] 绿勾在场）+ 标题「已完成」+ 头部提示「把便签拖回「全部便签」即可恢复」", planDoneView !== null && planDoneView.cards.length === 1 && planDoneView.cards[0] !== undefined && planDoneView.cards[0].id === createdId && planDoneView.cards[0].done === true && planDoneHeading !== null && planDoneHeading.indexOf("已完成") === 0 && planDoneHint !== null && planDoneHint.indexOf("全部便签") >= 0, planDoneView === null ? "null" : JSON.stringify([planDoneView.cards.length, planDoneHeading, planDoneHint]));
 await shot("18-我的计划-已完成.png");
-// ⑪l3 「已完成」里点开 = 底栏「恢复」→ 回到未完成（本视图空态；切回「全部便签」7 条）
-await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
-await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
-const restoreBtnText = await ev("(function(){var b=document.querySelector(" + j("[data-plan-editor-done]") + ");return b===null?null:b.textContent.trim();})()");
-await clickSelector("[data-plan-editor-done]");
-await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
+// ⑪l3 「已完成」里把便签拖回「全部便签」→ 回到未完成（本视图空态；切回「全部便签」7 条）
+await ev("window.scrollTo(0, 0)");
+await sleep(250);
+await dragHold("[data-plan-note=" + Q + createdId + Q + "]", "[data-plan-category=" + Q + "all" + Q + "]");
+const restoreMid = await ev("(function(){var all=document.querySelector(" + j("[data-plan-category=" + Q + "all" + Q + "]") + ");var ghost=document.querySelector(" + j("[data-plan-drag-ghost]") + ");return {active:all===null?null:all.getAttribute(" + j("data-plan-drop-active") + "),ghost:ghost!==null,ghostText:ghost===null?null:ghost.textContent.trim()};})()");
+check("⑪l3a 拖动中态：已完成便签拖到「全部便签」上方 = 该项高亮（drop-active=true）+ 悬浮小卡提示「松手，恢复为未完成」", restoreMid !== null && restoreMid.active === "true" && restoreMid.ghost === true && restoreMid.ghostText !== null && restoreMid.ghostText.indexOf("恢复") >= 0, restoreMid === null ? "null" : JSON.stringify(restoreMid));
+await dragRelease("[data-plan-category=" + Q + "all" + Q + "]");
+await sleep(900);
 const planDoneEmpty = await ev(planExpr());
-check("⑪l3 「已完成」里点开 = 底栏「恢复」→ 点后回到未完成：本视图空态（0 张卡 + 空态卡）", restoreBtnText === "恢复" && planDoneEmpty !== null && planDoneEmpty.cards.length === 0 && planDoneEmpty.empty === true, JSON.stringify([restoreBtnText, planDoneEmpty === null ? null : planDoneEmpty.cards.length]));
+check("⑪l3b 拖回恢复：便签拖回「全部便签」→ 回到未完成：本视图空态（0 张卡 + 空态卡）", planDoneEmpty !== null && planDoneEmpty.cards.length === 0 && planDoneEmpty.empty === true, planDoneEmpty === null ? "null" : JSON.stringify([planDoneEmpty.cards.length, planDoneEmpty.empty]));
 await clickSelector("[data-plan-category=" + Q + "all" + Q + "]");
 await sleep(300);
 const planBackAll = await ev(planExpr());
