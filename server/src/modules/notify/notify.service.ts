@@ -1,9 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  NOTIFICATION_SNOOZE_MAX_AHEAD_MS,
+  NOTIFICATION_SNOOZE_MIN_LEAD_MS,
   type Notification,
   type NotificationListQuery,
   type NotificationListResponse,
   type NotificationMarkAllReadResponse,
+  type NotificationSnoozeBody,
+  type NotificationSnoozeListResponse,
   type NotifyMessagePayload,
   type NotifyPrefs,
   type NotifyPrefsUpdateBody,
@@ -18,11 +22,14 @@ import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import {
   formatClockMinute,
   isDeliverableChannel,
+  isWithinQuiet,
   mergeKeyOf,
   parseNotifyMessage,
   parseQuietHours,
   planDelivery,
+  quietEndAfter,
   shanghaiDayStart,
+  shanghaiMinuteOfDay,
   type QuietHours,
 } from "./notify.delivery.js";
 import {
@@ -43,6 +50,13 @@ export interface NotifyFlushStats {
   postponed: number;
 }
 
+/** 稍后提醒触发循环单轮统计（worker 日志与回放断言共用）。 */
+export interface NotifySnoozeFlushStats {
+  scanned: number;
+  triggered: number;
+  deferred: number;
+}
+
 /** 生效偏好（个人配置 → env 缺省回退后）。 */
 interface ResolvedNotifyPrefs {
   quiet: QuietHours | null;
@@ -53,14 +67,17 @@ interface ResolvedNotifyPrefs {
 /**
  * 通知投递服务（S7-4 · j1 / M5-04 首刀 · C5 / C2-08 / C2-09）。
  *
- * 两条入口：
+ * 三条入口：
  * ① `consume` —— outbox 主题 `notify.message` 消费者（worker 注册表）：一次投递事件 = 一行留档
  *    （`source_dedupe_key` 唯一兜底消费重放），随后三选一：并入同期主行（合并）/ 立即投递 / 排期（免打扰 / 每日上限）；
  * ② `flushDue` —— 延迟投递排空（worker 常驻循环）：把 `deliver_at` 到期的行重排一次（合并或投递），
  *    与 consume 共用同一决策函数 —— 不在 outbox 重试里做（重试语义是「消费失败退避」，不是「投递窗口静默」）。
+ * ③ `flushSnoozes` —— 稍后提醒到点触发（worker 常驻循环 · C5-05 / M5-04-2）：与 ② 并列、语义独立 ——
+ *    不合并、不消耗每日上限；到点落免打扰时段顺延到时段结束，否则置回 unread + 推 `notification` / `unread`。
  *
  * 读面（消息中心）：收件箱列表 / 未读角标 / 标记已读·已处理 / 全部已读 / 通知偏好 —— 全为**个人资源**
- * （仅会话、无功能权限键、不写审计；先例 user_preferences / project_views）。
+ * （仅会话、无功能权限键、不写审计；先例 user_preferences / project_views）；稍后提醒（C5-05）同口径：
+ * 设置 / 取消 / 记录读面，记录表即留痕（不写审计）。
  *
  * 实时流（S8-3 · M5-04-1）：投递 / 标记在**同一事务内**经 `NotifyStreamPublisher` 发 `pg_notify`
  * （`notification` = 新投递行、`unread` = 未读数快照；合并 / 排期 / 幂等重放不发 —— 未读数无变化），
@@ -197,6 +214,48 @@ export class NotifyService {
     return stats;
   }
 
+  /**
+   * 稍后提醒到点触发（worker 常驻循环 · C5-05 / M5-04-2）：与 `flushDue` 并列、语义独立 ——
+   * 不合并、不消耗每日上限；到点落免打扰时段 → 顺延到时段结束（复用投递决策先例），否则置回 `unread`
+   * （`handled` 行照提醒）+ 清 `snoozeUntil` + 回填记录 `triggeredAt` + 推 `notification` / `unread`。
+   * 单行失败只记日志（下一轮重扫，不阻塞其余行）；单轮条数由 NOTIFY_SNOOZE_BATCH 收敛。
+   */
+  async flushSnoozes(): Promise<NotifySnoozeFlushStats> {
+    const now = this.clock.now();
+    const due = await this.repository.listDueSnoozes(now, this.config.env.NOTIFY_SNOOZE_BATCH);
+    const stats: NotifySnoozeFlushStats = { scanned: due.length, triggered: 0, deferred: 0 };
+    for (const row of due) {
+      try {
+        const prefs = await this.resolvePrefs(row.recipientId);
+        const outcome = await this.database.db.transaction(async (tx) => {
+          if (prefs.quiet !== null && isWithinQuiet(shanghaiMinuteOfDay(now), prefs.quiet)) {
+            const deferredUntil = quietEndAfter(now, prefs.quiet);
+            await this.repository.deferSnooze(row.id, deferredUntil, now, tx);
+            this.logger.log("稍后提醒免打扰顺延：#" + row.id + " → " + deferredUntil.toISOString());
+            return "deferred" as const;
+          }
+          const updated = await this.repository.triggerSnooze(row.id, now, tx);
+          await this.streamPublisher.publish(tx, {
+            recipientId: row.recipientId,
+            event: "notification",
+            data: toContract(updated),
+          });
+          const unreadCount = await this.repository.countUnread(row.recipientId, tx);
+          await this.streamPublisher.publish(tx, {
+            recipientId: row.recipientId,
+            event: "unread",
+            data: { unreadCount },
+          });
+          return "triggered" as const;
+        });
+        stats[outcome] += 1;
+      } catch (error) {
+        this.logger.error("稍后提醒触发失败（下一轮重扫）：#" + row.id + " —— " + messageOf(error));
+      }
+    }
+    return stats;
+  }
+
   /** 合并判定：命中同人同键、窗口内的未读主行 → 并入（子行留档 + 主行计数自增）。 */
   private async tryMerge(
     row: NotifyMessageRow,
@@ -274,6 +333,69 @@ export class NotifyService {
       }
       return { updated, unreadCount };
     });
+  }
+
+  /**
+   * 稍后提醒设置（C5-05 · S8-3 / M5-04-2）：范围校验（> now + 5 分钟且 ≤ now + 30 天；毫秒截断到秒后校验）
+   * → 覆盖语义（旧记录标 `cancelledAt` + 新记录）→ 行置读（原未读才发 `unread` 快照，对齐 mark 口径）。
+   * 404 族 = 他人行 / 合并子行 / 未投递行（与 mark 先例一致）；对已读 / 已处理行均可设置（用户显式意图优先）。
+   */
+  async snooze(actorId: string, id: number, body: NotificationSnoozeBody): Promise<Notification> {
+    const now = this.clock.now();
+    // 毫秒位向下取整到秒后再做范围校验（定案 §三-8：秒级口径，不因毫秒位卡边界）。
+    const target = new Date(Math.floor(new Date(body.snoozeUntil).getTime() / 1000) * 1000);
+    if (target.getTime() <= now.getTime() + NOTIFICATION_SNOOZE_MIN_LEAD_MS) {
+      throw new AppError("VALIDATION_FAILED", "稍后提醒时刻过早：须晚于当前时刻 + 5 分钟（毫秒截断到秒后校验）");
+    }
+    if (target.getTime() > now.getTime() + NOTIFICATION_SNOOZE_MAX_AHEAD_MS) {
+      throw new AppError("VALIDATION_FAILED", "稍后提醒时刻过远：不得晚于当前时刻 + 30 天");
+    }
+    return this.database.db.transaction(async (tx) => {
+      const existing = await this.repository.findByIdForRecipient(id, actorId, tx);
+      if (existing === null || existing.mergedIntoId !== null || existing.deliveredAt === null) {
+        throw new AppError("NOT_FOUND", "通知不存在：" + id);
+      }
+      const wasUnread = existing.status === "unread";
+      const updated = await this.repository.setSnooze(id, target, now, tx);
+      if (wasUnread) {
+        await this.publishUnread(actorId, tx);
+      }
+      return toContract(updated);
+    });
+  }
+
+  /**
+   * 稍后提醒取消（C5-05）：幂等（无未触发稍后提醒也 200）—— 清行上 `snoozeUntil` + 活跃记录标 `cancelledAt`。
+   * 状态不动（设置时已置读则不回滚）、未读数无变化不发事件；404 族与 mark 先例一致。
+   */
+  async unsnooze(actorId: string, id: number): Promise<Notification> {
+    const at = this.clock.now();
+    return this.database.db.transaction(async (tx) => {
+      const existing = await this.repository.findByIdForRecipient(id, actorId, tx);
+      if (existing === null || existing.mergedIntoId !== null || existing.deliveredAt === null) {
+        throw new AppError("NOT_FOUND", "通知不存在：" + id);
+      }
+      const updated = await this.repository.cancelSnooze(id, at, tx);
+      return toContract(updated);
+    });
+  }
+
+  /** 稍后提醒记录读面（C5-05「设置与触发记录可查」）：按 id 降序、不翻页；404 族与 mark 先例一致。 */
+  async listSnoozes(actorId: string, id: number): Promise<NotificationSnoozeListResponse> {
+    const existing = await this.repository.findByIdForRecipient(id, actorId);
+    if (existing === null || existing.mergedIntoId !== null || existing.deliveredAt === null) {
+      throw new AppError("NOT_FOUND", "通知不存在：" + id);
+    }
+    const rows = await this.repository.listSnoozes(id);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        setAt: row.setAt.toISOString(),
+        snoozeUntil: row.snoozeUntil.toISOString(),
+        triggeredAt: row.triggeredAt === null ? null : row.triggeredAt.toISOString(),
+        cancelledAt: row.cancelledAt === null ? null : row.cancelledAt.toISOString(),
+      })),
+    };
   }
 
   /** 投递广播（新投递 / 延迟补发同一口径）：`notification`（该行契约形态）+ `unread`（角标快照），同一事务内。 */
@@ -363,8 +485,8 @@ function toContract(row: NotifyMessageRow): Notification {
     refId: row.refId,
     templateCode: row.templateCode,
     mergedCount: row.mergedCount,
-    // S8-3 契约扩字段（稍后提醒）：实现刀 M5-04-2（迁移 0045）落地前恒 null。
-    snoozeUntil: null,
+    // 当前未触发的稍后提醒时刻（C5-05）：未设置 / 已触发 / 已取消 = null。
+    snoozeUntil: row.snoozeUntil === null ? null : row.snoozeUntil.toISOString(),
     deliveredAt: (row.deliveredAt ?? row.deliverAt).toISOString(),
     createdAt: row.createdAt.toISOString(),
   };

@@ -64,6 +64,7 @@ class FakeNotifyRepository {
       mergedIntoId: null,
       deliverAt: new Date("2026-09-28T06:00:00.000Z"),
       deliveredAt: null,
+      snoozeUntil: null,
       createdAt: new Date("2026-09-28T06:00:00.000Z"),
     };
     this.rows.push(row);
