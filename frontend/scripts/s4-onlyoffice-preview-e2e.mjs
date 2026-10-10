@@ -50,7 +50,7 @@ const OO_DOCSERVER = process.env.OO_DOCSERVER_URL ?? "http://127.0.0.1:8001";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9412);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR ?? tmpdir();
 const FIXTURE_DIR = process.env.FIXTURE_DIR ?? fileURLToPath(new URL("../../server/scripts/poc10/fixtures/", import.meta.url));
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");

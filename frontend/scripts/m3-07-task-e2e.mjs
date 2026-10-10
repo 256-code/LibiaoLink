@@ -31,7 +31,7 @@ const FRONTEND = process.env.FRONTEND_BASE ?? "http://localhost:3000";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9398);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const sha256 = (t) => createHash("sha256").update(t).digest("hex");
 const SEL = "[aria-label=" + String.fromCharCode(34) + "排序方式（维度 × 方向）" + String.fromCharCode(34) + "]";
 const GROUP = JSON.stringify(SEL);
