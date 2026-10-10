@@ -6,15 +6,18 @@ import { DateTimeSchema, PageQuerySchema, UuidSchema } from "../common/conventio
  * 通知（站内信 · 消息中心）契约（S7-4 · j1 / M5-04 首刀 · lan）。
  *
  * 口径来源：系统功能书 C5-01 收件箱三态（未读 / 已读 / 已处理）、C5-02 分类与筛选（提醒 / 审批 / 播报 / 系统 +
- *   时间区间 + 已读状态）、C5-03 全量留档；C2-08 投递保障（幂等去重 / 失败重试 / 错过补发 / 死信告警）、
+ *   时间区间 + 已读状态）、C5-03 全量留档、C5-05 稍后提醒（「设置新提醒时间；设置与触发记录可查」）；
+ *   C2-08 投递保障（幂等去重 / 失败重试 / 错过补发 / 死信告警）、
  *   C2-09 合并与免打扰（同期消息合并推送 / 免打扰时段静默次日补发 / 每人每日上限）；
- *   技术设计v0.2 §6.2「合并与免打扰」，§11.1 新增表 notifications / notify_prefs（技术设计v0.3 §3.6 同）；
- *   ADR-005（Outbox + PG 原生队列）、ADR-028（业务日固定 Asia/Shanghai）。
+ *   技术设计v0.2 §6.2「合并与免打扰」，§11.1 新增表 notifications / notify_prefs（技术设计v0.3 §3.6 同）、
+ *   §11.3 `/notifications/stream`（SSE）；ADR-005（Outbox + PG 原生队列）、ADR-028（业务日固定 Asia/Shanghai）。
  *
  * 本切片边界（S7-4）：站内信投递（outbox 主题 `notify.message` 消费）+ 合并（同人同时段）+ 免打扰（次日补发）+
  *   每人每日上限 + 收件箱读面（列表 / 未读计数 / 标记已读·已处理 / 全部已读）+ 全量留档 + 个人通知偏好。
- *   余下随后续卡片：企微通道（M5-03）/ SSE（`/notifications/stream`）/ 稍后提醒（C5-05）/
- *   规则生产端（i12 / i13：写 `notify.message` 的主题生产者）—— 投递层就绪后加项即可。
+ * S8-3 扩项（M5-04 余项 · 代 wmj 落地 · Push 210）：SSE 实时推送事件契约 + 稍后提醒契约（见本文件末两段；
+ *   端点注册见 `openapi.ts`；实现随 `M5-04-1` / `M5-04-2` · lan）。
+ * 余下随后续卡片：企微通道（M5-03）/ 规则生产端（i12 / i13：写 `notify.message` 的主题生产者）——
+ *   投递层就绪后加项即可。
  */
 
 /** 通知类型（C5-02 分类筛选）：提醒 / 审批 / 播报 / 系统。 */
@@ -119,6 +122,10 @@ export const NotificationSchema = z
     refId: UuidSchema.nullable().openapi({ description: "关联对象 id（可空；与 refType 成对）" }),
     templateCode: z.string().nullable().openapi({ description: "模板码（可空）" }),
     mergedCount: z.number().int().min(1).openapi({ description: "合并条数：同期同合并键的消息条数（未合并 = 1）" }),
+    snoozeUntil: DateTimeSchema.nullable().openapi({
+      description:
+        "未触发的稍后提醒时刻（C5-05）；null = 未设置 / 已触发 / 已取消（触发不改写 deliveredAt —— 首投时刻留档，重提醒时刻见记录）",
+    }),
     deliveredAt: DateTimeSchema.openapi({ description: "投递时刻（进入收件箱的时刻）" }),
     createdAt: DateTimeSchema.openapi({ description: "消息创建时刻（收到投递事件的时刻）" }),
   })
@@ -231,3 +238,76 @@ export const NotifyPrefsUpdateBodySchema = z
     description: "通知偏好更新（局部更新：只传变更键；quietHours 三态 default / off / HH:MM-HH:MM；空更新 400）",
   });
 export type NotifyPrefsUpdateBody = z.infer<typeof NotifyPrefsUpdateBodySchema>;
+
+/**
+ * ---- SSE 实时推送（S8-3 · M5-04 余项 · 实时性口径 · 技术设计v0.2 §11.3 `/notifications/stream`）----
+ *
+ * 事件集：`notification`（单条通知：新投递 / 稍后提醒触发重提醒）+ `unread`（未读角标变更）。
+ * 心跳 = SSE 注释行（`: ping`，周期落 env）—— 无载荷、无事件名，**不入契约**。
+ * 重连补偿 = 不补发（服务端零状态）：客户端重连后等下一次事件 + 立即用读面补拉
+ *   （`GET /notifications` + `NotificationListResponse.unreadCount`）对齐；`Last-Event-ID` 补发留二期。
+ * 多实例广播（实现口径）：写方事务内 `pg_notify`（通道 `notify_stream`），api 各实例 `LISTEN` 后桥到本地连接。
+ * 载荷 shape 不入生成物（先例 `NotifyMessagePayload`）；端点已在 `openapi.ts` 注册（+1 path / +1 operation）。
+ */
+export const NOTIFICATION_STREAM_EVENTS = ["notification", "unread"] as const;
+export type NotificationStreamEventType = (typeof NOTIFICATION_STREAM_EVENTS)[number];
+
+export const NotificationStreamUnreadPayloadSchema = z
+  .object({
+    unreadCount: z.number().int().min(0).openapi({ description: "当前未读总数（角标口径；= 未读状态主行数）" }),
+  })
+  .openapi("NotificationStreamUnreadPayload", {
+    description: "unread 事件载荷：未读角标同步（新投递 / 标记已读 / 全部已读 / 稍后提醒置读等未读数变更时刻；跨端一致性口径）",
+  });
+export type NotificationStreamUnreadPayload = z.infer<typeof NotificationStreamUnreadPayloadSchema>;
+
+export const NotificationStreamEventSchema = z
+  .discriminatedUnion("event", [
+    z.object({ event: z.literal("notification"), data: NotificationSchema }),
+    z.object({ event: z.literal("unread"), data: NotificationStreamUnreadPayloadSchema }),
+  ])
+  .openapi("NotificationStreamEvent", {
+    description:
+      "SSE 事件（判别联合）：notification = 单条通知（新投递 / 稍后提醒重提醒）；unread = 未读角标（{ unreadCount }）；心跳为注释行不进本契约",
+  });
+export type NotificationStreamEvent = z.infer<typeof NotificationStreamEventSchema>;
+
+/**
+ * ---- 稍后提醒（S8-3 · M5-04 余项 · C5-05）----
+ *
+ * 语义（定案）：设置 = 该行自动置 `read`（「收下、稍后再看」；角标同步走 `unread` 事件）+ 记一条设置记录；
+ *   触发 = 到点将原行置回 `unread`（角标 +1）+ 推 `notification` 事件 + 回填 `triggeredAt` + 清 `snoozeUntil`；
+ *   到点落在免打扰时段 → 顺延到时段结束（复用投递决策先例）、**不消耗每日上限**（用户主动重提醒，非新投递）；
+ *   重复设置 = 覆盖（旧记录标 `cancelledAt`）+ 写新记录；对已读 / 已处理行均可设置（用户显式意图优先）。
+ * 范围校验：`> now + 最短提前量` 且 `≤ now + 最长提前量`；毫秒位截断（向下取整到秒）后再校验。
+ * 数据面（随实现刀 · 迁移 `0045`）：`notifications.snooze_until` + `notification_snoozes`（一次设置一条）。
+ */
+export const NOTIFICATION_SNOOZE_MIN_LEAD_MS = 5 * 60_000;
+export const NOTIFICATION_SNOOZE_MAX_AHEAD_MS = 30 * 24 * 60 * 60_000;
+
+export const NotificationSnoozeBodySchema = z
+  .object({
+    snoozeUntil: DateTimeSchema.openapi({
+      description: "稍后提醒时刻（绝对时刻；校验范围 = now + 5 分钟 ~ now + 30 天；预设枚举由前端换算）",
+    }),
+  })
+  .openapi("NotificationSnoozeBody", { description: "设置稍后提醒（重复设置 = 覆盖旧记录 + 新记录）" });
+export type NotificationSnoozeBody = z.infer<typeof NotificationSnoozeBodySchema>;
+
+export const NotificationSnoozeRecordSchema = z
+  .object({
+    id: z.number().int().positive().openapi({ description: "记录 id（自增；读面按 id 降序）" }),
+    setAt: DateTimeSchema.openapi({ description: "设置时刻" }),
+    snoozeUntil: DateTimeSchema.openapi({ description: "设定时的稍后提醒时刻" }),
+    triggeredAt: DateTimeSchema.nullable().openapi({ description: "触发时刻；null = 未触发（或已取消）" }),
+    cancelledAt: DateTimeSchema.nullable().openapi({ description: "取消时刻（覆盖 / 手动取消）；null = 未取消" }),
+  })
+  .openapi("NotificationSnoozeRecord", {
+    description: "稍后提醒记录（C5-05「设置与触发记录可查」；一次设置一条，触发 / 取消回填对应时刻）",
+  });
+export type NotificationSnoozeRecord = z.infer<typeof NotificationSnoozeRecordSchema>;
+
+export const NotificationSnoozeListResponseSchema = z
+  .object({ items: z.array(NotificationSnoozeRecordSchema) })
+  .openapi("NotificationSnoozeListResponse", { description: "稍后提醒记录清单（按 id 降序，不翻页）" });
+export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeListResponseSchema>;

@@ -6938,6 +6938,216 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/notifications/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 通知实时流（SSE · S8-3）：事件 notification（单条通知）/ unread（未读角标）；心跳注释行不入契约；重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{id}/snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 设置稍后提醒（C5-05）：绝对时刻（now + 5 分钟 ~ now + 30 天）；设置即置读；重复设置 = 覆盖（旧记录标 cancelledAt + 写新记录） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotificationSnoozeBody"];
+                };
+            };
+            responses: {
+                /** @description 设置后的通知（snoozeUntil 已更新、该行置读） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        /** 取消稍后提醒（C5-05）：幂等（无未触发稍后提醒也 200）；返回更新后的通知（snoozeUntil = null） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 取消后的通知（snoozeUntil = null） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{id}/snoozes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 稍后提醒记录（C5-05「设置与触发记录可查」）：一次设置一条（触发 / 取消回填时刻）；按 id 降序，不翻页 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 稍后提醒记录清单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationSnoozeListResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7894,6 +8104,7 @@ export interface components {
             templateCode: string | null;
             /** @description 合并条数：同期同合并键的消息条数（未合并 = 1） */
             mergedCount: number;
+            snoozeUntil: components["schemas"]["DateTime"] & (string | null);
             deliveredAt: components["schemas"]["DateTime"] & unknown;
             createdAt: components["schemas"]["DateTime"] & unknown;
         };
@@ -7917,6 +8128,23 @@ export interface components {
         /** @description 标记收件箱状态（幂等；已处理可退回已读） */
         NotificationMarkBody: {
             status: components["schemas"]["NotificationStatus"];
+        };
+        /** @description 设置稍后提醒（重复设置 = 覆盖旧记录 + 新记录） */
+        NotificationSnoozeBody: {
+            snoozeUntil: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 稍后提醒记录清单（按 id 降序，不翻页） */
+        NotificationSnoozeListResponse: {
+            items: components["schemas"]["NotificationSnoozeRecord"][];
+        };
+        /** @description 稍后提醒记录（C5-05「设置与触发记录可查」；一次设置一条，触发 / 取消回填对应时刻） */
+        NotificationSnoozeRecord: {
+            /** @description 记录 id（自增；读面按 id 降序） */
+            id: number;
+            setAt: components["schemas"]["DateTime"] & unknown;
+            snoozeUntil: components["schemas"]["DateTime"] & unknown;
+            triggeredAt: components["schemas"]["DateTime"] & (string | null);
+            cancelledAt: components["schemas"]["DateTime"] & (string | null);
         };
         /**
          * @description 收件箱状态：unread 未读 / read 已读 / handled 已处理（标记接口幂等；允许回退到更早状态）
