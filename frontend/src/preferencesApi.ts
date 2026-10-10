@@ -8,7 +8,7 @@
 import { apiRequest, apiSend } from "./api";
 import { clearLegacySavedFilters, readLegacySavedFilters } from "./savedFilters";
 import type { SavedFilter } from "./savedFilters";
-import type { PlanNote } from "./myPlan";
+import type { PlanBoardBgId, PlanNote } from "./myPlan";
 
 /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：tasks / raised 两枚已展开的项目 id 列表（整体替换语义；默认两空数组 = 全部收起）。 */
 export type WorkspaceOpenProjects = {
@@ -16,10 +16,12 @@ export type WorkspaceOpenProjects = {
   raised: string[];
 };
 
-/** 「我的计划」便签墙（Push 268）：按账号存 prefs.myPlanBoard；PATCH 只传 notes / categories，updatedAt 由服务端盖章（从未保存 = null）。 */
+/** 「我的计划」便签墙（Push 268）：按账号存 prefs.myPlanBoard；PATCH 只传 notes / categories / bg（Push 271 起），updatedAt 由服务端盖章（从未保存 = null）。 */
 export type MyPlanBoardPrefs = {
   notes: PlanNote[];
   categories: string[];
+  /** 背景色（Push 271）：white = 与全站页面统一（默认）；cream = MiniMemo 奶白；读侧白名单外收敛为 white。 */
+  bg: PlanBoardBgId;
   updatedAt: string | null;
 };
 
@@ -61,8 +63,8 @@ export function saveWorkspaceOpenProjects(value: WorkspaceOpenProjects): Promise
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { workspaceOpenProjects: value });
 }
 
-/** 「我的计划」便签墙整体替换（Push 268 · 业务口径「数据接入数据库」）：只传这一个键（notes / categories），返回服务端收敛 + 盖章后的全量偏好。 */
-export function saveMyPlanBoard(board: { notes: PlanNote[]; categories: string[] }): Promise<UserPreferences> {
+/** 「我的计划」便签墙整体替换（Push 268 · 业务口径「数据接入数据库」；Push 271 起带上 bg 背景色）：只传这一个键（notes / categories / bg），返回服务端收敛 + 盖章后的全量偏好。 */
+export function saveMyPlanBoard(board: { notes: PlanNote[]; categories: string[]; bg: PlanBoardBgId }): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { myPlanBoard: board });
 }
 
