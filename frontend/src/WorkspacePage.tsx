@@ -76,6 +76,7 @@ import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
 import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
+import { ImageZoomViewer } from "./components/ImageZoomViewer";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
 import { MyPlanBoard } from "./components/MyPlanBoard";
@@ -645,7 +646,9 @@ function CategoryTags({ values }: { values: readonly string[] }) {
   );
 }
 
-/** 附图大图预览层（与「问题追踪」同款：点遮罩 / Esc 关闭；Push 216 口径）。 */
+/** 附图大图预览层（与「问题追踪」同款：点遮罩 / Esc 关闭；Push 216 口径）。
+ *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图改挂共享组件 ImageZoomViewer —— 滚轮 / ＋− / 双击 /
+ *  拖动平移（25% ~ 800%）；点图不再关（留给缩放 / 拖动），关浮层 = 点遮罩 / Esc。 */
 function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -677,8 +680,8 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
       className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
     >
       <figure className="flex max-h-full max-w-full flex-col items-center">
-        <img src={url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
-        <figcaption className="mt-2 text-center text-xs text-white/80">{name}</figcaption>
+        <ImageZoomViewer src={url} alt={name} />
+        <figcaption className="relative z-10 mt-2 rounded-md bg-zinc-900/35 px-2 py-1 text-center text-xs text-white/80 backdrop-blur-sm">{name}</figcaption>
       </figure>
     </div>,
     document.body,

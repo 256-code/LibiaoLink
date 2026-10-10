@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
+import { ImageZoomViewer } from "./ImageZoomViewer";
 import { InlineCell, InlineMemberCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
@@ -804,7 +805,9 @@ function PasteIcon({ className = "h-5 w-5" }: { className?: string }) {
  *  3) 预览层自带 stopPropagation（click / pointerdown）—— React 的 portal 事件沿 **React 树**继续冒泡：
  *     看板卡片的整卡 onClick / onPointerDown 会把「点预览层关掉」当成「点卡片」，预览一关抽屉就被带着打开
  *     （业务截图里「看板预览 + 抽屉预览」两层同屏的另一半原因）。同 InlineEdit 浮层的 portal 口径。
- *  4) Esc 改**捕获阶段**监听并止住传播：预览层在最上层时 Esc 只关预览层（再按一次才轮到抽屉自己的 Esc）。 */
+ *  4) Esc 改**捕获阶段**监听并止住传播：预览层在最上层时 Esc 只关预览层（再按一次才轮到抽屉自己的 Esc）。
+ *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图改挂共享组件 ImageZoomViewer —— 滚轮 / ＋− / 双击 /
+ *  拖动平移（25% ~ 800%）；点图不再关（留给缩放 / 拖动），关浮层 = 点遮罩 / Esc。 */
 function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -834,8 +837,8 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
       className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
     >
       <figure className="flex max-h-full max-w-full flex-col items-center">
-        <img src={url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
-        <figcaption className="mt-2 text-center text-xs text-white/80">{name}</figcaption>
+        <ImageZoomViewer src={url} alt={name} />
+        <figcaption className="relative z-10 mt-2 rounded-md bg-zinc-900/35 px-2 py-1 text-center text-xs text-white/80 backdrop-blur-sm">{name}</figcaption>
       </figure>
     </div>,
     document.body,
