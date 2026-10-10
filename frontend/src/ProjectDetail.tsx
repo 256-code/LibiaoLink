@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { DailySubMenu } from "./components/DailySubMenu";
+import { ExportOverviewButton } from "./components/ExportOverviewButton";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
@@ -17,6 +18,8 @@ import { memberNameOf, type Member } from "./data/members";
 import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
+import { exportProjectOverviewPdf } from "./exportOverviewPdf";
+import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
@@ -816,6 +819,32 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     void persistColumns(next);
   };
 
+  // 导出等待期（导出前先补「项目进展描述」列英译，§6.16 ⑯）：按钮转「生成中…」并防重复点击。
+  const [exportingOverview, setExportingOverview] = useState(false);
+  /** 译文进度（§6.16 ⑳ 导出等待浮层）：done / total；null = 翻译尚未开始（数据准备中，浮层走扫描态）。 */
+  const [exportTranslateProgress, setExportTranslateProgress] = useState<ExportTranslateProgress | null>(null);
+
+  /**
+   * 导出项目总览（PDF · 业务口径 2026-10-09 · §6.16）：把页面当前的 project / tasks / summary 交给报告模块
+   * （exportOverviewPdf.ts）拼 A4 横版报告，唤起系统打印窗口由用户选「另存为 PDF」；
+   * 2026-10-10 起导出前经翻译通道补「项目进展描述」列英文小字（translateApi.ts；通道不通静默降级）；导出不改数据。
+   */
+  const exportOverview = async (): Promise<void> => {
+    if (project === null || exportingOverview) {
+      return;
+    }
+    setExportingOverview(true);
+    setExportTranslateProgress(null);
+    try {
+      await exportProjectOverviewPdf({ project, tasks, summary }, (done, total) => {
+        setExportTranslateProgress({ done, total });
+      });
+    } finally {
+      setExportingOverview(false);
+      setExportTranslateProgress(null);
+    }
+  };
+
   if (project === null) {
     return (
       <div className="min-h-screen">
@@ -899,9 +928,16 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             {/* 标签栏右侧工具区：醒目模式（Push 134）项目总览 / 日报及问题两处都有 —— 业务口径 2026-09-28
                 「增加项目总览 同款醒目模式在问题追踪里面」+「醒目模式放在标签导航栏的最右侧」：日报及问题视图
                 没有列显隐按钮，开关落在标签栏最右侧；两处同一枚开关、同一个账号偏好（Push 171 起按账号存服务端）。
-                列显隐（ColumnPicker）仍按原口径只在项目总览出现。 */}
+                列显隐（ColumnPicker）仍按原口径只在项目总览出现。
+                2026-10-09 起工具区最左侧再补一枚「导出 PDF」（§6.16）：只在项目总览出现，导出的是这块视图的数据。 */}
             {activeView === "项目总览" || activeView === "日报及问题" ? (
               <div className="flex shrink-0 items-center gap-4">
+                {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：排在「醒目模式 / 筛选」左侧（两枚既有按钮位置不动）；
+                    数据 = 页面已取到的 project / tasks / summary，生成 A4 横版报告后在系统打印窗口里另存为 PDF；
+                    任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}
+                {activeView === "项目总览" ? (
+                  <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={() => { void exportOverview(); }} />
+                ) : null}
                 <FocusModeToggle checked={focus} onToggle={(checked) => { void handleToggleFocusMode(checked); }} />
                 {activeView === "项目总览" ? (
                   <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
@@ -1020,6 +1056,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         </div>
         ) : null}
       </main>
+
+      {/* 导出等待浮层（§6.16 ⑳）：翻译进行中显示小车动画 + 预计秒数；打印窗口唤起前随 exportingOverview 收起。 */}
+      {exportingOverview ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
     </div>
   );
 }

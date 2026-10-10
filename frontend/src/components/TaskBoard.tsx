@@ -51,13 +51,16 @@ export const TABLE_COLUMNS: ColumnDef[] = [
   { key: "title", label: "任务描述", width: "340px", min: 340, locked: true },
   { key: "manager", label: "项目经理", width: "0.66fr", min: 66 },
   { key: "owner", label: "任务负责人", width: "0.76fr", min: 76 },
-  { key: "status", label: "任务状态", width: "0.68fr", min: 68 },
+  // 状态列最小宽 84（2026-10-10 业务口径「屏幕太小就要左右滑动，不要牺牲这个组件的可视化」）：
+  // 最长档位「提前完成」实测 = 44px 文字 + 胶囊 / 单元格内衬 36px = 80px（刚好贴边）—— 抬到 84 留余量，
+  // 68px 时代（最小宽下实际只剩约 65px）会截成「提…」/「已…」。
+  { key: "status", label: "任务状态", width: "0.84fr", min: 84 },
   { key: "priority", label: "紧急重要度", width: "0.74fr", min: 74 },
   { key: "onTime", label: "是否按时交付", width: "0.86fr", min: 86 },
   { key: "deliverable", label: "输出成果文件", width: "0.86fr", min: 86 },
   { key: "files", label: "文件", width: "0.96fr", min: 96 },
   { key: "note", label: "项目进展描述", width: "0.9fr", min: 90 },
-  { key: "start", label: "开始日期", width: "0.66fr", min: 66 },
+  { key: "start", label: "开始日期", width: "0.7fr", min: 70 }, // 日期文案（「9月12日」）最小宽下也要完整：66 → 70
   { key: "days", label: "预计所需天数", width: "56px", min: 56, header: "" },
   { key: "due", label: "预计完成日期", width: "0.86fr", min: 86 },
   { key: "headcount", label: "预计所需施工人数", width: "1.08fr", min: 108 },
@@ -67,9 +70,12 @@ export const TABLE_COLUMNS: ColumnDef[] = [
 
 export type VisibleColumns = Partial<Record<ColumnKey, boolean>>;
 
-export const DEFAULT_VISIBLE_COLUMNS: VisibleColumns = {
-  headcount: false,
-};
+/**
+ * 默认显示的全部列（2026-10-10 业务口径「表格字段默认全部加上去吧 全选」）——
+ * 「预计所需施工人数」原先默认隐藏，现改为**默认全选**：没有偏好记录（新账号 / 清空偏好）时表头 15 列一个不少，
+ * 列显隐面板的「重置」也回到这份全选默认（落库值仍是「隐藏列 key 列表」，全选 = 空数组 = 不写任何隐藏列）。
+ */
+export const DEFAULT_VISIBLE_COLUMNS: VisibleColumns = {};
 
 export function resolveColumns(visible: VisibleColumns): ColumnDef[] {
   const columns = TABLE_COLUMNS.filter((column) => column.locked === true || visible[column.key] !== false);
@@ -78,6 +84,28 @@ export function resolveColumns(visible: VisibleColumns): ColumnDef[] {
     return columns.filter((column) => column.key !== "days");
   }
   return columns;
+}
+
+/**
+ * 表头 / 数据行的左右内衬（`px-5` = 20px × 2）：算表格最小宽度时必须带上 —— 内衬吃的是同一根 grid 的可用宽，
+ * 漏掉它每个 `fr` 列都会各少约 4%（2026-10-10 业务口径「屏幕太小就要左右滑动，不要牺牲这个组件的可视化」：
+ * 状态胶囊 / 日期在最小宽下被挤到省略号，根因就是这 40px 没算进去）。
+ */
+export const TABLE_ROW_PADDING_X = 40;
+
+/**
+ * 网格列模板：`fr` 列一律套 `minmax(最小宽, fr)` —— 视口不够时列**不再被压到最小宽以下**，
+ * 而是整张表撑到最小宽、由外层横向滚动接住（`#task-board-scroll` / 工作台表同套模板）。
+ */
+export function tableGridTemplate(columns: readonly ColumnDef[]): string {
+  return columns
+    .map((column) => (column.width.endsWith("fr") ? "minmax(" + column.min + "px, " + column.width + ")" : column.width))
+    .join(" ");
+}
+
+/** 表格最小宽度 = 各显示列最小宽之和 + 行内衬（`TABLE_ROW_PADDING_X`）：窄于它的视口出横向滚动，各列保持最小宽不变。 */
+export function tableMinWidth(columns: readonly ColumnDef[]): number {
+  return columns.reduce((total, column) => total + column.min, TABLE_ROW_PADDING_X);
 }
 
 /**
@@ -667,7 +695,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
               ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]"
               : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
         }
-        style={{ gridTemplateColumns: columns.map((column) => column.width).join(" ") }}
+        style={{ gridTemplateColumns: tableGridTemplate(columns) }}
       >
         {columns.map((column) => (
           <Fragment key={column.key}>
@@ -752,8 +780,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
    *  先落 id、列表重取回来才找得到行（找得到才开抽屉）。 */
   const drawerTask = selectedTaskId === null ? null : tasks.find((task) => task.id === selectedTaskId) ?? null;
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
-  const gridTemplate = columns.map((column) => column.width).join(" ");
-  const minWidth = columns.reduce((total, column) => total + column.min, 0);
+  const gridTemplate = tableGridTemplate(columns);
+  const minWidth = tableMinWidth(columns);
   /** 项目里已添加的节点判重键（见 `addedNodeKeysOf`）：添加卡片的节点 / 模板条目按它显示「已添加」并跳过重复。 */
   const addedNodeKeys = addedNodeKeysOf(tasks);
   /** 来源节点 id 集合（见 `addedNodeIdsOf` · M3-07 刀 3）：精确判重，优先于上面的同阶段同名兜底。 */
