@@ -1013,3 +1013,289 @@ body {
     transition: none;
   }
 }
+
+/* ============================================================================
+   项目总览「导出 PDF」按钮（业务口径 2026-10-09：按钮放在项目总览工具区，导出项目总览数据给客户看；
+   口径见 前端功能需求.md §6.16）。样张原为 styled-components（白底胶囊 + 悬停绿色下载层下滑），
+   按仓库既有口径改写成普通 CSS 类、**不引入 styled-components**（与顶层导航 / 看板卡片样张同一做法）；
+   尺寸收紧到标签栏右侧工具区的 h-8（32px）、文字为「导出 PDF」。
+   2026-10-09 追订「取消绿色弹出 和鼠标放置上去的提示」：绿色下载层（含箭头浮动动效）与鼠标悬停
+   tooltip 已撤，只留静止白面。
+   2026-10-10 追订「导出按钮 鼠标触碰效果 和筛选统一一下 统一成筛选的效果」：悬停那套多层大投影撤掉，
+   改成与工具区「筛选」按钮同一套悬停反馈 —— 描边 zinc-200 → zinc-300、字色 → zinc-900、150ms 过渡
+   （静止态的白面 / 字号 / 字重仍按 2026-10-09 样张，不动）。
+   ============================================================================ */
+.export-docs-btn {
+  position: relative;
+  display: inline-flex;
+  z-index: 1;
+  border: 0;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #131313;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+}
+
+.export-docs-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.export-docs-btn:focus-visible {
+  outline: 2px solid rgba(251, 191, 36, 0.7);
+  outline-offset: 2px;
+}
+
+.export-docs-btn__face {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background-color: #ffffff;
+  border: solid 1px #e4e4e7; /* zinc-200 —— 与「筛选」同一档描边 */
+  transition: border-color 0.15s ease, color 0.15s ease; /* 150ms —— 与「筛选」的 hover 过渡同档 */
+}
+
+/* 悬停 = 工具区「筛选」按钮同一套效果（描边 zinc-200 → zinc-300、字色 → zinc-900），不再有多层投影。 */
+.export-docs-btn:hover:not(:disabled) .export-docs-btn__face {
+  border-color: #d4d4d8; /* zinc-300 */
+  color: #18181b; /* zinc-900 */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-docs-btn__face {
+    transition: none;
+  }
+}
+
+/* ── 导出等待浮层（§6.16 ⑳ · 2026-10-10）：全屏浅底 + 白卡；卡片里「品牌蓝小车 + 流动路面」循环前进。
+      层级 90：盖过抽屉（z-50）/ 预览（z-60）/ 变更弹窗（z-70）。 ── */
+
+.export-progress {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(24, 24, 27, 0.22);
+  backdrop-filter: blur(2px);
+  animation: ll-fade-in 160ms ease-out both;
+}
+
+.export-progress__card {
+  width: 364px;
+  padding: 18px 24px 22px;
+  border-radius: 18px;
+  background-color: #ffffff;
+  box-shadow: 0 30px 70px -24px rgba(15, 23, 42, 0.5), 0 0 0 1px rgba(24, 24, 27, 0.05);
+  animation: ll-menu-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 舞台：小车车道（底部虚线）+ 小车本体（进出自舞台两端，循环首尾无跳变）。 */
+.export-progress__stage {
+  position: relative;
+  height: 92px;
+  margin: -2px 0 10px;
+  overflow: hidden;
+}
+
+/* 路面：虚线整体向左流动（与小车行进反向），读起来像车在前行。 */
+.export-progress__road {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  height: 2px;
+  background-image: repeating-linear-gradient(90deg, #d4d4d8 0 12px, transparent 12px 24px);
+  background-size: 24px 2px;
+  animation: ll-export-road 700ms linear infinite;
+}
+
+@keyframes ll-export-road {
+  from {
+    background-position-x: 0;
+  }
+  to {
+    background-position-x: -24px;
+  }
+}
+
+.export-progress__cart {
+  position: absolute;
+  bottom: 12px;
+  left: 0;
+  width: 66px;
+  height: 44px;
+  animation: ll-export-drive 3.4s linear infinite;
+}
+
+@keyframes ll-export-drive {
+  from {
+    transform: translateX(-84px);
+  }
+  to {
+    transform: translateX(332px);
+  }
+}
+
+/* 车身颠簸（与轮下阴影呼吸同频 0.85s）：幅度 3px，稳但不僵。 */
+.export-progress__cart-bob {
+  position: absolute;
+  inset: 0;
+  animation: ll-export-bob 850ms ease-in-out infinite;
+}
+
+@keyframes ll-export-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.export-progress__cart-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* 地面软阴影：随颠簸收放，补一点体积感。 */
+.export-progress__cart-shadow {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -2px;
+  height: 6px;
+  border-radius: 999px;
+  background: radial-gradient(closest-side, rgba(9, 9, 11, 0.18), rgba(9, 9, 11, 0));
+  animation: ll-export-shade 850ms ease-in-out infinite;
+}
+
+@keyframes ll-export-shade {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scaleX(0.8);
+    opacity: 0.5;
+  }
+}
+
+/* 车尾两道速度线：向右拉长 + 透明度呼吸（错峰 140ms）。 */
+.export-progress__trail {
+  position: absolute;
+  border-radius: 999px;
+  transform-origin: 100% 50%;
+  background: linear-gradient(90deg, rgba(7, 119, 248, 0), rgba(7, 119, 248, 0.35));
+}
+
+.export-progress__trail--long {
+  left: -34px;
+  top: 42%;
+  width: 30px;
+  height: 3px;
+  animation: ll-export-trail 640ms ease-in-out infinite;
+}
+
+.export-progress__trail--short {
+  left: -26px;
+  top: 62%;
+  width: 20px;
+  height: 2px;
+  animation: ll-export-trail 640ms ease-in-out 140ms infinite;
+}
+
+@keyframes ll-export-trail {
+  0%,
+  100% {
+    transform: scaleX(0.45);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+}
+
+.export-progress__title {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #18181b;
+}
+
+.export-progress__hint {
+  margin-top: 5px;
+  text-align: center;
+  font-size: 12px;
+  color: #71717a;
+}
+
+/* 秒数强调：品牌蓝 + 等宽数字（跳秒时不抖宽）。 */
+.export-progress__num {
+  font-weight: 600;
+  color: #0777f8;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-progress__bar {
+  position: relative;
+  margin-top: 14px;
+  height: 6px;
+  border-radius: 999px;
+  background-color: #e4e4e7;
+  overflow: hidden;
+}
+
+.export-progress__bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0777f8, #4eb0ff);
+  transition: width 300ms ease;
+}
+
+/* 未拿到总量（数据准备中）：扫描式来回，不假装有进度。 */
+.export-progress__bar.is-waiting .export-progress__bar-fill {
+  width: 32%;
+  animation: ll-export-scan 1.15s ease-in-out infinite;
+}
+
+@keyframes ll-export-scan {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-progress,
+  .export-progress__card,
+  .export-progress__road,
+  .export-progress__cart,
+  .export-progress__cart-bob,
+  .export-progress__cart-shadow,
+  .export-progress__trail--long,
+  .export-progress__trail--short,
+  .export-progress__bar.is-waiting .export-progress__bar-fill {
+    animation: none;
+  }
+}

@@ -84,6 +84,9 @@ export const TEMP_TASK_STAGE = "临时任务";
 /** 四格进度条的格数。 */
 export const PROGRESS_STEPS = 4;
 
+/** 四格进度的档位名（0 格「未开始」… 4 格「已完成」；任务表 / 抽屉 / 看板 / 导出报告共用同一套口径）。 */
+export const PROGRESS_LABELS: readonly string[] = ["未开始", "刚开工", "完成一半", "快完成了", "已完成"];
+
 /** 进度（0~1 小数）→ 点亮的格数（0~4，四舍五入）。 */
 export function progressStep(progress: number, steps: number = PROGRESS_STEPS): number {
   return Math.max(0, Math.min(steps, Math.round(progress * steps)));
