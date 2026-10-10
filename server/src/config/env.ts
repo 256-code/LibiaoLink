@@ -140,7 +140,21 @@ export const EnvSchema = z
     NOTIFY_SNOOZE_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).max(3600000).default(60000),
     /** 单轮稍后提醒扫描条数上限。 */
     NOTIFY_SNOOZE_BATCH: z.coerce.number().int().min(1).max(500).default(50),
-    // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
+    // ---- 企微通道（M5-03-1 · S8-1：客户端内核 · token 单飞 / 限速桶 / 错误码分类） ----
+    /** 企微 API 基址：联调 / stub 回放可替换；生产 = https://qyapi.weixin.qq.com。 */
+    WECOM_BASE_URL: z.string().min(1).default("https://qyapi.weixin.qq.com"),
+    /** 自建应用 CorpID / AgentId / Secret（Secret 属凭据，只走密钥渠道，真实值不落仓库；生产必填校验随 M5-03-3 接线启用）。 */
+    WECOM_CORP_ID: z.string().default(""),
+    WECOM_AGENT_ID: z.coerce.number().int().min(0).default(0),
+    WECOM_APP_SECRET: z.string().default(""),
+    /** 单次 HTTP 超时（毫秒）：gettoken / message/send / webhook 共用。 */
+    WECOM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(10000),
+    /** token 提前刷新余量（毫秒）：过期前多久主动重取（token_invalid 另走失效重取一次）。 */
+    WECOM_TOKEN_SAFETY_MS: z.coerce.number().int().min(0).max(3600000).default(300000),
+    /** 限速窗口（毫秒）+ 窗口内上限（0 = 未启用）：app 待 A5 实测回填；group = 群机器人文档值 20 条/分钟。 */
+    WECOM_RATE_WINDOW_MS: z.coerce.number().int().min(1000).max(3600000).default(60000),
+    WECOM_RATE_LIMIT_APP: z.coerce.number().int().min(0).max(1000000).default(0),
+    WECOM_RATE_LIMIT_GROUP: z.coerce.number().int().min(0).max(100000).default(20),    // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
     /** 调度任务失败最大尝试次数（含首次）：到顶置 jobs.status = failed（人工复位后继续）。 */
