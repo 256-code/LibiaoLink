@@ -31,6 +31,8 @@ type CategoryFilterSidebarProps = {
   regions: FacetOption[];
   types: FacetOption[];
   managers: FacetOption[];
+  /** 项目状态计数（Push 262 追订）：固定四档 active / paused / done / archived。 */
+  statuses: FacetOption[];
   /** 常用筛选胶囊的命中数（按组合单独取 total；缺数据按 0 显示）。 */
   savedFilterCounts: Record<string, number>;
   /** 时间区间选择器的提示日（当前项目集里最新的一天，YYYY-MM-DD）。 */
@@ -38,6 +40,7 @@ type CategoryFilterSidebarProps = {
   selectedRegions: string[];
   selectedManagerIds: string[];
   selectedTypes: string[];
+  selectedStatuses: string[];
   dateRange: DateRange | null;
   savedFilters: SavedFilter[];
   appliedSavedFilterId: string | null;
@@ -46,6 +49,7 @@ type CategoryFilterSidebarProps = {
   onToggleRegions: (regions: string[], checked: boolean) => void;
   onToggleManager: (managerId: string) => void;
   onToggleType: (projectType: string) => void;
+  onToggleStatus: (status: string) => void;
   onDateRangeChange: (range: DateRange | null) => void;
   onApplySavedFilter: (filter: SavedFilter) => void;
   onDeleteSavedFilter: (id: string) => void;
@@ -75,11 +79,13 @@ export function CategoryFilterSidebar({
   regions,
   types,
   managers,
+  statuses,
   savedFilterCounts,
   newestDay,
   selectedRegions,
   selectedManagerIds,
   selectedTypes,
+  selectedStatuses,
   dateRange,
   savedFilters,
   appliedSavedFilterId,
@@ -87,6 +93,7 @@ export function CategoryFilterSidebar({
   onToggleRegions,
   onToggleManager,
   onToggleType,
+  onToggleStatus,
   onDateRangeChange,
   onApplySavedFilter,
   onDeleteSavedFilter,
@@ -125,7 +132,11 @@ export function CategoryFilterSidebar({
   }, [open]);
 
   const activeCount =
-    selectedRegions.length + selectedManagerIds.length + selectedTypes.length + (dateRange === null ? 0 : 1);
+    selectedRegions.length +
+    selectedManagerIds.length +
+    selectedTypes.length +
+    selectedStatuses.length +
+    (dateRange === null ? 0 : 1);
 
   // 编辑态下四组胶囊改「勾选到草稿」；非编辑态维持原有「点一下改当前筛选」
   const regionSelection = compose === null ? selectedRegions : compose.criteria.regions;
@@ -215,6 +226,13 @@ export function CategoryFilterSidebar({
     }
     patchDraft({ projectTypes: toggleValue(compose.criteria.projectTypes, projectType) });
   };
+  /**
+   * 项目状态（Push 262 追订）：只作用于当前列表 —— 该维度不参与常用筛选的组合保存
+   * （服务端口径 homeSavedFilters 暂不含 statuses，不扩契约）。
+   */
+  const handleToggleStatus = (status: string): void => {
+    onToggleStatus(status);
+  };
   const handleDateRangeChange = (range: DateRange | null) => {
     if (compose === null) {
       onDateRangeChange(range);
@@ -285,23 +303,6 @@ export function CategoryFilterSidebar({
           " fixed bottom-0 left-0 top-16 z-20 flex w-[280px] flex-col transition-transform duration-300 ease-out " + GLASS_PANEL
         }
       >
-        <div className="flex items-start justify-between border-b border-zinc-200/70 px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-zinc-900">分类筛选</p>
-            <p className="mt-0.5 text-xs text-zinc-400">按常看组合、地区、项目类型、项目经理、项目时间筛选项目</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="关闭筛选"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-
         <ScrollArea viewportClassName="min-h-0 flex-1" className="space-y-6 px-5 py-5" ariaLabel="筛选条件">
           <section>
             <div className="flex items-center justify-between gap-2">
@@ -558,6 +559,13 @@ export function CategoryFilterSidebar({
             <p className="text-sm font-semibold tracking-wide text-zinc-700">项目经理</p>
             {renderChips(managers, managerSelection, handleToggleManager)}
           </section>
+          <section data-status-section="true">
+            <p className="text-sm font-semibold tracking-wide text-zinc-700">项目状态</p>
+            {renderChips(statuses, selectedStatuses, handleToggleStatus)}
+            {compose === null ? null : (
+              <p className="mt-2 text-[11px] leading-4 text-zinc-400">项目状态是当前列表的即时筛选，不保存进常用筛选。</p>
+            )}
+          </section>
           <section>
             <p className="flex items-center gap-1.5 text-sm font-semibold tracking-wide text-zinc-700">
               项目时间
@@ -587,6 +595,7 @@ export function CategoryFilterSidebar({
           </span>
           <button
             type="button"
+            data-filter-reset="true"
             onClick={onReset}
             disabled={activeCount === 0}
             className={

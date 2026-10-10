@@ -1213,6 +1213,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/tasks/{taskId}/unfinalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskUnfinalizeBody"];
+                };
+            };
+            responses: {
+                /** @description 取消定档后的任务（Task 同形；幂等路径原样返回） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/tasks/batch": {
         parameters: {
             query?: never;
@@ -2377,18 +2449,20 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删） */
-                    objectType?: components["schemas"]["AuditObjectType"];
+                    /** @description 对象类型（多值逗号分隔，取值见 AuditObjectType） */
+                    objectType?: string;
                     /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
                     objectId?: string;
-                    /** @description 操作人（按人检索 —— h7 验收项②） */
-                    actorId?: components["schemas"]["Uuid"] & unknown;
-                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝 */
-                    action?: components["schemas"]["AuditAction"];
-                    /** @description result=denied 即越权尝试（C7-03） */
-                    result?: components["schemas"]["AuditResult"] & unknown;
-                    /** @description UUID（主键与关联 ID） */
-                    projectId?: components["schemas"]["Uuid"];
+                    /** @description 操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②） */
+                    actorId?: string;
+                    /** @description 审计动作（多值逗号分隔，取值见 AuditAction） */
+                    action?: string;
+                    /** @description 审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03） */
+                    result?: string;
+                    /** @description 所属项目（多值逗号分隔） */
+                    projectId?: string;
+                    /** @description 关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感） */
+                    q?: string;
                     /** @description 时间下界（含，ISO8601） */
                     from?: components["schemas"]["DateTime"] & unknown;
                     /** @description 时间上界（含，ISO8601） */
@@ -8777,6 +8851,10 @@ export interface components {
             /** @description 全量替换节点顺序（含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
+        };
+        /** @description 任务取消定档提交（version = 抽屉当前行版本） */
+        TaskUnfinalizeBody: {
+            version: components["schemas"]["Version"] & unknown;
         };
         /** @description 编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架 */
         TaskUpdateBody: {

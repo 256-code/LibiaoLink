@@ -79,21 +79,25 @@ export const AuditLogSchema = z
 
 export const AuditLogListQuerySchema = z
   .object({
-    objectType: AuditObjectTypeSchema.optional(),
+    objectType: z.string().optional().openapi({ description: "对象类型（多值逗号分隔，取值见 AuditObjectType）" }),
     objectId: z.string().min(1).max(200).optional().openapi({
       description: "对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②）",
     }),
-    actorId: UuidSchema.optional().openapi({ description: "操作人（按人检索 —— h7 验收项②）" }),
-    action: AuditActionSchema.optional(),
-    result: AuditResultSchema.optional().openapi({ description: "result=denied 即越权尝试（C7-03）" }),
-    projectId: UuidSchema.optional(),
+    actorId: z.string().optional().openapi({ description: "操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②）" }),
+    action: z.string().optional().openapi({ description: "审计动作（多值逗号分隔，取值见 AuditAction）" }),
+    result: z.string().optional().openapi({ description: "审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03）" }),
+    projectId: z.string().optional().openapi({ description: "所属项目（多值逗号分隔）" }),
+    q: z.string().max(200).optional().openapi({
+      description: "关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感）",
+    }),
     from: DateTimeSchema.optional().openapi({ description: "时间下界（含，ISO8601）" }),
     to: DateTimeSchema.optional().openapi({ description: "时间上界（含，ISO8601）" }),
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
   })
   .openapi("AuditLogListQuery", {
-    description: "审计检索（C7-04）：按对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间过滤；固定 occurredAt 降序",
+    description:
+      "审计检索（C7-04）：按关键字 / 对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间过滤；多个筛选值以逗号分隔（去重保序，2026-10-09 追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」），逐值白名单校验、非法值 400；固定 occurredAt 降序",
   });
 
 export const AuditLogListResponseSchema = paginated(AuditLogSchema).openapi("AuditLogListResponse");

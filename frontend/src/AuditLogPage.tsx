@@ -3,7 +3,8 @@ import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
 import { DateRangePicker, type DateRange } from "./components/DateRangePicker";
 import { Loader } from "./components/Loader";
-import { SelectMenu } from "./components/SelectMenu";
+import { SearchInput } from "./components/SearchInput";
+import { SearchSelect } from "./components/SearchSelect";
 import type { DirectoryUser } from "./directory";
 import { fetchProjectList, formatDateTime, type ApiProject } from "./projectApi";
 import {
@@ -31,8 +32,9 @@ import type { MeResponse } from "./types";
  * 操作记录页（C7-04「管理员查询页」· u12 · 2026-10-08）。
  * 入口 = 右上角头像菜单「退出登录」下方的「操作记录」（AppHeader；仅 audit.view 渲染，服务端逐请求仍是最终裁决）。
  * 口径：全站关键操作留痕（谁 / 何时 / 动作 / 对象 / 摘要 / 结果），occurredAt 倒序、分页 50；
- * 筛选 = 操作人 / 动作 / 对象类型 / 结果 / 项目 / 时间区间 —— 与首页列表同一套「地址即状态」（useHashRoute 的 AuditQueryState，
- * 可分享 / 可收藏 / 刷新不丢）。越权尝试（result=denied）在结果列一眼可见（C7-03）。
+ * 筛选 = 关键字（Push 260 搜索：操作内容 / 操作人姓名，250ms 防抖）/ 操作人 / 动作 / 对象类型 / 结果 / 项目 / 时间区间 ——
+ * 与首页列表同一套「地址即状态」（useHashRoute 的 AuditQueryState，可分享 / 可收藏 / 刷新不丢）。
+ * 越权尝试（result=denied）在结果列一眼可见（C7-03）。
  * 失败口径：403 = 无 audit.view（菜单本不渲染，直链访问兜底提示）；其余错误给「重试」。
  */
 
@@ -51,6 +53,17 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
   const [state, setState] = useState<AuditPageState>({ kind: "loading" });
   const [reloadTick, setReloadTick] = useState(0);
   const [projects, setProjects] = useState<ApiProject[]>([]);
+
+  // 关键字防抖（Push 260 · 与首页列表同口径）：输入时不每个字符打一次接口（250ms 内的最后一次生效）
+  const [debouncedKeyword, setDebouncedKeyword] = useState(query.keyword ?? "");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedKeyword(query.keyword ?? "");
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [query.keyword]);
 
   // 项目筛选 / 项目列的选项（一次拉满；失败只影响选项丰富度，不阻塞主列表）
   useEffect(() => {
@@ -71,15 +84,25 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
     };
   }, []);
 
+  // 多选筛选键（2026-10-09 追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」）：数组引用每次解析都会变，
+  // 用逗号串当依赖键，防误触发重复取数。
+  const actorKey = query.actorIds.join(",");
+  const actionKey = query.actions.join(",");
+  const objectTypeKey = query.objectTypes.join(",");
+  const resultKey = query.results.join(",");
+  const projectKey = query.projectIds.join(",");
+
   useEffect(() => {
     let alive = true;
     setState({ kind: "loading" });
+    const keyword = debouncedKeyword.trim();
     fetchAuditLogs({
-      actorId: query.actorId,
-      action: query.action,
-      objectType: query.objectType,
-      result: query.result,
-      projectId: query.projectId,
+      keyword: keyword === "" ? null : keyword,
+      actorIds: query.actorIds,
+      actions: query.actions,
+      objectTypes: query.objectTypes,
+      results: query.results,
+      projectIds: query.projectIds,
       from: query.from,
       to: query.to,
       page: query.page,
@@ -106,7 +129,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
     return () => {
       alive = false;
     };
-  }, [query.actorId, query.action, query.objectType, query.result, query.projectId, query.from, query.to, query.page, reloadTick]);
+  }, [debouncedKeyword, actorKey, actionKey, objectTypeKey, resultKey, projectKey, query.from, query.to, query.page, reloadTick]);
 
   const patchFilter = (patch: Partial<AuditQueryState>): void => {
     onChangeQuery({ ...query, ...patch, page: 1 });
@@ -116,20 +139,23 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
   };
 
   const hasFilter =
-    query.actorId !== null ||
-    query.action !== null ||
-    query.objectType !== null ||
-    query.result !== null ||
-    query.projectId !== null ||
+    query.keyword !== null ||
+    query.actorIds.length > 0 ||
+    query.actions.length > 0 ||
+    query.objectTypes.length > 0 ||
+    query.results.length > 0 ||
+    query.projectIds.length > 0 ||
     query.from !== null ||
     query.to !== null;
 
-  const actorOptions = [{ value: "", label: "全部操作人" }].concat(directory.map((user) => ({ value: user.id, label: user.displayName })));
-  const actionOptions = [{ value: "", label: "全部动作" }].concat(AUDIT_ACTIONS.map((action) => ({ value: action, label: auditLabelOf(AUDIT_ACTION_LABELS, action) })));
-  const objectTypeOptions = [{ value: "", label: "全部对象" }].concat(AUDIT_OBJECT_TYPES.map((type) => ({ value: type, label: auditLabelOf(AUDIT_OBJECT_TYPE_LABELS, type) })));
-  const resultOptions = [{ value: "", label: "全部结果" }].concat(AUDIT_RESULTS.map((result) => ({ value: result, label: auditLabelOf(AUDIT_RESULT_LABELS, result) })));
-  const projectOptions = [{ value: "", label: "全部项目" }].concat(projects.map((project) => ({ value: project.id, label: project.code + " · " + project.name })));
+  // 五枚筛选均为多选（2026-10-09 追订）：不再有「全部…」选项行，空选占位交给 placeholder、触发器显示筛选名称 + 浅灰数量。
+  const actorOptions = directory.map((user) => ({ value: user.id, label: user.displayName }));
+  const actionOptions = AUDIT_ACTIONS.map((action) => ({ value: action, label: auditLabelOf(AUDIT_ACTION_LABELS, action) }));
+  const objectTypeOptions = AUDIT_OBJECT_TYPES.map((type) => ({ value: type, label: auditLabelOf(AUDIT_OBJECT_TYPE_LABELS, type) }));
+  const resultOptions = AUDIT_RESULTS.map((result) => ({ value: result, label: auditLabelOf(AUDIT_RESULT_LABELS, result) }));
+  const projectOptions = projects.map((project) => ({ value: project.id, label: project.code + " · " + project.name }));
   const projectCodeById = new Map(projects.map((project) => [project.id, project.code] as const));
+  const projectNameById = new Map(projects.map((project) => [project.id, project.name] as const));
   const userNameById = new Map(directory.map((user) => [user.id, user.displayName] as const));
   const formatContext: AuditFormatContext = { userNameById, projectCodeById };
 
@@ -156,53 +182,103 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
           </header>
 
           <section className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2.5">
-            <span data-audit-filter="actor" className="w-40 shrink-0">
-              <SelectMenu
+            <span data-audit-filter="keyword" className="w-72 shrink-0">
+              <SearchInput
+                value={query.keyword ?? ""}
+                onChange={(value) => {
+                  patchFilter({ keyword: value === "" ? null : value });
+                }}
+                placeholder="搜索操作内容或操作人"
+                className="w-full"
+              />
+            </span>
+            <span data-audit-filter="actor" className="w-36 shrink-0">
+              <SearchSelect
+                mode="multi"
                 ariaLabel="按操作人筛选"
-                value={query.actorId ?? ""}
+                values={query.actorIds}
                 options={actorOptions}
-                onChange={(value) => {
-                  patchFilter({ actorId: value === "" ? null : value });
+                placeholder="全部操作人"
+                searchPlaceholder="搜索姓名"
+                label="操作人"
+                onToggle={(value) => {
+                  patchFilter({
+                    actorIds: query.actorIds.includes(value)
+                      ? query.actorIds.filter((id) => id !== value)
+                      : query.actorIds.concat(value),
+                  });
                 }}
               />
             </span>
-            <span data-audit-filter="action" className="w-32 shrink-0">
-              <SelectMenu
+            <span data-audit-filter="action" className="w-28 shrink-0">
+              <SearchSelect
+                mode="multi"
                 ariaLabel="按动作筛选"
-                value={query.action ?? ""}
+                values={query.actions}
                 options={actionOptions}
-                onChange={(value) => {
-                  patchFilter({ action: value === "" ? null : value });
+                placeholder="全部动作"
+                searchPlaceholder="搜索动作"
+                label="动作"
+                onToggle={(value) => {
+                  patchFilter({
+                    actions: query.actions.includes(value)
+                      ? query.actions.filter((action) => action !== value)
+                      : query.actions.concat(value),
+                  });
                 }}
               />
             </span>
-            <span data-audit-filter="objectType" className="w-36 shrink-0">
-              <SelectMenu
+            <span data-audit-filter="objectType" className="w-32 shrink-0">
+              <SearchSelect
+                mode="multi"
                 ariaLabel="按对象类型筛选"
-                value={query.objectType ?? ""}
+                values={query.objectTypes}
                 options={objectTypeOptions}
-                onChange={(value) => {
-                  patchFilter({ objectType: value === "" ? null : value });
+                placeholder="全部对象"
+                searchPlaceholder="搜索对象类型"
+                label="对象类型"
+                onToggle={(value) => {
+                  patchFilter({
+                    objectTypes: query.objectTypes.includes(value)
+                      ? query.objectTypes.filter((type) => type !== value)
+                      : query.objectTypes.concat(value),
+                  });
                 }}
               />
             </span>
-            <span data-audit-filter="result" className="w-32 shrink-0">
-              <SelectMenu
+            <span data-audit-filter="result" className="w-28 shrink-0">
+              <SearchSelect
+                mode="multi"
                 ariaLabel="按结果筛选"
-                value={query.result ?? ""}
+                values={query.results}
                 options={resultOptions}
-                onChange={(value) => {
-                  patchFilter({ result: value === "" ? null : value });
+                placeholder="全部结果"
+                searchPlaceholder="搜索结果"
+                label="结果"
+                onToggle={(value) => {
+                  patchFilter({
+                    results: query.results.includes(value)
+                      ? query.results.filter((result) => result !== value)
+                      : query.results.concat(value),
+                  });
                 }}
               />
             </span>
-            <span data-audit-filter="project" className="w-48 shrink-0">
-              <SelectMenu
+            <span data-audit-filter="project" className="w-44 shrink-0">
+              <SearchSelect
+                mode="multi"
                 ariaLabel="按项目筛选"
-                value={query.projectId ?? ""}
+                values={query.projectIds}
                 options={projectOptions}
-                onChange={(value) => {
-                  patchFilter({ projectId: value === "" ? null : value });
+                placeholder="全部项目"
+                searchPlaceholder="搜索项目编号 / 名称"
+                label="项目"
+                onToggle={(value) => {
+                  patchFilter({
+                    projectIds: query.projectIds.includes(value)
+                      ? query.projectIds.filter((id) => id !== value)
+                      : query.projectIds.concat(value),
+                  });
                 }}
               />
             </span>
@@ -254,7 +330,11 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
 
           {state.kind === "ready" && state.result.items.length === 0 ? (
             <div data-audit-empty="true" className="rounded-xl border border-zinc-200 bg-white px-4 py-12 text-center text-sm text-zinc-500">
-              {hasFilter ? "当前筛选下没有操作记录，可清除筛选后重试。" : "暂无操作记录。"}
+              {query.keyword !== null
+                ? "没有匹配「" + query.keyword + "」的操作记录，可调整关键词或清除筛选。"
+                : hasFilter
+                  ? "当前筛选下没有操作记录，可清除筛选后重试。"
+                  : "暂无操作记录。"}
             </div>
           ) : null}
 
@@ -347,8 +427,22 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                             {auditLabelOf(AUDIT_RESULT_LABELS, item.result)}
                           </span>
                         </td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
-                          {item.projectId === null ? "—" : projectCodeById.get(item.projectId) ?? "—"}
+                        <td className="border-b border-zinc-100 px-4 py-3">
+                          {item.projectId === null ? (
+                            <span className="text-zinc-400">—</span>
+                          ) : (
+                            <div
+                              data-audit-project={item.projectId}
+                              data-audit-project-name={projectNameById.get(item.projectId) ?? ""}
+                              data-audit-project-code={projectCodeById.get(item.projectId) ?? ""}
+                              className="flex max-w-[240px] flex-col gap-0.5"
+                            >
+                              <span className="truncate font-medium text-zinc-700" title={projectNameById.get(item.projectId) ?? ""}>
+                                {projectNameById.get(item.projectId) ?? "—"}
+                              </span>
+                              <span className="whitespace-nowrap text-xs text-zinc-500">{projectCodeById.get(item.projectId) ?? "—"}</span>
+                            </div>
+                          )}
                         </td>
                       </tr>
                       );

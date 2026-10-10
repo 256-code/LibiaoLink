@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AuditLogPage } from "./AuditLogPage";
+import { FileLibraryPage } from "./FileLibraryPage";
 import Hub from "./Hub";
 import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
@@ -7,7 +8,8 @@ import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
-import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
+import { Toast } from "./components/Toast";
+import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
 import { hasPermission, loadMyPermissions, type MyPermissions } from "./permissions";
 import {
@@ -21,11 +23,11 @@ import {
   type Dicts,
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
+import { archiveProject, createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
-import { replaceAuditQuery, replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
-import type { MeResponse, Project } from "./types";
+import { replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
+import { projectStatusOf, type MeResponse, type Project } from "./types";
 
 type ViewState =
   | { kind: "loading" }
@@ -44,6 +46,12 @@ function errorMessageOf(error: unknown, fallback: string): string {
     }
     if (error.code === "PROJECT_ARCHIVED") {
       return "项目已归档，不能修改。";
+    }
+    if (error.code === "ARCHIVE_NOT_READY") {
+      return "项目尚未完成验收，不能归档（归档需先完成验收阶段）。";
+    }
+    if (error.code === "ARCHIVE_GATE_NOT_PASSED") {
+      return "归档门禁未通过（有缺项），请重试并在弹窗内确认。";
     }
     if (error.code === "DICT_ITEM_EXISTS") {
       return "该名称已被占用：请换一个名称，或联系管理员处理。";
@@ -65,6 +73,27 @@ function errorMessageOf(error: unknown, fallback: string): string {
     return error.message + "（" + error.code + "）";
   }
   return fallback + "：网络异常，请稍后重试。";
+}
+
+/**
+ * 编辑弹窗五字段与项目现值是否有差异（Push 262）：「已归档」保存要先落其余字段时，用来判断要不要先 PATCH。
+ */
+function projectFieldsChanged(
+  project: Project,
+  fields: { code: string; name: string; region: string; projectType: string; managerIds: string[] },
+): boolean {
+  if (
+    fields.code !== project.code ||
+    fields.name !== project.description ||
+    fields.region !== project.region ||
+    fields.projectType !== project.projectType
+  ) {
+    return true;
+  }
+  if (fields.managerIds.length !== project.managerIds.length) {
+    return true;
+  }
+  return fields.managerIds.some((managerId, index) => managerId !== project.managerIds[index]);
 }
 
 export default function App() {
@@ -336,24 +365,43 @@ export default function App() {
     }
   };
 
-  /** 编辑项目（PATCH + 乐观锁 version）：返回 null = 成功；返回文案 = 弹窗内提示。 */
-  const handleUpdateProject = async (project: Project, draft: ProjectDraft): Promise<string | null> => {
+  /**
+   * 编辑项目（Push 262 起带状态口径）：active / paused / done 走 PATCH（乐观锁 version）；
+   * archived 走归档端点（契约：PATCH 不收 archived —— ADR-027 门禁 + 清单 + 留痕）。
+   * 返回结构化结果：ok = 成功；error = 文案；archive-confirm = 归档缺项，弹窗内二次确认。
+   */
+  const handleUpdateProject = async (
+    project: Project,
+    draft: ProjectDraft,
+    options?: { archiveConfirm?: boolean },
+  ): Promise<ProjectSubmitResult> => {
+    const fields = {
+      code: draft.code.trim(),
+      name: draft.description.trim(),
+      region: draft.region,
+      projectType: draft.projectType,
+      managerIds: draft.managerIds,
+    };
     try {
-      await updateProject(
-        project.id,
-        {
-          code: draft.code.trim(),
-          name: draft.description.trim(),
-          region: draft.region,
-          projectType: draft.projectType,
-          managerIds: draft.managerIds,
-        },
-        project.version,
-      );
+      if (draft.status !== "archived") {
+        await updateProject(project.id, fields, project.version, draft.status);
+        setDataVersion((value) => value + 1);
+        return { kind: "ok" };
+      }
+      // 已归档：其余字段有改动先落（二次确认重试时跳过 PATCH）；归档端点始终用「最新 version」（PATCH / 他人改动都会前移）。
+      if (projectFieldsChanged(project, fields)) {
+        const latest = await fetchProject(project.id);
+        await updateProject(project.id, fields, latest.version);
+      }
+      const fresh = await fetchProject(project.id);
+      await archiveProject(project.id, fresh.version, options?.archiveConfirm === true);
       setDataVersion((value) => value + 1);
-      return null;
+      return { kind: "ok" };
     } catch (error: unknown) {
-      return errorMessageOf(error, "保存项目失败");
+      if (error instanceof ApiError && error.code === "ARCHIVE_GATE_NOT_PASSED" && options?.archiveConfirm !== true) {
+        return { kind: "archive-confirm", missing: error.details.map((detail) => detail.message) };
+      }
+      return { kind: "error", message: errorMessageOf(error, "保存项目失败") };
     }
   };
 
@@ -407,6 +455,8 @@ export default function App() {
    */
   const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
   const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
+  /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
+  const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
    * 任务模板页的维护权（左列节点库的新增 / 编辑 / 删除 + 右侧模板的新建 / 保存 / 删除 / 拖拽改内容）= blueprint.manage
    * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
@@ -459,12 +509,14 @@ export default function App() {
   }
 
   /**
-   * 底部提示区（一个 fixed 容器装两条，避免同时出现时叠在一起）：
-   * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，项目是数据级操作；
-   * ② 既有错误提示条（如项目经理修改失败）。
+   * 全局提示区：
+   * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，仍走底部固定条；
+   * ② 错误提示（如加载 / 删除 / 项目经理修改失败）—— Push 261 追订改**屏幕上方居中浮空 Toast**
+   *   （3s 自动消失口径见 Toast 组件；业务口径 2026-10-09「要直接在屏幕上方浮空的 然后保持3s消失 不要在页面顶部」）。
    */
   const bottomBars = (
-    <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+    <>
+      <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {pendingDelete === null ? null : (
         <div
           role="dialog"
@@ -494,24 +546,17 @@ export default function App() {
           </button>
         </div>
       )}
+      </div>
       {notice === null ? null : (
-        <div
-          role="alert"
-          className="pointer-events-auto flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg"
-        >
-          <span>{notice}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setNotice(null);
-            }}
-            className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-medium transition hover:bg-rose-100"
-          >
-            知道了
-          </button>
-        </div>
+        <Toast
+          kind="error"
+          text={notice}
+          onClose={() => {
+            setNotice(null);
+          }}
+        />
       )}
-    </div>
+    </>
   );
 
   const editModal =
@@ -525,20 +570,22 @@ export default function App() {
           managerIds: editingProject.managerIds,
           projectType: editingProject.projectType,
           region: editingProject.region,
+          status: projectStatusOf(editingProject.status) ?? "active",
         }}
         dicts={dicts}
         dictTools={dictTools}
         canManageDicts={canManageDicts}
+        canArchive={canArchiveProject}
         managerOptions={directoryMemberOptions(directory)}
         onClose={() => {
           setEditingProject(null);
         }}
-        onSubmit={async (draft) => {
-          const message = await handleUpdateProject(editingProject, draft);
-          if (message === null) {
+        onSubmit={async (draft, options) => {
+          const result = await handleUpdateProject(editingProject, draft, options);
+          if (result.kind === "ok") {
             setEditingProject(null);
           }
-          return message;
+          return result;
         }}
       />
     );
@@ -553,8 +600,9 @@ export default function App() {
   }
 
   if (route.kind === "workspace") {
-    // 工作台「我的任务」页（Push 230 起正式落地）：两个标签（我的任务 / 我提出的问题）+ 按项目的折叠面板，
-    // 数据 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）；标签走地址（?tab=，见 useHashRoute）。
+    // 工作台「我的任务」页（Push 230 起正式落地）：三枚标签（我的任务 / 提出·负责的问题 / 我的计划）+ 按项目的折叠面板；
+    // Push 260：第二枚标签改名「提出/负责的问题」并带下拉子菜单（我提出的问题 / 待我处理的问题，?sub=）；
+    // 数据 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）；标签走地址（?tab= / ?sub=，见 useHashRoute）。
     return (
       <>
         {/* 醒目模式（Push 232）：与项目详情同一个账号偏好（App 层持有 / 单键 PATCH），工作台只吃值 + 回显保存失败文案 */}
@@ -562,6 +610,8 @@ export default function App() {
           me={state.me}
           tab={route.tab}
           onChangeTab={replaceWorkspaceTab}
+          sub={route.sub}
+          onChangeSub={replaceWorkspaceSub}
           focusMode={focusMode}
           onFocusModeChange={handleSaveFocusMode}
           workspaceOpenProjects={workspaceOpenProjects}
@@ -606,6 +656,17 @@ export default function App() {
           canManageStakeholders={canManageStakeholders}
         />
         {editModal}
+        {bottomBars}
+      </>
+    );
+  }
+
+  if (route.kind === "files") {
+    // 文件库（Push 261 · 头像菜单「文件库」入口）：两栏（系统现有文件 / 回收站）+ 关键字 / 项目 / 状态 / 类型 / 上传人筛选，
+    // 筛选态走地址（replaceFilesQuery，地址即状态）—— 与 #/audit 同一口径；数据 = 逐项目聚合（FileLibraryPage.tsx）。
+    return (
+      <>
+        <FileLibraryPage me={state.me} query={route.query} onChangeQuery={replaceFilesQuery} directory={directory} />
         {bottomBars}
       </>
     );

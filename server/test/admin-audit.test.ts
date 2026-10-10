@@ -399,9 +399,9 @@ describe("AuditService（审计 C7）", () => {
       to: "2026-09-30T00:00:00.000Z",
     });
     expect(repo.lastFilter).toMatchObject({
-      objectType: "project",
+      objectTypes: ["project"],
       objectId: UUID_PROJECT,
-      actorId: UUID_ACTOR,
+      actorIds: [UUID_ACTOR],
       from: new Date("2026-09-01T00:00:00.000Z"),
       to: new Date("2026-09-30T00:00:00.000Z"),
     });
@@ -413,6 +413,34 @@ describe("AuditService（审计 C7）", () => {
       changes: [{ field: "name", from: "旧", to: "新" }],
       metadata: { traceId: "t-1" },
     });
+  });
+
+  it("list：多值筛选（2026-10-09 追订 · 操作记录里面也是）—— 逗号分隔 + 去重保序 + 逐值白名单，非法值 400", async () => {
+    const { service, repo } = makeAuditService();
+    await service.list({
+      action: "update,create,update",
+      objectType: "task,project",
+      result: "denied,succeeded",
+      actorId: UUID_ACTOR,
+      page: 1,
+      limit: 50,
+    });
+    expect(repo.lastFilter).toMatchObject({
+      actions: ["update", "create"],
+      objectTypes: ["task", "project"],
+      results: ["denied", "succeeded"],
+      actorIds: [UUID_ACTOR],
+    });
+    await expect(service.list({ action: "update,bogus", page: 1, limit: 50 })).rejects.toThrowError(/action/);
+    await expect(service.list({ actorId: "not-a-uuid", page: 1, limit: 50 })).rejects.toThrowError(/actorId/);
+  });
+
+  it("list：关键字 q 透传（trim 后入 filter；空白 = 未传）—— Push 260 搜索", async () => {
+    const { service, repo } = makeAuditService();
+    await service.list({ q: "  定档  ", page: 1, limit: 50 });
+    expect(repo.lastFilter?.keyword).toBe("定档");
+    await service.list({ q: "   ", page: 1, limit: 50 });
+    expect(repo.lastFilter?.keyword).toBeUndefined();
   });
 
   it("toAuditLog：changes 缺省为 null（无字段级变化）", () => {

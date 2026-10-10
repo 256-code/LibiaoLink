@@ -218,6 +218,12 @@ type TaskDrawerProps = {
   onSetActualEnd?: (taskId: string, iso: string) => void;
   onFinalize?: (taskId: string) => void;
   /**
+   * 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：已定档时「已」开关可再点 →
+   * 就地二次确认；确认后由调用方 POST …/tasks/{taskId}/unfinalize（清位重开、留痕「取消定档」）；
+   * 不传 = 已定档开关保持只读置灰。
+   */
+  onUnfinalize?: (taskId: string) => void;
+  /**
    * 任务文件上传（Push 226 · 「文件」那一刀前端接线）：选完文件由调用方分片直传文件库并关联本任务（taskId）；
    * onProgress 供抽屉内「上传中 N/M」提示（done = 已完成份数）。不传 = 「文件」行只读（保留计数展示、无上传入口）。
    */
@@ -264,7 +270,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -303,6 +309,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   /** 定档二次确认条（Push 252）：开关点开 = 就地提示「定档后不支持任何修改」，确认才调接口落库。 */
   const [finalizeConfirm, setFinalizeConfirm] = useState(false);
+  /** 取消定档二次确认条（Push 260）：已定档开关再次点击 = 就地提示「取消后重新开放修改」，确认才调接口。 */
+  const [unfinalizeConfirm, setUnfinalizeConfirm] = useState(false);
   /** 正在改名的文件 id（Push 226 续二；null = 没有在改名）。 */
   const [renamingId, setRenamingId] = useState<string | null>(null);
   /** 编辑中的**主名**（后缀不参与编辑 —— 同日报口径「自定义把图片png格式删了怎么办」：格式由系统保留）。 */
@@ -479,6 +487,11 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           setFinalizeConfirm(false);
           return;
         }
+        if (unfinalizeConfirm) {
+          // 「Esc 先关内层」（Push 260）：取消定档确认条同口径
+          setUnfinalizeConfirm(false);
+          return;
+        }
         requestClose();
       }
     };
@@ -486,7 +499,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [taskId, requestClose, finalizeConfirm]);
+  }, [taskId, requestClose, finalizeConfirm, unfinalizeConfirm]);
 
   /** 改草稿：ref 与 state 一起写 —— 失焦可能与最后一次输入同一批处理，只写 state 会让失焦读到旧值。 */
   const updateDraft = useCallback((patch: Partial<Draft>) => {
@@ -670,7 +683,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     });
   };
 
-  /** 删除文件（Push 226 续 · 移入回收站）：二次确认后由调用方执行，完成重取清单（表格计数由调用方整表重取刷新）。 */
+  /** 删除文件（Push 226 续 · 移入回收站）：二次确认后由调用方执行，完成重取清单（表格计数由调用方整表重取刷新）；
+   *  任务已定档 = 删除入口整体下架（Push 260 · 业务口径「定档后还能删除是bug 不能删除定档后」；服务端 recycle 同闸
+   *  409 TASK_FINALIZED）—— 本函数仍是二次确认后的唯一出口。 */
   const confirmFileDelete = (fileId: string) => {
     setPendingDelete(null);
     if (onDeleteFile === undefined) {
@@ -1047,6 +1062,11 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               }}
             />
           </div>
+          {taskFinalized ? (
+            <p data-drawer-files-note-finalized="true" className="text-[11px] leading-4 text-amber-600">
+              任务已定档：不支持新增 / 改名 / 删除等修改（修改走变更）
+            </p>
+          ) : null}
           {files === null || files.length === 0 ? null : (
             <ul className="flex flex-col gap-1">
               {files.map((file) => {
@@ -1133,7 +1153,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                     >
                       {downloadBusy === file.id ? "下载中…" : "下载"}
                     </button>
-                    {onDeleteFile === undefined ? null : confirming ? (
+                    {onDeleteFile === undefined || taskFinalized ? null : confirming ? (
                       <span data-file-delete-confirm="true" className="flex shrink-0 items-center gap-1">
                         <button type="button" onClick={() => { confirmFileDelete(file.id); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600">确认删除</button>
                         <button type="button" onClick={() => { setPendingDelete(null); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200">取消</button>
@@ -1307,18 +1327,33 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               {task.finalizedAt !== null ? (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">定档</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked="true"
-                    aria-label="任务已定档"
-                    data-task-finalize="on"
-                    title="任务已定档，不支持任何修改（文件修改走变更）"
-                    disabled
-                    className="relative inline-flex h-6 w-11 shrink-0 cursor-default items-center rounded-full bg-[#FECA04] transition-colors duration-200"
-                  >
-                    <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] translate-x-5 items-center justify-center rounded-full bg-white text-[9px] font-semibold text-amber-700 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">已</span>
-                  </button>
+                  {onUnfinalize === undefined ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked="true"
+                      aria-label="任务已定档"
+                      data-task-finalize="on"
+                      title="任务已定档，不支持任何修改（文件修改走变更）"
+                      disabled
+                      className="relative inline-flex h-6 w-11 shrink-0 cursor-default items-center rounded-full bg-[#FECA04] transition-colors duration-200"
+                    >
+                      <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] translate-x-5 items-center justify-center rounded-full bg-white text-[9px] font-semibold text-amber-700 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">已</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked="true"
+                      aria-label="任务已定档，点击取消定档"
+                      data-task-finalize="on"
+                      title="任务已定档；再次点击可取消定档（重新开放修改 —— 文件修改仍走变更）"
+                      onClick={() => { setUnfinalizeConfirm(true); }}
+                      className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full bg-[#FECA04] transition-colors duration-200 hover:brightness-95"
+                    >
+                      <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] translate-x-5 items-center justify-center rounded-full bg-white text-[9px] font-semibold text-amber-700 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">已</span>
+                    </button>
+                  )}
                 </span>
               ) : onFinalize === undefined ? null : (
                 <span className="flex items-center gap-1.5">
@@ -1365,6 +1400,29 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                   type="button"
                   data-task-finalize-cancel="true"
                   onClick={() => { setFinalizeConfirm(false); }}
+                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-semibold leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
+                >
+                  取消
+                </button>
+              </span>
+            </div>
+          ) : null}
+          {unfinalizeConfirm && task.finalizedAt !== null ? (
+            <div data-task-unfinalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs leading-5 text-amber-800">取消定档后该任务重新开放修改（文件修改仍走变更），确定取消定档？</p>
+              <span className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  data-task-unfinalize-confirm-btn="true"
+                  onClick={() => { setUnfinalizeConfirm(false); onUnfinalize?.(task.id); }}
+                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-[#FECA04] px-2.5 text-[11px] font-semibold leading-none text-zinc-900 shadow-[0_1px_2px_rgba(202,154,0,0.35)] transition-colors hover:bg-[#F2BE00]"
+                >
+                  确认取消定档
+                </button>
+                <button
+                  type="button"
+                  data-task-unfinalize-cancel="true"
+                  onClick={() => { setUnfinalizeConfirm(false); }}
                   className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-semibold leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
                 >
                   取消

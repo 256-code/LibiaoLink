@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
 import { hasPermission, loadMyPermissions, type MyPermissions } from "../permissions";
-import { AUDIT_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { AUDIT_BASE_HASH, FILES_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { TopNav } from "./TopNav";
 import type { MeResponse, Project } from "../types";
 
@@ -24,6 +24,8 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const seqNoText = project ? String(project.seqNo).padStart(2, "0") : "";
   /** 「操作记录」菜单项（audit.view）：管理面入口，画像未到 / 无权限不渲染。 */
   const canViewAudit = hasPermission(permissions, "audit.view");
+  /** 「文件库」菜单项（Push 261）：文件库页（#/files）全账号可见 —— 读面按项目可见性放开（无单独权限位），
+   *  「彻底删除」入口在页面内按 admin 角色收敛。 */
 
   useEffect(() => {
     if (!menuOpen) {
@@ -144,6 +146,17 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                     操作记录
                   </a>
                 ) : null}
+                <a
+                  role="menuitem"
+                  data-account-files="true"
+                  href={FILES_BASE_HASH}
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                >
+                  文件库
+                </a>
               </div>
             ) : null}
           </div>

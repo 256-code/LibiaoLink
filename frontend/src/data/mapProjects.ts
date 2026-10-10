@@ -14,19 +14,15 @@
  */
 import { WORLD_MAP_COUNTRIES, WORLD_MAP_MICRO_STATES, type WorldMapCountry, type WorldMapMicroState } from "./worldMap";
 import { accentOfItem, dictLabel, type Dicts } from "../dicts";
+import { PROJECT_STATUS_TEXT, PROJECT_STATUS_VALUES, type ProjectStatusValue } from "../types";
 import type { ApiProject } from "../projectApi";
 
-/** 项目状态（契约 projects.status）。 */
-export type MapProjectStatus = "active" | "paused" | "done" | "archived";
+/** 项目状态（契约 projects.status）：取值与文案收敛到 types.ts 的单一来源（Push 262 —— 卡片状态字 / 编辑弹窗 / 地图图例同口径）。 */
+export type MapProjectStatus = ProjectStatusValue;
 
-/** 状态展示顺序与文案（立柱分段、图例、项目清单共用一套口径）。 */
-export const MAP_PROJECT_STATUS_ORDER: readonly MapProjectStatus[] = ["active", "paused", "done", "archived"];
-export const MAP_PROJECT_STATUS_TEXT: Record<MapProjectStatus, string> = {
-  active: "进行中",
-  paused: "已暂停",
-  done: "已完成",
-  archived: "已归档",
-};
+/** 状态展示顺序与文案（立柱分段、图例、项目清单、卡片状态字、编辑弹窗共用一套口径）。 */
+export const MAP_PROJECT_STATUS_ORDER: readonly MapProjectStatus[] = PROJECT_STATUS_VALUES;
+export const MAP_PROJECT_STATUS_TEXT: Record<MapProjectStatus, string> = PROJECT_STATUS_TEXT;
 
 export type MapProjectStatusCount = { readonly status: MapProjectStatus; readonly count: number };
 
