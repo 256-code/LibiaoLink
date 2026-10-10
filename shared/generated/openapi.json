@@ -3540,6 +3540,9 @@
           {
             "type": "object",
             "properties": {
+              "bg": {
+                "$ref": "#/components/schemas/PlanBoardBg"
+              },
               "updatedAt": {
                 "allOf": [
                   {
@@ -3556,6 +3559,7 @@
               }
             },
             "required": [
+              "bg",
               "updatedAt"
             ]
           }
@@ -3582,13 +3586,23 @@
             },
             "maxItems": 12,
             "description": "分类表（整体替换语义；≤ 12 类）"
+          },
+          "bg": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PlanBoardBg"
+              },
+              {
+                "description": "背景色（Push 271；不传 = 沿用库内现值 · 老客户端兼容；白名单外由 schema 拒绝）"
+              }
+            ]
           }
         },
         "required": [
           "notes",
           "categories"
         ],
-        "description": "「我的计划」便签墙 PATCH 体（客户端只传 notes / categories；updatedAt 由服务端盖章）"
+        "description": "「我的计划」便签墙 PATCH 体（客户端只传 notes / categories / bg；updatedAt 由服务端盖章）"
       },
       "MyPlanNote": {
         "type": "object",
@@ -4232,6 +4246,23 @@
           "permissions"
         ],
         "description": "当前用户授权画像（未登录 401）"
+      },
+      "PlanBoardBg": {
+        "type": "string",
+        "enum": [
+          "white",
+          "cream",
+          "pink",
+          "orange",
+          "yellow",
+          "lime",
+          "emerald",
+          "sky",
+          "blue",
+          "violet",
+          "lavender"
+        ],
+        "description": "背景色（Push 271）：读侧白名单外 / 缺省一律收敛为 white（与前端 myPlan.ts 同口径）"
       },
       "PlanBoardColor": {
         "type": "string",

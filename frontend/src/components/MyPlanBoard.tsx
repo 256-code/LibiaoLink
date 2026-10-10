@@ -3,8 +3,10 @@ import { Toast } from "./Toast";
 import { Loader } from "./Loader";
 import { PlanNoteCard } from "./PlanNoteCard";
 import { PlanNoteEditor, type PlanNoteDraft } from "./PlanNoteEditor";
+import { RowDeleteButton } from "./RowDeleteButton";
 import { loadMyPreferences, saveMyPlanBoard } from "../preferencesApi";
 import {
+  PLAN_BOARD_BGS,
   PLAN_CATEGORY_MAX,
   PLAN_CATEGORY_NAME_MAX,
   PLAN_NOTE_LIMIT,
@@ -13,11 +15,12 @@ import {
   newPlanNoteId,
   normalizePlanCategoryName,
   orderPlanNotes,
-  planColorOf,
+  planBoardBgOf,
   planGreeting,
   readLegacyPlanBoard,
   seedPlanBoard,
   type PlanBoard,
+  type PlanBoardBgId,
   type PlanNote,
 } from "../myPlan";
 
@@ -37,13 +40,25 @@ import {
  * Push 270（业务口径 2026-10-10「我要分类的左侧全部作为完成区 虚线框起来 然后便签拖动应该脱离原来的位置」）：
  * 「完成」区放大成整条左栏 —— 虚线圆角框把分类卡整张裹进去，下方剩余空间给「完成」提示（悬停变墨底奶白）；左栏拉满视口高度（sticky 不抖）。
  * 拖动中便签从原位脱离：原槽位只留虚线占位框（卡片本体隐去），本体只以悬浮小卡（ghost）示人。
+ * Push 271（业务口径 2026-10-10「卡片拖动大小不要改变要原尺寸」）：ghost 改成被拖便签 1:1 原尺寸复刻（同款便签卡组件 + 抓取点偏移跟手，大小不缩水）；
+ * 落点提示挪到 ghost 顶部的小黑签（松手，收进「已完成」/ 松手，恢复为未完成）。
+ * 侧栏脚注「数据保存在账号里（换设备可见）」撤除（只留「共 N 条便签」）。
+ * 用户分类可删（Push 271）：行悬停出 ×，行内两步确认；删分类不删便签（有便签先整批移入「其他」，没有「其他」则第一条剩余分类）；
+ * 最后一个分类不可删；全部便签 / 已完成 固定不可删。
+ * 背景色切换（Push 271 · 业务口径 2026-10-10「在如图的位置增加背景颜色切换 默认是和别的页面统一颜色 第二个颜色是minimemo的默认颜色」→
+ * 「还有很多种颜色啊为什么不写了 而且为什么选中的效果也不一样」→「把玫红颜色删除掉」→「颜色选择组件要弹出选择 不要常驻 箭头旁边名称叫 背景颜色」→「搜索往右靠然后颜色选择不要下滑 要向右滑」→「背景颜色文字一开始不显示 鼠标触碰按钮才显示」）：
+ * 工具条左端 = 「背景颜色」箭头按钮（照参考组件：深色圆 + 白箭头 + 文字），点击弹出颜色面板（不常驻；从按钮右侧滑出、顶对齐按钮 = 不下滑）；展开 / 悬停时圆铺满成胶囊、箭头右移、文字转白，收起时只露圆 + 箭头（「背景颜色」文字悬停 / 展开才浮现）；
+ * 面板内 = 色块紧贴成一整条（墨框 + 硬投影连片 + 圆角叠角；悬停 1.5 / 邻 1.3 / 次邻 1.15 联动 + 冒色名签；点击 / 选中不改色块外观）；
+ * 色板 = 统一白（默认，与全站页面一致）/ 奶白（#fdfbf7 + 左上暖色径向渐变，参考页默认底色）/ 参考组件 9 色板（粉…薰衣草，实色铺底；玫红下架）；选中即整面 PATCH（随账号落库 · 换设备可见）。
+ * 用户分类删除的触发件 = 项目同款删除胶囊（RowDeleteButton：行悬停浮现幽灵垃圾桶，悬停展开成红色「删除」胶囊）。
  */
 
 const BTN_PRIMARY =
   "inline-flex items-center gap-[7px] rounded-[11px] border border-[#1c1917] bg-[#1c1917] px-3.5 py-[9px] text-[13px] font-medium text-[#fdfbf7] shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] transition hover:-translate-y-px hover:bg-[#292524] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0";
 
-/** 拖拽落点（Push 269）：done = 侧栏「完成」区域；all =「全部便签」（把已完成的拖回来恢复）。 */
-type PlanDragState = { noteId: string; done: boolean; x: number; y: number; over: "done" | "all" | null };
+/** 拖拽落点（Push 269）：done = 侧栏「完成」区域；all =「全部便签」（把已完成的拖回来恢复）。
+ *  Push 271：w / offX / offY = 原卡宽度与抓取点偏移（ghost 1:1 原尺寸复刻、跟手不跳）。 */
+type PlanDragState = { noteId: string; done: boolean; x: number; y: number; over: "done" | "all" | null; w: number; offX: number; offY: number };
 
 /* ----- 图标（照参考页同款的细线性图标；系统内联 SVG 口径） ----- */
 
@@ -126,6 +141,7 @@ function CategoryItem({
   onClick,
   buttonRef,
   dropActive,
+  onDelete,
 }: {
   value: string;
   label: string;
@@ -136,35 +152,149 @@ function CategoryItem({
   /** 拖拽落点（Push 269）：仅「全部便签」用（把已完成的便签拖回来恢复）。 */
   buttonRef?: Ref<HTMLButtonElement>;
   dropActive?: boolean;
+  /** 分类删除（Push 271）：仅用户分类给（行悬停浮现项目同款删除胶囊 RowDeleteButton）；全部便签 / 已完成 不给。
+   *  行悬停时右侧计数淡出让位（「删除和数字叠起来了不好看」—— 两个控件不同时出现在同一位置）。 */
+  onDelete?: () => void;
 }) {
   return (
-    <button
-      ref={buttonRef}
-      type="button"
-      data-plan-category={value}
-      data-plan-drop-active={dropActive === true ? "true" : undefined}
-      aria-pressed={active}
-      onClick={onClick}
-      className={
-        "flex items-center justify-between gap-2.5 rounded-full border border-[#e8e3da] px-3 py-1.5 text-[13.5px] transition lg:rounded-[11px] lg:border-0 lg:px-2.5 lg:py-[9px] " +
-        (active ? "bg-[#1c1917] text-[#fdfbf7]" : "text-[#57534e] hover:bg-[#faf9f7]") +
-        (dropActive === true ? " ring-2 ring-[#1c1917]/35" : "")
-      }
-    >
-      <span className="inline-flex items-center gap-2">
-        {icon}
-        {label}
-      </span>
-      <span className={"hidden text-[11px] lg:inline " + (active ? "opacity-[0.7]" : "opacity-[0.55]")}>{count}</span>
-    </button>
+    <div className="group relative min-w-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        data-plan-category={value}
+        data-plan-drop-active={dropActive === true ? "true" : undefined}
+        aria-pressed={active}
+        onClick={onClick}
+        className={
+          "flex w-full items-center justify-between gap-2.5 rounded-full border border-[#e8e3da] px-3 py-1.5 text-[13.5px] transition lg:rounded-[11px] lg:border-0 lg:px-2.5 lg:py-[9px] " +
+          (active ? "bg-[#1c1917] text-[#fdfbf7]" : "text-[#57534e] hover:bg-[#faf9f7]") +
+          (dropActive === true ? " ring-2 ring-[#1c1917]/35" : "")
+        }
+      >
+        <span className="inline-flex items-center gap-2">
+          {icon}
+          {label}
+        </span>
+        <span className={"hidden text-[11px] transition-opacity duration-200 lg:inline " + (active ? "opacity-[0.7]" : "opacity-[0.55]") + (onDelete === undefined ? "" : " group-hover:opacity-0")}>{count}</span>
+      </button>
+      {onDelete === undefined ? null : (
+        <span data-plan-category-delete={value} className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-end">
+          <RowDeleteButton label={"删除分类 " + label} onDelete={onDelete} />
+        </span>
+      )}
+    </div>
   );
 }
 
 /* ----- 工具条：搜索（照参考页搜索框材质） ----- */
 
+/** 背景色切换（Push 271 · 业务口径 2026-10-10「在如图的位置增加背景颜色切换 默认是和别的页面统一颜色 第二个颜色是minimemo的默认颜色」→
+ *  「还有很多种颜色啊为什么不写了 而且为什么选中的效果也不一样」→「效果不一样啊 另外选中是不用浮起来的」→「点击不要有变化即可」→「点击完毕还是弹起来了啊 没有回到原来的位置」→
+ *  「你完全参考这个代码不行吗」→「把玫红颜色删除掉」→「颜色选择组件要弹出选择 不要常驻 箭头旁边名称叫 背景颜色」→「搜索往右靠然后颜色选择不要下滑 要向右滑」→「背景颜色文字一开始不显示 鼠标触碰按钮才显示」）：
+ *  工具条左端 = 「背景颜色」箭头按钮（照参考组件：深色圆 + 白箭头 + 文字），点击弹出颜色面板（不常驻：再点按钮 / 点面板外 / Esc 收起；从按钮右侧滑出、顶对齐 = 不下滑；收起时只露圆 + 箭头，「背景颜色」文字悬停 / 展开才浮现；悬停 / 展开时圆铺满成胶囊、箭头右移、文字转白）；
+ *  面板内 = 色块紧贴成条（-6px 叠角）+ 悬停 1.5 / 邻 1.3 / 次邻 1.15 联动（z 抬升防遮挡）+ 冒奶白色名签，缓动 500ms cubic-bezier(0.175,0.885,0.32,1.1)（照参考组件 1:1）；
+ *  悬停「已选中」块 = 该块自身不放大（口径「选中是不用浮起来的」），邻居联动照常 —— 点击完毕时点击块自身立即落回原位、其余不塌陷（「点击完毕回到原来的位置」/「右边那个全压下去 源码不会这样」）；
+ *  点击不带任何焦点残留：指针 / 触摸点击后主动 blur；选择颜色后面板保持打开（可连续试色）。
+ *  排布追订（2026-10-10「搜索往右靠然后颜色选择不要下滑 要向右滑」）：颜色面板从按钮右侧滑出（左缘 = 按钮右缘 + 12px、顶对齐；240ms 弹性滑入 · 不下滑）；搜索框右靠（贴着「新建便签」）。 */
+function BackgroundSwitcher({ value, onChange }: { value: PlanBoardBgId; onChange: (next: PlanBoardBgId) => void }) {
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState<PlanBoardBgId | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocDown = (event: MouseEvent) => {
+      if (rootRef.current !== null && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const hoveredIndex = hovered === null ? -1 : PLAN_BOARD_BGS.findIndex((bg) => bg.id === hovered);
+  return (
+    <div ref={rootRef} data-plan-bg-root="" className="relative pl-0.5">
+      <button
+        type="button"
+        data-plan-bg-trigger=""
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={(event) => {
+          setOpen((prev) => !prev);
+          if (event.detail > 0) event.currentTarget.blur();
+        }}
+        className="group/bg relative h-12 w-48 cursor-pointer rounded-full text-left"
+      >
+        <span
+          aria-hidden="true"
+          className={"absolute inset-y-0 left-0 rounded-full bg-[#1c1917] transition-all duration-[450ms] ease-[cubic-bezier(0.65,0,0.076,1)] " + (open ? "w-full" : "w-12 group-hover/bg:w-full")}
+        />
+        <span
+          aria-hidden="true"
+          className={"absolute left-0 top-0 grid h-12 w-12 place-items-center text-[#fdfbf7] transition-transform duration-[450ms] ease-[cubic-bezier(0.65,0,0.076,1)] " + (open ? "translate-x-4" : "group-hover/bg:translate-x-4")}
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px]">
+            <path d="M5 12h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={"transition-opacity duration-[450ms] " + (open ? "opacity-100" : "opacity-0 group-hover/bg:opacity-100")} />
+            <path d="m12 6 6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <span className={"absolute inset-y-0 left-[52px] right-0 flex items-center justify-center text-[14px] font-semibold transition-[opacity,color] duration-[450ms] " + (open ? "text-[#fdfbf7] opacity-100" : "text-[#1c1917] opacity-0 group-hover/bg:opacity-100 group-hover/bg:text-[#fdfbf7]")}>背景颜色</span>
+      </button>
+      {open ? (
+        <div
+          data-plan-bg-panel=""
+          className="plan-bg-panel-pop absolute left-[calc(100%+12px)] top-0 z-40 rounded-2xl border border-[#e8e3da] bg-white px-4 pb-4 pt-12 shadow-[0_1px_2px_rgba(28,25,23,0.05),0_18px_44px_-18px_rgba(28,25,23,0.28)]"
+        >
+          <div data-plan-bg-switch="" role="group" aria-label="便签墙背景" className="flex items-center">
+            {PLAN_BOARD_BGS.map((item, index) => {
+              const active = value === item.id;
+              const dist = hoveredIndex >= 0 ? Math.abs(index - hoveredIndex) : -1;
+              const liftClass = dist === 0 ? (active ? "" : " scale-150") : dist === 1 ? " scale-[1.3]" : dist === 2 ? " scale-[1.15]" : "";
+              const liftZ = dist === 0 ? (active ? undefined : 99999) : dist === 1 ? 9999 : dist === 2 ? 999 : undefined;
+              return (
+                <span
+                  key={item.id}
+                  onMouseEnter={() => setHovered(item.id)}
+                  onMouseLeave={() => setHovered((h) => (h === item.id ? null : h))}
+                  style={{ zIndex: liftZ }}
+                  className={"group relative inline-flex" + (index === 0 ? "" : " -ml-[6px]") + " focus-within:z-20"}
+                >
+                  <button
+                    type="button"
+                    data-plan-bg-option={item.id}
+                    data-plan-bg-active={active ? "true" : "false"}
+                    aria-pressed={active}
+                    aria-label={"背景：" + item.label + "（" + item.hint + "）"}
+                    onClick={(event) => {
+                      onChange(item.id);
+                      if (event.detail > 0) event.currentTarget.blur();
+                    }}
+                    style={{ background: item.swatch }}
+                    className={"relative h-[34px] w-[34px] rounded-[8px] border-[2.5px] border-[#1c1917] shadow-[3.5px_3.5px_0_0_#1c1917] transition duration-500 ease-[cubic-bezier(0.175,0.885,0.32,1.1)] focus-visible:outline-none" + liftClass}
+                  />
+                  <span
+                    data-plan-bg-tip=""
+                    className="pointer-events-none absolute bottom-[calc(100%+9px)] left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-[8px] border-2 border-[#1c1917] bg-[#fef3c7] px-2 py-[3px] text-[11px] font-semibold text-[#1c1917] opacity-0 shadow-[2px_2px_0_0_#1c1917] transition-opacity duration-500 ease-[cubic-bezier(0.175,0.885,0.32,1.1)] group-hover:opacity-100"
+                  >
+                    {item.label}
+                  </span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function BoardSearch({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   return (
-    <div data-plan-search="" className="relative mx-auto flex w-full max-w-[460px] flex-1 items-center">
+    <div data-plan-search="" className="relative ml-auto flex w-full max-w-[460px] flex-1 items-center">
       <span className="pointer-events-none absolute left-3 text-[#a8a29e]">
         <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px]" aria-hidden="true">
           <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -239,6 +369,8 @@ export function MyPlanBoard() {
   const [notice, setNotice] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState("");
+  /** 分类删除（Push 271）：正在等确认删除的分类名（null = 无；全部便签 / 已完成 固定不可删）。 */
+  const [categoryConfirm, setCategoryConfirm] = useState<string | null>(null);
   /** 上云串行链：多笔提交按顺序落库（每笔都是整面便签墙，顺序错乱会互相覆盖）。 */
   const saveChain = useRef<Promise<void>>(Promise.resolve());
 
@@ -274,7 +406,7 @@ export function MyPlanBoard() {
                 return;
               }
               clearLegacyPlanBoard();
-              setBoard({ notes: saved.myPlanBoard.notes, categories: saved.myPlanBoard.categories });
+              setBoard({ notes: saved.myPlanBoard.notes, categories: saved.myPlanBoard.categories, bg: planBoardBgOf(saved.myPlanBoard.bg).id });
               return;
             } catch {
               if (!alive) {
@@ -285,7 +417,7 @@ export function MyPlanBoard() {
             }
           }
           clearLegacyPlanBoard();
-          setBoard({ notes: remote.notes, categories: remote.categories });
+          setBoard({ notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
           return;
         }
         if (remote.updatedAt === null) {
@@ -298,7 +430,7 @@ export function MyPlanBoard() {
           }
           return;
         }
-        setBoard({ notes: remote.notes, categories: remote.categories });
+        setBoard({ notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
       } catch {
         if (alive) {
           setLoadFailed(true);
@@ -338,13 +470,13 @@ export function MyPlanBoard() {
         return;
       }
       const note: PlanNote = { id: newPlanNoteId(), title: draft.title, content: draft.content, category: draft.category, colorId: draft.colorId, fontId: draft.fontId, done: false, createdAt: now, updatedAt: now };
-      commit({ notes: [note].concat(board.notes), categories: board.categories });
+      commit({ notes: [note].concat(board.notes), categories: board.categories, bg: board.bg });
       if (doneOnly) {
         setDoneOnly(false);
       }
     } else {
       const notes = board.notes.map((item) => (item.id === existing.id ? { ...item, ...draft, updatedAt: now } : item));
-      commit({ notes, categories: board.categories });
+      commit({ notes, categories: board.categories, bg: board.bg });
     }
     setEditor(null);
   };
@@ -354,7 +486,7 @@ export function MyPlanBoard() {
       return;
     }
     const target = editor.note;
-    commit({ notes: board.notes.filter((item) => item.id !== target.id), categories: board.categories }, "已删除便签。");
+    commit({ notes: board.notes.filter((item) => item.id !== target.id), categories: board.categories, bg: board.bg }, "已删除便签。");
     setEditor(null);
   };
 
@@ -365,7 +497,15 @@ export function MyPlanBoard() {
     }
     const now = new Date().toISOString();
     const notes = board.notes.map((item) => (item.id === noteId ? { ...item, done, updatedAt: now } : item));
-    commit({ notes, categories: board.categories }, done ? "已完成，收进「已完成」。" : "已恢复为未完成便签。");
+    commit({ notes, categories: board.categories, bg: board.bg }, done ? "已完成，收进「已完成」。" : "已恢复为未完成便签。");
+  };
+
+  /** 背景色切换（Push 271）：选中即整面 PATCH（bg 随账号落库 · 换设备可见）；重复点当前项不动。 */
+  const handleSwitchBg = (next: PlanBoardBgId): void => {
+    if (board === null || board.bg === next) {
+      return;
+    }
+    commit({ notes: board.notes, categories: board.categories, bg: next }, "已切换背景：" + planBoardBgOf(next).label + "。");
   };
 
   /** 命中测试（Push 270：完成区 = 整条左栏）：拖未完成便签 → 认左栏「完成」区（含分类卡区域）；拖已完成便签 → 只认「全部便签」行。 */
@@ -394,6 +534,11 @@ export function MyPlanBoard() {
     suppressOpenAtRef.current = 0;
     const startX = event.clientX;
     const startY = event.clientY;
+    /** Push 271：抓取点偏移 + 原卡宽度 —— ghost 按 1:1 原尺寸跟手。 */
+    const grabRect = event.currentTarget.getBoundingClientRect();
+    const grabX = event.clientX - grabRect.left;
+    const grabY = event.clientY - grabRect.top;
+    const grabW = grabRect.width;
     let active = false;
     const handleMove = (moveEvent: PointerEvent): void => {
       if (!active) {
@@ -402,7 +547,7 @@ export function MyPlanBoard() {
         }
         active = true;
       }
-      setDrag({ noteId: note.id, done: note.done, x: moveEvent.clientX, y: moveEvent.clientY, over: dragHit(moveEvent.clientX, moveEvent.clientY, note.done) });
+      setDrag({ noteId: note.id, done: note.done, x: moveEvent.clientX, y: moveEvent.clientY, over: dragHit(moveEvent.clientX, moveEvent.clientY, note.done), w: grabW, offX: grabX, offY: grabY });
     };
     const handleUp = (upEvent: PointerEvent): void => {
       cleanup();
@@ -453,7 +598,46 @@ export function MyPlanBoard() {
     if (normalized === "" || board.categories.includes(normalized) || board.categories.length >= PLAN_CATEGORY_MAX) {
       return;
     }
-    commit({ notes: board.notes, categories: board.categories.concat(normalized) });
+    commit({ notes: board.notes, categories: board.categories.concat(normalized), bg: board.bg });
+  };
+
+  /** 分类删除（Push 271）：删分类不删便签 —— 分类下仍有便签时整批移入「其他」（没有「其他」则第一条剩余分类）。 */
+  const handleDeleteCategory = (name: string): void => {
+    if (board === null) {
+      return;
+    }
+    const remaining = board.categories.filter((item) => item !== name);
+    if (remaining.length === 0) {
+      setCategoryConfirm(null);
+      setNotice({ kind: "info", text: "至少保留一个分类。" });
+      return;
+    }
+    const moveTo = remaining.includes("其他") ? "其他" : remaining[0];
+    const moved = board.notes.filter((item) => item.category === name).length;
+    const now = new Date().toISOString();
+    const notes = board.notes.map((item) => (item.category === name ? { ...item, category: moveTo, updatedAt: now } : item));
+    if (category === name) {
+      setCategory(null);
+    }
+    setCategoryConfirm(null);
+    commit(
+      { notes, categories: remaining, bg: board.bg },
+      moved > 0
+        ? "已删除分类「" + name + "」，" + String(moved) + " 条便签移入「" + moveTo + "」。"
+        : "已删除分类「" + name + "」。",
+    );
+  };
+
+  /** 分类删除第一步（Push 271）：点行内 × —— 最后一个分类不删（提示），其余进入行内确认。 */
+  const requestDeleteCategory = (name: string): void => {
+    if (board === null || categoryConfirm !== null) {
+      return;
+    }
+    if (board.categories.length <= 1) {
+      setNotice({ kind: "info", text: "至少保留一个分类。" });
+      return;
+    }
+    setCategoryConfirm(name);
   };
 
   /** 分类栏「新建分类」：回车 / 失焦提交（空 = 放弃）；已在表里 = 直接选中；到 12 类上限 = 不加。 */
@@ -529,12 +713,17 @@ export function MyPlanBoard() {
   return (
     <section
       data-workspace-plan=""
+      style={{ background: planBoardBgOf(board.bg).canvas }}
       className="-mx-6 -mb-10 -mt-5 min-h-[calc(100dvh-8rem)] bg-white px-6 pb-10 pt-6"
     >
       <div className="mx-auto w-full max-w-[1240px]">
         <div className="flex flex-wrap items-center gap-3">
+          <BackgroundSwitcher
+            value={board.bg}
+            onChange={handleSwitchBg}
+          />
           <BoardSearch value={keyword} onChange={setKeyword} />
-          <span className="ml-auto flex items-center gap-2">
+          <span className="flex items-center gap-2">
             <button
               type="button"
               data-plan-new=""
@@ -582,20 +771,65 @@ export function MyPlanBoard() {
                 setCategory(null);
               }}
             />
-            {board.categories.map((item) => (
-              <CategoryItem
-                key={item}
-                value={item}
-                label={item}
-                icon={<TagIcon />}
-                count={board.notes.filter((note) => !note.done && note.category === item).length}
-                active={!doneOnly && category === item}
-                onClick={() => {
-                  setDoneOnly(false);
-                  setCategory(category === item ? null : item);
-                }}
-              />
-            ))}
+            {board.categories.map((item) => {
+              const itemCount = board.notes.filter((note) => !note.done && note.category === item).length;
+              if (categoryConfirm === item) {
+                const rest = board.categories.filter((name) => name !== item);
+                const moveTo = rest.includes("其他") ? "其他" : rest[0];
+                const total = board.notes.filter((note) => note.category === item).length;
+                return (
+                  <div
+                    key={item}
+                    data-plan-category-confirm={item}
+                    className="w-full rounded-[14px] border border-dashed border-[#d5cdbd] bg-white px-3 py-2.5 text-left"
+                  >
+                    <p className="text-[12.5px] font-semibold text-[#1c1917]">{"删除「" + item + "」？"}</p>
+                    <p className="mt-0.5 text-[11.5px] text-[#a8a29e]">
+                      {total > 0 ? "分类下 " + String(total) + " 条便签将移入「" + moveTo + "」，便签本身不删" : "空分类，可直接删除"}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        data-plan-category-confirm-delete=""
+                        onClick={() => {
+                          handleDeleteCategory(item);
+                        }}
+                        className="rounded-full bg-[#1c1917] px-3 py-1 text-[12px] font-medium text-[#fdfbf7] transition hover:bg-[#292524]"
+                      >
+                        删除
+                      </button>
+                      <button
+                        type="button"
+                        data-plan-category-confirm-cancel=""
+                        onClick={() => {
+                          setCategoryConfirm(null);
+                        }}
+                        className="rounded-full border border-[#e8e3da] bg-white px-3 py-1 text-[12px] text-[#57534e] transition hover:bg-[#faf9f7]"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <CategoryItem
+                  key={item}
+                  value={item}
+                  label={item}
+                  icon={<TagIcon />}
+                  count={itemCount}
+                  active={!doneOnly && category === item}
+                  onClick={() => {
+                    setDoneOnly(false);
+                    setCategory(category === item ? null : item);
+                  }}
+                  onDelete={() => {
+                    requestDeleteCategory(item);
+                  }}
+                />
+              );
+            })}
             {addingCategory ? (
               <input
                 autoFocus
@@ -635,7 +869,6 @@ export function MyPlanBoard() {
               </button>
             )}
             <div className="mt-2 hidden gap-[3px] border-t border-dashed border-[#e8e3da] px-2 pb-1 pt-3 text-[11.5px] text-[#a8a29e] lg:grid">
-              <p>数据保存在账号里（换设备可见）</p>
               <p data-plan-count="">{"共 " + String(activeCount) + " 条便签"}</p>
             </div>
           </aside>
@@ -716,11 +949,15 @@ export function MyPlanBoard() {
       {drag === null || dragNote === null ? null : (
         <div
           data-plan-drag-ghost=""
-          style={{ left: drag.x, top: drag.y, backgroundColor: planColorOf(dragNote.colorId).bg, borderColor: planColorOf(dragNote.colorId).border, color: planColorOf(dragNote.colorId).ink }}
-          className="pointer-events-none fixed z-[60] w-[232px] -translate-x-1/2 -translate-y-1/2 rotate-[-3deg] rounded-[14px] border px-3.5 py-2.5 shadow-[0_18px_36px_-18px_rgba(28,25,23,0.55)]"
+          style={{ left: drag.x - drag.offX, top: drag.y - drag.offY, width: drag.w }}
+          className="pointer-events-none fixed z-[60] rotate-[-3deg]"
         >
-          <span className="block truncate text-[13px] font-semibold">{dragNote.title === "" ? "无标题" : dragNote.title}</span>
-          <span className="mt-0.5 block text-[11px] opacity-70">{drag.over === "done" ? "松手，收进「已完成」" : drag.over === "all" ? "松手，恢复为未完成" : dragNote.done ? "拖到「全部便签」可恢复" : "拖到「完成」区域即可完成"}</span>
+          <div className="relative rounded-[18px] shadow-[0_24px_44px_-20px_rgba(28,25,23,0.5)]">
+            <PlanNoteCard note={dragNote} onOpen={() => {}} />
+            <span className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full bg-[#1c1917] px-2.5 py-1 text-[11px] font-medium text-[#fdfbf7] shadow-[0_8px_18px_-10px_rgba(28,25,23,0.7)]">
+              {drag.over === "done" ? "松手，收进「已完成」" : drag.over === "all" ? "松手，恢复为未完成" : dragNote.done ? "拖到「全部便签」可恢复" : "拖到「完成」区域即可完成"}
+            </span>
+          </div>
         </div>
       )}
 

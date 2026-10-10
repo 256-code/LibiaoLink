@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type MyPlanBoard, type MyPlanNote, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
+import { PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -129,7 +129,12 @@ function planNoteOf(value: unknown): MyPlanNote | null {
   };
 }
 
-/** 便签墙（Push 268）：单条逐条收敛（非法整条丢弃、id 去重、≤ 300 条）；分类表去空 / 去重 / 截断；updatedAt 非法 → null。 */
+/** 便签墙背景色（Push 271）：白名单（PLAN_BOARD_BG_IDS）外 / 缺省 → null（调用方决定回落 white）。 */
+function planBoardBgOf(value: unknown): PlanBoardBg | null {
+  return typeof value === "string" && (PLAN_BOARD_BG_IDS as readonly string[]).includes(value) ? (value as PlanBoardBg) : null;
+}
+
+/** 便签墙（Push 268）：单条逐条收敛（非法整条丢弃、id 去重、≤ 300 条）；分类表去空 / 去重 / 截断；背景色白名单外 → white；updatedAt 非法 → null。 */
 function planBoardOf(value: unknown): MyPlanBoard {
   const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   const notes: MyPlanNote[] = [];
@@ -159,7 +164,7 @@ function planBoardOf(value: unknown): MyPlanBoard {
       }
     }
   }
-  return { notes, categories, updatedAt: isoTimeOf(record["updatedAt"]) };
+  return { notes, categories, bg: planBoardBgOf(record["bg"]) ?? "white", updatedAt: isoTimeOf(record["updatedAt"]) };
 }
 
 const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -186,10 +191,13 @@ export class UserPreferenceService {
     const existing = await this.preferences.find(userId);
     const current: PrefsRecord = { ...(existing?.prefs ?? {}) };
     const next: PrefsRecord = { ...current, ...(body as PrefsRecord) };
-    // 便签墙（Push 268）：客户端只传 notes / categories，updatedAt 由服务端盖章（不被客户端伪造）
+    // 便签墙（Push 268）：客户端只传 notes / categories（Push 271 起含 bg），updatedAt 由服务端盖章（不被客户端伪造）
     if (Object.prototype.hasOwnProperty.call(body, "myPlanBoard") && body.myPlanBoard !== undefined) {
       const board = body.myPlanBoard;
-      next["myPlanBoard"] = { notes: board.notes, categories: board.categories, updatedAt: at.toISOString() };
+      // 背景色（Push 271）：传入白名单值 = 整体替换；未传（老客户端 / 老页面）= 沿用库内现值；都没有 = white。
+      const previousBoard = typeof current["myPlanBoard"] === "object" && current["myPlanBoard"] !== null ? (current["myPlanBoard"] as Record<string, unknown>) : {};
+      const bg = planBoardBgOf(board.bg) ?? planBoardBgOf(previousBoard["bg"]) ?? "white";
+      next["myPlanBoard"] = { notes: board.notes, categories: board.categories, bg, updatedAt: at.toISOString() };
     }
     return this.toContract(await this.preferences.upsert(userId, next, at));
   }

@@ -1,6 +1,6 @@
 /**
  * 「我的计划」便签墙（工作台第三枚标签 · 业务口径 2026-10-10「照 minimemo3 的便签页融入系统」）：
- * 个人便签墙 —— 新建 / 编辑 / 删除 / 完成便签（完成后只出现在「已完成」视图，便签墙与分类视图不再显示），支持颜色、字体、分类（可自定义）、搜索；页面形态与配色照 MiniMemo 参考页照搬（Push 268 起页面底改纯白、排序下架 / 198 高圆角卡片 / 7 色 hex 调色板），编辑（填写）弹窗亦照搬（便签底色整卡铺底 + 顶栏关闭 / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 「更新于」底栏 + 「完成 / 恢复」；业务口径 2026-10-10「填写也要一样」→「数据接入数据库」+「新增完成按钮 完成后只显示在已完成里面」），不做导出 / 导入。
+ * 个人便签墙 —— 新建 / 编辑 / 删除 / 完成便签（完成后只出现在「已完成」视图，便签墙与分类视图不再显示），支持颜色、字体、分类（可自定义）、搜索；页面形态与配色照 MiniMemo 参考页照搬（Push 268 起页面底改纯白、排序下架 / 198 高圆角卡片 / 7 色 hex 调色板；Push 271 起工具条可切背景色 —— white 统一白（默认，与全站页面一致）/ cream 奶白（#fdfbf7 + 左上暖色径向渐变），随账号落库），编辑（填写）弹窗亦照搬（便签底色整卡铺底 + 顶栏关闭 / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 「更新于」底栏 + 「完成 / 恢复」；业务口径 2026-10-10「填写也要一样」→「数据接入数据库」+「新增完成按钮 完成后只显示在已完成里面」），不做导出 / 导入。
  *
  * 存储（Push 268 起 · 账号落库）：整面便签墙按账号存服务端偏好（user_preferences.prefs.myPlanBoard，GET / PATCH /api/v1/users/me/preferences，见 preferencesApi.ts）—— 换设备用同一账号登录都能看到；
  * 本机 localStorage 只保留旧键 libiaolink.plan.board.v1 作一次性迁移来源：账号里从未保存过（updatedAt null）或旧键有便签而账号为空时，首次打开本页把本机数据推上云再清旧键；
@@ -17,6 +17,10 @@
 export type PlanColorId = "white" | "yellow" | "green" | "blue" | "purple" | "pink" | "orange";
 
 export type PlanFontId = "sans" | "serif" | "mono";
+
+/** 便签墙背景色（Push 271）：white = 与全站页面统一纯白（默认）；cream = 奶白（参考页默认底色）；
+ *  其余 9 色 = 参考组件色板（粉 / 橙 / 黄 / 青柠 / 翠绿 / 天蓝 / 蓝 / 紫 / 薰衣草，实色铺底；玫红 2026-10-10 按口径「把玫红颜色删除掉」下架）。 */
+export type PlanBoardBgId = "white" | "cream" | "pink" | "orange" | "yellow" | "lime" | "emerald" | "sky" | "blue" | "violet" | "lavender";
 
 export type PlanNote = {
   id: string;
@@ -35,6 +39,8 @@ export type PlanNote = {
 export type PlanBoard = {
   notes: PlanNote[];
   categories: string[];
+  /** 背景色（Push 271 · 业务口径「默认是和别的页面统一颜色 第二个颜色是minimemo的默认颜色」）：随账号落库、换设备可见。 */
+  bg: PlanBoardBgId;
 };
 
 /** 本机旧键（Push 268 起只作一次性迁移来源：账号里没有便签墙时把本机数据推上云再清键）。 */
@@ -86,6 +92,34 @@ export function planColorOf(id: string): PlanColor {
 
 export function planFontOf(id: string): PlanFont {
   return PLAN_FONTS.find((item) => item.id === id) ?? PLAN_FONTS[0];
+}
+
+export type PlanBoardBackground = {
+  id: PlanBoardBgId;
+  label: string;
+  hint: string;
+  /** 工具条色块的色面（奶白 = 画布渐变的缩微版）。 */
+  swatch: string;
+  /** 画布（便签墙 section）背景：统一白 = 纯白；奶白 = MiniMemo 参考页原样（Push 266 口径：#fdfbf7 + 左上暖色径向渐变）。 */
+  canvas: string;
+};
+
+export const PLAN_BOARD_BGS: readonly PlanBoardBackground[] = [
+  { id: "white", label: "统一白", hint: "与其它页面一致（默认）", swatch: "#ffffff", canvas: "#ffffff" },
+  { id: "cream", label: "奶白", hint: "参考页默认底色", swatch: "radial-gradient(46px 30px at 28% 0%, #f6eddc 0%, #fdfbf7 76%)", canvas: "radial-gradient(1200px 480px at 12% -8%, #f6eddc 0%, rgba(246, 237, 220, 0) 62%), #fdfbf7" },
+  { id: "pink", label: "粉", hint: "#f472b6", swatch: "#f472b6", canvas: "#f472b6" },
+  { id: "orange", label: "橙", hint: "#fb923c", swatch: "#fb923c", canvas: "#fb923c" },
+  { id: "yellow", label: "黄", hint: "#facc15", swatch: "#facc15", canvas: "#facc15" },
+  { id: "lime", label: "青柠", hint: "#84cc16", swatch: "#84cc16", canvas: "#84cc16" },
+  { id: "emerald", label: "翠绿", hint: "#10b981", swatch: "#10b981", canvas: "#10b981" },
+  { id: "sky", label: "天蓝", hint: "#0ea5e9", swatch: "#0ea5e9", canvas: "#0ea5e9" },
+  { id: "blue", label: "蓝", hint: "#3b82f6", swatch: "#3b82f6", canvas: "#3b82f6" },
+  { id: "violet", label: "紫", hint: "#8b5cf6", swatch: "#8b5cf6", canvas: "#8b5cf6" },
+  { id: "lavender", label: "薰衣草", hint: "#a78bfa", swatch: "#a78bfa", canvas: "#a78bfa" },
+];
+
+export function planBoardBgOf(id: string): PlanBoardBackground {
+  return PLAN_BOARD_BGS.find((item) => item.id === id) ?? PLAN_BOARD_BGS[0];
 }
 
 function isPlanColorId(value: string): value is PlanColorId {
@@ -177,7 +211,7 @@ function seedNotes(now: Date): PlanNote[] {
 
 /** 首次打开（账号里从未保存过）预置的整面便签墙：6 条示例 + 默认六类（与参考页 minimemo3 的初始数据同一做法）。 */
 export function seedPlanBoard(): PlanBoard {
-  return { notes: seedNotes(new Date()), categories: PLAN_DEFAULT_CATEGORIES.slice() };
+  return { notes: seedNotes(new Date()), categories: PLAN_DEFAULT_CATEGORIES.slice(), bg: "white" };
 }
 
 /** 读取本机旧键（迁移来源）：无记录 / 损坏 = null（键保留，不覆盖原始值）；有记录 = 逐条收敛后的整面便签墙。 */
@@ -209,7 +243,8 @@ export function readLegacyPlanBoard(): PlanBoard | null {
         }
       }
     }
-    return { notes, categories: sanitizeCategories(record.categories) };
+    // 旧键（Push ≤ 267）没有背景色字段：一律按默认「统一白」迁移（新字段口径见 Push 271）。
+    return { notes, categories: sanitizeCategories(record.categories), bg: "white" };
   } catch {
     return null;
   }

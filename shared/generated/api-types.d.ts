@@ -8045,14 +8045,16 @@ export interface components {
         };
         /** @description 「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛 */
         MyPlanBoard: components["schemas"]["MyPlanBoardUpdate"] & {
+            bg: components["schemas"]["PlanBoardBg"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description 「我的计划」便签墙 PATCH 体（客户端只传 notes / categories；updatedAt 由服务端盖章） */
+        /** @description 「我的计划」便签墙 PATCH 体（客户端只传 notes / categories / bg；updatedAt 由服务端盖章） */
         MyPlanBoardUpdate: {
             /** @description 便签列表（整体替换语义；≤ 300 条） */
             notes: components["schemas"]["MyPlanNote"][];
             /** @description 分类表（整体替换语义；≤ 12 类） */
             categories: string[];
+            bg?: components["schemas"]["PlanBoardBg"] & unknown;
         };
         /** @description 「我的计划」单条便签（Push 268） */
         MyPlanNote: {
@@ -8214,6 +8216,11 @@ export interface components {
         PermissionMeResponse: {
             permissions: components["schemas"]["ActorPermissions"];
         };
+        /**
+         * @description 背景色（Push 271）：读侧白名单外 / 缺省一律收敛为 white（与前端 myPlan.ts 同口径）
+         * @enum {string}
+         */
+        PlanBoardBg: "white" | "cream" | "pink" | "orange" | "yellow" | "lime" | "emerald" | "sky" | "blue" | "violet" | "lavender";
         /**
          * @description 便签颜色 id（7 色 hex 调色板，与前端 myPlan.ts 同源）
          * @enum {string}

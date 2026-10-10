@@ -104,7 +104,8 @@ export const WorkspaceOpenProjectsSchema = z
 /**
  * 「我的计划」便签墙（Push 268 · 业务口径 2026-10-10「数据接入数据库」）：便签墙整体按账号存
  * `user_preferences.prefs.myPlanBoard`（与 workspaceOpenProjects 同一条偏好通道）—— 换设备可见。
- * PATCH 时客户端只传 { notes, categories }，updatedAt 由服务端盖章（同 prefs 行 updated_at 口径）；
+ * PATCH 时客户端只传 { notes, categories, bg }，updatedAt 由服务端盖章（同 prefs 行 updated_at 口径）；
+ * Push 271 起便签墙增加背景色 bg（white = 与全站页面统一纯白（默认）；cream = MiniMemo 奶白；另 10 色参考组件色板）—— 客户端整面 PATCH 时一并带上，未传（老客户端）服务端沿用库内现值；
  * 读侧坏形状逐条收敛（非法便签整条丢弃、分类表去空去重截断），与前端 `myPlan.ts` 同口径。
  */
 export const PLAN_BOARD_NOTE_LIMIT = 300;
@@ -119,6 +120,13 @@ export const PLAN_BOARD_COLOR_IDS = ["white", "yellow", "green", "blue", "purple
 export const PlanBoardColorSchema = z
   .enum(PLAN_BOARD_COLOR_IDS)
   .openapi("PlanBoardColor", { description: "便签颜色 id（7 色 hex 调色板，与前端 myPlan.ts 同源）" });
+
+/** 便签墙背景色 id（Push 271 · 业务口径「默认是和别的页面统一颜色 第二个颜色是minimemo的默认颜色」；与前端 `myPlan.ts` 的 `PLAN_BOARD_BGS` 同源）。 */
+export const PLAN_BOARD_BG_IDS = ["white", "cream", "pink", "orange", "yellow", "lime", "emerald", "sky", "blue", "violet", "lavender"] as const;
+
+export const PlanBoardBgSchema = z
+  .enum(PLAN_BOARD_BG_IDS)
+  .openapi("PlanBoardBg", { description: "便签墙背景色 id（Push 271）：white = 与全站页面统一纯白（默认）；cream = 奶白（#fdfbf7 + 左上暖色径向渐变）；pink / orange / yellow / lime / emerald / sky / blue / violet / lavender = 参考组件 9 色板（实色铺底；玫红已下架）" });
 
 /** 便签字体 id（简约 / 优雅 / 等宽；与前端 `myPlan.ts` 的 `PLAN_FONTS` 同源）。 */
 export const PLAN_BOARD_FONT_IDS = ["sans", "serif", "mono"] as const;
@@ -148,11 +156,13 @@ export const MyPlanBoardUpdateSchema = z
       .array(z.string().min(1).max(PLAN_BOARD_CATEGORY_NAME_MAX))
       .max(PLAN_BOARD_CATEGORY_LIMIT)
       .openapi({ description: "分类表（整体替换语义；≤ 12 类）" }),
+    bg: PlanBoardBgSchema.optional().openapi({ description: "背景色（Push 271；不传 = 沿用库内现值 · 老客户端兼容；白名单外由 schema 拒绝）" }),
   })
-  .openapi("MyPlanBoardUpdate", { description: "「我的计划」便签墙 PATCH 体（客户端只传 notes / categories；updatedAt 由服务端盖章）" });
+  .openapi("MyPlanBoardUpdate", { description: "「我的计划」便签墙 PATCH 体（客户端只传 notes / categories / bg；updatedAt 由服务端盖章）" });
 
 export const MyPlanBoardSchema = MyPlanBoardUpdateSchema
   .extend({
+    bg: PlanBoardBgSchema.openapi({ description: "背景色（Push 271）：读侧白名单外 / 缺省一律收敛为 white（与前端 myPlan.ts 同口径）" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "该键最后一次保存时间（服务端盖章）；从未保存 = null（前端据此判断首次进入 → 预置 6 条示例并上云）" }),
   })
   .openapi("MyPlanBoard", { description: "「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛" });
@@ -204,6 +214,7 @@ export const UserPreferencesUpdateBodySchema = z
 export type TaskTableColumnKey = z.infer<typeof TaskTableColumnKeySchema>;
 export type SavedHomeFilter = z.infer<typeof SavedHomeFilterSchema>;
 export type WorkspaceOpenProjects = z.infer<typeof WorkspaceOpenProjectsSchema>;
+export type PlanBoardBg = z.infer<typeof PlanBoardBgSchema>;
 export type MyPlanNote = z.infer<typeof MyPlanNoteSchema>;
 export type MyPlanBoard = z.infer<typeof MyPlanBoardSchema>;
 export type MyPlanBoardUpdate = z.infer<typeof MyPlanBoardUpdateSchema>;
