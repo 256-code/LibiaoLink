@@ -17,7 +17,7 @@
  * 说明：本机无 PG 时只做语法门禁；真机证据以 CI database job 为准（不伪造）。合成用户名 / 去重键前缀独立。
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
@@ -70,6 +70,11 @@ function check(id, title, expected, actual, ok, extra = "") {
   );
   evidence.checks.push({ id, title, expected, actual, ok, extra });
   process.stdout.write((ok ? "PASS " : "FAIL ") + id + " " + title + String.fromCharCode(10));
+  if (!ok) {
+    process.stdout.write(
+      "  → 期望：" + expected + " / 实际：" + actual + (extra === "" ? "" : " / " + extra) + String.fromCharCode(10),
+    );
+  }
 }
 
 function short(value, max = 320) {
@@ -181,12 +186,20 @@ class SseStream {
     }
   }
 
-  async waitForEvent(type, predicate = () => true, timeoutMs = 10_000) {
+  async waitForEvent(type, predicate = () => true, timeoutMs = 10_000, note = "") {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const hit = this.events.find((item) => item.type === type && predicate(item.data));
       if (hit !== undefined) return hit;
-      if (Date.now() >= deadline) throw new Error(this.name + " 等待事件超时：" + type + "（" + timeoutMs + "ms；已收 " + this.events.length + " 条：" + this.events.map((item) => item.type).join(",") + "）");
+      if (Date.now() >= deadline) {
+        const same = this.events.filter((item) => item.type === type);
+        throw new Error(
+          this.name + " 等待事件超时：" + type + "（" + timeoutMs + "ms；已收 " + this.events.length + " 条：" +
+            this.events.map((item) => item.type).join(",") + "；同类型 " + same.length + " 条，最近载荷：" +
+            (same.length === 0 ? "无" : short(same[same.length - 1].data, 500)) +
+            (note === "" ? "" : "；诊断：" + note) + "）",
+        );
+      }
       await sleep(50);
     }
   }
@@ -372,7 +385,26 @@ async function main() {
     );
     const storedRow = stored.rows[0];
     const storedId1 = Number(storedRow?.id);
-    const notification1 = await a1.waitForEvent("notification", (data) => data.id === storedId1, 10_000);
+    let notification1;
+    try {
+      notification1 = await a1.waitForEvent("notification", (data) => data.id === storedId1, 10_000, "storedId1=" + String(storedId1));
+    } catch (error) {
+      // 诊断探针（不改断言语义 · 仍抛原错）：超时后重投一条 —— 区分「发布早于 LISTEN 就绪（竞态）」与「广播桥 / 载荷被丢弃」。
+      const probe = { ...message1, title: "M5-04-1 回放一（诊断重投）", refId: randomUUID() };
+      const probeOutcome = await notify
+        .consume(claimed(3, dedupe("m1-probe"), probe))
+        .catch((probeError) => ({ outcome: "throw", error: messageOf(probeError) }));
+      process.stdout.write("  诊断探针：重投 outcome=" + short(probeOutcome) + String.fromCharCode(10));
+      try {
+        const probeStored = await db.query("select id from notifications where source_dedupe_key = $1", [dedupe("m1-probe")]);
+        const probeId = Number(probeStored.rows[0]?.id);
+        await a1.waitForEvent("notification", (data) => data.id === probeId, 10_000, "probeId=" + String(probeId));
+        process.stdout.write("  诊断探针：重投事件已到达 —— 首投缺失与投递 / 载荷无关（指向 LISTEN 就绪竞态）" + String.fromCharCode(10));
+      } catch (probeError) {
+        process.stdout.write("  诊断探针：重投仍无事件 —— " + messageOf(probeError) + String.fromCharCode(10));
+      }
+      throw error;
+    }
     check(
       "S2b",
       "本人连接收 notification：与库内行一致（title / status / deliveredAt / snoozeUntil）",
@@ -519,6 +551,17 @@ try {
   await main();
 } catch (error) {
   check("X", "回放主流程", "无异常（中止即报告剩余断言未执行）", "异常：" + messageOf(error), false);
+  try {
+    const log = readFileSync(join(HERE, "..", "api.log"), "utf8").trimEnd();
+    if (log !== "") {
+      process.stdout.write(
+        "—— api.log 尾部（最近 60 行 · 诊断）——" + String.fromCharCode(10) +
+          log.split(String.fromCharCode(10)).slice(-60).join(String.fromCharCode(10)) + String.fromCharCode(10),
+      );
+    }
+  } catch {
+    // 无 api.log（本地运行）：跳过
+  }
 }
 
 writeReports();
