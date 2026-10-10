@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import {
   NotificationListQuerySchema,
   NotificationMarkBodySchema,
@@ -12,21 +12,26 @@ import {
   type NotifyPrefs,
   type NotifyPrefsUpdateBody,
 } from "@libiaolink/contracts";
+import type { Request, Response } from "express";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { NotifyService } from "./notify.service.js";
+import { NotifyStreamService } from "./notify.stream.service.js";
 
 const notificationIdParam = new ZodValidationPipe(z.coerce.number().int().positive());
 
 /**
  * 消息中心接口（S7-4 · j1 / M5-04 首刀）：契约 shared/src/modules/notifications.ts。
  * 根路径 /api/v1/notifications —— 个人资源（收件箱只属收件人）：无功能权限键；读 = 会话、写 = 会话 + CSRF；不写审计。
- * 路由顺序：静态段（prefs / mark-all-read）声明在 `:id` 之前（Nest 按声明顺序匹配，否则 PATCH /prefs 会被 `:id` 吞掉）。
+ * 路由顺序：静态段（prefs / stream / mark-all-read）声明在 `:id` 之前（Nest 按声明顺序匹配，否则 PATCH /prefs 会被 `:id` 吞掉）。
  */
 @Controller("api/v1/notifications")
 @UseGuards(SessionGuard)
 export class NotifyController {
-  constructor(private readonly notify: NotifyService) {}
+  constructor(
+    private readonly notify: NotifyService,
+    private readonly streamService: NotifyStreamService,
+  ) {}
 
   /** 收件箱清单（C5-01 / C5-02）：状态 / 类型 / 关联对象 + 投递时刻区间 + 分页；随行未读角标。 */
   @Get()
@@ -41,6 +46,40 @@ export class NotifyController {
   @Get("prefs")
   prefs(@CurrentActorId() actorId: string): Promise<NotifyPrefs> {
     return this.notify.getPrefs(actorId);
+  }
+
+  /**
+   * 通知实时流（SSE · S8-3 / M5-04-1）：事件 `notification` / `unread`；心跳 = 注释行；重连不补发（读面补拉对齐）。
+   * 手写 `res`（实现评审选择 · 对照 `@Sse`）：注释行心跳 / 停机告知 / 响应头与关闭语义直接可控。
+   * 超限拒新 = 429（每用户连接上限 · 定案 §三-4；`RATE_LIMITED` 未入 shared 契约 —— M5-07 联调复评）。
+   */
+  @Get("stream")
+  stream(@Req() request: Request, @Res() res: Response, @CurrentActorId() actorId: string): void {
+    const connection = this.streamService.open(actorId, {
+      write: (chunk) => {
+        res.write(chunk);
+      },
+      end: () => {
+        res.end();
+      },
+    });
+    if (connection === null) {
+      const requestId = (request as { id?: unknown }).id;
+      res.status(429).json({
+        code: "RATE_LIMITED",
+        message: "通知实时流连接被拒绝：每用户连接数已达上限（或服务正在停止），请稍后重试",
+        details: [],
+        traceId: typeof requestId === "string" ? requestId : "",
+      });
+      return;
+    }
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+    res.on("close", () => connection.close());
   }
 
   /** 更新通知偏好（局部更新；空更新 400）。 */

@@ -17,6 +17,7 @@ import type {
   NotifyPrefsRow,
 } from "../src/modules/notify/notify.repository.js";
 import { NotifyService } from "../src/modules/notify/notify.service.js";
+import type { NotifyStreamWireMessage } from "../src/modules/notify/notify.stream.js";
 import { AppConfig } from "../src/config/config.module.js";
 
 const ME = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
@@ -189,7 +190,21 @@ const fakeDatabase = {
   db: { transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(undefined) },
 } as unknown as DatabaseService;
 
-function makeService(repo: FakeNotifyRepository, now: Date, overrides: Record<string, string> = {}) {
+/** 广播发布器替身（真发布器 = 事务内 pg_notify，见 notify-stream.test.ts）。 */
+class FakeStreamPublisher {
+  published: NotifyStreamWireMessage[] = [];
+
+  async publish(_client: unknown, message: NotifyStreamWireMessage): Promise<void> {
+    this.published.push(message);
+  }
+}
+
+function makeService(
+  repo: FakeNotifyRepository,
+  now: Date,
+  overrides: Record<string, string> = {},
+  publisher = new FakeStreamPublisher(),
+) {
   const env = loadEnv({
     DATABASE_URL: "postgresql://unused",
     NOTIFY_QUIET_HOURS: "22:00-08:00",
@@ -200,7 +215,7 @@ function makeService(repo: FakeNotifyRepository, now: Date, overrides: Record<st
   });
   const clock = new ClockService();
   clock.setSource(() => now);
-  return new NotifyService(repo as never, fakeDatabase, new AppConfig(env), clock);
+  return new NotifyService(repo as never, fakeDatabase, new AppConfig(env), clock, publisher as never);
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -447,5 +462,95 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     await expect(
       service.list(ME, { from: "2026-09-29T00:00:00.000Z", to: "2026-09-28T00:00:00.000Z", page: 1, limit: 50 }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+  });
+
+  it("实时流发布：投递发 notification（契约行）+ unread（角标）；合并 / 幂等重放不发", async () => {
+    const repo = new FakeNotifyRepository();
+    const publisher = new FakeStreamPublisher();
+    const service = makeService(repo, DAYTIME, {}, publisher);
+    await service.consume(claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "R02" })));
+    expect(publisher.published).toEqual([
+      {
+        recipientId: ME,
+        event: "notification",
+        data: expect.objectContaining({
+          id: 1,
+          type: "reminder",
+          title: "日报未填",
+          status: "unread",
+          mergedCount: 1,
+          snoozeUntil: null,
+          deliveredAt: DAYTIME.toISOString(),
+        }),
+      },
+      { recipientId: ME, event: "unread", data: { unreadCount: 1 } },
+    ]);
+
+    // 同期合并（同 mergeKey 第二条）：未读数无变化 → 不发。
+    await service.consume(
+      claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "R02" }), { id: 2, dedupeKey: "k2" }),
+    );
+    expect(repo.rows[1]?.mergedIntoId).toBe(1);
+    expect(publisher.published).toHaveLength(2);
+
+    // 幂等重放（同 dedupeKey）：duplicate → 不发。
+    await service.consume(claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "R02" })));
+    expect(publisher.published).toHaveLength(2);
+  });
+
+  it("实时流发布：免打扰排期不发；flush 补投按同口径发", async () => {
+    const repo = new FakeNotifyRepository();
+    const publisher = new FakeStreamPublisher();
+    const night = makeService(repo, NIGHT, {}, publisher);
+    await night.consume(claimedRow(payload()));
+    expect(repo.postponed).toHaveLength(1);
+    expect(publisher.published).toHaveLength(0);
+
+    const nextMorning = makeService(repo, new Date("2026-09-29T00:30:00.000Z"), {}, publisher);
+    expect(await nextMorning.flushDue()).toEqual({ scanned: 1, delivered: 1, merged: 0, postponed: 0 });
+    expect(publisher.published).toEqual([
+      {
+        recipientId: ME,
+        event: "notification",
+        data: expect.objectContaining({ id: 1, deliveredAt: "2026-09-29T00:30:00.000Z" }),
+      },
+      { recipientId: ME, event: "unread", data: { unreadCount: 1 } },
+    ]);
+  });
+
+  it("实时流发布：标记改未读数发 unread；同值幂等与全部已读空操作不发", async () => {
+    const repo = new FakeNotifyRepository();
+    const publisher = new FakeStreamPublisher();
+    const service = makeService(repo, DAYTIME, {}, publisher);
+    await service.consume(claimedRow(payload()));
+    expect(publisher.published).toHaveLength(2);
+
+    await service.mark(ME, 1, "read");
+    expect(publisher.published[2]).toEqual({ recipientId: ME, event: "unread", data: { unreadCount: 0 } });
+
+    await service.mark(ME, 1, "read");
+    expect(publisher.published).toHaveLength(3);
+
+    await service.mark(ME, 1, "unread");
+    expect(publisher.published[3]).toEqual({ recipientId: ME, event: "unread", data: { unreadCount: 1 } });
+
+    await service.markAllRead(ME);
+    expect(publisher.published[4]).toEqual({ recipientId: ME, event: "unread", data: { unreadCount: 0 } });
+
+    await service.markAllRead(ME);
+    expect(publisher.published).toHaveLength(5);
+  });
+
+  it("实时流发布：非法载荷 dead 与越权 404 均不发事件", async () => {
+    const repo = new FakeNotifyRepository();
+    const publisher = new FakeStreamPublisher();
+    const service = makeService(repo, DAYTIME, {}, publisher);
+    expect(await service.consume(claimedRow({ title: "", body: "" }))).toMatchObject({ outcome: "dead" });
+    expect(publisher.published).toHaveLength(0);
+
+    await service.consume(claimedRow(payload()));
+    expect(publisher.published).toHaveLength(2);
+    await expect(service.mark(OTHER, 1, "read")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(publisher.published).toHaveLength(2);
   });
 });

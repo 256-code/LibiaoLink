@@ -115,6 +115,7 @@ async function loadRuntime() {
       clockModule,
       notifyRepositoryModule,
       notifyServiceModule,
+      notifyStreamPublisherModule,
       notifyIndexModule,
       outboxModule,
       outboxStoreModule,
@@ -137,6 +138,7 @@ async function loadRuntime() {
       load("common/clock/clock.service.js"),
       load("modules/notify/notify.repository.js"),
       load("modules/notify/notify.service.js"),
+      load("modules/notify/notify.stream.publisher.js"),
       load("modules/notify/index.js"),
       load("db/outbox.js"),
       load("db/outbox.store.js"),
@@ -160,6 +162,7 @@ async function loadRuntime() {
       ClockService: clockModule.ClockService,
       NotifyRepository: notifyRepositoryModule.NotifyRepository,
       NotifyService: notifyServiceModule.NotifyService,
+      NotifyStreamPublisher: notifyStreamPublisherModule.NotifyStreamPublisher,
       NOTIFY_MESSAGE_TOPIC: notifyIndexModule.NOTIFY_MESSAGE_TOPIC,
       appendOutboxIfAbsent: outboxModule.appendOutboxIfAbsent,
       OutboxStore: outboxStoreModule.OutboxStore,
@@ -208,7 +211,8 @@ function buildEnv(overrides = {}) {
   clock.setSource(() => CLOCK_NOW);
   const config = new runtime.AppConfig(env);
   const database = new runtime.DatabaseService(config);
-  const notify = new runtime.NotifyService(new runtime.NotifyRepository(database), database, config, clock);
+  // S8-3（M5-04-1）：投递在事务内 pg_notify 广播（本回放无 SSE 连接 → 事件静默丢弃，不影响投递断言）。
+  const notify = new runtime.NotifyService(new runtime.NotifyRepository(database), database, config, clock, new runtime.NotifyStreamPublisher());
   const outboxStore = new runtime.OutboxStore(database);
   const jobsStore = new runtime.JobsStore(database);
   const calendar = new runtime.CalendarService(
