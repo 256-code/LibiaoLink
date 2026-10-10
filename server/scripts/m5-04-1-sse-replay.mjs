@@ -228,7 +228,7 @@ async function loadRuntime() {
   await import("reflect-metadata");
   const load = (relative) => import(pathToFileURL(join(HERE, "..", "dist", relative)).href);
   try {
-    const [envModule, configModule, databaseModule, clockModule, repositoryModule, serviceModule, publisherModule] =
+    const [envModule, configModule, databaseModule, clockModule, repositoryModule, serviceModule, publisherModule, streamModule] =
       await Promise.all([
         load("config/env.js"),
         load("config/config.module.js"),
@@ -237,6 +237,7 @@ async function loadRuntime() {
         load("modules/notify/notify.repository.js"),
         load("modules/notify/notify.service.js"),
         load("modules/notify/notify.stream.publisher.js"),
+        load("modules/notify/notify.stream.js"),
       ]);
     return {
       loadEnv: envModule.loadEnv,
@@ -246,6 +247,7 @@ async function loadRuntime() {
       NotifyRepository: repositoryModule.NotifyRepository,
       NotifyService: serviceModule.NotifyService,
       NotifyStreamPublisher: publisherModule.NotifyStreamPublisher,
+      NOTIFY_STREAM_CHANNEL: streamModule.NOTIFY_STREAM_CHANNEL,
     };
   } catch (error) {
     process.stderr.write("M5-04-1：无法加载 server/dist（先执行 cd server && npm run build）：" + String(error) + "\n");
@@ -402,6 +404,42 @@ async function main() {
         process.stdout.write("  诊断探针：重投事件已到达 —— 首投缺失与投递 / 载荷无关（指向 LISTEN 就绪竞态）" + String.fromCharCode(10));
       } catch (probeError) {
         process.stdout.write("  诊断探针：重投仍无事件 —— " + messageOf(probeError) + String.fromCharCode(10));
+        try {
+          const stat = await db.query(
+            "select pid, state, left(query, 90) as q from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() order by pid limit 12",
+          );
+          process.stdout.write("  诊断探针 2：本库其它后端（" + stat.rows.length + " 条）" + String.fromCharCode(10));
+          for (const row of stat.rows) {
+            process.stdout.write(
+              "    pid=" + row.pid + " state=" + (row.state ?? "-") + " q=" + row.q + String.fromCharCode(10),
+            );
+          }
+        } catch (statError) {
+          process.stdout.write("  诊断探针 2：pg_stat_activity 查询失败 —— " + messageOf(statError) + String.fromCharCode(10));
+        }
+        const raw = new pg.Client({ connectionString: DATABASE_URL });
+        const rawSeen = [];
+        try {
+          raw.on("notification", (msg) => rawSeen.push(msg.payload));
+          await raw.connect();
+          await raw.query("LISTEN " + runtime.NOTIFY_STREAM_CHANNEL);
+          const probe2 = { ...message1, title: "M5-04-1 回放一（诊断重投 2）", refId: randomUUID() };
+          const outcome2 = await notify
+            .consume(claimed(4, dedupe("m1-probe2"), probe2))
+            .catch((probeError2) => ({ outcome: "throw", error: messageOf(probeError2) }));
+          await sleep(1500);
+          process.stdout.write(
+            "  诊断探针 3（独立 LISTEN 复核发布侧）：outcome=" + short(outcome2) + "，收到广播 " + rawSeen.length + " 条" +
+              (rawSeen.length === 0 ? "" : "，首条：" + String(rawSeen[0]).slice(0, 300)) + String.fromCharCode(10),
+          );
+        } catch (rawError) {
+          process.stdout.write("  诊断探针 3：失败 —— " + messageOf(rawError) + String.fromCharCode(10));
+        } finally {
+          await raw.end().catch(() => {});
+        }
+        process.stdout.write(
+          "  诊断：A-1 心跳注释行 " + a1.comments.length + " 条（连接写路径探针；CI 心跳 1500ms）" + String.fromCharCode(10),
+        );
       }
       throw error;
     }
@@ -552,13 +590,16 @@ try {
 } catch (error) {
   check("X", "回放主流程", "无异常（中止即报告剩余断言未执行）", "异常：" + messageOf(error), false);
   try {
-    const log = readFileSync(join(HERE, "..", "api.log"), "utf8").trimEnd();
-    if (log !== "") {
-      process.stdout.write(
-        "—— api.log 尾部（最近 60 行 · 诊断）——" + String.fromCharCode(10) +
-          log.split(String.fromCharCode(10)).slice(-60).join(String.fromCharCode(10)) + String.fromCharCode(10),
-      );
-    }
+    const lines = readFileSync(join(HERE, "..", "api.log"), "utf8").trimEnd().split(String.fromCharCode(10));
+    const sse = lines.filter((line) => line.includes("SSE") || line.includes("NotifyStream"));
+    process.stdout.write(
+      "—— api.log · SSE 相关行（" + sse.length + " 条）——" + String.fromCharCode(10) +
+        (sse.length === 0 ? "（无）" : sse.slice(-40).join(String.fromCharCode(10))) + String.fromCharCode(10),
+    );
+    process.stdout.write(
+      "—— api.log 尾部（最近 40 行 · 诊断）——" + String.fromCharCode(10) +
+        lines.slice(-40).join(String.fromCharCode(10)) + String.fromCharCode(10),
+    );
   } catch {
     // 无 api.log（本地运行）：跳过
   }

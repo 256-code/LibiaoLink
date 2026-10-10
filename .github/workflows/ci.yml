@@ -198,7 +198,8 @@ jobs:
         env:
           NODE_ENV: test
           PORT: "3011"
-          LOG_LEVEL: warn
+          # 排查临时（M5-04-1 回放 S2b 超时定位；合并前回退 warn）：放开 info 观察 SSE 广播桥 / 连接建立日志
+          LOG_LEVEL: info
           DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
           # SSE 心跳周期收紧（M5-04-1 回放 S6 断言；生产缺省 25s —— S8-3 定案 §三-4）
           NOTIFY_STREAM_HEARTBEAT_MS: "1500"
