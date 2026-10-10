@@ -47,7 +47,7 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限））",
+    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
@@ -167,6 +167,31 @@ async function bootstrap(): Promise<void> {
   const notifyFlush = setInterval(() => void flushNotify(), env.NOTIFY_FLUSH_INTERVAL_MS);
   void flushNotify();
 
+  // 稍后提醒到点触发（S8-3 · M5-04-2 · C5-05）：与通知延迟投递并列、语义独立 —— 到点置回 unread +
+  // 推 notification / unread 事件（handled 行照提醒）；落免打扰时段顺延到时段结束；不消耗每日上限。
+  // 同用 draining 闸门避免上一轮叠加。
+  let snoozing = false;
+  const flushSnoozes = async (): Promise<void> => {
+    if (snoozing) {
+      return;
+    }
+    snoozing = true;
+    try {
+      const stats = await notify.flushSnoozes();
+      if (stats.scanned > 0) {
+        logger.log(
+          "稍后提醒触发：扫描 " + stats.scanned + " / 触发 " + stats.triggered + " / 顺延 " + stats.deferred,
+        );
+      }
+    } catch (error) {
+      logger.error("稍后提醒触发扫描失败：" + messageOf(error));
+    } finally {
+      snoozing = false;
+    }
+  };
+  const snoozeSweep = setInterval(() => void flushSnoozes(), env.NOTIFY_SNOOZE_SWEEP_INTERVAL_MS);
+  void flushSnoozes();
+
   // 积压 / 最老待领取 / 近期死信告警（ADR-005）；死信单条即时告警不依赖本循环（dispatcher 直发）。
   const probeAlerts = async (): Promise<void> => {
     try {
@@ -196,6 +221,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(outboxPoll);
     clearInterval(schedulerTick);
     clearInterval(notifyFlush);
+    clearInterval(snoozeSweep);
     clearInterval(alertProbe);
     clearInterval(retentionSweep);
     logger.log("worker 收到 " + signal + "，正在退出");

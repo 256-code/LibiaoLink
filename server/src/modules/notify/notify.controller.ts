@@ -1,7 +1,8 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import {
   NotificationListQuerySchema,
   NotificationMarkBodySchema,
+  NotificationSnoozeBodySchema,
   NotifyPrefsUpdateBodySchema,
   z,
   type Notification,
@@ -9,6 +10,8 @@ import {
   type NotificationListResponse,
   type NotificationMarkAllReadResponse,
   type NotificationMarkBody,
+  type NotificationSnoozeBody,
+  type NotificationSnoozeListResponse,
   type NotifyPrefs,
   type NotifyPrefsUpdateBody,
 } from "@libiaolink/contracts";
@@ -21,9 +24,10 @@ import { NotifyStreamService } from "./notify.stream.service.js";
 const notificationIdParam = new ZodValidationPipe(z.coerce.number().int().positive());
 
 /**
- * 消息中心接口（S7-4 · j1 / M5-04 首刀）：契约 shared/src/modules/notifications.ts。
+ * 消息中心接口（S7-4 · j1 / M5-04 首刀 + S8-3 M5-04-1 SSE / M5-04-2 稍后提醒）：契约 shared/src/modules/notifications.ts。
  * 根路径 /api/v1/notifications —— 个人资源（收件箱只属收件人）：无功能权限键；读 = 会话、写 = 会话 + CSRF；不写审计。
- * 路由顺序：静态段（prefs / stream / mark-all-read）声明在 `:id` 之前（Nest 按声明顺序匹配，否则 PATCH /prefs 会被 `:id` 吞掉）。
+ * 路由顺序：静态段（prefs / stream / mark-all-read）声明在 `:id` 之前（Nest 按声明顺序匹配，否则 PATCH /prefs 会被 `:id` 吞掉）；
+ * snooze 三件为 `:id/` 二级段（与静态段无冲突），与 `:id` 同级声明在后面。
  */
 @Controller("api/v1/notifications")
 @UseGuards(SessionGuard)
@@ -109,5 +113,36 @@ export class NotifyController {
     @CurrentActorId() actorId: string,
   ): Promise<Notification> {
     return this.notify.mark(actorId, id, body.status);
+  }
+
+  /**
+   * 设置 / 覆盖稍后提醒（C5-05 · S8-3 / M5-04-2）：设置即置读；重复设置 = 覆盖（旧记录标 cancelledAt + 新记录）；
+   * 范围 400（> now + 5 分钟且 ≤ now + 30 天）；他人 / 合并子行 / 未投递行统一 404。POST 语义返回更新后通知 → 200。
+   */
+  @Post(":id/snooze")
+  @HttpCode(200)
+  @UseGuards(CsrfGuard)
+  snooze(
+    @Param("id", notificationIdParam) id: number,
+    @Body(new ZodValidationPipe(NotificationSnoozeBodySchema)) body: NotificationSnoozeBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<Notification> {
+    return this.notify.snooze(actorId, id, body);
+  }
+
+  /** 取消稍后提醒（C5-05）：幂等（无未触发也 200）；返回 snoozeUntil = null 的通知；404 族同上。 */
+  @Delete(":id/snooze")
+  @UseGuards(CsrfGuard)
+  unsnooze(@Param("id", notificationIdParam) id: number, @CurrentActorId() actorId: string): Promise<Notification> {
+    return this.notify.unsnooze(actorId, id);
+  }
+
+  /** 稍后提醒记录（C5-05「设置与触发记录可查」）：按 id 降序、不翻页；404 族同上。 */
+  @Get(":id/snoozes")
+  listSnoozes(
+    @Param("id", notificationIdParam) id: number,
+    @CurrentActorId() actorId: string,
+  ): Promise<NotificationSnoozeListResponse> {
+    return this.notify.listSnoozes(actorId, id);
   }
 }
