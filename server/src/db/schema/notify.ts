@@ -1,8 +1,11 @@
 /**
- * notifications / notify_prefs（0040 · S7-4 · j1 / M5-04 首刀 · lan 线）。
- * 表口径见 database/migrations/0040_notify_delivery.sql：一行 = 一条投递事件（source_dedupe_key 唯一 =
- * 消费幂等）；合并子行（merged_into_id 非空）仅库内留档、不进收件箱；deliver_at / delivered_at 承载
- * 免打扰次日补发与每日上限排队的延迟投递；notify_prefs 一人一行、可空列 = 继承 env 缺省。
+ * notifications / notify_prefs（0040 · S7-4 · j1 / M5-04 首刀 · lan 线）+ notification_snoozes /
+ * notifications.snooze_until（0045 · S8-3 / M5-04-2 · C5-05 稍后提醒）。
+ * 表口径见 database/migrations/0040_notify_delivery.sql 与 0045_notification_snooze.sql：一行 = 一条投递事件
+ * （source_dedupe_key 唯一 = 消费幂等）；合并子行（merged_into_id 非空）仅库内留档、不进收件箱；
+ * deliver_at / delivered_at 承载免打扰次日补发与每日上限排队的延迟投递；snooze_until = 当前未触发的稍后
+ * 提醒时刻（null = 未设置 / 已触发 / 已取消）；notification_snoozes 一次设置一条（触发 / 取消回填时刻）；
+ * notify_prefs 一人一行、可空列 = 继承 env 缺省。
  */
 import { sql } from "drizzle-orm";
 import {
@@ -53,6 +56,8 @@ export const notifications = pgTable(
     deliverAt: timestamp("deliver_at", { withTimezone: true }).notNull().defaultNow(),
     /** 实际投递时刻；null = 尚未投递（子行恒为 null）。 */
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /** 当前未触发的稍后提醒时刻（C5-05）：null = 未设置 / 已触发 / 已取消；触发不改写 delivered_at。 */
+    snoozeUntil: timestamp("snooze_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -69,6 +74,9 @@ export const notifications = pgTable(
     index("ix_notifications_daily")
       .on(table.recipientId, table.deliveredAt)
       .where(sql`merged_into_id is null and delivered_at is not null`),
+    index("ix_notifications_snooze")
+      .on(table.snoozeUntil)
+      .where(sql`merged_into_id is null and snooze_until is not null`),
     check("ck_notifications_type", sql`${table.type} in ${sql.raw(sqlValueList(NOTIFICATION_TYPE_KEYS))}`),
     check("ck_notifications_status", sql`${table.status} in ${sql.raw(sqlValueList(NOTIFICATION_STATUS_KEYS))}`),
     check("ck_notifications_title", sql`char_length(btrim(${table.title})) between 1 and 200`),
@@ -77,6 +85,29 @@ export const notifications = pgTable(
     check("ck_notifications_merged_count", sql`${table.mergedCount} >= 1`),
     check("ck_notifications_merged_into", sql`${table.mergedIntoId} is null or ${table.mergedIntoId} <> ${table.id}`),
     check("ck_notifications_delivery", sql`${table.mergedIntoId} is null or ${table.deliveredAt} is null`),
+  ],
+);
+
+/** 稍后提醒记录（C5-05「设置与触发记录可查」）：一次设置一条；触发 / 取消（含覆盖）回填对应时刻、二者互斥。 */
+export const notificationSnoozes = pgTable(
+  "notification_snoozes",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    notificationId: bigint("notification_id", { mode: "number" })
+      .notNull()
+      .references(() => notifications.id, { onDelete: "cascade" }),
+    /** 设置时刻（进读面 setAt）。 */
+    setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 设定时的稍后提醒时刻（读面原样回显；触发可能晚于本时刻 —— 免打扰顺延）。 */
+    snoozeUntil: timestamp("snooze_until", { withTimezone: true }).notNull(),
+    /** 触发时刻；null = 未触发（或已取消）。 */
+    triggeredAt: timestamp("triggered_at", { withTimezone: true }),
+    /** 取消时刻（重复设置 = 覆盖旧记录 / 手动取消）；null = 未取消。 */
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("ix_notification_snoozes_notification").on(table.notificationId, table.id.desc()),
+    check("ck_notification_snoozes_exclusive", sql`${table.triggeredAt} is null or ${table.cancelledAt} is null`),
   ],
 );
 

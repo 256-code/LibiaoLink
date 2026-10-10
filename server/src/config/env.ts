@@ -135,6 +135,11 @@ export const EnvSchema = z
     NOTIFY_STREAM_HEARTBEAT_MS: z.coerce.number().int().min(100).max(3600000).default(25000),
     /** SSE 轮询兜底周期（毫秒；0 = 关 —— LISTEN/NOTIFY 为主案，本档弱实时仅补 unread 角标快照）。 */
     NOTIFY_STREAM_POLL_MS: z.coerce.number().int().min(0).max(3600000).default(0),
+    // ---- 稍后提醒到点触发（S8-3 · M5-04-2：C5-05 设置 / 取消 / 记录读面 + 触发循环 · Push 212） ----
+    /** 稍后提醒到点扫描周期（毫秒）：worker 常驻循环按 `snooze_until` 到期重提醒（免打扰顺延、不消耗每日上限）。 */
+    NOTIFY_SNOOZE_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).max(3600000).default(60000),
+    /** 单轮稍后提醒扫描条数上限。 */
+    NOTIFY_SNOOZE_BATCH: z.coerce.number().int().min(1).max(500).default(50),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),

@@ -270,3 +270,10 @@ jobs:
           M5_04_1_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
           M5_04_1_BASE_URL: http://127.0.0.1:3011
         run: node scripts/m5-04-1-sse-replay.mjs
+      # M5-04-2（稍后提醒：端点三件套 + 迁移 0045 + 触发循环 + SSE 联动 · S8-3 · lan 线，Push 212）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: M5-04-2 snooze replay (set / cancel / trigger / quiet deferral / handled + SSE)
+        working-directory: server
+        env:
+          M5_04_2_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M5_04_2_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m5-04-2-snooze-replay.mjs
