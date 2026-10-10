@@ -133,7 +133,13 @@ class SseStream {
       this.reader = response.body.getReader();
       void this.pump();
     } else {
-      this.body = await response.text().catch(() => "");
+      // 非 200（如 429 拒新）：错误信封也是 JSON —— 与 call() 同口径解析，断言才拿得到 code。
+      const text = await response.text().catch(() => "");
+      try {
+        this.body = text === "" ? null : JSON.parse(text);
+      } catch {
+        this.body = { raw: text.slice(0, 300) };
+      }
     }
     return this;
   }
