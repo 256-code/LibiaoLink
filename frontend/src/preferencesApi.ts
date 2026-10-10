@@ -1,6 +1,6 @@
 /**
  * 用户偏好（A4 / A24）：GET / PATCH /api/v1/users/me/preferences。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）。
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）。
  * 常用筛选（A24）自 Push 169 起按账号存服务端（user_preferences.prefs.homeSavedFilters）——
  * 同一账号换设备可见；同一设备换账号互不可见（服务端按会话 actorId 隔离，路径不接受用户 id）。
  * 契约 shared/src/modules/users.ts：PATCH 为合并语义（只传变更键、数组键整体替换）。
@@ -8,11 +8,19 @@
 import { apiRequest, apiSend } from "./api";
 import { clearLegacySavedFilters, readLegacySavedFilters } from "./savedFilters";
 import type { SavedFilter } from "./savedFilters";
+import type { PlanNote } from "./myPlan";
 
 /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：tasks / raised 两枚已展开的项目 id 列表（整体替换语义；默认两空数组 = 全部收起）。 */
 export type WorkspaceOpenProjects = {
   tasks: string[];
   raised: string[];
+};
+
+/** 「我的计划」便签墙（Push 268）：按账号存 prefs.myPlanBoard；PATCH 只传 notes / categories，updatedAt 由服务端盖章（从未保存 = null）。 */
+export type MyPlanBoardPrefs = {
+  notes: PlanNote[];
+  categories: string[];
+  updatedAt: string | null;
 };
 
 /** 偏好全量（与契约 UserPreferences 同形；`updatedAt` = 尚未保存过时 null）。 */
@@ -23,6 +31,8 @@ export type UserPreferences = {
   focusMode: boolean;
   /** 工作台折叠面板展开态（A31 · Push 233）：按标签记住已展开的项目 id；默认两空数组 = 全部收起。 */
   workspaceOpenProjects: WorkspaceOpenProjects;
+  /** 「我的计划」便签墙（Push 268）：整面便签墙按账号存；从未保存 = updatedAt null（前端据此预置示例 / 迁移旧键）。 */
+  myPlanBoard: MyPlanBoardPrefs;
   updatedAt: string | null;
 };
 
@@ -49,6 +59,11 @@ export function saveFocusMode(value: boolean): Promise<UserPreferences> {
 /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）单键 PATCH：整体替换两标签的项目 id 列表。 */
 export function saveWorkspaceOpenProjects(value: WorkspaceOpenProjects): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { workspaceOpenProjects: value });
+}
+
+/** 「我的计划」便签墙整体替换（Push 268 · 业务口径「数据接入数据库」）：只传这一个键（notes / categories），返回服务端收敛 + 盖章后的全量偏好。 */
+export function saveMyPlanBoard(board: { notes: PlanNote[]; categories: string[] }): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { myPlanBoard: board });
 }
 
 /**

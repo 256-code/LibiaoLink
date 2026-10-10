@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
-import { clearPlanBoard } from "../myPlan";
+import { clearLegacyPlanBoard } from "../myPlan";
 import { hasPermission, loadMyPermissions, type MyPermissions } from "../permissions";
 import { AUDIT_BASE_HASH, FILES_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { TopNav } from "./TopNav";
@@ -129,8 +129,8 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                   onClick={() => {
                     // 退出登录清除本地记忆：多人共用设备时，避免把上一位用户的筛选选择带给下一位
                     clearHomePrefs();
-                    // 「我的计划」便签墙同一口径：本机便签不带给下一位用户
-                    clearPlanBoard();
+                    // 「我的计划」便签墙：数据在账号里（Push 268 起）；这里只清尚未迁移上云的本机旧键，不带给下一位用户
+                    clearLegacyPlanBoard();
                   }}
                   className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >

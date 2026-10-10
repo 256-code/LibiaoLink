@@ -1,17 +1,17 @@
 /**
  * 「我的计划」便签墙（工作台第三枚标签 · 业务口径 2026-10-10「照 minimemo3 的便签页融入系统」）：
- * 个人便签墙 —— 新建 / 编辑 / 删除便签，支持颜色、字体、分类（可自定义）、搜索、排序；页面形态与配色照 MiniMemo 参考页照搬（奶白背景 / 198 高圆角卡片 / 7 色 hex 调色板），编辑（填写）弹窗亦照搬（便签底色整卡铺底 + 顶栏关闭 / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 「更新于」底栏；业务口径 2026-10-10「填写也要一样」），不做导出 / 导入。
+ * 个人便签墙 —— 新建 / 编辑 / 删除 / 完成便签（完成后只出现在「已完成」视图，便签墙与分类视图不再显示），支持颜色、字体、分类（可自定义）、搜索；页面形态与配色照 MiniMemo 参考页照搬（Push 268 起页面底改纯白、排序下架 / 198 高圆角卡片 / 7 色 hex 调色板），编辑（填写）弹窗亦照搬（便签底色整卡铺底 + 顶栏关闭 / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 「更新于」底栏 + 「完成 / 恢复」；业务口径 2026-10-10「填写也要一样」→「数据接入数据库」+「新增完成按钮 完成后只显示在已完成里面」），不做导出 / 导入。
  *
- * 存储（本刀 · 纯前端）：按浏览器本机保存，键 libiaolink.plan.board.v1（版本化 JSON，形状 = PlanBoard）；
- * 退出登录时随其它本机记忆一起清除（AppHeader，多人共用设备的隔离手段），换账号互不可见。
- * 服务端同步（按账号存偏好、换设备可见）不在本刀：需要 user_preferences.prefs 契约扩键（wmj 线），登记为后续事项。
+ * 存储（Push 268 起 · 账号落库）：整面便签墙按账号存服务端偏好（user_preferences.prefs.myPlanBoard，GET / PATCH /api/v1/users/me/preferences，见 preferencesApi.ts）—— 换设备用同一账号登录都能看到；
+ * 本机 localStorage 只保留旧键 libiaolink.plan.board.v1 作一次性迁移来源：账号里从未保存过（updatedAt null）或旧键有便签而账号为空时，首次打开本页把本机数据推上云再清旧键；
+ * 退出登录清掉未迁移的旧键（AppHeader，多人共用设备不把上一位的便签带给下一位）；迁移失败保留旧键、下次打开自动重试（原样展示本机数据，不阻塞页面）。
  *
  * 口径：
- * - 首次打开（本机无记录）预置 6 条示例便签（可删）—— 与参考页 minimemo3 的初始数据同一做法，便签墙一进来不是空的；
- * - 单条：标题（≤ 40 字）/ 内容（≤ 2000 字）/ 分类（默认六类，可加至 12 类、每类名 ≤ 10 字）/ 颜色（7 色）/ 字体（简约 / 优雅 / 等宽）；
+ * - 首次打开（账号里从未保存过）预置 6 条示例便签并上云（可删）—— 与参考页 minimemo3 的初始数据同一做法，便签墙一进来不是空的；
+ * - 单条：标题（≤ 40 字）/ 内容（≤ 2000 字）/ 分类（默认六类，可加至 12 类、每类名 ≤ 10 字）/ 颜色（7 色）/ 字体（简约 / 优雅 / 等宽）/ 完成态（done；完成后只出现在「已完成」视图）；
  * - 便签数上限 300 条（超出时「新建便签」出提示，不静默丢）；
- * - 读取时逐条收敛（不合法整条丢弃），不抛错、不半读半写；损坏不覆盖原始值（等人工排查）；
- * - 导出 / 导入不做（业务口径 2026-10-10「导出导入功能不要」）；本机数据自己留底，清浏览器数据会丢。
+ * - 读取时逐条收敛（不合法整条丢弃），不抛错、不半读半写；服务端读侧同口径收敛（server user-preference.service.ts）；
+ * - 导出 / 导入不做（业务口径 2026-10-10「导出导入功能不要」）；保存失败保留界面改动并出提示（可重试）。
  */
 
 export type PlanColorId = "white" | "yellow" | "green" | "blue" | "purple" | "pink" | "orange";
@@ -25,19 +25,19 @@ export type PlanNote = {
   category: string;
   colorId: PlanColorId;
   fontId: PlanFontId;
+  /** 完成态（Push 268）：true = 收进「已完成」，便签墙（含分类视图）不再显示。 */
+  done: boolean;
   /** ISO 8601（UTC，展示按本机时区）；排序与展示同一来源。 */
   createdAt: string;
   updatedAt: string;
 };
-
-export type PlanSortKey = "updated_desc" | "created_desc" | "created_asc" | "title_asc";
 
 export type PlanBoard = {
   notes: PlanNote[];
   categories: string[];
 };
 
-/** 本机存储键（版本化：形状升级时换 v2，旧键按迁移策略处理）。 */
+/** 本机旧键（Push 268 起只作一次性迁移来源：账号里没有便签墙时把本机数据推上云再清键）。 */
 export const PLAN_STORAGE_KEY = "libiaolink.plan.board.v1";
 
 export const PLAN_TITLE_MAX = 40;
@@ -79,13 +79,6 @@ export const PLAN_FONTS: readonly PlanFont[] = [
 
 /** 默认分类（首次打开预置；可再加，不删除 —— 便签引用的分类永远在）。 */
 export const PLAN_DEFAULT_CATEGORIES: readonly string[] = ["待办", "工作", "想法", "采购", "个人", "其他"];
-
-export const PLAN_SORT_LABELS: Record<PlanSortKey, string> = {
-  updated_desc: "最近更新",
-  created_desc: "最新创建",
-  created_asc: "最早创建",
-  title_asc: "标题 A→Z",
-};
 
 export function planColorOf(id: string): PlanColor {
   return PLAN_COLORS.find((item) => item.id === id) ?? PLAN_COLORS[0];
@@ -146,7 +139,7 @@ function sanitizeNote(value: unknown): PlanNote | null {
   }
   const colorId = typeof record.colorId === "string" && isPlanColorId(record.colorId) ? record.colorId : "white";
   const fontId = typeof record.fontId === "string" && isPlanFontId(record.fontId) ? record.fontId : "sans";
-  return { id, title, content, category, colorId, fontId, createdAt, updatedAt };
+  return { id, title, content, category, colorId, fontId, done: record.done === true, createdAt, updatedAt };
 }
 
 /** 分类表：去重、去空、去超长，最多 12 类；空表回落默认六类。 */
@@ -173,27 +166,30 @@ function sanitizeCategories(value: unknown): string[] {
 function seedNotes(now: Date): PlanNote[] {
   const at = (hoursAgo: number): string => new Date(now.getTime() - hoursAgo * 3600000).toISOString();
   return [
-    { id: "pn-seed-1", title: "本周重点", content: "1: 跟进印度项目的任务排期\n2: 整理周五评审要用的材料\n3: 给新同事开通账号", category: "待办", colorId: "yellow", fontId: "sans", createdAt: at(6), updatedAt: at(1) },
-    { id: "pn-seed-2", title: "想法速记", content: "把「我的计划」做成便签墙：颜色分类 + 搜索排序。\n先本机保存，重要内容自己留个底。", category: "想法", colorId: "blue", fontId: "sans", createdAt: at(26), updatedAt: at(3) },
-    { id: "pn-seed-3", title: "会议要点", content: "周一例会：\n- 验收节点提前到月底\n- 甘特图按负责人筛选\n- 日报必填项已上线", category: "工作", colorId: "white", fontId: "sans", createdAt: at(50), updatedAt: at(22) },
-    { id: "pn-seed-4", title: "采购清单", content: "- A4 打印纸\n- 标签机色带\n- 白板笔（黑 / 红）", category: "采购", colorId: "green", fontId: "mono", createdAt: at(74), updatedAt: at(30) },
-    { id: "pn-seed-5", title: "读书清单", content: "《人月神话》\n《凤凰项目》\n《持续交付》", category: "个人", colorId: "pink", fontId: "serif", createdAt: at(98), updatedAt: at(50) },
-    { id: "pn-seed-6", title: "随手记", content: "便签保存在这台设备的浏览器里：不跟账号走，清理浏览器数据前先自己留个底。", category: "其他", colorId: "purple", fontId: "sans", createdAt: at(122), updatedAt: at(74) },
+    { id: "pn-seed-1", title: "本周重点", content: "1: 跟进印度项目的任务排期\n2: 整理周五评审要用的材料\n3: 给新同事开通账号", category: "待办", colorId: "yellow", fontId: "sans", done: false, createdAt: at(6), updatedAt: at(1) },
+    { id: "pn-seed-2", title: "想法速记", content: "把「我的计划」做成便签墙：颜色分类 + 搜索。\n做完的便签点开按「完成」，自动收进「已完成」。", category: "想法", colorId: "blue", fontId: "sans", done: false, createdAt: at(26), updatedAt: at(3) },
+    { id: "pn-seed-3", title: "会议要点", content: "周一例会：\n- 验收节点提前到月底\n- 甘特图按负责人筛选\n- 日报必填项已上线", category: "工作", colorId: "white", fontId: "sans", done: false, createdAt: at(50), updatedAt: at(22) },
+    { id: "pn-seed-4", title: "采购清单", content: "- A4 打印纸\n- 标签机色带\n- 白板笔（黑 / 红）", category: "采购", colorId: "green", fontId: "mono", done: false, createdAt: at(74), updatedAt: at(30) },
+    { id: "pn-seed-5", title: "读书清单", content: "《人月神话》\n《凤凰项目》\n《持续交付》", category: "个人", colorId: "pink", fontId: "serif", done: false, createdAt: at(98), updatedAt: at(50) },
+    { id: "pn-seed-6", title: "随手记", content: "便签跟着账号走：换台设备用同一账号登录也能看到；重要内容自己留个底。", category: "其他", colorId: "purple", fontId: "sans", done: false, createdAt: at(122), updatedAt: at(74) },
   ];
 }
 
-/** 读取本机便签墙：无记录 = 预置示例并落盘；损坏 / 缺字段 = 逐条收敛（损坏不覆盖原始值）。 */
-export function loadPlanBoard(): PlanBoard {
+/** 首次打开（账号里从未保存过）预置的整面便签墙：6 条示例 + 默认六类（与参考页 minimemo3 的初始数据同一做法）。 */
+export function seedPlanBoard(): PlanBoard {
+  return { notes: seedNotes(new Date()), categories: PLAN_DEFAULT_CATEGORIES.slice() };
+}
+
+/** 读取本机旧键（迁移来源）：无记录 / 损坏 = null（键保留，不覆盖原始值）；有记录 = 逐条收敛后的整面便签墙。 */
+export function readLegacyPlanBoard(): PlanBoard | null {
   let raw: string | null = null;
   try {
     raw = window.localStorage.getItem(PLAN_STORAGE_KEY);
   } catch {
-    raw = null;
+    return null;
   }
   if (raw === null) {
-    const board: PlanBoard = { notes: seedNotes(new Date()), categories: PLAN_DEFAULT_CATEGORIES.slice() };
-    savePlanBoard(board);
-    return board;
+    return null;
   }
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -215,46 +211,22 @@ export function loadPlanBoard(): PlanBoard {
     }
     return { notes, categories: sanitizeCategories(record.categories) };
   } catch {
-    return { notes: [], categories: PLAN_DEFAULT_CATEGORIES.slice() };
+    return null;
   }
 }
 
-/** 整体写回本机；返回 false = 存储不可用（隐私模式 / 配额），调用方据此出提示。 */
-export function savePlanBoard(board: PlanBoard): boolean {
-  try {
-    window.localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify({ v: 1, notes: board.notes, categories: board.categories }));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 退出登录清除本机便签（与首页偏好同一条隔离口径：多人共用设备不把上一位的便签带给下一位）。 */
-export function clearPlanBoard(): void {
+/** 退出登录清掉未迁移的本机旧键（与首页偏好同一条隔离口径：多人共用设备不把上一位的便签带给下一位）。 */
+export function clearLegacyPlanBoard(): void {
   try {
     window.localStorage.removeItem(PLAN_STORAGE_KEY);
   } catch {
-    // 与写入同一降级策略
+    // 与旧写入同一降级策略
   }
 }
 
-/** 排序（不改原数组）：最近更新 / 最新创建 / 最早创建 / 标题 A→Z（中文按拼音排）。 */
-export function sortPlanNotes(notes: readonly PlanNote[], key: PlanSortKey): PlanNote[] {
-  const result = notes.slice();
-  if (key === "updated_desc") {
-    result.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    return result;
-  }
-  if (key === "created_desc") {
-    result.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return result;
-  }
-  if (key === "created_asc") {
-    result.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-    return result;
-  }
-  result.sort((left, right) => left.title.localeCompare(right.title, "zh-Hans-CN"));
-  return result;
+/** 顺序（Push 268 起固定 = 最近更新在前；排序 UI 下架）：不改原数组。 */
+export function orderPlanNotes(notes: readonly PlanNote[]): PlanNote[] {
+  return notes.slice().sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 /** 关键字（标题 / 内容 / 分类，忽略大小写）+ 分类过滤。 */

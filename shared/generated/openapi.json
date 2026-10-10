@@ -3532,6 +3532,133 @@
         ],
         "description": "/auth/me 响应（会话由 HttpOnly Cookie 承载）"
       },
+      "MyPlanBoard": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MyPlanBoardUpdate"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "updatedAt": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/DateTime"
+                  },
+                  {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "该键最后一次保存时间（服务端盖章）；从未保存 = null（前端据此判断首次进入 → 预置 6 条示例并上云）"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "updatedAt"
+            ]
+          }
+        ],
+        "description": "「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛"
+      },
+      "MyPlanBoardUpdate": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MyPlanNote"
+            },
+            "maxItems": 300,
+            "description": "便签列表（整体替换语义；≤ 300 条）"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10
+            },
+            "maxItems": 12,
+            "description": "分类表（整体替换语义；≤ 12 类）"
+          }
+        },
+        "required": [
+          "notes",
+          "categories"
+        ],
+        "description": "「我的计划」便签墙 PATCH 体（客户端只传 notes / categories；updatedAt 由服务端盖章）"
+      },
+      "MyPlanNote": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "便签 id（前端生成 pn- 前缀；跨设备同步后保持不变）"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "标题（≤ 40 字；与内容可各自为空，但不同时为空）"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "内容（≤ 2000 字）"
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "description": "分类名（≤ 10 字；引用 categories 表）"
+          },
+          "colorId": {
+            "$ref": "#/components/schemas/PlanBoardColor"
+          },
+          "fontId": {
+            "$ref": "#/components/schemas/PlanBoardFont"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "完成态（Push 268）：true = 收进「已完成」，便签墙（含分类视图）不再显示"
+          },
+          "createdAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "创建时间（ISO 8601；跨设备同步后保持原值）"
+              }
+            ]
+          },
+          "updatedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "最后更新时间（排序 / 卡片角标用）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "content",
+          "category",
+          "colorId",
+          "fontId",
+          "done",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "「我的计划」单条便签（Push 268）"
+      },
       "NodeCompleteBody": {
         "type": "object",
         "properties": {
@@ -4105,6 +4232,28 @@
           "permissions"
         ],
         "description": "当前用户授权画像（未登录 401）"
+      },
+      "PlanBoardColor": {
+        "type": "string",
+        "enum": [
+          "white",
+          "yellow",
+          "green",
+          "blue",
+          "purple",
+          "pink",
+          "orange"
+        ],
+        "description": "便签颜色 id（7 色 hex 调色板，与前端 myPlan.ts 同源）"
+      },
+      "PlanBoardFont": {
+        "type": "string",
+        "enum": [
+          "sans",
+          "serif",
+          "mono"
+        ],
+        "description": "便签字体 id（简约 / 优雅 / 等宽，与前端 myPlan.ts 同源）"
       },
       "PreviewStatus": {
         "type": "string",
@@ -8181,6 +8330,9 @@
           "workspaceOpenProjects": {
             "$ref": "#/components/schemas/WorkspaceOpenProjects"
           },
+          "myPlanBoard": {
+            "$ref": "#/components/schemas/MyPlanBoard"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -8201,6 +8353,7 @@
           "homeSavedFilters",
           "focusMode",
           "workspaceOpenProjects",
+          "myPlanBoard",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -8227,6 +8380,9 @@
           },
           "workspaceOpenProjects": {
             "$ref": "#/components/schemas/WorkspaceOpenProjects"
+          },
+          "myPlanBoard": {
+            "$ref": "#/components/schemas/MyPlanBoardUpdate"
           }
         },
         "additionalProperties": {},

@@ -1,13 +1,14 @@
 /**
- * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
+ * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
  * 未声明键保留）、读侧规范化（jsonb 是自由对象，脏数据一律收敛不抛错）、契约上限（≤ 20 组 / 名称 ≤ 20 字）、
- * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛。
+ * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛、便签墙形状 / 收敛 / 服务端盖章。
  * 不连库：仓储用内存替身（与 admin-audit.test.ts 同口径）；契约 schema 直接解析校验。
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema, WORKSPACE_OPEN_PROJECTS_LIMIT } from "@libiaolink/contracts";
+import { PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_NOTE_LIMIT, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema, WORKSPACE_OPEN_PROJECTS_LIMIT } from "@libiaolink/contracts";
+import type { MyPlanNote } from "@libiaolink/contracts";
 import type { SavedHomeFilter } from "@libiaolink/contracts";
 import { UserPreferenceService } from "../src/modules/identity/user-preference.service.js";
 import type { UserPreferenceRepository, UserPreferenceRow } from "../src/modules/identity/user-preference.repository.js";
@@ -70,7 +71,7 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], updatedAt: null }, updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
@@ -162,6 +163,52 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ workspaceOpenProjects: { tasks: ["不是-uuid"], raised: [] } }).success).toBe(false);
     const many = Array.from({ length: WORKSPACE_OPEN_PROJECTS_LIMIT + 1 }, () => PROJECT_A);
     expect(UserPreferencesUpdateBodySchema.safeParse({ workspaceOpenProjects: { tasks: many, raised: [] } }).success).toBe(false);
+  });
+
+  it("便签墙（「我的计划」· Push 268）：只传 myPlanBoard 落库、整体替换；updatedAt 由服务端盖章（不被客户端伪造值覆盖）", async () => {
+    const { service, repo } = makeService();
+    const note: MyPlanNote = { id: "pn-1", title: "买纸", content: "A4", category: "采购", colorId: "yellow", fontId: "sans", done: false, createdAt: AT.toISOString(), updatedAt: AT.toISOString() };
+    await service.update(USER_ID, { myPlanBoard: { notes: [note], categories: ["采购"] } }, AT);
+    const prefs = await service.get(USER_ID);
+    expect(prefs.myPlanBoard.notes).toEqual([note]);
+    expect(prefs.myPlanBoard.categories).toEqual(["采购"]);
+    expect(prefs.myPlanBoard.updatedAt).toBe(AT.toISOString());
+    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ myPlanBoard: { notes: [note], categories: ["采购"], updatedAt: AT.toISOString() } });
+    // 客户端夹带 updatedAt 伪造 → 被服务端盖章值覆盖（写入时间以服务端为准）
+    const forged: MyPlanNote = { ...note, id: "pn-2", done: true };
+    const later = new Date("2026-10-10T02:00:00.000Z");
+    const after = await service.update(USER_ID, { myPlanBoard: { notes: [forged], categories: ["采购"], updatedAt: "1999-01-01T00:00:00.000Z" } } as unknown as { myPlanBoard?: unknown }, later);
+    expect(after.myPlanBoard.updatedAt).toBe(later.toISOString());
+    expect(after.myPlanBoard.notes).toEqual([forged]);
+    // 未传键保持原值：换个键 PATCH 不冲掉便签墙
+    expect((await service.update(USER_ID, { focusMode: true }, AT)).myPlanBoard.notes).toEqual([forged]);
+  });
+
+  it("便签墙读侧收敛：脏 jsonb（非法便签整条丢弃 / 颜色字体回落 / done 非布尔 → false / 分类去空去重）", async () => {
+    const { service, repo } = makeService();
+    const ok: MyPlanNote = { id: "pn-a", title: "t", content: "c", category: "待办", colorId: "blue", fontId: "mono", done: true, createdAt: AT.toISOString(), updatedAt: AT.toISOString() };
+    const dirty = {
+      notes: [ok, { id: "pn-b" }, "oops", { ...ok, id: "pn-c", colorId: "red", fontId: "x", done: "yes" }, { ...ok, id: "pn-d", category: "  " }, { ...ok, id: "pn-e", title: "", content: "" }],
+      categories: ["待办", "待办", 5, "", "采购"],
+    };
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { myPlanBoard: dirty }, updatedAt: AT } as unknown as UserPreferenceRow);
+    const prefs = await service.get(USER_ID);
+    expect(prefs.myPlanBoard.notes.map((item) => item.id)).toEqual(["pn-a", "pn-c"]);
+    expect(prefs.myPlanBoard.notes[1]).toMatchObject({ colorId: "white", fontId: "sans", done: false });
+    expect(prefs.myPlanBoard.categories).toEqual(["待办", "采购"]);
+    expect(prefs.myPlanBoard.updatedAt).toBeNull();
+  });
+
+  it("便签墙契约：≤ 300 条 / done 必填 / 颜色字体白名单；超上限 / 缺 done / 未知色 / 超 12 类由 schema 拒绝", () => {
+    const note: MyPlanNote = { id: "pn-1", title: "t", content: "", category: "待办", colorId: "white", fontId: "sans", done: false, createdAt: AT.toISOString(), updatedAt: AT.toISOString() };
+    expect(UserPreferencesUpdateBodySchema.safeParse({ myPlanBoard: { notes: [note], categories: ["待办"] } }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ myPlanBoard: { notes: [{ ...note, done: undefined }], categories: ["待办"] } }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ myPlanBoard: { notes: [{ ...note, colorId: "red" }], categories: ["待办"] } }).success).toBe(false);
+    const many = Array.from({ length: PLAN_BOARD_NOTE_LIMIT + 1 }, () => note);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ myPlanBoard: { notes: many, categories: ["待办"] } }).success).toBe(false);
+    const cats = Array.from({ length: PLAN_BOARD_CATEGORY_LIMIT + 1 }, (_value, index) => "类" + String(index));
+    expect(UserPreferencesUpdateBodySchema.safeParse({ myPlanBoard: { notes: [], categories: cats } }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ myPlanBoard: { notes: [], categories: ["一二三四五六七八九十一"] } }).success).toBe(false);
   });
 
   it("契约上限：第 21 组 / 名称 21 字由 schema 拒绝（服务端 400）", () => {
