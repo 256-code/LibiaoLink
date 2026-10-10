@@ -186,7 +186,7 @@ class SseStream {
     for (;;) {
       const hit = this.events.find((item) => item.type === type && predicate(item.data));
       if (hit !== undefined) return hit;
-      if (Date.now() >= deadline) throw new Error(this.name + " 等待事件超时：" + type + "（" + timeoutMs + "ms）");
+      if (Date.now() >= deadline) throw new Error(this.name + " 等待事件超时：" + type + "（" + timeoutMs + "ms；已收 " + this.events.length + " 条：" + this.events.map((item) => item.type).join(",") + "）");
       await sleep(50);
     }
   }
@@ -371,7 +371,8 @@ async function main() {
       [dedupe("m1")],
     );
     const storedRow = stored.rows[0];
-    const notification1 = await a1.waitForEvent("notification", (data) => data.id === storedRow?.id, 10_000);
+    const storedId1 = Number(storedRow?.id);
+    const notification1 = await a1.waitForEvent("notification", (data) => data.id === storedId1, 10_000);
     check(
       "S2b",
       "本人连接收 notification：与库内行一致（title / status / deliveredAt / snoozeUntil）",
@@ -383,7 +384,7 @@ async function main() {
         deliveredAt: notification1.data.deliveredAt,
         snoozeUntil: notification1.data.snoozeUntil,
       }),
-      notification1.data.id === storedRow?.id &&
+      notification1.data.id === storedId1 &&
         notification1.data.title === "M5-04-1 回放一" &&
         notification1.data.status === "unread" &&
         typeof notification1.data.deliveredAt === "string" &&
@@ -420,7 +421,8 @@ async function main() {
     };
     await notify.consume(claimed(2, dedupe("m2"), message2));
     const stored2 = await db.query("select id from notifications where source_dedupe_key = $1", [dedupe("m2")]);
-    const notification2 = await a1.waitForEvent("notification", (data) => data.id === stored2.rows[0]?.id, 10_000);
+    const storedId2 = Number(stored2.rows[0]?.id);
+    const notification2 = await a1.waitForEvent("notification", (data) => data.id === storedId2, 10_000);
     const unread3 = await a1.waitForEvent("unread", (data) => data.unreadCount === 1, 10_000);
     await sleep(500);
     check(
@@ -428,7 +430,7 @@ async function main() {
       "跨用户隔离：A 收第二条（通知 + 角标），B 同窗口零事件",
       "A=id" + stored2.rows[0]?.id + " / unread=1 / B=0",
       short({ a: notification2.data.id, aUnread: unread3.data.unreadCount, b: b1.events.length }),
-      notification2.data.id === stored2.rows[0]?.id && unread3.data.unreadCount === 1 && b1.events.length === 0,
+      notification2.data.id === storedId2 && unread3.data.unreadCount === 1 && b1.events.length === 0,
     );
 
     // ------------------------------------------------------------------ S5 每用户连接上限
