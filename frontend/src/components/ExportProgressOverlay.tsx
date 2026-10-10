@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { lockBodyScroll } from "../scrollLock";
 
 /**
  * 导出等待浮层（2026-10-10 · §6.16 ⑳ · 业务口径「导出时间太长了要做加载动画提示用户 大概需要多长时间
@@ -52,6 +53,10 @@ export function ExportProgressOverlay({ progress }: { progress: ExportTranslateP
     }, TICK_MS);
     return () => window.clearInterval(timer);
   }, []);
+
+  // 2026-10-10 修复「导出浮层打开时背景仍可滚动」（与变更详情弹窗同一现象）：等待期间锁背景滚动，
+  // 浮层收起（导出结束 / 唤起打印窗口）即还原；同抽屉 / 弹窗口径（body overflow hidden + 滚动条宽度补偿）。
+  useEffect(() => lockBodyScroll(), []);
 
   const done = progress === null ? 0 : progress.done;
   const total = progress === null ? 0 : progress.total;

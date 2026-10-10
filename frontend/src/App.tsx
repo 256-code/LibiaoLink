@@ -9,6 +9,7 @@ import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
+import { useFocusTrap } from "./components/useFocusTrap";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
 import { hasPermission, loadMyPermissions, type MyPermissions } from "./permissions";
@@ -120,6 +121,8 @@ export default function App() {
   const [permissions, setPermissions] = useState<MyPermissions | null>(null);
   /** 待确认删除的项目（卡片删除先出确认条，第二下才真删）：null = 没有待确认的删除。 */
   const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在背景卡片）、Tab 在条内循环、关闭还原。 */
+  const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const route = useHashRoute();
 
   useEffect(() => {
@@ -519,6 +522,7 @@ export default function App() {
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {pendingDelete === null ? null : (
         <div
+          ref={deleteConfirmTrapRef}
           role="dialog"
           aria-label="确认删除项目"
           className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"

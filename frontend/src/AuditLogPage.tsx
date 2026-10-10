@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
 import { DateRangePicker, type DateRange } from "./components/DateRangePicker";
@@ -161,6 +161,17 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
 
   const range: DateRange | null = query.from === null || query.to === null ? null : { from: query.from, to: query.to };
   const totalPages = state.kind === "ready" ? Math.max(1, Math.ceil(state.result.total / state.result.limit)) : 1;
+  // 页码钳制（2026-10-10 修复「page=999 直接空态」；对照文件库口径）：直链 / 收藏的 page 超出总页数时按最后
+  // 一页重新取数并 replace 写回地址 —— 而不是「空态 + 分页器消失」。越界结果只在「取数中」渲染（空态与地址都不
+  // 落）；query 走 ref 读，effect 依赖只留 overPage / totalPages —— 否则 replace 触发的重渲染会重复调用 onChangeQuery。
+  const overPage = state.kind === "ready" && state.result.page > totalPages;
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  useEffect(() => {
+    if (overPage) {
+      onChangeQuery({ ...queryRef.current, page: totalPages });
+    }
+  }, [overPage, totalPages, onChangeQuery]);
 
   return (
     <div className="min-h-screen">
@@ -305,7 +316,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
             ) : null}
           </section>
 
-          {state.kind === "loading" ? (
+          {state.kind === "loading" || overPage ? (
             <div className="flex justify-center py-16">
               <Loader />
             </div>
@@ -328,7 +339,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
             </div>
           ) : null}
 
-          {state.kind === "ready" && state.result.items.length === 0 ? (
+          {state.kind === "ready" && state.result.items.length === 0 && !overPage ? (
             <div data-audit-empty="true" className="rounded-xl border border-zinc-200 bg-white px-4 py-12 text-center text-sm text-zinc-500">
               {query.keyword !== null
                 ? "没有匹配「" + query.keyword + "」的操作记录，可调整关键词或清除筛选。"

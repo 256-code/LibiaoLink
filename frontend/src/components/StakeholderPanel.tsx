@@ -16,6 +16,7 @@ import { RowDeleteButton } from "./RowDeleteButton";
 import { Toast } from "./Toast";
 import { RowEditButton } from "./RowEditButton";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
+import { useFocusTrap } from "./useFocusTrap";
 
 /**
  * 项目详情「干系人」面板（A27 · M6-06 前端接线；标签排在最右侧）：表格形态与「项目总览」同一套 ——
@@ -183,6 +184,8 @@ function StakeholderModal({
   /** 提交：返回 null = 成功（父层关窗 + 重取列表）；返回文案 = 失败提示，窗口保持打开。 */
   onSubmit: (draft: StakeholderDraft) => Promise<string | null>;
 }) {
+  /** 键盘焦点陷阱（Push 264 追订）：弹窗打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发按钮。 */
+  const modalTrapRef = useFocusTrap<HTMLDivElement>();
   const [draft, setDraft] = useState<StakeholderDraft>(() =>
     row === null
       ? { name: "", companyType: "", role: "", title: "", phone: "", wechat: "", email: "" }
@@ -229,6 +232,7 @@ function StakeholderModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-zinc-900/40" onClick={onClose} />
       <div
+        ref={modalTrapRef}
         role="dialog"
         aria-modal="true"
         aria-label={mode === "create" ? "新建干系人" : "编辑干系人"}
@@ -437,6 +441,8 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; row: Stakeholder } | null>(null);
   /** 删除二次确认（与首页删项目 / 模板 / 日报问题同一套：第一下只开口，第二下才真删）。 */
   const [pendingDelete, setPendingDelete] = useState<Stakeholder | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在行内「删除」按钮上）、Tab 在条内循环、关闭还原。 */
+  const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const [deletePending, setDeletePending] = useState(false);
   /** 写失败提示（删除）；加载失败走上面的 error 块。 */
   const [actionError, setActionError] = useState<string | null>(null);
@@ -644,6 +650,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       {pendingDelete === null ? null : (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
           <div
+            ref={deleteConfirmTrapRef}
             role="dialog"
             aria-label="确认删除干系人"
             data-delete-confirm-strip=""

@@ -10,6 +10,7 @@ import type { DateRange } from "./components/DateRangePicker";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
 import { Toast } from "./components/Toast";
+import { useFocusTrap } from "./components/useFocusTrap";
 import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
@@ -97,6 +98,10 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   // 常用筛选（Push 138；Push 169 起按账号存服务端）：组合由父层持有（同账号换设备可见），点一下套用到当前筛选
   // 「哪组正在生效」由条件比较派生，不另存状态；保存 / 删除失败的提示条见 savedFilterError
   const [savedFilterError, setSavedFilterError] = useState<string | null>(null);
+  // 待确认删除的常用筛选（Push 264 追订）：第一下只开底部确认条（与删除项目 / 模板同款非阻断），第二下才真删
+  const [pendingDeleteFilter, setPendingDeleteFilter] = useState<SavedFilter | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到胶囊行的删除按钮。 */
+  const deleteFilterConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteFilter !== null);
   // 无建项目权限时点「新建项目」的提示（Push 173；与 savedFilterError 同款琥珀提示条）
   const [createHint, setCreateHint] = useState<string | null>(null);
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
@@ -326,6 +331,19 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const deleteSavedFilter = (id: string) => {
     void persistSavedFilters(savedFilters.filter((item) => item.id !== id));
   };
+  /** 常用筛选删除第一下：只挂起（不落库），等底部确认条的第二下（业务口径 2026-10-10「删除常用筛选无二次确认」）。 */
+  const requestDeleteSavedFilter = (filter: SavedFilter) => {
+    setPendingDeleteFilter(filter);
+  };
+  /** 底部确认条的第二下：真删（整体替换 PATCH —— 失败仍走 savedFilterError 提示条，不静默吞）。 */
+  const confirmDeleteSavedFilter = () => {
+    const filter = pendingDeleteFilter;
+    if (filter === null) {
+      return;
+    }
+    setPendingDeleteFilter(null);
+    deleteSavedFilter(filter.id);
+  };
   const saveSavedFilter = ({ id, name, criteria }: { id: string | null; name: string; criteria: FilterCriteria }) => {
     // 保存前按当前字典 / 计数兜底：丢弃已不存在的地区 / 类型 / 经理（与 URL 参数归一化同一收敛口径）
     const knownRegions = new Set(Object.keys(facets.region));
@@ -375,7 +393,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         savedFilters={savedFilters}
         appliedSavedFilterId={appliedSavedFilterId}
         onApplySavedFilter={applySavedFilter}
-        onDeleteSavedFilter={deleteSavedFilter}
+        onRequestDeleteSavedFilter={requestDeleteSavedFilter}
         onSaveSavedFilter={saveSavedFilter}
         onToggleRegion={(region) => {
           updateFilters({ regions: toggleValue(activeFilters.regions, region) });
@@ -652,6 +670,41 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             return { kind: "error", message: message };
           }}
         />
+      )}
+
+      {/* 常用筛选删除的第二下确认条（Push 264 追订 · 业务口径「删除常用筛选无二次确认」）：与「删除项目 / 模板」同款
+          非阻断固定底栏 —— 第一下只开口，第二下「删除」才落库。 */}
+      {pendingDeleteFilter === null ? null : (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+          <div
+            ref={deleteFilterConfirmTrapRef}
+            role="dialog"
+            aria-label="确认删除常用筛选"
+            data-saved-filter-delete-confirm=""
+            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+          >
+            <span>
+              删除常用筛选「<span className="font-semibold">{pendingDeleteFilter.name}</span>」？只删这一组保存的条件，项目数据不受影响。
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDeleteFilter(null);
+              }}
+              className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              data-saved-filter-delete=""
+              onClick={confirmDeleteSavedFilter}
+              className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+            >
+              删除
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
