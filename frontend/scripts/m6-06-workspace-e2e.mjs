@@ -12,7 +12,9 @@
  *   路由 `?tab=plan` 就位；页面内容待详细设计，暂落登记卡 —— 数据面 / 契约本刀不动）→
  *   2026-10-10「照 minimemo3 便签页融入系统」+「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」
  *   （Push 266：便签墙页面落地并照 MiniMemo 参考页照搬 —— 奶白背景 / 左侧分类栏 / 198 高圆角卡片 / 7 色 hex 调色板；
- *   新建 / 编辑 / 删除 / 搜索 / 分类 / 排序，本机 localStorage 保存；导出 / 导入不做；本脚本「⑪」段扩为便签墙全流程）。
+ *   新建 / 编辑 / 删除 / 搜索 / 分类 / 排序，本机 localStorage 保存；导出 / 导入不做）→「填写也要一样」
+ *   （Push 267：编辑（填写）弹窗照参考页 NoteEditor 照搬 —— 便签底色整卡铺底 / 顶栏关闭 X + 7 色圆点 + 字体 Aa 分段器 /
+ *   大标题 + 记录区 / 分类胶囊（＋ 新分类）/ 底栏「更新于」+ 删除 + 保存；本脚本「⑪」段含两道弹窗照搬对账）。
  *
  * 口径复评（2026-09-30 · 业务：「明明有四个 为什么只显示了两个」→「不能有 7 天内时间限制」→「时间不限制 另外
  *   项目经理是我也要算在我的任务」）：我的任务 = 任务负责人含我 或 项目项目经理含我 + 未完成、不限完成日期窗口；
@@ -56,7 +58,7 @@
  *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
  *      收起 A → 刷新仍全收起 → GET preferences 逐段落库核对 → 收尾恢复账号偏好原值（不留痕）；
  *   ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 · 2026-10-10「照 minimemo3 便签页融入系统」+
- *       「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」）：
+ *       「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」→「填写也要一样」（Push 267 编辑（填写）弹窗照搬））：
  *      第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 便签墙（照 MiniMemo 参考页照搬：奶白背景 +
  *      暖色径向渐变 / 左侧分类栏 / 198 高圆角卡片 / 7 色 hex 调色板；首次进入预置 6 条示例；本机保存、不依赖
  *      GET /workspace —— 工作台读面加载中 / 失败也照常可用）：照搬口径对账（背景 / 卡片尺寸 / 网格）→ 新建（标题与
@@ -803,7 +805,7 @@ check("⑩k 回放收尾：账号偏好 workspaceOpenProjects 恢复原值（不
 
 // ---------- ⑪ 「我的计划」便签墙（Push 234 标签 / 路由就位 → Push 266 页面落地 · 2026-10-10「照 minimemo3 便签页融入系统」） ----------
 // 本刀验：第三枚标签 / 点击 / 深链照旧；页内 = 便签墙（首次进入预置 6 条示例；本机 localStorage 保存，不依赖 GET /workspace）——
-// 照搬口径（背景 / 卡片尺寸 / 调色板）对账 + 新建（空标题 / 空内容保存置灰）/ 编辑 / 搜索 / 分类过滤 / 排序 / 删除（二次确认）/ 刷新持久化；导出 / 导入不做。
+// 照搬口径（背景 / 卡片尺寸 / 调色板 + 编辑（填写）弹窗：⑪c3 新建态 / ⑪g2 编辑态 / ⑪n2 关闭 X）对账 + 新建（空标题 / 空内容保存置灰）/ 编辑 / 搜索 / 分类过滤 / 排序 / 删除（二次确认）/ 刷新持久化；导出 / 导入不做。
 const NOTE_CREATED_TITLE = "回放·便签甲改";
 /** 便签墙读数：计数文案 + 卡片（DOM 顺序 = 当前排序；带卡片 class 供颜色 / 字体对账）+ 网格 / 空态 / 任务·问题表 + 提示条文案。 */
 const planExpr = () => "(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var count=root.querySelector(" + j("[data-plan-count]") + ");var cards=root.querySelectorAll(" + j("[data-plan-note]") + ");var out=[];for(var i=0;i<cards.length;i+=1){var t=cards[i].querySelector(" + j("[data-plan-note-title]") + ");var c=cards[i].querySelector(" + j("[data-plan-note-category]") + ");out.push({id:String(cards[i].getAttribute(" + j("data-plan-note") + ")),title:t===null?String(" + j("") + "):t.textContent.trim(),category:c===null?String(" + j("") + "):c.textContent.trim(),className:String(cards[i].getAttribute(" + j("class") + ")),bg:String(cards[i].style.backgroundColor)});}var toast=document.querySelector(" + j("[data-plan-toast]") + ");return {count:count===null?String(" + j("") + "):count.textContent.trim(),cards:out,grid:root.querySelector(" + j("[data-plan-grid]") + ")!==null,empty:root.querySelector(" + j("[data-plan-empty]") + ")!==null,tables:root.querySelectorAll(" + j("[data-workspace-task-table],[data-workspace-issue-table]") + ").length,toast:toast===null?String(" + j("") + "):toast.textContent.trim()};})()";
@@ -852,7 +854,13 @@ check("⑪c 「我的计划」页 = 便签墙（不是登记卡）：首次进�
 const planSkin = await ev("(function(){var root=document.querySelector(" + j("[data-workspace-plan]") + ");if(root===null){return null;}var card=root.querySelector(" + j("[data-plan-note]") + ");var grid=root.querySelector(" + j("[data-plan-grid]") + ");if(card===null||grid===null){return null;}var rs=getComputedStyle(root);var cs=getComputedStyle(card);return {bgImage:rs.backgroundImage,bgColor:rs.backgroundColor,radius:cs.borderTopLeftRadius,padding:cs.paddingTop,minHeight:cs.minHeight,cols:getComputedStyle(grid).gridTemplateColumns};})()");
 const planSkinCols = planSkin === null ? [] : planSkin.cols.split(" ").map((item) => Math.round(parseFloat(item)));
 check("⑪c2 照搬口径对账：页面背景 = 奶白 #fdfbf7 + 暖色径向渐变；卡片圆角 18 / 内衬 18 / 最小高 198、网格列宽 ≥ 228（auto-fill）", planSkin !== null && planSkin.bgImage.indexOf("radial-gradient") >= 0 && planSkin.bgColor === "rgb(253, 251, 247)" && planSkin.radius === "18px" && planSkin.padding === "18px" && planSkin.minHeight === "198px" && planSkinCols.length >= 3 && Math.min.apply(null, planSkinCols) >= 228, planSkin === null ? "null" : JSON.stringify({ bgColor: planSkin.bgColor, radius: planSkin.radius, padding: planSkin.padding, minHeight: planSkin.minHeight, cols: planSkinCols }));
+// ⑪c3 「填写」弹窗照搬（新建态 · 2026-10-10「填写也要一样」）：整卡 = 便签底色（缺省黄）+ 24 圆角 / 680 宽；
+// 顶栏 = 关闭 X + 7 色圆点（选中 = 墨色描边）+ 3 枚字体 Aa（选中 = 墨底奶白字）；底栏 =「新建便签」+ 墨黑「保存」（空内容置灰）+ 删除缺席；
+// 对账复用 ⑪d 打开的新建弹窗（不关不合、数据不动）；关闭 X 另由 ⑪n2 覆盖。
 await clickSelector("[data-plan-new]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
+const editSkinNew = await ev("(function(){var overlay=document.querySelector(" + j("[data-plan-editor]") + ");if(overlay===null){return null;}var card=overlay.firstElementChild;var cs=getComputedStyle(card);var activeSwatch=card.querySelector(" + j("[data-plan-color][aria-pressed=true]") + ");var activeFont=card.querySelector(" + j("[data-plan-font][aria-pressed=true]") + ");var title=card.querySelector(" + j("[data-plan-editor-title]") + ");var save=card.querySelector(" + j("[data-plan-editor-save]") + ");var meta=card.querySelector(" + j("footer span") + ");return {bg:cs.backgroundColor,border:cs.borderTopColor,radius:cs.borderTopLeftRadius,width:Math.round(card.getBoundingClientRect().width),headX:card.querySelector(" + j("[data-plan-editor-close]") + ")!==null,swatchCount:card.querySelectorAll(" + j("[data-plan-color]") + ").length,activeSwatchBg:activeSwatch===null?null:getComputedStyle(activeSwatch).backgroundColor,activeSwatchBorder:activeSwatch===null?null:getComputedStyle(activeSwatch).borderTopColor,fontCount:card.querySelectorAll(" + j("[data-plan-font]") + ").length,activeFontBg:activeFont===null?null:getComputedStyle(activeFont).backgroundColor,activeFontColor:activeFont===null?null:getComputedStyle(activeFont).color,titleSize:getComputedStyle(title).fontSize,titlePlaceholder:title.getAttribute(" + j("placeholder") + "),saveBg:getComputedStyle(save).backgroundColor,saveText:save.textContent.trim(),saveDisabled:save.disabled,hasDelete:card.querySelector(" + j("[data-plan-editor-delete]") + ")!==null,metaText:meta===null?null:meta.textContent.trim()};})()");
+check("⑪c3 「填写」弹窗照搬（新建态）：整卡 = 便签底色（缺省黄 #fef8d5 / 描边 #f2e3a4）+ 24 圆角 / 680 宽；顶栏 = 关闭 X + 7 色圆点（选中 = 墨色描边）+ 3 枚字体 Aa（选中 = 墨底奶白）；底栏 =「新建便签」+ 墨黑「保存」（空内容置灰）+ 删除缺席", editSkinNew !== null && editSkinNew.bg === "rgb(254, 248, 213)" && editSkinNew.border === "rgb(242, 227, 164)" && editSkinNew.radius === "24px" && editSkinNew.width === 680 && editSkinNew.headX === true && editSkinNew.swatchCount === 7 && editSkinNew.activeSwatchBg === "rgb(253, 230, 138)" && editSkinNew.activeSwatchBorder === "rgb(28, 25, 23)" && editSkinNew.fontCount === 3 && editSkinNew.activeFontBg === "rgb(28, 25, 23)" && editSkinNew.activeFontColor === "rgb(253, 251, 247)" && editSkinNew.titleSize === "25px" && editSkinNew.titlePlaceholder === "标题" && editSkinNew.saveBg === "rgb(28, 25, 23)" && editSkinNew.saveText === "保存" && editSkinNew.saveDisabled === true && editSkinNew.hasDelete === false && editSkinNew.metaText === "新建便签", editSkinNew === null ? "null" : JSON.stringify(editSkinNew));
 await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
 const editor0 = await ev("(function(){var root=document.querySelector(" + j("[data-plan-editor]") + ");if(root===null){return null;}var save=root.querySelector(" + j("[data-plan-editor-save]") + ");var title=root.querySelector(" + j("[data-plan-editor-title]") + ");return {saveDisabled:save===null?null:save.disabled,titleValue:title===null?null:title.value};})()");
 check("⑪d 新建便签弹窗：标题 / 内容都空时「保存便签」置灰（至少填一项才可保存）", editor0 !== null && editor0.saveDisabled === true && editor0.titleValue === "", editor0 === null ? "null" : JSON.stringify(editor0));
@@ -874,6 +882,8 @@ await clickSelector("[data-plan-note=" + Q + createdId + Q + "]");
 await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
 const editPrefill = await ev("(function(){var t=document.querySelector(" + j("[data-plan-editor-title]") + ");return t===null?null:t.value;})()");
 check("⑪g 点卡片 = 编辑弹窗且已带出现值（标题「回放·便签甲」）", editPrefill === "回放·便签甲", String(editPrefill));
+const editSkinEdit = await ev("(function(){var overlay=document.querySelector(" + j("[data-plan-editor]") + ");if(overlay===null){return null;}var card=overlay.firstElementChild;var cs=getComputedStyle(card);var foot=card.querySelector(" + j("footer") + ");var spans=foot===null?[]:foot.querySelectorAll(" + j("span") + ");var meta=spans.length>0?spans[0].textContent.trim():null;var del=card.querySelector(" + j("[data-plan-editor-delete]") + ");return {bg:cs.backgroundColor,border:cs.borderTopColor,meta:meta,metaColor:spans.length>0?getComputedStyle(spans[0]).color:null,hasDelete:del!==null,deleteColor:del===null?null:getComputedStyle(del).color};})()");
+check("⑪g2 「填写」弹窗跟着便签色（编辑态）：整卡 = 蓝 #e3eefe / 描边 #c5daf7 + 底栏「更新于 YYYY年M月D日 HH:MM」（灰）+ 白底红图标删除键在场", editSkinEdit !== null && editSkinEdit.bg === "rgb(227, 238, 254)" && editSkinEdit.border === "rgb(197, 218, 247)" && editSkinEdit.meta !== null && /^更新于 \d{4}年\d{1,2}月\d{1,2}日 \d{2}:\d{2}$/.test(editSkinEdit.meta) && editSkinEdit.metaColor === "rgb(120, 113, 108)" && editSkinEdit.hasDelete === true && editSkinEdit.deleteColor === "rgb(220, 38, 38)", editSkinEdit === null ? "null" : JSON.stringify(editSkinEdit));
 await shot("17-我的计划-编辑弹窗.png");
 await typeInto("[data-plan-editor-title]", NOTE_CREATED_TITLE);
 await clickSelector("[data-plan-editor-save]");
@@ -912,6 +922,14 @@ await clickSelector("[data-plan-editor-delete-do]");
 await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
 const plan3 = await ev(planExpr());
 check("⑪n 再删一次 + 「确认删除」→ 弹窗关、回到 6 条（真删该便签）+ 出「已删除便签。」提示条", plan3 !== null && plan3.cards.length === 6 && !plan3.cards.some((item) => item.id === createdId) && plan3.toast.indexOf("已删除便签") >= 0, plan3 === null ? "null" : JSON.stringify([plan3.count, plan3.toast]));
+const closeId = plan3 !== null && plan3.cards[0] !== undefined ? plan3.cards[0].id : "";
+await clickSelector("[data-plan-note=" + Q + closeId + Q + "]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") !== null", 8000);
+const closePre = await ev("(function(){var dlg=document.querySelector(" + j("[data-plan-editor]") + ");if(dlg===null){return null;}return {confirm:dlg.querySelector(" + j("[data-plan-editor-delete-confirm]") + ")===null,meta:dlg.querySelector(" + j("footer span") + ")===null?null:dlg.querySelector(" + j("footer span") + ").textContent.indexOf(" + j("更新于") + ")===0};})()");
+await clickSelector("[data-plan-editor-close]");
+await waitFor("document.querySelector(" + j("[data-plan-editor]") + ") === null", 8000);
+const planClose = await ev(planExpr());
+check("⑪n2 「填写」弹窗关闭 X：点 X = 直接关（无删除确认、底栏带「更新于」）+ 数据不动（仍 6 条）", closePre !== null && closePre.confirm === true && closePre.meta === true && planClose !== null && planClose.cards.length === 6, closePre === null ? "null" : JSON.stringify([closePre, planClose === null ? null : planClose.cards.length]));
 await open("#/my-tasks?tab=plan", "[data-workspace-plan]");
 await waitFor("document.querySelector(" + j("[data-plan-grid]") + ") !== null", 15000);
 const plan4 = await ev(planExpr());

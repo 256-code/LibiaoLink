@@ -260,7 +260,7 @@ function BoardEmpty({ title, text, onNew }: { title: string; text: string; onNew
 
 /**
  * 便签墙主体：工具条（搜索 / 排序 / 新建）+ 左侧分类栏 + 「问候 + 标题 + 计数」头部 + 便签网格；
- * 点卡片进编辑弹窗（PlanNoteEditor）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
+ * 点卡片进编辑弹窗（PlanNoteEditor —— 2026-10-10「填写也要一样」照 MiniMemo 参考页 NoteEditor 照搬：便签底色整卡铺底 + 顶栏关闭 X / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 底栏「更新于」+ 删除 / 保存）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
  */
 export function MyPlanBoard() {
   const [board, setBoard] = useState<PlanBoard>(() => loadPlanBoard());
