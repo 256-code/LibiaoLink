@@ -34,6 +34,9 @@ import {
  * 完成态（Push 269 改拖拽 · 业务口径 2026-10-10「不要这个完成 在这个分类旁边增加完成区域 拖动便签到完成区域则完成」）：
  * 编辑弹窗不再有完成键 —— 侧栏分类卡下方新增「完成」拖放区：把便签拖进去即完成；「已完成」视图里的便签拖回「全部便签」即恢复。
  * 完成后只出现在「已完成」视图（便签墙与分类视图不再显示）。
+ * Push 270（业务口径 2026-10-10「我要分类的左侧全部作为完成区 虚线框起来 然后便签拖动应该脱离原来的位置」）：
+ * 「完成」区放大成整条左栏 —— 虚线圆角框把分类卡整张裹进去，下方剩余空间给「完成」提示（悬停变墨底奶白）；左栏拉满视口高度（sticky 不抖）。
+ * 拖动中便签从原位脱离：原槽位只留虚线占位框（卡片本体隐去），本体只以悬浮小卡（ghost）示人。
  */
 
 const BTN_PRIMARY =
@@ -365,7 +368,7 @@ export function MyPlanBoard() {
     commit({ notes, categories: board.categories }, done ? "已完成，收进「已完成」。" : "已恢复为未完成便签。");
   };
 
-  /** 命中测试：当前指针落在哪个落点上（拖未完成便签 → 只认「完成」区；拖已完成便签 → 只认「全部便签」）。 */
+  /** 命中测试（Push 270：完成区 = 整条左栏）：拖未完成便签 → 认左栏「完成」区（含分类卡区域）；拖已完成便签 → 只认「全部便签」行。 */
   const dragHit = (x: number, y: number, fromDone: boolean): "done" | "all" | null => {
     const inside = (node: HTMLElement | null): boolean => {
       if (node === null) {
@@ -512,15 +515,16 @@ export function MyPlanBoard() {
   const overDone = drag !== null && drag.over === "done";
   const overAll = drag !== null && drag.over === "all";
   const dragNote = drag === null ? null : board.notes.find((item) => item.id === drag.noteId) ?? null;
+  /** 完成区（Push 270）：整条左栏 = 虚线框住的大拖放区（分类卡嵌在里面，下方剩余空间给「完成」提示）。 */
   const zoneClass =
-    "flex items-center gap-2.5 rounded-[18px] border-[1.5px] px-3.5 py-3 transition " +
+    "flex min-w-0 flex-col gap-2.5 rounded-[18px] border-[1.5px] p-2 transition lg:sticky lg:top-[124px] lg:self-start lg:min-h-[calc(100dvh-176px)] " +
     (overDone
       ? "border-solid border-[#1c1917] bg-[#1c1917] text-[#fdfbf7] shadow-[0_10px_26px_-16px_rgba(28,25,23,0.5)]"
       : dragging
         ? dragFromDone
-          ? "border-dashed border-[#d5cdbd] bg-[#faf9f7] text-[#78716c] opacity-45"
+          ? "border-dashed border-[#d5cdbd] bg-[#faf9f7]/60 text-[#78716c] opacity-45"
           : "border-solid border-[#1c1917] bg-white text-[#1c1917]"
-        : "border-dashed border-[#d5cdbd] bg-[#faf9f7] text-[#78716c]");
+        : "border-dashed border-[#d5cdbd] bg-[#faf9f7]/60 text-[#78716c]");
 
   return (
     <section
@@ -546,7 +550,12 @@ export function MyPlanBoard() {
         </div>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[252px_minmax(0,1fr)]">
-          <div className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-[124px] lg:self-start">
+          <div
+            ref={doneZoneRef}
+            data-plan-done-zone=""
+            data-plan-done-zone-over={overDone ? "true" : "false"}
+            className={zoneClass}
+          >
           <aside className="flex flex-wrap content-start items-center gap-1.5 rounded-[18px] border border-[#e8e3da] bg-white p-3.5 shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] lg:flex-col lg:flex-nowrap lg:items-stretch lg:gap-[3px]">
             <p className="mb-2 hidden px-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a8a29e] lg:block">分类</p>
             <CategoryItem
@@ -631,19 +640,12 @@ export function MyPlanBoard() {
             </div>
           </aside>
 
-          <div
-            ref={doneZoneRef}
-            data-plan-done-zone=""
-            data-plan-done-zone-over={overDone ? "true" : "false"}
-            className={zoneClass}
-          >
-            <span className={"grid h-9 w-9 shrink-0 place-items-center rounded-full " + (overDone ? "bg-white/[0.14]" : "bg-[#efeae1]")}>
+          <div className="flex flex-col items-center justify-center gap-0.5 rounded-[14px] px-3 py-6 text-center lg:flex-1">
+            <span className={"grid h-9 w-9 place-items-center rounded-full " + (overDone ? "bg-white/[0.14]" : "bg-[#efeae1]")}>
               <CheckCircleIcon />
             </span>
-            <span className="min-w-0">
-              <span className="block text-[13.5px] font-semibold">完成</span>
-              <span className="block text-[11.5px] opacity-80">{overDone ? "松手，收进「已完成」" : "拖动便签到此处完成"}</span>
-            </span>
+            <span className="mt-2 block text-[13.5px] font-semibold">完成</span>
+            <span className="mt-0.5 block text-[11.5px] opacity-80">{overDone ? "松手，收进「已完成」" : dragFromDone ? "把便签拖回「全部便签」可恢复" : "拖动便签到此处完成"}</span>
           </div>
           </div>
 
@@ -682,21 +684,29 @@ export function MyPlanBoard() {
               />
             ) : (
               <div data-plan-grid="" className="grid grid-cols-[repeat(auto-fill,minmax(228px,1fr))] content-start gap-4">
-                {visible.map((note) => (
-                  <PlanNoteCard
-                    key={note.id}
-                    note={note}
-                    onOpen={() => {
-                      if (Date.now() - suppressOpenAtRef.current < 350) {
-                        return;
-                      }
-                      setEditor({ note });
-                    }}
-                    onPointerDown={(event) => {
-                      handleNotePointerDown(note, event);
-                    }}
-                  />
-                ))}
+                {visible.map((note) => {
+                  const lifted = drag !== null && drag.noteId === note.id;
+                  return (
+                    <div key={note.id} className="relative min-w-0">
+                      <PlanNoteCard
+                        note={note}
+                        lifted={lifted}
+                        onOpen={() => {
+                          if (Date.now() - suppressOpenAtRef.current < 350) {
+                            return;
+                          }
+                          setEditor({ note });
+                        }}
+                        onPointerDown={(event) => {
+                          handleNotePointerDown(note, event);
+                        }}
+                      />
+                      {lifted ? (
+                        <div data-plan-note-lift="" className="pointer-events-none absolute inset-0 rounded-[18px] border-2 border-dashed border-[#ded6c8] bg-[#faf9f7]/70" />
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

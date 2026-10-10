@@ -9,16 +9,20 @@ import { formatPlanRelative, planColorOf, planFontOf, type PlanNote } from "../m
  * Push 268：完成态右上角常显绿勾（替换悬停铅笔）—— 「已完成」视图里的卡片一眼可辨；未完成卡片照旧悬停浮现铅笔。
  * Push 269：卡片可拖拽（指针事件）—— 按住拖动超 6px 进入拖拽态（拖进「完成」区即完成、已完成的拖回「全部便签」即恢复）；
  * 没拖出阈值仍是点击打开编辑弹窗（便签墙按时间戳挡掉拖完松手那一下 click）。
+ * Push 270：拖动中卡片本体隐去（原位保留槽位高度，由便签墙叠虚线占位框）—— 便签「脱离原来的位置」，只以悬浮小卡示人。
  */
 export function PlanNoteCard({
   note,
   onOpen,
   onPointerDown,
+  lifted = false,
 }: {
   note: PlanNote;
   onOpen: () => void;
   /** 拖拽起点（Push 269）：按下交给便签墙统一处理（超阈值才算拖；松手落点决定完成 / 恢复）。 */
   onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  /** Push 270：正在被拖走 —— 卡片本体隐去（保留槽位尺寸，便签墙在原位叠虚线占位框）。 */
+  lifted?: boolean;
 }) {
   const color = planColorOf(note.colorId);
   const font = planFontOf(note.fontId);
@@ -33,6 +37,7 @@ export function PlanNoteCard({
       style={{ backgroundColor: color.bg, borderColor: color.border, color: color.ink }}
       className={
         "group relative flex min-h-[198px] w-full cursor-grab select-none flex-col active:cursor-grabbing justify-between gap-3.5 rounded-[18px] border p-[18px] text-left shadow-[0_1px_2px_rgba(28,25,23,0.04)] transition duration-[180ms] ease-out hover:-translate-y-[3px] hover:shadow-[0_18px_36px_-20px_rgba(28,25,23,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1c1917]/25 " +
+        (lifted ? "invisible " : "") +
         font.className
       }
     >
