@@ -26,6 +26,7 @@ import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { TRACKER_LABELS, TRACKER_STEPS, TrackerBar, trackerLabel, trackerStep } from "./Tracker";
+import { useFocusTrapFor } from "./useFocusTrap";
 const CLOSE_ANIMATION_MS = 170;
 /** 「已保存」提示的停留时间。 */
 const SAVED_FLASH_MS = 1600;
@@ -277,6 +278,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const [draft, setDraft] = useState<Draft>(() => draftOf(task, managerIds));
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  /** 抽屉键盘焦点陷阱（Push 264 追订）：开着时 Tab 在抽屉内循环、关闭后焦点还回触发行；换任务（aside 重建）也能继续认门。 */
+  const drawerRef = useRef<HTMLElement | null>(null);
+  useFocusTrapFor(drawerRef, task !== null);
   /** 「已保存」提示（非 0 = 展示中）。 */
   const [savedTick, setSavedTick] = useState(0);
   /** 悬停 / 聚焦中的进度档位（0 = 没有）：悬停时档位文字与进度条一起预览点完的样子。 */
@@ -904,7 +908,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       : []),
     {
       label: "项目经理",
-      value: editable ? (
+      // 2026-10-10 业务追订「项目经理也不可以修改」：任务已定档 → 项目经理字段随行锁定（项目级字段同样不可改），
+      // 只读展示名单 + 一句口径说明（未定档时行为不变）。
+      value: editable && !taskFinalized ? (
         <>
           <MemberMultiSelect
             values={draft.managerIds}
@@ -922,7 +928,12 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           <span className={CAPTION_CLASS}>项目级字段（可多位，按勾选顺序展示），改后全项目同步</span>
         </>
       ) : (
-        <span className="font-medium text-zinc-800">{managers ?? ""}</span>
+        <>
+          <span className="font-medium text-zinc-800">{managers ?? ""}</span>
+          {editable && taskFinalized ? (
+            <span className={CAPTION_CLASS}>任务已定档：不支持任何修改（如需修改请先取消定档）</span>
+          ) : null}
+        </>
       ),
     },
     {
@@ -1310,6 +1321,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         aria-hidden="true"
       />
       <aside
+        ref={drawerRef}
         key={task.id}
         role="dialog"
         aria-modal="true"

@@ -8,6 +8,7 @@ import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
 import { Toast } from "./components/Toast";
+import { useFocusTrap } from "./components/useFocusTrap";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
@@ -131,6 +132,10 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [dataVersion, setDataVersion] = useState(0);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+  /** 待确认删除的任务行（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：第一下只开底部确认条，第二下才真删。 */
+  const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行内删除按钮。 */
+  const deleteTaskConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTaskId !== null);
 
   /**
    * 「日报及问题」子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
@@ -534,10 +539,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     onChangeManagers?.(project.id, nextManagerIds);
   };
 
-  /** 任务表行内删除（Push 141 / A25）：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
-  const handleDeleteTask = (taskId: string) => {
+  /** 任务表行内删除第一下（Push 141 / A25；Push 264 追订加二次确认 · 业务口径「任务行内删除无二次确认」）：只挂起这一行，第二下在底部确认条上。
+   *  已定档任务的删除服务端一律 409（assertTaskMutable 覆盖 remove）—— 照定档行「点击即弹提示」的口径，不进入确认条。 */
+  const requestDeleteTask = (taskId: string) => {
     const row = rowOf(taskId);
-    if (projectId === null || row === undefined) {
+    if (row === undefined) {
+      return;
+    }
+    if (row.finalizedAt !== null) {
+      setToolError(taskWriteMessage({ code: "TASK_FINALIZED", message: "" }));
+      return;
+    }
+    setPendingDeleteTaskId(taskId);
+  };
+  /** 底部确认条的第二下：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
+  const confirmDeleteTask = () => {
+    const taskId = pendingDeleteTaskId;
+    const row = taskId === null ? undefined : rowOf(taskId);
+    setPendingDeleteTaskId(null);
+    if (projectId === null || taskId === null || row === undefined) {
       return;
     }
     void (async () => {
@@ -859,6 +879,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     );
   }
 
+  /** 底部确认条上的那一行（从最新任务列表里取标题 / 版本；任务已被别处删除时自动为 undefined = 不显示确认条）。 */
+  const pendingDeleteTask = pendingDeleteTaskId === null ? undefined : rowOf(pendingDeleteTaskId);
+
   return (
     <div className="min-h-screen">
       <AppHeader me={me} project={project} />
@@ -1002,7 +1025,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={requestDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -1043,13 +1066,16 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         </div>
 
         {/* 底部滑块（Push 221 起）：项目总览与干系人两个表格共用同一枚 —— 两视图互斥，scrollRef / 溢出态复用；
-            滚动容器 id 由 controlsId 按当前视图切换（task-board-scroll / stakeholder-board-scroll）。 */}
+            滚动容器 id 由 controlsId 按当前视图切换（task-board-scroll / stakeholder-board-scroll）。
+            2026-10-10 修「浮动滑块盖住末行 / 遮挡行内按钮点击」（业务反馈）：吸附条不再铺白底分隔、整条
+            pointer-events-none —— 吸附在视口底时不再遮字、点击穿透到行内按钮；可交互面只剩滑块本体
+            （pointer-events-auto，见 TableScrollbar 组件注释）。 */}
         {activeView === "项目总览" || activeView === "干系人" ? (
         <div
           id="table-scrollbar-bar"
           className={
-            "sticky bottom-0 z-10 flex items-center " +
-            (tableOverflow ? "mt-4 border-t border-zinc-200 bg-white/95 py-2.5 backdrop-blur" : "h-0 overflow-hidden")
+            "pointer-events-none sticky bottom-0 z-10 flex items-center " +
+            (tableOverflow ? "mt-4 py-2.5" : "h-0 overflow-hidden")
           }
         >
           <TableScrollbar scrollRef={tableScrollRef} onOverflowChange={setTableOverflow} controlsId={activeView === "干系人" ? "stakeholder-board-scroll" : "task-board-scroll"} />
@@ -1059,6 +1085,41 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
 
       {/* 导出等待浮层（§6.16 ⑳）：翻译进行中显示小车动画 + 预计秒数；打印窗口唤起前随 exportingOverview 收起。 */}
       {exportingOverview ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
+
+      {/* 任务行内删除的第二下确认条（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款
+          非阻断固定底栏 —— 第一下只开口，第二下「删除」才真删。 */}
+      {pendingDeleteTask === undefined ? null : (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+          <div
+            ref={deleteTaskConfirmTrapRef}
+            role="dialog"
+            aria-label="确认删除任务"
+            data-task-delete-confirm=""
+            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+          >
+            <span>
+              删除任务「<span className="font-semibold">{pendingDeleteTask.title}</span>」？删除后这一行从项目里移除；有变更记录引用的任务会被拦下。
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDeleteTaskId(null);
+              }}
+              className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              data-task-delete=""
+              onClick={confirmDeleteTask}
+              className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+            >
+              删除
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

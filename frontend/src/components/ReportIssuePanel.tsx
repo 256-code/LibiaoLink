@@ -32,6 +32,7 @@ import { RowDeleteButton } from "./RowDeleteButton";
 import { RowEditButton } from "./RowEditButton";
 import { ScrollArea } from "./ScrollArea";
 import { SearchInput } from "./SearchInput";
+import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
 
@@ -815,8 +816,11 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
+  /** 键盘焦点陷阱（Push 264 追订）：预览层打开时焦点进层内、Tab 在层内循环、关闭还原到缩略图。 */
+  const trapRef = useFocusTrap<HTMLDivElement>();
   return createPortal(
     <div
+      ref={trapRef}
       data-photo-preview=""
       role="dialog"
       aria-label={"预览 " + name}
@@ -981,6 +985,8 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
    *  第一下「×」只出底部确认条（与行删除二次提示同款固定底栏），第二下「移除」才真摘。
    *  确认条 portal 到 body —— 抽屉壳 .drawer-panel 的入场动画会当 containing block，留在组件里会偏移。 */
   const [pendingRemove, setPendingRemove] = useState<{ at: number; name: string } | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：移除图片确认条开着时焦点进条内、Tab 在条内循环、关闭还原到缩略图删除按钮。 */
+  const removeConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingRemove !== null);
   const requestRemove = (at: number) => {
     const item = items[at];
     if (item === undefined) {
@@ -1053,6 +1059,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
       {pendingRemove === null ? null : createPortal(
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
           <div
+            ref={removeConfirmTrapRef}
             role="dialog"
             aria-label="确认移除图片"
             data-remove-attachment-confirm-strip=""
@@ -1945,10 +1952,13 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
+  /** 键盘焦点陷阱（Push 264 追订）：编辑弹窗打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发按钮。 */
+  const trapRef = useFocusTrap<HTMLDivElement>();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-zinc-900/40" onClick={onClose} />
       <div
+        ref={trapRef}
         role="dialog"
         aria-modal="true"
         aria-label={label}
@@ -2663,6 +2673,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   const closingRef = useRef(false);
 
   useEffect(() => lockBodyScroll(), [issue.id]);
+  /** 键盘焦点陷阱（Push 264 追订）：抽屉打开时焦点进抽屉、Tab 在抽屉内循环、关闭还原到行内触发按钮。 */
+  const drawerTrapRef = useFocusTrap<HTMLElement>();
 
   const requestClose = useCallback(() => {
     if (closingRef.current) {
@@ -2930,6 +2942,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
         aria-hidden="true"
       />
       <aside
+        ref={drawerTrapRef}
         data-issue-drawer=""
         role="dialog"
         aria-modal="true"
@@ -3011,6 +3024,8 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
   /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到底部确认条
    *  （与首页「删除项目」/ 模板面板同款非阻断浮条），第二下「删除」才真删 —— 成对删除的连带范围写进文案。 */
   const [pendingDelete, setPendingDelete] = useState<{ kind: "report"; report: DailyReport } | { kind: "issue"; issue: Issue } | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行尾删除按钮。 */
+  const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
    *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
@@ -3496,6 +3511,7 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
       {pendingDelete === null ? null : (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
           <div
+            ref={deleteConfirmTrapRef}
             role="dialog"
             aria-label={pendingDelete.kind === "report" ? "确认删除日报" : "确认删除问题"}
             data-delete-confirm-strip=""

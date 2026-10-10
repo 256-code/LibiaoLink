@@ -16,9 +16,14 @@ import { DeliverableCell, docTypeCapsule } from "./DeliverablePicker";
 import { StageAddCard } from "./StageAddCard";
 import type { StagePlacement } from "./StageAddCard";
 import { TempTaskCreateForm } from "./TempTaskCreateForm";
+import { useFocusTrap } from "./useFocusTrap";
 import type { TemplatePresetNode } from "../data/templatePresets";
 
 const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+
+/** 定档任务的行内编辑入口锁定提示（Push 264 · P1-1）：与 409 TASK_FINALIZED 的提示文案同一句；
+ *  2026-10-10 业务追订「定档后不能修改就点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」—— 锁定入口保留可点，点击弹站点同款顶部 Toast（这句文案）。 */
+const FINALIZED_EDIT_HINT = "任务已定档，不支持任何修改（文件修改走变更）";
 
 export type ColumnKey =
   | "title"
@@ -328,6 +333,9 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
+  /** 定档锁定（Push 264 · P1-1）：行内任务字段入口一律锁定（点击弹顶部 Toast、不弹编辑浮层）；
+   *  2026-10-10 业务追订「项目经理也不可以修改」——「项目经理」列随行一并锁定；「文件」列仍走既有 taskFinalized 门控（修改走变更）。 */
+  const taskFinalized = task.finalizedAt !== null;
   const dotClass = STATUS_DOT_CLASS[status];
   /** 负责人展示（多位按「、」连接，Push 136；2026-09-24 定案「只按名字」—— 拼音口径下线）。 */
   const fullOwners = ownersLabel(task.owners);
@@ -399,6 +407,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           values={managerIds}
           options={members}
           ariaLabel="修改项目经理"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
             if (managerIds.includes(member.id)) {
@@ -427,6 +437,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           values={task.ownerIds}
           options={members}
           ariaLabel="修改任务负责人"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           display={
             task.owners.length === 0 ? (
               <span className="text-zinc-300">待分配</span>
@@ -456,6 +468,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           value={status}
           options={STATUS_OPTIONS}
           ariaLabel="修改任务状态"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           // Push 134：状态列改成裸框胶囊 —— 正常模式 = 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗），
           // 醒目模式 = 整行已有状态色，只留深色字（悬停给一点淡淡的可点提示）。
           bare
@@ -484,6 +498,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
             value={task.priority}
             options={PRIORITY_OPTIONS}
             ariaLabel="修改紧急重要度"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             // Push 134：紧急重要度同状态列 —— 裸框胶囊，色签底色**填满整颗胶囊**（业务口径「紧急程度也要」）
             bare
             triggerClassName={PRIORITY_CAPSULE_CLASS[task.priority] + " px-3 py-1.5 text-[11px] font-medium"}
@@ -525,6 +541,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       ) : (
         <DeliverableCell
           values={task.deliverableTypes}
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           onChange={(next) => {
             onPatch({ deliverableTypes: next });
           }}
@@ -560,6 +578,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <InlineTextCell
             value={task.note}
             ariaLabel="修改项目进展描述"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             display={task.note === "" ? <span className="text-zinc-300">—</span> : <span className="text-zinc-600" title={task.note}>{task.note}</span>}
             onSave={(value) => {
               onPatch({ note: value });
@@ -575,6 +595,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         <InlineDateCell
           valueIso={startIso}
           ariaLabel="修改开始日期"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           triggerClassName="tabular-nums text-zinc-600"
           display={startText === "" ? <span className="text-zinc-300">—</span> : startText}
           onChange={(iso) => {
@@ -595,6 +617,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         <InlineDateCell
           valueIso={dueIso}
           ariaLabel="修改预计完成日期"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           triggerClassName="tabular-nums text-zinc-600"
           display={dueText === "" ? <span className="text-zinc-300">—</span> : dueText}
           onChange={(iso) => {
@@ -614,6 +638,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <InlineNumberCell
             value={task.headcount}
             ariaLabel="修改预计所需施工人数"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             display={task.headcount > 0 ? task.headcount + " 人" : <span className="text-zinc-300">—</span>}
             onSave={(value) => {
               onPatch({ headcount: value });
@@ -634,6 +660,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <InlineDateCell
             valueIso={doneIso}
             ariaLabel="修改实际完成日期"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             triggerClassName="tabular-nums"
             display={task.doneDate !== "" ? <span className="text-zinc-600">{doneText}</span> : <span className="text-zinc-400">—</span>}
             onChange={(iso) => {
@@ -769,6 +797,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   const [cardStage, setCardStage] = useState<string | null>(null);
   /** 底部「临时任务」分组头的新建表单开着没有（Push 197；与阶段卡片互斥）。 */
   const [tempFormOpen, setTempFormOpen] = useState(false);
+  /** 键盘焦点陷阱（Push 264 追订）：临时任务新建浮层开着时焦点进浮层、Tab 在浮层内循环。 */
+  const tempFormTrapRef = useFocusTrap<HTMLDivElement>(tempFormOpen && onCreateTempTask !== undefined);
   /** 卡片的落点（Push 67：固定在表格表头正下方、左边缘对齐「项目经理」列，不浮在页面右上角、也不跟着点击跑）。 */
   const [cardBox, setCardBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
@@ -1149,6 +1179,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       ))}
       {tempFormOpen && onCreateTempTask !== undefined ? (
         <div
+          ref={tempFormTrapRef}
           role="dialog"
           aria-label={TEMP_TASK_STAGE + "：新建"}
           style={cardBox === null ? { top: 10, left: 24 } : cardBox}

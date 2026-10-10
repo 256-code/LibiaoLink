@@ -11,9 +11,11 @@ import {
   type FilePreviewKind,
   type PreviewViewerConfig,
 } from "../fileApi";
+import { lockBodyScroll } from "../scrollLock";
 import { stageNameOf } from "../taskApi";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { useFocusTrap } from "./useFocusTrap";
 
 /**
  * 「变更管理」详情弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：
@@ -49,6 +51,8 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
   const [previewNote, setPreviewNote] = useState<string | null>(null);
   const previewRef = useRef(preview);
   previewRef.current = preview;
+  /** 键盘焦点陷阱（Push 264 追订）：打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发处。 */
+  const trapRef = useFocusTrap<HTMLDivElement>();
 
   useEffect(() => {
     let alive = true;
@@ -87,6 +91,11 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
       document.removeEventListener("keydown", onKey, true);
     };
   }, [onClose]);
+
+  // 2026-10-10 修复「弹窗打开时背景仍可滚动」（业务反馈：滚轮滚动作用在背景页面，window.scrollY 0 → 1774）：
+  // 与任务抽屉 / 问题面板同一把锁（body `overflow: hidden` + 按滚动条实测宽度补内边距，关弹窗还原）；
+  // 弹窗内容区自带 `overflow-y-auto`，锁只作用于背景页面，不影响弹窗内滚动。
+  useEffect(() => lockBodyScroll(), []);
 
   const split = detail === null ? { content: "", cause: "" } : splitChangeReason(detail.reason);
   const applicantId = detail === null ? "" : detail.appliedBy;
@@ -132,6 +141,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
 
   return createPortal(
     <div
+      ref={trapRef}
       data-change-modal="true"
       role="dialog"
       aria-label="变更管理详情"

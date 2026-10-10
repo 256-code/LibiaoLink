@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { FilePreviewKind, PreviewViewerConfig } from "../fileApi";
 import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
+import { useFocusTrap } from "./useFocusTrap";
 
 /** 预览浮层（Push 226 续 / 续三 · S4 · Push 246 起任务列表「文件」列下拉与详情抽屉共用）：
  *  图片 = 大图（img）、PDF = 浏览器内置查看器（iframe）、Office / 文本族 = ONLYOFFICE 查看器外壳
@@ -36,8 +37,11 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
       document.removeEventListener("keydown", onKey, true);
     };
   }, [onClose]);
+  /** 键盘焦点陷阱（Push 264 追订）：打开时焦点进浮层、Tab 在浮层内循环、关闭还原到触发处。 */
+  const trapRef = useFocusTrap<HTMLDivElement>();
   return createPortal(
     <div
+      ref={trapRef}
       data-file-preview="true"
       data-file-preview-kind={kind}
       role="dialog"
