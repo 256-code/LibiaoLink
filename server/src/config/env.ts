@@ -128,6 +128,13 @@ export const EnvSchema = z
     NOTIFY_DAILY_LIMIT: z.coerce.number().int().min(0).max(1000).default(200),
     /** 次日投递窗口起点（分钟，Asia/Shanghai；480 = 08:00）：每日上限溢出 / 静默后补发的落点。 */
     NOTIFY_DAILY_WINDOW_START_MINUTE: z.coerce.number().int().min(0).max(1439).default(480),
+    // ---- SSE 实时流（S8-3 · M5-04-1：notification / unread 事件推送 · Push 211） ----
+    /** 每用户最大并发 SSE 连接数（超出拒新 = 429；定案 §三-4 缺省 3）。 */
+    NOTIFY_STREAM_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(100).default(3),
+    /** SSE 心跳注释行周期（毫秒；`: ping`，不入契约；定案 §三-4 缺省 25s）。 */
+    NOTIFY_STREAM_HEARTBEAT_MS: z.coerce.number().int().min(100).max(3600000).default(25000),
+    /** SSE 轮询兜底周期（毫秒；0 = 关 —— LISTEN/NOTIFY 为主案，本档弱实时仅补 unread 角标快照）。 */
+    NOTIFY_STREAM_POLL_MS: z.coerce.number().int().min(0).max(3600000).default(0),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),

@@ -33,6 +33,7 @@ import {
   type NotifyPrefsPatch,
   type NotifyPrefsRow,
 } from "./notify.repository.js";
+import { NotifyStreamPublisher } from "./notify.stream.publisher.js";
 
 /** flush 循环单轮统计（worker 日志与回放断言共用）。 */
 export interface NotifyFlushStats {
@@ -60,6 +61,10 @@ interface ResolvedNotifyPrefs {
  *
  * 读面（消息中心）：收件箱列表 / 未读角标 / 标记已读·已处理 / 全部已读 / 通知偏好 —— 全为**个人资源**
  * （仅会话、无功能权限键、不写审计；先例 user_preferences / project_views）。
+ *
+ * 实时流（S8-3 · M5-04-1）：投递 / 标记在**同一事务内**经 `NotifyStreamPublisher` 发 `pg_notify`
+ * （`notification` = 新投递行、`unread` = 未读数快照；合并 / 排期 / 幂等重放不发 —— 未读数无变化），
+ * 由 api 实例的 `NotifyStreamService` LISTEN 后桥到该用户 SSE 连接；重连不补发（客户端读面补拉）。
  */
 @Injectable()
 export class NotifyService {
@@ -70,6 +75,7 @@ export class NotifyService {
     private readonly database: DatabaseService,
     private readonly config: AppConfig,
     private readonly clock: ClockService,
+    private readonly streamPublisher: NotifyStreamPublisher,
   ) {}
 
   /** 单条消费（OutboxDispatcher 调用）：分类只有 done / dead / retry；任何异常都不外抛。 */
@@ -142,6 +148,7 @@ export class NotifyService {
       });
       if (decision.deliver) {
         await this.repository.markDelivered(row.id, now, tx);
+        await this.publishDelivered(row, now, tx);
       } else {
         this.logger.log(
           "通知静默排期（" + decision.reason + "）：#" + row.id + " → " + decision.deliverAt.toISOString(),
@@ -176,6 +183,7 @@ export class NotifyService {
           });
           if (decision.deliver) {
             await this.repository.markDelivered(row.id, now, tx);
+            await this.publishDelivered(row, now, tx);
             return "delivered" as const;
           }
           await this.repository.postpone(row.id, decision.deliverAt, now, tx);
@@ -238,20 +246,55 @@ export class NotifyService {
 
   /** 标记状态（C5-01）：幂等；仅本人已投递主行（他人 / 合并子行 / 未投递行统一 404 防 IDOR）。 */
   async mark(actorId: string, id: number, status: string): Promise<Notification> {
-    const existing = await this.repository.findByIdForRecipient(id, actorId);
-    if (existing === null || existing.mergedIntoId !== null || existing.deliveredAt === null) {
-      throw new AppError("NOT_FOUND", "通知不存在：" + id);
-    }
-    const updated = await this.repository.markStatus(id, status, this.clock.now());
-    return toContract(updated);
+    const at = this.clock.now();
+    return this.database.db.transaction(async (tx) => {
+      const existing = await this.repository.findByIdForRecipient(id, actorId, tx);
+      if (existing === null || existing.mergedIntoId !== null || existing.deliveredAt === null) {
+        throw new AppError("NOT_FOUND", "通知不存在：" + id);
+      }
+      const wasUnread = existing.status === "unread";
+      const updated = await this.repository.markStatus(id, status, at, tx);
+      // 未读数变更时刻才广播（幂等同值标记 / 已读互转不打扰其它端）。
+      if (wasUnread !== (updated.status === "unread")) {
+        await this.publishUnread(actorId, tx);
+      }
+      return toContract(updated);
+    });
   }
 
   /** 全部标记已读（C5-01）：只动本人已投递未读主行；幂等（无未读时 updated=0）。 */
   async markAllRead(actorId: string): Promise<NotificationMarkAllReadResponse> {
     const at = this.clock.now();
-    const updated = await this.repository.markAllRead(actorId, at);
-    const unreadCount = await this.repository.countUnread(actorId);
-    return { updated, unreadCount };
+    return this.database.db.transaction(async (tx) => {
+      const updated = await this.repository.markAllRead(actorId, at, tx);
+      const unreadCount = await this.repository.countUnread(actorId, tx);
+      // 幂等（updated = 0）不发事件：未读数无变化。
+      if (updated > 0) {
+        await this.streamPublisher.publish(tx, { recipientId: actorId, event: "unread", data: { unreadCount } });
+      }
+      return { updated, unreadCount };
+    });
+  }
+
+  /** 投递广播（新投递 / 延迟补发同一口径）：`notification`（该行契约形态）+ `unread`（角标快照），同一事务内。 */
+  private async publishDelivered(row: NotifyMessageRow, at: Date, tx: DbClient): Promise<void> {
+    const unreadCount = await this.repository.countUnread(row.recipientId, tx);
+    await this.streamPublisher.publish(tx, {
+      recipientId: row.recipientId,
+      event: "notification",
+      data: toContract({ ...row, deliveredAt: at }),
+    });
+    await this.streamPublisher.publish(tx, {
+      recipientId: row.recipientId,
+      event: "unread",
+      data: { unreadCount },
+    });
+  }
+
+  /** 未读数广播（标记 / 全部已读等状态变更时刻）。 */
+  private async publishUnread(userId: string, tx: DbClient): Promise<void> {
+    const unreadCount = await this.repository.countUnread(userId, tx);
+    await this.streamPublisher.publish(tx, { recipientId: userId, event: "unread", data: { unreadCount } });
   }
 
   /** 通知偏好（生效值）：个人配置缺省时回退 env（NOTIFY_QUIET_HOURS / NOTIFY_DAILY_LIMIT / NOTIFY_MERGE_WINDOW_MS）。 */
