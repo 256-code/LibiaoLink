@@ -38,6 +38,8 @@ class FakeListenerClient {
   errorHandler: ((error: Error) => void) | null = null;
   endHandler: (() => void) | null = null;
   queries: string[] = [];
+  /** 调用序列（connect / query:…）：回归 M5-04-1 真机回放根因 —— 必须先 connect 再 LISTEN。 */
+  events: string[] = [];
   ended = 0;
 
   on(event: string, listener: (...args: never[]) => void): unknown {
@@ -47,8 +49,13 @@ class FakeListenerClient {
     return this;
   }
 
+  async connect(): Promise<void> {
+    this.events.push("connect");
+  }
+
   async query(text: string): Promise<unknown> {
     this.queries.push(text);
+    this.events.push("query:" + text);
     return undefined;
   }
 
@@ -137,6 +144,8 @@ describe("SSE 实时流（S8-3 · M5-04-1）", () => {
       expect(service.clients).toHaveLength(1);
       expect(service.clients[0]?.queries).toContain("LISTEN notify_stream");
     });
+    // 回归（M5-04-1 真机回放根因）：pg v8 未连接时 query 只入队不派发 —— 必须先 connect 再 LISTEN。
+    expect(service.clients[0]?.events).toEqual(["connect", "query:LISTEN notify_stream"]);
 
     service.open(ME, new FakeSink());
     await flushMicrotasks();

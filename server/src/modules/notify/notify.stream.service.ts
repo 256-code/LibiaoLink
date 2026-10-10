@@ -155,7 +155,13 @@ export class NotifyStreamService implements OnApplicationShutdown {
 
   /** LISTEN 专用连接工厂（独立于查询池；测试覆写注入替身）。 */
   protected createListenerClient(): Client {
-    return new Client({ connectionString: this.config.env.DATABASE_URL });
+    return new Client({
+      connectionString: this.config.env.DATABASE_URL,
+      // 连接建立超时：桥建立失败必须落 catch（记日志 + 2s 重试），禁止静默悬挂（M5-04-1 真机回放实测）。
+      connectionTimeoutMillis: 5000,
+      // 观测锚点：pg_stat_activity 一眼认出广播桥（排障 / 连接治理用）。
+      application_name: "libiaolink-notify-stream",
+    });
   }
 
   /** 惰性启动广播桥：首个连接建立才 LISTEN（worker 无连接 → 永不启动）；并发调用去重。 */
@@ -185,6 +191,9 @@ export class NotifyStreamService implements OnApplicationShutdown {
           this.dropListener(client);
         }
       });
+      // 显式 connect 必须先行（M5-04-1 真机回放实测的静默悬挂根因）：pg v8 的 query() 在未连接时
+      // 只把查询入队、不自动建连；readyForQuery 恒 false —— 查询永久排队，桥永不就绪且无任何日志。
+      await client.connect();
       await client.query("LISTEN " + NOTIFY_STREAM_CHANNEL);
       this.listener = client;
       this.logger.log("SSE 广播桥就绪：LISTEN " + NOTIFY_STREAM_CHANNEL + "（惰性启动）");
