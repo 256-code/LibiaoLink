@@ -177,7 +177,8 @@ describe("用户偏好（A4 / A24）", () => {
     // 客户端夹带 updatedAt 伪造 → 被服务端盖章值覆盖（写入时间以服务端为准）
     const forged: MyPlanNote = { ...note, id: "pn-2", done: true };
     const later = new Date("2026-10-10T02:00:00.000Z");
-    const after = await service.update(USER_ID, { myPlanBoard: { notes: [forged], categories: ["采购"], updatedAt: "1999-01-01T00:00:00.000Z" } } as unknown as { myPlanBoard?: unknown }, later);
+    const forgedPatch = { myPlanBoard: { notes: [forged], categories: ["采购"], updatedAt: "1999-01-01T00:00:00.000Z" } } as unknown as Parameters<UserPreferenceService["update"]>[1];
+    const after = await service.update(USER_ID, forgedPatch, later);
     expect(after.myPlanBoard.updatedAt).toBe(later.toISOString());
     expect(after.myPlanBoard.notes).toEqual([forged]);
     // 未传键保持原值：换个键 PATCH 不冲掉便签墙
