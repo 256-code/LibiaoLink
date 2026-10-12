@@ -58,7 +58,7 @@ const j = (value) => JSON.stringify(value);
 
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) {
   console.error("回放用户不存在：" + REPLAY_USER);
   process.exit(1);

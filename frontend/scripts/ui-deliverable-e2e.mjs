@@ -45,7 +45,7 @@ const DRAWER_INPUT = "aside[role=dialog] [data-file-upload-input=true]";
 
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) { console.log("中止：找不到回放账号 " + REPLAY_USER); process.exit(1); }
 const token = "pxdlv-" + randomBytes(16).toString("hex");
 const csrf = randomBytes(16).toString("hex");
