@@ -8826,7 +8826,7 @@ export interface components {
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
         };
-        /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
+        /** @description 客户端计算的内容哈希；附件上传（未给 taskId / nodeId / docType）命中同项目既有同内容附件时直接秒传复用（reused=true、upload=null，不建新文件 / 会话）；其余命中返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
         /** @description 推进当前阶段：过门禁才生效；失败 422 STAGE_GATE_NOT_PASSED + 缺项明细（不部分推进） */
         StageAdvanceBody: {
@@ -9332,7 +9332,7 @@ export interface components {
             version: components["schemas"]["Version"];
         };
         UploadAbortResponse: {
-            upload: components["schemas"]["UploadSession"];
+            upload: components["schemas"]["UploadSession"] & unknown;
         };
         UploadCompleteBody: {
             contentHash: components["schemas"]["Sha256"] & unknown;
@@ -9373,9 +9373,12 @@ export interface components {
             fileId: components["schemas"]["Uuid"] & unknown;
             change: components["schemas"]["ChangeIntentBody"];
         };
+        /** @description 发起上传结果：新建 / 追加版本返回上传会话；附件域命中同内容既有文件则秒传复用（reused=true、upload=null） */
         UploadCreateResponse: {
             file: components["schemas"]["File"];
             upload: components["schemas"]["UploadSession"];
+            /** @description 是否复用了同项目既有的同内容附件（2026-10-12 口径）：true = 未新建文件、未建会话（file = 既有文件）；任务成果上传（带 taskId 等归属）恒 false */
+            reused: boolean;
             duplicateHint: components["schemas"]["DuplicateHint"];
         };
         /**
@@ -9399,7 +9402,7 @@ export interface components {
             url: string;
             expiresAt: components["schemas"]["DateTime"];
         };
-        /** @description 上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准） */
+        /** @description 上传会话；附件域秒传复用命中时 = null（无需传分片，直接把 file.id 挂到日报 / 问题等对象） */
         UploadSession: {
             id: components["schemas"]["Uuid"];
             fileId: components["schemas"]["Uuid"];
@@ -9409,7 +9412,7 @@ export interface components {
             status: components["schemas"]["UploadSessionStatus"];
             createdAt: components["schemas"]["DateTime"];
             expiresAt: components["schemas"]["DateTime"];
-        };
+        } | null;
         /**
          * @description 上传会话状态；active 可续传，completed/aborted/expired 不可再用
          * @enum {string}

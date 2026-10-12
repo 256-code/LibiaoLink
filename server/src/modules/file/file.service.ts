@@ -3,6 +3,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import {
   ChangeIntentBodySchema,
   ChangeRequestSchema,
+  DuplicateHintSchema,
   FileDetailSchema,
   FileFinalizeBodySchema,
   FileListResponseSchema,
@@ -47,6 +48,7 @@ import {
   FileRepository,
   type FileLinkInsertInput,
   type ChangeRequestRow,
+  type DuplicateFileRow,
   type FileRow,
   type FileVersionRow,
   type UploadSessionRow,
@@ -195,6 +197,26 @@ export class FileService {
       await this.assertTaskNotFinalized(effectiveTaskId);
     }
 
+    // 附件域秒传复用（2026-10-12）：同项目已有同内容附件（无任务 / 节点 / 类型归属）→ 不新建文件与上传会话，
+    // 直接复用既有文件 —— 同一张图在日报 / 问题附图等处多次粘贴只沉淀一条文件库记录，多处引用由 file_links 承担。
+    // 任务成果上传带任一归属（taskId / nodeId / docType）不参与复用：文件按 files.task_id 单归属。
+    if (
+      body.intent === "version" &&
+      target === null &&
+      body.taskId === undefined &&
+      body.nodeId === undefined &&
+      body.docType === undefined &&
+      body.contentHash !== undefined
+    ) {
+      const reusable = await this.repository.findAttachmentDuplicateByHash(body.projectId, body.contentHash.toLowerCase());
+      if (reusable !== null) {
+        const file = await this.repository.findFileById(reusable.fileId);
+        if (file !== null) {
+          return { file: toFileView(file), upload: null, reused: true, duplicateHint: toDuplicateHint(reusable) };
+        }
+      }
+    }
+
     const at = this.clock.now();
     const expiresAt = new Date(at.getTime() + this.config.env.UPLOAD_SESSION_TTL_HOURS * HOUR_MS);
     const plan = planUpload(body.sizeBytes);
@@ -281,16 +303,8 @@ export class FileService {
     return {
       file: toFileView(created.file),
       upload: toSessionView(created.session),
-      duplicateHint:
-        duplicateHint === null
-          ? null
-          : {
-              fileId: duplicateHint.fileId,
-              name: duplicateHint.name,
-              sizeBytes: Number(duplicateHint.sizeBytes),
-              uploadedBy: duplicateHint.uploadedBy,
-              uploadedAt: duplicateHint.uploadedAt.toISOString(),
-            },
+      reused: false,
+      duplicateHint: toDuplicateHint(duplicateHint),
     };
   }
 
@@ -1580,6 +1594,19 @@ function toSessionView(row: UploadSessionRow): z.infer<typeof UploadSessionSchem
     createdAt: row.createdAt.toISOString(),
     expiresAt: row.expiresAt.toISOString(),
   };
+}
+
+/** 秒传提示视图（DuplicateHint 契约）：既有文件 + 命中版本的体量 / 上传人 / 上传时间。 */
+function toDuplicateHint(row: DuplicateFileRow | null): z.infer<typeof DuplicateHintSchema> | null {
+  return row === null
+    ? null
+    : {
+        fileId: row.fileId,
+        name: row.name,
+        sizeBytes: Number(row.sizeBytes),
+        uploadedBy: row.uploadedBy,
+        uploadedAt: row.uploadedAt.toISOString(),
+      };
 }
 
 export function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSchema> {

@@ -144,7 +144,7 @@ const UploadCreateBaseSchema = z.object({
     .openapi({ description: "字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED" }),
   mime: z.string().max(200).optional(),
   contentHash: Sha256Schema.optional().openapi({
-    description: "客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传",
+    description: "客户端计算的内容哈希；附件上传（未给 taskId / nodeId / docType）命中同项目既有同内容附件时直接秒传复用（reused=true、upload=null，不建新文件 / 会话）；其余命中返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传",
   }),
   docType: DocTypeSchema.optional(),
   nodeId: UuidSchema.optional(),
@@ -199,10 +199,15 @@ export const DuplicateHintSchema = z
 export const UploadCreateResponseSchema = z
   .object({
     file: FileSchema,
-    upload: UploadSessionSchema,
+    upload: UploadSessionSchema.nullable().openapi({
+      description: "上传会话；附件域秒传复用命中时 = null（无需传分片，直接把 file.id 挂到日报 / 问题等对象）",
+    }),
+    reused: z.boolean().openapi({
+      description: "是否复用了同项目既有的同内容附件（2026-10-12 口径）：true = 未新建文件、未建会话（file = 既有文件）；任务成果上传（带 taskId 等归属）恒 false",
+    }),
     duplicateHint: DuplicateHintSchema.nullable(),
   })
-  .openapi("UploadCreateResponse");
+  .openapi("UploadCreateResponse", { description: "发起上传结果：新建 / 追加版本返回上传会话；附件域命中同内容既有文件则秒传复用（reused=true、upload=null）" });
 
 export const UploadPartsBodySchema = z
   .object({
