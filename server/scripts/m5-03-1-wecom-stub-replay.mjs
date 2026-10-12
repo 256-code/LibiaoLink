@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 /**
  * M5-03-1 适配器内核 · 本地 stub 回放（无网络 / 无 PG）：
- *   以本机 HTTP 桩模拟企微 gettoken / message/send / webhook 三类端点，驱动 server/dist 的企微内核
+ *   以本机 HTTP 桩模拟企微 gettoken / message/send 两类端点，驱动 server/dist 的企微内核
  *   （createWecomClientFromEnv 接线），覆盖实施方案 §五 的失败分类分支：
  *   token 单飞 / 失效重取一次（成功与连续失效）/ 配置类与接收人永久失败 / 频率限速 / 5xx / 超时 /
- *   非 JSON 兜底 / 本地限速桶短路与跨桶隔离 / webhook 成功与失效（93000）。
+ *   非 JSON 兜底 / 本地限速桶短路。
+ *
+ *   M5-03-2（P5 定案）：webhook 发送面退役 —— webhook 桩与 S12~S14 断言同批移除（29 → 21 断言）；
+ *   群通道（智能机器人）stub 回放见 scripts/m5-03-2-aibot-stub-replay.mjs。
  *
  * 前置：已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && node scripts/m5-03-1-wecom-stub-replay.mjs [--out <报告.md>] [--json <证据.json>]
@@ -48,14 +51,11 @@ function assertEqual(name, actual, expected) {
 const state = {
   gettoken: 0,
   send: 0,
-  webhook: 0,
   tokenSeq: 0,
   expiredUsed: false,
   mode: "ok",
   lastSendBody: null,
   lastSendToken: null,
-  lastWebhookKey: null,
-  lastWebhookBody: null,
 };
 
 function respondSend(res) {
@@ -101,15 +101,6 @@ const server = createServer((req, res) => {
       respondSend(res);
     });
   }
-  if (req.method === "POST" && url.pathname === "/cgi-bin/webhook/send") {
-    state.webhook += 1;
-    state.lastWebhookKey = url.searchParams.get("key");
-    return readBody(req).then((text) => {
-      state.lastWebhookBody = JSON.parse(text);
-      if (state.mode === "webhook_invalid") return json(res, 200, { errcode: 93000, errmsg: "invalid webhook url" });
-      return json(res, 200, { errcode: 0, errmsg: "ok" });
-    });
-  }
   return json(res, 404, { errcode: 404, errmsg: "not found" });
 });
 
@@ -149,7 +140,6 @@ async function main() {
     WECOM_TOKEN_SAFETY_MS: 300000,
     WECOM_RATE_WINDOW_MS: 60000,
     WECOM_RATE_LIMIT_APP: 0,
-    WECOM_RATE_LIMIT_GROUP: 0,
   };
   const makeRuntime = (envPatch, overrides = {}) =>
     createWecomClientFromEnv({ ...baseEnv, ...envPatch }, { now: () => FIXED_NOW, store: new InMemoryRateWindowStore(), ...overrides });
@@ -262,44 +252,6 @@ async function main() {
     assertEqual("S11 限速：拦截不发 HTTP（桩仅增 1 次）", state.send - sendBefore, 1);
   }
 
-  // S12 webhook 成功：无 token 面
-  {
-    const { client } = makeRuntime({ WECOM_RATE_LIMIT_GROUP: 1 });
-    const tokenBefore = state.gettoken;
-    const webhookBefore = state.webhook;
-    const result = await client.sendGroupText({ webhookUrl: baseUrl + "/cgi-bin/webhook/send?key=stub-key-1", content: "群播报" });
-    check("S12 webhook 成功：ok = true", result.ok === true && result.attempts === 1, JSON.stringify(result));
-    assertEqual("S12：桩收到恰 1 次 webhook", state.webhook - webhookBefore, 1);
-    assertEqual("S12：webhook 不走 gettoken", state.gettoken - tokenBefore, 0);
-    check(
-      "S12：webhook 包体 = text 载荷",
-      state.lastWebhookBody?.msgtype === "text" && state.lastWebhookBody?.text?.content === "群播报",
-      JSON.stringify(state.lastWebhookBody),
-    );
-    assertEqual("S12：webhook key 未丢失（query 保留）", state.lastWebhookKey, "stub-key-1");
-  }
-
-  // S13 webhook 失效 93000 → permanent
-  {
-    const { client } = makeRuntime({});
-    state.mode = "webhook_invalid";
-    const result = await client.sendGroupText({ webhookUrl: baseUrl + "/cgi-bin/webhook/send?key=stub-key-bad", content: "x" });
-    check("S13 webhook 93000 → permanent", result.ok === false && result.kind === "permanent" && result.errcode === 93000);
-    state.mode = "ok";
-  }
-
-  // S14 webhook 桶隔离：同桶限速、异桶放行
-  {
-    const { client } = makeRuntime({ WECOM_RATE_LIMIT_GROUP: 1 });
-    const urlA = baseUrl + "/cgi-bin/webhook/send?key=stub-key-a";
-    const urlB = baseUrl + "/cgi-bin/webhook/send?key=stub-key-b";
-    const webhookBefore = state.webhook;
-    const first = await client.sendGroupText({ webhookUrl: urlA, content: "1" });
-    const blocked = await client.sendGroupText({ webhookUrl: urlA, content: "2" });
-    const other = await client.sendGroupText({ webhookUrl: urlB, content: "3" });
-    check("S14 桶隔离：同桶首条放行 / 第二条拦截 / 异桶放行", first.ok === true && blocked.ok === false && blocked.attempts === 0 && other.ok === true);
-    assertEqual("S14：拦截不发 HTTP（桩仅增 2 次）", state.webhook - webhookBefore, 2);
-  }
 }
 
 main()

@@ -26,9 +26,24 @@ export {
   WECOM_CHANNELS,
 } from "./wecom.errors.js";
 export type { WecomChannel, WecomFailureKind } from "./wecom.errors.js";
-export { InMemoryRateWindowStore, WECOM_APP_BUCKET_ID, WecomRateLimiter, webhookBucketId } from "./wecom.rate.js";
-export type { RateWindowStore, WecomRateDecision, WecomRateKind } from "./wecom.rate.js";
+export { chatBucketId, InMemoryRateWindowStore, WECOM_APP_BUCKET_ID, WecomRateLimiter } from "./wecom.rate.js";
+export type {
+  RateWindowStore,
+  WecomRateDecision,
+  WecomRateKind,
+  WecomRateWindowSpec,
+  WecomRateWindowState,
+} from "./wecom.rate.js";
 export { WecomTokenError, WecomTokenManager } from "./wecom.token.js";
 export type { WecomTokenInfo } from "./wecom.token.js";
 export { createWecomClientFromEnv, WecomClient } from "./wecom.client.js";
 export type { WecomClientOptions, WecomRuntime, WecomRuntimeOverrides, WecomSendResult } from "./wecom.client.js";
+export { createWecomAibotClientFromEnv, createWsSocketFactory, WecomAibotClient } from "./wecom.aibot.js";
+export type {
+  AibotIncomingMessage,
+  AibotSendResult,
+  AibotSocket,
+  AibotSocketFactory,
+  WecomAibotOverrides,
+  WecomAibotStats,
+} from "./wecom.aibot.js";
