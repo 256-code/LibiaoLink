@@ -23,6 +23,10 @@
  * 2026-10-08 续二（Push 249）：定档上传（uploadFile / uploadFiles / replaceFileContent 的 finalize 选项 + finalizeFile）——
  *   业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」：传输完成即定档该文件
  *   （POST /files/{id}/finalize），挂接任务随文件定档一并锁定（服务端同事务）：此后任务写口一律 409 TASK_FINALIZED，修改走变更。
+ * 2026-10-12（附件域秒传复用）：附件上传（未给 taskId / nodeId / docType）命中同项目同内容既有文件时，
+ *   服务端直接返回既有文件（reused=true、upload=null，不建文件 / 会话）；uploadFile 命中即跳过传输、直接用
+ *   既有 fileId —— 同一张图在日报 / 问题附图多处粘贴只沉淀一条文件库记录；同内容在途上传按
+ *   （项目 + 哈希 + 任务）合并为一次链路。
  * 上传链路（D2 分片直传，契约 shared/src/modules/files.ts；参考实现 server/scripts/m4-upload-replay.mjs）：
  *   POST /api/v1/files/uploads（intent=version，contentHash = SHA-256）
  *   → POST /api/v1/files/{fileId}/uploads/{uploadId}/parts 取预签名分片 URL
@@ -41,7 +45,10 @@ import { sha256Hex } from "./sha256";
 
 type UploadCreateResponse = {
   file: { id: string; name: string };
-  upload: { id: string; partSizeBytes: number; totalParts: number };
+  /** 上传会话；附件域秒传复用命中 = null（2026-10-12：同一内容的附图只沉淀一条文件记录，不再重复传输）。 */
+  upload: { id: string; partSizeBytes: number; totalParts: number } | null;
+  /** true = 未新建文件 / 未建会话，file = 复用的既有文件（仅附件域；任务成果上传恒 false）。 */
+  reused: boolean;
 };
 
 type UploadPartsResponse = { parts: Array<{ partNumber: number; url: string }> };
@@ -116,23 +123,43 @@ async function transferChunks(
   );
 }
 
+/** 同内容在途上传合并表（key = 项目 + 哈希 + 任务）：连点 / 一次粘贴多份同一张图只发一次上传链路。 */
+const inFlightUploads = new Map<string, Promise<string>>();
+
 export async function uploadFile(projectId: string, file: Blob, name: string, options: UploadFileOptions = {}): Promise<string> {
   const buffer = await file.arrayBuffer();
   const contentHash = await sha256Hex(buffer);
-  const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
-    projectId,
-    name,
-    sizeBytes: file.size,
-    mime: file.type === "" ? undefined : file.type,
-    contentHash,
-    intent: "version",
-    taskId: options.taskId,
-  });
-  await transferChunks(created.file.id, created.upload, buffer, contentHash);
-  if (options.finalize === true) {
-    await finalizeFile(created.file.id);
+  const key = projectId + "|" + contentHash + "|" + (options.taskId ?? "");
+  const running = inFlightUploads.get(key);
+  if (running !== undefined) {
+    return running;
   }
-  return created.file.id;
+  const pending = (async (): Promise<string> => {
+    const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
+      projectId,
+      name,
+      sizeBytes: file.size,
+      mime: file.type === "" ? undefined : file.type,
+      contentHash,
+      intent: "version",
+      taskId: options.taskId,
+    });
+    // 附件域秒传复用（2026-10-12）：服务端不建文件 / 会话，直接用既有 file.id。
+    if (created.reused || created.upload === null) {
+      return created.file.id;
+    }
+    await transferChunks(created.file.id, created.upload, buffer, contentHash);
+    if (options.finalize === true) {
+      await finalizeFile(created.file.id);
+    }
+    return created.file.id;
+  })();
+  inFlightUploads.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    inFlightUploads.delete(key);
+  }
 }
 
 /**
@@ -193,6 +220,9 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
       stageKey: change.stageKey === undefined || change.stageKey === "" ? undefined : change.stageKey,
     },
   });
+  if (created.upload === null) {
+    throw new Error("上传会话创建失败，请重试");
+  }
   await transferChunks(created.file.id, created.upload, buffer, contentHash);
   invalidatePreview(target.id);
 }
@@ -242,6 +272,9 @@ export async function replaceFileContent(projectId: string, target: TaskFileRef,
     fileId: target.id,
     change: needsChange ? { reason: changeReason } : undefined,
   });
+  if (created.upload === null) {
+    throw new Error("上传会话创建失败，请重试");
+  }
   await transferChunks(created.file.id, created.upload, buffer, contentHash);
   invalidatePreview(target.id);
   if (finalize && !needsChange) {
