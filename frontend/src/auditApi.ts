@@ -7,7 +7,10 @@
  */
 import { apiRequest } from "./api";
 
-/** 审计动作（与契约 AUDIT_ACTIONS 同口径；中文标签见 AUDIT_ACTION_LABELS）。 */
+/**
+ * 审计动作（与契约 AUDIT_ACTIONS 同口径；中文标签见 AUDIT_ACTION_LABELS）。
+ * preview（预览）自 2026-10-12 起服务端不再写入（操作日志不记录预览动作）—— 值保留：历史行标签渲染与筛选兼容。
+ */
 export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "archive", "preview", "download", "deny"];
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

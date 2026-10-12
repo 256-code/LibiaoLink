@@ -56,7 +56,7 @@ const queryCases = [
 ];
 
 const enumCases = [
-  ["审计动作含 preview（D2-07：预览计入查看 / 下载审计）", AUDIT_ACTIONS.includes("preview")],
+  ["审计动作含 preview（值保留：2026-10-12 起不再写入预览审计 —— 操作日志不记录预览动作）", AUDIT_ACTIONS.includes("preview")],
   ["审计对象类型含 change（M4-04 变更记录）", AUDIT_OBJECT_TYPES.includes("change")],
   ["审计对象类型不含 preview（预览沿用 object_type = file + action = preview）", !AUDIT_OBJECT_TYPES.includes("preview")],
 ];

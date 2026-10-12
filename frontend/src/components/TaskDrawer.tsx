@@ -598,7 +598,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     });
   };
 
-  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览读取会写「查看」审计，不该随清单一开就铺开申请。
+  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 早先预览读取会写「查看」审计，不该随清单一开就铺开申请；Push 283 起预览不再写审计（操作日志不记录预览动作），懒取仍保留（不随清单铺开无谓的签发请求）。
    *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
    *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
   const openPreview = async (fileId: string, name: string, versionId?: string) => {
