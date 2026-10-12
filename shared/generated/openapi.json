@@ -5126,6 +5126,82 @@
         ],
         "description": "项目流程（阶段 + 节点 + 约束 + 状态）；导入即快照"
       },
+      "ProjectGroupBinding": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "bound": {
+            "type": "boolean",
+            "description": "是否已绑定（false = 未绑定，其余字段为 null / false）"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "群名 / 备注（绑定维护用）；未绑定 = null"
+          },
+          "chatidMasked": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "绑定 chatid 掩码（只回末 4 位）；未绑定 = null"
+          },
+          "activated": {
+            "type": "boolean",
+            "description": "会话已激活（群内有人给机器人发过消息）；未绑定 = false"
+          },
+          "updatedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "绑定 / 换绑 / 解绑时点；未绑定 = null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "bound",
+          "name",
+          "chatidMasked",
+          "activated",
+          "updatedAt"
+        ],
+        "description": "项目群绑定状态（GET 恒 200；未绑定 = bound:false）"
+      },
+      "ProjectGroupPutBody": {
+        "type": "object",
+        "properties": {
+          "chatid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,128}$",
+            "description": "企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串）"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空）"
+          }
+        },
+        "required": [
+          "chatid"
+        ],
+        "description": "绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义"
+      },
       "ProjectListResponse": {
         "type": "object",
         "properties": {
@@ -9711,6 +9787,184 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/group": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "项目群绑定状态（未绑定 = bound:false；chatid 掩码回显，activated = 群内已激活）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "群绑定状态（GET 恒 200；项目不存在 / 不可见 = 404）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGroupBinding"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectGroupPutBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "绑定后的群状态（chatid 掩码回显）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGroupBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "解绑项目群（幂等：未绑定也返回 bound:false；权限 project.update）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "解绑后的群状态（bound:false）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGroupBinding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {

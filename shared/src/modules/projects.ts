@@ -308,3 +308,41 @@ export const ProjectDeleteHeadersSchema = z
       }),
   })
   .openapi("ProjectDeleteHeaders");
+
+/**
+ * 项目群绑定（M5-03-2 · P5 定案：企微智能机器人 + chatid）：C2-05 群聊绑定（项目主数据维护）。
+ * 读面恒 200：`bound=false` = 未绑定（chatidMasked / name / updatedAt = null）；`chatidMasked` 只回末 4 位
+ *   （最小暴露口径，沿用 S8-1 §三-4 只写不读形态）；`activated` = 会话已激活（群内有人给机器人发过
+ *   消息 —— 主动推送前置条件；未激活推送命中 846607 未激活分支，投递层不重试 + 降级留痕）。
+ * 写面：`project.update` 权限档（B3 定案：项目经理维护）；项目归档后拒绝（409 PROJECT_ARCHIVED）。
+ */
+export const ProjectGroupBindingSchema = z
+  .object({
+    projectId: UuidSchema,
+    bound: z.boolean().openapi({ description: "是否已绑定（false = 未绑定，其余字段为 null / false）" }),
+    name: z.string().nullable().openapi({ description: "群名 / 备注（绑定维护用）；未绑定 = null" }),
+    chatidMasked: z.string().nullable().openapi({ description: "绑定 chatid 掩码（只回末 4 位）；未绑定 = null" }),
+    activated: z.boolean().openapi({ description: "会话已激活（群内有人给机器人发过消息）；未绑定 = false" }),
+    updatedAt: DateTimeSchema.nullable().openapi({ description: "绑定 / 换绑 / 解绑时点；未绑定 = null" }),
+  })
+  .openapi("ProjectGroupBinding", { description: "项目群绑定状态（GET 恒 200；未绑定 = bound:false）" });
+
+/**
+ * 绑定 / 换绑请求（PUT 覆盖语义）：`chatid` = 群消息回调自动落库的会话 id（机器人进群 + 群内激活一次后可得），
+ * 也接受先绑后激活（activated 随回调置位）；掩码只作用于读面，写入需全文。
+ */
+export const ProjectGroupPutBodySchema = z
+  .object({
+    chatid: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{8,128}$/, "chatid 形态非法（企微会话 id：字母 / 数字 / _ / -）")
+      .openapi({ description: "企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串）" }),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .nullish()
+      .openapi({ description: "群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空）" }),
+  })
+  .openapi("ProjectGroupPutBody", { description: "绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义" });
