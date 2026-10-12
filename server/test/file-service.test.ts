@@ -172,6 +172,7 @@ class FakeFileRepository {
   file: FileRow | null = makeFileRow();
   session: UploadSessionRow | null = makeSessionRow();
   duplicate: DuplicateFileRow | null = null;
+  attachmentDuplicate: DuplicateFileRow | null = null;
   expiredRows: (UploadSessionRow & { projectId: string })[] = [];
   /** 锁会话时抛错（验证过期清理「单条失败不阻断」）。 */
   failLockFor: string | null = null;
@@ -185,6 +186,7 @@ class FakeFileRepository {
   insertedVersions: FileVersionInsertInput[] = [];
   sessionPatches: { id: string; patch: UploadSessionPatch }[] = [];
   duplicateQueries: { projectId: string; contentHash: string; excludeFileId: string }[] = [];
+  attachmentDuplicateQueries: { projectId: string; contentHash: string }[] = [];
   lockSessionCalls = 0;
 
   async findProjectBrief(): Promise<FileProjectBriefRow | null> {
@@ -241,6 +243,11 @@ class FakeFileRepository {
   async findDuplicateByHash(projectId: string, contentHash: string, excludeFileId: string): Promise<DuplicateFileRow | null> {
     this.duplicateQueries.push({ projectId, contentHash, excludeFileId });
     return this.duplicate;
+  }
+
+  async findAttachmentDuplicateByHash(projectId: string, contentHash: string): Promise<DuplicateFileRow | null> {
+    this.attachmentDuplicateQueries.push({ projectId, contentHash });
+    return this.attachmentDuplicate;
   }
 
   async findFileById(fileId: string): Promise<FileRow | null> {
@@ -668,18 +675,20 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     expect(result.file.status).toBe("draft");
     expect(result.file.version).toBe(0);
     expect(result.file.createdBy).toBe(ACTOR);
-    expect(result.upload.intent).toBe("version");
-    expect(result.upload.status).toBe("active");
-    expect(result.upload.partSizeBytes).toBe(8 * MI_B);
-    expect(result.upload.totalParts).toBe(2);
-    expect(result.upload.createdAt).toBe(NOW.toISOString());
-    expect(result.upload.expiresAt).toBe(new Date(NOW.getTime() + 24 * 3_600_000).toISOString());
+    expect(result.reused).toBe(false);
+    const upload = result.upload!;
+    expect(upload.intent).toBe("version");
+    expect(upload.status).toBe("active");
+    expect(upload.partSizeBytes).toBe(8 * MI_B);
+    expect(upload.totalParts).toBe(2);
+    expect(upload.createdAt).toBe(NOW.toISOString());
+    expect(upload.expiresAt).toBe(new Date(NOW.getTime() + 24 * 3_600_000).toISOString());
     expect(result.duplicateHint).toBeNull();
 
     // 会话先写暂存键（ADR-006）：…/staging/{sessionId}（sessionId 由服务端生成）
     const inserted = h.repo.insertedSessions[0]!;
     expect(inserted.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/staging/${inserted.id}`);
-    expect(inserted.id).toBe(result.upload.id);
+    expect(inserted.id).toBe(upload.id);
     expect(inserted.expiresAt).toEqual(new Date(NOW.getTime() + 24 * 3_600_000));
     expect(h.repo.insertedFiles[0]!.status).toBe("draft");
     // init 未给哈希 → 不查秒传提示
@@ -689,8 +698,48 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     expect(h.audit.entries[0]).toMatchObject({ action: "create", objectType: "file", objectId: FILE });
   });
 
-  it("带 contentHash：命中同项目既有内容 → 回秒传提示（不阻断）", async () => {
+  it("附件域（2026-10-12）：命中同项目既有同内容附件 → 秒传复用，不新建文件 / 会话（reused=true、upload=null）", async () => {
     const h = makeService();
+    h.repo.attachmentDuplicate = {
+      fileId: OTHER_FILE,
+      name: "机械设计图纸-v1.pdf",
+      sizeBytes: 12 * MI_B,
+      uploadedBy: OTHER_ACTOR,
+      uploadedAt: new Date("2026-09-10T02:00:00Z"),
+    };
+    h.repo.otherFiles = [makeFileRow({ id: OTHER_FILE, name: "机械设计图纸-v1.pdf", version: 1, currentVersionId: VERSION })];
+    const result = await h.service.createUpload(
+      { projectId: PROJECT, name: "机械设计图纸.pdf", sizeBytes: 12 * MI_B, contentHash: HASH.toUpperCase(), intent: "version" },
+      ACTOR,
+    );
+
+    expect(result.reused).toBe(true);
+    expect(result.upload).toBeNull();
+    expect(result.file.id).toBe(OTHER_FILE);
+    expect(result.duplicateHint).toEqual({
+      fileId: OTHER_FILE,
+      name: "机械设计图纸-v1.pdf",
+      sizeBytes: 12 * MI_B,
+      uploadedBy: OTHER_ACTOR,
+      uploadedAt: "2026-09-10T02:00:00.000Z",
+    });
+    // 哈希统一小写后查询；复用不落文件 / 会话 / 审计
+    expect(h.repo.attachmentDuplicateQueries).toEqual([{ projectId: PROJECT, contentHash: HASH }]);
+    expect(h.repo.insertedFiles).toHaveLength(0);
+    expect(h.repo.insertedSessions).toHaveLength(0);
+    expect(h.audit.entries).toHaveLength(0);
+  });
+
+  it("任务成果上传（带 taskId）：同内容仍每次新建文件，只回秒传提示（不阻断）—— 附件域复用不吞任务归属", async () => {
+    const h = makeService();
+    h.repo.task = { id: TASK, projectId: PROJECT, finalizedAt: null };
+    h.repo.attachmentDuplicate = {
+      fileId: OTHER_FILE,
+      name: "机械设计图纸-v1.pdf",
+      sizeBytes: 12 * MI_B,
+      uploadedBy: OTHER_ACTOR,
+      uploadedAt: new Date("2026-09-10T02:00:00Z"),
+    };
     h.repo.duplicate = {
       fileId: OTHER_FILE,
       name: "机械设计图纸-v1.pdf",
@@ -699,10 +748,13 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
       uploadedAt: new Date("2026-09-10T02:00:00Z"),
     };
     const result = await h.service.createUpload(
-      { projectId: PROJECT, name: "机械设计图纸.pdf", sizeBytes: 12 * MI_B, contentHash: HASH.toUpperCase(), intent: "version" },
+      { projectId: PROJECT, name: "机械设计图纸.pdf", sizeBytes: 12 * MI_B, contentHash: HASH.toUpperCase(), intent: "version", taskId: TASK },
       ACTOR,
     );
 
+    expect(result.reused).toBe(false);
+    const upload = result.upload!;
+    expect(upload.intent).toBe("version");
     expect(result.duplicateHint).toEqual({
       fileId: OTHER_FILE,
       name: "机械设计图纸-v1.pdf",
@@ -710,7 +762,7 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
       uploadedBy: OTHER_ACTOR,
       uploadedAt: "2026-09-10T02:00:00.000Z",
     });
-    // 哈希统一小写后落会话与查询
+    expect(h.repo.attachmentDuplicateQueries).toHaveLength(0);
     expect(h.repo.insertedSessions[0]!.contentHash).toBe(HASH);
     expect(h.repo.duplicateQueries[0]).toMatchObject({ projectId: PROJECT, contentHash: HASH, excludeFileId: FILE });
   });
@@ -733,7 +785,7 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     );
 
     expect(result.file.id).toBe(FILE);
-    expect(result.upload.intent).toBe("change");
+    expect(result.upload!.intent).toBe("change");
     expect(h.repo.insertedFiles).toHaveLength(0);
     expect(h.repo.insertedSessions).toHaveLength(1);
     expect(h.repo.insertedSessions[0]).toMatchObject({ fileId: FILE, intent: "change" });
@@ -770,7 +822,7 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     );
 
     expect(result.file.id).toBe(FILE);
-    expect(result.upload.intent).toBe("change");
+    expect(result.upload!.intent).toBe("change");
     expect(h.repo.insertedFiles).toHaveLength(0);
     expect(h.repo.insertedSessions[0]!.changePayload).toEqual({
       reason: "换扩展名（xls → pptx）",
@@ -834,7 +886,7 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
     );
 
     expect(result.file.id).toBe(FILE);
-    expect(result.upload.intent).toBe("change");
+    expect(result.upload!.intent).toBe("change");
     expect(h.repo.insertedSessions).toHaveLength(1);
   });
 

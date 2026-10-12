@@ -5980,7 +5980,7 @@
       "Sha256": {
         "type": "string",
         "pattern": "^[a-f0-9]{64}$/i",
-        "description": "客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传"
+        "description": "客户端计算的内容哈希；附件上传（未给 taskId / nodeId / docType）命中同项目既有同内容附件时直接秒传复用（reused=true、upload=null，不建新文件 / 会话）；其余命中返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传"
       },
       "StageAdvanceBody": {
         "type": "object",
@@ -7984,7 +7984,14 @@
         "type": "object",
         "properties": {
           "upload": {
-            "$ref": "#/components/schemas/UploadSession"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UploadSession"
+              },
+              {
+                "description": "上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准）"
+              }
+            ]
           }
         },
         "required": [
@@ -8161,6 +8168,10 @@
           "upload": {
             "$ref": "#/components/schemas/UploadSession"
           },
+          "reused": {
+            "type": "boolean",
+            "description": "是否复用了同项目既有的同内容附件（2026-10-12 口径）：true = 未新建文件、未建会话（file = 既有文件）；任务成果上传（带 taskId 等归属）恒 false"
+          },
           "duplicateHint": {
             "$ref": "#/components/schemas/DuplicateHint"
           }
@@ -8168,8 +8179,10 @@
         "required": [
           "file",
           "upload",
+          "reused",
           "duplicateHint"
-        ]
+        ],
+        "description": "发起上传结果：新建 / 追加版本返回上传会话；附件域命中同内容既有文件则秒传复用（reused=true、upload=null）"
       },
       "UploadIntent": {
         "type": "string",
@@ -8248,7 +8261,10 @@
         ]
       },
       "UploadSession": {
-        "type": "object",
+        "type": [
+          "object",
+          "null"
+        ],
         "properties": {
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -8287,7 +8303,7 @@
           "createdAt",
           "expiresAt"
         ],
-        "description": "上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准）"
+        "description": "上传会话；附件域秒传复用命中时 = null（无需传分片，直接把 file.id 挂到日报 / 问题等对象）"
       },
       "UploadSessionStatus": {
         "type": "string",

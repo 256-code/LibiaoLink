@@ -550,16 +550,16 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                   </thead>
                   <tbody>
                     {pageItems.map((file) => (
-                      <tr key={file.id} data-file-row={file.id} className="align-top transition hover:bg-zinc-50/70">
-                        <td className="border-b border-zinc-100 px-4 py-3">
-                          <span className="flex items-center gap-2">
-                            <FileTypeIcon name={file.name} />
-                            <span className="truncate text-zinc-800" title={file.name}>
+                      <tr key={file.id} data-file-row={file.id} className="transition hover:bg-zinc-50/70">
+                        <td className="align-middle border-b border-zinc-100 px-4 py-3">
+                          <span className="flex items-center gap-2.5">
+                            <FileTypeIcon name={file.name} className="h-5 w-5" />
+                            <span className="truncate text-base text-zinc-800" title={file.name}>
                               {file.name}
                             </span>
                           </span>
                         </td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span
                             data-file-status={file.status}
                             title={
@@ -572,7 +572,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                             {FILE_STATUS_LABELS[file.status] ?? file.status}
                           </span>
                         </td>
-                        <td className="border-b border-zinc-100 px-4 py-3">
+                        <td className="align-middle border-b border-zinc-100 px-4 py-3">
                           <div
                             data-file-project={file.projectId}
                             data-file-project-code={projectCodeOf(file.projectId)}
@@ -585,15 +585,15 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                             <span className="whitespace-nowrap text-xs text-zinc-500">{projectCodeOf(file.projectId)}</span>
                           </div>
                         </td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{userNameOf(file.createdBy)}</td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
+                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{userNameOf(file.createdBy)}</td>
+                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
                           {query.tab === "recycled"
                             ? file.recycledAt === null
                               ? "—"
                               : formatDateTime(file.recycledAt) + " · " + userNameOf(file.recycledBy)
                             : formatDateTime(file.createdAt)}
                         </td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span className="flex items-center gap-2">
                             <button
                               type="button"
