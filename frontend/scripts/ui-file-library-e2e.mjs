@@ -10,7 +10,7 @@
  *      与库内逐一对账（同一项目集 + 四档在库状态，created_at desc + id asc）；
  *   ③ 分页：下一页 → page=2、行 = 库内第 51 行起；上一页回第 1 页、地址回 #/files；
  *   ④ 筛选（地址即状态）：状态 = 草稿（status=draft，行全草稿）/ 清除筛选还原；项目筛选 = **可搜索多选下拉**
- *      （打开即列全部选项、列表内部可鼠标滚轮滑动；输入「LBEG」把选项过滤到命中项 —— 业务口径 2026-10-09
+ *      （打开即列全部选项、列表内部可鼠标滚轮滑动；输入夹具项目编号（Push 274 起按第一条项目动态派生，避免沙箱新增项目即漂移）把选项过滤到命中项 —— 业务口径 2026-10-09
  *      「应该是搜索下拉框加鼠标滑动」）；多选追订「要可以多项选择 再次点击取消选择」：点选不关浮层（再点 = 取消），
  *      地址 project=<idA>[,<idB>…]（去重保序），多选计数 = 选中项目并集，逐个取消后还原 #/files；
  *      状态 / 上传人筛选同理多选（地址 status=draft,final / uploadedBy=<id>[,<id>…]；上传人 = 前端内存过滤）；
@@ -409,15 +409,18 @@ await clickSelector("[data-file-filter=status] button");
 await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
 await sleep(600);
 
+// ④c1 搜索词：按第一条项目（= 夹具项目）动态派生 —— 写死词在沙箱新增项目后必漂移（Push 274 修）。
+const projectSearchTerm = project.code;
+
 await clickSelector("[data-file-filter=project] button");
 const searchBoxReady = await waitFor("document.querySelector(" + j("[data-search-select-input]") + ") !== null", 8000);
 const projectListAll = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return {count:box.querySelectorAll(" + j("[role=option]") + ").length,scrollable:box.scrollHeight>box.clientHeight,overflow:getComputedStyle(box).overflowY};})()");
 await clickSelector("[data-search-select-input]");
-await page.send("Input.insertText", { text: "LBEG" });
+await page.send("Input.insertText", { text: projectSearchTerm });
 await sleep(400);
 const projectSearch = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}var os=box.querySelectorAll(" + j("[role=option]") + ");var texts=[];for(var i=0;i<os.length;i+=1){texts.push(String(os[i].textContent).trim());}return {count:os.length,texts:texts};})()");
 check("④c1 项目筛选 = 搜索下拉框（可输入过滤；打开即见全部选项、列表内部可滚）+ 列表鼠标可滑（overflow-y=auto / scrollHeight > clientHeight）",
-  searchBoxReady === true && projectListAll !== null && projectListAll.count > 20 && projectListAll.scrollable === true && projectListAll.overflow === "auto" && projectSearch !== null && projectSearch.count > 0 && projectSearch.count < projectListAll.count && projectSearch.texts.every((text) => text.indexOf("LBEG") !== -1),
+  searchBoxReady === true && projectListAll !== null && projectListAll.count > 20 && projectListAll.scrollable === true && projectListAll.overflow === "auto" && projectSearch !== null && projectSearch.count > 0 && projectSearch.count < projectListAll.count && projectSearch.texts.every((text) => text.indexOf(projectSearchTerm) !== -1),
   JSON.stringify({ all: projectListAll, filtered: projectSearch === null ? null : { count: projectSearch.count, first: projectSearch.texts[0] } }));
 const projectPicked = await pickOption(projectLabel);
 const expectProjectIds = await orderedIds(STATUSES_CURRENT, project.id);
