@@ -1,0 +1,581 @@
+/**
+ * 企微智能机器人长连接客户端（M5-03-2 · P5 定案 2026-10-12：群通道唯一发送面 —— **webhook 面退役**）。
+ *
+ * 协议（Spike 真机实测 2026-10-10 ~ 10-12；口径来源 = docs/M5-03-实施方案(企微通道).md §五 5.3A + 官方 90313 码表）：
+ *   - 连接 `wss://openws.work.weixin.qq.com`；帧 = `{ cmd, headers.req_id, body? }` JSON 文本帧；
+ *   - 订阅 `aibot_subscribe`（body = bot_id + secret）→ 回执 errcode 0 = 订阅成功（853000 = 凭据无效；
+ *     846601 = 后台未开启长连接模式）；
+ *   - 心跳 `ping`：默认 30s（WECOM_BOT_PING_INTERVAL_MS）；连续 2 个周期无回执 → 判失联、断开重连
+ *     （订阅请求有频率保护 —— 本客户端只在连接建立后订阅一次；重连走指数退避，天然控频）；
+ *   - 主动推送 `aibot_send_msg`（body = chatid + chat_type 2 + msgtype markdown）→ 回执按 req_id 关联；
+ *   - 回调 `aibot_msg_callback` / `aibot_event_callback`（body.chatid 仅群聊；chattype / from.userid /
+ *     msgid）经 `onMessage` 交给调用方（群绑定 ingest 用；本刀不落库）；
+ *   - 回执帧形状 = `{ headers: { req_id }, errcode, errmsg }` —— **errcode 在帧顶层**（非 body）。
+ *
+ * 语义：
+ *   - 会话激活硬前提：群内有人在会话中给机器人发过消息后，才能主动推送该会话；未激活推送命中
+ *     846607 未激活分支 → permanent（不重试 + 降级 B4 + 留痕）—— 激活态由调用方按绑定行
+ *     `wecom_groups.activated_at` 经 `groupActivated` 传入（846607 双语义切分；P5 定案）；
+ *   - 限速：按会话 30 条/分钟 + 1000 条/小时（回复 + 主动推送合计；Spike 实测）—— 本地双窗口桶，
+ *     拒绝不发帧、`retryAt` = 被拒窗口的下一窗口起点（延期重排、不消耗重试次数）；
+ *   - 断连 / 未订阅窗口：发送本地失败 retryable（不消耗服务端配额；重连就绪后由消费侧重排）；
+ *   - 安全：不日志、不回显 secret / chatid 明文（限速桶键 = chatid 摘要；错误描述过掩码）。
+ *
+ * 生命周期：`start()` 建连（幂等；启动后自动重连直至 `stop()`）→ `stop()` 停止（断连 + 清空待回执）。
+ * 接线边界：本刀只交付客户端内核（无 outbox / 投递接线 —— 消费侧接线随 M5-03-2 接线段）；
+ * 单测 / stub 回放经 `socketFactory` 注入替身，不触外网；生产工厂 `createWsSocketFactory` 为全仓唯一 import "ws" 处。
+ */
+import WebSocketImpl from "ws";
+import type { Env } from "../../config/env.js";
+import { classifyWecomErrcode, describeNetworkError, type WecomFailureKind } from "./wecom.errors.js";
+import {
+  chatBucketId,
+  InMemoryRateWindowStore,
+  WECOM_BOT_WINDOW_PER_HOUR_MS,
+  WECOM_BOT_WINDOW_PER_MINUTE_MS,
+  WecomRateLimiter,
+  type RateWindowStore,
+} from "./wecom.rate.js";
+
+/** 传输层最小面（生产 = ws；单测 / stub 回放 = 替身 —— 除 ws 语义外不依赖任何实现细节）。 */
+export interface AibotSocket {
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  onopen: (() => void) | null;
+  onmessage: ((data: string) => void) | null;
+  onclose: ((code: number, reason: string) => void) | null;
+  onerror: ((error: Error) => void) | null;
+}
+
+export type AibotSocketFactory = (url: string) => AibotSocket;
+
+export type AibotConnectionState = "stopped" | "connecting" | "subscribed" | "backoff";
+
+/** 回执帧（订阅 / 推送 / 心跳共形）：errcode 在帧顶层；字段逐项 typeof 松读。 */
+interface AibotAckFrame {
+  errcode?: unknown;
+  errmsg?: unknown;
+}
+
+/** 回调帧归一载荷（群绑定 ingest 用；本刀仅透传，不落库）。 */
+export interface AibotIncomingMessage {
+  cmd: "aibot_msg_callback" | "aibot_event_callback";
+  reqId: string | null;
+  chatid: string | null;
+  chattype: string | null;
+  fromUserId: string | null;
+  msgid: string | null;
+}
+
+export type AibotSendResult =
+  | { ok: true; attempts: number }
+  | {
+      ok: false;
+      kind: WecomFailureKind;
+      errcode: number | null;
+      errmsg: string | null;
+      /** 本地限速桶拒绝时为「被拒窗口的下一窗口起点」；服务端 846607 频控 / 未就绪为 null（退避由消费侧定）。 */
+      retryAt: Date | null;
+      /** 实际发出的帧数（本地限速拒绝 / 未就绪 = 0；单帧发送 = 1）。 */
+      attempts: number;
+      /** 返回时刻连接状态（诊断用）。 */
+      state: AibotConnectionState;
+    };
+
+export interface WecomAibotStats {
+  state: AibotConnectionState;
+  /** 建连尝试次数（含重连）。 */
+  connects: number;
+  /** 订阅帧发出次数。 */
+  subscribes: number;
+  /** 重连排程次数（含订阅失败 / 心跳失联 / 断连）。 */
+  reconnects: number;
+  framesIn: number;
+  framesOut: number;
+  lastError: string | null;
+  lastSubscribedAt: Date | null;
+}
+
+export interface WecomAibotOptions {
+  wsUrl: string;
+  botId: string;
+  secret: string;
+  pingIntervalMs: number;
+  /** 单帧回执超时（毫秒）：订阅 / 推送共用。 */
+  ackTimeoutMs: number;
+  reconnectMinMs: number;
+  reconnectMaxMs: number;
+  socketFactory: AibotSocketFactory;
+  limiter: WecomRateLimiter;
+  now?: () => number;
+}
+
+type AckOutcome = { ok: true; frame: AibotAckFrame } | { ok: false; reason: "timeout" | "closed" };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function readString(record: Record<string, unknown> | null, key: string): string | null {
+  if (record === null) {
+    return null;
+  }
+  const value = record[key];
+  return typeof value === "string" ? value : null;
+}
+
+export class WecomAibotClient {
+  private socket: AibotSocket | null = null;
+  private state: AibotConnectionState = "stopped";
+  private stopped = true;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly pending = new Map<string, (outcome: AckOutcome) => void>();
+  private readonly handlers = new Set<(message: AibotIncomingMessage) => void>();
+  private backoffMs = 0;
+  private missedPongs = 0;
+  private readonly counters = {
+    connects: 0,
+    subscribes: 0,
+    reconnects: 0,
+    framesIn: 0,
+    framesOut: 0,
+    lastError: null as string | null,
+    lastSubscribedAt: null as Date | null,
+  };
+
+  constructor(private readonly options: WecomAibotOptions) {}
+
+  /** 建立连接（幂等：已启动时忽略）。启动后自动重连直至 `stop()`。 */
+  start(): void {
+    if (!this.stopped) {
+      return;
+    }
+    this.stopped = false;
+    this.backoffMs = 0;
+    this.connect();
+  }
+
+  /** 停止：断开连接、清空待回执、不再重连（可再次 `start()`）。 */
+  async stop(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
+    this.stopped = true;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.stopPing();
+    const socket = this.socket;
+    this.socket = null;
+    this.state = "stopped";
+    this.failPending("closed");
+    if (socket !== null) {
+      try {
+        socket.close(1000, "client stop");
+      } catch {
+        // 忽略关闭异常（连接已死时 close 可能抛错）
+      }
+    }
+  }
+
+  getStats(): WecomAibotStats {
+    return { state: this.state, ...this.counters };
+  }
+
+  /** 订阅回调（群绑定 ingest 用）：返回退订函数。 */
+  onMessage(handler: (message: AibotIncomingMessage) => void): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
+  }
+
+  /** 群 markdown 推送（本刀唯一发送面）：限速（双窗口）→ aibot_send_msg → 等回执 → 分类。 */
+  async sendGroupMarkdown(params: {
+    chatid: string;
+    content: string;
+    /** 会话激活态（读绑定行 `wecom_groups.activated_at`；846607 双语义切分用 —— false = 未激活）。 */
+    groupActivated?: boolean | null;
+  }): Promise<AibotSendResult> {
+    if (this.state !== "subscribed" || this.socket === null) {
+      return {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: "长连接未就绪（state=" + this.state + "）",
+        retryAt: null,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    const rate = await this.options.limiter.tryConsume("group", chatBucketId(params.chatid), this.now());
+    if (!rate.ok) {
+      const refused = rate.windows.find((state) => state.count > state.limit);
+      return {
+        ok: false,
+        kind: "rate_limited",
+        errcode: null,
+        errmsg:
+          refused === undefined
+            ? "本地限速桶已满"
+            : "本地限速桶已满（" + String(refused.count) + "/" + String(refused.limit) + "）",
+        retryAt: rate.retryAt,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    const reqId = this.nextReqId("aibot_send_msg");
+    const ack = this.waitAck(reqId);
+    const sent = this.sendFrame({
+      cmd: "aibot_send_msg",
+      headers: { req_id: reqId },
+      body: { chatid: params.chatid, chat_type: 2, msgtype: "markdown", markdown: { content: params.content } },
+    });
+    if (!sent) {
+      this.cancelAck(reqId, "closed");
+    }
+    const outcome = await ack;
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: outcome.reason === "timeout" ? "推送回执超时" : "连接已断开（推送未确认）",
+        retryAt: null,
+        attempts: sent ? 1 : 0,
+        state: this.state,
+      };
+    }
+    const errcode = typeof outcome.frame.errcode === "number" ? outcome.frame.errcode : null;
+    const errmsg = typeof outcome.frame.errmsg === "string" ? outcome.frame.errmsg : null;
+    if (errcode === 0) {
+      return { ok: true, attempts: 1 };
+    }
+    if (errcode === null) {
+      return { ok: false, kind: "retryable", errcode: null, errmsg: "回执缺 errcode", retryAt: null, attempts: 1, state: this.state };
+    }
+    const kind = classifyWecomErrcode("wecom_group", errcode, { groupActivated: params.groupActivated ?? null });
+    return { ok: false, kind, errcode, errmsg, retryAt: null, attempts: 1, state: this.state };
+  }
+
+  // ---- 连接与帧处理 ----
+
+  private connect(): void {
+    if (this.stopped || this.socket !== null) {
+      return;
+    }
+    this.state = "connecting";
+    this.counters.connects += 1;
+    let socket: AibotSocket;
+    try {
+      socket = this.options.socketFactory(this.options.wsUrl);
+    } catch (error) {
+      this.scheduleReconnect("建立连接失败：" + describeNetworkError(error));
+      return;
+    }
+    this.socket = socket;
+    socket.onopen = () => {
+      if (this.stopped || this.socket !== socket) {
+        return;
+      }
+      this.subscribe(socket);
+    };
+    socket.onmessage = (data) => {
+      if (this.socket !== socket) {
+        return;
+      }
+      this.onFrame(data);
+    };
+    socket.onclose = (code, reason) => {
+      this.onSocketClosed(socket, code, reason);
+    };
+    socket.onerror = (error) => {
+      this.counters.lastError = describeNetworkError(error);
+    };
+  }
+
+  private subscribe(socket: AibotSocket): void {
+    const reqId = this.nextReqId("aibot_subscribe");
+    this.counters.subscribes += 1;
+    void this.waitAck(reqId).then((outcome) => {
+      if (this.socket !== socket) {
+        return;
+      }
+      this.handleSubscribeAck(outcome);
+    });
+    const sent = this.sendFrame({
+      cmd: "aibot_subscribe",
+      headers: { req_id: reqId },
+      body: { bot_id: this.options.botId, secret: this.options.secret },
+    });
+    if (!sent) {
+      this.dropSocket("订阅帧发送失败");
+    }
+  }
+
+  private handleSubscribeAck(outcome: AckOutcome): void {
+    if (outcome.ok && typeof outcome.frame.errcode === "number" && outcome.frame.errcode === 0) {
+      this.state = "subscribed";
+      this.backoffMs = 0;
+      this.missedPongs = 0;
+      this.counters.lastSubscribedAt = new Date(this.now());
+      this.startPing();
+      return;
+    }
+    let detail: string;
+    if (outcome.ok) {
+      const code = typeof outcome.frame.errcode === "number" ? String(outcome.frame.errcode) : "?";
+      const text = typeof outcome.frame.errmsg === "string" ? " " + outcome.frame.errmsg : "";
+      detail = "errcode=" + code + text;
+    } else {
+      detail = outcome.reason === "timeout" ? "订阅回执超时" : "连接已断开";
+    }
+    this.dropSocket("订阅失败：" + detail);
+  }
+
+  private onFrame(data: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const frame = asRecord(parsed);
+    if (frame === null) {
+      return;
+    }
+    this.counters.framesIn += 1;
+    const headers = asRecord(frame["headers"]);
+    const reqId = readString(headers, "req_id");
+    if (reqId !== null) {
+      const waiter = this.pending.get(reqId);
+      if (waiter !== undefined) {
+        this.pending.delete(reqId);
+        waiter({ ok: true, frame: frame as AibotAckFrame });
+        return;
+      }
+      if (reqId.startsWith("ping")) {
+        this.missedPongs = 0;
+        return;
+      }
+    }
+    const cmd = frame["cmd"];
+    if (cmd === "aibot_msg_callback" || cmd === "aibot_event_callback") {
+      this.dispatchCallback(cmd, reqId, frame);
+    }
+  }
+
+  private dispatchCallback(cmd: "aibot_msg_callback" | "aibot_event_callback", reqId: string | null, frame: Record<string, unknown>): void {
+    const body = asRecord(frame["body"]);
+    const from = body === null ? null : asRecord(body["from"]);
+    const message: AibotIncomingMessage = {
+      cmd,
+      reqId,
+      chatid: readString(body, "chatid"),
+      chattype: readString(body, "chattype"),
+      fromUserId: readString(from, "userid"),
+      msgid: readString(body, "msgid"),
+    };
+    for (const handler of this.handlers) {
+      try {
+        handler(message);
+      } catch {
+        // 回调处理器异常不影响连接（记录 / 重试由消费侧自理）
+      }
+    }
+  }
+
+  private startPing(): void {
+    this.stopPing();
+    this.missedPongs = 0;
+    this.pingTimer = setInterval(() => {
+      if (this.stopped || this.state !== "subscribed" || this.socket === null) {
+        return;
+      }
+      if (this.missedPongs >= 2) {
+        this.dropSocket("心跳失联（连续 2 个周期无回执）");
+        return;
+      }
+      this.missedPongs += 1;
+      this.sendFrame({ cmd: "ping", headers: { req_id: this.nextReqId("ping") } });
+    }, this.options.pingIntervalMs);
+  }
+
+  private stopPing(): void {
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
+  /** 主动断开当前连接（此处不排重连 —— 由调用方语境决定：订阅失败 / 心跳失联均在本方法内排程）。 */
+  private dropSocket(reason: string): void {
+    this.counters.lastError = reason;
+    const socket = this.socket;
+    this.socket = null;
+    this.stopPing();
+    this.failPending("closed");
+    if (socket !== null) {
+      try {
+        socket.close();
+      } catch {
+        // 忽略关闭异常
+      }
+    }
+    if (!this.stopped) {
+      this.scheduleReconnect(reason);
+    }
+  }
+
+  private onSocketClosed(socket: AibotSocket, code: number, reason: string): void {
+    if (this.socket !== socket) {
+      return;
+    }
+    this.socket = null;
+    this.stopPing();
+    this.failPending("closed");
+    if (this.stopped) {
+      this.state = "stopped";
+      return;
+    }
+    this.scheduleReconnect("连接断开（code=" + String(code) + (reason === "" ? "" : " " + reason) + "）");
+  }
+
+  private scheduleReconnect(reason: string): void {
+    if (this.stopped || this.reconnectTimer !== null) {
+      return;
+    }
+    this.counters.reconnects += 1;
+    this.counters.lastError = reason;
+    this.state = "backoff";
+    const delay = this.backoffMs === 0 ? this.options.reconnectMinMs : Math.min(this.backoffMs * 2, this.options.reconnectMaxMs);
+    this.backoffMs = delay;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private waitAck(reqId: string): Promise<AckOutcome> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(reqId);
+        resolve({ ok: false, reason: "timeout" });
+      }, this.options.ackTimeoutMs);
+      this.pending.set(reqId, (outcome) => {
+        clearTimeout(timer);
+        resolve(outcome);
+      });
+    });
+  }
+
+  private cancelAck(reqId: string, reason: "timeout" | "closed"): void {
+    const waiter = this.pending.get(reqId);
+    if (waiter !== undefined) {
+      this.pending.delete(reqId);
+      waiter({ ok: false, reason });
+    }
+  }
+
+  private failPending(reason: "timeout" | "closed"): void {
+    const waiters = [...this.pending.values()];
+    this.pending.clear();
+    for (const waiter of waiters) {
+      waiter({ ok: false, reason });
+    }
+  }
+
+  private sendFrame(frame: Record<string, unknown>): boolean {
+    const socket = this.socket;
+    if (socket === null) {
+      return false;
+    }
+    try {
+      socket.send(JSON.stringify(frame));
+    } catch (error) {
+      this.counters.lastError = describeNetworkError(error);
+      return false;
+    }
+    this.counters.framesOut += 1;
+    return true;
+  }
+
+  private nextReqId(prefix: string): string {
+    return prefix + "_" + String(this.now()) + "_" + Math.random().toString(36).slice(2, 8);
+  }
+
+  private now(): number {
+    return (this.options.now ?? Date.now)();
+  }
+}
+
+export interface WecomAibotOverrides {
+  limiter?: WecomRateLimiter;
+  store?: RateWindowStore;
+  socketFactory?: AibotSocketFactory;
+  now?: () => number;
+}
+
+/** 环境装配（读 WECOM_BOT_* env；单测 / stub 回放注入 socketFactory / 内存计数 / 时钟）。 */
+export function createWecomAibotClientFromEnv(
+  env: Env,
+  overrides: WecomAibotOverrides = {},
+): { aibot: WecomAibotClient; limiter: WecomRateLimiter } {
+  const limiter =
+    overrides.limiter ??
+    new WecomRateLimiter({
+      store: overrides.store ?? new InMemoryRateWindowStore(),
+      windows: [
+        { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: env.WECOM_BOT_RATE_LIMIT_PER_MINUTE },
+        { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: env.WECOM_BOT_RATE_LIMIT_PER_HOUR },
+      ],
+      now: overrides.now,
+    });
+  const aibot = new WecomAibotClient({
+    wsUrl: env.WECOM_BOT_WS_URL,
+    botId: env.WECOM_BOT_ID,
+    secret: env.WECOM_BOT_SECRET,
+    pingIntervalMs: env.WECOM_BOT_PING_INTERVAL_MS,
+    ackTimeoutMs: env.WECOM_BOT_ACK_TIMEOUT_MS,
+    reconnectMinMs: env.WECOM_BOT_RECONNECT_MIN_MS,
+    reconnectMaxMs: env.WECOM_BOT_RECONNECT_MAX_MS,
+    socketFactory: overrides.socketFactory ?? createWsSocketFactory(),
+    limiter,
+    now: overrides.now,
+  });
+  return { aibot, limiter };
+}
+
+/** ws 传输层实现（生产路径；全仓唯一 import "ws" 处 —— 其余测试 / 回放一律走 socketFactory 替身）。 */
+export function createWsSocketFactory(): AibotSocketFactory {
+  return (url) => {
+    const ws = new WebSocketImpl(url);
+    const socket: AibotSocket = {
+      send: (data) => {
+        ws.send(data);
+      },
+      close: (code, reason) => {
+        ws.close(code, reason);
+      },
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    ws.on("open", () => {
+      socket.onopen?.();
+    });
+    ws.on("message", (data) => {
+      socket.onmessage?.(typeof data === "string" ? data : data.toString());
+    });
+    ws.on("close", (code, reason) => {
+      socket.onclose?.(code, reason.toString());
+    });
+    ws.on("error", (error) => {
+      socket.onerror?.(error instanceof Error ? error : new Error(String(error)));
+    });
+    return socket;
+  };
+}

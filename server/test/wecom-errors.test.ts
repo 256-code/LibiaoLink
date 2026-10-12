@@ -1,6 +1,7 @@
 /**
- * 企微错误分类回归（M5-03-1 · S8-1）：errcode 表（app / group）、HTTP 状态兜底、网络错误描述掩码。
- * 口径：docs/M5-03-实施方案(企微通道).md §五；错误码集合为初始集（M5-03-4 实测锁定的回归基线）。
+ * 企微错误分类回归（M5-03-1 · S8-1；M5-03-2 群通道码表切换为智能机器人）：errcode 表（app / group）、
+ * 846607 双语义分流、HTTP 状态兜底、网络错误描述掩码。
+ * 口径：docs/M5-03-实施方案(企微通道).md §五（5.3A Spike 实测码表）；错误码集合为初始集（M5-03-4 锁定的回归基线）。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -27,19 +28,27 @@ describe("企微错误分类（M5-03-1 · S8-1）", () => {
     expect(classifyWecomErrcode("wecom_app", -1)).toBe("retryable");
   });
 
-  it("group：93000 webhook 失效 → permanent；45009 / -1 同表", () => {
-    expect(classifyWecomErrcode("wecom_group", 93000)).toBe("permanent");
-    expect(classifyWecomErrcode("wecom_group", 45009)).toBe("rate_limited");
-    expect(classifyWecomErrcode("wecom_group", -1)).toBe("retryable");
+  it("group（智能机器人）：853000 / 846601 → permanent；846609 → retryable", () => {
+    expect(classifyWecomErrcode("wecom_group", 853000)).toBe("permanent"); // bot_id / secret 无效
+    expect(classifyWecomErrcode("wecom_group", 846601)).toBe("permanent"); // 未开长连接模式
+    expect(classifyWecomErrcode("wecom_group", 846609)).toBe("retryable"); // 未订阅
+  });
+
+  it("group：846607 双语义按会话激活态分流（false = 未激活 → permanent；其余 → rate_limited）", () => {
+    expect(classifyWecomErrcode("wecom_group", 846607, { groupActivated: false })).toBe("permanent");
+    expect(classifyWecomErrcode("wecom_group", 846607, { groupActivated: true })).toBe("rate_limited");
+    expect(classifyWecomErrcode("wecom_group", 846607, { groupActivated: null })).toBe("rate_limited");
+    expect(classifyWecomErrcode("wecom_group", 846607)).toBe("rate_limited");
   });
 
   it("group：token 失效族不适用（按未收录兜底 retryable）", () => {
     expect(classifyWecomErrcode("wecom_group", 42001)).toBe("retryable");
   });
 
-  it("未收录 errcode 一律 retryable 兜底（有界重试，不误杀）", () => {
+  it("未收录 errcode 一律 retryable 兜底（有界重试，不误杀；93000 等 webhook 历史码随面退役、无专门分支）", () => {
     expect(classifyWecomErrcode("wecom_app", 123456)).toBe("retryable");
     expect(classifyWecomErrcode("wecom_group", 987654)).toBe("retryable");
+    expect(classifyWecomErrcode("wecom_group", 93000)).toBe("retryable");
   });
 
   it("HTTP 状态兜底：429 → rate_limited；408 / 5xx → retryable；其余 4xx → permanent", () => {

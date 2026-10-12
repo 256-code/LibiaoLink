@@ -111,11 +111,16 @@ jobs:
       - name: Build
         working-directory: server
         run: npm run build
-      # 企微内核 stub 回放（M5-03-1 · 无网络 / 无 PG：本机 HTTP 桩模拟 gettoken / message/send / webhook，
+      # 企微内核 stub 回放（M5-03-1 · 无网络 / 无 PG：本机 HTTP 桩模拟 gettoken / message/send，
       # 覆盖失败分类 / token 重取 / 限速短路分支）。脚本语法面由上方 syntax gate 覆盖。
       - name: WeCom kernel stub replay (net-free)
         working-directory: server
         run: node scripts/m5-03-1-wecom-stub-replay.mjs
+      # 智能机器人长连接 stub 回放（M5-03-2 · 无网络 / 无 PG：假 socket 驱动客户端，
+      # 覆盖订阅 / 推送帧 / 846607 双语义 / 限速短路 / 心跳重连 / stop 清理）。
+      - name: WeCom aibot stub replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-2-aibot-stub-replay.mjs
       - name: Boundary rules
         working-directory: server
         run: npm run check:boundaries

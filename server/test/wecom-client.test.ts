@@ -1,6 +1,6 @@
 /**
- * 企微客户端内核回归（M5-03-1 · S8-1）：app 发送（token / 重发一次）/ 分类透传 / 限速短路 /
- * webhook 发送（无 token 面）/ 传输层兜底。fetcher 全替身，不触外网。
+ * 企微客户端内核回归（M5-03-1 · S8-1；M5-03-2 收窄为自建应用单面）：app 发送（token / 重发一次）/
+ * 分类透传 / 限速短路 / 传输层兜底。fetcher 全替身，不触外网（群通道见 wecom-aibot.test.ts）。
  */
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryRateWindowStore, WecomRateLimiter } from "../src/modules/notify/wecom.rate.js";
@@ -16,7 +16,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 function makeClient(
   overrides: {
     appLimit?: number;
-    groupLimit?: number;
     now?: () => number;
     fetchTokenImpl?: () => Promise<WecomTokenInfo>;
   } = {},
@@ -33,8 +32,7 @@ function makeClient(
   });
   const limiter = new WecomRateLimiter({
     store: new InMemoryRateWindowStore(),
-    windowMs: 60_000,
-    limits: { app: overrides.appLimit ?? 0, group: overrides.groupLimit ?? 0 },
+    windows: [{ kind: "app", windowMs: 60_000, limit: overrides.appLimit ?? 0 }],
     now: overrides.now,
   });
   const client = new WecomClient({
@@ -151,39 +149,4 @@ describe("企微客户端内核（M5-03-1 · S8-1）", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("webhook 成功：不带 token 面（不触发 gettoken），包体 = text 载荷", async () => {
-    const { client, fetcher, tokenFetchCount } = makeClient();
-    fetcher.mockResolvedValueOnce(jsonResponse({ errcode: 0, errmsg: "ok" }));
-    const url = "https://qyapi.example.test/cgi-bin/webhook/send?key=SECRET-KEY";
-
-    const result = await client.sendGroupText({ webhookUrl: url, content: "群播报" });
-
-    expect(result).toEqual({ ok: true, retriedToken: false, attempts: 1 });
-    expect(tokenFetchCount()).toBe(0);
-    const call = fetcher.mock.calls[0];
-    expect(String(call![0])).toBe(url);
-    expect(JSON.parse(String(call![1]?.body))).toEqual({ msgtype: "text", text: { content: "群播报" } });
-  });
-
-  it("webhook 失效 93000 → permanent；同桶限速生效、异桶不受影响", async () => {
-    const now = () => 1_000;
-    const { client, fetcher } = makeClient({ groupLimit: 1, now });
-    const bad = "https://qyapi.example.test/cgi-bin/webhook/send?key=BAD";
-    const good = "https://qyapi.example.test/cgi-bin/webhook/send?key=GOOD";
-    fetcher.mockResolvedValueOnce(jsonResponse({ errcode: 93000, errmsg: "invalid webhook url" }));
-    fetcher.mockResolvedValueOnce(jsonResponse({ errcode: 0, errmsg: "ok" }));
-
-    const invalid = await client.sendGroupText({ webhookUrl: bad, content: "x" });
-    expect(invalid).toMatchObject({ ok: false, kind: "permanent", errcode: 93000 });
-
-    // bad 桶已用掉唯一额度 → 同桶再发被本地限速拦截（不发 HTTP）
-    const blocked = await client.sendGroupText({ webhookUrl: bad, content: "x" });
-    expect(blocked).toMatchObject({ ok: false, kind: "rate_limited", attempts: 0 });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-
-    // good 桶独立放行
-    const ok = await client.sendGroupText({ webhookUrl: good, content: "x" });
-    expect(ok.ok).toBe(true);
-    expect(fetcher).toHaveBeenCalledTimes(2);
-  });
 });

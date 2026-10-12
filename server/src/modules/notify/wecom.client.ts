@@ -1,5 +1,8 @@
 /**
- * 企微客户端内核（M5-03-1）：自建应用消息（token + 限速）与群机器人 webhook（限速）两个发送面。
+ * 企微客户端内核（M5-03-1；M5-03-2 发送面收窄为自建应用单面）：自建应用消息（token + 限速）。
+ *
+ * 群通道（智能机器人长连接）自 M5-03-2 起由 `wecom.aibot.ts` 承接（P5 定案 2026-10-12）——
+ * webhook 发送面退役（`sendGroupText` / `webhookBucketId` 同批移除；先例：ONLYOFFICE 承接后 LibreOffice 退役）。
  *
  * 行为口径（实施方案 §五 · 处置三分类）：
  *   - 分类结果**不抛业务异常**：ok / permanent / retryable / rate_limited / token_invalid 由返回载荷承载；
@@ -9,7 +12,7 @@
  *     （调用方延期重排、**不消耗重试次数**）；errcode 45009 由分类表归 rate_limited（retryAt = null，
  *     退避落点由消费侧策略定）；
  *   - 超时（WECOM_TIMEOUT_MS）走 AbortSignal.timeout；传输层异常统一 retryable，错误文本过掩码；
- *   - 安全：不日志、不回显 webhook 明文与 token（计数键只出 URL 摘要；错误描述过掩码）。
+ *   - 安全：不日志、不回显 token（计数键 = 全局桶 id；错误描述过掩码）。
  *
  * 接线边界：本刀只交付内核（无 outbox / 投递接线）—— 消费侧接线随 M5-03-2 / M5-03-3；
  * 装配入口 `createWecomClientFromEnv(env, overrides?)`（单测 / stub 回放注入 fetcher / 内存计数 / 时钟）。
@@ -26,7 +29,6 @@ import {
   InMemoryRateWindowStore,
   WECOM_APP_BUCKET_ID,
   WecomRateLimiter,
-  webhookBucketId,
   type RateWindowStore,
 } from "./wecom.rate.js";
 import { WecomTokenError, WecomTokenManager, type WecomTokenInfo } from "./wecom.token.js";
@@ -138,11 +140,15 @@ export class WecomClient {
   async sendAppText(params: { toUser: readonly string[]; content: string }): Promise<WecomSendResult> {
     const rate = await this.options.limiter.tryConsume("app", WECOM_APP_BUCKET_ID, this.now());
     if (!rate.ok) {
+      const refused = rate.windows.find((state) => state.count > state.limit);
       return {
         ok: false,
         kind: "rate_limited",
         errcode: null,
-        errmsg: "本地限速桶已满（" + String(rate.count) + "/" + String(rate.limit) + "）",
+        errmsg:
+          refused === undefined
+            ? "本地限速桶已满"
+            : "本地限速桶已满（" + String(refused.count) + "/" + String(refused.limit) + "）",
         httpStatus: null,
         retryAt: rate.retryAt,
         retriedToken: false,
@@ -179,34 +185,6 @@ export class WecomClient {
       return this.failure(second, "wecom_app", true, 2);
     }
     return this.failure(first, "wecom_app", false, 1);
-  }
-
-  /** 群机器人文本消息：限速（webhook 桶）→ POST webhook 地址；无 token 面。 */
-  async sendGroupText(params: { webhookUrl: string; content: string; bucketId?: string }): Promise<WecomSendResult> {
-    const bucketId = params.bucketId ?? webhookBucketId(params.webhookUrl);
-    const rate = await this.options.limiter.tryConsume("group", bucketId, this.now());
-    if (!rate.ok) {
-      return {
-        ok: false,
-        kind: "rate_limited",
-        errcode: null,
-        errmsg: "本地限速桶已满（" + String(rate.count) + "/" + String(rate.limit) + "）",
-        httpStatus: null,
-        retryAt: rate.retryAt,
-        retriedToken: false,
-        attempts: 0,
-      };
-    }
-    const outcome = await requestJson(
-      this.options.fetcher,
-      params.webhookUrl,
-      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ msgtype: "text", text: { content: params.content } }) },
-      this.options.timeoutMs,
-    );
-    if (outcome.status === "ok") {
-      return { ok: true, retriedToken: false, attempts: 1 };
-    }
-    return this.failure(outcome, "wecom_group", false, 1);
   }
 
   private post(token: string, body: Record<string, unknown>): Promise<WecomHttpOutcome> {
@@ -335,8 +313,7 @@ export function createWecomClientFromEnv(env: Env, overrides: WecomRuntimeOverri
     overrides.limiter ??
     new WecomRateLimiter({
       store: overrides.store ?? new InMemoryRateWindowStore(),
-      windowMs: env.WECOM_RATE_WINDOW_MS,
-      limits: { app: env.WECOM_RATE_LIMIT_APP, group: env.WECOM_RATE_LIMIT_GROUP },
+      windows: [{ kind: "app", windowMs: env.WECOM_RATE_WINDOW_MS, limit: env.WECOM_RATE_LIMIT_APP }],
       now,
     });
   const client = new WecomClient({
