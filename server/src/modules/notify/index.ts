@@ -2,6 +2,7 @@
 export { NotifyModule } from "./notify.module.js";
 export {
   composeGroupMarkdown,
+  GROUP_DEGRADE_PREFIX,
   GROUP_MARKDOWN_MAX_BYTES,
   GROUP_TRUNCATION_SUFFIX,
   maskChatid,
@@ -10,11 +11,23 @@ export {
   truncateGroupMarkdown,
 } from "./notify.group.service.js";
 export { NotifyGroupRepository } from "./notify.group.repository.js";
+export {
+  APP_DEGRADE_PREFIX,
+  APP_TEXT_MAX_BYTES,
+  APP_TRUNCATION_SUFFIX,
+  composeAppText,
+  maskUserid,
+  NotifyAppService,
+  truncateAppText,
+} from "./notify.app.service.js";
+export { NotifyAppRepository } from "./notify.app.repository.js";
+export type { NotifyAppDeliveryInsert, WecomAppContact } from "./notify.app.repository.js";
 export { PgRateWindowStore } from "./wecom.rate.pg.js";
 export { NotifyService } from "./notify.service.js";
 export type { NotifyFlushStats, NotifySnoozeFlushStats } from "./notify.service.js";
 export { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC } from "./notify.constants.js";
 export {
+  channelOfNotifyPayload,
   formatClockMinute,
   isDeliverableChannel,
   isWithinQuiet,
@@ -28,6 +41,7 @@ export {
   shanghaiDayStart,
   shanghaiMinuteOfDay,
 } from "./notify.delivery.js";
+export { truncateUtf8Bytes } from "./wecom.text.js";
 export type { DeliveryDecision, QuietHours } from "./notify.delivery.js";
 export {
   classifyWecomErrcode,

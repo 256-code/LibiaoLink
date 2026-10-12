@@ -145,7 +145,8 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     const outcome = await createRuleEventConsumers(h.deps).get("task.completed")?.handle(row("task.completed", { taskId: "t-1" }));
 
     expect(outcome).toEqual({ outcome: "done" });
-    expect(h.appended).toHaveLength(1);
+    // M5-03-3 起：R02 双动作（inbox + wecom_app）各产一行 —— app 行幂等键加 ":app" 后缀防撞唯一约束。
+    expect(h.appended).toHaveLength(2);
     const event = h.appended[0];
     expect(event?.client).toBe(DB);
     expect(event?.event.topic).toBe("notify.message");
@@ -159,8 +160,18 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     expect(payload.templateCode).toBe("R02_INBOX");
     expect(payload.mergeKey).toBe("R02:t-1:v5");
     expect(String(payload.body)).toContain("安装摄像头");
-    // 同规则第二条动作（wecom_app）不产行：渠道护栏 warn 留痕（与投递层「非 inbox → dead」配对）。
-    expect(h.logs.warn.some((line) => line.includes("wecom_app"))).toBe(true);
+    // 第二条动作（wecom_app）：channel=wecom_app 行（幂等键 ":app" 后缀；模板码回溯 R02_WECOM）。
+    const appEvent = h.appended[1];
+    expect(appEvent?.client).toBe(DB);
+    expect(appEvent?.event.topic).toBe("notify.message");
+    expect(appEvent?.event.dedupeKey).toBe("R02:t-1:v5:app");
+    const appPayload = appEvent?.event.payload as Record<string, unknown>;
+    expect(appPayload.recipientId).toBe("u-1");
+    expect(appPayload.type).toBe("reminder");
+    expect(appPayload.channel).toBe("wecom_app");
+    expect(appPayload.templateCode).toBe("R02_WECOM");
+    expect(appPayload.mergeKey).toBe("R02:t-1:v5");
+    expect(String(appPayload.body)).toContain("安装摄像头");
   });
 
   it("冷启动保护：事件行创建时刻过旧 → 零产出且按 event_too_old 留痕", async () => {
@@ -224,11 +235,15 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     await handler.run(window);
     await handler.run(window);
 
-    expect(h.appended).toHaveLength(2);
-    expect(h.appended[0]?.event.dedupeKey).toBe(h.appended[1]?.event.dedupeKey);
-    expect(h.appended[0]?.event.dedupeKey).toBe("A01:u-1:2026-09-24");
+    // M5-03-3 起：A01 双动作（inbox + wecom_app）× 两轮 = 4 行；同窗口两轮幂等键逐行稳定。
+    expect(h.appended.map((item) => item.event.dedupeKey)).toEqual([
+      "A01:u-1:2026-09-24",
+      "A01:u-1:2026-09-24:app",
+      "A01:u-1:2026-09-24",
+      "A01:u-1:2026-09-24:app",
+    ]);
   });
-  it("A01 站内信合并：同一人多项目合并一条（收件人粒度幂等键 + 项目清单）", async () => {
+  it("A01 双渠道合并：同一人多项目 inbox / wecom_app 各合并一条（收件人粒度幂等键 + 项目清单）", async () => {
     const rules = BUILTIN_RULES.filter((rule) => rule.code === "A01");
     const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
     const h = makeHarness({ rules: async () => [...rules], now: () => late });
@@ -241,15 +256,20 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
       jobContext(new Date(atShanghaiTime("2026-09-24", "19:00")), new Date(atShanghaiTime("2026-09-24", "19:40"))),
     );
 
-    expect(result?.produced).toBe(1);
-    expect(h.appended).toHaveLength(1);
+    // M5-03-3 起：A01 双动作各合并一行（inbox + wecom_app），produced = 2。
+    expect(result?.produced).toBe(2);
+    expect(h.appended).toHaveLength(2);
     expect(h.appended[0]?.event.dedupeKey).toBe("A01:u-1:2026-09-24");
     const payload = h.appended[0]?.event.payload as Record<string, unknown>;
     expect(payload.templateCode).toBe("A01_INBOX_MERGED");
     expect(payload.refType).toBeNull();
     expect(payload.refId).toBeNull();
     expect(String(payload.body)).toContain("临港数据中心、张江机房");
-    expect(h.logs.warn.some((line) => line.includes("wecom_app"))).toBe(true);
+    expect(h.appended[1]?.event.dedupeKey).toBe("A01:u-1:2026-09-24:app");
+    const appPayload = h.appended[1]?.event.payload as Record<string, unknown>;
+    expect(appPayload.channel).toBe("wecom_app");
+    expect(appPayload.templateCode).toBe("A01_WECOM_MERGED");
+    expect(String(appPayload.body)).toContain("临港数据中心、张江机房");
   });
 
   it("群收件人缺失（project.group 无绑定列）：零产出 + recipient_missing 留痕", async () => {

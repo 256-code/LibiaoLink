@@ -126,6 +126,12 @@ jobs:
       - name: WeCom group delivery replay (net-free)
         working-directory: server
         run: node scripts/m5-03-2-group-replay.mjs
+      # 应用消息 + 告警出口回放（M5-03-3 · 无网络 / 无 PG：假仓储 / 假 HTTP 客户端 / 假站内信驱动应用消费链，
+      # 覆盖三分类 / C5-04 降级 / 收件人不可投递 / 渠道路由防御 / 告警抑制与回退 · lan 线，Push 226）：
+      # 请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: WeCom app delivery replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-3-app-replay.mjs
       - name: Boundary rules
         working-directory: server
         run: npm run check:boundaries

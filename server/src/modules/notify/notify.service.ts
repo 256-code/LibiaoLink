@@ -21,7 +21,6 @@ import type { DbClient } from "../../db/db-client.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import {
   formatClockMinute,
-  isDeliverableChannel,
   isWithinQuiet,
   mergeKeyOf,
   parseNotifyMessage,
@@ -74,6 +73,7 @@ interface ResolvedNotifyPrefs {
  *    与 consume 共用同一决策函数 —— 不在 outbox 重试里做（重试语义是「消费失败退避」，不是「投递窗口静默」）。
  * ③ `flushSnoozes` —— 稍后提醒到点触发（worker 常驻循环 · C5-05 / M5-04-2）：与 ② 并列、语义独立 ——
  *    不合并、不消耗每日上限；到点落免打扰时段顺延到时段结束，否则置回 unread + 推 `notification` / `unread`。
+ * ④ `deliverInboxCopy` —— C5-04 降级入口（M5-03-3）：企微投递失败 → 同收件人站内信副本（同 ① 投递口径）。
  *
  * 读面（消息中心）：收件箱列表 / 未读角标 / 标记已读·已处理 / 全部已读 / 通知偏好 —— 全为**个人资源**
  * （仅会话、无功能权限键、不写审计；先例 user_preferences / project_views）；稍后提醒（C5-05）同口径：
@@ -105,13 +105,16 @@ export class NotifyService {
         error: "通知载荷非法（缺 recipientId / type / title / body 或超长）：" + row.dedupeKey,
       };
     }
-    if (!isDeliverableChannel(message.channel ?? "inbox")) {
-      // 接线段护栏（wmj PR #197 提请）：非 inbox 渠道在 M5-03 落地前按确定性失败收口（dead + 告警），
-      // 不得静默当站内信投递 —— 一次即弃，不进重试退避。
-      this.logger.warn("通知渠道未落地（确定性失败转 dead）：outbox#" + row.id + " · channel=" + message.channel);
+    const channel = message.channel ?? "inbox";
+    if (channel !== "inbox") {
+      // M5-03-3 起 wecom_app 已落地：由 NotifyAppService 消费（OutboxModule 按载荷 channel 路由）；
+      // 本消费器只承载 inbox。其余渠道（email 等）未落地：按确定性失败收口（dead + 告警），
+      // 不得静默当站内信投递（wmj PR #197 护栏）—— 一次即弃，不进重试退避。
+      this.logger.warn("通知渠道非 inbox（确定性失败转 dead）：outbox#" + row.id + " · channel=" + channel);
       return {
         outcome: "dead",
-        error: "非 inbox 渠道未落地（M5-03 前按确定性失败收口）：channel=" + message.channel + " · " + row.dedupeKey,
+        error:
+          "非 inbox 渠道（wecom_app 由应用消息服务消费；email 等未落地）：channel=" + channel + " · " + row.dedupeKey,
       };
     }
     try {
@@ -174,6 +177,14 @@ export class NotifyService {
       }
       return { duplicate: false };
     });
+  }
+
+  /**
+   * C5-04 降级入口（M5-03-3）：企微投递失败 → 站内信副本 —— 与 inbox 消费同一落行 / 合并 / 排期 / 实时流口径。
+   * 调用方负责幂等键后缀（先例：":c504" —— 避免与来源事件 source_dedupe_key 唯一约束相撞）。
+   */
+  async deliverInboxCopy(message: NotifyMessagePayload, topic: string, dedupeKey: string): Promise<{ duplicate: boolean }> {
+    return this.deliverOnce(message, topic, dedupeKey);
   }
 
   /**

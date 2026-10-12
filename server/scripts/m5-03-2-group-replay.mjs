@@ -4,7 +4,8 @@
  *   驱动 server/dist 的群通道链路（NotifyGroupService + WecomAibotClient 端子 + OutboxDispatcher），覆盖：
  *   ① 载荷解析 / markdown 组装 / 字节截断 / 掩码（纯函数）；
  *   ② 消费三分类 —— ok → done + sent 行 / rate_limited → deferred（attempts 不消耗）/ retryable → retry +
- *      failed 行 / permanent（846607 未激活）→ dead + dead 行；未绑定 / 停用 / 非法载荷的确定性收敛；
+ *      failed 行 / permanent（846607 未激活）→ dead + dead 行 + C5-04 降级（项目经理站内信 · :c504）；
+ *      未绑定 / 停用同走降级；非法载荷的确定性收敛；
  *   ③ 回调 ingest（群会话激活置位 / 幂等 / 非群聊忽略）；
  *   ④ dispatcher deferred 收敛（attempts 原值回写 = 不消耗重试预算）。
  *
@@ -119,6 +120,7 @@ async function main() {
       groups: [groupRow()],
       deliveries: [],
       activateCalls: [],
+      managers: new Map([[PROJECT_ID, "u-manager"]]),
       async findGroupByProject(projectId) {
         return this.groups.find((row) => row.projectId === projectId) ?? null;
       },
@@ -132,6 +134,9 @@ async function main() {
         row.activatedAt = at;
         return row;
       },
+      async findProjectManagerId(projectId) {
+        return this.managers.get(projectId) ?? null;
+      },
       async insertDelivery(input) {
         this.deliveries.push(input);
       },
@@ -143,7 +148,19 @@ async function main() {
         return aibotResult;
       },
     };
-    return { service: new group.NotifyGroupService(repo, aibot, clock), repo, aibot };
+    const inbox = {
+      copies: [],
+      failNext: false,
+      async deliverInboxCopy(message, topic, dedupeKey) {
+        if (this.failNext) {
+          this.failNext = false;
+          throw new Error("站内信落库失败（回放）");
+        }
+        this.copies.push({ message, topic, dedupeKey });
+        return { duplicate: false };
+      },
+    };
+    return { service: new group.NotifyGroupService(repo, aibot, inbox, clock), repo, aibot, inbox };
   };
 
   {
@@ -169,23 +186,54 @@ async function main() {
   }
 
   {
-    const { service, repo } = makeService({ ok: false, kind: "permanent", errcode: 846607, errmsg: "send msg not allowed", retryAt: null, attempts: 1, state: "subscribed" });
-    const outcome = await service.consume(claimedRow(payload()));
+    const { service, repo, inbox } = makeService({ ok: false, kind: "permanent", errcode: 846607, errmsg: "send msg not allowed", retryAt: null, attempts: 1, state: "subscribed" });
+    const outcome = await service.consume(claimedRow(payload({ templateCode: "R03_GROUP" })));
     assertTrue("G15 permanent（846607 未激活）：dead + dead 行（含 errcode 描述）", outcome.outcome === "dead" && outcome.error.includes("846607") && repo.deliveries[0].state === "dead");
+    assertTrue(
+      "G15b permanent 降级（B4）：项目经理站内信（:c504 键 + 前缀 + R03 非播报 → reminder）",
+      inbox.copies.length === 1 &&
+        inbox.copies[0].dedupeKey === "R03:t-1:2026-09-24:c504" &&
+        inbox.copies[0].topic === "notify.group" &&
+        inbox.copies[0].message.recipientId === "u-manager" &&
+        inbox.copies[0].message.type === "reminder" &&
+        String(inbox.copies[0].message.body).startsWith(group.GROUP_DEGRADE_PREFIX),
+    );
   }
 
   {
-    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
+    const { service, inbox } = makeService({ ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" });
+    const outcome = await service.consume(claimedRow(payload({ templateCode: "A02_GROUP" })));
+    assertTrue("G15c 播报类模板（A02）：降级 type=broadcast", outcome.outcome === "dead" && inbox.copies.length === 1 && inbox.copies[0].message.type === "broadcast");
+  }
+
+  {
+    const { service, repo, aibot, inbox } = makeService({ ok: true, attempts: 1 });
     repo.groups = [];
     const outcome = await service.consume(claimedRow(payload()));
     assertTrue("G16 未绑定：dead 且不写投递行、不发送（差异登记②）", outcome.outcome === "dead" && repo.deliveries.length === 0 && aibot.sends.length === 0);
+    assertTrue("G16b 未绑定同样走 B4 降级：项目经理站内信（:c504）", inbox.copies.length === 1 && inbox.copies[0].dedupeKey === "R03:t-1:2026-09-24:c504");
   }
 
   {
-    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
+    const { service, repo } = makeService({ ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" });
+    repo.managers = new Map();
+    const outcome = await service.consume(claimedRow(payload()));
+    assertTrue("G16c PM 解析不到（项目软删）：跳过站内信，仍 dead", outcome.outcome === "dead");
+  }
+
+  {
+    const { service, inbox } = makeService({ ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" });
+    inbox.failNext = true;
+    const outcome = await service.consume(claimedRow(payload()));
+    assertTrue("G16d 降级站内信写库失败：retry 收敛（有界重试不静默丢）", outcome.outcome === "retry" && String(outcome.error).includes("降级站内信失败"));
+  }
+
+  {
+    const { service, repo, aibot, inbox } = makeService({ ok: true, attempts: 1 });
     repo.groups = [groupRow({ enabled: false })];
     const outcome = await service.consume(claimedRow(payload()));
     assertTrue("G17 绑定停用：dead + dead 行（target=chatid）、不发送", outcome.outcome === "dead" && repo.deliveries[0].state === "dead" && repo.deliveries[0].target === CHATID && aibot.sends.length === 0);
+    assertTrue("G17b 绑定停用同样走 B4 降级", inbox.copies.length === 1);
   }
 
   {

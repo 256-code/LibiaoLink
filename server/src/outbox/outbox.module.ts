@@ -9,7 +9,16 @@ import { OutboxStore } from "../db/outbox.store.js";
 import { AUTOMATION_SCHEDULE_JOB_KIND, listEnabledRules } from "../modules/automation/index.js";
 import { CalendarModule, CalendarService } from "../modules/calendar/index.js";
 import { FileModule, PREVIEW_JOB_TOPIC, PreviewService } from "../modules/file/index.js";
-import { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC, NotifyGroupService, NotifyModule, NotifyService } from "../modules/notify/index.js";
+import {
+  channelOfNotifyPayload,
+  NOTIFY_GROUP_TOPIC,
+  NOTIFY_MESSAGE_TOPIC,
+  NotifyAppService,
+  NotifyGroupService,
+  NotifyModule,
+  NotifyService,
+  WecomAibotClient,
+} from "../modules/notify/index.js";
 import { LogOutboxAlertSink, OUTBOX_ALERT_SINK } from "./alert.js";
 import { AutomationSubjectReader } from "./automation-subjects.js";
 import { createAutomationScheduleHandler, createRuleEventConsumers, type AutomationWiringDeps } from "./automation-wiring.js";
@@ -19,6 +28,7 @@ import { resolveOutboxPolicies } from "./policy.js";
 import { OutboxAlertProbe } from "./probe.js";
 import { OutboxRetention } from "./retention.js";
 import { JOBS_REGISTRY, JobScheduler, type OutboxJobHandler } from "./scheduler.js";
+import { WecomAlertSink } from "./wecom-alert.sink.js";
 
 /** 规则接线日志（Nest Logger：产出 / 跳过 / 渠道留痕与 worker 日志同管道）。 */
 const wiringLogger = new Logger("AutomationWiring");
@@ -47,7 +57,18 @@ export class OutboxModule {
         JobsStore,
         ClockService,
         AutomationSubjectReader,
-        { provide: OUTBOX_ALERT_SINK, useClass: LogOutboxAlertSink },
+        {
+          provide: OUTBOX_ALERT_SINK,
+          useFactory: (aibot: WecomAibotClient) => {
+            const fallback = new LogOutboxAlertSink();
+            // 告警群出口（M5-03-3 · B2 定案）：chatid + 智能机器人凭据齐备才启用；否则保持结构化日志。
+            if (env.OUTBOX_ALERT_WECOM_CHATID === "" || env.WECOM_BOT_ID === "" || env.WECOM_BOT_SECRET === "") {
+              return fallback;
+            }
+            return new WecomAlertSink(aibot, env.OUTBOX_ALERT_WECOM_CHATID, fallback);
+          },
+          inject: [WecomAibotClient],
+        },
         { provide: OUTBOX_POLICIES, useFactory: () => resolveOutboxPolicies(env) },
         {
           provide: OUTBOX_REGISTRY,
@@ -55,12 +76,13 @@ export class OutboxModule {
             previews: PreviewService,
             notify: NotifyService,
             groupNotify: NotifyGroupService,
+            appNotify: NotifyAppService,
             subjects: AutomationSubjectReader,
             clock: ClockService,
             calendar: CalendarService,
             database: DatabaseService,
           ) => {
-            const registry = buildRegistry(env, previews, notify, groupNotify);
+            const registry = buildRegistry(env, previews, notify, groupNotify, appNotify);
             if (env.AUTOMATION_WIRING_ENABLED === "true") {
               const deps = automationWiringDeps(env, subjects, clock, calendar, database);
               for (const [topic, handler] of createRuleEventConsumers(deps)) {
@@ -69,7 +91,16 @@ export class OutboxModule {
             }
             return registry;
           },
-          inject: [PreviewService, NotifyService, NotifyGroupService, AutomationSubjectReader, ClockService, CalendarService, DatabaseService],
+          inject: [
+            PreviewService,
+            NotifyService,
+            NotifyGroupService,
+            NotifyAppService,
+            AutomationSubjectReader,
+            ClockService,
+            CalendarService,
+            DatabaseService,
+          ],
         },
         {
           provide: JOBS_REGISTRY,
@@ -101,6 +132,7 @@ function buildRegistry(
   previews: PreviewService,
   notify: NotifyService,
   groupNotify: NotifyGroupService,
+  appNotify: NotifyAppService,
 ): Map<OutboxTopic, OutboxTopicHandler> {
   const registry = new Map<OutboxTopic, OutboxTopicHandler>();
   if (env.PREVIEW_JOB_ENABLED === "true") {
@@ -111,7 +143,10 @@ function buildRegistry(
   }
   if (env.NOTIFY_DELIVERY_ENABLED === "true") {
     registry.set(NOTIFY_MESSAGE_TOPIC, {
-      handle: (row) => notify.consume(row),
+      // 渠道分流（M5-03-3）：wecom_app → 应用消息消费（NotifyAppService）；其余（inbox / 未落地 email）→
+      // 站内信消费器（后者对非 inbox 渠道按确定性失败收口 —— 投递层护栏）。
+      handle: (row) =>
+        channelOfNotifyPayload(row.payload) === "wecom_app" ? appNotify.consume(row) : notify.consume(row),
     });
     // 群通道（M5-03-2 接线段）：凭据齐备才注册消费 —— 未配置时「只存不投」（notify.group 行不领取，
     // 不因客户端未就绪空转重试）；配置后由 worker 启动流程 start() 长连接（entry/worker.ts）。
