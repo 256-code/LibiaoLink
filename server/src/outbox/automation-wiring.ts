@@ -2,19 +2,20 @@
  * automation 规则接线（S7-4 · M5-02 接线段）· 消费 / 调度两入口装配。
  *
  * ① 事件消费（OutboxTopicHandler；主题 = 契约 RULE_EVENT_TOPICS）：领取事件行 → 冷启动判据（行创建时刻）→
- *    读主体快照（AutomationSubjectReader）→ evaluateEventMessages（引擎，wmj 线）→ 逐条 inbox message 写
- *    `notify.message`（appendOutboxIfAbsent，dedupeKey = 引擎幂等键，唯一约束兜底至少一次投递）；
+ *    读主体快照（AutomationSubjectReader）→ evaluateEventMessages（引擎，wmj 线）→ 逐条产出：inbox →
+ *    `notify.message`（站内信）/ wecom_group → `notify.group`（群播报；appendOutboxIfAbsent，dedupeKey = 引擎幂等键，
+ *    唯一约束兜底至少一次投递）；
  * ② 调度（OutboxJobHandler；kind = automation-schedule.job）：读窗口主体池 → planWindowMessages → 同上产出，
  *    与 last_run_at 推进同一事务（JobRunContext.tx）—— 崩溃回滚后窗口重放，幂等键兜底不重发。
  *
- * 渠道口径（本切片）：只有 inbox 落 `notify.message`（投递面已就绪，S7-4 j1）；wecom_app / wecom_group 等
- *   非 inbox **不产行**（产了也必被投递层按「未落地」确定性失败 dead）—— 逐条 warn 留痕 + 计数入日志/note，
- *   与投递层护栏（wmj PR #197）配对；M5-03 落地后按渠道扩产出。
+ * 渠道口径（M5-03-2 接线段起）：inbox → `notify.message`（S7-4 j1）；wecom_group → `notify.group`（群播报：
+ *   载荷只带 projectId（寻址键）+ 文案，投递层按绑定解析 chatid + 按会话限速）；wecom_app / email 仍未落地 ——
+ *   逐条 warn 留痕 + 计数入日志/note（与投递层护栏 wmj PR #197 配对；M5-03-3 / M5-04 起按渠道扩产出）。
  * 冷启动保护（事件形态）：AUTOMATION_EVENT_MAX_AGE_MS 透传引擎 —— 接线前积压的历史事件按 `event_too_old`
  *   消费掉、不补发业务通知（投递层免打扰的「次日补发」不受影响）。
  * 边界：本层只做「主体读库 + 引擎求值 + 产出落库」；投递 / 合并 / 免打扰 / 重试 / 死信归 notify + outbox 运行时。
  */
-import { RULE_EVENT_TOPICS, type AutomationRule, type NotifyMessagePayload, type RuleEventTopic } from "@libiaolink/contracts";
+import { RULE_EVENT_TOPICS, type AutomationRule, type NotifyGroupMessagePayload, type NotifyMessagePayload, type RuleEventTopic } from "@libiaolink/contracts";
 import type { Logger } from "@nestjs/common";
 import type { Env } from "../config/env.js";
 import type { DbClient } from "../db/db-client.js";
@@ -28,7 +29,7 @@ import {
   type ReplaySubject,
 } from "../modules/automation/index.js";
 import type { CalendarShiftDirection, CalendarWindow } from "../modules/calendar/index.js";
-import { isDeliverableChannel, NOTIFY_MESSAGE_TOPIC } from "../modules/notify/index.js";
+import { isDeliverableChannel, NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC } from "../modules/notify/index.js";
 import type { OutboxHandleOutcome, OutboxTopicHandler } from "./handler.js";
 import type { JobRunResult, OutboxJobHandler } from "./scheduler.js";
 import type { WindowSubjectBundle } from "./automation-subjects.js";
@@ -76,8 +77,11 @@ export interface AutomationWiringDeps {
 
 /** 产出统计（日志与 JobRunResult.note 共用）。 */
 export interface ProduceStats {
+  /** notify.message（站内信）产出行数。 */
   produced: number;
-  /** 非 inbox 渠道跳过（M5-03 前未落地）条数。 */
+  /** notify.group（群播报）产出行数（M5-03-2 接线段起）。 */
+  groupProduced: number;
+  /** 未落地渠道跳过（wecom_app / email —— 随 M5-03-3 / M5-04 逐项落地）条数。 */
   channelSkipped: number;
 }
 /** 单条产出上下文（事件形态 / 调度形态共用；append 由调用方绑定事务或主连接）。 */
@@ -89,10 +93,11 @@ interface ProduceContext {
   scope: string;
 }
 
-/** 规则码 → 关联对象（refType / refId 成对；主体仅任务映射实体，其余暂无单一对象 → 空）。 */
+/** 规则码 → 关联对象（refType / refId 成对；任务主体映射 task、项目日报主体映射 project，其余暂无单一对象 → 空）。 */
 function referenceOf(ruleCode: string, entityId: string): { refType: string | null; refId: string | null } {
   const kind = subjectKindOf(ruleCode);
   if (kind === "task") return { refType: "task", refId: entityId };
+  if (kind === "project_day") return { refType: "project", refId: entityId };
   return { refType: null, refId: null };
 }
 
@@ -117,22 +122,48 @@ function logSkips(logger: WiringLogger, scope: string, skipped: readonly { reaso
 }
 
 /**
- * 逐条产出（本切片只收 inbox）：
- *   - 非 inbox 渠道：不产行 + warn（与投递层「非 inbox → dead」护栏配对；投产率计 channelSkipped）；
- *   - 载荷不合规（无收件人 / 标题或正文为空）：不产行，收 invalid 由调用方按确定性失败收口（模板配置问题）；
- *   - 合并 / 幂等：dedupeKey = 引擎幂等键（规则 + 实体 + 窗口），mergeKey 显式取同键 —— 通知层合并
- *     （C2-09 同期合并）不参与机内产出（引擎已按收件人合并且幂等键防重），避免跨窗口误合并。
+ * 逐条产出（inbox → notify.message / wecom_group → notify.group）：
+ *   - 未落地渠道（wecom_app / email）：不产行 + warn（与投递层「非白名单 → dead」护栏配对；计入 channelSkipped）；
+ *   - 载荷不合规（无收件人 / 正文为空；站内信另要求标题非空）：不产行，收 invalid 由调用方按确定性失败收口（模板配置问题）；
+ *   - 群播报寻址：payload.projectId 取 message.recipientId —— 不变式「wecom_group 的 recipientId = 群寻址键（一期 = projectId）」，
+ *     由主体读取层保证（project.group 收件人 id = 项目 id；未绑定 → 引擎已按 recipient_missing 不产出）；
+ *   - 合并 / 幂等：dedupeKey = 引擎幂等键（规则 + 实体 + 窗口），站内信 mergeKey 显式取同键 —— 通知层合并
+ *     （C2-09 同期合并）不参与机内产出（引擎已按收件人合并且幂等键防重），避免跨窗口误合并；群播报逐条不合并。
  */
-async function produceInboxMessages(
+async function produceMessages(
   messages: readonly ReplayMessage[],
   context: ProduceContext,
 ): Promise<{ stats: ProduceStats; invalid: string[] }> {
-  const stats: ProduceStats = { produced: 0, channelSkipped: 0 };
+  const stats: ProduceStats = { produced: 0, groupProduced: 0, channelSkipped: 0 };
   const invalid: string[] = [];
   for (const message of messages) {
+    if (message.channel === "wecom_group") {
+      const body = message.body.trim();
+      const title = message.title === null ? null : message.title.trim() === "" ? null : message.title.trim();
+      if (message.recipientId === null) {
+        invalid.push(message.dedupeKey + "（无群收件人）");
+        continue;
+      }
+      if (body === "") {
+        invalid.push(message.dedupeKey + "（正文为空）");
+        continue;
+      }
+      const reference = referenceOf(message.ruleCode, message.entityId);
+      const payload: NotifyGroupMessagePayload = {
+        projectId: message.recipientId,
+        title,
+        body,
+        refType: reference.refType,
+        refId: reference.refId,
+        templateCode: templateCodeOf(context.rules, message),
+      };
+      await context.append({ topic: NOTIFY_GROUP_TOPIC, dedupeKey: message.dedupeKey, payload });
+      stats.groupProduced += 1;
+      continue;
+    }
     if (!isDeliverableChannel(message.channel)) {
       stats.channelSkipped += 1;
-      context.logger.warn("规则接线：渠道未落地（M5-03 前不产通知）：" + message.channel + " · " + message.dedupeKey);
+      context.logger.warn("规则接线：渠道未落地（随 M5-03-3 / M5-04 逐项接线）：" + message.channel + " · " + message.dedupeKey);
       continue;
     }
     const title = message.title === null ? null : message.title.trim();
@@ -162,7 +193,6 @@ async function produceInboxMessages(
   }
   return { stats, invalid };
 }
-
 /**
  * 事件消费者注册表（主题 = RULE_EVENT_TOPICS 全量）：
  *   - 无事件型规则订阅的主题：直接消费完成（不产消息；新增规则后自动生效，规则集动态读）；
@@ -199,7 +229,7 @@ export function createRuleEventConsumers(deps: AutomationWiringDeps): Map<RuleEv
           maxEventAgeMs: deps.env.AUTOMATION_EVENT_MAX_AGE_MS,
         });
         logSkips(deps.logger, scope, evaluation.skipped);
-        const { stats, invalid } = await produceInboxMessages(evaluation.messages, {
+        const { stats, invalid } = await produceMessages(evaluation.messages, {
           rules,
           append: (event) => deps.append(deps.db, event),
           logger: deps.logger,
@@ -209,9 +239,10 @@ export function createRuleEventConsumers(deps: AutomationWiringDeps): Map<RuleEv
           deps.logger.warn("规则接线：消息载荷不合规（确定性失败转 dead）：" + scope + " · " + invalid.join("；"));
           return { outcome: "dead", error: "消息载荷不合规（模板缺标题 / 收件人）：" + invalid.join("；") };
         }
-        if (stats.produced > 0 || stats.channelSkipped > 0) {
+        if (stats.produced > 0 || stats.groupProduced > 0 || stats.channelSkipped > 0) {
           deps.logger.log(
-            "规则接线：产出 " + stats.produced + " 条 notify.message / 非 inbox 跳过 " + stats.channelSkipped + " 条：" + scope,
+            "规则接线：产出 " + stats.produced + " 条 notify.message / " + stats.groupProduced + " 条 notify.group / 未落地渠道跳过 " +
+              stats.channelSkipped + " 条：" + scope,
           );
         }
         return { outcome: "done" };
@@ -250,7 +281,7 @@ export function createAutomationScheduleHandler(deps: AutomationWiringDeps): Out
         shiftDirection: shift.shiftDirection,
       });
       logSkips(deps.logger, scope, evaluation.skipped);
-      const { stats, invalid } = await produceInboxMessages(evaluation.messages, {
+      const { stats, invalid } = await produceMessages(evaluation.messages, {
         rules,
         append: (event) => deps.append(context.tx, event),
         logger: deps.logger,
@@ -260,12 +291,13 @@ export function createAutomationScheduleHandler(deps: AutomationWiringDeps): Out
         throw new Error("规则接线：调度产出载荷不合规（事务回滚）：" + invalid.join("；"));
       }
       deps.logger.log(
-        "规则接线：窗口产出 " + stats.produced + " 条 notify.message / 非 inbox 跳过 " + stats.channelSkipped +
-          " 条 / 主体 " + bundle.subjects.length + " 个：" + scope,
+        "规则接线：窗口产出 " + stats.produced + " 条 notify.message / " + stats.groupProduced + " 条 notify.group / 未落地渠道跳过 " +
+          stats.channelSkipped + " 条 / 主体 " + bundle.subjects.length + " 个：" + scope,
       );
       return {
-        produced: stats.produced,
-        note: "主体 " + bundle.subjects.length + " 个 / 非 inbox 跳过 " + stats.channelSkipped + " 条",
+        produced: stats.produced + stats.groupProduced,
+        note: "主体 " + bundle.subjects.length + " 个 / notify.message " + stats.produced + " 条 / notify.group " + stats.groupProduced +
+          " 条 / 未落地渠道跳过 " + stats.channelSkipped + " 条",
       };
     },
   };

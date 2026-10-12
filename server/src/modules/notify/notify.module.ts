@@ -1,11 +1,17 @@
 import { Module } from "@nestjs/common";
 import { ClockService } from "../../common/clock/clock.service.js";
+import { AppConfig } from "../../config/config.module.js";
+import { DatabaseService } from "../../db/database.service.js";
 import { IdentityModule } from "../identity/index.js";
+import { NotifyGroupRepository } from "./notify.group.repository.js";
+import { NotifyGroupService } from "./notify.group.service.js";
 import { NotifyController } from "./notify.controller.js";
 import { NotifyRepository } from "./notify.repository.js";
 import { NotifyService } from "./notify.service.js";
 import { NotifyStreamPublisher } from "./notify.stream.publisher.js";
 import { NotifyStreamService } from "./notify.stream.service.js";
+import { createWecomAibotClientFromEnv, WecomAibotClient } from "./wecom.aibot.js";
+import { PgRateWindowStore } from "./wecom.rate.pg.js";
 
 /**
  * notify 模块（平台 · S7-4 · j1 / M5-04 首刀）：站内信投递内核 —— outbox `notify.message` 消费 +
@@ -14,11 +20,30 @@ import { NotifyStreamService } from "./notify.stream.service.js";
  * 装配：api 侧挂控制器（AppModule）；worker 侧经 OutboxModule 的消费注册表 + entry/worker.ts 的 flush 循环。
  * 实时流（S8-3 · M5-04-1）：`NotifyStreamService` 惰性 LISTEN（首个 SSE 连接建立才启动 —— worker 不建连接 → 不启动）；
  * `NotifyStreamPublisher` 供投递 / 标记在事务内 pg_notify（worker 写方同样生效，api 各实例桥到本地连接）。
+ * 群通道（M5-03-2 接线段）：`NotifyGroupService` 消费 `notify.group`（worker 注册表）+ 回调 ingest；
+ * `WecomAibotClient` 由工厂装配（api 侧构造不建连；worker 侧入口显式 `start()`）。
  */
 @Module({
   imports: [IdentityModule],
   controllers: [NotifyController],
-  providers: [NotifyRepository, NotifyService, NotifyStreamPublisher, NotifyStreamService, ClockService],
-  exports: [NotifyService],
+  providers: [
+    NotifyRepository,
+    NotifyService,
+    NotifyStreamPublisher,
+    NotifyStreamService,
+    NotifyGroupRepository,
+    NotifyGroupService,
+    PgRateWindowStore,
+    {
+      // 群通道长连接客户端（M5-03-2 接线段）：构造不建连（start() 由 worker 启动流程显式调用）；
+      // 限速计数 = PgRateWindowStore（DB 计数，跨进程共享配额 —— 差异登记①收口）。
+      provide: WecomAibotClient,
+      useFactory: (config: AppConfig, database: DatabaseService) =>
+        createWecomAibotClientFromEnv(config.env, { store: new PgRateWindowStore(database) }).aibot,
+      inject: [AppConfig, DatabaseService],
+    },
+    ClockService,
+  ],
+  exports: [NotifyService, NotifyGroupService, WecomAibotClient],
 })
 export class NotifyModule {}

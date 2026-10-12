@@ -1,7 +1,7 @@
 import type { Env } from "../config/env.js";
 import type { OutboxTopic } from "@libiaolink/contracts";
 import { PREVIEW_JOB_TOPIC } from "../modules/file/index.js";
-import { NOTIFY_MESSAGE_TOPIC } from "../modules/notify/index.js";
+import { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC } from "../modules/notify/index.js";
 
 /**
  * 主题级重试策略（S7-1）：重试与死信的**语义**由契约 fixed（shared/src/modules/outbox.ts），
@@ -46,6 +46,9 @@ export function resolveOutboxPolicies(env: Env): ReadonlyMap<OutboxTopic, Outbox
     // notify.message（S7-4 站内信投递）：站内信 = 本地写库（无外部依赖抖动），沿用通用重试口径
     // （OUTBOX_DEFAULT_*：5 次 / 15s 起 / 30min 封顶）；不丢由 source_dedupe_key 唯一 + 死信告警兜底。
     [NOTIFY_MESSAGE_TOPIC, defaultTopicPolicy(env)],
+    // notify.group（M5-03-2 群播报）：通用重试口径（OUTBOX_DEFAULT_*）—— retryable 才累计尝试；
+    // rate_limited（限速 / 未就绪）走 deferred 延期重排、不消耗重试预算（dispatcher）。
+    [NOTIFY_GROUP_TOPIC, defaultTopicPolicy(env)],
   ]);
 }
 

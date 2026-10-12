@@ -13,7 +13,8 @@
  *        同事务提交、job_runs 留痕（executed / fire_count / produced / note）→ 消费 → 收件箱可见。
  *   证据七（调度窗口 · A01 合并）：同一人名下多项目 → 收件人粒度一条（项目清单合并文案 + 幂等键收件人粒度）。
  *   证据八（重放幂等）：回拨窗口重放 → 产出幂等键不重复（appendOutboxIfAbsent 唯一约束兜底）、job_runs 如实留痕。
- *   证据九（非 inbox 跳过）：R02 / A01 的 wecom_app 动作不产行，接线层 warn + channelSkipped 计数入 note。
+ *   证据九（未落地渠道跳过 · Push 224 措辞）：R02 / A01 的 wecom_app 动作不产行，接线层 warn + channelSkipped 计数入 note
+ *   （note 口径 = 主体数 / notify.message 条数 / notify.group 条数 / 未落地渠道跳过条数）。
  *   证据十（自清理）：合成前缀 / 实体 id 全量精确清理，零残留（finally 兜底）。
  *
  * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）。
@@ -589,15 +590,16 @@ function buildEnv(overrides = {}) {
     );
     check(
       "S6b",
-      "job_runs 留痕：executed / fire_count=1 / produced=1 / note 含主体数与非 inbox 跳过数",
-      "1 行 / executed / produced=1 / note 含「主体 4」与「非 inbox 跳过 1 条」",
+      "job_runs 留痕：executed / fire_count=1 / produced=1 / note 含主体数、双渠道计数与未落地渠道跳过数",
+      "1 行 / executed / produced=1 / note 含「主体 4」与「notify.message N 条 / notify.group N 条 / 未落地渠道跳过 1 条」",
       short(runs1),
       runs1.length === 1 &&
         runs1[0]?.status === "executed" &&
         runs1[0]?.produced === 1 &&
         runs1[0]?.fire_count === 1 &&
         String(runs1[0]?.note).includes("主体 4") &&
-        String(runs1[0]?.note).includes("非 inbox 跳过 1 条"),
+        /notify\.message \d+ 条 \/ notify\.group \d+ 条/.test(String(runs1[0]?.note)) &&
+        String(runs1[0]?.note).includes("未落地渠道跳过 1 条"),
     );
     const a01Row = await outboxRow(a01Key);
     const a01Payload = a01Row?.payload ?? {};
@@ -630,7 +632,7 @@ function buildEnv(overrides = {}) {
     );
     check(
       "S6e",
-      "非 inbox 跳过（证据九）：接线层 warn 含「渠道未落地」；本回放产出消息数 = 4（R02×2 + 护栏行 + A01）",
+      "未落地渠道跳过（证据九）：接线层 warn 含「渠道未落地」；本回放产出消息数 = 4（R02×2 + 护栏行 + A01）",
       "warn 命中 / notify.message=4",
       short({ warnHit: wiringLogs.warn.some((line) => line.includes("渠道未落地")), messages: await ourMessageCount() }),
       wiringLogs.warn.some((line) => line.includes("渠道未落地")) && (await ourMessageCount()) === 4,

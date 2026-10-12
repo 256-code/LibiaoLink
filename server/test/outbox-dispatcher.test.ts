@@ -133,7 +133,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
       { topics: [TOPIC_A], limit: 2, staleAfterMs: 600000, workerId: "test-worker" },
       { topics: [TOPIC_B], limit: 2, staleAfterMs: 600000, workerId: "test-worker" },
     ]);
-    expect(stats).toEqual({ claimed: 3, done: 3, retried: 0, dead: 0 });
+    expect(stats).toEqual({ claimed: 3, done: 3, retried: 0, deferred: 0, dead: 0 });
     // 每主题轮内只领 OUTBOX_BATCH_LIMIT 条：TOPIC_A 领 2（余 1 条留给下一轮，不被清空），TOPIC_B 领 1
     expect(h.store.done).toEqual([1, 2, 4]);
     expect(h.store.byTopic.get(TOPIC_A)!.map((row) => row.id)).toEqual([3]);
@@ -144,7 +144,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
 
     const stats = await h.dispatcher.drainOnce();
 
-    expect(stats).toEqual({ claimed: 0, done: 0, retried: 0, dead: 0 });
+    expect(stats).toEqual({ claimed: 0, done: 0, retried: 0, deferred: 0, dead: 0 });
     expect(h.store.claims).toHaveLength(0);
   });
 
@@ -170,7 +170,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
 
     const stats = await h.dispatcher.drainOnce();
 
-    expect(stats).toEqual({ claimed: 3, done: 1, retried: 2, dead: 0 });
+    expect(stats).toEqual({ claimed: 3, done: 1, retried: 2, deferred: 0, dead: 0 });
     expect(h.store.retried.map((item) => item.id)).toEqual([1, 2]);
     expect(h.store.retried[0]!.input.error).toBe("处理器炸了");
     expect(h.store.retried[1]!.input.error).toBe("处理器返回非法结果");
@@ -190,13 +190,54 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
 
     const stats = await h.dispatcher.drainOnce();
 
-    expect(stats).toEqual({ claimed: 1, done: 0, retried: 1, dead: 0 });
+    expect(stats).toEqual({ claimed: 1, done: 0, retried: 1, deferred: 0, dead: 0 });
     expect(h.store.retried[0]).toMatchObject({ id: 1, input: { attempts: 3, error: "稍后再试" } });
     // 第 3 次失败后：1000 * 2^(3-1) = 4000ms
     expect(h.store.retried[0]!.input.availableAt.getTime()).toBe(NOW.getTime() + 4000);
     expect(h.store.dead).toHaveLength(0);
   });
 
+  it("deferred：延期重排回 pending（attempts 原值 = 不消耗重试次数；availableAt 原样回写）", async () => {
+    const policies = new Map<OutboxTopic, OutboxTopicPolicy>([
+      [TOPIC_A, { batchLimit: 2, maxAttempts: 3, backoffBaseMs: 1000, backoffMaxMs: 10000 }],
+    ]);
+    const retryAt = new Date(NOW.getTime() + 60_000);
+    const h = makeDispatcher({
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [TOPIC_A, handlerOf(async () => ({ outcome: "deferred", availableAt: retryAt, error: "本地限速桶已满" }))],
+      ]),
+      policies,
+    });
+    // attempts 已到 maxAttempts：deferred 仍不转 dead（「等窗口」≠「消费失败」，不占重试预算）
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 5, { attempts: 3 })]);
+
+    const stats = await h.dispatcher.drainOnce();
+
+    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, deferred: 1, dead: 0 });
+    expect(h.store.retried[0]).toMatchObject({ id: 5, input: { attempts: 3, error: "本地限速桶已满" } });
+    expect(h.store.retried[0]!.input.availableAt).toBe(retryAt);
+    expect(h.store.dead).toHaveLength(0);
+    expect(h.alerts.emitted).toHaveLength(0);
+  });
+
+  it("deferred：availableAt 非法（非 Date）时兜底 now+60s", async () => {
+    const h = makeDispatcher({
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [
+          TOPIC_A,
+          handlerOf(
+            async () => ({ outcome: "deferred", availableAt: "not-a-date", error: "限速" }) as unknown as OutboxHandleOutcome,
+          ),
+        ],
+      ]),
+    });
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 6)]);
+
+    const stats = await h.dispatcher.drainOnce();
+
+    expect(stats.deferred).toBe(1);
+    expect(h.store.retried[0]!.input.availableAt.getTime()).toBe(NOW.getTime() + 60_000);
+  });
   it("retry 到顶：先 onDead 留痕再落 dead，并发单条死信告警（不等探针周期）", async () => {
     const deadHooks: { id: number; error: string }[] = [];
     const h = makeDispatcher({
@@ -216,7 +257,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
 
     const stats = await h.dispatcher.drainOnce();
 
-    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, dead: 1 });
+    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, deferred: 0, dead: 1 });
     expect(deadHooks).toEqual([{ id: 7, error: "一直失败" }]);
     expect(h.store.dead[0]).toMatchObject({ id: 7, input: { attempts: 3, error: "一直失败" } });
     expect(h.alerts.emitted).toHaveLength(1);
@@ -245,7 +286,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
 
     const stats = await h.dispatcher.drainOnce();
 
-    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, dead: 1 });
+    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, deferred: 0, dead: 1 });
     expect(h.store.dead[0]).toMatchObject({ id: 9, input: { attempts: 1, error: "文件损坏" } });
     expect(h.alerts.emitted[0]!.code).toBe("outbox.dead");
   });
@@ -264,7 +305,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
 
     const stats = await h.dispatcher.drainOnce();
 
-    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, dead: 1 });
+    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, deferred: 0, dead: 1 });
     expect(h.store.dead[0]!.input.attempts).toBe(3);
     expect(h.alerts.emitted).toHaveLength(1);
   });
