@@ -51,7 +51,7 @@ const check = (name, ok, detail) => { checks.push({ name: name, ok: ok === true 
 mkdirSync(SHOTS, { recursive: true });
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) { console.error("回放用户不存在：" + REPLAY_USER); process.exit(1); }
 const token = "pxseq-" + randomBytes(16).toString("hex");
 const csrf = randomBytes(16).toString("hex");

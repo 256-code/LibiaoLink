@@ -44,9 +44,9 @@ http://localhost:8000/login/oauth/authorize?client_id=libiaolink-a195b721bb30a7d
 
 > `验证码` 页签现在点了发不出码 —— 本地没有短信/邮箱通道（公司测试环境也一样）。
 
-> **回放专用账号**：`px-replay`（潘兴·回放）/ `wmj-replay`（吴孟杰·回放）—— 建在本地用户库、**无口令**（回放脚本直接写会话，不走登录页），角色与真人号一致（`admin` + `project_manager`）；`frontend/scripts/*-e2e.mjs` 默认用它俩跑（`REPLAY_USER` 可覆盖）。**真人账号（panxing / wmj）不再做回放夹具**（2026-10-10 事故：脚本与用户并发共用同一账号，快照还原把用户的删除覆盖 →「删了便签重登又出现」）。
+> **回放专用账号（2026-10-12 已删除）**：`px-replay`（潘兴·回放）/ `wmj-replay`（吴孟杰·回放）—— 曾建在本地用户库、**无口令**（回放脚本直接写会话，不走登录页），角色与真人号一致（`admin` + `project_manager`）；`frontend/scripts/*-e2e.mjs` 默认用它俩跑（`REPLAY_USER` 可覆盖）。**真人账号（panxing / wmj）不做回放夹具**（2026-10-10 事故：脚本与用户并发共用同一账号，快照还原把用户的删除覆盖 →「删了便签重登又出现」）。**2026-10-12 按业务要求删除**：两账号已按内建删除语义软删（`status=disabled` + `removed_at`、在线会话全部撤销、审计留痕）—— 用户目录 / 项目经理与负责人候选 / 登录面均不再出现；回放脚本启动时即报「回放用户不存在：px-replay」退出（Push 281 起加 `status=active` 守卫）。**要再跑回放，先按本节 SQL 复活账号。**
 
-> 换库 / 新沙箱重建：
+> 换库 / 新沙箱重建（全新库用下面 INSERT 段；**已软删的现有沙箱用紧随其后的 UPDATE 段复活**）：
 
 ```sql
 insert into users (casdoor_id, username, display_name, email, status) values
@@ -55,6 +55,13 @@ insert into users (casdoor_id, username, display_name, email, status) values
 insert into user_roles (user_id, role_id)
   select u.id, r.id from users u join roles r on r.code in ('admin', 'project_manager')
   where u.username in ('px-replay', 'wmj-replay');
+```
+
+> 现有沙箱「复活」两条（软删后恢复；角色未动、直接可用；如需再回到删除态，把 status 改回 'disabled' 并置 removed_at）：
+
+```sql
+update users set status = 'active', removed_at = null, updated_at = now()
+  where username in ('px-replay', 'wmj-replay');
 ```
 
 > 应用已开 `enableAutoSignin`：**已有 SSO 会话时，打开登录入口（或点应用卡片）会直接签发、不再显示登录页**（对应接入标准第 4 条「打开主页即弹认证页、无需二次点击」）。想查看登录页本身或切换账号：用无痕窗口，或先退出登录。
