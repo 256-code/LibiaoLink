@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
+import { PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -82,6 +82,91 @@ function openProjectsOf(value: unknown): WorkspaceOpenProjects {
   return { tasks: stringArrayOf(record["tasks"]), raised: stringArrayOf(record["raised"]) };
 }
 
+/** 便签颜色 / 字体白名单（契约 PlanBoardColorSchema / PlanBoardFontSchema）：jsonb 里旧值 / 手改值一律回落缺省。 */
+const PLAN_COLOR_SET: ReadonlySet<string> = new Set(PLAN_BOARD_COLOR_IDS);
+const PLAN_FONT_SET: ReadonlySet<string> = new Set(PLAN_BOARD_FONT_IDS);
+
+function isoTimeOf(value: unknown): string | null {
+  return typeof value === "string" && value !== "" && !Number.isNaN(Date.parse(value)) ? value : null;
+}
+
+function isPlanColor(value: unknown): value is MyPlanNote["colorId"] {
+  return typeof value === "string" && PLAN_COLOR_SET.has(value);
+}
+
+function isPlanFont(value: unknown): value is MyPlanNote["fontId"] {
+  return typeof value === "string" && PLAN_FONT_SET.has(value);
+}
+
+/** 「我的计划」单条（Push 268）：与前端 myPlan.ts sanitize 同口径 —— 字段缺失 / 类型不符即整条丢弃（不半读半写）。 */
+function planNoteOf(value: unknown): MyPlanNote | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" && record.id !== "" && record.id.length <= 64 ? record.id : null;
+  const title = typeof record.title === "string" ? record.title.slice(0, PLAN_BOARD_TITLE_MAX) : null;
+  const content = typeof record.content === "string" ? record.content.slice(0, PLAN_BOARD_CONTENT_MAX) : null;
+  const category = typeof record.category === "string" ? record.category.trim().slice(0, PLAN_BOARD_CATEGORY_NAME_MAX) : null;
+  const createdAt = isoTimeOf(record.createdAt);
+  const updatedAt = isoTimeOf(record.updatedAt);
+  if (id === null || title === null || content === null || category === null || category === "" || createdAt === null || updatedAt === null) {
+    return null;
+  }
+  if (title === "" && content === "") {
+    return null;
+  }
+  return {
+    id,
+    title,
+    content,
+    category,
+    colorId: isPlanColor(record.colorId) ? record.colorId : "white",
+    fontId: isPlanFont(record.fontId) ? record.fontId : "sans",
+    done: booleanOf(record.done),
+    createdAt,
+    updatedAt,
+  };
+}
+
+/** 便签墙背景色（Push 271）：白名单（PLAN_BOARD_BG_IDS）外 / 缺省 → null（调用方决定回落 white）。 */
+function planBoardBgOf(value: unknown): PlanBoardBg | null {
+  return typeof value === "string" && (PLAN_BOARD_BG_IDS as readonly string[]).includes(value) ? (value as PlanBoardBg) : null;
+}
+
+/** 便签墙（Push 268）：单条逐条收敛（非法整条丢弃、id 去重、≤ 300 条）；分类表去空 / 去重 / 截断；背景色白名单外 → white；updatedAt 非法 → null。 */
+function planBoardOf(value: unknown): MyPlanBoard {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const notes: MyPlanNote[] = [];
+  if (Array.isArray(record["notes"])) {
+    for (const item of record["notes"]) {
+      const note = planNoteOf(item);
+      if (note !== null && !notes.some((existing) => existing.id === note.id)) {
+        notes.push(note);
+      }
+      if (notes.length >= PLAN_BOARD_NOTE_LIMIT) {
+        break;
+      }
+    }
+  }
+  const categories: string[] = [];
+  if (Array.isArray(record["categories"])) {
+    for (const item of record["categories"]) {
+      if (typeof item !== "string") {
+        continue;
+      }
+      const name = item.trim().slice(0, PLAN_BOARD_CATEGORY_NAME_MAX);
+      if (name !== "" && !categories.includes(name)) {
+        categories.push(name);
+      }
+      if (categories.length >= PLAN_BOARD_CATEGORY_LIMIT) {
+        break;
+      }
+    }
+  }
+  return { notes, categories, bg: planBoardBgOf(record["bg"]) ?? "white", updatedAt: isoTimeOf(record["updatedAt"]) };
+}
+
 const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 function dayOf(value: unknown): string | null {
@@ -89,7 +174,7 @@ function dayOf(value: unknown): string | null {
 }
 
 /**
- * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）；
+ * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）；
  * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
  * 偏好是界面状态（非业务数据），不写审计；单用户单写者，无乐观锁。
@@ -106,6 +191,14 @@ export class UserPreferenceService {
     const existing = await this.preferences.find(userId);
     const current: PrefsRecord = { ...(existing?.prefs ?? {}) };
     const next: PrefsRecord = { ...current, ...(body as PrefsRecord) };
+    // 便签墙（Push 268）：客户端只传 notes / categories（Push 271 起含 bg），updatedAt 由服务端盖章（不被客户端伪造）
+    if (Object.prototype.hasOwnProperty.call(body, "myPlanBoard") && body.myPlanBoard !== undefined) {
+      const board = body.myPlanBoard;
+      // 背景色（Push 271）：传入白名单值 = 整体替换；未传（老客户端 / 老页面）= 沿用库内现值；都没有 = white。
+      const previousBoard = typeof current["myPlanBoard"] === "object" && current["myPlanBoard"] !== null ? (current["myPlanBoard"] as Record<string, unknown>) : {};
+      const bg = planBoardBgOf(board.bg) ?? planBoardBgOf(previousBoard["bg"]) ?? "white";
+      next["myPlanBoard"] = { notes: board.notes, categories: board.categories, bg, updatedAt: at.toISOString() };
+    }
     return this.toContract(await this.preferences.upsert(userId, next, at));
   }
 
@@ -117,6 +210,7 @@ export class UserPreferenceService {
       homeSavedFilters: savedFiltersOf(prefs["homeSavedFilters"]),
       focusMode: booleanOf(prefs["focusMode"]),
       workspaceOpenProjects: openProjectsOf(prefs["workspaceOpenProjects"]),
+      myPlanBoard: planBoardOf(prefs["myPlanBoard"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }

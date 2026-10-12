@@ -231,13 +231,32 @@ body {
   animation: ll-menu-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* 便签墙「背景颜色」弹出面板（Push 271 追订 · 业务口径「颜色选择不要下滑 要向右滑」）：
+   从按钮右侧滑出（左缘 = 按钮右缘 + 12px · 顶对齐），240ms 弹性左→右滑入。 */
+@keyframes ll-plan-bg-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.plan-bg-panel-pop {
+  transform-origin: left center;
+  animation: ll-plan-bg-panel-in 240ms cubic-bezier(0.175, 0.885, 0.32, 1.1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drawer-backdrop,
   .drawer-panel,
   .drawer-backdrop.is-closing,
   .drawer-panel.is-closing,
   .menu-pop,
-  .submenu-pop {
+  .submenu-pop,
+  .plan-bg-panel-pop {
     animation: none;
   }
 }
