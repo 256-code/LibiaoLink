@@ -4,7 +4,6 @@ import { AppError } from "../src/common/errors/app-error.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
 import type { DatabaseService } from "../src/db/database.service.js";
-import type { AuditService } from "../src/modules/admin/index.js";
 import type { FileRepository, FileRow, FileVersionRow } from "../src/modules/file/file.repository.js";
 import { PreviewReadService } from "../src/modules/file/preview-read.service.js";
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
@@ -14,7 +13,7 @@ import type { DownloadUrlInput, ObjectStorage, SignedUrl } from "../src/storage/
 
 /**
  * M4-05 读 API 门禁（不连库、不连对象存储）：`GET /files/{id}/preview` 的通道语义。
- * ① 图片直签（S6-前置 · D6）—— 原对象短时签名（TTL 与内联语义）+ **只记一条** preview 审计（D2-07）；
+ * ① 图片直签（S6-前置 · D6）—— 原对象短时签名（TTL 与内联语义）+ **不写审计**（Push 283 起操作日志不记录预览动作）；
  *    不查 / 不落产物行、不投任务；存量产物行（ready / not_ready / failed）一律不参与；指定历史版本签该版本原对象；
  * ② 终态降级 —— 判不出通道 / 无版本两类（不落表不投递）；
  * ③ 404 —— 文件不存在 / 项目不可见 / 版本不属于该文件（同形，防 IDOR）。
@@ -249,14 +248,13 @@ function makeService(env: Partial<Env> = {}): Harness {
     storage as unknown as ObjectStorage,
     permission as unknown as PermissionService,
     users as unknown as UserService,
-    audit as unknown as AuditService,
     config,
   );
   return { service, repo, previews, storage, permission, users, audit, database };
 }
 
 describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
-  it("图片直签（缺省当前版本 · S6-前置 D6）：原对象短时签名 + 一条 preview 审计 + 产物字段全空", async () => {
+  it("图片直签（缺省当前版本 · S6-前置 D6）：原对象短时签名 + 不写审计 + 产物字段全空", async () => {
     const h = makeService();
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
@@ -274,17 +272,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       generatedAt: null,
     });
     expect(h.storage.signed).toEqual([{ objectKey: SOURCE_KEY, expiresInSeconds: 300 }]);
-    expect(h.audit.entries).toHaveLength(1);
-    expect(h.audit.entries[0]).toMatchObject({
-      actorId: ACTOR,
-      action: "preview",
-      objectType: "file",
-      objectId: FILE,
-      projectId: PROJECT,
-      metadata: { versionId: VERSION, target: "image" },
-    });
-    expect(h.audit.entries[0]!.summary).toContain("机械设计图纸.png");
-    expect(h.audit.entries[0]!.summary).toContain("图片直签");
+    expect(h.audit.entries).toHaveLength(0);
     // 不查产物（findByKey 0 次）/ 不登记 / 不投递 / 不开事务（S6-前置 起无 not_ready 轮询路径）。
     expect(h.previews.queries).toHaveLength(0);
     expect(h.previews.ensured).toHaveLength(0);
@@ -301,7 +289,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(Object.keys(h.storage.signed[0]!)).toEqual(["objectKey", "expiresInSeconds"]);
   });
 
-  it("图片直签指定历史版本（A4-06）：签该版本原对象，审计记该 versionId", async () => {
+  it("图片直签指定历史版本（A4-06）：签该版本原对象，不写审计", async () => {
     const h = makeService();
     h.repo.versions.set(
       HISTORY,
@@ -319,7 +307,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       generatedAt: null,
     });
     expect(h.storage.signed).toEqual([{ objectKey: SOURCE_KEY_HISTORY, expiresInSeconds: 300 }]);
-    expect(h.audit.entries[0]).toMatchObject({ metadata: { versionId: HISTORY, target: "image" } });
+    expect(h.audit.entries).toHaveLength(0);
     expect(h.previews.queries).toHaveLength(0);
   });
 
@@ -445,10 +433,10 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
     expect(h.storage.signed).toHaveLength(0);
-    expect(h.audit.entries[0]).toMatchObject({ metadata: { viewerKind: "onlyoffice", documentType: "pdf" } });
+    expect(h.audit.entries).toHaveLength(0);
   });
 
-  it("Office（docx）→ ready + viewer 非空：不查产物 / 不投递 / 不签名；审计记 viewerKind 与 documentType", async () => {
+  it("Office（docx）→ ready + viewer 非空：不查产物 / 不投递 / 不签名 / 不写审计（Push 283 起操作日志不记录预览动作）", async () => {
     const h = makeService();
     h.repo.file = makeFileRow({ name: "方案.docx" });
     h.repo.versions.set(
@@ -487,13 +475,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
     expect(h.storage.signed).toHaveLength(0);
-    expect(h.audit.entries).toHaveLength(1);
-    expect(h.audit.entries[0]).toMatchObject({
-      actorId: ACTOR,
-      action: "preview",
-      objectId: FILE,
-      metadata: { versionId: VERSION, viewerKind: "onlyoffice", documentType: "word" },
-    });
+    expect(h.audit.entries).toHaveLength(0);
   });
 
   it("viewer token：HS256 逐字签发（permissions 嵌 document · Push 258 错层修正）+ iat/exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS），document.url 不含存储凭证", async () => {
