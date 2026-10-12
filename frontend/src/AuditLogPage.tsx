@@ -150,7 +150,11 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
 
   // 五枚筛选均为多选（2026-10-09 追订）：不再有「全部…」选项行，空选占位交给 placeholder、触发器显示筛选名称 + 浅灰数量。
   const actorOptions = directory.map((user) => ({ value: user.id, label: user.displayName }));
-  const actionOptions = AUDIT_ACTIONS.map((action) => ({ value: action, label: auditLabelOf(AUDIT_ACTION_LABELS, action) }));
+  // 动作下拉撤「预览」（2026-10-12）：服务端不写入、存量已清；preview 仅保留在 auditApi 标签映射用于历史数据渲染。
+  const actionOptions = AUDIT_ACTIONS.filter((action) => action !== "preview").map((action) => ({
+    value: action,
+    label: auditLabelOf(AUDIT_ACTION_LABELS, action),
+  }));
   const objectTypeOptions = AUDIT_OBJECT_TYPES.map((type) => ({ value: type, label: auditLabelOf(AUDIT_OBJECT_TYPE_LABELS, type) }));
   const resultOptions = AUDIT_RESULTS.map((result) => ({ value: result, label: auditLabelOf(AUDIT_RESULT_LABELS, result) }));
   const projectOptions = projects.map((project) => ({ value: project.id, label: project.code + " · " + project.name }));
