@@ -10,6 +10,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { notifyDeliveries, wecomGroups } from "../../db/schema/notify.js";
+import { projects } from "../../db/schema/projects.js";
 
 export type WecomGroupRow = typeof wecomGroups.$inferSelect;
 
@@ -37,6 +38,19 @@ export class NotifyGroupRepository {
   async findGroupByChatid(chatid: string, client: DbClient = this.database.db): Promise<WecomGroupRow | null> {
     const rows = await client.select().from(wecomGroups).where(eq(wecomGroups.chatid, chatid)).limit(1);
     return rows[0] ?? null;
+  }
+
+  /**
+   * 群失败降级（C5-04 / B4 定案）读项目经理：projects.manager_ids[0]（软删 / 不存在 = null）。
+   * 边界同文件头注：直接读表，不 import project 模块。
+   */
+  async findProjectManagerId(projectId: string, client: DbClient = this.database.db): Promise<string | null> {
+    const rows = await client
+      .select({ managerIds: projects.managerIds })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    return rows[0]?.managerIds[0] ?? null;
   }
 
   /** 回调 ingest：会话激活置位（仅未激活行命中；已激活 / 未绑定返回 null —— 幂等）。 */

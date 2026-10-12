@@ -261,7 +261,7 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     const retry = await service.consume(claimedRow(payload()));
     expect(retry.outcome).toBe("retry");
   });
-  it("消费：非 inbox 渠道未落地（M5-03 前）→ 确定性失败 dead，不落行", async () => {
+  it("消费：非 inbox 渠道（wecom_app 由 OutboxModule 路由到 NotifyAppService）→ 本消费器只承载 inbox，确定性失败 dead，不落行", async () => {
     const repo = new FakeNotifyRepository();
     const service = makeService(repo, DAYTIME);
     const outcome = await service.consume(claimedRow(payload({ channel: "wecom_app" })));

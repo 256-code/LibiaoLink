@@ -5,9 +5,10 @@
  *   ok                              → done（sent 行，attempts = 实际帧数）；
  *   rate_limited（本地桶 / 846607 超频）→ deferred（deferred 行；availableAt = retryAt ?? now+60s；不消耗重试次数）；
  *   retryable（断连 / 未订阅 / 回执超时）→ retry（failed 行）；
- *   permanent（853000 / 846601 / 45002 / 846607 未激活）→ dead（dead 行；降级 B4 属 M5-03-3）；
+ *   permanent（853000 / 846601 / 45002 / 846607 未激活）→ dead（dead 行）+ C5-04 降级（B4 定案 · M5-03-3：
+ *     项目经理站内信；管理员告警群留痕由 outbox 死信告警自动承担 —— 出口 = 企微告警群）；
  *   无绑定                          → dead（不写投递行 —— target NOT NULL 无值可落；差异登记②）；
- *   绑定停用（enabled=false）        → dead（dead 行，target=chatid）。
+ *   绑定停用（enabled=false）        → dead（dead 行，target=chatid）；上述两类同样走 B4 降级。
  *
  * 超长口径（B5 定案）：内容按 UTF-8 字节截断（≤ 20000 字节，留 20480 官方上限余量），尾部省略 + warn 留痕。
  * markdown 组装：title === null ? body : `**title**\n\nbody`。
@@ -19,14 +20,19 @@ import { ClockService } from "../../common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
+import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { WecomAibotClient } from "./wecom.aibot.js";
+import { truncateUtf8Bytes } from "./wecom.text.js";
 
 /** 群 markdown 字节上限（官方口径 20480；取 20000 留余量 —— B5 定案「投递层按字节截断留痕」）。 */
 export const GROUP_MARKDOWN_MAX_BYTES = 20_000;
 
 /** 截断省略后缀（尾部省略口径）。 */
 export const GROUP_TRUNCATION_SUFFIX = "\n\n…（内容过长，已截断）";
+
+/** 降级站内信前缀（C5-04 · B4 定案：群失败 → 项目经理站内信；正文保留原文）。 */
+export const GROUP_DEGRADE_PREFIX = "【项目群播报未送达，已降级为站内信】\n\n";
 
 /** chatid 掩码（日志 / outbox error 口径：只回末 4 位，全文只落库）。 */
 export function maskChatid(chatid: string): string {
@@ -67,16 +73,12 @@ export function truncateGroupMarkdown(content: string, maxBytes: number = GROUP_
   content: string;
   truncated: boolean;
 } {
-  if (Buffer.byteLength(content, "utf8") <= maxBytes) {
-    return { content, truncated: false };
-  }
-  const bytes = Buffer.from(content, "utf8").subarray(0, maxBytes - Buffer.byteLength(GROUP_TRUNCATION_SUFFIX, "utf8"));
-  let sliced = bytes.toString("utf8");
-  // 多字节字符切在中间时 toString 产生 U+FFFD 替换符：从尾部剥离（回退到合法字符边界）
-  while (sliced.endsWith("\uFFFD")) {
-    sliced = sliced.slice(0, -1);
-  }
-  return { content: sliced + GROUP_TRUNCATION_SUFFIX, truncated: true };
+  return truncateUtf8Bytes(content, maxBytes, GROUP_TRUNCATION_SUFFIX);
+}
+
+/** 降级站内信类型：A02 / R06 为播报（摘要群发 / 喜报），其余群播报按提醒。 */
+function degradeTypeOf(templateCode: string | null): "broadcast" | "reminder" {
+  return templateCode !== null && /^(A02|R06)/.test(templateCode) ? "broadcast" : "reminder";
 }
 
 /** 失败描述（errcode / 类型 / 连接态；不含 chatid 明文 —— 载荷与库值都不含）。 */
@@ -97,6 +99,7 @@ export class NotifyGroupService {
   constructor(
     private readonly repository: NotifyGroupRepository,
     private readonly aibot: WecomAibotClient,
+    private readonly notify: NotifyService,
     private readonly clock: ClockService,
   ) {}
 
@@ -135,11 +138,12 @@ export class NotifyGroupService {
     const binding = await this.repository.findGroupByProject(message.projectId);
     if (binding === null) {
       // 无绑定：notify_deliveries.target NOT NULL 无值可落 —— 不写投递行，dead + 日志（差异登记②）；
-      // 运营可见性由 outbox 死信告警承担（项目群绑定维护 = M5-07 前端入口 / PUT 接口）。
+      // 运营可见性由 outbox 死信告警承担（项目群绑定维护 = M5-07 前端入口 / PUT 接口）；
+      // 降级（B4）= 项目经理站内信（正文含原文）。
       this.logger.warn(
         "群未绑定（确定性失败转 dead）：outbox#" + row.id + " · project=" + message.projectId + " · " + row.dedupeKey,
       );
-      return { outcome: "dead", error: "群未绑定（project " + message.projectId + "）：" + row.dedupeKey };
+      return await this.deadWithDegrade(row, message, "群未绑定（project " + message.projectId + "）：" + row.dedupeKey);
     }
     const masked = maskChatid(binding.chatid);
     if (!binding.enabled) {
@@ -152,7 +156,7 @@ export class NotifyGroupService {
         sentAt: null,
       });
       this.logger.warn("群绑定已停用（确定性失败转 dead）：outbox#" + row.id + " · chatid " + masked);
-      return { outcome: "dead", error: "群绑定已停用（chatid " + masked + "）：" + row.dedupeKey };
+      return await this.deadWithDegrade(row, message, "群绑定已停用（chatid " + masked + "）：" + row.dedupeKey);
     }
 
     const composed = composeGroupMarkdown(message);
@@ -213,7 +217,7 @@ export class NotifyGroupService {
       });
       return { outcome: "retry", error };
     }
-    // permanent（含 846607 未激活分支）：不重试；降级 B4（项目经理站内信 + 管理员告警群）随 M5-03-3。
+    // permanent（含 846607 未激活分支）：不重试；降级 B4（项目经理站内信 + 管理员告警群留痕）。
     await this.repository.insertDelivery({
       outboxId: row.id,
       target: binding.chatid,
@@ -223,6 +227,46 @@ export class NotifyGroupService {
       sentAt: null,
     });
     this.logger.warn("群播报确定性失败（转 dead）：" + row.dedupeKey + " · chatid " + masked + " —— " + error);
-    return { outcome: "dead", error: error };
+    return await this.deadWithDegrade(row, message, error);
+  }
+
+  /**
+   * 群失败降级（C5-04 / B4 定案）：项目经理站内信 —— 经 NotifyService.deliverInboxCopy 走同一落行 / 合并 /
+   * 免打扰 / 实时流口径；幂等键 = 来源 dedupeKey + ":c504"。管理员告警群留痕由 outbox 死信告警自动承担
+   * （dispatcher → OUTBOX_ALERT_SINK，M5-03-3 起 = 企微告警群）。降级写库失败 → retry 收敛（有界重试，
+   * 不静默丢消息）；PM 解析不到（项目软删 / 不存在）→ 跳过站内信（仍 dead + 死信告警）。
+   */
+  private async deadWithDegrade(
+    row: OutboxClaimedRow,
+    message: NotifyGroupMessagePayload,
+    error: string,
+  ): Promise<OutboxHandleOutcome> {
+    const managerId = await this.repository.findProjectManagerId(message.projectId);
+    if (managerId === null) {
+      this.logger.warn("群失败降级：项目经理解析不到（跳过站内信）：" + row.dedupeKey + " · project=" + message.projectId);
+      return { outcome: "dead", error };
+    }
+    try {
+      await this.notify.deliverInboxCopy(
+        {
+          recipientId: managerId,
+          type: degradeTypeOf(message.templateCode ?? null),
+          title: message.title ?? "项目群播报",
+          body: GROUP_DEGRADE_PREFIX + message.body,
+          refType: message.refType,
+          refId: message.refId,
+          templateCode: message.templateCode,
+          mergeKey: null,
+        },
+        row.topic,
+        row.dedupeKey + ":c504",
+      );
+      this.logger.warn("群失败已降级项目经理站内信（manager " + managerId + "）：" + row.dedupeKey + " —— " + error);
+      return { outcome: "dead", error };
+    } catch (degradeError) {
+      const detail = degradeError instanceof Error ? degradeError.message : String(degradeError);
+      this.logger.error("群失败降级站内信失败（按可重试收敛）：" + row.dedupeKey + " —— " + detail);
+      return { outcome: "retry", error: error + " / 降级站内信失败：" + detail };
+    }
   }
 }

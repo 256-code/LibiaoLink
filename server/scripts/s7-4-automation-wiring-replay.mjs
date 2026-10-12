@@ -8,13 +8,14 @@
  *        正常产出（对照组：拦截判据是「事件年龄」而非条件不命中）。
  *   证据三（主体不可解析）：taskId 不存在 → outbox 行 dead（确定性失败一次即弃）、零产出。
  *   证据四（无事件型规则订阅）：issue.updated 主题 → 直接消费完成、零产出（不产无主通知）。
- *   证据五（渠道护栏）：notify.message 行 channel=wecom_app → 投递层 dead + 零落库（M5-03 前不静默当站内信）。
+ *   证据五（渠道分流 · M5-03-3）：wecom_app 动作产「:app」行；本回放注册表未接应用分支 → NotifyService 防御
+ *        dead + 零落库（生产装配按 channel 分流至 NotifyAppService —— 应用分支语义见 m5-03-3 回放）。
  *   证据六（调度窗口 · A01 应填未填）：真 JobScheduler tick 领取 automation-schedule.job → 产出与 last_run_at 推进
  *        同事务提交、job_runs 留痕（executed / fire_count / produced / note）→ 消费 → 收件箱可见。
  *   证据七（调度窗口 · A01 合并）：同一人名下多项目 → 收件人粒度一条（项目清单合并文案 + 幂等键收件人粒度）。
  *   证据八（重放幂等）：回拨窗口重放 → 产出幂等键不重复（appendOutboxIfAbsent 唯一约束兜底）、job_runs 如实留痕。
- *   证据九（未落地渠道跳过 · Push 224 措辞）：R02 / A01 的 wecom_app 动作不产行，接线层 warn + channelSkipped 计数入 note
- *   （note 口径 = 主体数 / notify.message 条数 / notify.group 条数 / 未落地渠道跳过条数）。
+ *   证据九（渠道落地口径 · M5-03-3 更新）：wecom_app 动作已落地为「:app」行、不再计入跳过（email 仍计；本回放无 email
+ *   产出 → note 跳过计数 = 0）。note 口径 = 主体数 / notify.message 条数（含 app）/ notify.group 条数 / 未落地渠道跳过条数。
  *   证据十（自清理）：合成前缀 / 实体 id 全量精确清理，零残留（finally 兜底）。
  *
  * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）。
@@ -454,11 +455,12 @@ function buildEnv(overrides = {}) {
     const notification1Row = notification1.rows[0] ?? null;
     check(
       "S1d",
-      "投递落库：notify.message 消费 → notifications 一行（delivered_at 非空 / source_topic 回溯）",
-      "claimed=1 / done=1 / 1 行 / delivered_at 非空 / source_topic=notify.message",
+      "投递落库：notify.message 消费 → notifications 一行（inbox 落行；app 行经本回放注册表护栏 dead）",
+      "claimed=2 / done=1（inbox）+ dead=1（app 防御）/ 1 行 / delivered_at 非空 / source_topic=notify.message",
       short({ ...drain2, rows: notification1.rows.length, delivered: notification1Row?.delivered_at !== null }),
-      drain2.claimed === 1 &&
+      drain2.claimed === 2 &&
         drain2.done === 1 &&
+        drain2.dead === 1 &&
         notification1.rows.length === 1 &&
         notification1Row?.delivered_at !== null &&
         notification1Row?.source_topic === "notify.message",
@@ -471,12 +473,14 @@ function buildEnv(overrides = {}) {
       short({ total: inbox1.total, unread: inbox1.unreadCount, ref: inbox1.items[0]?.refType }),
       inbox1.total === 1 && inbox1.unreadCount === 1 && inbox1.items[0]?.refType === "task",
     );
+    const appRow1 = await outboxRow(r02TaskAKey + ":app");
+    const appPayload1 = appRow1?.payload ?? {};
     check(
       "S1f",
-      "渠道留痕：R02 的第二动作（wecom_app）不产行、warn 记录（与投递层护栏配对）",
-      "warn 含 wecom_app / 产出仅 1 条 notify.message",
-      short({ warnHit: wiringLogs.warn.some((line) => line.includes("wecom_app")), messages: await ourMessageCount() }),
-      wiringLogs.warn.some((line) => line.includes("wecom_app")) && (await ourMessageCount()) === 1,
+      "双行产出（M5-03-3）：R02 第二动作产 channel=wecom_app 行（:app 幂等键）；本回放注册表未接应用分支 → NotifyService 防御 dead（生产装配按 channel 分流，见 m5-03-3 回放）",
+      "app 行存在 / channel=wecom_app / status=dead / 产出 2 条 notify.message",
+      short({ appKey: appRow1 !== null, channel: appPayload1.channel, status: appRow1?.status, messages: await ourMessageCount() }),
+      appRow1 !== null && appPayload1.channel === "wecom_app" && appRow1?.status === "dead" && (await ourMessageCount()) === 2,
     );    // --------------------------------- 证据二：冷启动保护（过旧拦截 / 新建对照）
     await insertOutbox("task.completed", { taskId: taskB }, OUTBOX_PREFIX + tag + ".evt.cold", new Date(CLOCK_NOW.getTime() - EVENT_MAX_AGE_MS - HOUR_MS));
     const drain3 = await dispatcher.drainOnce();
@@ -511,10 +515,10 @@ function buildEnv(overrides = {}) {
     const drain4b = await dispatcher.drainOnce();
     check(
       "S2c",
-      "对照组落库：次责任人收件箱 1 条（及时添加文件）",
-      "claimed=1 / done=1 / notifications=1 行",
+      "对照组落库：次责任人收件箱 1 条（inbox 落行；app 行防御 dead）",
+      "claimed=2 / done=1 + dead=1 / notifications=1 行",
       short({ ...drain4b, rows: await notifyRowCount(r02TaskBKey) }),
-      drain4b.claimed === 1 && drain4b.done === 1 && (await notifyRowCount(r02TaskBKey)) === 1,
+      drain4b.claimed === 2 && drain4b.done === 1 && drain4b.dead === 1 && (await notifyRowCount(r02TaskBKey)) === 1,
     );
 
     // ----------------------------------------- 证据三：主体不可解析 → dead
@@ -562,8 +566,8 @@ function buildEnv(overrides = {}) {
     const wecomRow = await outboxRow(wecomKey);
     check(
       "S5",
-      "渠道护栏：notify.message channel=wecom_app → 投递层 dead、零落库",
-      "status=dead / claimed=1 / dead=1 / notifications=0",
+      "渠道护栏（防御）：channel=wecom_app 原始行（本回放注册表未接应用分支）→ NotifyService 确定性 dead、零落库（生产装配按 channel 分流至 NotifyAppService）",
+      "status=dead / claimed=1 / dead=1 / notifications=0 / error 含「非 inbox」",
       short({ status: wecomRow?.status, error: wecomRow?.last_error, ...drain7, rows: await notifyRowCount(wecomKey) }),
       wecomRow?.status === "dead" &&
         String(wecomRow?.last_error).includes("非 inbox") &&
@@ -590,16 +594,17 @@ function buildEnv(overrides = {}) {
     );
     check(
       "S6b",
-      "job_runs 留痕：executed / fire_count=1 / produced=1 / note 含主体数、双渠道计数与未落地渠道跳过数",
-      "1 行 / executed / produced=1 / note 含「主体 4」与「notify.message N 条 / notify.group N 条 / 未落地渠道跳过 1 条」",
+      "job_runs 留痕：executed / fire_count=1 / produced=2（A01 inbox + wecom_app 双行）/ note 含主体数与双渠道计数",
+      "1 行 / executed / produced=2 / note 含「主体 4」与「notify.message 2 条 / notify.group 0 条 / 未落地渠道跳过 0 条」",
       short(runs1),
       runs1.length === 1 &&
         runs1[0]?.status === "executed" &&
-        runs1[0]?.produced === 1 &&
+        runs1[0]?.produced === 2 &&
         runs1[0]?.fire_count === 1 &&
         String(runs1[0]?.note).includes("主体 4") &&
-        /notify\.message \d+ 条 \/ notify\.group \d+ 条/.test(String(runs1[0]?.note)) &&
-        String(runs1[0]?.note).includes("未落地渠道跳过 1 条"),
+        String(runs1[0]?.note).includes("notify.message 2 条") &&
+        String(runs1[0]?.note).includes("notify.group 0 条") &&
+        String(runs1[0]?.note).includes("未落地渠道跳过 0 条"),
     );
     const a01Row = await outboxRow(a01Key);
     const a01Payload = a01Row?.payload ?? {};
@@ -621,21 +626,22 @@ function buildEnv(overrides = {}) {
     const ownerTemplates = inboxOwner.items.map((item) => item.templateCode).sort();
     check(
       "S6d",
-      "调度产出消费：A01 落行 → 责任人收件箱共 2 条（R02 + A01）",
-      "claimed=1 / done=1 / total=2 / unreadCount=2 / 模板集命中",
+      "调度产出消费：A01 inbox 落行 / app 行防御 dead → 责任人收件箱共 2 条（R02 + A01）",
+      "claimed=2 / done=1 + dead=1 / total=2 / unreadCount=2 / 模板集命中",
       short({ ...drain8, total: inboxOwner.total, unread: inboxOwner.unreadCount, templates: ownerTemplates }),
-      drain8.claimed === 1 &&
+      drain8.claimed === 2 &&
         drain8.done === 1 &&
+        drain8.dead === 1 &&
         inboxOwner.total === 2 &&
         inboxOwner.unreadCount === 2 &&
         JSON.stringify(ownerTemplates) === JSON.stringify(["A01_INBOX_MERGED", "R02_INBOX"]),
     );
     check(
       "S6e",
-      "未落地渠道跳过（证据九）：接线层 warn 含「渠道未落地」；本回放产出消息数 = 4（R02×2 + 护栏行 + A01）",
-      "warn 命中 / notify.message=4",
+      "渠道落地口径（证据九更新）：wecom_app 动作已落地为 :app 行、跳过计数归零（本回放无 email 产出）；产出消息数 = 7（R02 双行 + 对照组双行 + 护栏行 + A01 双行）",
+      "无「渠道未落地」warn / notify.message=7",
       short({ warnHit: wiringLogs.warn.some((line) => line.includes("渠道未落地")), messages: await ourMessageCount() }),
-      wiringLogs.warn.some((line) => line.includes("渠道未落地")) && (await ourMessageCount()) === 4,
+      wiringLogs.warn.some((line) => line.includes("渠道未落地")) === false && (await ourMessageCount()) === 7,
     );
     // ------------------------------------- 证据八：同窗口重放（幂等键兜底不重发）
     await db.query(
