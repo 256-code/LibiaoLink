@@ -10,7 +10,8 @@
  * 我的任务不就好了」（任务表行口径照项目页任务表）→「这些字段一个不能少懂吗」（Push 231：任务表 = 项目页任务表
  * 全 15 列 —— 任务描述 / 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 / 输出成果文件 / 文件 /
  * 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 / 预计所需施工人数 / 实际完成日期 / 变更关联）。
- * 表仍是**只读** —— 工作台读面不带任务 version，不挂项目页那套点开编辑。折叠面板头常驻**「进入项目」**按钮
+ * 表与项目页任务表逐列对齐（Push 279 起**行内可编辑** —— 读面本身不带任务 version，编辑能力由 useTaskFull 回填行接上，
+ * 见文末 Push 279 段）。折叠面板头常驻**「进入项目」**按钮
  * （Push 232 · 业务口径「增加进入项目按钮」）：落点由调用方给定 —— 「我的任务」= 项目详情缺省标签「项目总览」
  * `#/project/{id}`；「我提出的问题」= 该项目「日报及问题 → 问题追踪」（Push 253 起，见下条；Push 242 时为该页
  * 「日报记录」）；按钮在面板头右侧、不参与展开收起。
@@ -66,8 +67,22 @@
  * 标签走地址（`#/my-tasks?tab=raised&sub=handling`，缺省「我的任务」/ 缺省子标签 raised 不落参数）—— 与列表筛选态 /
  * 详情页子视图同一口径。两个子视图共用同一组「已展开项目」记忆（workspaceOpenProjects.raised；同一标签下的两个问题
  * 视图，若后续要各记一组需契约扩键，随下一刀对齐 wmj 线）。
- * 待办（下一刀，业务未提）：任务级深链 `?task=`
- * （一键开任务详情抽屉）。
+ *
+ * Push 278（业务口径 2026-10-12「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」）：「我的任务」任务表
+ * 行**点击即开任务抽屉**（右侧滑出，与项目页同一枚 TaskDrawer）—— 全能力即时保存：项目经理（项目级回写项目）/
+ * 任务负责人 / 日期区间（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 / 输出成果文件 / 四格进度 / 任务状态 /
+ * 实际完成日期 / 定档与取消定档 / 文件上传 · 删除 · 改名 / 变更申请与变更记录两页；数据源 = useTaskFull 回填行
+ * （带 version，打开零新增请求；行不在回填里时按 id 单查兜底）；写入口径与项目页逐一对齐（同一套 updateTask /
+ * updateTaskProgress / finalizeTask / unfinalizeTask / 文件三件 + 项目经理 updateProject），写后防抖静默刷新
+ * 聚合读面（不打断抽屉 —— 抽屉内 task 用写回响应就地更新、version 滚动前进）。任务级深链 `?task=`（跳项目页开
+ * 抽屉的地址形态）仍不做：页内抽屉已覆盖「一键编辑」，深链属可分享地址增强、业务未提。
+ *
+ * Push 279（业务口径 2026-10-12「不用点开抽屉也要可以编辑」→「和项目总览一样」）：任务表的**行**从只读自绘壳换成
+ * 项目页那枚 TaskRow —— 行内逐列可编辑（四格进度 / 项目经理 / 负责人 / 状态 / 紧急重要度 / 成果文件 /「文件」
+ * 列下拉（预览 · 上传 · 删除）/ 进展描述 / 三段日期 / 人数；天数随日期联动写回、不单独开编辑，与项目页同口径），
+ * 点行照旧开右侧抽屉；行数据 = useTaskFull 回填行（带 version），写后按响应就地更新 + 防抖静默刷新
+ * （回填一到本地覆盖即让位）；该项目源接口没取到 = 该行降级只读（fallbackTaskOf），点行仍可开抽屉
+ * （抽屉内按 id 单查后照常编辑）。
  */
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -80,16 +95,16 @@ import { ImageZoomViewer } from "./components/ImageZoomViewer";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
 import { MyPlanBoard } from "./components/MyPlanBoard";
+import { TaskDrawer, type TaskEditSubmit } from "./components/TaskDrawer";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_CLASS, ISSUE_TAG_CLASS, ISSUE_TAG_TEXT_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
-import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS, STATUS_ROW_CLASS, STATUS_TAG_TEXT_CLASS, resolveColumns, tableGridTemplate, tableMinWidth, type ColumnDef, type ColumnKey } from "./components/TaskBoard";
-import { TrackerDots } from "./components/Tracker";
-import { docTypeCapsule } from "./components/DeliverablePicker";
-import { dateOnlyText, daysBetweenInclusive } from "./data/tasks";
+import { TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, taskPatchBody, type ColumnDef, type TaskPatch } from "./components/TaskBoard";
+import { TEMP_TASK_STAGE, daysBetweenInclusive, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { memberNameOf, type Member } from "./data/members";
 import type { IssueState, ReportPhoto } from "./data/reports";
-import { usePhotoUrl } from "./fileApi";
-import { fetchProject } from "./projectApi";
+import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
+import { fetchProject, updateProject, type ApiProject } from "./projectApi";
 import { fetchProjectIssues, ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
-import { displayStatusLabel, fetchProjectTasks, stageNameOf, type ApiTaskListItem } from "./taskApi";
+import { displayStatusLabel, fetchProjectTasks, fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask, type ApiTaskListItem } from "./taskApi";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
 import type { WorkspaceOpenProjects } from "./preferencesApi";
 import { projectViewHref, type WorkspaceIssueView, type WorkspaceTab } from "./useHashRoute";
@@ -97,6 +112,8 @@ import type { MeResponse } from "./types";
 
 type WorkspacePageProps = {
   me: MeResponse;
+  /** 人员目录（App 层全局目录）：任务抽屉的「项目经理 / 任务负责人」多选候选（Push 278）。 */
+  members: readonly Member[];
   /** 当前标签（地址派生：`#/my-tasks` 缺省「我的任务」/ `#/my-tasks?tab=raised`「我提出的问题」）。 */
   tab: WorkspaceTab;
   /** 切标签：同步渲染并写回地址（replace，不新增历史条目）。 */
@@ -130,28 +147,6 @@ const TASK_GROUP_CHIP: Record<TaskGroupKey, string> = {
   unscheduled: "bg-zinc-100 text-zinc-600",
 };
 
-/** 「液态玻璃」小框的**只读**形态（与 InlineEdit 的 InlineCell 静止态同一档材质）：项目页任务表里
- *  负责人 / 日期格是「点开编辑」的小胶囊；工作台读面不带 version（写不了），只借形、不接交互。 */
-const GLASS_FRAME =
-  "inline-flex max-w-full items-center gap-1 rounded-lg border border-zinc-200/90 bg-white/75 px-1.5 py-[3px] text-xs backdrop-blur-[3px]";
-
-/** ISO（YYYY-MM-DD）→「M月D日」（项目页任务表日期格的短口径，不带年份；未排期空日期由 DatePill 显示「—」）。 */
-function cnDateShort(iso: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (match === null) {
-    return iso;
-  }
-  return String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
-}
-
-/** 日期格（只读玻璃胶囊；空 = 「—」）—— 与项目页任务表「开始 / 预计完成 / 实际完成」三列同一档显示。 */
-function DatePill({ iso }: { iso: string | null }) {
-  if (iso === null) {
-    return <span className="text-xs text-zinc-300">—</span>;
-  }
-  return <span className={GLASS_FRAME + " tabular-nums text-zinc-600"}>{cnDateShort(iso)}</span>;
-}
-
 /** 次按钮（重新加载）—— 与「日报及问题」的 BTN_SECONDARY 同一档材质。 */
 const BTN_SECONDARY =
   "rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:border-zinc-400 hover:bg-zinc-100 hover:text-zinc-900";
@@ -173,19 +168,6 @@ function issueStateOf(state: string): { label: string; className: string; focusR
     return { label: ISSUE_STATE_NAMES[state], className: ISSUE_TAG_CLASS[state], focusRowClass: ISSUE_ROW_CLASS[state], focusTagClass: ISSUE_TAG_TEXT_CLASS[state] };
   }
   return { label: state, className: "bg-zinc-100 text-zinc-600", focusRowClass: "hover:bg-zinc-50/80", focusTagClass: "text-zinc-600" };
-}
-
-/** 「是否按时交付」列的逾期标注（与项目页任务表 lateDeliveryLabel 同口径；工作台不引项目页的 ProjectTask
- *  模型，直接用聚合读面的 displayStatus + 回填行的 onTime）：展示态 = 已延期 → 「逾期未交付」；
- *  已完成（done / early_done）但 onTime = false → 「逾期已交付」；其余走「按时交付 / —」。 */
-function lateDeliveryOf(displayStatus: string, onTime: boolean | null): "逾期未交付" | "逾期已交付" | null {
-  if (displayStatus === "overdue") {
-    return "逾期未交付";
-  }
-  if ((displayStatus === "done" || displayStatus === "early_done") && onTime === false) {
-    return "逾期已交付";
-  }
-  return null;
 }
 
 type ProjectTasks = {
@@ -286,45 +268,52 @@ function useIssueFull(issues: readonly ApiWorkspaceIssue[]): { full: Map<string,
  *  工作台聚合读面（A31 第一刀）只带 9 列 —— 项目经理 / 输出成果文件 / 文件 / 项目进展描述 / 预计所需天数 /
  *  预计所需施工人数 / 是否按时交付（onTime）/ 变更关联不在那里。按项目向源接口回填
  *  （GET /projects/{id}/tasks 一次取满 + GET /projects/{id} 取项目经理名），按任务 id / 项目 id 对齐；
- *  单个项目取不到不挡全页：对应列落「—」，标题行给 partial 提示（与 useIssueFull 同一套降级口径）。 */
+ *  单个项目取不到不挡全页：对应列落「—」，标题行给 partial 提示（与 useIssueFull 同一套降级口径）。
+ *  Push 279 起同批把「文件」列的清单（fetchTaskFiles）一起回填 —— 行内那一列要项目页同款的下拉入口。 */
 type TaskFull = {
-  /** 任务 id → 列表行（含 ownerNames / fileSummary / deliverableTypes / note / estimatedDays / headcount / onTime / changeLinks）。 */
+  /** 任务 id → 列表行（含 ownerNames / fileSummary / deliverableTypes / note / estimatedDays / headcount / onTime / changeLinks / version）。 */
   detail: Map<string, ApiTaskListItem>;
-  /** 项目 id → 项目经理名数组（展示时「、」连接；未取到 = 无该键）。 */
-  managers: Map<string, string[]>;
+  /** 项目 id → 项目卡（Push 278：managerNames 供「项目经理」列与抽屉展示、managerIds + version 供抽屉项目经理多选与项目级回写；未取到 = 无该键）。 */
+  projects: Map<string, ApiProject>;
+  /** 任务 id → 随行文件引用（Push 279 · 行内「文件」列下拉 = 项目页同款 fetchTaskFiles 按项目全量）：未取到 = 无该键，
+   *  该格退回「N 份」计数（文件是次要信息，取不到不算 partial）。 */
+  files: Map<string, TaskFileRef[]>;
 };
 
 function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; ready: boolean } {
-  const [full, setFull] = useState<TaskFull>(() => ({ detail: new Map(), managers: new Map() }));
+  const [full, setFull] = useState<TaskFull>(() => ({ detail: new Map(), projects: new Map(), files: new Map() }));
   const [partial, setPartial] = useState(false);
   /** 回填是否跑完（成功 / 失败都算跑完）：e2e 的等待锚点；跑完前对应列先按「—」渲染。 */
   const [ready, setReady] = useState(false);
   useEffect(() => {
     const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
     if (all.length === 0) {
-      setFull({ detail: new Map(), managers: new Map() });
+      setFull({ detail: new Map(), projects: new Map(), files: new Map() });
       setPartial(false);
       setReady(true);
       return;
     }
     let cancelled = false;
-    setReady(false);
+    // Push 278：重跑（写后静默刷新触发的重取）不再回落 ready —— 旧值在列上不闪「—」，新数据到了直接替换。
     void (async () => {
       const projectIds = Array.from(new Set(all.map((task) => task.projectId)));
       const results = await Promise.all(
         projectIds.map(async (projectId) => {
-          const [taskList, managerNames] = await Promise.all([
+          const [taskList, project, fileMap] = await Promise.all([
             fetchProjectTasks(projectId).then((result) => result.items).catch(() => null),
-            fetchProject(projectId).then((project) => project.managerNames).catch(() => null),
+            fetchProject(projectId).catch(() => null),
+            // 行内「文件」列（Push 279）：与项目页同一个清单接口（按项目全量取满、taskId → 文件引用）。
+            fetchTaskFiles(projectId).catch(() => null),
           ]);
-          return { projectId, taskList, managerNames };
+          return { projectId, taskList, project, fileMap };
         }),
       );
       if (cancelled) {
         return;
       }
       const detail = new Map<string, ApiTaskListItem>();
-      const managers = new Map<string, string[]>();
+      const projects = new Map<string, ApiProject>();
+      const files = new Map<string, TaskFileRef[]>();
       let failed = 0;
       for (const result of results) {
         if (result.taskList === null) {
@@ -334,13 +323,18 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
             detail.set(item.id, item);
           }
         }
-        if (result.managerNames === null) {
+        if (result.project === null) {
           failed += 1;
         } else {
-          managers.set(result.projectId, result.managerNames.filter((name): name is string => name !== null && name !== ""));
+          projects.set(result.projectId, result.project);
+        }
+        if (result.fileMap !== null) {
+          for (const [taskId, refs] of result.fileMap) {
+            files.set(taskId, refs);
+          }
         }
       }
-      setFull({ detail, managers });
+      setFull({ detail, projects, files });
       setPartial(failed > 0);
       setReady(true);
     })();
@@ -349,6 +343,41 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
     };
   }, [data]);
   return { full, partial, ready };
+}
+
+/** 行内编辑的降级行（Push 279）：该项目任务源接口没取到时（回填没命中 —— 没有 version，写不了），用聚合读面
+ *  自带的字段组一条**只读** ProjectTask —— 项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 按时交付 /
+ *  变更关联这些扩列落「—」（与扩列回填失败时的旧口径一致）；点行仍可开抽屉（抽屉内按 id 单查后照常编辑）。 */
+function fallbackTaskOf(task: ApiWorkspaceTask): ProjectTask {
+  const startDate = task.plannedStart ?? "";
+  const dueDate = task.plannedEnd ?? "";
+  return {
+    id: task.id,
+    nodeId: null,
+    sourceNodeId: null,
+    stageKey: task.stageKey,
+    stage: stageNameOf(task.stageKey),
+    sortIndex: 0,
+    title: task.title,
+    titleEn: task.titleEn ?? "",
+    ownerIds: [...task.ownerIds],
+    owners: task.ownerNames.map((name) => (name === null || name === "" ? "—" : name)),
+    status: displayStatusLabel(task.displayStatus),
+    progress: task.progress,
+    startDate,
+    dueDate,
+    doneDate: task.actualEnd ?? "",
+    days: startDate !== "" && dueDate !== "" ? daysBetweenInclusive(startDate, dueDate) : 0,
+    deliverableTypes: [],
+    files: { total: 0, draft: 0, final: 0 },
+    changes: [],
+    onTime: null,
+    note: "",
+    headcount: 0,
+    priority: task.priority === "高" || task.priority === "中" || task.priority === "低" ? task.priority : null,
+    version: 0,
+    finalizedAt: null,
+  };
 }
 
 /** 折叠面板（业务口径「未展开是项目名称和编号 下拉是具体我的任务」「也是折叠面板」）：
@@ -427,28 +456,54 @@ function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
 }
 
 /** 展开区 ① 我的任务表：列口径 = 项目页任务表全列（Push 231 · 业务口径「这些字段一个不能少」）——
- *  表头 / 列壳直接复用项目页的 TABLE_COLUMNS（同序 / 同宽 / 同 min，列宽用 grid 模板还原），15 列一个不少：
- *  任务描述（+ 四格进度点；原「已逾期 / 今日待办 / 即将到期」分组签按业务口径「这个不要展示」已下线，
- *  组序仍由服务端给定、由行序体现）/ 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 /
- *  输出成果文件 / 文件 / 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 /
- *  预计所需施工人数 / 实际完成日期 / 变更关联。只读形态（工作台读面不带 version）：借项目页的形
- *  （色签 / 玻璃胶囊 / 空值「—」），不挂点开编辑；数据 = 聚合读面的 9 列 + useTaskFull 回填的扩展字段。 */
+ *  表头 / 列壳 / 行一律复用项目页的 TASK_COLUMNS + TaskRow，15 列一个不少：
+ *  任务描述（+ 四格进度点）/ 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 / 输出成果文件 /
+ *  文件 / 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 /
+ *  预计所需施工人数 / 实际完成日期 / 变更关联。
+ *  Push 279（业务口径 2026-10-12「不用点开抽屉也要可以编辑」→「和项目总览一样」）：行不再是只读自绘壳 ——
+ *  直接用项目页那枚 TaskRow（行内逐列可编辑：四格进度 / 项目经理 / 负责人 / 状态 / 紧急重要度 / 成果文件 /
+ *  「文件」列下拉（预览 · 上传 · 删除）/ 进展描述 / 三段日期 / 人数；天数随日期联动写回、不单独开编辑），
+ *  点行仍开右侧任务抽屉（onSelect）。行数据 = useTaskFull 回填行（带 version，能写）；回填没命中
+ *  （该项目任务源接口没取到）= 该行降级只读（fallbackTaskOf），点行仍可开抽屉（抽屉内按 id 单查后照常编辑）。
+ *  行外壳保留工作台自己的 data-workspace-task* 锚点（回放读数 / 排障），内里就是项目页的同款行。 */
 const TASK_COLUMNS: ColumnDef[] = resolveColumns({});
 
-function TaskTable({ projectId, items, full, ready, focus }: {
+/** 行内编辑回调（Push 279）：签名 = 项目页 TaskRow 那一套，只是先带 projectId 定位面板（同一组回调跨项目面板共用）。 */
+type TaskTableHandlers = {
+  onProgress: (projectId: string, taskId: string, progress: number) => void;
+  onSetStatus: (projectId: string, taskId: string, status: TaskStatus) => void;
+  onSetActualEnd: (projectId: string, taskId: string, iso: string) => void;
+  onPatch: (projectId: string, taskId: string, patch: TaskPatch) => void;
+  onChangeManagers: (projectId: string, managerIds: string[]) => void;
+  onUploadFiles: (projectId: string, taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>;
+  onDeleteFile: (fileId: string) => Promise<void>;
+};
+
+function TaskTable({ projectId, items, full, filesByTask, ready, focus, members, onOpenTask, rowOf, handlers }: {
   projectId: string;
   items: ProjectTasks["items"];
-  /** 回填的扩展字段（useTaskFull）。 */
+  /** 回填的扩展字段 / 项目卡 / 文件清单（useTaskFull）。 */
   full: TaskFull;
+  /** 任务文件引用（useTaskFull 回填）：行内「文件」列下拉与文件名胶囊的数据源。 */
+  filesByTask: ReadonlyMap<string, TaskFileRef[]>;
   /** 回填是否跑完（data-workspace-task-full 锚点；跑完前对应列先按「—」渲染）。 */
   ready: boolean;
   /** 醒目模式（Push 232）：整行铺任务状态底色 + 状态胶囊收口成深色字（口径 = 项目页 TaskBoard）。 */
   focus: boolean;
+  /** 人员目录（任务行内「项目经理 / 负责人」多选候选；Push 279）。 */
+  members: readonly Member[];
+  /** 点任务行打开右侧任务抽屉（Push 278）。 */
+  onOpenTask: (task: ApiWorkspaceTask) => void;
+  /** 行的当前数据（本地写回覆盖 → 回填行；undefined = 该行降级只读）。 */
+  rowOf: (taskId: string) => ProjectTask | undefined;
+  /** 行内写入（Push 279）。 */
+  handlers: TaskTableHandlers;
 }) {
   // 与项目页任务表同一套列宽口径（2026-10-10）：`fr` 列带 minmax 硬下限 + 最小宽算上行内衬 —— 窄窗下横向滚动、不压列。
   const gridTemplate = tableGridTemplate(TASK_COLUMNS);
   const minWidth = tableMinWidth(TASK_COLUMNS);
-  const managerText = (full.managers.get(projectId) ?? []).join("、");
+  const project = full.projects.get(projectId);
+  const managers = (project?.managerNames ?? []).filter((name): name is string => name !== null && name !== "").join("、");
   return (
     <div data-workspace-task-table="" data-workspace-task-full={ready ? "true" : "false"} data-workspace-task-focus={focus ? "true" : "false"} className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
       <div className="overflow-x-auto">
@@ -470,158 +525,41 @@ function TaskTable({ projectId, items, full, ready, focus }: {
           </div>
           <div className="divide-y divide-zinc-100">
             {items.map(({ task }) => {
-              const detail = full.detail.get(task.id);
-              const status = displayStatusLabel(task.displayStatus);
+              const row = rowOf(task.id);
+              const ui = row ?? fallbackTaskOf(task);
+              // 回填命中（有 version）才挂行内编辑入口；降级行只读 —— 点行仍开抽屉（抽屉内单查兜底）。
+              const editable = row !== undefined;
               const stage = stageNameOf(task.stageKey);
-              const subtitle = (stage === "" ? "临时任务" : stage) + (task.titleEn === null || task.titleEn === "" ? "" : " · " + task.titleEn);
-              const ownerText = task.ownerNames.map((name) => name ?? "").filter((name) => name !== "").join("、");
-              const priorityClass =
-                task.priority === null ? "" : ((PRIORITY_CAPSULE_CLASS as Record<string, string | undefined>)[task.priority] ?? "bg-zinc-100 text-zinc-500");
-              const onTime = detail === undefined ? null : detail.onTime;
-              const late = lateDeliveryOf(task.displayStatus, onTime);
-              const deliverableTypes = detail === undefined ? [] : detail.deliverableTypes;
-              const fileSummary = detail === undefined ? null : detail.fileSummary;
-              const note = detail === undefined ? null : detail.note;
-              const derivedDays = task.plannedStart !== null && task.plannedEnd !== null ? daysBetweenInclusive(task.plannedStart, task.plannedEnd) : 0;
-              const days = (detail === undefined ? null : detail.estimatedDays) ?? derivedDays;
-              const headcount = detail === undefined ? null : detail.headcount;
-              const changes = detail === undefined ? [] : detail.changeLinks;
-              const changeTitle =
-                changes.length === 0
-                  ? undefined
-                  : changes.map((change) => "变更 " + dateOnlyText(change.appliedAt) + (change.reason === null || change.reason === "" ? "" : "（" + change.reason + "）")).join("；");
-              const cells: Record<Exclude<ColumnKey, "title">, ReactNode> = {
-                manager:
-                  managerText === "" ? (
-                    <span className="text-xs text-zinc-300">—</span>
-                  ) : (
-                    <span className="truncate text-xs text-zinc-600" title={managerText}>{managerText}</span>
-                  ),
-                owner:
-                  task.ownerIds.length === 0 ? (
-                    <span className="text-xs text-zinc-300">待分配</span>
-                  ) : (
-                    <span className={GLASS_FRAME + " min-w-0 text-zinc-600"} title={ownerText}>
-                      <span className="min-w-0 truncate">{ownerText}</span>
-                    </span>
-                  ),
-                status: (
-                  <span
-                    data-workspace-task-status={task.displayStatus}
-                    className={
-                      "inline-block " +
-                      (focus
-                        ? "px-1.5 py-[3px] text-xs font-semibold " + STATUS_TAG_TEXT_CLASS[status]
-                        : "rounded-lg px-3 py-1.5 text-[11px] font-medium " + STATUS_CAPSULE_CLASS[status])
-                    }
-                  >
-                    {status}
-                  </span>
-                ),
-                priority:
-                  task.priority === null ? (
-                    <span className="text-xs text-zinc-300">—</span>
-                  ) : (
-                    <span className={"inline-block rounded-lg px-3 py-1.5 text-[11px] font-medium " + priorityClass}>{task.priority}</span>
-                  ),
-                onTime: (
-                  <span>
-                    {late === "逾期未交付" ? (
-                      <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
-                    ) : late === "逾期已交付" ? (
-                      <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
-                    ) : onTime === null ? (
-                      <span className="text-xs text-zinc-300">—</span>
-                    ) : (
-                      <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">按时交付</span>
-                    )}
-                  </span>
-                ),
-                deliverable: (
-                  <span className="flex min-w-0 items-center gap-1">
-                    {deliverableTypes.length === 0 ? (
-                      <span className="text-xs text-zinc-300">—</span>
-                    ) : (
-                      <>
-                        <span className="min-w-0 truncate" title={deliverableTypes.join("、")}>
-                          {docTypeCapsule(deliverableTypes[0])}
-                        </span>
-                        {deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{deliverableTypes.length - 1}</span> : null}
-                      </>
-                    )}
-                  </span>
-                ),
-                files:
-                  fileSummary === null || fileSummary.total === 0 ? (
-                    <span className="text-xs text-zinc-300">—</span>
-                  ) : (
-                    <span className="flex min-w-0 items-center gap-1">
-                      <span
-                        className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600"
-                        title={"共 " + String(fileSummary.total) + " 份（未定档 " + String(fileSummary.draft) + " / 已定档 " + String(fileSummary.final) + "）"}
-                      >
-                        {fileSummary.total} 份
-                      </span>
-                      {fileSummary.draft > 0 ? <span className="text-[10px] text-amber-600">未定档 {fileSummary.draft}</span> : null}
-                    </span>
-                  ),
-                note:
-                  note === null || note === "" ? (
-                    <span className="text-xs text-zinc-300">—</span>
-                  ) : (
-                    <span className="block min-w-0 truncate text-xs text-zinc-600" title={note}>{note}</span>
-                  ),
-                start: <DatePill iso={task.plannedStart} />,
-                days: (
-                  <span data-workspace-task-days={String(days)} className="relative flex items-center justify-center self-stretch">
-                    <span className="h-px w-10 bg-zinc-300" />
-                    <span className="absolute inset-x-0 bottom-1/2 mb-1 text-center text-[11px] leading-none tabular-nums text-zinc-500">{days}</span>
-                  </span>
-                ),
-                due: <DatePill iso={task.plannedEnd} />,
-                headcount: (
-                  <span className="text-xs tabular-nums text-zinc-600">
-                    {headcount !== null && headcount > 0 ? headcount + " 人" : <span className="text-zinc-300">—</span>}
-                  </span>
-                ),
-                doneDate: <DatePill iso={task.actualEnd} />,
-                change: (
-                  <span data-workspace-task-change={String(changes.length)} className="flex items-center gap-1" title={changeTitle}>
-                    {changes.length === 0 ? null : (
-                      <>
-                        <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">变更</span>
-                        {changes.length > 1 ? <span className="text-[10px] text-zinc-400">+{changes.length - 1}</span> : null}
-                      </>
-                    )}
-                  </span>
-                ),
-              };
+              const subtitle = (stage === "" ? TEMP_TASK_STAGE : stage) + (task.titleEn === null || task.titleEn === "" ? "" : " · " + task.titleEn);
               return (
                 <div
                   key={task.id}
                   data-workspace-task={task.id}
-                  className={"grid items-center px-5 py-2.5 transition-colors " + (focus ? STATUS_ROW_CLASS[status] : "hover:bg-zinc-50/80")}
-                  style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
+                  data-workspace-task-status={task.displayStatus}
+                  data-workspace-task-dots={String(ui.progress)}
+                  data-workspace-task-change={String(ui.changes.length)}
                 >
-                  {TASK_COLUMNS.map((column) =>
-                    column.key === "title" ? (
-                      <div key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-4 self-stretch">
-                        <div className="min-w-0 flex-1">
-                          <p data-workspace-task-title="" className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === null ? "" : " / " + task.titleEn)}>
-                            {task.title}
-                          </p>
-                          {subtitle === "" ? null : <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subtitle}>{subtitle}</p>}
-                        </div>
-                        <span data-workspace-task-dots={String(task.progress)} className="shrink-0">
-                          <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读展示：不接悬停预览 */ }} />
-                        </span>
-                      </div>
-                    ) : (
-                      <div key={column.key} data-column={column.key} className="flex min-w-0 items-center justify-center self-stretch">
-                        {cells[column.key]}
-                      </div>
-                    ),
-                  )}
+                  <TaskRow
+                    task={ui}
+                    columns={TASK_COLUMNS}
+                    selected={false}
+                    focusMode={focus}
+                    subtitle={subtitle}
+                    onSelect={() => {
+                      onOpenTask(task);
+                    }}
+                    onProgress={editable ? (progress) => { handlers.onProgress(projectId, task.id, progress); } : undefined}
+                    managers={managers}
+                    managerIds={project?.managerIds ?? []}
+                    members={members}
+                    onSetStatus={editable ? (status) => { handlers.onSetStatus(projectId, task.id, status); } : undefined}
+                    onSetActualEnd={editable ? (iso) => { handlers.onSetActualEnd(projectId, task.id, iso); } : undefined}
+                    onChangeManagers={editable && project !== undefined ? (managerIds) => { handlers.onChangeManagers(projectId, managerIds); } : undefined}
+                    onPatch={editable ? (patch) => { handlers.onPatch(projectId, task.id, patch); } : undefined}
+                    onUploadFiles={editable ? (taskId, files, onProgress, finalize) => handlers.onUploadFiles(projectId, taskId, files, onProgress, finalize) : undefined}
+                    onDeleteFile={editable ? handlers.onDeleteFile : undefined}
+                    files={filesByTask.get(task.id)}
+                  />
                 </div>
               );
             })}
@@ -843,11 +781,291 @@ const TABS: ReadonlyArray<{ key: WorkspaceTab; label: string }> = [
   { key: "plan", label: "我的计划" },
 ];
 
-/** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。 */
-function MyTasksView({ data, focus, openIds, onToggleProject }: { data: ApiWorkspace; focus: boolean; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void }) {
+/** 两份人员名单是否一致（顺序敏感：名单顺序就是展示顺序，Push 136 —— 与项目页 sameIds 同口径）。 */
+function sameMemberIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+/** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。
+ *  Push 278：任务行**点击开任务抽屉**（业务口径「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」）——
+ *  抽屉 = 项目页同款 TaskDrawer（全能力即时保存）；数据源 = useTaskFull 回填行（带 version，打开零新增请求），
+ *  行不在回填里时按 id 单查兜底；写后防抖静默刷新聚合读面（抽屉不打断：task 用写回响应就地更新、version 滚动前进）。 */
+function MyTasksView({ data, focus, openIds, onToggleProject, members, actorName, onReload }: { data: ApiWorkspace; focus: boolean; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorName: string; onReload: () => void }) {
   const projects = groupTasksByProject(data);
   const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length + data.myTasks.unscheduled.length;
   const { full, partial, ready } = useTaskFull(data);
+
+  /** 抽屉里的当前任务（含 version；null = 抽屉关着）：写回响应就地更新 —— version 滚动前进，连续编辑不撞旧值。 */
+  const [drawerTask, setDrawerTask] = useState<{ task: ProjectTask; projectId: string } | null>(null);
+  /** 打开 / 保存失败文案（null = 无提示）：抽屉内的失败只出提示条，不回滚已在输入的内容。 */
+  const [taskError, setTaskError] = useState<string | null>(null);
+  /** 写后静默刷新（Push 278）：防抖 400ms 合并连续编辑 —— 重取聚合读面把行数据（进度 / 状态 / 文件计数 / 变更关联）
+   *  带回来；数据引用一变 useTaskFull 自动重跑（重跑不落 ready，列不闪「—」）。 */
+  const reloadTimer = useRef<number | null>(null);
+  const scheduleReload = (): void => {
+    if (reloadTimer.current !== null) {
+      window.clearTimeout(reloadTimer.current);
+    }
+    reloadTimer.current = window.setTimeout(() => {
+      reloadTimer.current = null;
+      onReload();
+    }, 400);
+  };
+  useEffect(() => () => {
+    if (reloadTimer.current !== null) {
+      window.clearTimeout(reloadTimer.current);
+    }
+  }, []);
+
+  /** 人员目录 → 姓名（回填行 / 写回响应补姓名共用）。 */
+  const resolveName = (id: string): string | undefined => memberNameOf(members, id);
+  /** 行内写回覆盖（Push 279）：写成功用响应就地更新这一行（version 滚动前进）—— 回填刷新一到即让位（见下）。 */
+  const [patches, setPatches] = useState<Map<string, ProjectTask>>(new Map());
+  // 回填重跑（首次加载 / 写后静默刷新）一到，本地覆盖清空：新回填行已含写后的值，覆盖只在两次回填之间兜住画面。
+  useEffect(() => {
+    setPatches(new Map());
+  }, [full.detail]);
+
+  /** 回填行派生（不含本地覆盖）：该项目任务源接口没取到 = undefined。 */
+  const detailRowOf = (taskId: string): ProjectTask | undefined => {
+    const item = full.detail.get(taskId);
+    return item === undefined ? undefined : toUiTask(item, undefined, resolveName);
+  };
+  /** 行的当前数据：本地写回覆盖优先，其次回填行（两者都没有 = 该行降级只读，见 TaskTable 的 fallbackTaskOf）。 */
+  const rowOf = (taskId: string): ProjectTask | undefined => patches.get(taskId) ?? detailRowOf(taskId);
+
+  /** 写成功后就地更新行（Push 279 · 与项目页 replaceRow 同口径）：文件摘要 / 负责人姓名从旧行继承。 */
+  const applyRowUpdate = (updated: ApiTask): void => {
+    setPatches((current) => {
+      const next = new Map(current);
+      next.set(updated.id, toUiTask(updated, current.get(updated.id) ?? detailRowOf(updated.id), resolveName));
+      return next;
+    });
+  };
+
+  /** 行内写入统一出口（Push 279）：以当前行 version 提交（与项目页同一套写入口径）；成功 = 就地更新行 + 防抖静默刷新；
+   *  失败走页内提示条（版本冲突顺带静默刷新 —— 下一次回填把最新行带回来）。 */
+  const runRowWrite = (taskId: string, write: (row: ProjectTask) => Promise<ApiTask>): void => {
+    const row = rowOf(taskId);
+    if (row === undefined) {
+      return;
+    }
+    void (async () => {
+      try {
+        const updated = await write(row);
+        applyRowUpdate(updated);
+        setTaskError(null);
+        scheduleReload();
+      } catch (error) {
+        setTaskError(error instanceof ApiError ? error.message : "任务保存失败。");
+        if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
+          scheduleReload();
+        }
+      }
+    })();
+  };
+
+  /** 打开任务抽屉：优先用当前行（本地写回覆盖 → 回填行，零请求 —— 行内刚改过的值也在）；没有（回填未跑完 /
+   *  失败）就按 id 单查兜底。 */
+  const openTask = (task: ApiWorkspaceTask): void => {
+    const current = rowOf(task.id);
+    if (current !== undefined) {
+      setTaskError(null);
+      setDrawerTask({ task: current, projectId: task.projectId });
+      return;
+    }
+    void (async () => {
+      try {
+        const detail = await fetchTaskDetail(task.projectId, task.id);
+        setTaskError(null);
+        setDrawerTask({ task: toUiTask(detail, undefined, resolveName), projectId: task.projectId });
+      } catch (error) {
+        setTaskError(error instanceof ApiError ? error.message : "任务详情取不到，请稍后重试。");
+      }
+    })();
+  };
+
+  /** 写操作统一出口：以抽屉当前 version 提交（与项目页同一套写入口径）；成功用响应就地更新抽屉 + 调度静默刷新。 */
+  const runTaskWrite = (write: (task: ProjectTask, projectId: string) => Promise<ApiTask>): void => {
+    const current = drawerTask;
+    if (current === null) {
+      return;
+    }
+    void (async () => {
+      try {
+        const updated = await write(current.task, current.projectId);
+        setDrawerTask((previous) => (previous === null || previous.task.id !== updated.id ? previous : { task: toUiTask(updated, previous.task, resolveName), projectId: previous.projectId }));
+        // 抽屉写回同步到行（Push 279）：进度 / 状态 / 文件计数这类行上可见的字段当场跟着变。
+        applyRowUpdate(updated);
+        setTaskError(null);
+        scheduleReload();
+      } catch (error) {
+        setTaskError(error instanceof ApiError ? error.message : "任务保存失败。");
+      }
+    })();
+  };
+
+  /** 抽屉「即改即存」提交：项目经理（项目级）变化回写项目；任务字段走 PATCH（与项目页 handlePatchTask 同一 body）。 */
+  const handleDrawerSubmit = (values: TaskEditSubmit): void => {
+    const current = drawerTask;
+    if (current === null) {
+      return;
+    }
+    const project = full.projects.get(current.projectId);
+    if (project !== undefined && values.managerIds.length > 0 && !sameMemberIds(values.managerIds, project.managerIds)) {
+      void (async () => {
+        try {
+          await updateProject(project.id, { code: project.code, name: project.name, region: project.region, projectType: project.projectType, managerIds: values.managerIds }, project.version);
+          scheduleReload();
+        } catch (error) {
+          setTaskError(error instanceof ApiError ? error.message : "项目经理保存失败。");
+        }
+      })();
+    }
+    runTaskWrite((row, projectId) =>
+      updateTask(projectId, row.id, {
+        version: row.version,
+        ownerIds: values.ownerIds,
+        plannedStart: values.startDate === "" ? null : values.startDate,
+        plannedEnd: values.dueDate === "" ? null : values.dueDate,
+        estimatedDays: values.days,
+        headcount: values.headcount,
+        priority: values.priority,
+        deliverableTypes: values.deliverableTypes,
+        note: values.note,
+      }),
+    );
+  };
+  /** 任务描述改名（临时任务才出这一行，见 TaskDrawer 的 titleEditable 口径）。 */
+  const handleDrawerRename = (_taskId: string, title: string, titleEn: string): void => {
+    runTaskWrite((row, projectId) => updateTask(projectId, row.id, { version: row.version, title, titleEn: titleEn === "" ? null : titleEn }));
+  };
+  /** 四格进度 / 任务状态 / 实际完成日期：与项目页行内同一套接口（updateTaskProgress / updateTask）。 */
+  const handleDrawerProgress = (_taskId: string, progress: number): void => {
+    runTaskWrite((row, projectId) => updateTaskProgress(projectId, row.id, { progress, version: row.version }));
+  };
+  const handleDrawerStatus = (_taskId: string, status: TaskStatus): void => {
+    runTaskWrite((row, projectId) => updateTask(projectId, row.id, { status: statusWriteValue(status), version: row.version }));
+  };
+  const handleDrawerActualEnd = (_taskId: string, iso: string): void => {
+    runTaskWrite((row, projectId) => updateTaskProgress(projectId, row.id, iso === "" ? { progress: 0.75, version: row.version } : { progress: 1, actualEnd: iso, version: row.version }));
+  };
+  const handleDrawerFinalize = (_taskId: string): void => {
+    runTaskWrite((row, projectId) => finalizeTask(projectId, row.id, row.version));
+  };
+  const handleDrawerUnfinalize = (_taskId: string): void => {
+    runTaskWrite((row, projectId) => unfinalizeTask(projectId, row.id, row.version));
+  };
+  /** 文件上传 / 删除 / 改名：抽屉内部上传完成 / 失败后自动重取清单（filesTick），这里只管调接口 + 刷新行计数。 */
+  const handleDrawerUploadFiles = (taskId: string, files: File[], onProgress?: (done: number, total: number) => void): Promise<void> => {
+    const current = drawerTask;
+    if (current === null) {
+      return Promise.resolve();
+    }
+    return (async () => {
+      try {
+        await uploadFiles(current.projectId, files, { taskId, onProgress });
+        scheduleReload();
+      } catch (error) {
+        scheduleReload();
+        setTaskError(error instanceof ApiError ? error.message : "文件上传失败。");
+      }
+    })();
+  };
+  const handleDrawerDeleteFile = (fileId: string): Promise<void> => {
+    return (async () => {
+      try {
+        await recycleFile(fileId);
+        scheduleReload();
+      } catch (error) {
+        setTaskError(error instanceof ApiError ? error.message : "文件删除失败。");
+      }
+    })();
+  };
+  const handleDrawerRenameFile = (fileId: string, name: string): Promise<void> => {
+    return (async () => {
+      try {
+        await renameFile(fileId, name);
+        scheduleReload();
+      } catch (error) {
+        setTaskError(error instanceof ApiError ? error.message : "文件改名失败。");
+      }
+    })();
+  };
+  /** 变更提交成功（onChanged）：重取任务详情（变更关联 / 文件新状态带回来）→ 抽屉就地更新；行数据交给静默刷新。 */
+  const handleDrawerChanged = (): void => {
+    const current = drawerTask;
+    if (current === null) {
+      return;
+    }
+    void (async () => {
+      try {
+        const detail = await fetchTaskDetail(current.projectId, current.task.id);
+        setDrawerTask((previous) => (previous === null || previous.task.id !== detail.id ? previous : { task: toUiTask(detail, previous.task, (id) => memberNameOf(members, id)), projectId: previous.projectId }));
+      } catch {
+        // 详情取不到不打断：文件清单由抽屉内 filesTick 自理，行数据交给静默刷新。
+      }
+      scheduleReload();
+    })();
+  };
+
+  /** 行内编辑回调（Push 279）：逐列与项目页 TaskRow 同一套写入口径（回填行的 version + 防抖静默刷新）；
+   *  项目经理是项目级字段（回写项目卡），文件两件走项目文件库（上传 / 回收站），失败都进同一条提示条。 */
+  const rowHandlers: TaskTableHandlers = {
+    onProgress: (projectId, taskId, progress) => {
+      runRowWrite(taskId, (row) => updateTaskProgress(projectId, taskId, { progress, version: row.version }));
+    },
+    onSetStatus: (projectId, taskId, status) => {
+      runRowWrite(taskId, (row) => updateTask(projectId, taskId, { status: statusWriteValue(status), version: row.version }));
+    },
+    onSetActualEnd: (projectId, taskId, iso) => {
+      runRowWrite(taskId, (row) => updateTaskProgress(projectId, taskId, iso === "" ? { progress: 0.75, version: row.version } : { progress: 1, actualEnd: iso, version: row.version }));
+    },
+    onPatch: (projectId, taskId, patch) => {
+      runRowWrite(taskId, (row) => updateTask(projectId, taskId, taskPatchBody(row.version, patch)));
+    },
+    onChangeManagers: (projectId, managerIds) => {
+      const project = full.projects.get(projectId);
+      if (project === undefined || sameMemberIds(managerIds, project.managerIds)) {
+        return;
+      }
+      void (async () => {
+        try {
+          await updateProject(project.id, { code: project.code, name: project.name, region: project.region, projectType: project.projectType, managerIds }, project.version);
+          setTaskError(null);
+          scheduleReload();
+        } catch (error) {
+          setTaskError(error instanceof ApiError ? error.message : "项目经理保存失败。");
+        }
+      })();
+    },
+    onUploadFiles: (projectId, taskId, files, onProgress, finalize) => {
+      return (async () => {
+        try {
+          await uploadFiles(projectId, files, { taskId, onProgress, finalize });
+          scheduleReload();
+        } catch (error) {
+          // 可能已部分成功（逐份直传中途失败 / 定档被拦）：先静默刷新让计数归位，再走统一错误出口。
+          scheduleReload();
+          setTaskError(error instanceof ApiError ? error.message : "文件上传失败。");
+        }
+      })();
+    },
+    onDeleteFile: (fileId) => {
+      return (async () => {
+        try {
+          await recycleFile(fileId);
+          scheduleReload();
+        } catch (error) {
+          setTaskError(error instanceof ApiError ? error.message : "文件删除失败。");
+        }
+      })();
+    },
+  };
+
+  const drawerProject = drawerTask === null ? undefined : full.projects.get(drawerTask.projectId);
+  const drawerManagers = (drawerProject?.managerNames ?? []).filter((name): name is string => name !== null && name !== "").join("、");
+
   return (
     <section data-workspace-tasks="" className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -878,10 +1096,35 @@ function MyTasksView({ data, focus, openIds, onToggleProject }: { data: ApiWorks
                 onToggleProject(project.projectId);
               }}
             >
-              <TaskTable projectId={project.projectId} items={project.items} full={full} ready={ready} focus={focus} />
+              <TaskTable projectId={project.projectId} items={project.items} full={full} filesByTask={full.files} ready={ready} focus={focus} members={members} onOpenTask={openTask} rowOf={rowOf} handlers={rowHandlers} />
             </ProjectPanel>
           ))}
         </div>
+      )}
+      <TaskDrawer
+        task={drawerTask?.task ?? null}
+        managers={drawerManagers}
+        managerIds={drawerProject?.managerIds ?? []}
+        members={members}
+        onSubmit={handleDrawerSubmit}
+        onRename={handleDrawerRename}
+        onProgress={handleDrawerProgress}
+        onSetStatus={handleDrawerStatus}
+        onSetActualEnd={handleDrawerActualEnd}
+        onFinalize={handleDrawerFinalize}
+        onUnfinalize={handleDrawerUnfinalize}
+        onUploadFiles={handleDrawerUploadFiles}
+        onDeleteFile={handleDrawerDeleteFile}
+        onRenameFile={handleDrawerRenameFile}
+        onChanged={handleDrawerChanged}
+        actorName={actorName}
+        projectId={drawerTask?.projectId}
+        onClose={() => {
+          setDrawerTask(null);
+        }}
+      />
+      {taskError === null ? null : (
+        <Toast kind="error" text={taskError} onClose={() => { setTaskError(null); }} anchor={{ name: "data-workspace-task-error", value: "" }} />
       )}
     </section>
   );
@@ -961,7 +1204,7 @@ function IssuesView({ view, issues, focus, openIds, onToggleProject, overrides, 
  *  Push 260：「我提出的问题」标签下再分两枚子标签（我提出的问题 / 待我处理的问题，`?sub=`，见 ISSUE_VIEW_TABS）——
  *  两枚子标签共用同一份读面（myIssues.raised / myIssues.handling）与同一组展开态记忆，只换数据栏与标题；
  *  展示口径 = 「已完成不显示」（Push 260 第七项 —— 见 IssuesView 的 visibleIssues 过滤）。 */
-export default function WorkspacePage({ me, tab, onChangeTab, sub, onChangeSub, focusMode, onFocusModeChange, workspaceOpenProjects, onWorkspaceOpenProjectsChange }: WorkspacePageProps) {
+export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onChangeSub, focusMode, onFocusModeChange, workspaceOpenProjects, onWorkspaceOpenProjectsChange }: WorkspacePageProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: "loading" });
   /** 重新加载令牌：bump 一次重新取数（错误态的「重新加载」用）。 */
   const [reloadToken, setReloadToken] = useState(0);
@@ -1120,6 +1363,18 @@ export default function WorkspacePage({ me, tab, onChangeTab, sub, onChangeSub, 
     };
   }, [reloadToken]);
 
+  /** 任务抽屉写后静默刷新（Push 278）：重取聚合读面但不置 loading（整页不闪）—— 行数据（进度 / 状态 / 文件计数 /
+   *  变更关联）随写回滚；失败静默（抽屉内已就地更新，下次自然刷新兜底）。 */
+  const refreshQuietly = (): void => {
+    void fetchWorkspace()
+      .then((next) => {
+        setState({ kind: "ready", data: next });
+      })
+      .catch(() => {
+        // 静默：抽屉内已就地更新；列表本次没刷新成功不影响继续编辑。
+      });
+  };
+
   return (
     <div className="min-h-screen">
       <AppHeader me={me} />
@@ -1271,6 +1526,9 @@ export default function WorkspacePage({ me, tab, onChangeTab, sub, onChangeSub, 
               data={state.data}
               focus={focus}
               openIds={taskOpenIds}
+              members={members}
+              actorName={me.user.displayName ?? ""}
+              onReload={refreshQuietly}
               onToggleProject={(projectId) => {
                 handleToggleProject("tasks", projectId);
               }}

@@ -10,7 +10,7 @@ import { StakeholderPanel } from "./components/StakeholderPanel";
 import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { TableScrollbar } from "./components/TableScrollbar";
-import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
+import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, taskPatchBody, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
 import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
@@ -43,7 +43,6 @@ import {
   type ApiTaskListItem,
   type TaskCreateInput,
   createTasksFromTemplate,
-  type TaskUpdateInput,
 } from "./taskApi";
 
 /** 阶段名（不含「项目总览」汇总视图）。 */
@@ -459,40 +458,8 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (projectId === null || row === undefined) {
       return;
     }
-    const body: TaskUpdateInput = { version: row.version };
-    if (patch.title !== undefined) {
-      body.title = patch.title;
-    }
-    // 任务描述（英文）：空串 = 清空（契约 nullable），与日期空串口径一致
-    if (patch.titleEn !== undefined) {
-      body.titleEn = patch.titleEn === "" ? null : patch.titleEn;
-    }
-    if (patch.ownerIds !== undefined) {
-      body.ownerIds = patch.ownerIds;
-    }
-    // 日期空串 = 未填（契约 nullable）：清空走显式 null
-    if (patch.startDate !== undefined) {
-      body.plannedStart = patch.startDate === "" ? null : patch.startDate;
-    }
-    if (patch.dueDate !== undefined) {
-      body.plannedEnd = patch.dueDate === "" ? null : patch.dueDate;
-    }
-    if (patch.days !== undefined) {
-      body.estimatedDays = patch.days;
-    }
-    if (patch.headcount !== undefined) {
-      body.headcount = patch.headcount;
-    }
-    if (patch.priority !== undefined) {
-      body.priority = patch.priority;
-    }
-    // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：常规编辑开放，传数组 = 整体替换
-    if (patch.deliverableTypes !== undefined) {
-      body.deliverableTypes = patch.deliverableTypes;
-    }
-    if (patch.note !== undefined) {
-      body.note = patch.note;
-    }
+    // patch → body 的字段口径（空串 = 清空等）抽到 TaskBoard.taskPatchBody（Push 279）：与工作台行内编辑同源
+    const body = taskPatchBody(row.version, patch);
     void (async () => {
       try {
         replaceRow(await updateTask(projectId, taskId, body));
