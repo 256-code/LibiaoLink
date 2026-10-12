@@ -1,7 +1,7 @@
 /*
  * Outbox 消费与调度契约回放（M5-02 草案 · Push 165 · wmj）：契约内不变式 + 键形态与再生窗口（Zod 层，无 DB / 无 HTTP）。
  * 运行：shared/ 下 node scripts/outbox-contract-replay.mjs；退出码 0 = 全过。
- * 口径：主题白名单（规则可订阅事件为其子集 + 写入端 ⊆ 白名单；Push 182 起预留清单首次清空 —— notify.message 已转写入端；Push 221 登记 1 项预留 notify.group（M5-03-2 契约刀，接线刀移出））/ 状态与库侧 CHECK 同值 / 幂等执行键 scope:entityId:window（含状态版本再生）。
+ * 口径：主题白名单（规则可订阅事件为其子集 + 写入端 ⊆ 白名单；Push 182 起预留清单首次清空 —— notify.message 已转写入端；Push 221 登记 1 项预留 notify.group、Push 224 接线段移出（automation-wiring 产出行，预留清单再次清空））/ 状态与库侧 CHECK 同值 / 幂等执行键 scope:entityId:window（含状态版本再生）。
  * 说明：库侧权威门禁在 server 的 test/schema-literals-parity.test.ts（lan 线，本脚本只做静态旁证）。
  */
 import { readdirSync, readFileSync } from "node:fs";
@@ -28,10 +28,10 @@ const missing = RULE_EVENT_TOPICS.filter((topic) => !OUTBOX_TOPICS.includes(topi
 check("RULE_EVENT_TOPICS 是 OUTBOX_TOPICS 的子集", missing.length === 0, missing.length ? "缺：" + missing.join(", ") : RULE_EVENT_TOPICS.length + " 个主题全部在册");
 // 1b) 写入端 ↔ 白名单零漂移（静态旁证：扫 server/src 的主题字面量与主题常量；不连库）。
 const SERVER_SRC_URL = new URL("../../server/src/", import.meta.url);
-const TOPIC_CONSTANTS = { PREVIEW_JOB_TOPIC: "preview.job", NOTIFY_MESSAGE_TOPIC: "notify.message" };
+const TOPIC_CONSTANTS = { PREVIEW_JOB_TOPIC: "preview.job", NOTIFY_MESSAGE_TOPIC: "notify.message", NOTIFY_GROUP_TOPIC: "notify.group" };
 // 定案口径 = 已写入闭集 ∪ 已定案预留主题；notify.message 随 S7-4 规则接线转为写入端（Push 182 口径订正）；
-// notify.group = M5-03-2 契约刀先入的预留主题（Push 221）—— 接线刀（automation-wiring 产出行 + TOPIC_CONSTANTS 登记）同批移出。
-const RESERVED_TOPICS = ["notify.group"];
+// notify.group = M5-03-2 契约刀先入的预留主题（Push 221）—— 接线段（Push 224：automation-wiring 产出行 + TOPIC_CONSTANTS 登记）同批移出，预留清单再次清空。
+const RESERVED_TOPICS = [];
 function listTsFiles(dirUrl) {
   const files = [];
   for (const entry of readdirSync(dirUrl, { withFileTypes: true })) {

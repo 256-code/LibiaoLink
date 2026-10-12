@@ -12,6 +12,8 @@ import { FlowRepository } from "./flow.repository.js";
 import { FlowService } from "./flow.service.js";
 import { NodesController } from "./nodes.controller.js";
 import { ProjectsController } from "./project.controller.js";
+import { ProjectGroupRepository } from "./project-group.repository.js";
+import { ProjectGroupService } from "./project-group.service.js";
 import { ProjectMemberRepository } from "./project-member.repository.js";
 import { ProjectMemberService } from "./project-member.service.js";
 import { ProjectRepository } from "./project.repository.js";
@@ -19,7 +21,8 @@ import { ProjectService } from "./project.service.js";
 
 /**
  * project 模块（领域 · h2 / h3）：项目主数据 CRUD（M2-01）、列表 / facets（M2-04）、成员名册（M2-05）、
- * 流程实例与导入快照（M2-02）、节点增删与完成门禁（v0.2 §3.6）、阶段推进 / 回退（M2-03）。
+ * 流程实例与导入快照（M2-02）、节点增删与完成门禁（v0.2 §3.6）、阶段推进 / 回退（M2-03）、
+ * 项目群绑定读写（M5-03-2 接线段 · C2-05）。
  * 归档：门禁 + 引用式清单 + 冻结状态位（M7-04 · ADR-027）。
  * 依赖方向：project → { blueprint, node(GateService), identity, permission(策略守卫) }（node 不反依赖 project，避免循环）。
  */
@@ -31,6 +34,8 @@ import { ProjectService } from "./project.service.js";
     ProjectService,
     ProjectMemberRepository,
     ProjectMemberService,
+    ProjectGroupRepository,
+    ProjectGroupService,
     FlowRepository,
     FlowService,
     ArchiveRepository,

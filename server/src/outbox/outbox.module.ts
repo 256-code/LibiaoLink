@@ -9,7 +9,7 @@ import { OutboxStore } from "../db/outbox.store.js";
 import { AUTOMATION_SCHEDULE_JOB_KIND, listEnabledRules } from "../modules/automation/index.js";
 import { CalendarModule, CalendarService } from "../modules/calendar/index.js";
 import { FileModule, PREVIEW_JOB_TOPIC, PreviewService } from "../modules/file/index.js";
-import { NOTIFY_MESSAGE_TOPIC, NotifyModule, NotifyService } from "../modules/notify/index.js";
+import { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC, NotifyGroupService, NotifyModule, NotifyService } from "../modules/notify/index.js";
 import { LogOutboxAlertSink, OUTBOX_ALERT_SINK } from "./alert.js";
 import { AutomationSubjectReader } from "./automation-subjects.js";
 import { createAutomationScheduleHandler, createRuleEventConsumers, type AutomationWiringDeps } from "./automation-wiring.js";
@@ -22,6 +22,9 @@ import { JOBS_REGISTRY, JobScheduler, type OutboxJobHandler } from "./scheduler.
 
 /** 规则接线日志（Nest Logger：产出 / 跳过 / 渠道留痕与 worker 日志同管道）。 */
 const wiringLogger = new Logger("AutomationWiring");
+
+/** 消费注册表日志（群通道门控留痕：未配置 = 「只存不投」明确可见）。 */
+const registryLogger = new Logger("OutboxRegistry");
 
 /**
  * Outbox worker 运行时（S7-1）：dispatcher（领取 / 消费 / 重试 / dead）+ 告警探针 + done 行保留期清理；
@@ -51,12 +54,13 @@ export class OutboxModule {
           useFactory: (
             previews: PreviewService,
             notify: NotifyService,
+            groupNotify: NotifyGroupService,
             subjects: AutomationSubjectReader,
             clock: ClockService,
             calendar: CalendarService,
             database: DatabaseService,
           ) => {
-            const registry = buildRegistry(env, previews, notify);
+            const registry = buildRegistry(env, previews, notify, groupNotify);
             if (env.AUTOMATION_WIRING_ENABLED === "true") {
               const deps = automationWiringDeps(env, subjects, clock, calendar, database);
               for (const [topic, handler] of createRuleEventConsumers(deps)) {
@@ -65,7 +69,7 @@ export class OutboxModule {
             }
             return registry;
           },
-          inject: [PreviewService, NotifyService, AutomationSubjectReader, ClockService, CalendarService, DatabaseService],
+          inject: [PreviewService, NotifyService, NotifyGroupService, AutomationSubjectReader, ClockService, CalendarService, DatabaseService],
         },
         {
           provide: JOBS_REGISTRY,
@@ -96,6 +100,7 @@ function buildRegistry(
   env: Env,
   previews: PreviewService,
   notify: NotifyService,
+  groupNotify: NotifyGroupService,
 ): Map<OutboxTopic, OutboxTopicHandler> {
   const registry = new Map<OutboxTopic, OutboxTopicHandler>();
   if (env.PREVIEW_JOB_ENABLED === "true") {
@@ -108,6 +113,15 @@ function buildRegistry(
     registry.set(NOTIFY_MESSAGE_TOPIC, {
       handle: (row) => notify.consume(row),
     });
+    // 群通道（M5-03-2 接线段）：凭据齐备才注册消费 —— 未配置时「只存不投」（notify.group 行不领取，
+    // 不因客户端未就绪空转重试）；配置后由 worker 启动流程 start() 长连接（entry/worker.ts）。
+    if (env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
+      registry.set(NOTIFY_GROUP_TOPIC, {
+        handle: (row) => groupNotify.consume(row),
+      });
+    } else {
+      registryLogger.warn("WECOM_BOT_ID / WECOM_BOT_SECRET 未配置：群通道未启用，notify.group 只存不投");
+    }
   }
   return registry;
 }

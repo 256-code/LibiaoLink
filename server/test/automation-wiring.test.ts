@@ -13,8 +13,9 @@ import type { OutboxEventInput } from "../src/db/outbox.js";
 import {
   AUTOMATION_SCHEDULE_JOB_KIND,
   BUILTIN_RULES,
-  toTaskSubject,
+  toProjectDaySubject,
   toReportMemberSubject,
+  toTaskSubject,
   type ReplaySubject,
   type ReplayTask,
 } from "../src/modules/automation/index.js";
@@ -261,6 +262,64 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(result?.produced).toBe(0);
     expect(h.appended).toHaveLength(0);
     expect(h.logs.log.some((line) => line.includes("recipient_missing"))).toBe(true);
+  });
+
+  it("R03 群播报命中：产出 notify.group（projectId = 群寻址键；R03 无标题 → title null；refType = task）", async () => {
+    const rules = BUILTIN_RULES.filter((rule) => rule.code === "R03");
+    const h = makeHarness({ rules: async () => [...rules] });
+    h.subjects.windowSubjects = [toTaskSubject(task({ plannedEnd: "2026-09-25", projectGroupId: "p-1" }))];
+
+    const result = await createAutomationScheduleHandler(h.deps).run(jobContext(FROM, TO));
+
+    expect(result?.produced).toBe(1);
+    expect(h.appended).toHaveLength(1);
+    const event = h.appended[0];
+    expect(event?.client).toBe(TX);
+    expect(event?.event.topic).toBe("notify.group");
+    expect(event?.event.dedupeKey).toBe("R03:t-1:2026-09-24");
+    const payload = event?.event.payload as Record<string, unknown>;
+    expect(payload.projectId).toBe("p-1");
+    expect(payload.title).toBeNull();
+    expect(String(payload.body)).toContain("安装摄像头");
+    expect(payload.refType).toBe("task");
+    expect(payload.refId).toBe("t-1");
+    expect(payload.templateCode).toBe("R03_GROUP");
+    expect(payload.chatid).toBeUndefined();
+    expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
+  });
+
+  it("A02 项目日报命中：产出 notify.group（title 非空 / refType = project / 幂等键 = A02:项目:日期）", async () => {
+    const rules = BUILTIN_RULES.filter((rule) => rule.code === "A02");
+    const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
+    const h = makeHarness({ rules: async () => [...rules], now: () => late });
+    h.subjects.windowSubjects = [
+      toProjectDaySubject({
+        projectId: "p-1",
+        projectName: "临港数据中心",
+        date: "2026-09-24",
+        entryCount: 3,
+        headcountTotal: 12,
+        issueCount: 1,
+        summaryText: "张三：安装摄像头 3 台",
+        groupId: "p-1",
+      }),
+    ];
+
+    const result = await createAutomationScheduleHandler(h.deps).run(
+      jobContext(new Date(atShanghaiTime("2026-09-24", "18:55")), new Date(atShanghaiTime("2026-09-24", "19:40"))),
+    );
+
+    expect(result?.produced).toBe(1);
+    expect(h.appended).toHaveLength(1);
+    const payload = h.appended[0]?.event.payload as Record<string, unknown>;
+    expect(h.appended[0]?.event.topic).toBe("notify.group");
+    expect(h.appended[0]?.event.dedupeKey).toBe("A02:p-1:2026-09-24");
+    expect(payload.projectId).toBe("p-1");
+    expect(payload.title).toBe("日报汇总 | 临港数据中心（2026-09-24）");
+    expect(String(payload.body)).toContain("发现问题 1 条");
+    expect(payload.refType).toBe("project");
+    expect(payload.refId).toBe("p-1");
+    expect(payload.templateCode).toBe("A02_GROUP");
   });
 
   it("空主体池：零产出 + note 留痕", async () => {

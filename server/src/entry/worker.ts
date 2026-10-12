@@ -5,7 +5,7 @@ import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
 import { FileService, PreviewService } from "../modules/file/index.js";
-import { NotifyService } from "../modules/notify/index.js";
+import { NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
 import { JobScheduler, OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
@@ -28,10 +28,12 @@ async function bootstrap(): Promise<void> {
   const files = app.get(FileService);
   const previews = app.get(PreviewService);
   const notify = app.get(NotifyService);
+  const groupNotify = app.get(NotifyGroupService);
   const dispatcher = app.get(OutboxDispatcher);
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
   const scheduler = app.get(JobScheduler);
+  const aibot = app.get(WecomAibotClient);
 
   if (process.argv.includes("--health-check")) {
     try {
@@ -91,6 +93,21 @@ async function bootstrap(): Promise<void> {
     logger.warn("预览转换队列已关闭（PREVIEW_JOB_ENABLED=false）：preview.job 只投递不消费");
   }
 
+  // 企微群通道长连接（M5-03-2 接线段 · P5 定案）：凭据齐备才启动 —— 订阅 + 30s 心跳 + 自动重连；
+  // 回调 ingest = 群会话激活置位（主动推送前置，846607 双语义切分依据）。未配置 = 「只存不投」
+  // （与 OutboxModule 注册表门控同口径）；api 进程同模块但从不 start()（构造无副作用）。
+  if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
+    aibot.onMessage((message) => {
+      void groupNotify.activateFromCallback(message).catch((error) => {
+        logger.warn("群回调 ingest 失败（忽略本次；待下次回调或人工核查）：" + messageOf(error));
+      });
+    });
+    aibot.start();
+    logger.log("企微智能机器人长连接已启动（群通道：订阅 + 心跳 + 会话激活 ingest）");
+  } else {
+    logger.warn("企微群通道未启动（WECOM_BOT_ID / WECOM_BOT_SECRET 未配置或通知投递关闭）：notify.group 只存不投");
+  }
+
   // Outbox 分派（S7-1）：一轮 = 按注册主题各领一批（每主题 OUTBOX_BATCH_LIMIT 条，SKIP LOCKED）后串行收敛；
   // 单条预览最长占满客户端超时（默认 90s），用 draining 闸门避免上一轮没跑完就叠加下一轮。
   let draining = false;
@@ -103,8 +120,8 @@ async function bootstrap(): Promise<void> {
       const stats = await dispatcher.drainOnce();
       if (stats.claimed > 0) {
         logger.log(
-          "outbox 分派：领取 " + stats.claimed + " / done " + stats.done + " / 重试 " + stats.retried + " / 死信 " +
-            stats.dead,
+          "outbox 分派：领取 " + stats.claimed + " / done " + stats.done + " / 重试 " + stats.retried + " / 延期 " +
+            stats.deferred + " / 死信 " + stats.dead,
         );
       }
     } catch (error) {
@@ -224,6 +241,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(snoozeSweep);
     clearInterval(alertProbe);
     clearInterval(retentionSweep);
+    aibot.stop();
     logger.log("worker 收到 " + signal + "，正在退出");
     await app.close();
     process.exit(0);
