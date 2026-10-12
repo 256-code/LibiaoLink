@@ -121,6 +121,11 @@ jobs:
       - name: WeCom aibot stub replay (net-free)
         working-directory: server
         run: node scripts/m5-03-2-aibot-stub-replay.mjs
+      # 群播报接线段回放（M5-03-2 接线段 · 无网络 / 无 PG：假仓储 / 假长连接端子驱动消费链，
+      # 覆盖三分类 / 未绑定与停用 / 回调 ingest / dispatcher deferred 收敛）。
+      - name: WeCom group delivery replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-2-group-replay.mjs
       - name: Boundary rules
         working-directory: server
         run: npm run check:boundaries

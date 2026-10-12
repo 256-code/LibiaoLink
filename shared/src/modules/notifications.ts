@@ -119,7 +119,12 @@ export type NotifyMessagePayload = z.infer<typeof NotifyMessagePayloadSchema>;
 export const NotifyGroupMessagePayloadSchema = z
   .object({
     projectId: UuidSchema.openapi({ description: "目标项目 id（投递时解析该项目当前群绑定；未绑定 = 确定性失败留痕）" }),
-    title: nonBlankText(NOTIFICATION_TITLE_MAX_LENGTH, "标题").openapi({ description: "标题（前后空白剔除后 1 ~ 200 字）" }),
+    title: nonBlankText(NOTIFICATION_TITLE_MAX_LENGTH, "标题")
+      .nullable()
+      .openapi({
+        description:
+          "标题（前后空白剔除后 1 ~ 200 字；null = 无标题 —— 先例 R03_GROUP 群播报无标题，投递仅正文；个人消息不受影响）",
+      }),
     body: nonBlankText(NOTIFICATION_BODY_MAX_LENGTH, "正文").openapi({
       description: "正文（前后空白剔除后 1 ~ 4000 字）；投递层按企微 markdown 字节上限截断 —— 尾部省略 + 截断留痕（B5 定案）",
     }),

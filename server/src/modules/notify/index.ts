@@ -1,8 +1,19 @@
 /** notify 模块唯一公开出口（api / worker 组合根与 outbox 注册表使用）。 */
 export { NotifyModule } from "./notify.module.js";
+export {
+  composeGroupMarkdown,
+  GROUP_MARKDOWN_MAX_BYTES,
+  GROUP_TRUNCATION_SUFFIX,
+  maskChatid,
+  NotifyGroupService,
+  parseGroupMessage,
+  truncateGroupMarkdown,
+} from "./notify.group.service.js";
+export { NotifyGroupRepository } from "./notify.group.repository.js";
+export { PgRateWindowStore } from "./wecom.rate.pg.js";
 export { NotifyService } from "./notify.service.js";
 export type { NotifyFlushStats, NotifySnoozeFlushStats } from "./notify.service.js";
-export { NOTIFY_MESSAGE_TOPIC } from "./notify.constants.js";
+export { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC } from "./notify.constants.js";
 export {
   formatClockMinute,
   isDeliverableChannel,
