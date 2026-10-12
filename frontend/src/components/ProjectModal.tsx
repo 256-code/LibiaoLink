@@ -23,6 +23,8 @@ export type ProjectDraft = {
   code: string;
   /** 前端「项目描述」= 契约 name。 */
   description: string;
+  /** 备注（契约 description，Push 280 恢复采集）：空串 = 未填写（新建不发送、编辑发送 null 清空）。 */
+  note: string;
   /** 项目经理（多位，Push 136）：至少一位，数组顺序 = 展示顺序。 */
   managerIds: string[];
   /** 项目类型：字典 projectType 的码（主题色由字典元数据下发）。 */
@@ -83,6 +85,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const archivedLock = isEdit && initial?.status === "archived";
   const [code, setCode] = useState(initial?.code ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [note, setNote] = useState(initial?.note ?? "");
   const [managerIds, setManagerIds] = useState<string[]>(initial?.managerIds ?? []);
   const [projectType, setProjectType] = useState<string>(initial?.projectType ?? dicts.projectType[0]?.code ?? "");
   /** 新建默认不带地区（业务口径「新建项目不要默认英国 默认为空即可」）：占位「请选择地区」，由用户在小窗里点选。 */
@@ -207,7 +210,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     }
     setPending(true);
     setError(null);
-    const result = await onSubmit({ code, description, managerIds, projectType, region, status });
+    const result = await onSubmit({ code, description, note, managerIds, projectType, region, status });
     setPending(false);
     applyResult(result);
   };
@@ -219,7 +222,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     }
     setPending(true);
     setError(null);
-    const result = await onSubmit({ code, description, managerIds, projectType, region, status }, { archiveConfirm: true });
+    const result = await onSubmit({ code, description, note, managerIds, projectType, region, status }, { archiveConfirm: true });
     setPending(false);
     applyResult(result);
   };
@@ -313,6 +316,20 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               onChange={setProjectType}
             />
           </div>
+
+          {/* Push 280：备注（契约 description）恢复采集 —— 新建 / 编辑都可填；多行、选填、上限 2000（契约 max(2000)）。 */}
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+              备注<span className="ml-1 text-xs font-normal text-zinc-400">选填</span>
+            </span>
+            <textarea
+              className={fieldClass + " min-h-20 resize-y"}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              maxLength={2000}
+              placeholder="项目背景 / 交付说明等"
+            />
+          </label>
 
           {isEdit ? (
             <div className="block">

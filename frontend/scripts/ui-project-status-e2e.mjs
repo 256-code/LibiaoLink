@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：项目状态（Push 262 · 编辑项目「项目状态」四选一 + 卡片状态字 + 已归档归档流）
+ * LibiaoLink 前端 · 回放：项目状态（Push 262 · 编辑项目「项目状态」四选一 + 卡片状态字 + 已归档归档流）+ 编辑弹窗「备注」字段（Push 280）
  *
  * 业务口径（2026-10-09）：「编辑项目里面加一个修改项目的状态 进行中 已暂停 已完成 已归档」+
  * 「在项目卡片分类右侧显示淡淡的文字状态」。
@@ -16,6 +16,7 @@
  *      归档成功：status = archived + project_archives 清单 1 行（acknowledged_missing 含缺项）+ 审计 action = archive；
  *   ⑤ 已归档项目再开编辑弹窗：四枚选项与保存全禁用（只读保护），提示「项目已归档：处于只读保护」在场；
  *   ⑥ 控制台零报错；跑完会话撤销、抛荒项目业务表零残留（审计行追加写、按 C7-05 保留）、目标项目状态还原。
+ *   ⑦ 编辑弹窗「备注」（Push 280 · 契约 description）：多行文本框在场（选填 · 上限 2000 · 占位文案）且初值 = 库内值；填文本保存 → 库内 description 落文本 + 审计字段级留痕（null → 文本）；重开弹窗回填；清空保存 → 库内 null（清空发 null）+ 审计（文本 → null）；再开为空；收尾随 ⑱ 一并还原。
  *
  * 前置（都在本机跑着）：前端 dev :3000 / api :3001 / 本地沙箱 PG :5433 / 本机 Chrome（无头）。
  * 用法：node scripts/ui-project-status-e2e.mjs
@@ -90,6 +91,7 @@ const TARGET_CODE = process.env.TARGET_CODE ?? "LBEG-20260928-1002";
 const target = (await db.query("select id, code, name, status from projects where code = $1 and deleted_at is null", [TARGET_CODE])).rows[0];
 if (target === undefined) { console.error("目标项目不存在：" + TARGET_CODE); process.exit(1); }
 if (target.status !== "active") { console.error("目标项目初始状态不是 active：" + target.status); process.exit(1); }
+const targetDesc0 = (await db.query("select description from projects where id = $1", [target.id])).rows[0].description;
 
 const stamp = Date.now().toString(36).toUpperCase();
 const throwCode = "PXQC-" + stamp;
@@ -215,12 +217,46 @@ async function clickByText(selector, text) {
   return true;
 }
 
+/** Push 280：「备注」文本框用 —— 真键盘输入 / 清空（与 m6-06 同款）。 */
+async function pressKey(key, code, vk, modifiers = 0) {
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers });
+  await sleep(120);
+}
+/** 覆盖式输入（先 Ctrl+A 再插字；换行 = 真回车键）—— 便签标题 / 内容 / 搜索都用它。 */
+async function typeInto(selector, text) {
+  await clickSelector(selector);
+  await pressKey("a", "KeyA", 65, 2);
+  const parts = String(text).split("\n");
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i > 0) {
+      await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: String.fromCharCode(13), unmodifiedText: String.fromCharCode(13) });
+      await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+      await sleep(160);
+    }
+    if (parts[i] !== "") {
+      await page.send("Input.insertText", { text: parts[i] });
+    }
+    await sleep(160);
+  }
+  await sleep(360);
+}
+async function clearField(selector) {
+  await clickSelector(selector);
+  await pressKey("a", "KeyA", 65, 2);
+  await pressKey("Backspace", "Backspace", 8);
+  await sleep(300);
+}
+
 const editDialogSel = "[role=dialog][aria-label=" + j("编辑项目") + "]";
 const createDialogSel = "[role=dialog][aria-label=" + j("新建项目") + "]";
 const submitSel = editDialogSel + " button[type=submit]";
 
 const cardExpr = () => "(function(){var ref=document.createElement(" + j("span") + ");ref.className=" + j("text-zinc-400") + ";ref.textContent=" + j("m") + ";ref.style.position=" + j("absolute") + ";ref.style.visibility=" + j("hidden") + ";document.body.appendChild(ref);var refColor=getComputedStyle(ref).color;document.body.removeChild(ref);var cards=document.querySelectorAll(" + j(".project-card") + ");var out=[];for(var i=0;i<cards.length;i+=1){var c=cards[i];var h=c.querySelector(" + j("h1") + ");var st=c.querySelector(" + j("[data-card-status]") + ");var badge=st===null?null:st.previousElementSibling;var r=st===null?null:st.getBoundingClientRect();var b=badge===null?null:badge.getBoundingClientRect();var conf=st===null?null:getComputedStyle(st);out.push({code:h===null?null:String(h.textContent).trim(),status:st===null?null:String(st.getAttribute(" + j("data-card-status") + ")),text:st===null?null:String(st.textContent).trim(),left:r===null?null:r.left,badgeRight:b===null?null:b.right,top:r===null?null:r.top,bottom:r===null?null:r.bottom,badgeTop:b===null?null:b.top,badgeBottom:b===null?null:b.bottom,color:conf===null?null:conf.color,refColor:refColor,fontSize:conf===null?null:conf.fontSize});}return out;})()";
 const modalExpr = () => "(function(){var d=document.querySelector(" + j(editDialogSel) + ");if(d===null){return null;}var opts=[];var bs=d.querySelectorAll(" + j("[data-project-status-option]") + ");for(var i=0;i<bs.length;i+=1){opts.push({value:bs[i].getAttribute(" + j("data-project-status-option") + "),text:String(bs[i].textContent).trim(),selected:bs[i].getAttribute(" + j("aria-checked") + "),disabled:bs[i].disabled});}var submit=d.querySelector(" + j("button[type=submit]") + ");var spans=d.querySelectorAll(" + j("span") + ");var hint=null;for(var k=0;k<spans.length;k+=1){var t=String(spans[k].textContent).trim();if(t.indexOf(" + j("保存后立即生效") + ")===0||t.indexOf(" + j("归档走归档流程") + ")===0||t.indexOf(" + j("项目已归档：处于只读保护") + ")===0){hint=t;break;}}return {options:opts,submitLabel:submit===null?null:String(submit.textContent).trim(),submitDisabled:submit===null?true:submit.disabled,hint:hint};})()";
+
+const remarkSel = editDialogSel + " textarea";
+const remarkExpr = () => "(function(){var d=document.querySelector(" + j(editDialogSel) + ");if(d===null){return null;}var a=d.querySelector(" + j("textarea") + ");if(a===null){return {present:false};}var lab=a.closest(" + j("label") + ");return {present:true,tag:a.tagName,label:lab===null?null:String(lab.textContent).trim(),value:a.value,maxLength:a.maxLength,placeholder:a.placeholder,disabled:a.disabled};})()";
 
 async function cardStatusOf(code) {
   const cards = await ev(cardExpr());
@@ -281,6 +317,10 @@ try {
   const createReady = await waitFor("document.querySelector(" + j(createDialogSel) + ") !== null", 10000);
   const createOptions = Number(await ev("document.querySelectorAll(" + j(createDialogSel + " [data-project-status-option]") + ").length"));
   check("⑤ 新建弹窗不含状态区（「项目状态」只编辑弹窗有）", createReady === true && createOptions === 0, "count=" + String(createOptions));
+  const createRemark = await ev("(function(){var d=document.querySelector(" + j(createDialogSel) + ");if(d===null){return null;}var a=d.querySelector(" + j("textarea") + ");if(a===null){return {present:false};}var lab=a.closest(" + j("label") + ");return {present:true,label:lab===null?null:String(lab.textContent).trim(),value:a.value,maxLength:a.maxLength};})()");
+  check("⑤bis 新建弹窗同样含「备注」字段（初值空 · 上限 2000 —— 新建留空不发送）",
+    createRemark !== null && createRemark.present === true && createRemark.label !== null && createRemark.label.indexOf("备注") === 0 && createRemark.value === "" && createRemark.maxLength === 2000,
+    JSON.stringify(createRemark));
   await clickByText(createDialogSel + " button", "取消");
   await waitFor("document.querySelector(" + j(createDialogSel) + ") === null", 8000);
 
@@ -327,6 +367,48 @@ try {
   check("⑩ 改回「进行中」还原：库内 active、卡面 = 进行中、审计 done → active",
     targetRestored.status === "active" && cardRestored !== null && cardRestored.text === "进行中" && hasStatusChange(await auditRows(target.id, 3), "done", "active"),
     JSON.stringify({ db: targetRestored.status, card: cardRestored === null ? null : cardRestored.status }));
+
+  // ---------- ③bis 编辑弹窗「备注」（Push 280 · 契约 description：建 / 读 / 清空 / 回填） ----------
+  await openEditFor(TARGET_CODE);
+  await sleep(400);
+  const remark0 = await ev(remarkExpr());
+  check("⑩a 编辑弹窗「备注」在场（选填 · 多行文本框 · 上限 2000 · 占位文案）且初值 = 库内 description",
+    remark0 !== null && remark0.present === true && remark0.tag === "TEXTAREA" && remark0.label !== null && remark0.label.indexOf("备注") === 0 && remark0.value === (targetDesc0 === null ? "" : targetDesc0) && remark0.maxLength === 2000 && remark0.placeholder.indexOf("项目背景") === 0,
+    JSON.stringify(remark0));
+  const remarkText = "回放·备注-" + stamp;
+  await typeInto(remarkSel, remarkText);
+  const remarkFilledShot = await shot("project-remark-filled", { x: 380, y: 60, width: 740, height: 880, scale: 1 });
+  console.log("截图：" + remarkFilledShot);
+  await clickSelector(submitSel);
+  const remarkSaved = await waitFor("document.querySelector(" + j(editDialogSel) + ") === null", 20000);
+  await sleep(1200);
+  const descAfterSave = (await db.query("select description from projects where id = $1", [target.id])).rows[0].description;
+  const hasDescriptionChange = (rows, from, to) => rows.some((row) => (Array.isArray(row.changes) ? row.changes : []).some((item) => item !== null && item.field === "description" && item.from === from && item.to === to));
+  check("⑩b 填备注 → 保存修改：弹窗关、库内 description 落文本、审计 update 含 description（原值 → 文本）",
+    remarkSaved === true && descAfterSave === remarkText && hasDescriptionChange(await auditRows(target.id, 3), targetDesc0, remarkText),
+    JSON.stringify({ db: descAfterSave }));
+  await openEditFor(TARGET_CODE);
+  await sleep(400);
+  const remarkRefill = await ev(remarkExpr());
+  check("⑩c 重开编辑弹窗：备注回填 = 刚保存的文本（持久化）",
+    remarkRefill !== null && remarkRefill.present === true && remarkRefill.value === remarkText,
+    JSON.stringify(remarkRefill));
+  await clearField(remarkSel);
+  await clickSelector(submitSel);
+  await waitFor("document.querySelector(" + j(editDialogSel) + ") === null", 20000);
+  await sleep(1200);
+  const descAfterClear = (await db.query("select description from projects where id = $1", [target.id])).rows[0].description;
+  check("⑩d 清空备注 → 保存修改：库内 description = null（清空发 null）、审计 update 含 description（文本 → null）",
+    descAfterClear === null && hasDescriptionChange(await auditRows(target.id, 3), remarkText, null),
+    JSON.stringify({ db: descAfterClear }));
+  await openEditFor(TARGET_CODE);
+  await sleep(400);
+  const remarkCleared = await ev(remarkExpr());
+  check("⑩e 重开编辑弹窗：备注已清空（回读 = 空）",
+    remarkCleared !== null && remarkCleared.present === true && remarkCleared.value === "",
+    JSON.stringify(remarkCleared));
+  await clickByText(editDialogSel + " button", "取消");
+  await waitFor("document.querySelector(" + j(editDialogSel) + ") === null", 8000);
 
   // ---------- ④ 已归档：缺项 422 → 二次确认 → 归档成功（抛荒项目） ----------
   await page.send("Page.reload");
@@ -489,6 +571,7 @@ try {
   check("⑰-异常 流程异常中止：" + String(error !== null && error !== undefined && error.message !== undefined ? error.message : error), false);
 } finally {
   await db.query("update projects set status = $2, updated_at = now() where id = $1 and status <> $2", [target.id, "active"]);
+  await db.query("update projects set description = $2, updated_at = now() where id = $1 and description is distinct from $2", [target.id, targetDesc0]);
   await cleanupThrowProject();
   await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
   // 首页本地记忆（筛选 / 侧栏开合）清掉：本轮回放点过状态 chip，避免下一轮不带参数进入时恢复出筛选
@@ -498,9 +581,10 @@ try {
 // ---------- ⑦ 收尾 ----------
 const residue = (await db.query("select (select count(*)::int from projects where id = $1) as throw_projects, (select count(*)::int from tasks where project_id = $1) as throw_tasks, (select count(*)::int from project_stages where project_id = $1) as throw_stages, (select count(*)::int from project_archives where project_id = $1) as throw_archives, (select count(*)::int from sessions where token_hash = $2 and revoked_at is null) as sessions", [throwId, sha256(token)])).rows[0];
 const targetFinal = (await projectRowOf(target.id)).status;
-check("⑱ 零残留：抛荒项目业务表全 0 行、目标项目状态还原 active、临时会话已撤销",
-  Number(residue.throw_projects) === 0 && Number(residue.throw_tasks) === 0 && Number(residue.throw_stages) === 0 && Number(residue.throw_archives) === 0 && Number(residue.sessions) === 0 && targetFinal === "active",
-  JSON.stringify({ residue: residue, target: targetFinal }));
+const targetDescFinal = (await db.query("select description from projects where id = $1", [target.id])).rows[0].description;
+check("⑱ 零残留：抛荒项目业务表全 0 行、目标项目状态还原 active + 备注还原、临时会话已撤销",
+  Number(residue.throw_projects) === 0 && Number(residue.throw_tasks) === 0 && Number(residue.throw_stages) === 0 && Number(residue.throw_archives) === 0 && Number(residue.sessions) === 0 && targetFinal === "active" && targetDescFinal === targetDesc0,
+  JSON.stringify({ residue: residue, target: targetFinal, desc: targetDescFinal }));
 const failed = checks.filter((item) => item.ok !== true).length;
 console.log("—— 合计 " + String(checks.length) + " 项：" + String(checks.length - failed) + " 通过 / " + String(failed) + " 失败 ——");
 try { page.ws.close(); } catch (error) { }
