@@ -182,7 +182,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
             <div>
               <h1 className="text-lg font-semibold text-zinc-900">操作记录</h1>
               <p className="mt-0.5 text-xs text-zinc-500">
-                全站关键操作的留痕（新增 / 修改 / 删除 / 预览 / 下载 / 越权尝试……），按时间倒序；仅系统管理员可见。
+                全站关键操作的留痕（新增 / 修改 / 删除 / 下载 / 越权尝试……），按时间倒序；仅系统管理员可见。
               </p>
             </div>
             {state.kind === "ready" ? (
