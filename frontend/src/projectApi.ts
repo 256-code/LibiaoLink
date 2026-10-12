@@ -101,24 +101,50 @@ export function fetchProject(id: string): Promise<ApiProject> {
   return apiRequest<ApiProject>("/api/v1/projects/" + encodeURIComponent(id));
 }
 
-/** 写请求字段（新建 / 编辑同一套；customer / 备注 description 表单暂未采集，不发送即不改）。 */
+/**
+ * 写请求字段（新建 / 编辑同一套）。
+ * Push 280：`remark` = 备注（契约 `description`）—— undefined = 不发送（不改）；空串 = 新建不发送（留空）、编辑发送 null（清空）。
+ * customer（客户）仍未采集（不发送即不改）。
+ */
 export type ProjectWriteInput = {
   code: string;
   name: string;
   region: string;
   projectType: string;
   managerIds: string[];
+  /** 备注（契约 description）：undefined = 不发送；空串 = 新建留空不发送 / 编辑发 null 清空。 */
+  remark?: string;
 };
 
 export function createProject(input: ProjectWriteInput): Promise<ApiProject> {
-  return apiSend<ApiProject>("/api/v1/projects", "POST", input);
+  const body: { code: string; name: string; region: string; projectType: string; managerIds: string[]; description?: string } = {
+    code: input.code,
+    name: input.name,
+    region: input.region,
+    projectType: input.projectType,
+    managerIds: input.managerIds,
+  };
+  // 备注（Push 280）：新建留空不发送（契约 description 可选）；有值才带上。
+  if (input.remark !== undefined && input.remark !== "") {
+    body.description = input.remark;
+  }
+  return apiSend<ApiProject>("/api/v1/projects", "POST", body);
 }
 
 /** PATCH 可写状态（契约 ProjectUpdateBody：archived 不接受 PATCH —— 归档只能走归档端点；Push 262 编辑弹窗口径）。 */
 export type ProjectStatusPatch = "active" | "paused" | "done";
 
 export function updateProject(id: string, input: ProjectWriteInput, version: number, status?: ProjectStatusPatch): Promise<ApiProject> {
-  const body: ProjectWriteInput & { version: number } & { status?: ProjectStatusPatch } = {
+  const body: {
+    code: string;
+    name: string;
+    region: string;
+    projectType: string;
+    managerIds: string[];
+    version: number;
+    status?: ProjectStatusPatch;
+    description?: string | null;
+  } = {
     code: input.code,
     name: input.name,
     region: input.region,
@@ -128,6 +154,10 @@ export function updateProject(id: string, input: ProjectWriteInput, version: num
   };
   if (status !== undefined) {
     body.status = status;
+  }
+  // 备注（Push 280）：undefined = 不发送（不改）；空串 = 发 null 清空（契约 description 可空）。
+  if (input.remark !== undefined) {
+    body.description = input.remark === "" ? null : input.remark;
   }
   return apiSend<ApiProject>("/api/v1/projects/" + encodeURIComponent(id), "PATCH", body);
 }
@@ -190,6 +220,7 @@ export function toUiProject(view: ApiProject): Project {
     seqNo: view.seqNo,
     code: view.code,
     description: view.name,
+    remark: view.description ?? "",
     region: view.region,
     projectType: view.projectType,
     createdAt: formatDateTime(view.createdAt),

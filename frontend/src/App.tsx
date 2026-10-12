@@ -77,15 +77,16 @@ function errorMessageOf(error: unknown, fallback: string): string {
 }
 
 /**
- * 编辑弹窗五字段与项目现值是否有差异（Push 262）：「已归档」保存要先落其余字段时，用来判断要不要先 PATCH。
+ * 编辑弹窗字段与项目现值是否有差异（Push 262；Push 280 起含备注）：「已归档」保存要先落其余字段时，用来判断要不要先 PATCH。
  */
 function projectFieldsChanged(
   project: Project,
-  fields: { code: string; name: string; region: string; projectType: string; managerIds: string[] },
+  fields: { code: string; name: string; region: string; projectType: string; managerIds: string[]; remark: string },
 ): boolean {
   if (
     fields.code !== project.code ||
     fields.name !== project.description ||
+    fields.remark !== project.remark ||
     fields.region !== project.region ||
     fields.projectType !== project.projectType
   ) {
@@ -229,6 +230,7 @@ export default function App() {
         region: draft.region,
         projectType: draft.projectType,
         managerIds: draft.managerIds,
+        remark: draft.note.trim(),
       });
       setDataVersion((value) => value + 1);
       return null;
@@ -384,6 +386,7 @@ export default function App() {
       region: draft.region,
       projectType: draft.projectType,
       managerIds: draft.managerIds,
+      remark: draft.note.trim(),
     };
     try {
       if (draft.status !== "archived") {
@@ -571,6 +574,7 @@ export default function App() {
         initial={{
           code: editingProject.code,
           description: editingProject.description,
+          note: editingProject.remark,
           managerIds: editingProject.managerIds,
           projectType: editingProject.projectType,
           region: editingProject.region,
