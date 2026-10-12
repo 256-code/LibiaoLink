@@ -248,12 +248,20 @@ const staleRow = byTitle(await tasksOf(), "回放任务·设计");
 const bumped = await api("/api/v1/projects/" + projectId + "/tasks/" + staleRow.id, "PATCH", { headcount: 7, version: staleRow.version });
 check("夹具：后台改「施工人数」把页面这份顶成旧版本（200）", bumped.status === 200 && bumped.json !== null && bumped.json.version === staleRow.version + 1, bumped.status + " → v" + (bumped.json === null ? "?" : String(bumped.json.version)));
 check("页面点四格（页面这份还是旧版本）", (await clickTracker("回放任务·设计", "刚开工")) === true);
-await sleep(3200);
-const conflictText = String(await ev("(function(){var els=document.querySelectorAll(\"[role=alert]\");return els.length===0?\"\":els[0].innerText;})()"));
+// Push 276 口径更新：提示条已改全局 Toast（Push 261：role=status + data-toast、2s 自动消失）——
+// 原「sleep 3.2s 后读 [role=alert]」在 Toast 化后必然扑空；改为 2s 窗口内轮询抓取。
+let conflictText = "";
+for (let i = 0; i < 16; i += 1) {
+  conflictText = String(await ev("(function(){var el=document.querySelector(\"[data-toast]\");return el===null?\"\":el.innerText;})()"));
+  if (conflictText.indexOf("版本冲突") >= 0) { break; }
+  await sleep(140);
+}
 check("409 → 提示条出现（含「版本冲突」）", conflictText.indexOf("版本冲突") >= 0, flat(conflictText).slice(0, 200));
+// Push 276：等自动整表重取（reloadAll）落定，再做下一段「重取后重试」。
+await sleep(1400);
 const afterConflict = byTitle(await tasksOf(), "回放任务·设计");
 check("冲突写入被拒：进度没动（仍 0）、后台改的施工人数已是 7", afterConflict.progress === 0 && afterConflict.headcount === 7, JSON.stringify({ p: afterConflict.progress, h: afterConflict.headcount }));
-await ev("(function(){var els=document.querySelectorAll(\"[role=alert]\");if(els.length===0){return false;}var bs=els[0].querySelectorAll(\"button\");for(var i=0;i<bs.length;i++){if((bs[i].textContent||\"\").trim()===\"关闭\"){bs[i].click();return true;}}return false;})()");
+await ev("(function(){var el=document.querySelector(\"[data-toast]\");if(el===null){return false;}var bs=el.querySelectorAll(\"button\");for(var i=0;i<bs.length;i++){if((bs[i].textContent||\"\").trim()===\"关闭\"){bs[i].click();return true;}}return false;})()");
 await sleep(500);
 check("自动重取到新版本后，再点一次能写进去", (await clickTracker("回放任务·设计", "刚开工")) === true);
 await sleep(3200);

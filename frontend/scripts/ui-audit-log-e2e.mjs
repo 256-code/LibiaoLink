@@ -234,8 +234,31 @@ check("行口径齐备：操作人 / 动作标签 / 对象 / 结果签 / 项目�
 check("首屏请求无筛选参数（只有 page / limit）", lastReq().indexOf("page=1") !== -1 && lastReq().indexOf("limit=50") !== -1 && lastReq().indexOf("action=") === -1 && lastReq().indexOf("actorId=") === -1 && lastReq().indexOf("objectType=") === -1 && lastReq().indexOf("result=") === -1 && lastReq().indexOf("projectId=") === -1 && lastReq().indexOf("from=") === -1 && lastReq().indexOf("to=") === -1, lastReq());
 const firstRowId = first === null || first.rows.length === 0 ? null : first.rows[0].id;
 
-const auditProjectCell = await ev("(function(){var cs=document.querySelectorAll(" + j("[data-audit-project]") + ");var c=null;for(var i=0;i<cs.length;i+=1){if((cs[i].getAttribute(" + j("data-audit-project-name") + ")||'')!==''&&(cs[i].getAttribute(" + j("data-audit-project-code") + ")||'')!==''){c=cs[i];break;}}if(c===null){return null;}var spans=c.querySelectorAll(" + j("span") + ");return {name:c.getAttribute(" + j("data-audit-project-name") + "),code:c.getAttribute(" + j("data-audit-project-code") + "),rows:spans.length,direction:getComputedStyle(c).flexDirection,first:spans.length>0?String(spans[0].textContent).trim():null,second:spans.length>1?String(spans[1].textContent).trim():null};})()");
+// Push 276 加固（修数据漂移 flaky）：首屏 50 行可能全被「已删临时项目」行占据（回放批次产物），或项目映射未就绪 ——
+// 改为按「库内最新一条项目仍存活的行」页位直达（±1 页内顺扫），断言后地址回第 1 页（后续分页用例从第 1 页起步）。
+const auditProjectProbe = "(function(){var cs=document.querySelectorAll(" + j("[data-audit-project]") + ");var c=null;for(var i=0;i<cs.length;i+=1){if((cs[i].getAttribute(" + j("data-audit-project-name") + ")||'')!==''&&(cs[i].getAttribute(" + j("data-audit-project-code") + ")||'')!==''){c=cs[i];break;}}if(c===null){return null;}var spans=c.querySelectorAll(" + j("span") + ");return {name:c.getAttribute(" + j("data-audit-project-name") + "),code:c.getAttribute(" + j("data-audit-project-code") + "),rows:spans.length,direction:getComputedStyle(c).flexDirection,first:spans.length>0?String(spans[0].textContent).trim():null,second:spans.length>1?String(spans[1].textContent).trim():null};})()";
+let auditProjectCell = null;
+const liveIdxRow = (await db.query("select idx from (select a.id, row_number() over (order by a.occurred_at desc, a.id desc) - 1 as idx from audit_logs a where a.project_id in (select id from projects)) t order by idx asc limit 1")).rows[0];
+const livePage = liveIdxRow === undefined ? 1 : Math.floor(Number(liveIdxRow.idx) / 50) + 1;
+if (livePage !== 1) {
+  await ev("window.location.hash = " + j("#/audit?page=" + String(livePage)) + ";");
+  await waitFor("window.location.hash.indexOf(" + j("page=" + String(livePage)) + ") !== -1", 8000);
+  await sleep(900);
+}
+for (let round = 0; round < 2 && auditProjectCell === null; round += 1) {
+  for (let i = 0; i < 12 && auditProjectCell === null; i += 1) {
+    auditProjectCell = await ev(auditProjectProbe);
+    if (auditProjectCell !== null) { break; }
+    await sleep(150);
+  }
+  if (auditProjectCell !== null || round === 1) { break; }
+  await clickSelector("[data-audit-next]");
+  await sleep(900);
+}
 check("项目列排版 = 中文名在上、编号在下（两行；与文件库同款 —— 追订「中文和编号的位置反一下」）", auditProjectCell !== null && auditProjectCell.rows === 2 && auditProjectCell.direction === "column" && auditProjectCell.first === auditProjectCell.name && auditProjectCell.second === auditProjectCell.code, JSON.stringify(auditProjectCell));
+await ev("(function(){if(window.location.hash.indexOf(" + j("page=") + ") !== -1){window.location.hash = " + j("#/audit") + ";}})()");
+await waitFor("window.location.hash.indexOf(\"page=\") === -1", 8000);
+await sleep(900);
 
 // 人话护栏（2026-10-09 业务口径：「不要这种太机器的操作记录 要让人可以看懂的 那些路由还有具体的代码不要显示」）
 const pageText = await ev("(function(){var t=document.querySelector(" + j("[data-audit-page]") + ");if(t===null){return null;}return String(t.textContent);})()");
