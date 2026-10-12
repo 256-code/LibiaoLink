@@ -9,6 +9,8 @@ import {
   ProjectCreateBodySchema,
   ProjectDeleteHeadersSchema,
   ProjectFacetsSchema,
+  ProjectGroupBindingSchema,
+  ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
   ProjectMemberCreateBodySchema,
@@ -315,6 +317,47 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "归档记录与清单", ...json(ProjectArchiveViewSchema) },
       404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/group",
+    tags: ["projects"],
+    summary: "项目群绑定状态（未绑定 = bound:false；chatid 掩码回显，activated = 群内已激活）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "群绑定状态（GET 恒 200；项目不存在 / 不可见 = 404）", ...json(ProjectGroupBindingSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "put",
+    path: "/api/v1/projects/{id}/group",
+    tags: ["projects"],
+    summary: "绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
+    request: { params: idParams, body: json(ProjectGroupPutBodySchema) },
+    responses: {
+      200: { description: "绑定后的群状态（chatid 掩码回显）", ...json(ProjectGroupBindingSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/projects/{id}/group",
+    tags: ["projects"],
+    summary: "解绑项目群（幂等：未绑定也返回 bound:false；权限 project.update）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "解绑后的群状态（bound:false）", ...json(ProjectGroupBindingSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

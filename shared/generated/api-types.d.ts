@@ -459,6 +459,167 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目群绑定状态（未绑定 = bound:false；chatid 掩码回显，activated = 群内已激活） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 群绑定状态（GET 恒 200；项目不存在 / 不可见 = 404） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupBinding"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        /** 绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update） */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectGroupPutBody"];
+                };
+            };
+            responses: {
+                /** @description 绑定后的群状态（chatid 掩码回显） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupBinding"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 解绑项目群（幂等：未绑定也返回 bound:false；权限 project.update） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 解绑后的群状态（bound:false） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupBinding"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/members": {
         parameters: {
             query?: never;
@@ -8481,6 +8642,26 @@ export interface components {
             /** @description 项目导入时的蓝图版本（快照）；0 = 尚未导入（h3 之前建的项目） */
             blueprintVersion: number;
             stages: components["schemas"]["ProjectStage"][];
+        };
+        /** @description 项目群绑定状态（GET 恒 200；未绑定 = bound:false） */
+        ProjectGroupBinding: {
+            projectId: components["schemas"]["Uuid"];
+            /** @description 是否已绑定（false = 未绑定，其余字段为 null / false） */
+            bound: boolean;
+            /** @description 群名 / 备注（绑定维护用）；未绑定 = null */
+            name: string | null;
+            /** @description 绑定 chatid 掩码（只回末 4 位）；未绑定 = null */
+            chatidMasked: string | null;
+            /** @description 会话已激活（群内有人给机器人发过消息）；未绑定 = false */
+            activated: boolean;
+            updatedAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义 */
+        ProjectGroupPutBody: {
+            /** @description 企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串） */
+            chatid: string;
+            /** @description 群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空） */
+            name?: string | null;
         };
         ProjectListResponse: {
             items: components["schemas"]["Project"][];
