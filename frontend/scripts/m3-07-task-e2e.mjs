@@ -39,7 +39,7 @@ const PROBE = "(function(){var out={buttons:[],cards:[],groupText:\"\"};var g=do
 
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 const token = "pxe2e-" + randomBytes(16).toString("hex");
 const csrf = randomBytes(16).toString("hex");
 await db.query("insert into sessions (token_hash, user_id, id_token, expires_at) values ($1, $2, $3, now() + make_interval(mins => 30))", [sha256(token), userRow.id, "px-e2e"]);

@@ -117,7 +117,7 @@ const db = new Client({ connectionString: DB });
 await db.connect();
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 async function makeSession(username) {
-  const row = (await db.query("select id, username, display_name from users where username = $1", [username])).rows[0];
+  const row = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [username])).rows[0];
   if (row === undefined) {
     console.error("回放用户不存在：" + username);
     process.exit(1);
