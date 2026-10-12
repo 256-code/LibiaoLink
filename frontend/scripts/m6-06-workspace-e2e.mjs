@@ -53,7 +53,8 @@
  *   ② 页面骨架：两枚下划线标签（我的任务 / 我提出的问题；文字 + 选中下划线）+ 默认选中「我的任务」+ 地址不带 `?tab=`；
  *   ③ 「我的任务」折叠面板：收起 = 项目名称 + 编号（最急的项目在最上）+ 摘要签 + 「进入项目」按钮；展开 = 该项目下的任务表；
  *   ④ 任务表口径（Push 231 扩列：列口径照项目页任务表全 15 列 ——「直接把这个搬到我的任务不就好了」+
- *      「这些字段一个不能少懂吗」）：任务描述 + 四格进度点（不含分组签 —— 业务口径「这个不要展示」，
+ *      「这些字段一个不能少懂吗」；Push 279 起**行换成项目页那枚可编辑行** —— 行内逐列可点 + 点行开右侧抽屉，
+ *      见本段「④-2 / ④v ~ ④z2」）：任务描述 + 四格进度点（不含分组签 —— 业务口径「这个不要展示」，
  *      组序由行序体现）/ 项目经理 / 负责人 / 状态 / 紧急重要度 /
  *      逾期未交付 / 输出成果文件 / 文件 / 进展描述 / 开始·实际日期 / 天数 / 人数 / 变更关联；
  *      命中口径 = 负责人含我 或 项目经理含我、不限完成日期（远期照收 + 未排期单列）；他人项目（我既非负责人也非项目经理）与已完成不进；
@@ -529,7 +530,7 @@ const panelsExpr = () => "(function(){var root=document.querySelector(" + j("[da
 const TASK_HEAD_EXPECTED = ["任务描述", "项目经理", "任务负责人", "任务状态", "紧急重要度", "是否按时交付", "输出成果文件", "文件", "项目进展描述", "开始日期", "", "预计完成日期", "预计所需施工人数", "实际完成日期", "变更关联"];
 /** 任务表读数（按项目面板）：表头（15 列）+ 每行按 data-column 列名取数（不按下标，列序调整不再连坐）。 */
 const taskRowsExpr = (projectId) =>
-  "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("[data-workspace-task-head] [data-column]") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<rows.length;i+=1){var row=rows[i];var cell=function(key){var node=row.querySelector('[data-column=' + JSON.stringify(key) + ']');return node===null?'':node.textContent.trim();};var attr=function(name){var node=row.querySelector('[' + name + ']');return node===null?'':String(node.getAttribute(name));};var titleNode=row.querySelector(" + j("[data-workspace-task-title]") + ");var groupNode=row.querySelector(" + j("[data-workspace-task-group]") + ");out.push({id:String(row.getAttribute(" + j("data-workspace-task") + ")),title:cell(" + j("title") + "),titleText:titleNode===null?'':titleNode.textContent.trim(),group:attr(" + j("data-workspace-task-group") + "),groupText:groupNode===null?'':groupNode.textContent.trim(),manager:cell(" + j("manager") + "),owners:cell(" + j("owner") + "),status:cell(" + j("status") + "),statusKey:attr(" + j("data-workspace-task-status") + "),priority:cell(" + j("priority") + "),onTime:cell(" + j("onTime") + "),deliverable:cell(" + j("deliverable") + "),files:cell(" + j("files") + "),note:cell(" + j("note") + "),start:cell(" + j("start") + "),days:cell(" + j("days") + "),due:cell(" + j("due") + "),headcount:cell(" + j("headcount") + "),doneDate:cell(" + j("doneDate") + "),change:cell(" + j("change") + "),changeCount:attr(" + j("data-workspace-task-change") + "),dots:attr(" + j("data-workspace-task-dots") + "),rowClass:String(row.getAttribute(" + j("class") + ")),statusClass:(function(){var n=row.querySelector(" + j("[data-workspace-task-status]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
+  "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("[data-workspace-task-head] [data-column]") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<rows.length;i+=1){var row=rows[i];var cell=function(key){var node=row.querySelector('[data-column=' + JSON.stringify(key) + ']');return node===null?'':node.textContent.trim();};var attr=function(name){var node=row.getAttribute(name)!==null?row:row.querySelector('[' + name + ']');return node===null?'':String(node.getAttribute(name));};var titleNode=row.querySelector('[data-column=\"title\"] p');var groupNode=null;var rowNode=row.querySelector('[role=button]');out.push({id:String(row.getAttribute(" + j("data-workspace-task") + ")),title:cell(" + j("title") + "),titleText:titleNode===null?'':titleNode.textContent.trim(),group:attr(" + j("data-workspace-task-group") + "),groupText:groupNode===null?'':groupNode.textContent.trim(),manager:cell(" + j("manager") + "),owners:cell(" + j("owner") + "),status:cell(" + j("status") + "),statusKey:attr(" + j("data-workspace-task-status") + "),priority:cell(" + j("priority") + "),onTime:cell(" + j("onTime") + "),deliverable:cell(" + j("deliverable") + "),files:cell(" + j("files") + "),note:cell(" + j("note") + "),start:cell(" + j("start") + "),days:cell(" + j("days") + "),due:cell(" + j("due") + "),headcount:cell(" + j("headcount") + "),doneDate:cell(" + j("doneDate") + "),change:cell(" + j("change") + "),changeCount:attr(" + j("data-workspace-task-change") + "),dots:attr(" + j("data-workspace-task-dots") + "),rowClass:rowNode===null?String(row.getAttribute(" + j("class") + ")):String(rowNode.getAttribute(" + j("class") + ")),statusClass:(function(){var n=row.querySelector('[data-column=\"status\"]');if(n===null){return '';}var b=n.querySelector('button');return String((b===null?n:b).getAttribute(" + j("class") + "));})(),rowInteractive:rowNode!==null});}return {table:true,heads:headTexts,rows:out};})()";
 /** 问题表读数（按项目面板）。 */
 /** Push 242 列对齐断言用：问题表表头每列的 [left, width]（四舍五入到整数像素）。 */
 const issueHeadRectsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return null;}var heads=table.querySelectorAll(" + j("thead th") + ");var out=[];for(var i=0;i<heads.length;i+=1){var r=heads[i].getBoundingClientRect();out.push([Math.round(r.left),Math.round(r.width)]);}return out;})()";
@@ -543,6 +544,20 @@ const stateCellExpr = (projectId, issueId) => "(function(){var row=document.quer
 /** Push 260：行内下拉浮层的选项读数（浮层 portal 到 body）。 */
 const popoverOptionsExpr = () => "(function(){var box=document.querySelector(" + j("[data-inline-popover]") + ");if(box===null){return null;}var items=box.querySelectorAll(" + j("[role=" + Q + "option" + Q + "]") + ");var out=[];for(var i=0;i<items.length;i+=1){out.push({text:String(items[i].textContent.trim()),selected:items[i].getAttribute(" + j("aria-selected") + ")});}return {listbox:box.querySelector(" + j("[role=" + Q + "listbox" + Q + "]") + ")!==null,count:items.length,items:out};})()";
 const openStatePopover = (projectId, issueId) => "(document.querySelector(" + j("[data-inline-popover] [role=" + Q + "listbox" + Q + "]") + ") !== null)";
+/** Push 279：「我的任务」任务行的外壳（data-workspace-task = 任务 id；内里 = 项目页同款 TaskRow）。 */
+const taskRowSel = (projectId, taskId) => "[data-workspace-panel=" + Q + projectId + Q + "] [data-workspace-task=" + Q + taskId + Q + "]";
+/** Push 279：任务详情抽屉（右侧滑出，与项目页同一枚 TaskRow 抽屉）。 */
+const DRAWER = "aside[role=dialog]";
+/** Push 279：按文案点行内下拉（data-inline-popover）里的选项（找不到直接报错）。 */
+async function clickRowOption(text) {
+  const point = await ev("(function(){var box=document.querySelector(" + j("[data-inline-popover]") + ");if(box===null){return null;}var items=box.querySelectorAll(" + j("[role=option]") + ");for(var i=0;i<items.length;i+=1){if(items[i].textContent.trim()===" + j(text) + "){var r=items[i].getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}}return null;})()");
+  if (point === null || point === undefined) throw new Error("行内下拉选项点不到：" + text);
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await sleep(700);
+}
+
 /** 空态 / 汇总行读数。 */
 const totalExpr = () => "(function(){var node=document.querySelector(" + j("[data-workspace-task-total]") + ");return node===null?null:node.textContent.trim();})()";
 
@@ -593,7 +608,7 @@ check("④i 反例不出现：他人项目任务（C）与已完成任务不进�
 check("④l 表头 = 项目页任务表全 15 列（同序；「预计所需天数」窄列表头为空）", rowsA !== null && rowsA.heads.join("|") === TASK_HEAD_EXPECTED.join("|"), rowsA === null ? "null" : JSON.stringify(rowsA.heads));
 check("④m 项目经理列 = 项目主数据责任人（A 项目 = 我 —— " + me.displayName + "）", rowsA !== null && rowsA.rows.every((item) => item.manager === me.displayName), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.manager)));
 check("④n 输出成果文件列 = 首枚名 + 「+N」（CAD图纸+1 / 验收单 / —）", rowsA !== null && rowsA.rows.map((item) => item.deliverable).join("|") === "CAD图纸+1|验收单|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.deliverable)));
-check("④o 文件列 = 「N 份 + 未定档 N」（逾期任务直传 1 份 draft；无文件落「—」）", rowsA !== null && rowsA.rows[0].files.indexOf("1 份") >= 0 && rowsA.rows[0].files.indexOf("未定档 1") >= 0 && rowsA.rows.slice(1).every((item) => item.files === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.files)));
+check("④o（Push 279 起 = 项目页同款）文件列 = 文件名胶囊（逾期任务直传 1 份 → 首份文件名；无文件落「—」）", rowsA !== null && rowsA.rows[0].files.indexOf(taskFileName) >= 0 && rowsA.rows.slice(1).every((item) => item.files === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.files)));
 check("④p 项目进展描述列 = note 原文 / 「—」", rowsA !== null && rowsA.rows[0].note === "回放·进展描述：图纸已出，等待评审" && rowsA.rows.slice(1).every((item) => item.note === "—"), rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.note)));
 check("④q 预计所需天数窄列 = 显式 5 / 推算 3（含首尾）/ 无开始日期落 0（项目页同口径）", rowsA !== null && rowsA.rows.map((item) => item.days).join("|") === "5|3|0|0|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.days)));
 check("④r 预计所需施工人数列 = 6 人 / 3 人 / —", rowsA !== null && rowsA.rows.map((item) => item.headcount).join("|") === "6 人|3 人|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.headcount)));
@@ -602,6 +617,42 @@ check("④t 扩列降级横幅不出现（两个项目的源接口都取到）",
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 const rowsB = await ev(taskRowsExpr(projectB));
 check("④u 跨项目 B：1 行、项目经理 = " + me.displayName + "、" + other.displayName + "（多值「、」连接）、其余扩列落「—」", rowsB !== null && rowsB.table === true && rowsB.rows.length === 1 && rowsB.rows[0].id === tB.id && rowsB.rows[0].manager === me.displayName + "、" + other.displayName && rowsB.rows[0].deliverable === "—" && rowsB.rows[0].files === "—" && rowsB.rows[0].note === "—" && rowsB.rows[0].headcount === "—" && rowsB.rows[0].changeCount === "0", rowsB === null ? "null" : JSON.stringify(rowsB.rows));
+
+// ---------- ④-2 任务行内编辑 + 点行开抽屉（Push 279 · 业务口径「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」→「不用点开抽屉也要可以编辑」→「和项目总览一样」） ----------
+const rowAnatomy279 = await ev("(function(){var row=document.querySelector(" + j(taskRowSel(projectA, tOverdue.id)) + ");if(row===null){return null;}var inner=row.querySelector(" + j("[role=button]") + ");var cell=function(key){return row.querySelector('[data-column=' + JSON.stringify(key) + ']');};var aria=function(key){var c=cell(key);if(c===null){return null;}var b=c.querySelector('button[data-inline-cell]');return b===null?null:String(b.getAttribute('aria-label'));};var titleCell=cell('title');var dotButtons=titleCell===null?[]:titleCell.querySelectorAll('button[aria-label]');var dots=0;for(var d=0;d<dotButtons.length;d+=1){if(String(dotButtons[d].getAttribute('aria-label')).indexOf('设置进度')===0){dots+=1;}}var fileCell=cell('files');return {row:inner!==null,status:aria('status'),priority:aria('priority'),owner:aria('owner'),manager:aria('manager'),note:aria('note'),dots:dots,filesPopover:fileCell!==null&&fileCell.querySelector(" + j("[data-cell-action=task-files]") + ")!==null};})()");
+check("④v（Push 279）任务行 = 项目页同款可编辑行：整行 role=button、四格进度 = 4 枚可点按钮、「项目经理 / 负责人 / 状态 / 紧急重要度 / 进展描述」各有行内触发器、「文件」列是下拉入口", rowAnatomy279 !== null && rowAnatomy279.row === true && rowAnatomy279.manager === "修改项目经理" && rowAnatomy279.owner === "修改任务负责人" && rowAnatomy279.status === "修改任务状态" && rowAnatomy279.priority === "修改紧急重要度" && rowAnatomy279.note === "修改项目进展描述" && rowAnatomy279.dots === 4 && rowAnatomy279.filesPopover === true, JSON.stringify(rowAnatomy279));
+await shot("m6-06-workspace-row-inline-edit.png");
+await clickSelector(taskRowSel(projectA, tOverdue.id) + " [data-cell-action=task-files]");
+const rowFilesPop279 = await waitFor("document.querySelector(" + j("[data-task-files-popover=true]") + ") !== null", 10000);
+const rowFilesInfo279 = await ev("(function(){var p=document.querySelector(" + j("[data-task-files-popover=true]") + ");if(p===null){return null;}var items=p.querySelectorAll(" + j("[data-task-files-item]") + ");return {count:items.length,name:items.length===0?false:String(items[0].textContent).indexOf(" + j(taskFileName) + ")>=0,add:p.querySelector(" + j("[data-task-files-add]") + ")!==null};})()");
+check("④v2（Push 279）「文件」列下拉 = 项目页同款（本任务那 1 份文件名在场 + 「＋ 添加文件」入口）—— 行内就能传文件", rowFilesPop279 === true && rowFilesInfo279 !== null && rowFilesInfo279.count === 1 && rowFilesInfo279.name === true && rowFilesInfo279.add === true, JSON.stringify(rowFilesInfo279));
+const priorityCellSel279 = taskRowSel(projectA, tOverdue.id) + " [data-column=priority] button[data-inline-cell]";
+const tasksBefore279 = await api("/api/v1/projects/" + projectA + "/tasks?limit=200");
+const versionBefore279 = tasksBefore279.json === null ? -1 : tasksBefore279.json.items.filter((item) => item.id === tOverdue.id)[0].version;
+await clickSelector(priorityCellSel279);
+const priOpen279 = await waitFor("document.querySelector(" + j("[data-inline-popover] [role=listbox]") + ") !== null", 15000);
+const priOpts279 = await ev(popoverOptionsExpr());
+check("④w（Push 279）点「紧急重要度」胶囊 = 弹三档下拉（高 / 中 / 低，当前项「高」aria-selected=true）—— 与项目页下拉逐项同款", priOpen279 === true && priOpts279 !== null && priOpts279.count === 3 && priOpts279.items.map((item) => item.text).join("|") === "高|中|低" && priOpts279.items.map((item) => item.selected).join("|") === "true|false|false", JSON.stringify(priOpts279));
+await clickRowOption("低");
+const priChanged279 = await waitFor("(function(){var c=document.querySelector(" + j(taskRowSel(projectA, tOverdue.id) + " [data-column=priority]") + ");return c!==null&&c.textContent.trim()===" + j("低") + "&&document.querySelector(" + j("[data-inline-popover]") + ")===null;})()", 20000);
+const tasksAfterPri279 = await api("/api/v1/projects/" + projectA + "/tasks?limit=200");
+const overdueAfterPri279 = tasksAfterPri279.json === null ? undefined : tasksAfterPri279.json.items.filter((item) => item.id === tOverdue.id)[0];
+check("④x（Push 279）行内改「紧急重要度」高 → 低：格子当场翻「低」、下拉收起；接口回读已落库（priority=低、version 涨 1）", priChanged279 === true && overdueAfterPri279 !== undefined && overdueAfterPri279.priority === "低" && overdueAfterPri279.version === versionBefore279 + 1, JSON.stringify([priChanged279, overdueAfterPri279 === undefined ? null : [overdueAfterPri279.priority, overdueAfterPri279.version, versionBefore279]]));
+await clickSelector(priorityCellSel279);
+await waitFor("document.querySelector(" + j("[data-inline-popover]") + ") !== null", 15000);
+await clickRowOption("高");
+const priRevert279 = await waitFor("(function(){var c=document.querySelector(" + j(taskRowSel(projectA, tOverdue.id) + " [data-column=priority]") + ");return c!==null&&c.textContent.trim()===" + j("高") + ";})()", 20000);
+const tasksRevert279 = await api("/api/v1/projects/" + projectA + "/tasks?limit=200");
+const overdueRevert279 = tasksRevert279.json === null ? undefined : tasksRevert279.json.items.filter((item) => item.id === tOverdue.id)[0];
+check("④y（Push 279）再改回「高」复位（后面 ⑨ 的列断言不连坐）：页面 + 接口都是「高」", priRevert279 === true && overdueRevert279 !== undefined && overdueRevert279.priority === "高", JSON.stringify([priRevert279, overdueRevert279 === undefined ? null : overdueRevert279.priority]));
+await clickSelector(taskRowSel(projectA, tOverdue.id) + " [data-column=title] p");
+const drawerOpen279 = await waitFor("document.querySelector(" + j(DRAWER) + ") !== null", 20000);
+const drawerInfo279 = await ev("(function(){var d=document.querySelector(" + j(DRAWER) + ");return d===null?null:{title:String(d.textContent).indexOf(" + j("回放·逾期任务") + ")>=0,noteField:d.querySelector(" + j("textarea") + ")!==null};})()");
+check("④z（Push 279）不点编辑格、直接点任务描述 → 右侧任务抽屉滑出（标题 = 该任务、抽屉内「项目进展描述」可编辑）—— 行内编辑不挤掉点行开抽屉", drawerOpen279 === true && drawerInfo279 !== null && drawerInfo279.title === true && drawerInfo279.noteField === true, JSON.stringify(drawerInfo279));
+await shot("m6-06-workspace-row-drawer.png");
+await clickSelector("aside[role=dialog] button[aria-label=" + Q + "关闭任务详情" + Q + "]");
+const drawerClosed279 = await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 15000);
+check("④z2（Push 279）抽屉「关闭任务详情」收口", drawerClosed279 === true, String(drawerClosed279));
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 
 // ---------- ⑤ 切标签 ----------

@@ -3,14 +3,14 @@ import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
 import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
-import { stageNameOf, type ApiProjectSummary } from "../taskApi";
+import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { ChangeDetailModal } from "./ChangeDetailModal";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
-import { Tracker } from "./Tracker";
+import { Tracker, TrackerDots } from "./Tracker";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { DeliverableCell, docTypeCapsule } from "./DeliverablePicker";
 import { StageAddCard } from "./StageAddCard";
@@ -222,6 +222,45 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
 export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
+/**
+ * 行内编辑 / 抽屉编辑共用的「patch → PATCH body」映射（Push 279 从项目页 handlePatchTask 抽出 · version 由调用方带）：
+ * 空串 = 清空（契约 nullable）这类字段口径只维护这一处 —— 项目页任务表与工作台「我的任务」的行内编辑同源。
+ */
+export function taskPatchBody(version: number, patch: TaskPatch): TaskUpdateInput {
+  const body: TaskUpdateInput = { version };
+  if (patch.title !== undefined) {
+    body.title = patch.title;
+  }
+  if (patch.titleEn !== undefined) {
+    body.titleEn = patch.titleEn === "" ? null : patch.titleEn;
+  }
+  if (patch.ownerIds !== undefined) {
+    body.ownerIds = patch.ownerIds;
+  }
+  if (patch.startDate !== undefined) {
+    body.plannedStart = patch.startDate === "" ? null : patch.startDate;
+  }
+  if (patch.dueDate !== undefined) {
+    body.plannedEnd = patch.dueDate === "" ? null : patch.dueDate;
+  }
+  if (patch.days !== undefined) {
+    body.estimatedDays = patch.days;
+  }
+  if (patch.headcount !== undefined) {
+    body.headcount = patch.headcount;
+  }
+  if (patch.priority !== undefined) {
+    body.priority = patch.priority;
+  }
+  if (patch.deliverableTypes !== undefined) {
+    body.deliverableTypes = patch.deliverableTypes;
+  }
+  if (patch.note !== undefined) {
+    body.note = patch.note;
+  }
+  return body;
+}
+
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -329,7 +368,12 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
+/** 任务表的行（项目总览 / 工作台「我的任务」共用 · Push 279 起导出给工作台复用）：各列按回调是否传入自动切换
+ *  只读 / 可编辑 —— 行内进度（onProgress）/ 项目经理（onChangeManagers）/ 负责人（onPatch.ownerIds）/ 状态
+ *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
+ *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）。
+ *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean; subtitle?: string }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -380,16 +424,22 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
 
   const cells: Record<ColumnKey, ReactNode> = {
     title: (
-      <div className="flex min-w-0 items-center gap-4 self-stretch">
+      <div data-column="title" className="flex min-w-0 items-center gap-4 self-stretch">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
             {task.title}
           </p>
-          {task.titleEn === "" ? null : (
-            <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={task.titleEn}>{task.titleEn}</p>
+          {(subtitle ?? task.titleEn) === "" ? null : (
+            <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subtitle ?? task.titleEn}>{subtitle ?? task.titleEn}</p>
           )}
         </div>
-        <Tracker progress={task.progress} onChange={onProgress} />
+        {onProgress === undefined ? (
+          <span className="shrink-0">
+            <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读行：不接悬停预览 */ }} />
+          </span>
+        ) : (
+          <Tracker progress={task.progress} onChange={onProgress} />
+        )}
         {onDelete === undefined ? null : (
           // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
           // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
@@ -733,7 +783,7 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
               // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）。
               // 左右各留 4px 内衬（业务口径 2026-09-30「这个触碰到了 要优化一下」）：满宽内容（文件名胶囊 / 进展描述胶囊）
               // 与相邻列不再贴边 —— 两格相邻时天然留出 8px 空隙；内容居中口径不变。
-              <div className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
+              <div data-column={column.key} className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
             )}
           </Fragment>
         ))}

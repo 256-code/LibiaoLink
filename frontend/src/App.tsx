@@ -612,6 +612,7 @@ export default function App() {
         {/* 醒目模式（Push 232）：与项目详情同一个账号偏好（App 层持有 / 单键 PATCH），工作台只吃值 + 回显保存失败文案 */}
         <WorkspacePage
           me={state.me}
+          members={directoryMemberOptions(directory)}
           tab={route.tab}
           onChangeTab={replaceWorkspaceTab}
           sub={route.sub}
