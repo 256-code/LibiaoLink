@@ -108,6 +108,50 @@ export const NotifyMessagePayloadSchema = z
 export type NotifyMessagePayload = z.infer<typeof NotifyMessagePayloadSchema>;
 
 /**
+ * `notify.group` 主题载荷（群播报 · M5-03-2 · P5 定案）：outbox 独立主题 —— 收件人是**项目群**。
+ *
+ * 边界（S8-1 §三-1 A 案定案）：与 `NotifyMessagePayload` 不混用 —— 群播报无个人收件人（不进收件箱、
+ *   无合并 / 免打扰 / 每日上限语义），逐条播报 + 按会话限速（30 条/分钟、1000 条/小时 · P5 定案）；
+ *   投递层按 `projectId` 读当前群绑定解析 `chatid`（换绑后未投递消息仍可送出；未绑定 / 群未激活 =
+ *   确定性失败留痕）。
+ * 不进载荷：`chatid`（绑定态数据，投递时读库）、`mergeKey`（幂等由 outbox dedupeKey 承担）。
+ */
+export const NotifyGroupMessagePayloadSchema = z
+  .object({
+    projectId: UuidSchema.openapi({ description: "目标项目 id（投递时解析该项目当前群绑定；未绑定 = 确定性失败留痕）" }),
+    title: nonBlankText(NOTIFICATION_TITLE_MAX_LENGTH, "标题").openapi({ description: "标题（前后空白剔除后 1 ~ 200 字）" }),
+    body: nonBlankText(NOTIFICATION_BODY_MAX_LENGTH, "正文").openapi({
+      description: "正文（前后空白剔除后 1 ~ 4000 字）；投递层按企微 markdown 字节上限截断 —— 尾部省略 + 截断留痕（B5 定案）",
+    }),
+    refType: z
+      .string()
+      .max(NOTIFICATION_REF_TYPE_MAX_LENGTH)
+      .nullish()
+      .openapi({ description: "关联对象类型（project / report / task 等，与审计对象类型同词汇表；可空）" }),
+    refId: UuidSchema.nullish().openapi({ description: "关联对象 id（与 refType 成对；可空）" }),
+    templateCode: z
+      .string()
+      .max(NOTIFICATION_TEMPLATE_CODE_MAX_LENGTH)
+      .nullish()
+      .openapi({ description: "模板码（R03_GROUP / R04_GROUP / R05_GROUP / R06_GROUP / A02_GROUP；排障与文案回溯用）" }),
+  })
+  .superRefine((value, context) => {
+    const hasRefType = value.refType !== null && value.refType !== undefined && value.refType !== "";
+    const hasRefId = value.refId !== null && value.refId !== undefined;
+    if (hasRefType !== hasRefId) {
+      context.addIssue({
+        code: "custom",
+        message: "refType 与 refId 必须成对出现",
+        path: ["refId"],
+      });
+    }
+  })
+  .openapi("NotifyGroupMessagePayload", {
+    description: "群播报投递事件载荷（outbox 主题 notify.group）：目标项目 + 标题 / 正文 + 关联对象 + 模板码；chatid 不进载荷（投递时读绑定）",
+  });
+export type NotifyGroupMessagePayload = z.infer<typeof NotifyGroupMessagePayloadSchema>;
+
+/**
  * 收件箱条目（C5-01 / C5-03 全量留档）。
  * 只返回**已投递**的主行（合并子行仅在库内留档，不进收件箱）；`mergedCount` = 本行合并的消息条数（≥ 1）。
  */
