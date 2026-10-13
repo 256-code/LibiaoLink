@@ -28,6 +28,20 @@ export function isImageFile(input: { fileName: string; mime: string | null }): b
 }
 
 /**
+ * CAD 三维族（ADR-031 · 2026-10-13）：前端浏览器直解析渲染 —— occt-import-js（OpenCASCADE WASM）
+ * 读 STEP / IGES，three.js Loader 读 STL / 3MF / OBJ / glTF。与图片直签同口径：原对象短时签名直出
+ * （不投转换任务、不落产物行）；dwg / dxf 不在此列 —— 二维走服务端转换管线（ADR-031 决策 1，
+ * 随 M4-06 切片另行落地，届时恢复 previewTargetsFor 投递映射）。
+ */
+const CAD_EXTENSIONS = new Set(["step", "stp", "iges", "igs", "stl", "3mf", "obj", "gltf", "glb"]);
+
+/** CAD 三维直签判定（ADR-031）：扩展名 ∈ CAD 三维族（MIME 常缺省、不可靠，仅按扩展名判）。 */
+export function isCadFile(input: { fileName: string; mime: string | null }): boolean {
+  const extension = extensionOf(input.fileName);
+  return CAD_EXTENSIONS.has(extension);
+}
+
+/**
  * 投递通道映射（M4-05c 定档预生成 / 读取侧补投的共用判定点）：S6-前置（D6）起常量空表 ——
  * 图片改原对象直签（见 `isImageFile`，不经转换）、其余走查看器通道，转换管线无投递；
  * `structured` 二期启用时在此恢复映射（契约 `PREVIEW_TARGETS` 枚举已预留）。
