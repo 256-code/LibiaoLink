@@ -63,3 +63,4 @@ cd server && node --env-file-if-exists=.env scripts/s7-4-automation-wiring-repla
 | T5+（同场发现 · 非计划项） | 探针路径复报实证：`outbox.dead_letter` ×3 —— 11:37:45 / 11:42:45 / 11:47:45（每 5 分钟一轮 · 同一死信 `#9000`）；成因 = 探针状态口径 + 抑制窗口（5 分钟）恰等于探针周期（5 分钟）竞态穿透 + 即时 / 探针 code 分离；已登记方案 §九；**修复已落地（Push 229）**：探针死信水位线 + 抑制窗口 15 分钟 + 死信同族抑制 |
 
 > 运行时口径：worker = `server/dist/entry/worker.js`（`server/.env` 注入 · git 忽略 · 真机段零代码改动）；限速桶键 = `group:<chatBucketId>:w60000` / `:w3600000`（`chatBucketId` = sha256(chatid) 前 12 位 —— 计数键 / 日志不含 chatid 明文）；chatid 一律掩码（`wrsu…aKSg` / `wrsu…9vww`）。
+> 告警文案：上表 T4 / T5 / T5+ 样本为修复当日原文（含企微 errmsg 机器尾巴 / detail JSON）；文案已于 **Push 230** 收敛为核心语义口径（`code + message` · 见方案 §九 / §十）—— 后续真机复验以新文案为准。

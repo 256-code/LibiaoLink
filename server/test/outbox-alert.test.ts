@@ -180,7 +180,7 @@ class FakeAibot {
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("WecomAlertSink（M5-03-3 告警群出口）", () => {
-  it("emit：经智能机器人推告警群（文本含 code / message / detail JSON），不回退", async () => {
+  it("emit：经智能机器人推告警群（文本 = 头部 + message；不回显 detail JSON），不回退", async () => {
     const aibot = new FakeAibot();
     const fallback = new FakeAlertSink();
     const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, fallback, () => 0);
@@ -191,11 +191,27 @@ describe("WecomAlertSink（M5-03-3 告警群出口）", () => {
 
     expect(aibot.sends).toHaveLength(1);
     expect(aibot.sends[0]!.chatid).toBe(ALERT_CHATID);
-    expect(aibot.sends[0]!.content).toContain("LibiaoLink 告警");
-    expect(aibot.sends[0]!.content).toContain("outbox.dead_letter");
-    expect(aibot.sends[0]!.content).toContain("近期死信 2 条");
-    expect(aibot.sends[0]!.content).toContain('{"deadRecent":2}');
+    expect(aibot.sends[0]!.content).toBe("【LibiaoLink 告警】outbox.dead_letter\n近期死信 2 条");
     expect(fallback.emitted).toHaveLength(0);
+  });
+
+  it("积压告警：主题明细紧凑行（前 5 条），不回显 detail JSON", async () => {
+    const aibot = new FakeAibot();
+    const fallback = new FakeAlertSink();
+    const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, fallback, () => 0);
+    const alert: OutboxAlert = {
+      code: "outbox.backlog",
+      level: "warn",
+      message: "outbox 待领取积压 1001 条（阈值 1000）",
+      detail: { duePending: 1001, byTopic: [backlog("task.overdue", 7, 1000), backlog("report.weekly", 3, 900)] },
+    };
+
+    sink.emit(alert);
+    await flush();
+
+    expect(aibot.sends[0]!.content).toBe(
+      "【LibiaoLink 告警】outbox.backlog\noutbox 待领取积压 1001 条（阈值 1000）\n主题：task.overdue 7 条 · report.weekly 3 条",
+    );
   });
 
   it("同族抑制：窗口内只推首条；不同族不受影响；窗口过期恢复", async () => {
