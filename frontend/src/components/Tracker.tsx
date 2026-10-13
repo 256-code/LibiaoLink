@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PROGRESS_LABELS, PROGRESS_STEPS, progressStep } from "../data/tasks";
+import { progressLabelOf, textOf, useLocale } from "../i18n";
 
 type TrackerProps = {
   progress: number;
@@ -50,6 +51,7 @@ export function TrackerDots({
   /** 炫彩档（Push 293 追订「背景留白」+「带弧度的」+「绿回标配」）：四格点外包一块胶囊白槽，点亮 = emerald-500、空格 = zinc-200 —— 白槽上清晰不打糊。 */
   vivid?: boolean;
 }) {
+  const locale = useLocale();
   const filled = trackerStep(progress, steps);
 
   return (
@@ -66,8 +68,8 @@ export function TrackerDots({
           <button
             key={step}
             type="button"
-            aria-label={"设置进度 " + (TRACKER_LABELS[step] ?? "")}
-            title={"设置进度：" + (TRACKER_LABELS[step] ?? "")}
+            aria-label={textOf(locale, "tracker.setAria", { name: progressLabelOf(locale, step) })}
+            title={textOf(locale, "tracker.setTitle", { name: progressLabelOf(locale, step) })}
             onClick={(event) => {
               event.stopPropagation();
               onChange?.(trackerNextProgress(progress, step, steps));
@@ -117,6 +119,7 @@ export function TrackerBar({
   /** 点亮那几颗点的样子（实心 + 白描边，跟填充同一色系：绿 / 蓝 / 灰）。 */
   dotOnClassName: string;
 }) {
+  const locale = useLocale();
   const filled = trackerStep(progress, steps);
   const active = hovered > 0 ? hovered : filled;
   const pct = Math.round((active / steps) * 100);
@@ -141,8 +144,8 @@ export function TrackerBar({
           <button
             key={step}
             type="button"
-            aria-label={"设置进度 " + (TRACKER_LABELS[step] ?? "")}
-            title={"设置进度：" + (TRACKER_LABELS[step] ?? "")}
+            aria-label={textOf(locale, "tracker.setAria", { name: progressLabelOf(locale, step) })}
+            title={textOf(locale, "tracker.setTitle", { name: progressLabelOf(locale, step) })}
             onClick={(event) => {
               event.stopPropagation();
               onChange?.(trackerNextProgress(progress, step, steps));
@@ -176,11 +179,12 @@ export function TrackerBar({
 export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = false }: TrackerProps) {
   const [hovered, setHovered] = useState(0);
   const filled = trackerStep(progress, steps);
+  const locale = useLocale();
   const active = hovered > 0 ? hovered : filled;
-  const label = TRACKER_LABELS[active] ?? "";
+  const label = progressLabelOf(locale, active);
 
   return (
-    <span className="flex shrink-0 items-center gap-2" title={"项目进度：" + label}>
+    <span className="flex shrink-0 items-center gap-2" title={textOf(locale, "tracker.overallTitle", { name: label })}>
       <span
         className={
           "w-12 text-right text-[11px] text-zinc-500 transition-opacity " + (hovered > 0 ? "opacity-100" : "opacity-0")

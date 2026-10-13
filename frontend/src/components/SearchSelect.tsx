@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { usePopover } from "./usePopover";
+import { useT } from "../i18n";
 
 /** 选项：搜索下拉的选项文案必须是字符串（搜索按它做包含匹配）。 */
 export type SearchSelectOption = { value: string; label: string };
@@ -55,6 +56,7 @@ const LIST_MAX_HEIGHT = 280;
  */
 export function SearchSelect(props: SearchSelectProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(POPOVER_WIDTH, LIST_MAX_HEIGHT + 56);
+  const t = useT();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -152,7 +154,7 @@ export function SearchSelect(props: SearchSelectProps) {
             {selectedCount > 0 ? <span className="shrink-0 text-xs font-normal text-zinc-400">{selectedCount}</span> : null}
           </span>
         ) : triggerText === "" ? (
-          <span className="truncate text-zinc-400">{props.placeholder ?? "请选择"}</span>
+          <span className="truncate text-zinc-400">{props.placeholder ?? t("sel.placeholder")}</span>
         ) : (
           <span className={"truncate font-medium " + (props.disabled === true ? "text-zinc-400" : "text-zinc-800")}>{triggerText}</span>
         )}
@@ -176,8 +178,8 @@ export function SearchSelect(props: SearchSelectProps) {
                   type="text"
                   value={query}
                   data-search-select-input="true"
-                  aria-label={props.searchPlaceholder ?? "搜索选项"}
-                  placeholder={props.searchPlaceholder ?? "搜索…"}
+                  aria-label={props.searchPlaceholder ?? t("sel.searchAria")}
+                  placeholder={props.searchPlaceholder ?? t("sel.search")}
                   onChange={(event) => {
                     setQuery(event.target.value);
                     setActiveIndex(0);
@@ -188,7 +190,7 @@ export function SearchSelect(props: SearchSelectProps) {
               </div>
               <div ref={listRef} data-search-select-list="true" className="overflow-y-auto overscroll-contain p-1" style={{ maxHeight: LIST_MAX_HEIGHT }}>
                 {matched.length === 0 ? (
-                  <p className="px-2.5 py-2 text-xs text-zinc-400">{props.emptyText ?? "没有匹配的选项。"}</p>
+                  <p className="px-2.5 py-2 text-xs text-zinc-400">{props.emptyText ?? t("sel.empty")}</p>
                 ) : (
                   matched.map((option, index) => (
                     <button

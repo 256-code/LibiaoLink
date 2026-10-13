@@ -253,11 +253,11 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         setDataError(null);
         // 列表一次取满（契约 limit 上限 200）：超了先提示，按需分页随搜索那一刀接线
         if (list.total > list.items.length) {
-          setToolError("项目任务共 " + String(list.total) + " 条，本次只取到前 " + String(list.items.length) + " 条");
+          setToolError(t("pd.tasks.truncated", { total: list.total, shown: list.items.length }));
         }
       } catch (error) {
         if (alive) {
-          setDataError(error instanceof ApiError ? error.message : "任务数据加载失败");
+          setDataError(error instanceof ApiError ? error.message : t("pd.tasks.loadFailed"));
         }
       } finally {
         if (alive) {
@@ -322,13 +322,13 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   /** 写入失败的统一出口：409 版本冲突顺带整表重取（本地这份已经过期）。 */
   const reportWriteError = (error: unknown): void => {
     if (error instanceof ApiError) {
-      setToolError(taskWriteMessage(error));
+      setToolError(taskWriteMessage(locale, error));
       if (error.code === "VERSION_CONFLICT") {
         reloadAll();
       }
       return;
     }
-    setToolError(error instanceof Error ? error.message : "任务写入失败");
+    setToolError(error instanceof Error ? error.message : t("pd.tasks.writeFailed"));
   };
 
   /** 一次成功写入的收尾：刷新汇总卡 + 通知项目时间变化。 */
@@ -546,7 +546,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       return;
     }
     if (row.finalizedAt !== null) {
-      setToolError(taskWriteMessage({ code: "TASK_FINALIZED", message: "" }));
+      setToolError(taskWriteMessage(locale, { code: "TASK_FINALIZED", message: "" }));
       return;
     }
     setPendingDeleteTaskId(taskId);
@@ -688,7 +688,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             ...(base === undefined ? {} : { sortIndex: base }),
           });
           if (result.skipped.length > 0) {
-            setToolError("有 " + String(result.skipped.length) + " 条节点在这个项目里已经加过，本次已跳过（没有重复创建）。");
+            setToolError(t("pd.nodes.skipped", { n: result.skipped.length }));
           }
           if (result.created.length > 0) {
             afterCreate();
@@ -743,7 +743,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             }
           }
           if (result.skipped.length > 0) {
-            setToolError("有 " + String(result.skipped.length) + " 条节点在这个项目里已经加过，本次已跳过（没有重复创建）。");
+            setToolError(t("pd.nodes.skipped", { n: result.skipped.length }));
           }
           if (result.created.length > 0) {
             afterCreate();

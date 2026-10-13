@@ -12,8 +12,8 @@ import { RowDeleteButton } from "./RowDeleteButton";
  * 档位切换口径（Push 289 追订「简约和适中的切换 卡片会出现几秒的边框加深」）：过渡只留 transform / box-shadow ——
  * 原来 transition-all 会把「新出现的边框」从 currentColor（近黑）渐变到淡彩描边，切换瞬间就是一帧深色描边；
  * 顺带免掉整卡底色逐帧重绘（几十张卡一起切换时不再卡顿）。底色 / 描边切换 = 瞬时。
- * 右下角国家名水印（Push 289 追订「像大牌广告」）：watermark 传项目地区显示名 —— 124px 特粗、灰黑 6%、右 20px / 下 46px 出血（右侧与底部都被裁掉一截），垫在内容之下（-z-10 + 卡片 isolate）。
- * 超长口径（同日追订「国家名字太长的话 要截取后面的不要截前面的字」）：宽度上限 max-w = 卡片内宽 - 8px —— 水印起点因此永远落在卡片左内边距线（28px）上，整串超宽时从**尾部**溢出、被卡片右缘裁掉（前几个字完整保留）；不再出现「开头被裁」的旧观感。
+ * 右下角国家名水印（Push 289 追订「像大牌广告」；Push 301 追订「中文模式和英文模式水印不一样」「之前的中文不要改」「缩写不好看 试试全称吧」—— 文字按界面语言分流：中文 = 地区中文名、英文 = 英文全称）：124px 特粗、灰黑 6%，垫在内容之下（-z-10 + 卡片 isolate）。
+ * 两种排版（watermarkBleed，默认 true = Push 289 出血口径逐字不变）：出血口径 = 右 20px / 下 46px（右侧与底部各裁一截）+ max-w = 卡片内宽 − 8px（起点锚左内边距线 28px，超长从尾部裁、前字完整）；完整口径（false · 英文侧）= 右内缩 28px + 贴底 + max-w = 卡片内宽 − 56px —— 字形全高完整显示，超长名从尾部裁、起点仍锚左内边距线。
  */
 
 /** 半透明投影色（悬停光晕用）：十六进制色 → rgba；其它写法（rgb / 变量）原样返回。 */
@@ -49,8 +49,10 @@ type CardProps = {
   tintBorder?: string;
   /** 炫彩档文字加深（Push 293 追订「炫彩模式文字不明显 看不出来」）：彩底上把卡片次要灰字提深一档（.tint-vivid 作用域）。 */
   vividInk?: boolean;
-  /** 右下角大号淡化水印（项目地区显示名，Push 289 追订）：124px 特粗、灰黑 6%、右下擦出卡片；超长从尾部裁切（前几个字保留）；不传 / 空串 = 不渲染。 */
+  /** 右下角大号淡化水印（Push 289 追订 + Push 301 追订按语言分流）：中文界面 = 地区中文名、英文界面 = 英文全称（完整显示）；124px 特粗、灰黑 6%；不传 / 空串 = 不渲染。 */
   watermark?: string;
+  /** 水印排版口径（Push 301 追订「之前的中文不要改」）：true / 不传 = Push 289 原出血口径（右 20px / 下 46px，右侧与底部各裁一截；max-w = 卡片内宽 − 8px）；false = 完整显示口径（右内缩 28px + 贴底；max-w = 卡片内宽 − 56px，字形全高不裁）。 */
+  watermarkBleed?: boolean;
   /** 项目经理展示文本（多位时按「、」连接；Push 136）。 */
   managerNames: string;
   time: string;
@@ -74,6 +76,7 @@ export function Card({
   tintBorder,
   vividInk,
   watermark,
+  watermarkBleed,
   managerNames,
   time,
   onEdit,
@@ -103,7 +106,12 @@ export function Card({
         <span
           aria-hidden="true"
           data-card-watermark="true"
-          className="pointer-events-none absolute -bottom-[46px] -right-5 -z-10 max-w-[calc(100%-8px)] select-none whitespace-nowrap text-[124px] font-black leading-none tracking-tighter text-zinc-900/[0.06]"
+          className={
+            "pointer-events-none absolute -z-10 select-none whitespace-nowrap text-[124px] font-black leading-none tracking-tighter text-zinc-900/[0.06]" +
+            (watermarkBleed === false
+              ? " bottom-0 right-7 max-w-[calc(100%-56px)]"
+              : " -bottom-[46px] -right-5 max-w-[calc(100%-8px)]")
+          }
         >
           {watermark}
         </span>

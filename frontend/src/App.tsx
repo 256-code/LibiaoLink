@@ -10,7 +10,7 @@ import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
-import { applyLocale, asLocale } from "./i18n";
+import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
@@ -42,24 +42,25 @@ type ViewState =
 
 /** 写失败 → 面向业务的提示（错误码口径《前端功能需求》§3.7）。 */
 function errorMessageOf(error: unknown, fallback: string): string {
+  const t = (key: TextKey, params?: Record<string, string | number>): string => textOf(getLocale(), key, params);
   if (error instanceof ApiError) {
     if (error.code === "PROJECT_CODE_EXISTS") {
-      return "项目编号已存在，请换一个编号。";
+      return t("app.err.codeExists");
     }
     if (error.code === "VERSION_CONFLICT") {
-      return "数据已被他人更新，本次改动未保存。请核对最新内容后重试。";
+      return t("app.err.versionConflict");
     }
     if (error.code === "PROJECT_ARCHIVED") {
-      return "项目已归档，不能修改。";
+      return t("app.err.archived");
     }
     if (error.code === "ARCHIVE_NOT_READY") {
-      return "项目尚未完成验收，不能归档（归档需先完成验收阶段）。";
+      return t("app.err.archiveNotReady");
     }
     if (error.code === "ARCHIVE_GATE_NOT_PASSED") {
-      return "归档门禁未通过（有缺项），请重试并在弹窗内确认。";
+      return t("app.err.archiveGate");
     }
     if (error.code === "DICT_ITEM_EXISTS") {
-      return "该名称已被占用：请换一个名称，或联系管理员处理。";
+      return t("app.err.dictExists");
     }
     if (error.code === "DICT_ITEM_IN_USE") {
       // A3 删除守卫（Push 174）：服务端文案自带「哪个条目 + 多少个项目在用」，原样透出比前端复述更准。
@@ -67,17 +68,17 @@ function errorMessageOf(error: unknown, fallback: string): string {
     }
     if (error.code === "VALIDATION_FAILED") {
       const first = error.details[0];
-      return first !== undefined && first.message !== "" ? "参数校验失败：" + first.message : "参数校验失败，请检查填写内容。";
+      return first !== undefined && first.message !== "" ? t("app.err.validation", { message: first.message }) : t("app.err.validationPlain");
     }
     if (error.status === 403) {
-      return "没有权限执行该操作。";
+      return t("app.err.forbidden");
     }
     if (error.status === 404) {
-      return "项目不存在或无权访问。";
+      return t("app.err.notFound");
     }
-    return error.message + "（" + error.code + "）";
+    return t("app.err.wrapped", { message: error.message, code: error.code });
   }
-  return fallback + "：网络异常，请稍后重试。";
+  return t("app.err.network", { fallback });
 }
 
 /**
@@ -103,6 +104,7 @@ function projectFieldsChanged(
 }
 
 export default function App() {
+  const t = useT();
   const [state, setState] = useState<ViewState>({ kind: "loading" });
   // 参考数据：字典（地区 / 项目类型 + 主题色）、用户目录（项目经理）与本人偏好（常用筛选）；失败不阻塞登录，页面用兜底值
   const [dicts, setDicts] = useState<Dicts>(EMPTY_DICTS);
@@ -252,7 +254,7 @@ export default function App() {
         if (!cancelled) {
           setDetail(null);
           if (error instanceof ApiError && error.status !== 404) {
-            setNotice(errorMessageOf(error, "加载项目失败"));
+            setNotice(errorMessageOf(error, t("app.fail.loadProject")));
           }
         }
       } finally {
@@ -281,7 +283,7 @@ export default function App() {
       setDataVersion((value) => value + 1);
       return null;
     } catch (error: unknown) {
-      return errorMessageOf(error, "创建项目失败");
+      return errorMessageOf(error, t("app.fail.createProject"));
     }
   };
 
@@ -310,7 +312,7 @@ export default function App() {
       );
       return null;
     } catch (error: unknown) {
-      return errorMessageOf(error, type === "region" ? "添加地区失败" : "添加项目类型失败");
+      return errorMessageOf(error, type === "region" ? t("app.fail.addRegion") : t("app.fail.addProjectType"));
     }
   };
 
@@ -325,7 +327,7 @@ export default function App() {
       applyDictType(type, await deleteDictItem(type, code));
       return null;
     } catch (error: unknown) {
-      return errorMessageOf(error, type === "region" ? "删除地区失败" : "删除项目类型失败");
+      return errorMessageOf(error, type === "region" ? t("app.fail.deleteRegion") : t("app.fail.deleteProjectType"));
     }
   };
 
@@ -343,7 +345,7 @@ export default function App() {
       await deleteProject(project.id, project.version);
       setDataVersion((value) => value + 1);
     } catch (error: unknown) {
-      setNotice(errorMessageOf(error, "删除项目失败"));
+      setNotice(errorMessageOf(error, t("app.fail.deleteProject")));
     }
   };
 
@@ -361,7 +363,7 @@ export default function App() {
       return null;
     } catch (error: unknown) {
       setSavedFilters((current) => (current === items ? previous : current));
-      return errorMessageOf(error, "常用筛选保存失败");
+      return errorMessageOf(error, t("app.fail.saveFilters"));
     }
   };
 
@@ -378,7 +380,7 @@ export default function App() {
       return null;
     } catch (error: unknown) {
       setTaskTableHiddenColumns((current) => (current === keys ? previous : current));
-      return errorMessageOf(error, "列显隐保存失败");
+      return errorMessageOf(error, t("app.fail.saveColumns"));
     }
   };
 
@@ -396,7 +398,7 @@ export default function App() {
       return null;
     } catch (error: unknown) {
       setWorkspaceOpenProjects((current) => (current === value ? previous : current));
-      return errorMessageOf(error, "面板展开态保存失败");
+      return errorMessageOf(error, t("app.fail.savePanels"));
     }
   };
 
@@ -442,13 +444,13 @@ export default function App() {
           const latest = toUiProject(await fetchProject(project.id));
           return { kind: "conflict", version: latest.version, latest: { code: latest.code, description: latest.description, note: latest.remark, managerIds: latest.managerIds, projectType: latest.projectType, region: latest.region, status: projectStatusOf(latest.status) ?? "active" } };
         } catch {
-          return { kind: "error", message: "项目已被修改或已不可见，当前输入已保留，暂时无法读取最新内容。" };
+          return { kind: "error", message: t("app.err.projectGone") };
         }
       }
       if (error instanceof ApiError && error.code === "ARCHIVE_GATE_NOT_PASSED" && options?.archiveConfirm !== true) {
         return { kind: "archive-confirm", missing: error.details.map((detail) => detail.message) };
       }
-      return { kind: "error", message: errorMessageOf(error, "保存项目失败") };
+      return { kind: "error", message: errorMessageOf(error, t("app.fail.saveProject")) };
     }
   };
 
@@ -474,7 +476,7 @@ export default function App() {
       setDataVersion((value) => value + 1);
       return true;
     } catch (error: unknown) {
-      setNotice(errorMessageOf(error, "项目经理修改失败"));
+      setNotice(errorMessageOf(error, t("app.fail.saveManagers")));
       return false;
     }
   };
@@ -529,7 +531,7 @@ export default function App() {
     return (
       <main className="page">
         <div className="card">
-          <p className="muted">正在跳转公司统一登录…</p>
+          <p className="muted">{t("app.login.redirecting")}</p>
         </div>
       </main>
     );
@@ -539,7 +541,7 @@ export default function App() {
     return (
       <main className="page">
         <div className="card">
-          <h1>加载失败</h1>
+          <h1>{t("app.loadFailed")}</h1>
           <p className="muted">{state.message}</p>
           <p>
             <button
@@ -548,7 +550,7 @@ export default function App() {
                 window.location.reload();
               }}
             >
-              重试
+              {t("common.retry")}
             </button>
           </p>
         </div>
@@ -569,11 +571,11 @@ export default function App() {
         <div
           ref={deleteConfirmTrapRef}
           role="dialog"
-          aria-label="确认删除项目"
+          aria-label={t("app.delete.aria")}
           className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
         >
           <span>
-            删除项目 <span className="font-mono font-semibold">{pendingDelete.code}</span>（{pendingDelete.description}）？删除后连同任务一起删除、编号可再用。
+            {t("app.delete.lead")} <span className="font-mono font-semibold">{pendingDelete.code}</span>{t("app.delete.tail", { name: pendingDelete.description })}
           </span>
           <button
             type="button"
@@ -582,7 +584,7 @@ export default function App() {
             }}
             className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -591,7 +593,7 @@ export default function App() {
             }}
             className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
           >
-            删除
+            {t("common.delete")}
           </button>
         </div>
       )}

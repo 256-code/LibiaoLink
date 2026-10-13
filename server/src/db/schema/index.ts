@@ -15,3 +15,4 @@ export * from "./reports.js";
 export * from "./views.js";
 export * from "./follows.js";
 export * from "./notify.js";
+export * from "./translate.js";

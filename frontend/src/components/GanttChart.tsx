@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import type { Member } from "../data/members";
 import type { TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROGRESS_STEPS, TEMP_TASK_STAGE, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, TEMP_TASK_STAGE, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
-import { fieldText, stageText, useLocale, useLocalizedTranslator, useT } from "../i18n";
+import { fieldText, mdText, monthShortText, monthYearText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, yearText } from "../i18n";
+import type { Locale } from "../i18n";
 import { STATUS_DOT_CLASS, TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, type TaskPatch } from "./TaskBoard";
 
 /**
@@ -274,19 +275,19 @@ function dayOfMonth(utc: number): number {
   return new Date(utc).getUTCDate();
 }
 
-function monthTextOf(utc: number): string {
+function monthTextOf(locale: Locale, utc: number): string {
   const date = new Date(utc);
-  return String(date.getUTCFullYear()) + "年" + String(date.getUTCMonth() + 1) + "月";
+  return monthYearText(locale, date.getUTCFullYear(), date.getUTCMonth() + 1);
 }
 
 /** 月粒度下排的月份文案（如「5月」—— 年份已经在上一行）。 */
-function monthShortTextOf(utc: number): string {
-  return String(new Date(utc).getUTCMonth() + 1) + "月";
+function monthShortTextOf(locale: Locale, utc: number): string {
+  return monthShortText(locale, new Date(utc).getUTCMonth() + 1);
 }
 
 /** 月粒度上排的年份文案（如「2026年」）。 */
-function yearTextOf(utc: number): string {
-  return String(new Date(utc).getUTCFullYear()) + "年";
+function yearTextOf(locale: Locale, utc: number): string {
+  return yearText(locale, new Date(utc).getUTCFullYear());
 }
 
 /** 周粒度下周列的文案（该周首日，如「5/18」）。 */
@@ -374,7 +375,7 @@ type GanttDrag = {
 };
 
 /** 任务 → 甘特条：日期直接吃 ISO（契约 DateOnly，空串 = 未填）。 */
-function buildBar(task: ProjectTask): GanttBar {
+function buildBar(locale: Locale, task: ProjectTask): GanttBar {
   const rawStart = task.startDate === "" ? null : utcFromIso(task.startDate);
   const rawEnd = task.dueDate === "" ? null : utcFromIso(task.dueDate);
   const done = task.doneDate === "" ? null : utcFromIso(task.doneDate);
@@ -385,14 +386,15 @@ function buildBar(task: ProjectTask): GanttBar {
   const percent = Math.max(0, Math.min(100, Math.round(task.progress * 100)));
   const owners = ownersLabel(task.owners);
   /** 悬停提示里的日期按「M月D日」展示（模型里存的是 ISO）。 */
-  const dayText = (iso: string): string => (iso === "" ? "—" : cnDateFromIso(iso));
+  const dayText = (iso: string): string => (iso === "" ? "—" : mdText(locale, iso));
+  const gap = locale === "en" ? " · " : "　";
   const label = [
     task.title + (task.titleEn === "" ? "" : "（" + task.titleEn + "）"),
-    "开始 " + dayText(task.startDate) + "　预计完成 " + dayText(task.dueDate),
-    task.doneDate === "" ? "" : "实际完成 " + dayText(task.doneDate),
-    "进度 " + String(percent) + "%　状态 " + status,
-    "负责人 " + (owners === "" ? "待分配" : owners),
-    "拖动条 = 整体改期 · 拖两端 = 改工期 · 拖圆点 = 改进度",
+    textOf(locale, "gantt.tip.start", { date: dayText(task.startDate) }) + gap + textOf(locale, "gantt.tip.due", { date: dayText(task.dueDate) }),
+    task.doneDate === "" ? "" : textOf(locale, "gantt.tip.done", { date: dayText(task.doneDate) }),
+    textOf(locale, "gantt.tip.progress", { n: percent }) + gap + textOf(locale, "gantt.tip.status", { status: statusText(locale, status) }),
+    textOf(locale, "gantt.tip.owners", { names: owners === "" ? textOf(locale, "gantt.owner.none") : owners }),
+    textOf(locale, "gantt.tip.dragBar"),
   ]
     .filter((line) => line !== "")
     .join("\n");
@@ -405,6 +407,7 @@ function buildBar(task: ProjectTask): GanttBar {
  * includeToday = 「回到今天」把今天并进范围（今天本来就在范围里 = 无影响，见下面的注释）。
  */
 function buildModel(
+  locale: Locale,
   tasks: readonly ProjectTask[],
   today: number,
   collapsed: Record<string, boolean>,
@@ -412,7 +415,7 @@ function buildModel(
   includeToday: boolean,
   viewport?: { start: number; end: number },
 ): GanttModel | null {
-  const bars = tasks.map(buildBar);
+  const bars = tasks.map((task) => buildBar(locale, task));
 
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
@@ -452,14 +455,14 @@ function buildModel(
   for (let index = 0; index < days; index += 1) {
     const utc = shiftDays(rangeStart, index);
     const weekday = weekdayOf(utc);
-    const label = monthTextOf(utc);
+    const label = monthTextOf(locale, utc);
     const last = months[months.length - 1];
     if (last !== undefined && last.label === label) {
       last.days += 1;
     } else {
-      months.push({ key: "month-" + String(index), label, short: monthShortTextOf(utc), days: 1, start: index });
+      months.push({ key: "month-" + String(index), label, short: monthShortTextOf(locale, utc), days: 1, start: index });
     }
-    const yearLabel = yearTextOf(utc);
+    const yearLabel = yearTextOf(locale, utc);
     const lastYear = years[years.length - 1];
     if (lastYear !== undefined && lastYear.label === yearLabel) {
       lastYear.days += 1;
@@ -624,6 +627,11 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
 
   const scaleConfig = SCALES[scale];
   const dayWidth = scaleConfig.dayWidth[zoom];
+  /** 粒度 / 缩放 / 行筛选的显示名（Push 301 词典；模块常量只留 key）。 */
+  const scaleText = (key: ScaleKey): string => t(key === "day" ? "gantt.scale.day" : key === "week" ? "gantt.scale.week" : "gantt.scale.month");
+  const densityText = (key: ZoomKey): string => t(key === "compact" ? "gantt.density.compact" : key === "standard" ? "gantt.density.standard" : "gantt.density.wide");
+  const rowFilterText = (key: RowFilterKey): string => t(key === "all" ? "gantt.rowFilter.all" : key === "overdue" ? "gantt.rowFilter.overdue" : "gantt.rowFilter.unscheduled");
+  const rowFilterHint = (key: RowFilterKey): string => t(key === "all" ? "gantt.rowFilter.all.hint" : key === "overdue" ? "gantt.rowFilter.overdue.hint" : "gantt.rowFilter.unscheduled.hint");
 
   /** 负责人筛选项（M3-07 刀 1 后半）：按任务出现顺序收集**负责人 id**（与看板「负责人按任务出现顺序」同口径）；有「没负责人」的任务才出「待分配」。 */
   const ownerOptions = useMemo(() => {
@@ -650,16 +658,16 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
    * 选中值走**负责人 id**（与 visibleTasks 的过滤口径同一套字符串空间）。
    */
   const ownerItems = useMemo<SearchSelectItem[]>(() => {
-    const items: SearchSelectItem[] = [{ kind: "plain", value: OWNER_ANY, name: "全部", hint: "不限负责人" }];
+    const items: SearchSelectItem[] = [{ kind: "plain", value: OWNER_ANY, name: textOf(locale, "gantt.owner.all"), hint: textOf(locale, "gantt.owner.allHint") }];
     for (const ownerId of ownerOptions.ids) {
       const member = members.find((item) => item.id === ownerId);
-      items.push(member === undefined ? { kind: "plain", value: ownerId, name: ownerId, hint: "负责人" } : { kind: "member", value: ownerId, member });
+      items.push(member === undefined ? { kind: "plain", value: ownerId, name: ownerId, hint: fieldText(locale, "负责人") } : { kind: "member", value: ownerId, member });
     }
     if (ownerOptions.hasUnassigned) {
-      items.push({ kind: "plain", value: OWNER_NONE, name: "待分配", hint: "未填负责人" });
+      items.push({ kind: "plain", value: OWNER_NONE, name: textOf(locale, "gantt.owner.none"), hint: textOf(locale, "gantt.owner.noneHint") });
     }
     return items;
-  }, [ownerOptions, members]);
+  }, [ownerOptions, members, locale]);
 
   /** 筛选后的任务：时间轴范围、阶段汇总、左表行数全部跟着它走（业务口径「甘特内筛选」）。 */
   const visibleTasks = useMemo(() => {
@@ -702,8 +710,8 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
         end: origin + Math.ceil((node.scrollLeft + Math.max(0, node.clientWidth - leftWidth)) / previousDayWidth) * DAY_MS,
       }
       : undefined;
-    return buildModel(visibleTasks, today, collapsed, filtering, includeToday, viewport);
-  }, [visibleTasks, today, collapsed, filtering, includeToday, viewportKey, leftWidth]);
+    return buildModel(locale, visibleTasks, today, collapsed, filtering, includeToday, viewport);
+  }, [visibleTasks, today, collapsed, filtering, includeToday, viewportKey, leftWidth, locale]);
   const weekendSet = useMemo(() => new Set(model === null ? [] : model.weekends), [model]);
 
   /**
@@ -1154,7 +1162,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   if (tasks.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-14 text-center text-sm text-zinc-500">
-        这个项目还没有任务：到「项目总览」点阶段标签，从任务节点 / 模板里挑节点加进来。
+        {t("gantt.empty.project")}
       </div>
     );
   }
@@ -1180,16 +1188,16 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
             {FALLBACK_TASK_COLUMNS.map((column) =>
               column.key === "title" ? (
                 <span key={column.key} data-column={column.key} className="truncate">
-                  {column.label}
+                  {fieldText(locale, column.label)}
                 </span>
               ) : (
                 <span
                   key={column.key}
                   data-column={column.key}
-                  title={column.label === "" ? undefined : column.label}
+                  title={column.label === "" ? undefined : fieldText(locale, column.label)}
                   className={"truncate text-center " + (column.headerClass ?? "")}
                 >
-                  {column.header ?? column.label}
+                  {column.header ?? fieldText(locale, column.label)}
                 </span>
               ),
             )}
@@ -1205,9 +1213,9 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                 <div data-gantt-list-stage={group.stage} className="flex w-full items-center gap-2.5 bg-zinc-100 px-5 py-3">
                   <button
                     type="button"
-                    aria-label={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    aria-label={isCollapsed ? t("board.stage.expand") : t("board.stage.collapse")}
                     aria-expanded={!isCollapsed}
-                    title={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    title={isCollapsed ? t("board.stage.expand") : t("board.stage.collapse")}
                     onClick={(event) => {
                       event.stopPropagation();
                       toggleStage(group.stage);
@@ -1224,9 +1232,9 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                   </button>
                   <span className="relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 ring-zinc-200">
                     <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
-                    <span className="relative text-sm font-semibold text-zinc-800">{group.stage}</span>
+                    <span className="relative text-sm font-semibold text-zinc-800">{stageText(locale, group.stage)}</span>
                     <span className="relative text-xs text-zinc-500">
-                      已完成 {done}/{group.items.length}
+                      {t("board.stage.done", { done: done, total: group.items.length })}
                     </span>
                   </span>
                 </div>
@@ -1275,31 +1283,31 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
         <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
           <li className="flex items-center gap-1.5">
             <span className={"h-2.5 w-4 rounded-[3px] " + BAR_DONE_CLASS} aria-hidden="true" />
-            已完成进度
+            {t("gantt.legend.done")}
           </li>
           <li className="flex items-center gap-1.5">
             <span className={"h-2.5 w-4 rounded-[3px] " + BAR_TODO_CLASS} aria-hidden="true" />
-            剩余工期
+            {t("gantt.legend.remaining")}
           </li>
           <li className="flex items-center gap-1.5">
             <span className="h-2.5 w-4 rounded-[3px] bg-[#f7a63c] shadow-[inset_3px_0_0_0_#ef4444]" aria-hidden="true" />
-            已延期
+            {t("gantt.legend.overdue")}
           </li>
-          <li className="flex items-center gap-1.5" title="单日任务（开始 = 预计完成）：已完成 = 绿色、未完成 = 灰色、已延期 = 红色">
+          <li className="flex items-center gap-1.5" title={t("gantt.legend.singleDayHint")}>
             <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-emerald-500 ring-1 ring-emerald-700/60" aria-hidden="true" />
-            单日任务
+            {t("gantt.legend.singleDay")}
           </li>
           <li className="flex items-center gap-1.5">
             <span className="h-3 w-[2px] bg-zinc-900/60" aria-hidden="true" />
-            实际完成日期
+            {t("gantt.legend.doneDate")}
           </li>
           <li className="flex items-center gap-1.5">
             <span className="h-3 border-l border-dashed border-blue-500" aria-hidden="true" />
-            今天
+            {t("gantt.legend.today")}
           </li>
         </ul>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <span className="text-[11px] text-zinc-400">粒度</span>
+          <span className="text-[11px] text-zinc-400">{t("gantt.label.granularity")}</span>
           <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
             {SCALE_KEYS.map((key) => (
               <button
@@ -1308,17 +1316,17 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                 onClick={() => {
                   setScale(key);
                 }}
-                title={"时间轴按「" + SCALES[key].label + "」展开（官方 timelineHeader.scales）：只换表头分段与网格密度，条 / 里程碑 / 今天线仍按天精确落点"}
+                title={t("gantt.scale.title", { name: scaleText(key) })}
                 className={
                   "rounded-md px-2.5 py-1 text-xs font-medium transition " +
                   (key === scale ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
                 }
               >
-                {SCALES[key].label}
+                {scaleText(key)}
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-zinc-400">缩放</span>
+          <span className="text-[11px] text-zinc-400">{t("gantt.label.zoom")}</span>
           <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
             {ZOOM_LEVELS.map((level) => (
               <button
@@ -1327,13 +1335,13 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                 onClick={() => {
                   setZoom(level.key);
                 }}
-                title={"时间轴列宽：" + (scale === "month" ? "每月约 " : "每" + scaleConfig.label + " ") + String(Math.round(scaleConfig.unitDays * scaleConfig.dayWidth[level.key])) + "px"}
+                title={scale === "month" ? t("gantt.zoom.titleMonth", { n: Math.round(scaleConfig.unitDays * scaleConfig.dayWidth[level.key]) }) : t("gantt.zoom.titleUnit", { unit: locale === "en" ? (scale === "day" ? "day" : "week") : scaleText(scale), n: Math.round(scaleConfig.unitDays * scaleConfig.dayWidth[level.key]) })}
                 className={
                   "rounded-md px-2.5 py-1 text-xs font-medium transition " +
                   (level.key === zoom ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
                 }
               >
-                {level.label}
+                {densityText(level.key)}
               </button>
             ))}
           </div>
@@ -1342,7 +1350,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
             onClick={toggleAll}
             className={"rounded-lg border px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:text-zinc-900 " + GLASS_SURFACE}
           >
-            {allCollapsedNow ? "全部展开" : "全部折叠"}
+            {allCollapsedNow ? t("gantt.toggle.allExpand") : t("gantt.toggle.allCollapse")}
           </button>
           <button
             type="button"
@@ -1350,8 +1358,8 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
             disabled={model === null}
             title={
               todayIndex === null
-                ? "今天不在当前时间轴范围内（范围跟着筛完剩下的任务走）：点一下把时间轴延到今天并居中"
-                : "把时间轴滚到今天（今天所在列落在可视区左 1/3）"
+                ? t("gantt.today.outOfRange")
+                : t("gantt.today.title")
             }
             className={
               "rounded-lg border px-2.5 py-1 text-xs font-medium transition " +
@@ -1360,22 +1368,22 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                 : GLASS_SURFACE + " text-zinc-600 hover:text-zinc-900")
             }
           >
-            回到今天
+            {t("gantt.today.button")}
           </button>
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-zinc-100 pt-2">
-        <span className="text-[11px] text-zinc-400">筛选</span>
+        <span className="text-[11px] text-zinc-400">{t("gantt.label.filter")}</span>
         <label className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-          负责人
+          {fieldText(locale, "负责人")}
           <SearchSelect
             value={ownerFilter}
             items={ownerItems}
             onChange={(next) => {
               setOwnerFilter(next);
             }}
-            ariaLabel="按负责人筛选"
-            footer={"共 " + String(ownerOptions.ids.length) + " 位负责人 · 按姓名 / 工号搜索"}
+            ariaLabel={t("gantt.owner.aria")}
+            footer={t("gantt.owner.footer", { n: ownerOptions.ids.length })}
             triggerClassName={"flex min-w-[88px] items-center gap-1 rounded-lg border py-1 pl-2 pr-1.5 text-xs text-zinc-600 transition " + GLASS_SURFACE}
           />
         </label>
@@ -1387,33 +1395,33 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
               onClick={() => {
                 setRowFilter(item.key);
               }}
-              title={item.hint}
+              title={rowFilterHint(item.key)}
               className={
                 "rounded-md px-2.5 py-1 text-xs font-medium transition " +
                 (item.key === rowFilter ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
               }
             >
-              {item.label}
+              {rowFilterText(item.key)}
             </button>
           ))}
         </div>
         {filtering ? (
           <>
             <span className="text-[11px] tabular-nums text-zinc-500">
-              {"筛选后 " + String(visibleTasks.length) + " / 共 " + String(tasks.length) + " 条任务"}
+              {t("gantt.filter.result", { shown: visibleTasks.length, total: tasks.length })}
             </span>
             <button
               type="button"
               onClick={clearFilters}
               className={"rounded-lg border px-2 py-1 text-[11px] font-medium text-zinc-500 transition hover:text-zinc-900 " + GLASS_SURFACE}
             >
-              清空筛选
+              {t("gantt.filter.clear")}
             </button>
           </>
         ) : null}
       </div>
       <p className="mt-2 border-t border-zinc-100 pt-2 text-[11px] leading-4 text-zinc-400">
-        条上操作（对齐参考样例）：拖条 = 整体改期 · 拖条两端 = 改工期 · 拖条上圆点 = 改进度（四档）· 拖到时间轴左右边缘 = 画面自动跟着走 · 点条 = 选中 · 点左表任务行 = 定位到条 · 拖空白 = 平移画面（横向 / 纵向跟手）· 拖左表右边线 = 移动分隔线（左表被时间轴盖住多少，双击复位）· Esc = 取消
+        {t("gantt.hint.barOps")}
       </p>
     </div>
   );
@@ -1426,22 +1434,22 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
         {toolbarBlock}
         {visibleTasks.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-14 text-center text-sm text-zinc-500">
-            <p>当前筛选下没有任务：{tasks.length} 条任务全被筛掉了。</p>
+            <p>{t("gantt.empty.filtered", { n: tasks.length })}</p>
             <button
               type="button"
               onClick={clearFilters}
               className="mt-3 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900"
             >
-              清空筛选
+              {t("gantt.filter.clear")}
             </button>
           </div>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs text-zinc-500">
               {filtering ? (
-                <p>当前筛选出的 {visibleTasks.length} 条任务都还没填「开始日期 / 预计完成日期」，画不出时间轴 —— 先在下面按列表把日期补上，就能出甘特条。</p>
+                <p>{t("gantt.empty.unscheduledFiltered", { n: visibleTasks.length })}</p>
               ) : (
-                <p>这个项目有 {tasks.length} 个任务，但都还没填「开始日期 / 预计完成日期」，暂时画不出时间轴 —— 先在下面按列表把日期补上，就能出甘特条。</p>
+                <p>{t("gantt.empty.unscheduledProject", { n: tasks.length })}</p>
               )}
             </div>
             {taskListBlock}
@@ -1477,8 +1485,8 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   const rowDateRange = (row: GanttRow): { start: string; end: string; live: boolean } => {
     if (row.kind === "group") {
       return {
-        start: row.group.start === null ? "—" : cnDateFromIso(isoOf(row.group.start)),
-        end: row.group.end === null ? "—" : cnDateFromIso(isoOf(row.group.end)),
+        start: row.group.start === null ? "—" : mdText(locale, isoOf(row.group.start)),
+        end: row.group.end === null ? "—" : mdText(locale, isoOf(row.group.end)),
         live: false,
       };
     }
@@ -1486,7 +1494,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
       return { start: "—", end: "—", live: false };
     }
     const live = liveOf(row.bar);
-    return { start: cnDateFromIso(isoOf(live.start)), end: cnDateFromIso(isoOf(live.end)), live: live.dragging };
+    return { start: mdText(locale, isoOf(live.start)), end: mdText(locale, isoOf(live.end)), live: live.dragging };
   };
 
   /** 点时间轴空白 / 左表空白：清掉选中（拖动收尾补的那一下 click 挡掉，免得刚拖完就取消选中）。 */
@@ -1524,8 +1532,8 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
     }
     const text =
       drag.mode === "progress"
-        ? "进度 " + String(drag.percent) + "%"
-        : cnDateFromIso(isoOf(drag.start)) + " → " + cnDateFromIso(isoOf(drag.end)) + " · 共 " + String(dayDiff(drag.start, drag.end) + 1) + " 天";
+        ? t("gantt.tip.progress", { n: drag.percent })
+        : t("gantt.tip.dragRange", { from: mdText(locale, isoOf(drag.start)), to: mdText(locale, isoOf(drag.end)), n: dayDiff(drag.start, drag.end) + 1 });
     return (
       <span className="pointer-events-none absolute z-40 select-none whitespace-nowrap rounded-md bg-zinc-900/90 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-lg" style={{ left, top: -12 }}>
         {text}
@@ -1636,7 +1644,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
             <span
               className="absolute inset-y-0 w-[2px] bg-zinc-900/60"
               style={{ left: doneLeft }}
-              title={"实际完成 " + (bar.task.doneDate === "" ? "—" : cnDateFromIso(bar.task.doneDate))}
+              title={t("gantt.tip.done", { date: bar.task.doneDate === "" ? "—" : mdText(locale, bar.task.doneDate) })}
             />
           )}
           {showHandles ? (
@@ -1666,7 +1674,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                 left: clampNumber((live.percent / 100) * box.width - KNOB_SIZE / 2, EDGE_ZONE_W, Math.max(box.width - KNOB_SIZE - EDGE_ZONE_W, EDGE_ZONE_W)),
                 top: (BAR_H - KNOB_SIZE) / 2,
               }}
-              title={"拖动改进度（当前 " + String(percent) + "%）"}
+              title={t("gantt.tip.dragProgress", { n: percent })}
               onPointerDown={(event) => {
                 beginDrag(event, bar, "progress");
               }}
@@ -1688,15 +1696,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
       <div
         className={"absolute rounded-full " + BAR_TODO_CLASS}
         style={{ left: box.left, width: box.width, height: GROUP_BAR_H, top: (ROW_H - GROUP_BAR_H) / 2 }}
-        title={
-          "阶段工期（组内任务并集）　已完成 " +
-          String(group.doneCount) +
-          "/" +
-          String(group.bars.length) +
-          "　" +
-          String(group.percent) +
-          "%"
-        }
+        title={t("gantt.groupSpan.tip", { text: String(group.doneCount) + "/" + String(group.bars.length) + " · " + String(group.percent) + "%" })}
       >
         <span className={"absolute inset-y-0 left-0 rounded-full " + BAR_DONE_CLASS} style={{ width: group.percent + "%" }} aria-hidden="true" />
       </div>
@@ -1785,7 +1785,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                           onClick={() => {
                             toggleStage(row.group.stage);
                           }}
-                          title={collapsed[row.group.stage] === true ? "展开这个阶段" : "折叠这个阶段"}
+                          title={collapsed[row.group.stage] === true ? t("board.stage.expand") : t("board.stage.collapse")}
                           className="flex h-full min-w-0 items-center gap-1.5 px-2 text-left"
                           style={{ width: COL_TITLE_W }}
                         >
@@ -1813,7 +1813,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                             event.stopPropagation();
                             locateBar(row.bar);
                           }}
-                          title={row.bar.label + "\n点一下 = 选中这条，并把条定位到时间轴可视区"}
+                          title={row.bar.label + "\n" + t("gantt.tip.selectTip")}
                           className="flex h-full min-w-0 items-center gap-1.5 pl-6 pr-2 text-left"
                           style={{ width: COL_TITLE_W }}
                         >
@@ -1843,7 +1843,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
               {/* 拖这条线 = 移动右侧时间轴的左边界（左表被盖住多少），双击复位到全露（官方 frame.verticalSplitLineMoveable + verticalSplitLineHighlight）：高亮线压在分隔线本身上 */}
               <span
                 className="absolute -right-2 top-0 z-30 h-full w-4 cursor-col-resize touch-none"
-                title="拖动移动分隔线（左表被时间轴盖住多少），双击复位"
+                title={t("gantt.splitter.title")}
                 onPointerDown={beginSplit}
                 onPointerMove={moveSplit}
                 onPointerUp={endSplit}

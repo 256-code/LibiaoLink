@@ -39,6 +39,7 @@
 import { type ProjectTask, type TaskStatus } from "./data/tasks";
 import { stageNameOf } from "./taskApi";
 import { translateZhToEn } from "./translateApi";
+import { getLocale, textOf } from "./i18n";
 import { projectManagerText } from "./types";
 import {
   STAGE_NAMES,
@@ -464,7 +465,7 @@ function printHtmlDocument(html: string): void {
   }
   const frame = document.createElement("iframe");
   frame.id = PRINT_FRAME_ID;
-  frame.title = "项目总览导出（打印）";
+  frame.title = textOf(getLocale(), "exp.frameTitle");
   frame.setAttribute("aria-hidden", "true");
   // 离屏但要保持渲染（display:none 的 iframe 在部分浏览器里会打印空白）：挪到视口外、尺寸给足
   frame.style.cssText = "position: fixed; left: -20000px; top: 0; width: 1280px; height: 900px; border: 0;";

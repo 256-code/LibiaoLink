@@ -1,3 +1,5 @@
+import { useT } from "../i18n";
+
 /**
  * 任务表行内的删除按钮（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：
  * 形态取自业务给的参考代码（圆 → 悬停展开成红底胶囊、浮出「删除」字样），尺寸与色彩按任务表行收小 / 收淡：
@@ -9,7 +11,7 @@
  */
 export function RowDeleteButton({
   onDelete,
-  label = "删除任务",
+  label,
   scope = "default",
 }: {
   onDelete: () => void;
@@ -22,11 +24,13 @@ export function RowDeleteButton({
    */
   scope?: "default" | "panel";
 }) {
+  const t = useT();
+  const text = label ?? t("row.delete.task");
   return (
     <button
       type="button"
-      aria-label={label}
-      title={label}
+      aria-label={text}
+      title={text}
       onClick={(event) => {
         event.stopPropagation();
         onDelete();
@@ -38,7 +42,7 @@ export function RowDeleteButton({
       }
     >
       <span className="pointer-events-none absolute -translate-y-3 text-[11px] font-semibold opacity-0 transition-all duration-300 group-hover/del:translate-y-0 group-hover/del:opacity-100 group-focus-visible/del:translate-y-0 group-focus-visible/del:opacity-100">
-        删除
+        {t("common.delete")}
       </span>
       <svg
         viewBox="0 0 448 512"

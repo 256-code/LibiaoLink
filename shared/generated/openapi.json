@@ -87,6 +87,10 @@
     {
       "name": "notifications",
       "description": "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流与稍后提醒（S8-3）"
+    },
+    {
+      "name": "translate",
+      "description": "翻译通道（§6.16 ㉕）：手打内容英译译文库 —— 单条（库优先 + 引擎兜底落库）与批量查库（切页提速）"
     }
   ],
   "components": {
@@ -8036,6 +8040,108 @@
           "version"
         ],
         "description": "编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架"
+      },
+      "TranslateBatchBody": {
+        "type": "object",
+        "properties": {
+          "qs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "minItems": 1,
+            "maxItems": 400
+          },
+          "source": {
+            "$ref": "#/components/schemas/TranslateLang"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TranslateLang"
+          }
+        },
+        "required": [
+          "qs"
+        ],
+        "description": "批量查库请求（英文界面切页提速；只回已存译文）"
+      },
+      "TranslateBatchResponse": {
+        "type": "object",
+        "properties": {
+          "translations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "q": {
+                  "type": "string",
+                  "description": "原文（请求时原样回显）"
+                },
+                "translatedText": {
+                  "type": "string",
+                  "description": "已存译文"
+                }
+              },
+              "required": [
+                "q",
+                "translatedText"
+              ]
+            },
+            "description": "命中条目（译文库已存；未命中的由前端走单条通道）"
+          }
+        },
+        "required": [
+          "translations"
+        ]
+      },
+      "TranslateBody": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "source": {
+            "$ref": "#/components/schemas/TranslateLang"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TranslateLang"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text"
+            ],
+            "default": "text"
+          }
+        },
+        "required": [
+          "q"
+        ],
+        "description": "单条翻译请求：译文库优先、未命中调引擎后落库"
+      },
+      "TranslateLang": {
+        "type": "string",
+        "enum": [
+          "zh",
+          "en"
+        ],
+        "default": "zh",
+        "description": "语言：zh 中文 / en 英文"
+      },
+      "TranslateResponse": {
+        "type": "object",
+        "properties": {
+          "translatedText": {
+            "type": "string",
+            "description": "译文（译文库命中或引擎产出后落库）"
+          }
+        },
+        "required": [
+          "translatedText"
+        ]
       },
       "UploadAbortResponse": {
         "type": "object",
@@ -17779,6 +17885,114 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/translate": {
+      "post": {
+        "tags": [
+          "translate"
+        ],
+        "summary": "单条翻译（译文库优先）：命中直出；未命中调内网引擎（HY-MT1.5-1.8B）后落库 —— 引擎不可用 500 INTERNAL（前端静默降级跳过）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "译文（库内或引擎产出，产出即落库）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "翻译引擎不可用（INTERNAL；前端静默降级跳过）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/translate/batch": {
+      "post": {
+        "tags": [
+          "translate"
+        ],
+        "summary": "批量查库（不调引擎）：一次请求拿整页已存译文（英文界面切页提速）；未命中条目由前端走单条通道",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslateBatchBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "命中条目清单",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
             "content": {
               "application/json": {
                 "schema": {
