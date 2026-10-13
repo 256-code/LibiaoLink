@@ -1,7 +1,7 @@
 # PoC-2 回放证据（企微通道：免登可用 / 应用消息送达 / 群通道送达 / 限速实测）
 
 > 卡片：i6 · S8·M5-03（PoC-2 · 主责 lan，评审 wmj / px）｜验收口径 = `docs/M5-03-实施方案(企微通道).md` §一 目标四条 + §八 验证与验收；依赖先决见 `docs/M5-03-外部依赖清单(企微通道).md`。
-> 状态：**真机段已回填（Push 228 · 2026-10-13）** —— M5-03-1 ~ M5-03-3 的 stub / 回放证据已随各刀 CI 落地；**真机实测（群通道）T2 ~ T5 + T4R（重拉恢复）全通过**（T1 单聊面因范围调整暂缓）—— 断言明细见 §二、落痕见 §五。
+> 状态：**真机段已回填（Push 228 · 2026-10-13）** —— M5-03-1 ~ M5-03-3 的 stub / 回放证据已随各刀 CI 落地；**真机实测（群通道）T2 ~ T5 + T4R（重拉恢复）全通过**（T1 单聊面因范围调整暂缓）—— 断言明细见 §二、落痕见 §五；**T5 反向发现（告警复报）修复已随 Push 229 落地**（见 §二 T5+ 行）。
 > `docs/` 属 px 线：本文件由 lan 代记，**请 px 复核**（先例：`docs/PoC-4-回放证据(Outbox投递语义).md` 等 12 份 `docs/PoC-*` 证据）。
 
 | 项 | 值 |
@@ -60,6 +60,6 @@ cd server && node --env-file-if-exists=.env scripts/s7-4-automation-wiring-repla
 | T4 | `outbox #9000 dead`（errcode=93001 permanent · 日志「群播报确定性失败（转 dead）」）；`deliveries #5 dead`；降级 `notifications #33`（type=reminder · source_dedupe_key=`M5-03-PoC2:T4:2026-10-13:c504` · unread）；告警日志「告警已推企微告警群：outbox.dead · chatid ****9vww」 |
 | T4R | `outbox #9001 done`（attempts=0）；`deliveries #6 sent`（03:36:16Z）；群内可见（用户确认） |
 | T5 | 告警群收到 `【LibiaoLink 告警】outbox.dead`（用户确认） |
-| T5+（同场发现 · 非计划项） | 探针路径复报实证：`outbox.dead_letter` ×3 —— 11:37:45 / 11:42:45 / 11:47:45（每 5 分钟一轮 · 同一死信 `#9000`）；成因 = 探针状态口径 + 抑制窗口（5 分钟）恰等于探针周期（5 分钟）竞态穿透 + 即时 / 探针 code 分离；已登记方案 §九（修复随 Push 229） |
+| T5+（同场发现 · 非计划项） | 探针路径复报实证：`outbox.dead_letter` ×3 —— 11:37:45 / 11:42:45 / 11:47:45（每 5 分钟一轮 · 同一死信 `#9000`）；成因 = 探针状态口径 + 抑制窗口（5 分钟）恰等于探针周期（5 分钟）竞态穿透 + 即时 / 探针 code 分离；已登记方案 §九；**修复已落地（Push 229）**：探针死信水位线 + 抑制窗口 15 分钟 + 死信同族抑制 |
 
 > 运行时口径：worker = `server/dist/entry/worker.js`（`server/.env` 注入 · git 忽略 · 真机段零代码改动）；限速桶键 = `group:<chatBucketId>:w60000` / `:w3600000`（`chatBucketId` = sha256(chatid) 前 12 位 —— 计数键 / 日志不含 chatid 明文）；chatid 一律掩码（`wrsu…aKSg` / `wrsu…9vww`）。

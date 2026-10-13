@@ -118,9 +118,44 @@ describe("OutboxAlertProbe.probeOnce（S7-1）", () => {
     expect(alerts).toHaveLength(0);
     expect(sink.emitted).toHaveLength(0);
   });
+
+  it("死信水位线：首次命中照发；同量复报抑制；新增再放行；回落重建基线", async () => {
+    const { probe, store, sink } = makeProbe();
+
+    store.current = snapshot({ deadRecent: 1, deadTotal: 1 });
+    const first = await probe.probeOnce();
+    expect(first.map((alert) => alert.code)).toEqual(["outbox.dead_letter"]);
+
+    expect(await probe.probeOnce()).toHaveLength(0);
+
+    store.current = snapshot({ deadRecent: 2, deadTotal: 2 });
+    const grown = await probe.probeOnce();
+    expect(grown.map((alert) => alert.code)).toEqual(["outbox.dead_letter"]);
+
+    store.current = snapshot({ deadRecent: 0, deadTotal: 0 });
+    expect(await probe.probeOnce()).toHaveLength(0);
+
+    store.current = snapshot({ deadRecent: 1, deadTotal: 1 });
+    const afterReset = await probe.probeOnce();
+    expect(afterReset.map((alert) => alert.code)).toEqual(["outbox.dead_letter"]);
+    expect(await probe.probeOnce()).toHaveLength(0);
+
+    expect(sink.emitted).toHaveLength(3);
+  });
+
+  it("水位线只收敛死信：其它告警照常每轮判定", async () => {
+    const { probe, store } = makeProbe();
+    store.current = snapshot({ duePending: 1001, oldestDueMs: 1000, deadRecent: 1, deadTotal: 1 });
+
+    const first = await probe.probeOnce();
+    expect(first.map((alert) => alert.code).sort()).toEqual(["outbox.backlog", "outbox.dead_letter"]);
+
+    const second = await probe.probeOnce();
+    expect(second.map((alert) => alert.code)).toEqual(["outbox.backlog"]);
+  });
 });
 
-/** 企微告警群出口（M5-03-3）：智能机器人推管理员告警群 + 同 code 抑制 + 失败回退日志出口。 */
+/** 企微告警群出口（M5-03-3）：智能机器人推管理员告警群 + 同族抑制（15 分钟窗口）+ 失败回退日志出口。 */
 const ALERT_CHATID = "AlertChatIdAbcDef-99";
 
 class FakeAibot {
@@ -163,7 +198,7 @@ describe("WecomAlertSink（M5-03-3 告警群出口）", () => {
     expect(fallback.emitted).toHaveLength(0);
   });
 
-  it("同 code 抑制：窗口内只推首条；不同 code 不受影响；窗口过期恢复", async () => {
+  it("同族抑制：窗口内只推首条；不同族不受影响；窗口过期恢复", async () => {
     const aibot = new FakeAibot();
     const fallback = new FakeAlertSink();
     let nowMs = 1_000_000;
@@ -183,6 +218,27 @@ describe("WecomAlertSink（M5-03-3 告警群出口）", () => {
     sink.emit(backlogAlert);
     await flush();
     expect(aibot.sends).toHaveLength(3);
+    expect(fallback.emitted).toHaveLength(0);
+  });
+
+  it("死信同族抑制：即时（outbox.dead）后探针（outbox.dead_letter）窗口内不双报；窗口过期恢复", async () => {
+    const aibot = new FakeAibot();
+    const fallback = new FakeAlertSink();
+    let nowMs = 1_000_000;
+    const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, fallback, () => nowMs);
+
+    sink.emit({ code: "outbox.dead", level: "error", message: "死信 notify.message#9000" });
+    await flush();
+    sink.emit({ code: "outbox.dead_letter", level: "error", message: "近期死信 1 条" });
+    await flush();
+    expect(aibot.sends).toHaveLength(1);
+    expect(aibot.sends[0]!.content).toContain("outbox.dead");
+
+    nowMs += ALERT_SUPPRESS_MS;
+    sink.emit({ code: "outbox.dead_letter", level: "error", message: "近期死信 2 条" });
+    await flush();
+    expect(aibot.sends).toHaveLength(2);
+    expect(aibot.sends[1]!.content).toContain("outbox.dead_letter");
     expect(fallback.emitted).toHaveLength(0);
   });
 
