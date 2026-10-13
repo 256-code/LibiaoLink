@@ -5,7 +5,7 @@
  * - 新建 POST /api/v1/projects、编辑 PATCH /api/v1/projects/{id}（乐观锁 version）、删除 DELETE /api/v1/projects/{id}（If-Match 版本）
  * 契约 shared/src/modules/projects.ts；UI 模型见 types.ts（前端「项目描述」= 契约 name）。
  */
-import { apiRequest, apiSend } from "./api";
+import { apiRequest, apiSend, readAllPages } from "./api";
 import type { ListQueryState } from "./useHashRoute";
 import type { Project } from "./types";
 
@@ -86,10 +86,9 @@ export function buildListQuery(filters: ListQueryState, skip: FacetSkip | null =
 
 export function fetchProjectList(filters: ListQueryState): Promise<ProjectListResult> {
   const parts = [buildListQuery(filters)];
-  parts.push("page=1");
-  parts.push("limit=" + String(PROJECT_PAGE_LIMIT));
+
   const query = parts.filter((part) => part !== "").join("&");
-  return apiRequest<ProjectListResult>("/api/v1/projects?" + query);
+  return readAllPages<ApiProject>("/api/v1/projects?" + query);
 }
 
 export function fetchProjectFacets(filters: ListQueryState, skip: FacetSkip | null = null): Promise<ProjectFacets> {

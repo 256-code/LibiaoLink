@@ -53,7 +53,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
       ref={trapRef}
       data-file-preview="true"
       data-file-preview-kind={kind}
-      role="dialog"
+      role="dialog" data-live-sync-readonly="true"
       aria-label={"预览 " + name}
       onClick={(event) => {
         event.stopPropagation();

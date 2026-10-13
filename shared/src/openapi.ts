@@ -112,6 +112,7 @@ import {
   NotificationSnoozeListResponseSchema,
   NotifyPrefsSchema,
   NotifyPrefsUpdateBodySchema,
+  ResourceInvalidationPayloadSchema,
 } from "./modules/notifications.ts";
 import {
   BlueprintImportBodySchema,
@@ -214,6 +215,7 @@ const calendarDayParams = z.object({ date: DateOnlySchema });
  */
 export function buildOpenApiDocument() {
   const registry = new OpenAPIRegistry();
+  registry.register("ResourceInvalidationPayload", ResourceInvalidationPayloadSchema);
 
   // ---- 项目与首页分类 ----
   registry.registerPath({
@@ -734,12 +736,13 @@ export function buildOpenApiDocument() {
     method: "patch",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400；locale 非枚举 400）",
+    summary: "更新当前用户偏好（行锁合并；集合键必须expectedRevisions，缺失400、冲突409）",
     request: { body: json(UserPreferencesUpdateBodySchema) },
     responses: {
       200: { description: "更新后的偏好全量", ...json(UserPreferencesSchema) },
       400: commonErrors[400],
       401: commonErrors[401],
+      409: commonErrors[409],
     },
   });
 
@@ -1847,13 +1850,13 @@ export function buildOpenApiDocument() {
     path: "/api/v1/notifications/stream",
     tags: ["notifications"],
     summary:
-      "通知实时流（SSE · S8-3）：事件 notification（单条通知）/ unread（未读角标）；心跳注释行不入契约；" +
+      "通知及业务同步流（SSE）：事件 notification（单条通知）/ unread（未读角标）/ invalidate（资源类别失效提示，无业务数据）；心跳注释行不入契约；" +
       "重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期）",
     responses: {
       200: {
         description:
           "SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；" +
-          "心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连）",
+          "event: invalidate → data = { resources: 资源类别[] }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连）",
         content: { "text/event-stream": { schema: { type: "string" } } },
       },
       401: commonErrors[401],

@@ -132,6 +132,34 @@ function wireNotification(userId: string, overrides: Partial<Notification> = {})
 }
 
 describe("SSE 实时流（S8-3 · M5-04-1）", () => {
+  it("业务失效提示扇出到十名在线用户，仅发送资源类别", async () => {
+    const { service } = makeService();
+    const sinks = Array.from({ length: 10 }, (_, index) => {
+      const sink = new FakeSink();
+      service.open("fixture-user-" + String(index), sink);
+      return sink;
+    });
+    await vi.waitFor(() => expect(service.clients[0]?.queries).toContain("LISTEN notify_stream"));
+    service.clients[0]!.emitNotification(JSON.stringify({ recipientId: null, event: "invalidate", data: { resources: ["tasks"], projectId: "private" } }));
+    await vi.waitFor(() => expect(sinks[0]?.chunks.length).toBe(1));
+    for (const sink of sinks) expect(sink.chunks).toEqual(['event: invalidate\ndata: {"resources":["tasks"]}\n\n']);
+    await service.onApplicationShutdown();
+  });
+  it("同账号偏好仅到本人所有连接，连续提示合并且不同账号隔离", async () => {
+    vi.useFakeTimers();
+    try {
+      const { service } = makeService();
+      const first = new FakeSink(); const second = new FakeSink(); const other = new FakeSink();
+      service.open(ME, first); service.open(ME, second); service.open(OTHER, other);
+      await flushMicrotasks();
+      for (let index = 0; index < 100; index += 1) service.clients[0]!.emitNotification(JSON.stringify({ recipientId: ME, event: "invalidate", data: { resources: ["preferences"] } }));
+      await vi.advanceTimersByTimeAsync(250);
+      expect(first.chunks).toEqual([frameOf("invalidate", { resources: ["preferences"] })]);
+      expect(second.chunks).toEqual(first.chunks);
+      expect(other.chunks).toEqual([]);
+      await service.onApplicationShutdown();
+    } finally { vi.useRealTimers(); }
+  });
   it("建立连接：计数 + 惰性 LISTEN（首个连接才建桥）且不发初始帧", async () => {
     const { service } = makeService();
     expect(service.clients).toHaveLength(0);

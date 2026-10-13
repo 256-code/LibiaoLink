@@ -2,8 +2,9 @@
  * SSE 实时流（S8-3 · M5-04-1）线协议与帧编码：契约 shared/src/modules/notifications.ts（NOTIFICATION_STREAM_EVENTS）。
  *
  * 两段协议：
- * ① 广播桥（写方事务内 `pg_notify` → 各实例 LISTEN）：载荷 = 契约事件 + `recipientId`（扇出键，不进 SSE 帧）；
- * ② SSE 帧（实例 → 浏览器 EventSource）：`event: <notification|unread>` + `data: <契约载荷>`；
+ * ① 广播桥（`pg_notify` → 各实例 LISTEN）：个人通知事务内发布、失效提示成功响应后合并发布；
+ *    载荷 = 契约事件 + `recipientId`（个人扇出键；失效提示为 null，不进 SSE 帧）；
+ * ② SSE 帧（实例 → 浏览器 EventSource）：`event: <notification|unread|invalidate>` + `data: <契约载荷>`；
  *    心跳 / 停机告知 = 注释行（无事件名、无载荷，按定案不入契约）。
  * 重连不补发（定案 §三-3）：本层零游标状态 —— 错过的事件由客户端读面补拉对齐。
  */
@@ -13,8 +14,9 @@ import {
   z,
   type NotificationStreamEvent,
 } from "@libiaolink/contracts";
+import { LIVE_RESOURCES } from "../../common/realtime/resource-change.js";
 
-/** PG 广播通道名（定案 §三-5：写方事务内 pg_notify；api 各实例 LISTEN 后桥到本地连接，多实例零额外配置）。 */
+/** PG 广播通道名：api 各实例 LISTEN 后桥到本地连接，多实例零额外配置。 */
 export const NOTIFY_STREAM_CHANNEL = "notify_stream" as const;
 
 /** 广播桥载荷（契约事件 + 收件人）：监听侧校验通过才扇出（非法载荷告警丢弃，不影响已建连接）。 */
@@ -25,11 +27,12 @@ export const NotifyStreamWireSchema = z.discriminatedUnion("event", [
     event: z.literal("unread"),
     data: NotificationStreamUnreadPayloadSchema,
   }),
-]);
+  z.object({ recipientId: z.string().min(1).nullable(), event: z.literal("invalidate"), data: z.object({ resources: z.array(z.enum(LIVE_RESOURCES)).min(1).max(LIVE_RESOURCES.length) }) }),
+]).refine((wire) => wire.event !== "invalidate" || (wire.recipientId === null ? !wire.data.resources.includes("preferences") : wire.data.resources.every((resource) => resource === "preferences" || resource === "permissions")), { message: "personal hints require a recipient" });
 export type NotifyStreamWireMessage = z.infer<typeof NotifyStreamWireSchema>;
 
 /** SSE 帧编码（契约事件 → EventSource 事件）：`event:` + 单行 JSON `data:` + 空行结束一帧。 */
-export function frameOf(event: NotificationStreamEvent["event"], data: unknown): string {
+export function frameOf(event: NotificationStreamEvent["event"] | "invalidate", data: unknown): string {
   return "event: " + event + "\ndata: " + JSON.stringify(data) + "\n\n";
 }
 

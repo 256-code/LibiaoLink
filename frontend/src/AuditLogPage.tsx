@@ -1,4 +1,7 @@
+import { hasPermission, useMyPermissions } from "./permissions";
 import { useEffect, useRef, useState } from "react";
+import { useLiveRefresh } from "./useLiveRefresh";
+import { keepLiveOrder } from "./liveSync";
 import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
 import { DateRangePicker, type DateRange } from "./components/DateRangePicker";
@@ -50,9 +53,15 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
   onChangeQuery: (next: AuditQueryState) => void;
   directory: readonly DirectoryUser[];
 }) {
+  const permissions = useMyPermissions();
   const [state, setState] = useState<AuditPageState>({ kind: "loading" });
   const [reloadTick, setReloadTick] = useState(0);
+  const windowId = useRef<number | undefined>(undefined);
   const [projects, setProjects] = useState<ApiProject[]>([]);
+
+  useEffect(() => {
+    if (state.kind === "error" && state.forbidden && hasPermission(permissions, "audit.view")) setReloadTick((value) => value + 1);
+  }, [permissions]);
 
   // 关键字防抖（Push 260 · 与首页列表同口径）：输入时不每个字符打一次接口（250ms 内的最后一次生效）
   const [debouncedKeyword, setDebouncedKeyword] = useState(query.keyword ?? "");
@@ -94,6 +103,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
 
   useEffect(() => {
     let alive = true;
+    windowId.current = undefined;
     setState({ kind: "loading" });
     const keyword = debouncedKeyword.trim();
     fetchAuditLogs({
@@ -109,6 +119,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
     })
       .then((result) => {
         if (alive) {
+          windowId.current = result.windowId ?? (query.page === 1 ? result.items.reduce((id, item) => Math.max(id, item.id), 0) || undefined : undefined);
           setState({ kind: "ready", result });
         }
       })
@@ -130,6 +141,25 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
       alive = false;
     };
   }, [debouncedKeyword, actorKey, actionKey, objectTypeKey, resultKey, projectKey, query.from, query.to, query.page, reloadTick]);
+
+  useLiveRefresh(["audit", "projects", "permissions"], async () => {
+    const readingHistory = query.page > 1 || window.scrollY > 160;
+    try {
+      const keyword = debouncedKeyword.trim();
+      const [result, projectList] = await Promise.all([
+        fetchAuditLogs({ keyword: keyword === "" ? null : keyword, actorIds: query.actorIds, actions: query.actions, objectTypes: query.objectTypes, results: query.results, projectIds: query.projectIds, from: query.from, to: query.to, page: query.page, beforeId: readingHistory ? windowId.current : undefined }),
+        fetchProjectList(EMPTY_LIST_QUERY),
+      ]);
+      return () => {
+        if (!readingHistory) windowId.current = result.windowId ?? (query.page === 1 ? result.items.reduce((id, item) => Math.max(id, item.id), 0) || undefined : undefined);
+        setState({ kind: "ready", result });
+        setProjects((previous) => keepLiveOrder(previous, projectList.items));
+      };
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) return () => setState({ kind: "error", message: "没有权限查看操作记录（需要 audit.view）。", forbidden: true });
+      throw error;
+    }
+  }, [debouncedKeyword, actorKey, actionKey, objectTypeKey, resultKey, projectKey, query.from, query.to, query.page].join(":"), state.kind === "ready", { readOnly: true });
 
   const patchFilter = (patch: Partial<AuditQueryState>): void => {
     onChangeQuery({ ...query, ...patch, page: 1 });
@@ -372,7 +402,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                     {state.result.items.map((item) => {
                       const changeLines = auditChangeLines(item, formatContext);
                       return (
-                      <tr key={item.id} data-audit-row={String(item.id)} className="align-top transition hover:bg-zinc-50/70">
+                      <tr key={item.id} data-live-row={String(item.id)} data-audit-row={String(item.id)} className="align-top transition hover:bg-zinc-50/70">
                         <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{formatDateTime(item.occurredAt)}</td>
                         <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{item.actorName ?? "系统"}</td>
                         <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3">
