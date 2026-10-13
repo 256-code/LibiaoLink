@@ -3,8 +3,8 @@
  * 契约：POST /api/v1/translate
  *   入参 { q: string, source: "zh", target: "en", format: "text" }
  *   出参 { translatedText: string }
- * （形态对齐内网 LibreTranslate 的 /translate —— 开发环境由 Vite 代理直连 127.0.0.1:5005
- *  （见 vite.config.ts 的 TRANSLATE_ORIGIN，服务本体见 deploy/libretranslate/）；
+ * （形态对齐翻译服务契约 /translate —— 开发环境由 Vite 代理直连 127.0.0.1:5008
+ *  （HY-MT1.5-1.8B 验证服务，见 vite.config.ts 的 TRANSLATE_ORIGIN）；
  *  生产环境由后端 server/ 按同一契约实现代理 + 缓存。）
  *
  * 容错（重要）：本模块**从不抛错** —— 任何一条拿不到译文就跳过（返回表里没有该条），
@@ -63,11 +63,13 @@ export function normalizeEnglish(text: string): string {
 }
 
 /** 领域术语表（Push 297 · 业务口径 2026-10-13「新西兰基督城仓配……是新西兰基督城仓库与配送中心的意思 这个模型翻译是啥逻辑 是不是需要纠正」）：
- *  内网 LibreTranslate（Argos 小模型 · §6.16 ⑮）是逐句机翻 —— 没有上下文、也不认识行业简称 / 地名别称 / 品牌，
+ *  内网翻译引擎（2026-10-13 起 HY-MT1.5-1.8B；此前 LibreTranslate/Argos 小模型 · §6.16 ⑮ 为逐句机翻）
+ *  —— 没有上下文、也不认识行业简称 / 地名别称 / 品牌，
  *  实测「基督城」→ Christtown / Christian City、「仓配」→ Hammy / Christian Barracks / 直接被吞、
  *  「立镖」→ A dart、「分拣中心」→ Selection Centre，全部不可用。做法 = **保护式强翻译**：
- *  出引擎前把命中术语换成「数字占位符」（实测该引擎对 Xq + 无连零数字 + Y 形态原样透传；纯字母 / 全大写 /
- *  含 00 的数字 / 相邻无分隔的占位符会被吞或改写），回包再把占位符换回这里的固定译法 —— 术语不参与机翻。
+ *  出引擎前把命中术语换成「数字占位符」（Xq + 无连零数字 + Y 形态 —— 纯字母 / 全大写 / 含 00 的数字 /
+ *  相邻无分隔的占位符会被吞或改写，唯此形态实测原样透传：Argos 与 HY-MT1.5-1.8B 均验证通过），
+ *  回包再把占位符换回这里的固定译法 —— 术语不参与机翻。
  *  匹配 = **长词优先**（仓配中心 先于 仓配，避免译成「… Center Center」）；人名 / 品牌 / 产品词定稿英文后加一行即可。 */
 const GLOSSARY: ReadonlyArray<{ zh: string; en: string }> = [
   { zh: "基督城", en: "Christchurch" },
