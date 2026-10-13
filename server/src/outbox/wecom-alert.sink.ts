@@ -4,6 +4,8 @@
  * LogOutboxAlertSink（结构化日志），防告警链自断。
  * 抑制：同族在 ALERT_SUPPRESS_MS 窗口内只发首条（防告警风暴 —— 实施方案 §六 口径；被抑条目记日志）；
  * `outbox.dead` 与 `outbox.dead_letter` 同族 —— 死信即时压制探针双报（M5-03-4 T5 反向发现修复）。
+ * 文案（核心语义口径 · 2026-10-13）：code + message（+ 积压主题明细紧凑行）—— 不再原样回显 detail JSON、
+ * 企微 errmsg 机器尾巴（hint / from ip / more info）与 kind / state 内部态（源头收敛见 describeWecomFailure）。
  * 安全：chatid 掩码（末 4 位），日志不回显全文；detail 由调用方保证不含凭据。
  */
 import { Logger } from "@nestjs/common";
@@ -21,10 +23,30 @@ export function alertSuppressFamily(code: OutboxAlert["code"]): string {
   return code === "outbox.dead_letter" ? "outbox.dead" : code;
 }
 
-/** 告警文本（含 detail JSON）。 */
+/** 告警文本：头部 + 核心语义 message（+ 积压主题明细紧凑行）；不再原样回显 detail JSON。 */
 export function composeAlertText(alert: OutboxAlert): string {
-  const detail = alert.detail === undefined ? "" : "\n" + JSON.stringify(alert.detail);
-  return "【LibiaoLink 告警】" + alert.code + "\n" + alert.message + detail;
+  const breakdown = topicBreakdownLine(alert.detail);
+  return "【LibiaoLink 告警】" + alert.code + "\n" + alert.message + (breakdown === null ? "" : "\n" + breakdown);
+}
+
+/** 主题明细紧凑行（积压 / 最老待领取类告警）：`主题：a 7 条 · b 3 条`（截前 5；detail 非该形状时返回 null）。 */
+function topicBreakdownLine(detail: OutboxAlert["detail"]): string | null {
+  const byTopic: unknown = detail?.["byTopic"];
+  if (!Array.isArray(byTopic)) {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const item of byTopic.slice(0, 5)) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const topic = (item as { topic?: unknown }).topic;
+    const due = (item as { due?: unknown }).due;
+    if (typeof topic === "string" && typeof due === "number") {
+      parts.push(topic + " " + String(due) + " 条");
+    }
+  }
+  return parts.length === 0 ? null : "主题：" + parts.join(" · ");
 }
 
 export class WecomAlertSink implements OutboxAlertSink {
