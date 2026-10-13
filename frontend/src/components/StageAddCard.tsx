@@ -1,3 +1,5 @@
+import { useLiveRefresh } from "../useLiveRefresh";
+import { keepLiveOrder } from "../liveSync";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { addedNodeKey } from "../data/tasks";
@@ -254,6 +256,16 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
     setActiveTab("nodes");
   }, [stage]);
 
+  useLiveRefresh(["templates"], async () => {
+    const [nextNodes, nextTemplates] = await Promise.all([fetchStageNodes(stage), fetchStageTemplates(stage)]);
+    return () => {
+      setNodes((previous) => keepLiveOrder(previous, nextNodes));
+      setTemplates((previous) => keepLiveOrder(previous, nextTemplates));
+      // An armed selection stays a snapshot; the write API still validates its nodes/template.
+      if (armed !== null && armed.nodes.some((node) => !nextNodes.some((next) => next.id === node.id))) setNodesError("所选节点已被删除，请重新选择后添加。");
+    };
+  }, stage, !nodesLoading && !templatesLoading, { readOnly: true });
+
   // 节点库取数（换阶段 / 重试重取）：失败只在卡片里提示（卡片本来就是临时浮层，不占全局提示条）
   useEffect(() => {
     let alive = true;
@@ -373,6 +385,10 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
 
   /** 位置选好了（Push 113）：交给上层按这个位置插进项目；没给批量入口时逐条加。templateId = 当前标签是哪块模板（缺省 = 节点池）。 */
   const commitAdd = (picked: readonly TemplatePresetNode[], next: StagePlacement, templateId?: string) => {
+    if (picked.some((node) => !nodes.some((current) => current.id === node.id)) || (templateId !== undefined && !templates.some((item) => item.id === templateId))) {
+      setNodesError("所选节点或模板已变化，请重新选择后添加。");
+      return;
+    }
     if (onAddNodes !== undefined) {
       onAddNodes(stage, picked, next, templateId);
       return;

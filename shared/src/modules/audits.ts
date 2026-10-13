@@ -95,6 +95,7 @@ export const AuditLogListQuerySchema = z
     }),
     from: DateTimeSchema.optional().openapi({ description: "时间下界（含，ISO8601）" }),
     to: DateTimeSchema.optional().openapi({ description: "时间上界（含，ISO8601）" }),
+    beforeId: z.coerce.number().int().positive().optional().openapi({ description: "稳定阅读窗口的最大审计序号；总数仍为当前筛选的总数" }),
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
   })
@@ -103,7 +104,7 @@ export const AuditLogListQuerySchema = z
       "审计检索（C7-04）：按关键字 / 对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间过滤；多个筛选值以逗号分隔（去重保序，2026-10-09 追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」），逐值白名单校验、非法值 400；固定 occurredAt 降序",
   });
 
-export const AuditLogListResponseSchema = paginated(AuditLogSchema).openapi("AuditLogListResponse");
+export const AuditLogListResponseSchema = paginated(AuditLogSchema).extend({ windowId: z.number().int().positive().nullable().openapi({ description: "该阅读窗口的最大审计序号，自动回读通过beforeId保持历史页稳定" }) }).openapi("AuditLogListResponse");
 
 
 /** 审计枚举与视图的类型别名（前端与 handler 直接用）。 */

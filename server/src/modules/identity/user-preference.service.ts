@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { AppError } from "../../common/errors/app-error.js";
 import { PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
@@ -177,7 +178,7 @@ function dayOf(value: unknown): string | null {
  * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）；
  * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
- * 偏好是界面状态（非业务数据），不写审计；单用户单写者，无乐观锁。
+ * 偏好不写审计；事务内合并，多窗口整板/组合写入必须比较对应键的版本。
  */
 @Injectable()
 export class UserPreferenceService {
@@ -188,18 +189,26 @@ export class UserPreferenceService {
   }
 
   async update(userId: string, body: UserPreferencesUpdateBody, at: Date = new Date()): Promise<UserPreferences> {
-    const existing = await this.preferences.find(userId);
-    const current: PrefsRecord = { ...(existing?.prefs ?? {}) };
-    const next: PrefsRecord = { ...current, ...(body as PrefsRecord) };
-    // 便签墙（Push 268）：客户端只传 notes / categories（Push 271 起含 bg），updatedAt 由服务端盖章（不被客户端伪造）
-    if (Object.prototype.hasOwnProperty.call(body, "myPlanBoard") && body.myPlanBoard !== undefined) {
-      const board = body.myPlanBoard;
-      // 背景色（Push 271）：传入白名单值 = 整体替换；未传（老客户端 / 老页面）= 沿用库内现值；都没有 = white。
-      const previousBoard = typeof current["myPlanBoard"] === "object" && current["myPlanBoard"] !== null ? (current["myPlanBoard"] as Record<string, unknown>) : {};
-      const bg = planBoardBgOf(board.bg) ?? planBoardBgOf(previousBoard["bg"]) ?? "white";
-      next["myPlanBoard"] = { notes: board.notes, categories: board.categories, bg, updatedAt: at.toISOString() };
-    }
-    return this.toContract(await this.preferences.upsert(userId, next, at));
+    if (Object.prototype.hasOwnProperty.call(body, "_revisions")) throw new AppError("VALIDATION_FAILED", "服务端版本元数据不可写入");
+    const row = await this.preferences.mutate(userId, (current) => {
+      const { expectedRevisions, ...patch } = body;
+      const revisions = revisionRecord(current["_revisions"]);
+      for (const key of ["homeSavedFilters", "myPlanBoard"] as const) {
+        if (patch[key] === undefined) continue;
+        if (expectedRevisions?.[key] === undefined) throw new AppError("VALIDATION_FAILED", "保存需要偏好基线版本，请重新打开页面");
+        if (expectedRevisions[key] !== (revisions[key] ?? 0)) throw new AppError("VERSION_CONFLICT", "另一个窗口已修改这些内容，未保存的改动仍保留，请核对后再保存");
+      }
+      const next: PrefsRecord = { ...current, ...patch };
+      delete next["expectedRevisions"];
+      for (const key of Object.keys(patch)) revisions[key] = (revisions[key] ?? 0) + 1;
+      next["_revisions"] = revisions;
+      if (body.myPlanBoard !== undefined) {
+        const previous = planBoardOf(current["myPlanBoard"]);
+        next["myPlanBoard"] = { ...body.myPlanBoard, bg: body.myPlanBoard.bg ?? previous.bg, updatedAt: at.toISOString() };
+      }
+      return next;
+    }, at);
+    return this.toContract(row);
   }
 
   /** 行 → 契约：声明键按形状收敛，updatedAt 由写入时间给出（无行 = null）。 */
@@ -211,7 +220,15 @@ export class UserPreferenceService {
       focusMode: booleanOf(prefs["focusMode"]),
       workspaceOpenProjects: openProjectsOf(prefs["workspaceOpenProjects"]),
       myPlanBoard: planBoardOf(prefs["myPlanBoard"]),
+      revisions: revisionRecord(prefs["_revisions"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }
+}
+
+function revisionRecord(value: unknown): Record<string, number> {
+  const result = Object.create(null) as Record<string, number>;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return result;
+  for (const [key, revision] of Object.entries(value)) if (typeof revision === "number" && Number.isSafeInteger(revision) && revision >= 0) result[key] = revision;
+  return result;
 }

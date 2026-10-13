@@ -191,6 +191,7 @@ export const UserPreferencesSchema = z
       }),
     workspaceOpenProjects: WorkspaceOpenProjectsSchema,
     myPlanBoard: MyPlanBoardSchema,
+    revisions: z.record(z.string(), z.number().int().nonnegative()).openapi({ description: "偏好各键的基线版本；未写过的键为0" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
   .openapi("UserPreferences", { description: "用户偏好（全量；GET 返回当前值）" });
@@ -203,11 +204,12 @@ export const UserPreferencesUpdateBodySchema = z
     focusMode: z.boolean().optional(),
     workspaceOpenProjects: WorkspaceOpenProjectsSchema.optional(),
     myPlanBoard: MyPlanBoardUpdateSchema.optional(),
+    expectedRevisions: z.object({ homeSavedFilters: z.number().int().nonnegative().optional(), myPlanBoard: z.number().int().nonnegative().optional() }).strict().optional().openapi({ description: "更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。" }),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED"
+      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单、focusMode为布尔，否则400"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */

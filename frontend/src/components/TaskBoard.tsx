@@ -293,7 +293,7 @@ type TaskBoardProps = {
   /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
   managerIds?: string[];
   /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
-  onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
+  onSubmitTaskEdit?: (values: TaskEditSubmit) => Promise<number | null>;
   /** 任务描述改名（Push 196：抽屉里改临时任务名；阶段任务与节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
   onRenameTask?: (taskId: string, title: string, titleEn: string) => void;
   /**
@@ -755,6 +755,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       <div
         role="button"
         data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
+        data-live-row={task.id}
         tabIndex={0}
         title="点击查看任务详情"
         onClick={onSelect}

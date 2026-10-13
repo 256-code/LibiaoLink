@@ -1,4 +1,7 @@
+import { ApiError } from "../api";
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
+import { keepLiveOrder } from "../liveSync";
+import { useLiveRefresh } from "../useLiveRefresh";
 import {
   STAKEHOLDER_COMPANY_TYPES,
   createStakeholder,
@@ -175,12 +178,16 @@ function CellText({ value }: { value: { text: string; className: string; title?:
 function StakeholderModal({
   mode,
   row,
+  projection,
+  available,
   onClose,
   onSubmit,
 }: {
   mode: "create" | "edit";
   /** 编辑时的当行快照（缺键字段在表单里禁用）；新建为 null。 */
   row: Stakeholder | null;
+  projection: Stakeholder | null;
+  available: boolean;
   onClose: () => void;
   /** 提交：返回 null = 成功（父层关窗 + 重取列表）；返回文案 = 失败提示，窗口保持打开。 */
   onSubmit: (draft: StakeholderDraft) => Promise<string | null>;
@@ -194,8 +201,8 @@ function StakeholderModal({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const locked = (field: MaskableField): boolean => row !== null && missingKey(row, field);
-  const canSubmit = draft.name.trim() !== "" && draft.companyType !== "" && !pending;
+  const locked = (field: MaskableField): boolean => row !== null && (projection === null || missingKey(projection, field));
+  const canSubmit = available && draft.name.trim() !== "" && draft.companyType !== "" && !pending;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -244,6 +251,7 @@ function StakeholderModal({
         <p className="mt-1 text-sm text-zinc-500">
           {mode === "create" ? "录入后自动关联到当前项目（A5-03）。" : "只提交改动过的字段；清空输入框 = 删除该字段内容。"}
         </p>
+        {available ? null : <p role="status" className="mt-2 text-xs text-amber-700">联系人已不存在或无权修改，当前填写内容保留，不能继续提交。</p>}
         <ScrollArea viewportClassName="mt-5 min-h-0 flex-1" className="overscroll-contain space-y-4 px-0.5 pb-1" ariaLabel="干系人表单" thumbAlwaysVisible>
         <form id="stakeholder-modal-form" className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
@@ -270,7 +278,7 @@ function StakeholderModal({
               data-stakeholder-field="title"
               className={fieldClass}
               disabled={locked("title")}
-              value={draft.title}
+              value={locked("title") ? "" : draft.title}
               onChange={(event) => edit("title", event.target.value)}
               placeholder={locked("title") ? "无权限查看 / 修改（字段级权限）" : "如 现场项目经理（可选）"}
             />
@@ -281,7 +289,7 @@ function StakeholderModal({
               data-stakeholder-field="phone"
               className={fieldClass}
               disabled={locked("phone")}
-              value={draft.phone}
+              value={locked("phone") ? "" : draft.phone}
               onChange={(event) => edit("phone", event.target.value)}
               placeholder={locked("phone") ? "无权限查看 / 修改（字段级权限）" : "如 +86 138 0000 0000（可选）"}
             />
@@ -292,7 +300,7 @@ function StakeholderModal({
               data-stakeholder-field="wechat"
               className={fieldClass}
               disabled={locked("wechat")}
-              value={draft.wechat}
+              value={locked("wechat") ? "" : draft.wechat}
               onChange={(event) => edit("wechat", event.target.value)}
               placeholder={locked("wechat") ? "无权限查看 / 修改（字段级权限）" : "微信号（可选）"}
             />
@@ -303,7 +311,7 @@ function StakeholderModal({
               data-stakeholder-field="email"
               className={fieldClass}
               disabled={locked("email")}
-              value={draft.email}
+              value={locked("email") ? "" : draft.email}
               onChange={(event) => edit("email", event.target.value)}
               placeholder={locked("email") ? "无权限查看 / 修改（字段级权限）" : "如 name@example.com（可选）"}
             />
@@ -453,6 +461,19 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
   const [actionError, setActionError] = useState<string | null>(null);
   const headerRowRef = useRef<HTMLDivElement | null>(null);
 
+  useLiveRefresh(["stakeholders", "permissions"], async () => {
+    let result;
+    try { result = await fetchProjectStakeholders(projectId); } catch (error) {
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return () => { setItems([]); setTotal(0); setError("项目已不存在或无权查看联系人"); };
+      throw error;
+    }
+    return () => {
+      setItems((previous) => keepLiveOrder(previous, result.items));
+      setTotal(result.total);
+      setError(null);
+    };
+  }, projectId + ":" + String(dataVersion), !loading, { readOnly: true });
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -507,11 +528,15 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
     if (modal === null) {
       return null;
     }
+    if (!canManage || error !== null) return "无权修改，当前填写内容已保留。";
     try {
       if (modal.mode === "create") {
         await createStakeholder(createBodyOf(draft, projectId));
       } else {
+        const projection = items.find((item) => item.id === modal.row.id);
+        if (projection === undefined) return "联系人已被删除或已不可见，当前填写内容已保留。";
         const patch = patchOf(draft, modal.row);
+        for (const field of EDITABLE_FIELDS) if (missingKey(projection, field)) delete patch[field];
         if (Object.keys(patch).length > 0) {
           await updateStakeholder(modal.row.id, patch);
         }
@@ -645,6 +670,8 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
         <StakeholderModal
           mode={modal.mode}
           row={modal.mode === "edit" ? modal.row : null}
+          projection={modal.mode === "edit" ? items.find((item) => item.id === modal.row.id) ?? null : null}
+          available={canManage && error === null && (modal.mode === "create" || items.some((item) => item.id === modal.row.id))}
           onClose={() => {
             setModal(null);
           }}

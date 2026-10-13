@@ -3,7 +3,7 @@
  * 契约 UserSummary = { id, username, displayName, email, status }（shared/src/modules/users.ts）；只返回启用用户。
  * 一期目录规模小，全量拉一页（limit 上限 200）；按需搜索留待 M3-07 接入 q。
  */
-import { apiRequest } from "./api";
+import { readAllPages } from "./api";
 import type { Member } from "./data/members";
 
 export type DirectoryUser = {
@@ -14,13 +14,12 @@ export type DirectoryUser = {
   status: string;
 };
 
-type UserListResponse = { items: DirectoryUser[]; page: number; limit: number; total: number };
 
 /** 目录一次拉满（契约限 200）。 */
 export const DIRECTORY_LIMIT = 200;
 
 export async function loadDirectory(): Promise<DirectoryUser[]> {
-  const payload = await apiRequest<UserListResponse>("/api/v1/users?limit=" + String(DIRECTORY_LIMIT));
+  const payload = await readAllPages<DirectoryUser>("/api/v1/users");
   return payload.items;
 }
 

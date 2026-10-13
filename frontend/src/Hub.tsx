@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLiveRefresh } from "./useLiveRefresh";
 import { AppHeader } from "./components/AppHeader";
 import { HubMap } from "./components/HubMap";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
@@ -19,6 +20,13 @@ import type { MeResponse } from "./types";
 export default function Hub({ me }: { me: MeResponse }) {
   const [distribution, setDistribution] = useState<HubMapDistribution | null>(null);
   const [note, setNote] = useState("项目数据加载中…");
+  useLiveRefresh(["projects", "dicts", "permissions", "users"], async () => {
+    const [list, dicts] = await Promise.all([fetchProjectList(EMPTY_LIST_QUERY), loadDicts()]);
+    return () => {
+      setDistribution(buildMapDistribution(list.items, dicts));
+      setNote(list.items.length < list.total ? "图上只画了前 " + String(list.items.length) + " 个项目（共 " + String(list.total) + " 个）" : "");
+    };
+  }, "hub", distribution !== null);
 
   useEffect(() => {
     let cancelled = false;

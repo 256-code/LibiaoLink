@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
-import { hasPermission, loadMyPermissions, type MyPermissions } from "../permissions";
+import { hasPermission, useMyPermissions } from "../permissions";
 import { AUDIT_BASE_HASH, FILES_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { TopNav } from "./TopNav";
 import type { MeResponse, Project } from "../types";
@@ -18,7 +18,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const contact = user.email ?? user.name ?? "—";
   const initial = Array.from(displayName)[0] ?? "—";
   const [menuOpen, setMenuOpen] = useState(false);
-  const [permissions, setPermissions] = useState<MyPermissions | null>(null);
+  const permissions = useMyPermissions();
   const menuRef = useRef<HTMLDivElement | null>(null);
   const homeHref = listHref();
   const upHref = upLevelHref();
@@ -51,19 +51,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   }, [menuOpen]);
 
   // 「操作记录」入口的权限位（audit.view · C7-04 管理员查询页）：画像未到 / 拉取失败 = 不渲染入口（服务端逐请求仍是最终裁决）。
-  useEffect(() => {
-    let alive = true;
-    loadMyPermissions()
-      .then((profile) => {
-        if (alive) {
-          setPermissions(profile);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+
 
   // 站内跳转统一拦截：带修饰键点击（新标签 / 新窗口）交给浏览器默认行为
   const interceptNav = (action: () => void) => (event: ReactMouseEvent<HTMLAnchorElement>) => {

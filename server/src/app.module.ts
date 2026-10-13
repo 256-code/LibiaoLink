@@ -1,5 +1,6 @@
 import { Module, type DynamicModule } from "@nestjs/common";
-import { APP_FILTER } from "@nestjs/core";
+import { APP_FILTER, APP_INTERCEPTOR } from "@nestjs/core";
+import { ResourceChangeInterceptor } from "./common/realtime/resource-change.js";
 import { AUDIT_SINK } from "./common/audit/audit-sink.js";
 import { ApiErrorFilter } from "./common/errors/api-error.filter.js";
 import { createLoggerModule } from "./common/logging/logger.module.js";
@@ -51,6 +52,7 @@ export class AppModule {
         NotifyModule,
       ],
       providers: [
+        { provide: APP_INTERCEPTOR, useClass: ResourceChangeInterceptor },
         { provide: APP_FILTER, useClass: ApiErrorFilter },
         // 越权留痕出口：全局异常过滤器经 common 令牌调用 admin 的 AuditService（避免 common → modules 反向依赖）
         { provide: AUDIT_SINK, useExisting: AuditService },

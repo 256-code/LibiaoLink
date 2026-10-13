@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ClockService } from "../../common/clock/clock.service.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
+import { PermissionModule } from "../permission/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { NotifyAppRepository } from "./notify.app.repository.js";
 import { NotifyAppService } from "./notify.app.service.js";
@@ -12,6 +13,8 @@ import { NotifyRepository } from "./notify.repository.js";
 import { NotifyService } from "./notify.service.js";
 import { NotifyStreamPublisher } from "./notify.stream.publisher.js";
 import { NotifyStreamService } from "./notify.stream.service.js";
+import { ResourceChangePublisher } from "./resource-change.publisher.js";
+import { RESOURCE_CHANGE_SINK } from "../../common/realtime/resource-change.js";
 import { createWecomAibotClientFromEnv, WecomAibotClient } from "./wecom.aibot.js";
 import { createWecomClientFromEnv, WecomClient } from "./wecom.client.js";
 import { PgRateWindowStore } from "./wecom.rate.pg.js";
@@ -29,13 +32,15 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
  * `WecomClient`（自建应用）由工厂装配，限速计数同走 `PgRateWindowStore`。
  */
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, PermissionModule],
   controllers: [NotifyController],
   providers: [
     NotifyRepository,
     NotifyService,
     NotifyStreamPublisher,
     NotifyStreamService,
+    ResourceChangePublisher,
+    { provide: RESOURCE_CHANGE_SINK, useExisting: ResourceChangePublisher },
     NotifyGroupRepository,
     NotifyGroupService,
     NotifyAppRepository,
@@ -58,6 +63,6 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     },
     ClockService,
   ],
-  exports: [NotifyService, NotifyGroupService, NotifyAppService, WecomAibotClient, WecomClient],
+  exports: [NotifyService, NotifyGroupService, NotifyAppService, WecomAibotClient, WecomClient, RESOURCE_CHANGE_SINK],
 })
 export class NotifyModule {}

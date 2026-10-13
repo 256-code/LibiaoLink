@@ -35,6 +35,7 @@ export type UserPreferences = {
   workspaceOpenProjects: WorkspaceOpenProjects;
   /** 「我的计划」便签墙（Push 268）：整面便签墙按账号存；从未保存 = updatedAt null（前端据此预置示例 / 迁移旧键）。 */
   myPlanBoard: MyPlanBoardPrefs;
+  revisions: Record<string, number>;
   updatedAt: string | null;
 };
 
@@ -44,8 +45,8 @@ export function loadMyPreferences(): Promise<UserPreferences> {
 }
 
 /** 常用筛选整体替换（PATCH 只带这一个键）：返回服务端收敛后的全量偏好，前端以返回值覆盖本地。 */
-export function saveHomeSavedFilters(items: SavedFilter[]): Promise<UserPreferences> {
-  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { homeSavedFilters: items });
+export function saveHomeSavedFilters(items: SavedFilter[], revision: number): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { homeSavedFilters: items, expectedRevisions: { homeSavedFilters: revision } });
 }
 
 /** 任务表列显隐整体替换（A4 · Push 170）：只传这一个键，返回服务端收敛后的全量偏好。 */
@@ -64,8 +65,8 @@ export function saveWorkspaceOpenProjects(value: WorkspaceOpenProjects): Promise
 }
 
 /** 「我的计划」便签墙整体替换（Push 268 · 业务口径「数据接入数据库」；Push 271 起带上 bg 背景色）：只传这一个键（notes / categories / bg），返回服务端收敛 + 盖章后的全量偏好。 */
-export function saveMyPlanBoard(board: { notes: PlanNote[]; categories: string[]; bg: PlanBoardBgId }): Promise<UserPreferences> {
-  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { myPlanBoard: board });
+export function saveMyPlanBoard(board: { notes: PlanNote[]; categories: string[]; bg: PlanBoardBgId }, revision: number): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { myPlanBoard: board, expectedRevisions: { myPlanBoard: revision } });
 }
 
 /**
@@ -86,10 +87,10 @@ export async function loadMyPreferencesWithLegacyMigration(): Promise<UserPrefer
     return prefs;
   }
   try {
-    const migrated = await saveHomeSavedFilters(legacy);
+    const migrated = await saveHomeSavedFilters(legacy, prefs.revisions?.homeSavedFilters ?? 0);
     clearLegacySavedFilters();
     return migrated;
   } catch {
-    return { ...prefs, homeSavedFilters: legacy };
+    return await loadMyPreferences().catch(() => ({ ...prefs, homeSavedFilters: legacy }));
   }
 }

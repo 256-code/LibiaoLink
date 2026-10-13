@@ -9,7 +9,7 @@
  * - 删除 DELETE /api/v1/projects/{id}/tasks/{taskId}（If-Match 回传 version）
  * 契约字段 → UI 模型（data/tasks.ts 的 ProjectTask）的映射只在本文件做。
  */
-import { apiRequest, apiSend } from "./api";
+import { apiRequest, apiSend, readAllPages } from "./api";
 import { cnDateFromIso, daysBetweenInclusive, type ProjectTask, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
 
 /** 契约 Task / TaskListItem / TaskDetail（本文件只需用到的字段；服务端可能多给，忽略即可）。 */
@@ -205,8 +205,8 @@ export function toUiTask(
 }
 
 export function fetchProjectTasks(projectId: string): Promise<ApiTaskListResult> {
-  return apiRequest<ApiTaskListResult>(
-    "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks?limit=" + String(TASK_PAGE_LIMIT),
+  return readAllPages<ApiTaskListItem>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks",
   );
 }
 

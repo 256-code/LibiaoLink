@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { keepLiveOrder } from "../liveSync";
+import { useLiveRefresh } from "../useLiveRefresh";
 import { createPortal } from "react-dom";
 import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
@@ -825,7 +827,7 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
     <div
       ref={trapRef}
       data-photo-preview=""
-      role="dialog"
+      role="dialog" data-live-sync-readonly="true"
       aria-label={"预览 " + name}
       onClick={(event) => {
         event.stopPropagation();
@@ -2947,7 +2949,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
       <aside
         ref={drawerTrapRef}
         data-issue-drawer=""
-        role="dialog"
+        role="dialog" data-live-sync-readonly="true"
         aria-modal="true"
         aria-labelledby="issue-drawer-title"
         className={
@@ -3020,6 +3022,7 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
   const [draft, setDraft] = useState<ReportDraft>(() => emptyDraft());
   /** 当前表单对应的草稿行 id（Push 216：暂存 = 写库 state=draft；提交 = 把这条草稿 PATCH 成已提交；null = 还没暂存过）。 */
   const [draftId, setDraftId] = useState<string | null>(null);
+  const draftVersion = useRef<number | null>(null);
   /** 写请求防重入（提交 / 暂存）。 */
   const [saving, setSaving] = useState(false);
   /** 操作提示（提交 / 暂存 / 删除 / 失败）。 */
@@ -3057,6 +3060,14 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useLiveRefresh(["reports", "issues", "files", "permissions", "users"], async () => {
+    const [nextReports, nextIssues] = await Promise.all([fetchProjectReports(project.id), fetchProjectIssues(project.id)]);
+    return () => {
+      setReports((previous) => keepLiveOrder(previous, nextReports));
+      setIssues((previous) => keepLiveOrder(previous, nextIssues));
+    };
+  }, project.id, loadState === "ready");
 
   /** 行内编辑落值（Push 216 接真）：先本地乐观更新，PATCH 回包替换该行；失败提示并重取（409 乐观锁冲突同路）。
    *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）；
@@ -3158,7 +3169,7 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
           const open = issuesRef.current.find((item) => item.id === current);
           return open !== undefined && open.reportId === reportId ? null : current;
         });
-        setDraftId((current) => (current === reportId ? null : current));
+        // Keep the deleted draft identity so a later save cannot silently recreate it.
         setNotice("已删除该日报；它派生的全部问题随日报一起删除。");
       })
       .catch((error) => {
@@ -3177,7 +3188,7 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
         if (result.cascadedReportId !== null) {
           const cascaded = result.cascadedReportId;
           setReports((previous) => previous.filter((item) => item.id !== cascaded));
-          setDraftId((current) => (current === cascaded ? null : current));
+          // Keep the deleted draft identity and its text until the user starts a new report.
         }
         setOpenIssueId((current) => (current === issue.id ? null : current));
         setNotice(result.cascadedReportId === null ? "已删除该问题。" : "已删除该问题；来源日报随问题一起删除。");
@@ -3297,6 +3308,10 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
       return;
     }
     const body = draftWriteBody("submitted");
+    if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
+      setNotice("这篇草稿已被删除，输入仍保留；请核对后另建日报。");
+      return;
+    }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
     const dateCn = cnDateOf(draft.dateIso);
     const issueCount = body.issues?.length ?? 0;
@@ -3304,11 +3319,12 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
     const write =
       draftRow === null
         ? createReport(project.id, createBody(body))
-        : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftRow.version });
+        : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftVersion.current ?? draftRow.version });
     write
       .then(() => {
         setDraft(emptyDraft());
         setDraftId(null);
+        draftVersion.current = null;
         setNotice(
           "已提交 " + dateCn + " 的日报" +
             (issueCount > 0
@@ -3343,14 +3359,19 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
       return;
     }
     const body = draftWriteBody("draft");
+    if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
+      setNotice("这篇草稿已被删除，输入仍保留；请核对后另建日报。");
+      return;
+    }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
     setSaving(true);
     const write =
       draftRow === null
         ? createReport(project.id, createBody(body))
-        : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftRow.version });
+        : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftVersion.current ?? draftRow.version });
     write
       .then((saved) => {
+        draftVersion.current = saved.version;
         if (draftRow === null) {
           setDraftId(saved.id);
         }
@@ -3365,6 +3386,9 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
         setSaving(false);
       });
   };
+
+  const remoteDraft = draftId === null ? null : reports.find((item) => item.id === draftId) ?? null;
+  const draftChanged = draftId !== null && (remoteDraft === null || remoteDraft.version !== draftVersion.current);
 
   /** 搜索命中（与项目空间同口径：不区分大小写的子串匹配；空关键词 = 全部命中）。 */
   const searchHit = (keyword: string, fields: readonly (string | number)[]): boolean => {
@@ -3411,6 +3435,14 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
             onSubmit={handleSubmit}
             onSaveDraft={handleSaveDraft}
           />
+          {draftChanged ? (
+            <div data-report-draft-conflict="" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+              <p>{remoteDraft === null ? "账号里的这篇草稿已被删除，填写内容仍保留。" : "账号里的草稿已变化，当前填写仍基于原版本，保存不会覆盖他人的修改。"}</p>
+              {remoteDraft === null ? <button type="button" className="mt-2 underline" onClick={() => { setDraftId(null); draftVersion.current = null; }}>保留当前内容，另建日报</button> : (
+                <details className="mt-2"><summary>核对最新草稿</summary><p className="whitespace-pre-wrap py-2">{remoteDraft.doneWork + "\n明日计划：" + remoteDraft.plan}</p><button type="button" className="underline" onClick={() => { draftVersion.current = remoteDraft.version; setNotice("已确认采用当前填写内容；再次保存仍会检查版本。"); }}>确认用当前填写内容重新保存</button></details>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : loadState === "loading" ? (
         /* Push 216 接真：三个列表子视图共用同一份首屏加载态 */

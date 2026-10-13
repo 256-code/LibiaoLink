@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { keepLiveOrder } from "./liveSync";
+import { useLiveRefresh } from "./useLiveRefresh";
 import { ApiError } from "./api";
 import type { DictTools } from "./dictTools";
 import { AppHeader } from "./components/AppHeader";
@@ -164,6 +166,25 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const [facets, setFacets] = useState<ProjectFacets>(EMPTY_FACETS);
   const [savedCounts, setSavedCounts] = useState<Record<string, number>>({});
   const [reloadToken, setReloadToken] = useState(0);
+
+  useLiveRefresh(["projects", "dicts", "permissions", "users"], async () => {
+    const current = requestRef.current;
+    const [page, regions, types, managers, statuses, counts] = await Promise.all([
+      fetchProjectList(current), fetchProjectFacets(current, "regions"), fetchProjectFacets(current, "projectTypes"),
+      fetchProjectFacets(current, "managerIds"), fetchProjectFacets(current, "statuses"),
+      Promise.all(savedFilters.map(async (filter): Promise<[string, number]> => {
+        const result = await fetchProjectFacets({ regions: filter.regions, projectTypes: filter.projectTypes, managerIds: filter.managerIds, statuses: [], timeFrom: filter.timeFrom, timeTo: filter.timeTo, q: "", sortDesc: true });
+        return [filter.id, result.total];
+      })),
+    ]);
+    return () => {
+      setItems((previous) => keepLiveOrder(previous, page.items.map(toUiProject)));
+      setTotal(page.total);
+      setFacets({ total: managers.total, region: regions.region, projectType: types.projectType, managerId: managers.managerId, stageKey: regions.stageKey, status: statuses.status });
+      setSavedCounts(Object.fromEntries(counts));
+      setLoadError(null);
+    };
+  }, requestKey + ":" + String(reloadToken) + ":" + String(refreshToken) + ":" + JSON.stringify(savedFilters), !loading && loadError === null);
 
   useEffect(() => {
     let cancelled = false;
@@ -598,6 +619,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           {items.map((project) => (
             <div
               key={project.id}
+              data-live-row={project.id}
               role="link"
               tabIndex={0}
               aria-label={"打开项目 " + project.code}

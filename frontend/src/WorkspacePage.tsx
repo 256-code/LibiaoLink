@@ -85,6 +85,8 @@
  * （抽屉内按 id 单查后照常编辑）。
  */
 import { useEffect, useRef, useState } from "react";
+import { keepLiveOrder } from "./liveSync";
+import { useLiveRefresh, useQueuedRefresh } from "./useLiveRefresh";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { ApiError } from "./api";
@@ -216,51 +218,49 @@ function groupIssuesByProject(issues: readonly ApiWorkspaceIssue[]): ProjectIssu
 
 /** 「解决方案或建议 / 问题附图」两列的数据不在工作台聚合读面（A31 第一刀）里 —— 逐项目向源接口
  *  （GET /projects/{id}/issues，一次取满 limit=200）回填、按问题 id 对齐；单个项目取不到不挡全页：
- *  那几行的两列落「—」，标题行给一句 partial 提示（不静默丢内容）。 */
+ *  初次取不到的两列落「—」，后续补取失败保留已有值；标题行给一句 partial 提示。 */
 type IssueFull = { solution: string; photos: ReportPhoto[] };
 
 function useIssueFull(issues: readonly ApiWorkspaceIssue[]): { full: Map<string, IssueFull>; partial: boolean } {
   const [full, setFull] = useState<Map<string, IssueFull>>(new Map());
   const [partial, setPartial] = useState(false);
-  useEffect(() => {
+  useQueuedRefresh(async () => {
     if (issues.length === 0) {
-      setFull(new Map());
-      setPartial(false);
-      return;
+      return () => { setFull(new Map()); setPartial(false); };
     }
-    let cancelled = false;
-    void (async () => {
-      const projectIds = Array.from(new Set(issues.map((issue) => issue.projectId)));
-      const results = await Promise.all(
-        projectIds.map(async (projectId) => {
-          try {
-            return { list: await fetchProjectIssues(projectId) };
-          } catch {
-            return { list: null };
-          }
-        }),
-      );
-      if (cancelled) {
-        return;
-      }
-      const next = new Map<string, IssueFull>();
-      let failed = 0;
-      for (const result of results) {
-        if (result.list === null) {
-          failed += 1;
-          continue;
+    const projectIds = Array.from(new Set(issues.map((issue) => issue.projectId)));
+    const results = await Promise.all(
+      projectIds.map(async (projectId) => {
+        try {
+          return { projectId, list: await fetchProjectIssues(projectId) };
+        } catch {
+          return { projectId, list: null };
         }
-        for (const item of result.list) {
-          next.set(item.id, { solution: item.solution, photos: item.photos });
-        }
+      }),
+    );
+    const next = new Map<string, IssueFull>();
+    let failed = 0;
+    for (const result of results) {
+      if (result.list === null) {
+        failed += 1;
+        continue;
       }
-      setFull(next);
-      setPartial(failed > 0);
-    })();
+      for (const item of result.list) {
+        next.set(item.id, { solution: item.solution, photos: item.photos });
+      }
+    }
+    const failedProjects = new Set(results.filter((result) => result.list === null).map((result) => result.projectId));
     return () => {
-      cancelled = true;
+      setFull((previous) => {
+        for (const issue of issues) {
+          const retained = previous.get(issue.id);
+          if (failedProjects.has(issue.projectId) && retained !== undefined) next.set(issue.id, retained);
+        }
+        return next;
+      });
+      setPartial(failed > 0);
     };
-  }, [issues]);
+  }, issues);
   return { full, partial };
 }
 
@@ -268,7 +268,7 @@ function useIssueFull(issues: readonly ApiWorkspaceIssue[]): { full: Map<string,
  *  工作台聚合读面（A31 第一刀）只带 9 列 —— 项目经理 / 输出成果文件 / 文件 / 项目进展描述 / 预计所需天数 /
  *  预计所需施工人数 / 是否按时交付（onTime）/ 变更关联不在那里。按项目向源接口回填
  *  （GET /projects/{id}/tasks 一次取满 + GET /projects/{id} 取项目经理名），按任务 id / 项目 id 对齐；
- *  单个项目取不到不挡全页：对应列落「—」，标题行给 partial 提示（与 useIssueFull 同一套降级口径）。
+ *  单个项目取不到不挡全页：初次对应列落「—」，后续保留已有值；标题行给 partial 提示。
  *  Push 279 起同批把「文件」列的清单（fetchTaskFiles）一起回填 —— 行内那一列要项目页同款的下拉入口。 */
 type TaskFull = {
   /** 任务 id → 列表行（含 ownerNames / fileSummary / deliverableTypes / note / estimatedDays / headcount / onTime / changeLinks / version）。 */
@@ -285,63 +285,68 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
   const [partial, setPartial] = useState(false);
   /** 回填是否跑完（成功 / 失败都算跑完）：e2e 的等待锚点；跑完前对应列先按「—」渲染。 */
   const [ready, setReady] = useState(false);
-  useEffect(() => {
+  useQueuedRefresh(async () => {
     const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
     if (all.length === 0) {
-      setFull({ detail: new Map(), projects: new Map(), files: new Map() });
-      setPartial(false);
-      setReady(true);
-      return;
+      return () => { setFull({ detail: new Map(), projects: new Map(), files: new Map() }); setPartial(false); setReady(true); };
     }
-    let cancelled = false;
     // Push 278：重跑（写后静默刷新触发的重取）不再回落 ready —— 旧值在列上不闪「—」，新数据到了直接替换。
-    void (async () => {
-      const projectIds = Array.from(new Set(all.map((task) => task.projectId)));
-      const results = await Promise.all(
-        projectIds.map(async (projectId) => {
-          const [taskList, project, fileMap] = await Promise.all([
-            fetchProjectTasks(projectId).then((result) => result.items).catch(() => null),
-            fetchProject(projectId).catch(() => null),
-            // 行内「文件」列（Push 279）：与项目页同一个清单接口（按项目全量取满、taskId → 文件引用）。
-            fetchTaskFiles(projectId).catch(() => null),
-          ]);
-          return { projectId, taskList, project, fileMap };
-        }),
-      );
-      if (cancelled) {
-        return;
-      }
-      const detail = new Map<string, ApiTaskListItem>();
-      const projects = new Map<string, ApiProject>();
-      const files = new Map<string, TaskFileRef[]>();
-      let failed = 0;
-      for (const result of results) {
-        if (result.taskList === null) {
-          failed += 1;
-        } else {
-          for (const item of result.taskList) {
-            detail.set(item.id, item);
-          }
-        }
-        if (result.project === null) {
-          failed += 1;
-        } else {
-          projects.set(result.projectId, result.project);
-        }
-        if (result.fileMap !== null) {
-          for (const [taskId, refs] of result.fileMap) {
-            files.set(taskId, refs);
-          }
+    const projectIds = Array.from(new Set(all.map((task) => task.projectId)));
+    const results = await Promise.all(
+      projectIds.map(async (projectId) => {
+        const [taskList, project, fileMap] = await Promise.all([
+          fetchProjectTasks(projectId).then((result) => result.items).catch(() => null),
+          fetchProject(projectId).catch(() => null),
+          // 行内「文件」列（Push 279）：与项目页同一个清单接口（按项目全量取满、taskId → 文件引用）。
+          fetchTaskFiles(projectId).catch(() => null),
+        ]);
+        return { projectId, taskList, project, fileMap };
+      }),
+    );
+    const detail = new Map<string, ApiTaskListItem>();
+    const projects = new Map<string, ApiProject>();
+    const files = new Map<string, TaskFileRef[]>();
+    let failed = 0;
+    for (const result of results) {
+      if (result.taskList === null) {
+        failed += 1;
+      } else {
+        for (const item of result.taskList) {
+          detail.set(item.id, item);
         }
       }
-      setFull({ detail, projects, files });
+      if (result.project === null) {
+        failed += 1;
+      } else {
+        projects.set(result.projectId, result.project);
+      }
+      if (result.fileMap !== null) {
+        for (const [taskId, refs] of result.fileMap) {
+          files.set(taskId, refs);
+        }
+      }
+    }
+    const apply = () => {
+      setFull((previous) => {
+        for (const result of results) {
+          if (result.project === null) {
+            const retained = previous.projects.get(result.projectId);
+            if (retained !== undefined) projects.set(result.projectId, retained);
+          }
+          for (const task of all.filter((item) => item.projectId === result.projectId)) {
+            const retainedDetail = previous.detail.get(task.id);
+            const retainedFiles = previous.files.get(task.id);
+            if (result.taskList === null && retainedDetail !== undefined) detail.set(task.id, retainedDetail);
+            if (result.fileMap === null && retainedFiles !== undefined) files.set(task.id, retainedFiles);
+          }
+        }
+        return { detail, projects, files };
+      });
       setPartial(failed > 0);
       setReady(true);
-    })();
-    return () => {
-      cancelled = true;
     };
-  }, [data]);
+    return apply;
+  }, data);
   return { full, partial, ready };
 }
 
@@ -606,7 +611,7 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
     <div
       ref={trapRef}
       data-photo-preview=""
-      role="dialog"
+      role="dialog" data-live-sync-readonly="true"
       aria-label={"预览 " + name}
       onClick={(event) => {
         event.stopPropagation();
@@ -886,45 +891,44 @@ function MyTasksView({ data, focus, openIds, onToggleProject, members, actorName
   };
 
   /** 写操作统一出口：以抽屉当前 version 提交（与项目页同一套写入口径）；成功用响应就地更新抽屉 + 调度静默刷新。 */
-  const runTaskWrite = (write: (task: ProjectTask, projectId: string) => Promise<ApiTask>): void => {
+  const runTaskWrite = async (write: (task: ProjectTask, projectId: string) => Promise<ApiTask>): Promise<number | null> => {
     const current = drawerTask;
     if (current === null) {
-      return;
+      return null;
     }
-    void (async () => {
-      try {
-        const updated = await write(current.task, current.projectId);
-        setDrawerTask((previous) => (previous === null || previous.task.id !== updated.id ? previous : { task: toUiTask(updated, previous.task, resolveName), projectId: previous.projectId }));
-        // 抽屉写回同步到行（Push 279）：进度 / 状态 / 文件计数这类行上可见的字段当场跟着变。
-        applyRowUpdate(updated);
-        setTaskError(null);
-        scheduleReload();
-      } catch (error) {
-        setTaskError(error instanceof ApiError ? error.message : "任务保存失败。");
-      }
-    })();
+    try {
+      const updated = await write(current.task, current.projectId);
+      setDrawerTask((previous) => (previous === null || previous.task.id !== updated.id ? previous : { task: toUiTask(updated, previous.task, resolveName), projectId: previous.projectId }));
+      // 抽屉写回同步到行（Push 279）：进度 / 状态 / 文件计数这类行上可见的字段当场跟着变。
+      applyRowUpdate(updated);
+      setTaskError(null);
+      scheduleReload();
+      return updated.version;
+    } catch (error) {
+      setTaskError(error instanceof ApiError ? error.message : "任务保存失败。");
+      return null;
+    }
   };
 
   /** 抽屉「即改即存」提交：项目经理（项目级）变化回写项目；任务字段走 PATCH（与项目页 handlePatchTask 同一 body）。 */
-  const handleDrawerSubmit = (values: TaskEditSubmit): void => {
+  const handleDrawerSubmit = async (values: TaskEditSubmit): Promise<number | null> => {
     const current = drawerTask;
     if (current === null) {
-      return;
+      return null;
     }
     const project = full.projects.get(current.projectId);
-    if (project !== undefined && values.managerIds.length > 0 && !sameMemberIds(values.managerIds, project.managerIds)) {
-      void (async () => {
-        try {
-          await updateProject(project.id, { code: project.code, name: project.name, region: project.region, projectType: project.projectType, managerIds: values.managerIds }, project.version);
-          scheduleReload();
-        } catch (error) {
-          setTaskError(error instanceof ApiError ? error.message : "项目经理保存失败。");
-        }
-      })();
+    if (values.managerChanged && project !== undefined && values.managerIds.length > 0 && !sameMemberIds(values.managerIds, project.managerIds)) {
+      try {
+        await updateProject(project.id, { code: project.code, name: project.name, region: project.region, projectType: project.projectType, managerIds: values.managerIds }, project.version);
+        scheduleReload();
+      } catch (error) {
+        setTaskError(error instanceof ApiError ? error.message : "项目经理保存失败。");
+        return null;
+      }
     }
-    runTaskWrite((row, projectId) =>
+    return runTaskWrite((row, projectId) =>
       updateTask(projectId, row.id, {
-        version: row.version,
+        version: values.version,
         ownerIds: values.ownerIds,
         plannedStart: values.startDate === "" ? null : values.startDate,
         plannedEnd: values.dueDate === "" ? null : values.dueDate,
@@ -1362,6 +1366,26 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
       cancelled = true;
     };
   }, [reloadToken]);
+
+  useLiveRefresh(["tasks", "projects", "issues", "reports", "files", "permissions", "users"], async () => {
+    const next = await fetchWorkspace();
+    return () => setState((previous) => {
+      if (previous.kind !== "ready") return previous;
+      return { kind: "ready", data: {
+        ...next,
+        myTasks: {
+          overdue: keepLiveOrder(previous.data.myTasks.overdue, next.myTasks.overdue),
+          today: keepLiveOrder(previous.data.myTasks.today, next.myTasks.today),
+          upcoming: keepLiveOrder(previous.data.myTasks.upcoming, next.myTasks.upcoming),
+          unscheduled: keepLiveOrder(previous.data.myTasks.unscheduled, next.myTasks.unscheduled),
+        },
+        myIssues: {
+          raised: keepLiveOrder(previous.data.myIssues.raised, next.myIssues.raised),
+          handling: keepLiveOrder(previous.data.myIssues.handling, next.myIssues.handling),
+        },
+      } };
+    });
+  }, String(reloadToken) + ":" + tab, state.kind === "ready" && tab !== "plan");
 
   /** 任务抽屉写后静默刷新（Push 278）：重取聚合读面但不置 loading（整页不闪）—— 行数据（进度 / 状态 / 文件计数 /
    *  变更关联）随写回滚；失败静默（抽屉内已就地更新，下次自然刷新兜底）。 */

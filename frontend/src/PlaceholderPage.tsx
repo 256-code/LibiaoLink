@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { subscribeLiveHints, keepLiveOrder } from "./liveSync";
+import { useLiveRefresh } from "./useLiveRefresh";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { RowDeleteButton } from "./components/RowDeleteButton";
@@ -242,6 +244,25 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
   /** 取数版本号：新增 / 删除成功后 +1 重取，保证左列与节点库一致。 */
   const [nodesVersion, setNodesVersion] = useState(0);
   const activeNodes = nodesByStage[activeSection] ?? EMPTY_NODE_LIST;
+
+  useEffect(() => subscribeLiveHints((resources) => {
+    if (!resources.includes("templates")) return;
+    setNodesByStage((previous) => Object.fromEntries(Object.entries(previous).filter(([stage]) => stage === activeSection)));
+    setTemplatesByStage((previous) => Object.fromEntries(Object.entries(previous).map(([stage, drafts]) => [stage, stage === activeSection ? drafts : drafts.filter(isDirty)])));
+  }), [activeSection]);
+
+  useLiveRefresh(["templates"], async () => {
+    const [nodes, templates] = await Promise.all([fetchStageNodes(activeSection), fetchStageTemplates(activeSection)]);
+    return () => {
+      setNodesByStage((previous) => ({ ...previous, [activeSection]: keepLiveOrder(previous[activeSection] ?? [], nodes) }));
+      setNodesError(null);
+      setTemplatesError(null);
+      setTemplatesByStage((previous) => {
+        const merged = mergeStageTemplates(previous, activeSection, templates);
+        return { ...merged, [activeSection]: keepLiveOrder(previous[activeSection] ?? [], merged[activeSection] ?? []) };
+      });
+    };
+  }, activeSection + ":" + String(nodesVersion) + ":" + String(templatesVersion), page === "templates" && !nodesLoading && !templatesLoading);
   /** 左列「任务节点」的搜索词：按中 / 英文名过滤当前板块的节点卡片。 */
   const [nodeQuery, setNodeQuery] = useState("");
 

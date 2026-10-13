@@ -394,6 +394,7 @@ function buildModel(
   collapsed: Record<string, boolean>,
   hideEmptyGroups: boolean,
   includeToday: boolean,
+  viewport?: { start: number; end: number },
 ): GanttModel | null {
   const bars = tasks.map(buildBar);
 
@@ -419,8 +420,8 @@ function buildModel(
     max = Math.max(max, today);
   }
 
-  const rangeStart = shiftDays(min, -PAD_DAYS);
-  const rangeEnd = shiftDays(max, PAD_DAYS);
+  const rangeStart = Math.min(shiftDays(min, -PAD_DAYS), viewport?.start ?? Number.POSITIVE_INFINITY);
+  const rangeEnd = Math.max(shiftDays(max, PAD_DAYS), viewport?.end ?? Number.NEGATIVE_INFINITY);
   const days = dayDiff(rangeStart, rangeEnd) + 1;
   const todayIndex = today >= rangeStart && today <= rangeEnd ? dayDiff(rangeStart, today) : null;
 
@@ -664,7 +665,24 @@ export function GanttChart({ tasks, members, onPatchTask, onSetProgress }: { tas
   }, [tasks, ownerFilter, rowFilter]);
 
   const filtering = ownerFilter !== OWNER_ANY || rowFilter !== "all";
-  const model = useMemo(() => buildModel(visibleTasks, today, collapsed, filtering, includeToday), [visibleTasks, today, collapsed, filtering, includeToday]);
+  const viewportKey = [ownerFilter, rowFilter, scale, zoom, leftWidth, includeToday].join("|");
+  const viewportKeyRef = useRef(viewportKey);
+  const model = useMemo(() => {
+    const node = scrollRef.current;
+    const keepViewport = viewportKeyRef.current === viewportKey;
+    viewportKeyRef.current = viewportKey;
+    const origin = Number(node?.dataset.liveDateOrigin);
+    const previousDayWidth = Number(node?.dataset.liveDateWidth);
+    // A short chart may have no scrollbar yet. Retain its visible dates as well,
+    // so an earlier remote task cannot clamp the restored horizontal position.
+    const viewport = keepViewport && node !== null && Number.isFinite(origin) && previousDayWidth > 0
+      ? {
+        start: origin + Math.floor(node.scrollLeft / previousDayWidth) * DAY_MS,
+        end: origin + Math.ceil((node.scrollLeft + Math.max(0, node.clientWidth - leftWidth)) / previousDayWidth) * DAY_MS,
+      }
+      : undefined;
+    return buildModel(visibleTasks, today, collapsed, filtering, includeToday, viewport);
+  }, [visibleTasks, today, collapsed, filtering, includeToday, viewportKey, leftWidth]);
   const weekendSet = useMemo(() => new Set(model === null ? [] : model.weekends), [model]);
 
   const todayIndex = model === null ? null : model.todayIndex;
@@ -1545,6 +1563,8 @@ export function GanttChart({ tasks, members, onPatchTask, onSetProgress }: { tas
       <div className="relative">
         <div
           ref={scrollRef}
+          data-live-date-origin={model === null ? undefined : model.rangeStart}
+          data-live-date-width={dayWidth}
           className={
             "scrollbar-hidden h-[calc(100vh-15rem)] min-h-[22rem] max-h-[52rem] overflow-auto rounded-xl border border-zinc-200 bg-white " +
             (panActive ? "cursor-grabbing select-none" : "cursor-grab")

@@ -23,6 +23,12 @@ class FakePreferenceRepository {
   async find(userId: string): Promise<UserPreferenceRow | null> {
     return this.rows.get(userId) ?? null;
   }
+  private chain: Promise<unknown> = Promise.resolve();
+  mutate(userId: string, update: (current: Record<string, unknown>) => Record<string, unknown>, at: Date): Promise<UserPreferenceRow> {
+    const operation = this.chain.then(async () => this.upsert(userId, update(this.rows.get(userId)?.prefs ?? {}), at));
+    this.chain = operation.catch(() => {});
+    return operation;
+  }
   async upsert(userId: string, prefs: Record<string, unknown>, at: Date): Promise<UserPreferenceRow> {
     const row = { userId, prefs, updatedAt: at } as UserPreferenceRow;
     this.rows.set(userId, row);
@@ -71,22 +77,22 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
     const { service, repo } = makeService();
-    const prefs = await service.update(USER_ID, { homeSavedFilters: [filterOf(1)] }, AT);
+    const prefs = await service.update(USER_ID, { homeSavedFilters: [filterOf(1)], expectedRevisions: { homeSavedFilters: 0 } }, AT);
     expect(prefs.homeSavedFilters).toEqual([filterOf(1)]);
     expect(prefs.taskTableHiddenColumns).toEqual([]);
     expect(prefs.updatedAt).toBe(AT.toISOString());
-    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ homeSavedFilters: [filterOf(1)] });
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ homeSavedFilters: [filterOf(1)] });
   });
 
   it("合并语义：只传变更键 —— 未传的声明键保持原值，数组键整体替换", async () => {
     const { service } = makeService();
-    await service.update(USER_ID, { taskTableHiddenColumns: ["owner", "due"], homeSavedFilters: [filterOf(1), filterOf(2)] }, AT);
-    const after = await service.update(USER_ID, { homeSavedFilters: [filterOf(3)] }, AT);
+    await service.update(USER_ID, { taskTableHiddenColumns: ["owner", "due"], homeSavedFilters: [filterOf(1), filterOf(2)], expectedRevisions: { homeSavedFilters: 0 } }, AT);
+    const after = await service.update(USER_ID, { homeSavedFilters: [filterOf(3)], expectedRevisions: { homeSavedFilters: 1 } }, AT);
     expect(after.taskTableHiddenColumns).toEqual(["owner", "due"]);
     expect(after.homeSavedFilters).toEqual([filterOf(3)]);
   });
@@ -94,8 +100,8 @@ describe("用户偏好（A4 / A24）", () => {
   it("未声明键原样保存（前向兼容）：后续 PATCH 不会把它冲掉", async () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { sidebarOpen: false } as unknown as { homeSavedFilters?: SavedHomeFilter[] }, AT);
-    await service.update(USER_ID, { homeSavedFilters: [filterOf(4)] }, AT);
-    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ sidebarOpen: false, homeSavedFilters: [filterOf(4)] });
+    await service.update(USER_ID, { homeSavedFilters: [filterOf(4)], expectedRevisions: { homeSavedFilters: 0 } }, AT);
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ sidebarOpen: false, homeSavedFilters: [filterOf(4)] });
   });
 
   it("读侧规范化：非数组 / 缺 id / 重复 id / 非法日期一律收敛，名称超长截断", async () => {
@@ -130,8 +136,8 @@ describe("用户偏好（A4 / A24）", () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { taskTableHiddenColumns: ["owner"], focusMode: true }, AT);
     expect((await service.get(USER_ID)).focusMode).toBe(true);
-    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ taskTableHiddenColumns: ["owner"], focusMode: true });
-    const after = await service.update(USER_ID, { homeSavedFilters: [filterOf(9)] }, AT);
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ taskTableHiddenColumns: ["owner"], focusMode: true });
+    const after = await service.update(USER_ID, { homeSavedFilters: [filterOf(9)], expectedRevisions: { homeSavedFilters: 0 } }, AT);
     expect(after.focusMode).toBe(true);
     expect(after.taskTableHiddenColumns).toEqual(["owner"]);
     expect((await service.update(USER_ID, { focusMode: false }, AT)).focusMode).toBe(false);
@@ -154,7 +160,7 @@ describe("用户偏好（A4 / A24）", () => {
     expect((await service.get(USER_ID)).workspaceOpenProjects).toEqual({ tasks: [PROJECT_A], raised: [] });
     const after = await service.update(USER_ID, { workspaceOpenProjects: { tasks: [], raised: [PROJECT_B] } }, AT);
     expect(after.workspaceOpenProjects).toEqual({ tasks: [], raised: [PROJECT_B] });
-    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ workspaceOpenProjects: { tasks: [], raised: [PROJECT_B] } });
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ workspaceOpenProjects: { tasks: [], raised: [PROJECT_B] } });
   });
 
   it("工作台展开态契约：{ tasks, raised }（uuid 数组）通过；缺键 / 非 uuid / 超上限 400", () => {
@@ -168,26 +174,26 @@ describe("用户偏好（A4 / A24）", () => {
   it("便签墙（「我的计划」· Push 268）：只传 myPlanBoard 落库、整体替换；updatedAt 由服务端盖章（不被客户端伪造值覆盖）", async () => {
     const { service, repo } = makeService();
     const note: MyPlanNote = { id: "pn-1", title: "买纸", content: "A4", category: "采购", colorId: "yellow", fontId: "sans", done: false, createdAt: AT.toISOString(), updatedAt: AT.toISOString() };
-    await service.update(USER_ID, { myPlanBoard: { notes: [note], categories: ["采购"] } }, AT);
+    await service.update(USER_ID, { myPlanBoard: { notes: [note], categories: ["采购"] }, expectedRevisions: { myPlanBoard: 0 } }, AT);
     const prefs = await service.get(USER_ID);
     expect(prefs.myPlanBoard.notes).toEqual([note]);
     expect(prefs.myPlanBoard.categories).toEqual(["采购"]);
     expect(prefs.myPlanBoard.updatedAt).toBe(AT.toISOString());
-    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ myPlanBoard: { notes: [note], categories: ["采购"], bg: "white", updatedAt: AT.toISOString() } });
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ myPlanBoard: { notes: [note], categories: ["采购"], bg: "white", updatedAt: AT.toISOString() } });
     // 客户端夹带 updatedAt 伪造 → 被服务端盖章值覆盖（写入时间以服务端为准）
     const forged: MyPlanNote = { ...note, id: "pn-2", done: true };
     const later = new Date("2026-10-10T02:00:00.000Z");
-    const forgedPatch = { myPlanBoard: { notes: [forged], categories: ["采购"], updatedAt: "1999-01-01T00:00:00.000Z" } } as unknown as Parameters<UserPreferenceService["update"]>[1];
+    const forgedPatch = { expectedRevisions: { myPlanBoard: 1 }, myPlanBoard: { notes: [forged], categories: ["采购"], updatedAt: "1999-01-01T00:00:00.000Z" } } as unknown as Parameters<UserPreferenceService["update"]>[1];
     const after = await service.update(USER_ID, forgedPatch, later);
     expect(after.myPlanBoard.updatedAt).toBe(later.toISOString());
     expect(after.myPlanBoard.notes).toEqual([forged]);
     // 未传键保持原值：换个键 PATCH 不冲掉便签墙
     expect((await service.update(USER_ID, { focusMode: true }, AT)).myPlanBoard.notes).toEqual([forged]);
     // Push 271 背景色三态：传入白名单值 = 整体替换；老客户端不传 bg = 沿用库内现值（不冲回 white）
-    const cream = await service.update(USER_ID, { myPlanBoard: { notes: [forged], categories: ["采购"], bg: "cream" } }, AT);
+    const cream = await service.update(USER_ID, { myPlanBoard: { notes: [forged], categories: ["采购"], bg: "cream" }, expectedRevisions: { myPlanBoard: 2 } }, AT);
     expect(cream.myPlanBoard.bg).toBe("cream");
-    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ myPlanBoard: { notes: [forged], categories: ["采购"], bg: "cream", updatedAt: AT.toISOString() }, focusMode: true });
-    const legacyNoBg = await service.update(USER_ID, { myPlanBoard: { notes: [forged], categories: ["采购"] } }, AT);
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ myPlanBoard: { notes: [forged], categories: ["采购"], bg: "cream", updatedAt: AT.toISOString() }, focusMode: true });
+    const legacyNoBg = await service.update(USER_ID, { myPlanBoard: { notes: [forged], categories: ["采购"] }, expectedRevisions: { myPlanBoard: 3 } }, AT);
     expect(legacyNoBg.myPlanBoard.bg).toBe("cream");
   });
 
@@ -234,6 +240,26 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ taskTableHiddenColumns: [] }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ taskTableHiddenColumns: ["progress"] }).success).toBe(false);
     expect(UserPreferencesUpdateBodySchema.safeParse({ taskTableHiddenColumns: ["title"] }).success).toBe(false);
+  });
+
+  it("同账号同时保存整板：只有一个基线成功，另一个409且不能覆盖", async () => {
+    const { service } = makeService();
+    const writes = await Promise.allSettled([
+      service.update(USER_ID, { myPlanBoard: { notes: [], categories: ["A"] }, expectedRevisions: { myPlanBoard: 0 } }),
+      service.update(USER_ID, { myPlanBoard: { notes: [], categories: ["B"] }, expectedRevisions: { myPlanBoard: 0 } }),
+    ]);
+    expect(writes.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+    const failed = writes.find((item) => item.status === "rejected");
+    expect(failed?.status === "rejected" && failed.reason.code).toBe("VERSION_CONFLICT");
+    expect((await service.get(USER_ID)).myPlanBoard.categories).toEqual(["A"]);
+  });
+
+  it("十个不同键并发写入全部保留，且不能伪造服务端版本", async () => {
+    const { service, repo } = makeService();
+    await Promise.all(Array.from({ length: 10 }, (_, index) => service.update(USER_ID, { ["key" + String(index)]: index })));
+    for (let index = 0; index < 10; index += 1) expect(repo.rows.get(USER_ID)?.prefs["key" + String(index)]).toBe(index);
+    await expect(service.update(USER_ID, { _revisions: { myPlanBoard: 999 } })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await expect(service.update(USER_ID, { myPlanBoard: { notes: [], categories: [] } })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 
   it("白名单与前端任务表列同源：TASK_TABLE_COLUMN_KEYS = TABLE_COLUMNS 的非锁定列（逐项 + 顺序）", () => {
