@@ -1,7 +1,9 @@
 import { HUB_HASH, TEMPLATE_BASE_HASH, WORKSPACE_BASE_HASH, projectsHref, useHashRoute } from "../useHashRoute";
 
 /**
- * 顶部导航栏（业务口径 2026-09-30「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」）。
+ * 顶部导航栏（业务口径 2026-09-30「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」；
+ * Push 285 业务口径 2026-10-12「登录后默认进入项目空间 首页名称改成蓝图」：首项由「首页」改名「**蓝图**」——
+ * 落点不变（`#/` 顶层），登录默认落地改由路由层落项目空间，见 useHashRoute）。
  *
  * 首版按业务给的 styled-components 玻璃胶囊样张还原（CSS 见 app.css 的 .topnav-* 段）；业务随后收口
  * 「去除这个液态效果 只保留文字」（2026-09-30）→ 胶囊面 / 描边环 / 高光扫过 / 悬浮动效全部下架，
@@ -13,7 +15,7 @@ import { HUB_HASH, TEMPLATE_BASE_HASH, WORKSPACE_BASE_HASH, projectsHref, useHas
 export function TopNav() {
   const route = useHashRoute();
   const items = [
-    { key: "hub", label: "首页", href: HUB_HASH, active: route.kind === "hub" },
+    { key: "hub", label: "蓝图", href: HUB_HASH, active: route.kind === "hub" },
     {
       key: "projects",
       label: "项目空间",

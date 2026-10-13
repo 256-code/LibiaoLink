@@ -67,8 +67,12 @@
  *   ⑦ 深链：`#/my-tasks?tab=raised` 直接打开仍停在该标签；`?tab=` 不认识的值落回「我的任务」；
  *      「进入项目」按钮 =「我的任务」落项目总览、切到「我提出的问题」落该项目「问题追踪」（Push 232 / Push 242 / Push 253），
  *      浏览器后退回工作台；
- *   ⑨ 醒目模式（Push 232 ·「同样增加醒目模式」）：开关在标签导航栏最右侧、值 = 账号偏好；开 = 任务 / 问题整行铺
- *      状态底色 + 状态签收口成深色字，关 = 恢复白底（跑完把账号偏好恢复原值，不留痕）；
+ *   ⑨ 背景档位（Push 290 · 业务口径「醒目模式可以删除了 统一用背景改 我的任务那边也要适配」）：原醒目模式开关下架，
+ *      观感 = 顶栏「背景 · 档位」（简约 / 适中 / 炫彩），工作台任务表 / 「我提出的问题」表都随档位；真点菜单切档逐档对账
+ *      （data-workspace-task-tint / data-workspace-issue-tint + 行色 computed + 状态列 oklch 深色字）；Push 291 起切档 = 单键 PATCH
+ *      「user_preferences.prefs.backgroundTier」（按账号记住）—— 切档落库 / 刷新保持 / 收尾恢复账号原值（不留痕）；同日 Push 292 起同菜单
+ *      第四行 =「水印」开关（账号偏好 cardWatermark：点击落库 / 刷新保持 / 收尾恢复，⑨j 组对账）；点档 / 点开关都不收弹层
+ *      （Push 292 追订「选择后不要退出 用户点别的地方再退出」：点外 / Esc / 再点触发钮才收，⑨a2 对账）；同日 Push 293 起「炫彩」档实装（同色相高饱和兑白 —— 底色 ×0.62 / 悬停 ×0.82）：⑨d2 / ⑨f2 对账（行色 computed 换高饱和值、状态列 oklch 深色字照旧）；同日追订「炫彩模式文字不明显 看不出来」：行 / 卡挂 .tint-vivid 把次要灰字提深一档（⑨d2 / ⑨f2 顺带对账类名）；同日再追订「炫彩下点这个进度条看不清」→「背景留白」→「带弧度的」→「胶囊的绿回到之前的版本」：炫彩档四格进度点底挖出胶囊白槽（rounded-full + bg-white），点回标配绿（emerald-500 / zinc-200），适中 / 简约不动：⑨c2 / ⑨f3 对账类名；
  *   ⑩ 折叠面板展开态记忆（Push 233 ·「这个下拉要有记忆」）：偏好归零 = 全收起 → 展开 A → 刷新仍展开 / B 仍收起 →
  *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
  *      收起 A → 刷新仍全收起 → GET preferences 逐段落库核对 → 收尾恢复账号偏好原值（不留痕）；
@@ -86,7 +90,7 @@
  *      页与「我提出的问题」同构（同一张七列表 / 同一套归类色签）；色签与项目页「问题追踪」逐 token 相等；「已完成不显示」= 两栏同一过滤（A2 完成态不出现）；
  *      深链 ?sub=handling 直达、未知值回落；跑完恢复账号偏好原值（截图：submenu / handling 两张，见 SCREENSHOT_DIR）。
  *   ⑧ 收尾：删三个临时项目（A / B / C，物理删）→ 读面 404；撤销两条临时会话；库内零残留；控制台 0 异常。
- * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ 醒目模式 + Push 233 展开态记忆 +
+ * 证据：docs/m6-回放证据(工作台我的任务·前端).md（Push 231 扩列 + Push 232「进入项目」/ Push 290 背景档位适配（原醒目模式下架） + Push 291 档位按账号落库 + Push 292 水印开关 + Push 233 展开态记忆 +
  *   Push 266 便签墙 / Push 268 便签墙落库 + 完成态小节）
  */
 
@@ -534,6 +538,9 @@ const taskRowsExpr = (projectId) =>
 /** 问题表读数（按项目面板）。 */
 /** Push 242 列对齐断言用：问题表表头每列的 [left, width]（四舍五入到整数像素）。 */
 const issueHeadRectsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return null;}var heads=table.querySelectorAll(" + j("thead th") + ");var out=[];for(var i=0;i<heads.length;i+=1){var r=heads[i].getBoundingClientRect();out.push([Math.round(r.left),Math.round(r.width)]);}return out;})()";
+/** Push 293 追订「炫彩下点这个进度条看不清」→「背景留白」「带弧度的」「绿回标配」：任务行四格进度点读数（第一行 4 颗按钮 + 点底槽 class；类名断口径 —— Tailwind v4 的斜杠透明度计算色不稳）。 */
+const taskTrackerDotsExpr = (projectId) =>
+  "(function(){var ps=document.querySelectorAll(" + j("[data-workspace-panel]") + ");var panel=null;for(var k=0;k<ps.length;k+=1){if(String(ps[k].getAttribute(" + j("data-workspace-panel") + "))===" + j(projectId) + "){panel=ps[k];break;}}if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var row=table.querySelector(" + j("[data-workspace-task]") + ");if(row===null){return {row:false};}var btns=row.querySelectorAll(" + j("button[aria-label]") + ");var out=[];var wrap=null;for(var i=0;i<btns.length;i+=1){var label=String(btns[i].getAttribute(" + j("aria-label") + "));if(label.indexOf(" + j("设置进度") + ")===0){out.push(String(btns[i].getAttribute(" + j("class") + ")));if(wrap===null&&btns[i].parentElement!==null){wrap=String(btns[i].parentElement.getAttribute(" + j("class") + "));}}}return {row:true,count:out.length,dots:out,wrap:wrap};})()";
 const issueRowsExpr = (projectId) => "(function(){var panel=document.querySelector(" + j('[data-workspace-panel="' + projectId + '"]') + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var headTexts=[];for(var h=0;h<heads.length;h+=1){headTexts.push(heads[h].textContent.trim());}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var link=rows[i].querySelector(" + j("a") + ");var photoNodes=rows[i].querySelectorAll(" + j("[data-issue-photo]") + ");var photoNames=[];for(var p=0;p<photoNodes.length;p+=1){photoNames.push(String(photoNodes[p].getAttribute(" + j("data-issue-photo") + ")));}out.push({id:String(rows[i].getAttribute(" + j("data-workspace-issue") + ")),date:cells[0].textContent.trim(),title:cells[1].textContent.trim(),categories:cells[2].textContent.trim(),owner:cells[3].textContent.trim(),solution:cells[4].textContent.trim(),photosText:cells[5].textContent.trim(),photos:photoNodes.length,photoNames:photoNames,state:cells[6].textContent.trim(),href:link===null?" + j("") + ":link.getAttribute(" + j("href") + "),rowClass:String(rows[i].getAttribute(" + j("class") + ")),stateClass:(function(){var n=rows[i].querySelector(" + j("[data-issue-state]") + ");return n===null?String(" + j("") + "):String(n.getAttribute(" + j("class") + "));})()});}return {table:true,heads:headTexts,rows:out};})()";
 /** Push 260「要居中这个状态」几何读数：「问题是否处理」列表头 / 单元格 text-align + 色签与单元格的水平中心差 / 左右留白差。 */
 const issueStateGeomExpr = (projectId) => "(function(){var panel=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "]") + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var heads=table.querySelectorAll(" + j("thead th") + ");var head=heads[6];var headAlign=getComputedStyle(head).textAlign;var headText=String(head.textContent.trim());var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){var cells=rows[i].querySelectorAll(" + j("td") + ");var cell=cells[6];var tag=cell.querySelector(" + j("[data-issue-state]") + ");var cr=cell.getBoundingClientRect();var tr=tag===null?null:tag.getBoundingClientRect();out.push({align:getComputedStyle(cell).textAlign,tag:tag===null?null:String(tag.textContent.trim()),cellCenter:Math.round((cr.left+cr.right)/2*100)/100,tagCenter:tr===null?null:Math.round((tr.left+tr.right)/2*100)/100,leftGap:tr===null?null:Math.round((tr.left-cr.left)*100)/100,rightGap:tr===null?null:Math.round((cr.right-tr.right)*100)/100,tagWidth:tr===null?null:Math.round(tr.width)});}return {table:true,headAlign:headAlign,headText:headText,rows:out};})()";
@@ -774,63 +781,157 @@ check("⑦i（Push 253）顶部标签停在「日报及问题」（主标签选�
 await ev("window.history.back()");
 const backToRaised = await waitFor("document.querySelector(" + j("[data-workspace-issues]") + ") !== null && window.location.hash === " + j("#/my-tasks?tab=raised"), 25000);
 check("⑦j（Push 253）浏览器后退回工作台「我提出的问题」（?tab=raised 原样恢复）", backToRaised === true, String(backToRaised));
-// ⑦ 段收尾：切回「我的任务」（与 Push 242 前的落点一致 —— ⑨ 醒目模式段从任务表读起）
+// ⑦ 段收尾：切回「我的任务」（与 Push 242 前的落点一致 —— ⑨ 背景档位段从任务表读起）
 await clickSelector("[data-workspace-tab=" + Q + "tasks" + Q + "]");
 await waitFor("window.location.hash === " + j("#/my-tasks") + " && document.querySelector(" + j("[data-workspace-page]") + ") !== null", 25000);
 await ev("window.scrollTo(0, 0)");
 
-// ---------- ⑨ 醒目模式（Push 232 · 业务口径「同样增加醒目模式」） ----------
-const focusCheckedExpr = "(function(){var wrap=document.querySelector(" + j("[data-workspace-focus-toggle]") + ");if(wrap===null){return null;}var box=wrap.querySelector(" + j("input") + ");return box===null?null:box.checked;})()";
-const focusWrapExpr = "(function(){var wrap=document.querySelector(" + j("[data-workspace-focus-toggle]") + ");if(wrap===null){return null;}return {inNav:wrap.closest(" + j("[data-workspace-tabs]") + ")!==null,checked:(function(){var box=wrap.querySelector(" + j("input") + ");return box===null?null:box.checked;})()};})()";
-const prefStartRes = await api("/api/v1/users/me/preferences");
-const prefStart = prefStartRes.status === 200 && prefStartRes.json !== null && typeof prefStartRes.json.focusMode === "boolean" ? prefStartRes.json.focusMode : null;
-const focus0 = await ev(focusWrapExpr);
-check("⑨a 标签导航栏最右侧有「醒目模式」开关（同项目总览 / 问题追踪一枚；初值 = 账号偏好 focusMode）", focus0 !== null && focus0.inNav === true && prefStart !== null && focus0.checked === prefStart, focus0 === null ? "null" : JSON.stringify([focus0, prefStart]));
-// 归一化到「关」（原值为开先点掉；本节最后恢复原值）
-if (prefStart === true) {
-  await clickSelector("[data-workspace-focus-toggle]");
-  await waitFor(focusCheckedExpr + " === false", 15000);
-}
-await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]') + ") !== null", 25000);
-await ensurePanelOpen(projectA, true);
-await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task]') + ") !== null", 25000);
-const focusOffRows = await ev(taskRowsExpr(projectA));
-check("⑨b 关：任务表 = 白底行（hover 档）+ 状态胶囊照旧", focusOffRows !== null && focusOffRows.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && focusOffRows.rows[0].statusClass.indexOf("bg-rose-100") >= 0, focusOffRows === null ? "null" : JSON.stringify([focusOffRows.rows[0].rowClass, focusOffRows.rows[0].statusClass]));
-await clickSelector("[data-workspace-focus-toggle]");
-const focusOnAttr = await waitFor("(function(){var t=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-task-table]') + ");return t!==null&&t.getAttribute(" + j("data-workspace-task-focus") + ")===" + j("true") + ";})()", 20000);
-const focusOnRows = await ev(taskRowsExpr(projectA));
-check("⑨c 开：任务表整行铺状态底色（逾期 rose / 今日 sky / 即将 amber · 6% 档）+ 状态胶囊收口成深色字", focusOnAttr === true && focusOnRows !== null && focusOnRows.rows[0].rowClass.indexOf("bg-rose-500/[0.06]") >= 0 && focusOnRows.rows[1].rowClass.indexOf("bg-sky-500/[0.06]") >= 0 && focusOnRows.rows[2].rowClass.indexOf("bg-amber-500/[0.06]") >= 0 && focusOnRows.rows[0].statusClass.indexOf("text-rose-700") >= 0 && focusOnRows.rows[0].statusClass.indexOf("bg-rose-100") < 0, focusOnRows === null ? "null" : JSON.stringify([focusOnRows.rows.map((item) => item.rowClass), focusOnRows.rows.map((item) => item.statusClass)]));
-let prefOn = null;
-for (let attempt = 0; attempt < 20; attempt += 1) {
-  prefOn = await api("/api/v1/users/me/preferences");
-  if (prefOn.status === 200 && prefOn.json !== null && prefOn.json.focusMode === true) break;
-  await sleep(300);
-}
-check("⑨d 偏好落库：单键 PATCH 后 GET /users/me/preferences 的 focusMode = true（按账号跨设备记忆）", prefOn !== null && prefOn.status === 200 && prefOn.json !== null && prefOn.json.focusMode === true, prefOn === null ? "null" : JSON.stringify(prefOn.json === null ? prefOn.status : prefOn.json.focusMode));
-await clickSelector('[data-workspace-tab="raised"]');
-await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-panel-toggle]') + ") !== null", 25000);
-await ensurePanelOpen(projectA, true);
-await waitFor("document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-issue]') + ") !== null", 25000);
-const focusIssueRows = await ev(issueRowsExpr(projectA));
-check("⑨e 切「我提出的问题」同款：未解决行 sky（6% 档）+ 状态签收口成深色字；已完成行不出现（已完成不显示）", focusIssueRows !== null && focusIssueRows.rows.length === 1 && focusIssueRows.rows[0].id === issueA1.issue.id && focusIssueRows.rows[0].rowClass.indexOf("bg-sky-500/[0.06]") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("text-sky-700") >= 0 && focusIssueRows.rows[0].stateClass.indexOf("bg-sky-100") < 0, focusIssueRows === null ? "null" : JSON.stringify([focusIssueRows.rows.map((item) => [item.id, item.rowClass]), focusIssueRows.rows.map((item) => item.stateClass)]));
-await clickSelector("[data-workspace-focus-toggle]");
-const focusOffAttr = await waitFor("(function(){var t=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-issue-table]') + ");return t!==null&&t.getAttribute(" + j("data-workspace-issue-focus") + ")===" + j("false") + ";})()", 20000);
-const focusOffRows2 = await ev(issueRowsExpr(projectA));
-check("⑨f 关：问题表回到白底行 + 状态签原样（仍只 1 行）", focusOffAttr === true && focusOffRows2 !== null && focusOffRows2.rows.length === 1 && focusOffRows2.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && focusOffRows2.rows[0].stateClass.indexOf("bg-sky-100") >= 0, focusOffRows2 === null ? "null" : JSON.stringify([focusOffRows2.rows[0].rowClass, focusOffRows2.rows[0].stateClass]));
-// 恢复账号偏好原值（回放不留痕）
-if (prefStart === true) {
-  await clickSelector("[data-workspace-focus-toggle]");
-  await waitFor(focusCheckedExpr + " === true", 15000);
-  let prefBack = null;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    prefBack = await api("/api/v1/users/me/preferences");
-    if (prefBack.status === 200 && prefBack.json !== null && prefBack.json.focusMode === true) break;
-    await sleep(300);
+// ---------- ⑨ 背景档位（Push 290 · 原「醒目模式」下架：观感统一走顶栏「背景 · 档位」；任务表 / 「我提出的问题」表随档位） ----------
+/** 打开顶栏「背景 · 档位」弹层（没开才点开）。 */
+async function openBgMenu() {
+  const menuOpen = await ev("document.querySelector(" + j("[data-bg-tier-menu]") + ") !== null");
+  if (menuOpen !== true) {
+    await clickSelector("[data-bg-tier-trigger]");
+    const opened = await waitFor("document.querySelector(" + j("[data-bg-tier-menu]") + ") !== null", 15000);
+    if (opened !== true) throw new Error("背景档位菜单没打开");
   }
-  check("⑨g 回放收尾：账号偏好 focusMode 恢复原值 true（不留痕）", prefBack !== null && prefBack.status === 200 && prefBack.json !== null && prefBack.json.focusMode === true, prefBack === null ? "null" : JSON.stringify(prefBack.json === null ? prefBack.status : prefBack.json.focusMode));
-} else {
-  check("⑨g 回放收尾：账号偏好 focusMode 原值即 false，无需恢复", true, "false");
 }
+/** 点顶栏「背景 · 档位」里的一档：触发钮 →（菜单没开先点开）→ 选档 → 等触发钮文案落位。 */
+async function setBgTier(tier, label) {
+  await openBgMenu();
+  await clickSelector("[data-bg-tier=" + Q + tier + Q + "]");
+  const landed = await waitFor("(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");return t!==null&&String(t.textContent).indexOf(" + j(label) + ") >= 0;})()", 15000);
+  if (landed !== true) throw new Error("背景档位没切到：" + tier);
+}
+const bgTriggerExpr = "(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");var nav=document.querySelector(" + j("[data-workspace-tabs]") + ");return t===null?null:{text:String(t.textContent.trim()),expanded:String(t.getAttribute(" + j("aria-expanded") + ")),inNav:nav!==null&&nav.contains(t)};})()";
+// Push 291：档位改按账号落库 —— 起点先把账号值归一为「简约」（上次中断遗留也能自愈；bgPrefStart 收尾恢复，不留痕）
+const bgLabelOf = { simple: "简约", medium: "适中", vivid: "炫彩" };
+const bgPrefSnap = await api("/api/v1/users/me/preferences");
+const bgPrefStart = bgPrefSnap.status === 200 && bgPrefSnap.json !== null && (bgPrefSnap.json.backgroundTier === "medium" || bgPrefSnap.json.backgroundTier === "vivid") ? bgPrefSnap.json.backgroundTier : "simple";
+if (bgPrefStart !== "simple") {
+  await api("/api/v1/users/me/preferences", "PATCH", { backgroundTier: "simple" });
+  await open("#/my-tasks", "[data-workspace-page]");
+  await waitFor("document.querySelector(" + j("[data-bg-tier-trigger]") + ") !== null", 25000);
+}
+const bg0 = await ev(bgTriggerExpr);
+check("⑨a 观感开关 = 顶栏「背景 · 档位」（Push 290 原「醒目模式」开关下架：标签导航栏里不再有它）；默认档「简约」（Push 291 起按账号落库：起点先归一为「简约」）", bg0 !== null && bg0.text.indexOf("背景") >= 0 && bg0.text.indexOf("简约") >= 0 && bg0.expanded === "false" && bg0.inNav === false, bg0 === null ? "null" : JSON.stringify(bg0));
+/** 任务行 computed 底色（前 3 行 · 内层 role=button —— 适中档的行色铺在这层）。 */
+const taskRowBgExpr = (projectId) => "(function(){var panel=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "]") + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<3&&i<rows.length;i+=1){var node=rows[i].querySelector(" + j("[role=button]") + ");out.push(node===null?null:getComputedStyle(node).backgroundColor);}return {table:true,bgs:out};})()";
+/** 问题行 computed 底色（逐行 tr）。 */
+const issueRowBgExpr = (projectId) => "(function(){var panel=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "]") + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-issue-table]") + ");if(table===null){return {table:false};}var rows=table.querySelectorAll(" + j("tbody tr") + ");var out=[];for(var i=0;i<rows.length;i+=1){out.push(getComputedStyle(rows[i]).backgroundColor);}return {table:true,bgs:out};})()";
+const taskTintExpr = (projectId) => "(function(){var t=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "] [data-workspace-task-table]") + ");return t===null?null:String(t.getAttribute(" + j("data-workspace-task-tint") + "));})()";
+const issueTintExpr = (projectId) => "(function(){var t=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "] [data-workspace-issue-table]") + ");return t===null?null:String(t.getAttribute(" + j("data-workspace-issue-tint") + "));})()";
+await setBgTier("simple", "简约");
+// Push 292 追订「选择后不要退出 用户点别的地方再退出」：切档后弹层保持打开；再点触发钮 / 点外才收起
+const tierMenuKept = await ev("document.querySelector(" + j("[data-bg-tier-menu]") + ") !== null");
+check("⑨a2 选档不收起弹层（Push 292 追订「选择后不要退出 用户点别的地方再退出」）：切「简约」后菜单仍开着", tierMenuKept === true, String(tierMenuKept));
+await clickSelector("[data-bg-tier-trigger]");
+const tierMenuClosed = await waitFor("document.querySelector(" + j("[data-bg-tier-menu]") + ") === null", 15000);
+if (tierMenuClosed !== true) throw new Error("再点触发钮没收起弹层");
+await waitFor("document.querySelector(" + j("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-panel-toggle]") + ") !== null", 25000);
+await ensurePanelOpen(projectA, true);
+await waitFor("document.querySelector(" + j("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-task]") + ") !== null", 25000);
+const simpleTint = await ev(taskTintExpr(projectA));
+const simpleRows = await ev(taskRowsExpr(projectA));
+const simpleBgs = await ev(taskRowBgExpr(projectA));
+check("⑨b 简约档 = 原系统观感：任务行白底（hover 档）+ 状态胶囊照旧（data-workspace-task-tint=false）", simpleTint === "false" && simpleRows !== null && simpleRows.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && simpleRows.rows[0].statusClass.indexOf("bg-rose-100") >= 0 && simpleBgs !== null && simpleBgs.bgs[0] === "rgba(0, 0, 0, 0)", simpleRows === null ? "null" : JSON.stringify([simpleTint, simpleRows.rows[0].rowClass, simpleRows.rows[0].statusClass, simpleBgs === null ? null : simpleBgs.bgs]));
+await setBgTier("medium", "适中");
+const mediumAttr = await waitFor(taskTintExpr(projectA) + " === " + j("true"), 20000);
+const mediumRows = await ev(taskRowsExpr(projectA));
+const mediumBgs = await ev(taskRowBgExpr(projectA));
+check("⑨c 适中档：任务表整行铺状态色（便签同款兑白 —— 已延期 rgb(253, 226, 231) / 待开始 rgb(219, 242, 252) / 进行中 rgb(254, 240, 218)）+ 状态列收口成深色字（oklch 自定色 · 无胶囊底）", mediumAttr === true && mediumRows !== null && mediumRows.rows.slice(0, 3).every((item) => item.rowClass.indexOf("task-row-tint") >= 0) && mediumRows.rows[0].statusClass.indexOf("oklch(52%_.26_16.44)") >= 0 && mediumRows.rows[1].statusClass.indexOf("oklch(53%_.18_237.32)") >= 0 && mediumRows.rows[2].statusClass.indexOf("oklch(58%_.20_70.08)") >= 0 && mediumRows.rows[0].statusClass.indexOf("bg-rose-100") < 0 && mediumBgs !== null && mediumBgs.bgs.join("|") === "rgb(253, 226, 231)|rgb(219, 242, 252)|rgb(254, 240, 218)", mediumRows === null ? "null" : JSON.stringify([mediumBgs === null ? null : mediumBgs.bgs, mediumRows.rows.slice(0, 3).map((item) => item.statusClass)]));
+const mediumTrackerDots = await ev(taskTrackerDotsExpr(projectA));
+check("⑨c2 进度点口径回归（Push 293 追订「炫彩下点这个进度条看不清」）：适中档四格点仍 = 点亮 emerald-500 / 空格 zinc-200，点底无白槽（炫彩背景留白不外溢）", mediumTrackerDots !== null && mediumTrackerDots.row === true && mediumTrackerDots.count === 4 && mediumTrackerDots.dots.every((cls) => cls.indexOf("bg-emerald-500") >= 0 || cls.indexOf("bg-zinc-200") >= 0) && mediumTrackerDots.dots.every((cls) => cls.indexOf("bg-emerald-700") < 0 && cls.indexOf("bg-zinc-900") < 0) && mediumTrackerDots.wrap !== null && mediumTrackerDots.wrap.indexOf("bg-white") < 0, mediumTrackerDots === null ? "null" : JSON.stringify([mediumTrackerDots.dots, mediumTrackerDots.wrap]));
+await clickSelector("[data-workspace-tab=" + Q + "raised" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-panel-toggle]") + ") !== null", 25000);
+await ensurePanelOpen(projectA, true);
+await waitFor("document.querySelector(" + j("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-issue]") + ") !== null", 25000);
+const mediumIssueTint = await ev(issueTintExpr(projectA));
+const mediumIssueRows = await ev(issueRowsExpr(projectA));
+const mediumIssueBgs = await ev(issueRowBgExpr(projectA));
+check("⑨d 切「我提出的问题」同款（档位跨标签、两表同源）：未解决行铺 sky 兑白 + 状态字 oklch 深蓝；已完成行不出现（已完成不显示）", mediumIssueTint === "true" && mediumIssueRows !== null && mediumIssueRows.rows.length === 1 && mediumIssueRows.rows[0].id === issueA1.issue.id && mediumIssueRows.rows[0].rowClass.indexOf("issue-row-tint") >= 0 && mediumIssueRows.rows[0].stateClass.indexOf("oklch(53%_.18_237.32)") >= 0 && mediumIssueRows.rows[0].stateClass.indexOf("bg-sky-100") < 0 && mediumIssueBgs !== null && mediumIssueBgs.bgs.join("|") === "rgb(219, 242, 252)", mediumIssueRows === null ? "null" : JSON.stringify([mediumIssueTint, mediumIssueRows.rows.map((item) => [item.id, item.rowClass, item.stateClass]), mediumIssueBgs === null ? null : mediumIssueBgs.bgs]));
+// ⑨d2 炫彩档问题表（Push 293 · 业务口径「ok现在我们做炫彩 颜色饱和度偏高的色彩」）：同色相高饱和铺色 —— 未解决行 = sky 500 ×0.62 兑白
+await setBgTier("vivid", "炫彩");
+const vividIssueAttr = await waitFor(issueTintExpr(projectA) + " === " + j("true"), 20000);
+const vividIssueRows2 = await ev(issueRowsExpr(projectA));
+const vividIssueBgs2 = await ev(issueRowBgExpr(projectA));
+check("⑨d2 炫彩档：问题表同色相高饱和铺色（未解决 = sky 500 ×0.62 兑白 = rgb(106, 199, 241)）+ 文字加深作用域（tint-vivid）挂上，状态列 oklch 深色字照旧", vividIssueAttr === true && vividIssueRows2 !== null && vividIssueRows2.rows.length === 1 && vividIssueRows2.rows[0].rowClass.indexOf("issue-row-tint") >= 0 && vividIssueRows2.rows[0].rowClass.indexOf("tint-vivid") >= 0 && vividIssueRows2.rows[0].stateClass.indexOf("oklch(53%_.18_237.32)") >= 0 && vividIssueBgs2 !== null && vividIssueBgs2.bgs.join("|") === "rgb(106, 199, 241)", vividIssueBgs2 === null ? "null" : JSON.stringify(vividIssueBgs2.bgs));
+await setBgTier("simple", "简约");
+const simpleIssueAttr = await waitFor(issueTintExpr(projectA) + " === " + j("false"), 20000);
+const simpleIssueRows = await ev(issueRowsExpr(projectA));
+const simpleIssueBgs = await ev(issueRowBgExpr(projectA));
+check("⑨e 回切简约：问题表回白底行 + 状态签胶囊原样（仍只 1 行 —— 档位回切双向生效）", simpleIssueAttr === true && simpleIssueRows !== null && simpleIssueRows.rows.length === 1 && simpleIssueRows.rows[0].rowClass.indexOf("hover:bg-zinc-50/80") >= 0 && simpleIssueRows.rows[0].stateClass.indexOf("bg-sky-100") >= 0 && simpleIssueBgs !== null && simpleIssueBgs.bgs[0] === "rgba(0, 0, 0, 0)", simpleIssueRows === null ? "null" : JSON.stringify([simpleIssueRows.rows[0].rowClass, simpleIssueRows.rows[0].stateClass, simpleIssueBgs === null ? null : simpleIssueBgs.bgs]));
+await clickSelector("[data-workspace-tab=" + Q + "tasks" + Q + "]");
+await waitFor("document.querySelector(" + j("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-panel-toggle]") + ") !== null", 25000);
+await ensurePanelOpen(projectA, true);
+await waitFor("document.querySelector(" + j("[data-workspace-panel=" + Q + projectA + Q + "] [data-workspace-task-table]") + ") !== null", 25000);
+const backSimpleTint = await ev(taskTintExpr(projectA));
+check("⑨f 切回「我的任务」：任务表也回简约档（data-workspace-task-tint=false —— 观感随档位、切标签不重置档位）", backSimpleTint === "false", String(backSimpleTint));
+// ⑨f2 炫彩档任务表（Push 293）：同色相高饱和铺色 —— 已延期 / 待开始 / 进行中 三行 = 500 档 ×0.62 兑白
+await setBgTier("vivid", "炫彩");
+const vividTaskLanded = await waitFor(taskTintExpr(projectA) + " === " + j("true"), 20000);
+const vividTaskRows = await ev(taskRowsExpr(projectA));
+const vividTaskBgs = await ev(taskRowBgExpr(projectA));
+check("⑨f2 炫彩档：任务表整行铺同色相高饱和色（= rgb(248, 136, 155)|rgb(106, 199, 241)|rgb(249, 195, 104)）+ 文字加深作用域（tint-vivid）挂上，状态列 oklch 深色字照旧", vividTaskLanded === true && vividTaskRows !== null && vividTaskRows.rows.slice(0, 3).every((item) => item.rowClass.indexOf("task-row-tint") >= 0 && item.rowClass.indexOf("tint-vivid") >= 0) && vividTaskRows.rows[0].statusClass.indexOf("oklch(52%_.26_16.44)") >= 0 && vividTaskRows.rows[1].statusClass.indexOf("oklch(53%_.18_237.32)") >= 0 && vividTaskRows.rows[2].statusClass.indexOf("oklch(58%_.20_70.08)") >= 0 && vividTaskBgs !== null && vividTaskBgs.bgs.join("|") === "rgb(248, 136, 155)|rgb(106, 199, 241)|rgb(249, 195, 104)", vividTaskBgs === null ? "null" : JSON.stringify(vividTaskBgs.bgs));
+const vividTrackerDots = await ev(taskTrackerDotsExpr(projectA));
+check("⑨f3 炫彩档进度点 = 胶囊白槽 + 标配绿（Push 293 追订「炫彩下点这个进度条看不清」→「背景留白」→「带弧度的」→「胶囊的绿回到之前的版本」）：四格点底 = 胶囊白槽（rounded-full + bg-white、无 backdrop-blur），点 = 点亮 emerald-500 / 空格 zinc-200（深配色 emerald-700 / zinc-900 已退场）", vividTrackerDots !== null && vividTrackerDots.row === true && vividTrackerDots.count === 4 && vividTrackerDots.dots.every((cls) => cls.indexOf("bg-emerald-500") >= 0 || cls.indexOf("bg-zinc-200") >= 0) && vividTrackerDots.dots.every((cls) => cls.indexOf("bg-emerald-700") < 0 && cls.indexOf("bg-zinc-900") < 0 && cls.indexOf("bg-white") < 0) && vividTrackerDots.wrap !== null && vividTrackerDots.wrap.indexOf("bg-white") >= 0 && vividTrackerDots.wrap.indexOf("rounded-full") >= 0 && vividTrackerDots.wrap.indexOf("backdrop-blur") < 0, vividTrackerDots === null ? "null" : JSON.stringify([vividTrackerDots.dots, vividTrackerDots.wrap]));
+await setBgTier("simple", "简约");
+// Push 291：切档 = 单键 PATCH backgroundTier（按账号记住）—— 切档落库 → 刷新保持 → 收尾恢复账号原值（不留痕）
+await setBgTier("medium", "适中");
+let bgPrefOn = null;
+for (let i = 0; i < 30; i += 1) {
+  bgPrefOn = await api("/api/v1/users/me/preferences");
+  if (bgPrefOn.status === 200 && bgPrefOn.json !== null && bgPrefOn.json.backgroundTier === "medium") break;
+  await sleep(500);
+}
+check("⑨g 切档落库（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：切「适中」= 单键 PATCH backgroundTier=medium（GET 回读，按账号跨设备记忆）", bgPrefOn !== null && bgPrefOn.status === 200 && bgPrefOn.json !== null && bgPrefOn.json.backgroundTier === "medium", bgPrefOn === null ? "null" : JSON.stringify(bgPrefOn.json === null ? bgPrefOn.status : bgPrefOn.json.backgroundTier));
+await open("#/my-tasks", "[data-workspace-page]");
+const bgReloadLanded = await waitFor("(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");return t!==null&&String(t.textContent).indexOf(" + j("适中") + ") >= 0;})()", 15000);
+const bgReload = await ev(bgTriggerExpr);
+check("⑨h 刷新保持：重开页仍是「适中」（档位 = 账号偏好读面回填，不再是内存 store 刷新回默认）", bgReloadLanded === true && bgReload !== null && bgReload.text.indexOf("适中") >= 0, bgReload === null ? "null" : JSON.stringify(bgReload));
+await setBgTier(bgPrefStart, bgLabelOf[bgPrefStart]);
+let bgPrefBack = null;
+for (let i = 0; i < 30; i += 1) {
+  bgPrefBack = await api("/api/v1/users/me/preferences");
+  if (bgPrefBack.status === 200 && bgPrefBack.json !== null && bgPrefBack.json.backgroundTier === bgPrefStart) break;
+  await sleep(500);
+}
+await open("#/my-tasks", "[data-workspace-page]");
+const bgBackLanded = await waitFor("(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");return t!==null&&String(t.textContent).indexOf(" + j(bgLabelOf[bgPrefStart]) + ") >= 0;})()", 15000);
+const bgTierBack = await ev(bgTriggerExpr);
+check("⑨i 回放收尾：账号偏好 backgroundTier 恢复原值（不留痕）且重开页档位与账号一致", bgPrefBack !== null && bgPrefBack.status === 200 && bgPrefBack.json !== null && bgPrefBack.json.backgroundTier === bgPrefStart && bgBackLanded === true && bgTierBack !== null && bgTierBack.text.indexOf(bgLabelOf[bgPrefStart]) >= 0, JSON.stringify([bgPrefBack === null ? null : bgPrefBack.json === null ? bgPrefBack.status : bgPrefBack.json.backgroundTier, bgTierBack]));
+// ⑨j 卡片水印开关（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：背景菜单第四行 =「水印」开关；点击 = 单键 PATCH cardWatermark、刷新保持、收尾恢复原值
+const wmRowExpr = "(function(){var n=document.querySelector(" + j("[data-bg-watermark]") + ");return n===null?null:{state:String(n.getAttribute(" + j("data-bg-watermark") + ")),checked:String(n.getAttribute(" + j("aria-checked") + ")),label:String(n.textContent.trim())};})()";
+const wmStateExpr = "(function(){var n=document.querySelector(" + j("[data-bg-watermark]") + ");return n===null?null:String(n.getAttribute(" + j("data-bg-watermark") + "));})()";
+const wmPrefSnap = await api("/api/v1/users/me/preferences");
+const wmPrefStart = wmPrefSnap.status === 200 && wmPrefSnap.json !== null && wmPrefSnap.json.cardWatermark === false ? false : true;
+const wmFlip = wmPrefStart === false;
+await openBgMenu();
+await waitFor("document.querySelector(" + j("[data-bg-watermark]") + ") !== null", 15000);
+const wm0 = await ev(wmRowExpr);
+check("⑨j 水印开关在场：背景菜单第四行 =「水印」（开关态 = 账号偏好 cardWatermark，默认开）", wm0 !== null && wm0.label.indexOf("水印") >= 0 && wm0.state === (wmPrefStart ? "on" : "off") && wm0.checked === String(wmPrefStart), wm0 === null ? "null" : JSON.stringify([wm0, wmPrefStart]));
+await clickSelector("[data-bg-watermark]");
+const wmMenuStillOpen = await ev("document.querySelector(" + j("[data-bg-tier-menu]") + ") !== null");
+let wmPrefOn = null;
+for (let i = 0; i < 30; i += 1) {
+  wmPrefOn = await api("/api/v1/users/me/preferences");
+  if (wmPrefOn.status === 200 && wmPrefOn.json !== null && wmPrefOn.json.cardWatermark === wmFlip) break;
+  await sleep(500);
+}
+check("⑨j2 点「水印」= 单键 PATCH cardWatermark（GET 回读翻转值；开关行是设定项、菜单保持打开）", wmPrefOn !== null && wmPrefOn.status === 200 && wmPrefOn.json !== null && wmPrefOn.json.cardWatermark === wmFlip && wmMenuStillOpen === true, wmPrefOn === null ? "null" : JSON.stringify([wmPrefOn.json === null ? wmPrefOn.status : wmPrefOn.json.cardWatermark, wmMenuStillOpen]));
+await open("#/my-tasks", "[data-workspace-page]");
+await openBgMenu();
+const wmLanded = await waitFor(wmStateExpr + " === " + j(wmFlip ? "on" : "off"), 15000);
+check("⑨j3 刷新保持：重开页开关态 = 账号值（水印设置随账号记住）", wmLanded === true, String(await ev(wmStateExpr)));
+await clickSelector("[data-bg-watermark]");
+let wmPrefBack = null;
+for (let i = 0; i < 30; i += 1) {
+  wmPrefBack = await api("/api/v1/users/me/preferences");
+  if (wmPrefBack.status === 200 && wmPrefBack.json !== null && wmPrefBack.json.cardWatermark === wmPrefStart) break;
+  await sleep(500);
+}
+check("⑨j4 回放收尾：cardWatermark 恢复原值（不留痕）", wmPrefBack !== null && wmPrefBack.status === 200 && wmPrefBack.json !== null && wmPrefBack.json.cardWatermark === wmPrefStart, wmPrefBack === null ? "null" : JSON.stringify(wmPrefBack.json === null ? wmPrefBack.status : wmPrefBack.json.cardWatermark));
+await open("#/my-tasks", "[data-workspace-page]");
 
 // ---------- ⑩ 折叠面板展开态记忆（Push 233 · 业务口径「这个下拉要有记忆」） ----------
 const resetMemory = await patchOpenProjects({ tasks: [], raised: [] });
@@ -1323,8 +1424,8 @@ const navSlot1 = await ev(stickyRect("[data-workspace-tabs]"));
 check("⑫e 滚动后导航栏钉在顶栏正下方（top = 64；栏高 = 59 = pt-3 12 + 标签 46 + 底边 1）", navSlot1 !== null && Math.abs(navSlot1.top - 64) <= 0.5 && Math.abs(navSlot1.height - 59) <= 1, navSlot1 === null ? "null" : JSON.stringify([navSlot1.top, navSlot1.height]));
 const clientW235 = await ev("document.documentElement.clientWidth");
 check("⑫f 横幅铺满行宽（-mx-6 抵消后 left = 0 / right = 视口可用宽 clientWidth，扣纵向滚动条；页面不因此横向滚动）", navSlot1 !== null && Math.abs(navSlot1.left) <= 0.5 && Math.abs(navSlot1.right - clientW235) <= 0.5 && (await ev("document.documentElement.scrollWidth")) <= clientW235 + 1, navSlot1 === null ? "null" : JSON.stringify([navSlot1.left, navSlot1.right, clientW235]));
-const inBar = await ev("(function(){var nav=document.querySelector(" + j("[data-workspace-tabs]") + ");if(nav===null){return null;}var r=nav.getBoundingClientRect();var tabs=nav.querySelectorAll(" + j("[data-workspace-tab]") + ");var focus=nav.querySelector(" + j("[data-workspace-focus-toggle]") + ");var ok=true;for(var i=0;i<tabs.length;i+=1){var b=tabs[i].getBoundingClientRect();if(b.height<=0||b.top<r.top-0.5||b.bottom>r.bottom+0.5){ok=false;}}var fb=focus===null?null:focus.getBoundingClientRect();return {ok:ok,tabs:tabs.length,focusIn:fb!==null&&fb.height>0&&fb.top>=r.top-0.5&&fb.bottom<=r.bottom+0.5};})()");
-check("⑫g 滚动后三枚标签 + 醒目模式开关都还在栏内（栏高兜得住、不吞字）", inBar !== null && inBar.ok === true && inBar.tabs === 3 && inBar.focusIn === true, JSON.stringify(inBar));
+const inBar = await ev("(function(){var nav=document.querySelector(" + j("[data-workspace-tabs]") + ");if(nav===null){return null;}var r=nav.getBoundingClientRect();var tabs=nav.querySelectorAll(" + j("[data-workspace-tab]") + ");var ok=true;for(var i=0;i<tabs.length;i+=1){var b=tabs[i].getBoundingClientRect();if(b.height<=0||b.top<r.top-0.5||b.bottom>r.bottom+0.5){ok=false;}}return {ok:ok,tabs:tabs.length};})()");
+check("⑫g 滚动后三枚标签都还在栏内（栏高兜得住、不吞字；Push 290 起栏内不再挂开关）", inBar !== null && inBar.ok === true && inBar.tabs === 3, JSON.stringify(inBar));
 const hit235 = await ev("(function(){var tabs=document.querySelectorAll(" + j("[data-workspace-tab]") + ");for(var i=0;i<tabs.length;i+=1){if(tabs[i].getAttribute(" + j("aria-current") + ")===" + j("page") + "){var r=tabs[i].getBoundingClientRect();var el=document.elementFromPoint(Math.round(r.left+r.width/2),Math.round(r.top+r.height/2));return el!==null&&(el===tabs[i]||tabs[i].contains(el));}}return null;})()");
 check("⑫h 吸顶状态下选中标签仍是命中元素（可点、不被浮层盖住）", hit235 === true, String(hit235));
 await clickSelector('[data-workspace-tab="raised"]');

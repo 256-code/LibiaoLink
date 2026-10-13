@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
+import { BACKGROUND_TIER_IDS, PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type BackgroundTier, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -74,6 +74,18 @@ function savedFiltersOf(value: unknown): SavedHomeFilter[] {
 /** 布尔偏好（醒目模式 · §6.13）：jsonb 是自由对象，只认严格布尔，字符串 / 数字 / 缺失一律回默认 false（不抛错）。 */
 function booleanOf(value: unknown): boolean {
   return value === true;
+}
+
+/** 背景档位（Push 291 · 业务口径 2026-10-13「当前背景选择后刷新就没了 要按账号记住」）：jsonb 里白名单外（simple / medium / vivid 之外）/ 缺省一律回默认 simple（不抛错）。 */
+const BACKGROUND_TIER_SET: ReadonlySet<string> = new Set(BACKGROUND_TIER_IDS);
+
+function backgroundTierOf(value: unknown): BackgroundTier {
+  return typeof value === "string" && BACKGROUND_TIER_SET.has(value) ? (value as BackgroundTier) : "simple";
+}
+
+/** 卡片水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：默认 true（没存过 = 显示）；只有严格 false 关闭，其余（缺省 / 非布尔）一律回 true。 */
+function cardWatermarkOf(value: unknown): boolean {
+  return value !== false;
 }
 
 /** 工作台展开态（A31 · Push 233）：`{ tasks, raised }` 两个项目 id 列表；jsonb 里非对象 / 数组内非字符串项一律收敛（不抛错）。 */
@@ -174,7 +186,7 @@ function dayOf(value: unknown): string | null {
 }
 
 /**
- * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）；
+ * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）；
  * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
  * 偏好是界面状态（非业务数据），不写审计；单用户单写者，无乐观锁。
@@ -211,6 +223,8 @@ export class UserPreferenceService {
       focusMode: booleanOf(prefs["focusMode"]),
       workspaceOpenProjects: openProjectsOf(prefs["workspaceOpenProjects"]),
       myPlanBoard: planBoardOf(prefs["myPlanBoard"]),
+      backgroundTier: backgroundTierOf(prefs["backgroundTier"]),
+      cardWatermark: cardWatermarkOf(prefs["cardWatermark"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }

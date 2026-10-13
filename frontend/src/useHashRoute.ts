@@ -128,10 +128,14 @@ export type Route =
 /** 任务模板页地址：当前板块（标签栏选中的阶段）也走 URL —— 与列表页筛选态同一口径，地址即状态。 */
 export const TEMPLATE_BASE_HASH = "#/templates";
 
-/** 列表页地址：入口页（Hub）占用 #/，项目空间列表移到 #/projects。 */
+/** 列表页地址：蓝图页（Hub · Push 285 前叫「入口页 / 首页」）占用 #/，项目空间列表移到 #/projects。 */
 export const LIST_BASE_HASH = "#/projects";
 
-/** 入口页地址（顶层）：详情 / 列表 / 占位页的「上一层」最终都落到这里。 */
+/**
+ * 蓝图页地址（顶层）：详情 / 列表 / 占位页的「上一层」最终都落到这里。
+ * Push 285（业务口径 2026-10-12「登录后默认进入项目空间 首页名称改成蓝图」）：导航项与页面名由「首页」改「蓝图」；
+ * 登录后默认落地改项目空间 —— 裸根地址（无 hash / 只有 `#`）按项目空间列表解析，本地址只由显式 `#/`（点导航项 / 分享链接）进入。
+ */
 export const HUB_HASH = "#/";
 
 /** 项目详情地址前缀：当前标签走 `?view=`（缺省「项目总览」不落参数）。 */
@@ -511,7 +515,7 @@ export function hasListFilters(filters: ListQueryState): boolean {
   );
 }
 
-/** 「项目空间」入口地址：有本地记忆的筛选时直接用记忆地址（与不带参数进入首页的恢复口径一致）。 */
+/** 「项目空间」入口地址：有本地记忆的筛选时直接用记忆地址（与「不带参数进入列表」的恢复口径一致）。 */
 export function projectsHref(): string {
   const stored = readStoredFilters();
   if (stored === null) {
@@ -526,7 +530,13 @@ export function parseHash(hash: string): Route {
   const separator = raw.indexOf("?");
   const path = separator === -1 ? raw : raw.slice(0, separator);
   const search = separator === -1 ? "" : raw.slice(separator + 1);
-  if (path === "" || path === "/") {
+  if (path === "") {
+    // 裸根地址（登录回跳的 `/`、直输域名；或只有 `#`）：Push 285 起默认入口 = **项目空间**
+    // （业务口径 2026-10-12「登录后默认进入项目空间」）—— 按列表参数解析；初始化代码再把地址规范化成 `#/projects`。
+    return { kind: "list", filters: parseListQuery(search) };
+  }
+  if (path === "/") {
+    // 蓝图页（顶层 · Push 285 起导航项与页面名由「首页」改「蓝图」）：显式 `#/` 仍落本页 —— 刷新 / 分享 / 撤回不丢。
     return { kind: "hub" };
   }
   if (path === "/templates") {
@@ -770,30 +780,41 @@ function readHash(): string {
   return typeof window === "undefined" ? "" : window.location.hash;
 }
 
+/** 裸根地址（无 hash —— 登录回跳的 `/`、直输域名；或只有 `#`）：Push 285 起 = 登录默认入口，落项目空间。 */
+function isBareRootHash(hash: string): boolean {
+  return hash === "" || hash === "#";
+}
+
 /**
  * 初始路由：URL 未携带列表参数时，用本地记忆恢复上次筛选选择（A1-18，URL 优先、本地次之）。
  * 恢复出的选择由下方初始化代码同步回地址栏（replace），与「URL 是筛选态唯一来源」的口径一致。
+ *
+ * Push 285（业务口径 2026-10-12「登录后默认进入项目空间」）：裸根地址的默认页从蓝图页改为**项目空间** ——
+ * 初始化时把地址规范化成列表地址（`#/projects`；有本地筛选记忆时带记忆参数）；`#/`（显式）仍是蓝图页。
  */
-function resolveInitialRoute(): { route: Route; restored: boolean } {
-  const parsed = parseHash(window.location.hash);
+function resolveInitialRoute(): { route: Route; restored: boolean; normalized: boolean } {
+  const hash = window.location.hash;
+  const bareRoot = isBareRootHash(hash);
+  const parsed = parseHash(hash);
   if (parsed.kind !== "list" || buildListHash(parsed.filters) !== LIST_BASE_HASH) {
-    return { route: parsed, restored: false };
+    return { route: parsed, restored: false, normalized: false };
   }
   const stored = readStoredFilters();
   if (stored === null) {
-    return { route: parsed, restored: false };
+    // 裸根默认入口：没有记忆也把地址规范化成列表地址（地址即状态）
+    return { route: parsed, restored: false, normalized: bareRoot };
   }
   const restoredFilters: ListQueryState = { ...stored, q: "" };
   if (buildListHash(restoredFilters) === LIST_BASE_HASH) {
     // 记忆里是「无筛选」视图（用户上次重置过）：与默认视图一致，无需恢复
-    return { route: parsed, restored: false };
+    return { route: parsed, restored: false, normalized: bareRoot };
   }
-  return { route: { kind: "list", filters: restoredFilters }, restored: true };
+  return { route: { kind: "list", filters: restoredFilters }, restored: true, normalized: false };
 }
 
 const initial =
   typeof window === "undefined"
-    ? { route: { kind: "list", filters: EMPTY_LIST_QUERY } as Route, restored: false }
+    ? { route: { kind: "list", filters: EMPTY_LIST_QUERY } as Route, restored: false, normalized: false }
     : resolveInitialRoute();
 let currentRoute: Route = initial.route;
 /** 进入详情页时所处列表页的地址（含筛选态）：顶栏与返回按钮据此还原列表页。 */
@@ -803,8 +824,8 @@ let retryTimer: number | null = null;
 let installed = false;
 const listeners = new Set<() => void>();
 
-// 初始化时把从本地记忆恢复出的筛选态写回地址栏（replace，不产生历史条目）
-if (initial.restored) {
+// 初始化时把从本地记忆恢复出的筛选态、或裸根默认入口规范化出的列表地址写回地址栏（replace，不产生历史条目）
+if (initial.restored || initial.normalized) {
   flushHash();
 }
 
@@ -868,7 +889,7 @@ export function useHashRoute(): Route {
   return useSyncExternalStore(subscribe, getSnapshot);
 }
 
-/** 初始加载是否由本地记忆恢复而来（首页据此区分「书签入口」与「带参数链接」两种初始态）。 */
+/** 初始加载是否由本地记忆恢复而来（项目空间列表据此区分「书签入口」与「带参数链接」两种初始态）。 */
 export function initialRouteRestored(): boolean {
   return initial.restored;
 }
@@ -905,7 +926,7 @@ export function goBackToList(): void {
   window.location.hash = (listReturnHash ?? LIST_BASE_HASH).slice(1);
 }
 
-/** 上一层地址：详情 → 列表（含筛选态）；列表 / 占位页 → 入口页；入口页 → 入口页。 */
+/** 上一层地址：详情 → 列表（含筛选态）；列表 / 占位页 → 蓝图页；蓝图页 → 蓝图页。 */
 export function upLevelHref(): string {
   if (currentRoute.kind === "list") {
     return HUB_HASH;
@@ -925,5 +946,6 @@ export function goUpLevel(): void {
   if (currentRoute.kind === "hub") {
     return;
   }
+  // 其余页面（列表 / 任务模板 / 工作台 / 操作记录 / 文件库）的上一层 = 蓝图页（#/）
   window.location.hash = "/";
 }

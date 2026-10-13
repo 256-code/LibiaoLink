@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { cardBorderOf, cardTintOf, useBackgroundTier, useCardWatermark } from "./backgroundTier";
 import type { DictTools } from "./dictTools";
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
@@ -93,6 +94,10 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
 
   const route = useHashRoute();
+  /** 背景档位（Push 289 · 同日「先来适中版」→「不同项目类型的颜色不同应该」→「用 c 试试」）：适中 = 项目卡片按项目类型铺「便签同款实色」。 */
+  const backgroundTier = useBackgroundTier();
+  /** 卡片水印开关（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：关 = 卡片不渲染国家名水印。 */
+  const cardWatermark = useCardWatermark();
   const filters = route.kind === "list" ? route.filters : EMPTY_LIST_QUERY;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // 常用筛选（Push 138；Push 169 起按账号存服务端）：组合由父层持有（同账号换设备可见），点一下套用到当前筛选
@@ -614,6 +619,10 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 seqNo={project.seqNo}
                 code={project.code}
                 description={project.description}
+                watermark={cardWatermark ? dictLabel(dicts, "region", project.region) : undefined}
+                tint={cardTintOf(backgroundTier, typeAccent(dicts, project.projectType).color)}
+                tintBorder={cardBorderOf(backgroundTier, typeAccent(dicts, project.projectType).color)}
+                vividInk={backgroundTier === "vivid"}
                 typeLabel={dictLabel(dicts, "projectType", project.projectType)}
                 status={project.status}
                 statusText={projectStatusText(project.status)}

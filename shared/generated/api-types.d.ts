@@ -2174,7 +2174,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态） */
+        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态 / 背景档位 / 卡片水印） */
         get: {
             parameters: {
                 query?: never;
@@ -2209,7 +2209,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400） */
         patch: {
             parameters: {
                 query?: never;
@@ -7397,6 +7397,11 @@ export interface components {
          * @enum {string}
          */
         AuditResult: "succeeded" | "denied" | "failed";
+        /**
+         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple
+         * @enum {string}
+         */
+        BackgroundTier: "simple" | "medium" | "vivid";
         /** @description 自建蓝图 JSON（v0.2 §3.2 + ADR-019）；导入校验 = schema + 引用 + 幂等 */
         Blueprint: {
             /** @enum {number} */
@@ -9466,15 +9471,20 @@ export interface components {
             focusMode: boolean;
             workspaceOpenProjects: components["schemas"]["WorkspaceOpenProjects"];
             myPlanBoard: components["schemas"]["MyPlanBoard"];
+            backgroundTier: components["schemas"]["BackgroundTier"];
+            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true */
+            cardWatermark: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED */
+        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔，否则 400 VALIDATION_FAILED */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
             focusMode?: boolean;
             workspaceOpenProjects?: components["schemas"]["WorkspaceOpenProjects"];
             myPlanBoard?: components["schemas"]["MyPlanBoardUpdate"];
+            backgroundTier?: components["schemas"]["BackgroundTier"] & unknown;
+            cardWatermark?: boolean;
         } & {
             [key: string]: unknown;
         };

@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：顶部导航栏（四个纯文字项 —— 首页 / 项目空间 / 任务模板 / 我的任务）
+ * LibiaoLink 前端 · 回放：顶部导航栏（四个纯文字项 —— 蓝图 / 项目空间 / 任务模板 / 我的任务）
  *
  * 业务口径（2026-09-30）：「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」（UI 参考业务给的
  * styled-components 玻璃胶囊样张）→ 同日四轮收口：「把阴影去除」→「黑很明显的黑边去除」→「字的阴影也不要」
  * →「去除这个液态效果 只保留文字」。
+ * 追加口径（2026-10-12）：「登录后默认进入项目空间 首页名称改成蓝图」—— 导航首项由「首页」改名「蓝图」
+ * （落点不变，仍是顶层 `#/`）；登录默认入口改落项目空间（裸根 `/` → `#/projects`）。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
- *   ① 五个落点（入口页 / 列表页 / 任务模板页 / 我的任务 / 项目详情）上导航都是四项、文案与落点一一对应；
- *   ② 当前项恰好一项：入口页亮「首页」、列表页与项目详情亮「项目空间」、任务模板页亮「任务模板」、工作台亮「我的任务」；
+ *   ① 六个落点（登录默认入口（裸根 `/`）/ 蓝图页 / 列表页 / 任务模板页 / 我的任务 / 项目详情）上导航都是四项、
+ *      文案与落点一一对应；
+ *   ② 当前项恰好一项：蓝图页亮「蓝图」、列表页与项目详情亮「项目空间」、任务模板页亮「任务模板」、工作台亮「我的任务」；
  *   ③ 纯文字护栏（液态效果已下架）：四项都没有面（背景）、没有 box-shadow（含描边环内衬与字阴影）、没有 backdrop-filter、
  *      没有 ::after 伪元素（描边环 / 高光扫过）；悬停与按下都没有 transform（缩放 / rotate3d）；
  *   ④ 当前项 = 深色加粗、未选 = 中灰（取值同一套：rgb(24, 24, 27) 700 / rgb(82, 82, 82) 400）；
  *   ⑤ 窄屏（<768px）整排隐藏；命中区在顶栏内（不探头）；
  *   ⑥ 点项即走（真机鼠标点「任务模板」/「我的任务」→ 地址随之为 #/templates / #/my-tasks）；
- *   ⑦ 控制台零报错；跑完会话撤销、库内零残留。
+ *   ⑦ 控制台零报错；跑完会话撤销、库内零残留；
+ *   ⑧ 登录默认入口（2026-10-12 口径）：裸根 `/`（无 hash）落项目空间、地址规范化成 `#/projects`；`#/`（显式）仍是蓝图页。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
@@ -141,7 +145,8 @@ await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 100
 const projectRow = (await db.query("select id, code, seq_no from projects where deleted_at is null order by seq_no desc limit 1")).rows[0];
 if (projectRow === undefined) { console.error("库内没有项目：项目详情落点的断言没有夹具"); process.exit(1); }
 const routes = [
-  { name: "入口页", hash: "#/", expect: "hub", label: "首页" },
+  { name: "登录默认入口（裸根）", hash: "", expect: "projects", label: "项目空间" },
+  { name: "蓝图页", hash: "#/", expect: "hub", label: "蓝图" },
   { name: "项目空间列表", hash: "#/projects", expect: "projects", label: "项目空间" },
   { name: "任务模板页", hash: "#/templates", expect: "templates", label: "任务模板" },
   { name: "我的任务工作台", hash: "#/my-tasks", expect: "workspace", label: "我的任务" },
@@ -149,6 +154,7 @@ const routes = [
 ];
 const navExpr = "(function(){var nav=document.querySelector(" + j("[data-topnav]") + ");if(nav===null){return null;}var ns=getComputedStyle(nav);var as=nav.querySelectorAll(" + j("[data-topnav-item]") + ");var items=[];for(var i=0;i<as.length;i+=1){var a=as[i];var r=a.getBoundingClientRect();var s=getComputedStyle(a);var af=getComputedStyle(a," + j("::after") + ");items.push({key:a.getAttribute(" + j("data-topnav-item") + "),label:String(a.textContent||" + j("") + ").trim(),href:a.getAttribute(" + j("href") + "),current:String(a.getAttribute(" + j("aria-current") + ")),x:Math.round(r.left),y:Math.round(r.top),w:Math.round(r.width),h:Math.round(r.height),fontSize:s.fontSize,fontWeight:s.fontWeight,color:s.color,bgImage:s.backgroundImage,bgColor:s.backgroundColor,boxShadow:s.boxShadow,textShadow:s.textShadow,backdrop:s.backdropFilter||s.webkitBackdropFilter||" + j("none") + ",transform:s.transform,borderRadius:s.borderRadius,padding:s.padding,afterContent:af.content,afterBg:af.backgroundImage,afterShadow:af.boxShadow});}var h=document.querySelector(" + j("header") + ");var out={display:ns.display,items:items,labelSpans:nav.querySelectorAll(" + j(".topnav-btn__label") + ").length,shadowEls:nav.querySelectorAll(" + j(".topnav-btn__shadow") + ").length,headerH:h===null?null:Math.round(h.getBoundingClientRect().height)};var nr=nav.getBoundingClientRect();out.navRect={x:Math.round(nr.left),y:Math.round(nr.top),w:Math.round(nr.width),h:Math.round(nr.height)};return out;})()";
 const seen = {};
+const routeHashes = {};
 const shots = [];
 for (const route of routes) {
   await page.send("Page.navigate", { url: "about:blank" });
@@ -161,6 +167,7 @@ for (const route of routes) {
   }
   await sleep(2200);
   seen[route.hash] = await ev(navExpr);
+  routeHashes[route.hash] = String(await ev("window.location.hash"));
   const strip = { x: 0, y: 0, width: 1500, height: 96, scale: 1 };
   shots.push(await shot("topnav-" + route.expect + "-" + String(shots.length + 1), strip));
 }
@@ -170,17 +177,35 @@ for (const route of routes) {
   const items = info === null || info === undefined ? [] : info.items;
   const labels = items.map((item) => item.label).join("|");
   const hrefOk = items.length === 4 && items[0].href === "#/" && items[1].href.indexOf("#/projects") === 0 && items[2].href === "#/templates" && items[3].href === "#/my-tasks";
-  check("顶栏四项 + 文案与落点对得上（" + route.name + "）", items.length === 4 && labels === "首页|项目空间|任务模板|我的任务" && hrefOk === true, JSON.stringify(items.map((item) => item.label + "=" + item.href)));
+  check("顶栏四项 + 文案与落点对得上（" + route.name + "）", items.length === 4 && labels === "蓝图|项目空间|任务模板|我的任务" && hrefOk === true, JSON.stringify(items.map((item) => item.label + "=" + item.href)));
   const current = items.filter((item) => item.current === "page");
   check("当前项恰好一项、且是「" + route.label + "」（" + route.name + "）", current.length === 1 && current[0].key === route.expect, JSON.stringify(current.map((item) => item.key + "/" + item.current)));
 }
+check("登录后默认入口：裸根 `/` 落项目空间、地址规范化成 #/projects（业务口径 2026-10-12「登录后默认进入项目空间」）", routeHashes[""] === "#/projects", String(routeHashes[""]));
+check("蓝图页地址 `#/` 照常（显式进入、刷新 / 分享不丢）", routeHashes["#/"] === "#/", String(routeHashes["#/"]));
+
+// 登录默认入口 × 本地筛选记忆（A1-18 恢复口径不变）：记忆里的筛选在裸根入口原样恢复并写回地址
+const memoryStore = { v: 1, filters: { regions: [], projectTypes: [], managerIds: [], statuses: [], timeFrom: null, timeTo: null, sortDesc: false }, sidebarOpen: null };
+await ev("window.localStorage.setItem(" + j("libiaolink.home.prefs.v1") + "," + j(JSON.stringify(memoryStore)) + ")");
+await page.send("Page.navigate", { url: "about:blank" });
+await sleep(300);
+await page.send("Page.navigate", { url: FRONTEND + "/" });
+let memoryReady = false;
+for (let i = 0; i < 50 && memoryReady !== true; i += 1) {
+  memoryReady = (await ev("document.querySelector(" + j("[data-topnav]") + ") !== null")) === true;
+  if (memoryReady !== true) await sleep(400);
+}
+await sleep(1600);
+const memoryHash = String(await ev("window.location.hash"));
+check("裸根入口按本地记忆恢复筛选（记忆 sortDesc=false → #/projects?sort=createdAt:asc）", memoryHash === "#/projects?sort=createdAt:asc", memoryHash);
+await ev("window.localStorage.removeItem(" + j("libiaolink.home.prefs.v1") + ")");
 const hub = seen["#/"];
 const hubItems = hub === null || hub === undefined ? [] : hub.items;
 const badStyle = hubItems.filter((item) => item.bgImage !== "none" || item.bgColor !== "rgba(0, 0, 0, 0)" || item.boxShadow !== "none" || item.textShadow !== "none" || item.backdrop !== "none" || item.transform !== "none" || item.afterBg !== "none" || (item.afterContent !== "none" && item.afterContent !== "normal"));
 check("纯文字护栏：四项无面 / 无描边环 / 无高光 / 无阴影（含字阴影）/ 无 backdrop / 无 transform，也没有 __shadow 落影层与 __label 文字面", hubItems.length === 4 && badStyle.length === 0 && hub.labelSpans === 0 && hub.shadowEls === 0, JSON.stringify(badStyle.slice(0, 2)) + " / labelSpans " + String(hub === null ? -1 : hub.labelSpans) + " / shadowEls " + String(hub === null ? -1 : hub.shadowEls));
 const cur = hubItems.filter((item) => item.current === "page")[0] ?? null;
 const rest = hubItems.filter((item) => item.current !== "page");
-check("配色：当前项 = " + j("rgb(24, 24, 27)") + " 700、未选 = " + j("rgb(82, 82, 82)") + " 400（入口页）", cur !== null && cur.color === "rgb(24, 24, 27)" && cur.fontWeight === "700" && rest.length === 3 && rest.every((item) => item.color === "rgb(82, 82, 82)" && item.fontWeight === "400"), JSON.stringify(hubItems.map((item) => [item.key, item.color, item.fontWeight])));
+check("配色：当前项 = " + j("rgb(24, 24, 27)") + " 700、未选 = " + j("rgb(82, 82, 82)") + " 400（蓝图页）", cur !== null && cur.color === "rgb(24, 24, 27)" && cur.fontWeight === "700" && rest.length === 3 && rest.every((item) => item.color === "rgb(82, 82, 82)" && item.fontWeight === "400"), JSON.stringify(hubItems.map((item) => [item.key, item.color, item.fontWeight])));
 check("字号 13px、命中区在顶栏内（不探头）", hubItems.length === 4 && hubItems.every((item) => item.fontSize === "13px") && hub.headerH !== null && hubItems.every((item) => item.y + item.h <= hub.headerH), "字号 " + String(hubItems[0] === undefined ? "?" : hubItems[0].fontSize) + " / 顶栏高 " + String(hub === null ? -1 : hub.headerH));
 const hit = hubItems.filter((item) => item.key === "templates")[0] ?? null;
 const hoverExpr = "(function(){var a=document.querySelector(" + j("[data-topnav-item=templates]") + ");if(a===null){return null;}var s=getComputedStyle(a);return {transform:s.transform,boxShadow:s.boxShadow,textShadow:s.textShadow,color:s.color,bgImage:s.backgroundImage};})()";

@@ -59,11 +59,12 @@ type CategoryFilterSidebarProps = {
   onClose: () => void;
 };
 
-/** 添加 / 编辑常用筛选的编辑态（id = null 为新建）。 */
+/** 添加 / 编辑常用筛选的编辑态（id = null 为新建；prefilled = 由「一键添加」带入当前筛选、勾选还没动过）。 */
 type ComposeState = {
   id: string | null;
   name: string;
   criteria: FilterCriteria;
+  prefilled: boolean;
 };
 
 function criteriaCount(criteria: FilterCriteria): number {
@@ -149,6 +150,20 @@ export function CategoryFilterSidebar({
       : compose.criteria.timeFrom !== null && compose.criteria.timeTo !== null
         ? { from: compose.criteria.timeFrom, to: compose.criteria.timeTo }
         : null;
+
+  /**
+   * 「一键添加」（Push 286）：当前筛选里可存入常用筛选的部分（项目状态不参与组合保存）。
+   * 任一条件有值（地区 / 项目类型 / 项目经理 / 项目时间）时，分组标题右侧的「+ 添加」改显「一键添加」：
+   * 点一下把当前条件整组带进新建草稿 —— 当前筛选原样不动（不重置），直接让用户取名保存。
+   */
+  const currentCriteria: FilterCriteria = {
+    regions: selectedRegions.slice(),
+    projectTypes: selectedTypes.slice(),
+    managerIds: selectedManagerIds.slice(),
+    timeFrom: dateRange === null ? null : dateRange.from,
+    timeTo: dateRange === null ? null : dateRange.to,
+  };
+  const canQuickAdd = hasCriteria(currentCriteria);
 
   /**
    * 「地区」按洲分组（Push 192；业务口径 2026-09-28「我觉得这里太乱了 要根据各个州分类 可以展开」）：
@@ -311,20 +326,28 @@ export function CategoryFilterSidebar({
               <button
                 type="button"
                 onClick={() => {
-                  setCompose({ id: null, name: "", criteria: emptyCriteria() });
+                  // 「一键添加」：把当前筛选整组带进草稿（不重置当前筛选）；没有任何可保存条件时才从空草稿开始
+                  setCompose({
+                    id: null,
+                    name: "",
+                    criteria: canQuickAdd ? currentCriteria : emptyCriteria(),
+                    prefilled: canQuickAdd,
+                  });
                 }}
                 disabled={!canCompose}
                 title={
                   savedFilters.length >= SAVED_FILTER_LIMIT
                     ? "最多保存 " + SAVED_FILTER_LIMIT + " 组常用筛选"
-                    : "把常看的分类勾成一组，命名保存"
+                    : canQuickAdd
+                      ? "一键把当前筛选条件存成一组（当前筛选不变），起个名字即可"
+                      : "把常看的分类勾成一组，命名保存"
                 }
                 className={
                   "rounded-lg px-2 py-1 text-xs font-medium transition " +
                   (canCompose ? "text-zinc-700 hover:bg-zinc-100" : "cursor-not-allowed text-zinc-300")
                 }
               >
-                + 添加
+                {canQuickAdd ? "一键添加" : "+ 添加"}
               </button>
             </div>
 
@@ -334,7 +357,9 @@ export function CategoryFilterSidebar({
                   {compose.id === null ? "新建常用筛选" : "编辑常用筛选"}
                 </p>
                 <p className="mt-1 text-[11px] leading-4 text-zinc-500">
-                  在下方分类里勾选多项（可跨组），名称可自定义；保存后即出现在「常用筛选」并立即生效。
+                  {compose.prefilled
+                    ? "已带入当前筛选条件（可在下方分类里继续增减），起个名字保存即可 —— 保存后即出现在「常用筛选」并立即生效。"
+                    : "在下方分类里勾选多项（可跨组），名称可自定义；保存后即出现在「常用筛选」并立即生效。"}
                 </p>
                 <input
                   value={compose.name}
@@ -387,7 +412,9 @@ export function CategoryFilterSidebar({
             {savedFilters.length === 0 ? (
               compose === null ? (
                 <p className="mt-3 text-xs leading-5 text-zinc-400">
-                  还没有常用筛选 —— 点「添加」，勾选常看的分类、起个名字保存。
+                  {canQuickAdd
+                    ? "还没有常用筛选 —— 点「一键添加」，把当前筛选条件起个名字保存。"
+                    : "还没有常用筛选 —— 点「添加」，勾选常看的分类、起个名字保存。"}
                 </p>
               ) : null
             ) : (
@@ -426,7 +453,7 @@ export function CategoryFilterSidebar({
                         <button
                           type="button"
                           onClick={() => {
-                            setCompose({ id: filter.id, name: filter.name, criteria: criteriaOf(filter) });
+                            setCompose({ id: filter.id, name: filter.name, criteria: criteriaOf(filter), prefilled: false });
                           }}
                           aria-label={"编辑常用筛选 " + filter.name}
                           title="编辑 / 改名"

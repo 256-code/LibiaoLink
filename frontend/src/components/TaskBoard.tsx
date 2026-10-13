@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintOf, type TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
@@ -178,16 +179,39 @@ export const STATUS_TAG_CLASS: Record<TaskStatus, string> = {
 };
 
 /**
- * 醒目模式（Push 134）的整行底色：业务口径「保留整行浅色，但大幅降低透明度」——
- * 同一个状态色（图一色系）压到 **6% 不透明**（马卡龙级极淡，只隐约区分），悬停再抬一档到 12% 留住「这一行可点」的手感。
- * Push 232：导出给工作台「我的任务」表复用（同款醒目模式口径，避免两处色表漂移）。
+ * 背景档位 · 适中档的任务行底色（Push 289 追订「选择适中模式 … 项目总览的颜色应该也要变」→ 定稿
+ * 「我要C方案是色调深浅参考 颜色本身不要换 不然我怎么区分状态啊」）：**颜色 = 任务状态色**（五色取图一 500 档），
+ * **深浅 = 便签同款配方** —— 底色 = 状态色 × 0.15 + 白、悬停 = × 0.32 + 白
+ * （直接复用 backgroundTier.ts 的 mediumCardTintOf / mediumCardBorderOf，与项目空间卡片同一套兑白比例）。
  */
-export const STATUS_ROW_CLASS: Record<TaskStatus, string> = {
-  已延期: "bg-rose-500/[0.06] hover:bg-rose-500/[0.12]",
-  进行中: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
-  已完成: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
-  待开始: "bg-sky-500/[0.06] hover:bg-sky-500/[0.12]",
-  提前完成: "bg-fuchsia-500/[0.06] hover:bg-fuchsia-500/[0.12]",
+const STATUS_TINT_BASE: Record<TaskStatus, string> = {
+  已延期: "#f43f5e",
+  进行中: "#f59e0b",
+  已完成: "#10b981",
+  待开始: "#0ea5e9",
+  提前完成: "#d946ef",
+};
+
+/** 状态 → 行色对（tint = 常态底、hover = 悬停底）：兑白换算在模块加载时算好，行内只读表。 */
+export const STATUS_ROW_TINT: Record<TaskStatus, { tint: string; hover: string }> = {
+  已延期: { tint: mediumCardTintOf(STATUS_TINT_BASE.已延期) ?? "", hover: mediumCardBorderOf(STATUS_TINT_BASE.已延期) ?? "" },
+  进行中: { tint: mediumCardTintOf(STATUS_TINT_BASE.进行中) ?? "", hover: mediumCardBorderOf(STATUS_TINT_BASE.进行中) ?? "" },
+  已完成: { tint: mediumCardTintOf(STATUS_TINT_BASE.已完成) ?? "", hover: mediumCardBorderOf(STATUS_TINT_BASE.已完成) ?? "" },
+  待开始: { tint: mediumCardTintOf(STATUS_TINT_BASE.待开始) ?? "", hover: mediumCardBorderOf(STATUS_TINT_BASE.待开始) ?? "" },
+  提前完成: { tint: mediumCardTintOf(STATUS_TINT_BASE.提前完成) ?? "", hover: mediumCardBorderOf(STATUS_TINT_BASE.提前完成) ?? "" },
+};
+
+/**
+ * 背景档位 · 炫彩档的任务行底色（Push 293 · 业务口径 2026-10-13「ok现在我们做炫彩 颜色饱和度偏高的色彩」）：
+ * 色相照旧 = 任务状态色（定稿「颜色本身不要换 不然我怎么区分状态啊」），浓淡换高饱和配方 —— 底色 = 状态色 × 0.62 + 白、
+ * 悬停 = × 0.82 + 白（复用 backgroundTier.ts 的 vividCardTintOf / vividCardBorderOf；行铺色沿用 .task-row-tint 变量机制）。
+ */
+export const STATUS_ROW_TINT_VIVID: Record<TaskStatus, { tint: string; hover: string }> = {
+  已延期: { tint: vividCardTintOf(STATUS_TINT_BASE.已延期) ?? "", hover: vividCardBorderOf(STATUS_TINT_BASE.已延期) ?? "" },
+  进行中: { tint: vividCardTintOf(STATUS_TINT_BASE.进行中) ?? "", hover: vividCardBorderOf(STATUS_TINT_BASE.进行中) ?? "" },
+  已完成: { tint: vividCardTintOf(STATUS_TINT_BASE.已完成) ?? "", hover: vividCardBorderOf(STATUS_TINT_BASE.已完成) ?? "" },
+  待开始: { tint: vividCardTintOf(STATUS_TINT_BASE.待开始) ?? "", hover: vividCardBorderOf(STATUS_TINT_BASE.待开始) ?? "" },
+  提前完成: { tint: vividCardTintOf(STATUS_TINT_BASE.提前完成) ?? "", hover: vividCardBorderOf(STATUS_TINT_BASE.提前完成) ?? "" },
 };
 
 /**
@@ -203,15 +227,18 @@ export const STATUS_CAPSULE_CLASS: Record<TaskStatus, string> = {
 };
 
 /**
- * 醒目模式下的状态字色（Push 134）：整行已经有状态色了，状态列不再套白底小框 / 色签底色，只留这一档深色字。
- * Push 232：导出给工作台「我的任务」表复用（状态胶囊在醒目模式下收口成这一档）。
+ * 铺色档（适中 / 炫彩 · tierTint）下的状态列字色（Push 289 追订「字体颜色饱和度高一点」→「还不够 再高一点」→「饱和度高了 但是颜色深度不够」
+ * →「深度加了 但是感觉还不是很吸睛」）：Tailwind 调色板里没有「又艳又深」这一档（500 档够艳但偏浅、700 档够深但彩度掉），
+ * 直接自定 oklch —— **彩度再抬到 500 档之上（×1.08）、明度压到 52 ~ 58%**（色相取图一 500 档；进行中的琥珀明度只能到 58%、彩度也只能到 .20，再压出色域）。
+ * 「吸睛」的另外两手在状态列的分支里：字号 13px、字重 700、字距 tracking-wide（见下面 triggerClassName）。
+ * （Push 290 起「醒目模式」下架：本档 = 唯一的彩色字档，由背景档位铺色档「适中 / 炫彩」驱动。）
  */
-export const STATUS_TAG_TEXT_CLASS: Record<TaskStatus, string> = {
-  已延期: "text-rose-700",
-  进行中: "text-amber-800",
-  已完成: "text-emerald-700",
-  待开始: "text-sky-700",
-  提前完成: "text-fuchsia-700",
+export const STATUS_TAG_TEXT_TIER_CLASS: Record<TaskStatus, string> = {
+  已延期: "text-[oklch(52%_.26_16.44)]",
+  进行中: "text-[oklch(58%_.20_70.08)]",
+  已完成: "text-[oklch(53%_.18_162.48)]",
+  待开始: "text-[oklch(53%_.18_237.32)]",
+  提前完成: "text-[oklch(53%_.30_322.15)]",
 };
 
 /** 任务状态可选项（顺序对齐业务截图：已延期 / 进行中 / 已完成 / 待开始 / 提前完成）。 */
@@ -310,10 +337,11 @@ type TaskBoardProps = {
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
   viewStage?: string;
   /**
-   * 醒目模式（Push 134，业务口径「启用后项目总览的卡片整行都变成图一状态的颜色」）：
-   * 打开后每张任务卡片整行铺该任务状态的底色（图一色签同款），关掉 = 保持现状（白底行）。
+   * 背景档位 · 铺色档（Push 289 追订定稿「用 c · 色调深浅参考、颜色本身不要换」；Push 293 扩展炫彩）：
+   * "medium" = 便签同款淡彩整行铺**任务状态色**（STATUS_ROW_TINT）；"vivid" = 同色相高饱和浓彩（STATUS_ROW_TINT_VIVID）；
+   * 两档都把状态列收口成深色字。不传 / false = 白底行 + 色签胶囊（Push 290「醒目模式」下架后，本项 = 唯一的整行铺色开关）。
    */
-  focusMode?: boolean;
+  tierTint?: TintedTier | false;
   /**
    * 任务文件上传（Push 226 · 「文件」那一刀前端接线；Push 246 起入口收进「文件」列下拉顶部的「＋ 添加文件」）：
    * 选文件 → 调用方分片直传文件库并关联本任务，完成后整表重取刷新计数；不传 = 下拉里不显示添加入口。
@@ -373,10 +401,12 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean; subtitle?: string }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
+  /** 背景档位铺色档（适中 / 炫彩）：行铺状态色 + 状态列收口深色字；simple / 未传 = 胶囊照旧。 */
+  const tierTinted = tierTint === "medium" || tierTint === "vivid";
   /** 定档锁定（Push 264 · P1-1）：行内任务字段入口一律锁定（点击弹顶部 Toast、不弹编辑浮层）；
    *  2026-10-10 业务追订「项目经理也不可以修改」——「项目经理」列随行一并锁定；「文件」列仍走既有 taskFinalized 门控（修改走变更）。 */
   const taskFinalized = task.finalizedAt !== null;
@@ -435,10 +465,10 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         </div>
         {onProgress === undefined ? (
           <span className="shrink-0">
-            <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读行：不接悬停预览 */ }} />
+            <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读行：不接悬停预览 */ }} vivid={tierTint === "vivid"} />
           </span>
         ) : (
-          <Tracker progress={task.progress} onChange={onProgress} />
+          <Tracker progress={task.progress} onChange={onProgress} vivid={tierTint === "vivid"} />
         )}
         {onDelete === undefined ? null : (
           // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
@@ -520,12 +550,15 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           ariaLabel="修改任务状态"
           disabled={taskFinalized}
           disabledHint={FINALIZED_EDIT_HINT}
-          // Push 134：状态列改成裸框胶囊 —— 正常模式 = 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗），
-          // 醒目模式 = 整行已有状态色，只留深色字（悬停给一点淡淡的可点提示）。
+          // Push 134：状态列改成裸框胶囊 —— 简约档（默认）= 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗）；
+          // 背景档位铺色档（tierTint = medium / vivid）= 行上已有状态色，状态列收口 —— 撤掉胶囊底色只留该状态的深色字
+          // （否则胶囊底 ≈ 行底色、看上去忽有忽无）。铺色档字色 = STATUS_TAG_TEXT_TIER_CLASS（自定 oklch：
+          // 彩度 500 档 ×1.08、明度压深到 52~58%，外加 13px / 700 / 字距 tracking-wide ——
+          // 追订「饱和度高了 但是颜色深度不够」→「深度加了 但是感觉还不是很吸睛」）。
           bare
           triggerClassName={
-            focusMode
-              ? STATUS_TAG_TEXT_CLASS[status] + " px-1.5 py-[3px] text-xs font-semibold hover:bg-zinc-900/[0.04]"
+            tierTinted
+              ? STATUS_TAG_TEXT_TIER_CLASS[status] + " px-1.5 py-[3px] text-[13px] font-bold tracking-wide hover:bg-zinc-900/[0.04]"
               : STATUS_CAPSULE_CLASS[status] + " px-3 py-1.5 text-[11px] font-medium"
           }
           display={<span className="truncate">{status}</span>}
@@ -766,14 +799,23 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         }}
         className={
           "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
-          // 醒目模式（Push 134）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
-          (focusMode
-            ? STATUS_ROW_CLASS[status] + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
+          // 背景档位铺色档（tierTint = medium / vivid）：整行铺任务状态色（浓淡随档），悬停压深一档（app.css 的 .task-row-tint；
+          // 选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）。
+          (tierTinted
+            ? "task-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
             : selected
               ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]"
               : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
         }
-        style={{ gridTemplateColumns: tableGridTemplate(columns) }}
+        style={
+          tierTinted
+            ? ({
+                gridTemplateColumns: tableGridTemplate(columns),
+                "--row-tint": (tierTint === "vivid" ? STATUS_ROW_TINT_VIVID : STATUS_ROW_TINT)[status].tint,
+                "--row-tint-hover": (tierTint === "vivid" ? STATUS_ROW_TINT_VIVID : STATUS_ROW_TINT)[status].hover,
+              } as CSSProperties)
+            : { gridTemplateColumns: tableGridTemplate(columns) }
+        }
       >
         {columns.map((column) => (
           <Fragment key={column.key}>
@@ -837,7 +879,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -1179,7 +1221,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                       <TaskRow
                         key={task.id}
                         task={task}
-                        focusMode={focusMode === true}
+                        tierTint={tierTint ?? false}
                         columns={columns}
                         selected={selectedTaskId !== null && selectedTaskId === task.id}
                         onSelect={() => setSelectedTaskId(task.id)}
