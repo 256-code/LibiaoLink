@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BACKGROUND_TIER_IDS, PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type BackgroundTier, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
+import { BACKGROUND_TIER_IDS, LOCALE_IDS, PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type BackgroundTier, type Locale, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -86,6 +86,13 @@ function backgroundTierOf(value: unknown): BackgroundTier {
 /** 卡片水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：默认 true（没存过 = 显示）；只有严格 false 关闭，其余（缺省 / 非布尔）一律回 true。 */
 function cardWatermarkOf(value: unknown): boolean {
   return value !== false;
+}
+
+/** 界面语言（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」）：jsonb 里白名单外（zh / en 之外）/ 缺省一律回默认 zh（不抛错）。 */
+const LOCALE_SET: ReadonlySet<string> = new Set(LOCALE_IDS);
+
+function localeOf(value: unknown): Locale {
+  return typeof value === "string" && LOCALE_SET.has(value) ? (value as Locale) : "zh";
 }
 
 /** 工作台展开态（A31 · Push 233）：`{ tasks, raised }` 两个项目 id 列表；jsonb 里非对象 / 数组内非字符串项一律收敛（不抛错）。 */
@@ -186,7 +193,7 @@ function dayOf(value: unknown): string | null {
 }
 
 /**
- * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）；
+ * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）；
  * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
  * 偏好是界面状态（非业务数据），不写审计；单用户单写者，无乐观锁。
@@ -225,6 +232,7 @@ export class UserPreferenceService {
       myPlanBoard: planBoardOf(prefs["myPlanBoard"]),
       backgroundTier: backgroundTierOf(prefs["backgroundTier"]),
       cardWatermark: cardWatermarkOf(prefs["cardWatermark"]),
+      locale: localeOf(prefs["locale"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }

@@ -74,6 +74,30 @@ const PREFETCH_RETRY_MS = 60000;
 /** 会话级「原文 → 英文」缓存（同一 SPA 会话内跨页面共用）：写进展描述时预热、导出直接命中。 */
 const translationCache = new Map<string, string>();
 
+/** 译文缓存版本号（每条译文入缓存 +1）：语言切换「手打内容」显示用 —— 组件订阅它，译文到位即重渲染。 */
+let translationRevision = 0;
+
+/** 缓存变更订阅（同上）：返回退订函数。 */
+const translationListeners = new Set<() => void>();
+
+export function subscribeTranslations(listener: () => void): () => void {
+  translationListeners.add(listener);
+  return () => {
+    translationListeners.delete(listener);
+  };
+}
+
+export function getTranslationRevision(): number {
+  return translationRevision;
+}
+
+function notifyTranslations(): void {
+  translationRevision += 1;
+  translationListeners.forEach((listener) => {
+    listener();
+  });
+}
+
 /** 在途请求（原文 → 同一个 Promise）：预热与导出同时要同一条时只打一次机器翻译。 */
 const inFlight = new Map<string, Promise<string | null>>();
 
@@ -97,6 +121,7 @@ function cachePut(source: string, translated: string): void {
     }
     translationCache.delete(oldest.value);
   }
+  notifyTranslations();
 }
 
 /** 逐条翻译（POST /api/v1/translate），失败返回 null（不抛错；由 translateOneShared 统一记退避 / 写缓存）。 */

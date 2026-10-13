@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { TABLE_COLUMNS, type ColumnKey, type VisibleColumns } from "./TaskBoard";
+import { fieldText, useLocale, useT } from "../i18n";
 
 type ColumnPickerProps = {
   visible: VisibleColumns;
@@ -8,6 +9,8 @@ type ColumnPickerProps = {
 };
 
 export function ColumnPicker({ visible, onToggle, onReset }: ColumnPickerProps) {
+  const locale = useLocale();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -44,14 +47,14 @@ export function ColumnPicker({ visible, onToggle, onReset }: ColumnPickerProps) 
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-3.5 w-3.5">
           <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M10 18h4" />
         </svg>
-        筛选
+        {t("picker.filter")}
       </button>
       {open ? (
         <div className="absolute right-0 top-full z-30 mt-2 w-60 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl">
           <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
-            <span className="text-xs font-medium text-zinc-500">表格显示字段</span>
+            <span className="text-xs font-medium text-zinc-500">{t("picker.fields")}</span>
             <button type="button" onClick={onReset} className="text-xs text-zinc-400 transition hover:text-zinc-700">
-              重置
+              {t("picker.reset")}
             </button>
           </div>
           <div className="max-h-80 overflow-y-auto">
@@ -73,8 +76,8 @@ export function ColumnPicker({ visible, onToggle, onReset }: ColumnPickerProps) 
                     onChange={(event) => onToggle(column.key, event.target.checked)}
                     className="h-4 w-4 accent-zinc-900"
                   />
-                  <span className="truncate">{column.label}</span>
-                  {locked ? <span className="ml-auto text-[10px] text-zinc-300">常显</span> : null}
+                  <span className="truncate">{fieldText(locale, column.label)}</span>
+                  {locked ? <span className="ml-auto text-[10px] text-zinc-300">{t("picker.locked")}</span> : null}
                 </label>
               );
             })}

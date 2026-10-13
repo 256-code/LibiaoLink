@@ -8,6 +8,7 @@ import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
+import { applyLocale, asLocale } from "./i18n";
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
@@ -170,6 +171,8 @@ export default function App() {
           // 外观偏好（Push 291 背景档位 / Push 292 卡片水印）：登录后从账号偏好静默落位（坏值 / 缺键回落默认）
           applyBackgroundTier(asBackgroundTier(prefsResult.value.backgroundTier));
           applyCardWatermark(asCardWatermark(prefsResult.value.cardWatermark));
+          // 界面语言（Push 296）：按账号静默落位（刷新 / 换设备同账号保持；坏值 / 缺键回落中文）
+          applyLocale(asLocale(prefsResult.value.locale));
         }
       } catch (error: unknown) {
         if (!cancelled) {

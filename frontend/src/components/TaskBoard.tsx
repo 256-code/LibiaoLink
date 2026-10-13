@@ -5,6 +5,7 @@ import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
 import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
+import { fieldText, stageText, useLocale, useLocalizedText, useT } from "../i18n";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { ChangeDetailModal } from "./ChangeDetailModal";
@@ -402,6 +403,13 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
 export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
+  const locale = useLocale();
+  /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
+   *  英文界面任务名按「自带英文名 titleEn 优先 → 机翻译文 → 原文」回退；副行给中文原名对照；中文界面照旧。 */
+  const localizedTitle = useLocalizedText(task.title);
+  const localizedNote = useLocalizedText(task.note);
+  const titleText = locale === "en" ? (task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
+  const subText = locale === "en" ? (subtitle ?? (titleText === task.title ? "" : task.title)) : (subtitle ?? task.titleEn);
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -456,11 +464,11 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     title: (
       <div data-column="title" className="flex min-w-0 items-center gap-4 self-stretch">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
-            {task.title}
+          <p className="truncate text-sm font-bold text-zinc-900" title={titleText + (subText === "" ? "" : " / " + subText)}>
+            {titleText}
           </p>
-          {(subtitle ?? task.titleEn) === "" ? null : (
-            <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subtitle ?? task.titleEn}>{subtitle ?? task.titleEn}</p>
+          {subText === "" ? null : (
+            <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subText}>{subText}</p>
           )}
         </div>
         {onProgress === undefined ? (
@@ -655,7 +663,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           task.note === "" ? (
             <span className="text-xs text-zinc-300">—</span>
           ) : (
-            <span className="block truncate text-xs text-zinc-600" title={task.note}>{task.note}</span>
+            <span className="block truncate text-xs text-zinc-600" title={task.note}>{localizedNote}</span>
           )
         ) : (
           <InlineTextCell
@@ -663,7 +671,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
             ariaLabel="修改项目进展描述"
             disabled={taskFinalized}
             disabledHint={FINALIZED_EDIT_HINT}
-            display={task.note === "" ? <span className="text-zinc-300">—</span> : <span className="text-zinc-600" title={task.note}>{task.note}</span>}
+            display={task.note === "" ? <span className="text-zinc-300">—</span> : <span className="text-zinc-600" title={task.note}>{localizedNote}</span>}
             onSave={(value) => {
               onPatch({ note: value });
             }}
@@ -884,6 +892,8 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
 }
 
 export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
+  const t = useT();
+  const locale = useLocale();
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -1102,13 +1112,13 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
             {columns.map((column) =>
               column.key === "title" ? (
                 <span key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-2.5">
-                  <span className="truncate">{column.header ?? column.label}</span>
+                  <span className="truncate">{column.header ?? fieldText(locale, column.label)}</span>
                   <button
                     type="button"
                     onClick={onToggleAllStages}
                     disabled={stages.length === 0}
-                    aria-label={allCollapsed ? "展开全部阶段" : "收起全部阶段"}
-                    title={allCollapsed ? "展开全部阶段" : "收起全部阶段"}
+                    aria-label={allCollapsed ? t("board.allExpandStages") : t("board.allCollapseStages")}
+                    title={allCollapsed ? t("board.allExpandStages") : t("board.allCollapseStages")}
                     className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-3 w-3">
@@ -1118,17 +1128,17 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                         <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5 12 6.5l5 5M7 16.5l5-5 5 5" />
                       )}
                     </svg>
-                    {allCollapsed ? "全部展开" : "一键收起"}
+                    {allCollapsed ? t("board.allExpand") : t("board.allCollapse")}
                   </button>
                 </span>
               ) : (
                 <span
                   key={column.key}
                   data-column={column.key}
-                  title={column.label === "" ? undefined : column.label}
+                  title={column.label === "" ? undefined : fieldText(locale, column.label)}
                   className={"truncate text-center " + (column.headerClass ?? "")}
                 >
-                  {column.header ?? column.label}
+                  {column.header ?? fieldText(locale, column.label)}
                 </span>
               ),
             )}
@@ -1148,9 +1158,9 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                   {/* 折叠开关只留这枚箭头（原先点整行也能折叠） */}
                   <button
                     type="button"
-                    aria-label={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    aria-label={isCollapsed ? t("board.stage.expand") : t("board.stage.collapse")}
                     aria-expanded={!isCollapsed}
-                    title={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    title={isCollapsed ? t("board.stage.expand") : t("board.stage.collapse")}
                     onClick={(event) => {
                       event.stopPropagation();
                       onToggleStage(group.stage);
@@ -1165,24 +1175,24 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                     <button
                       type="button"
                       data-temp-task-pill="true"
-                      aria-label={"添加任务：" + TEMP_TASK_STAGE}
+                      aria-label={t("board.temp.addAria")}
                       aria-expanded={tempFormOpen}
                       onClick={(event) => {
                         event.stopPropagation();
                         toggleTempForm();
                       }}
-                      title="新建临时任务（没有模板，自己填名称）"
+                      title={t("board.temp.createTitle")}
                       className={
                         "relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 transition " +
                         (tempFormOpen ? "ring-2 ring-[#feca04]/70" : "ring-zinc-200 hover:ring-zinc-300")
                       }
                     >
                       <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
-                      <span className="relative text-sm font-semibold text-zinc-800">{group.stage}</span>
+                      <span className="relative text-sm font-semibold text-zinc-800">{stageText(locale, group.stage)}</span>
                       {/* 空分组（没有临时任务的项目）：只留组名，不显示 0/0 完成 */}
                       {group.items.length === 0 ? null : (
                         <span className="relative text-xs text-zinc-500">
-                          已完成 {done}/{group.items.length}
+                          {t("board.stage.done", { done: done, total: group.items.length })}
                         </span>
                       )}
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="relative h-3 w-3 text-zinc-400">
@@ -1198,18 +1208,18 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                       event.stopPropagation();
                       toggleCard(group.stage);
                     }}
-                    title="打开右侧卡片：这个阶段的任务节点 + 模板（预览 / 添加到项目）"
+                    title={t("board.stage.openCard")}
                     className={
                       "relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 transition " +
                       (cardStage === group.stage ? "ring-2 ring-[#feca04]/70" : "ring-zinc-200 hover:ring-zinc-300")
                     }
                   >
                     <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
-                    <span className="relative text-sm font-semibold text-zinc-800">{group.stage}</span>
+                    <span className="relative text-sm font-semibold text-zinc-800">{stageText(locale, group.stage)}</span>
                     {/* 空阶段（只出骨架的项目）：只留阶段名，不显示 0/0 完成 */}
                     {group.items.length === 0 ? null : (
                       <span className="relative text-xs text-zinc-500">
-                        已完成 {done}/{group.items.length}
+                        {t("board.stage.done", { done: done, total: group.items.length })}
                       </span>
                     )}
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="relative h-3 w-3 text-zinc-400">

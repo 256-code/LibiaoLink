@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { WorkspaceIssueView } from "../useHashRoute";
+import { useLocale, workspaceLabelText } from "../i18n";
 
 /**
  * 「提出/负责的问题」的下拉子菜单（业务口径 2026-10-09「然后导航栏还是改成这样的吧」；
@@ -48,6 +49,7 @@ export const ISSUE_VIEW_ITEMS: ReadonlyArray<{ key: WorkspaceIssueView; label: s
  * 锚点：面板 data-workspace-submenu、子项 data-workspace-subtab（供回放断言与后续 E2E 复用）。
  */
 export function WorkspaceIssueSubMenu({ active, onSelect }: { active: WorkspaceIssueView; onSelect: (view: WorkspaceIssueView) => void }) {
+  const locale = useLocale();
   return (
     <div
       data-workspace-submenu
@@ -73,7 +75,7 @@ export function WorkspaceIssueSubMenu({ active, onSelect }: { active: WorkspaceI
             }
           >
             {item.icon}
-            <span>{item.label}</span>
+            <span>{workspaceLabelText(locale, item.label)}</span>
           </button>
         );
       })}

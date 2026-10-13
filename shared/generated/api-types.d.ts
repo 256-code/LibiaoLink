@@ -2209,7 +2209,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400） */
+        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400；locale 非枚举 400） */
         patch: {
             parameters: {
                 query?: never;
@@ -8196,6 +8196,11 @@ export interface components {
             /** @description 问题附图整体替换（file_links(object_type=issue)；缺省 = 不改；空数组 = 清空） */
             photoFileIds?: components["schemas"]["Uuid"][];
         };
+        /**
+         * @description 界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh
+         * @enum {string}
+         */
+        Locale: "zh" | "en";
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
         MeResponse: {
             user: components["schemas"]["User"];
@@ -9472,11 +9477,12 @@ export interface components {
             workspaceOpenProjects: components["schemas"]["WorkspaceOpenProjects"];
             myPlanBoard: components["schemas"]["MyPlanBoard"];
             backgroundTier: components["schemas"]["BackgroundTier"];
+            locale: components["schemas"]["Locale"];
             /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true */
             cardWatermark: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔，否则 400 VALIDATION_FAILED */
+        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔、locale 需为枚举（zh / en），否则 400 VALIDATION_FAILED */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
@@ -9484,6 +9490,7 @@ export interface components {
             workspaceOpenProjects?: components["schemas"]["WorkspaceOpenProjects"];
             myPlanBoard?: components["schemas"]["MyPlanBoardUpdate"];
             backgroundTier?: components["schemas"]["BackgroundTier"] & unknown;
+            locale?: components["schemas"]["Locale"] & unknown;
             cardWatermark?: boolean;
         } & {
             [key: string]: unknown;

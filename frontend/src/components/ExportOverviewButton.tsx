@@ -1,3 +1,5 @@
+import { useT } from "../i18n";
+
 type ExportOverviewButtonProps = {
   /** 点「导出 PDF」时触发（导出实现见 ../exportOverviewPdf.ts）。 */
   onExport: () => void;
@@ -25,13 +27,14 @@ type ExportOverviewButtonProps = {
  * 等待期间按钮进 busy 态（文案「生成中…」+ 置灰防重复点）；翻译通道不可用时导出照常（静默降级）。
  */
 export function ExportOverviewButton({ onExport, disabled = false, busy = false }: ExportOverviewButtonProps) {
+  const t = useT();
   const blocked = disabled || busy;
   return (
     <button
       type="button"
       data-export-overview=""
       className="export-docs-btn"
-      aria-label="导出项目总览数据（PDF）"
+      aria-label={t("export.aria")}
       aria-busy={busy}
       disabled={blocked}
       onClick={onExport}
@@ -44,7 +47,7 @@ export function ExportOverviewButton({ onExport, disabled = false, busy = false 
           <line x1={16} y1={17} x2={8} y2={17} />
           <polyline points="10 9 9 9 8 9" />
         </svg>
-        {busy ? "生成中…" : "导出 PDF"}
+        {busy ? t("export.busy") : t("export.pdf")}
       </span>
     </button>
   );
