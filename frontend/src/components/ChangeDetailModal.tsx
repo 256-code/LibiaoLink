@@ -1,3 +1,5 @@
+import { useLiveRefresh } from "../useLiveRefresh";
+import { ApiError } from "../api";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { memberNameOf, type Member } from "../data/members";
@@ -74,6 +76,16 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
     };
   }, [changeId, retryTick]);
 
+  useLiveRefresh(["files", "tasks"], async () => {
+    try {
+      const row = await fetchChangeRequest(changeId);
+      return () => { setDetail(row); setNote(null); };
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 403)) return () => { setDetail(null); setNote("该变更已不存在或不可见"); };
+      throw error;
+    }
+  }, changeId, detail !== null, { readOnly: true });
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -143,7 +155,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
     <div
       ref={trapRef}
       data-change-modal="true"
-      role="dialog"
+      role="dialog" data-live-sync-readonly="true"
       aria-label="变更管理详情"
       onClick={onClose}
       className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 p-6"

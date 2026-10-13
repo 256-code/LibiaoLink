@@ -208,6 +208,7 @@ export const UserPreferencesSchema = z
       }),
     workspaceOpenProjects: WorkspaceOpenProjectsSchema,
     myPlanBoard: MyPlanBoardSchema,
+    revisions: z.record(z.string(), z.number().int().nonnegative()).openapi({ description: "偏好各键的基线版本；未写过的键为0" }),
     backgroundTier: BackgroundTierSchema.openapi({ description: "背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple" }),
     locale: LocaleSchema.openapi({ description: "界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" }),
     cardWatermark: z
@@ -227,6 +228,7 @@ export const UserPreferencesUpdateBodySchema = z
     focusMode: z.boolean().optional(),
     workspaceOpenProjects: WorkspaceOpenProjectsSchema.optional(),
     myPlanBoard: MyPlanBoardUpdateSchema.optional(),
+    expectedRevisions: z.object({ homeSavedFilters: z.number().int().nonnegative().optional(), myPlanBoard: z.number().int().nonnegative().optional() }).strict().optional().openapi({ description: "更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。" }),
     backgroundTier: BackgroundTierSchema.optional(),
     locale: LocaleSchema.optional(),
     cardWatermark: z.boolean().optional(),
@@ -234,7 +236,7 @@ export const UserPreferencesUpdateBodySchema = z
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔、locale 需为枚举（zh / en），否则 400 VALIDATION_FAILED"
+      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */

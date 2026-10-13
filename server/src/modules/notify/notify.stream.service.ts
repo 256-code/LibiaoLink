@@ -9,6 +9,8 @@
  */
 import { Injectable, Logger, type OnApplicationShutdown } from "@nestjs/common";
 import { Client, type Notification } from "pg";
+import type { LiveResource } from "../../common/realtime/resource-change.js";
+import { PermissionService } from "../permission/index.js";
 import { AppConfig } from "../../config/config.module.js";
 import { NotifyRepository } from "./notify.repository.js";
 import {
@@ -90,10 +92,13 @@ export class NotifyStreamService implements OnApplicationShutdown {
   private listenPending: Promise<void> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private shuttingDown = false;
+  private readonly hints = new Map<string | null, Set<LiveResource>>();
+  private hintTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly repository: NotifyRepository,
     private readonly config: AppConfig,
+    private readonly permissions?: PermissionService,
   ) {}
 
   /** 活跃连接数（观测 / 测试；不传 user 时为全部）。 */
@@ -134,6 +139,8 @@ export class NotifyStreamService implements OnApplicationShutdown {
   /** 停机（Nest 生命周期）：逐连接先发注释行再收尾，随后关闭广播桥。 */
   async onApplicationShutdown(): Promise<void> {
     this.shuttingDown = true;
+    if (this.hintTimer !== null) clearTimeout(this.hintTimer);
+    this.hints.clear();
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
@@ -245,6 +252,25 @@ export class NotifyStreamService implements OnApplicationShutdown {
 
   /** 扇出到该用户的本地连接；本实例无该用户连接 = 静默丢弃（重连不补发口径，客户端读面补拉）。 */
   private broadcast(wire: NotifyStreamWireMessage): void {
+    if (wire.event === "invalidate") {
+      if (wire.data.resources.includes("permissions") || wire.data.resources.includes("users")) this.permissions?.invalidate();
+      const resources = this.hints.get(wire.recipientId) ?? new Set<LiveResource>();
+      for (const resource of wire.data.resources) resources.add(resource);
+      this.hints.set(wire.recipientId, resources);
+      if (this.hintTimer === null) {
+        this.hintTimer = setTimeout(() => {
+          this.hintTimer = null;
+          for (const [recipientId, categories] of this.hints) {
+            const frame = frameOf("invalidate", { resources: [...categories] });
+            const targets = recipientId === null ? this.connections.values() : [this.connections.get(recipientId) ?? new Set<StreamConnection>()];
+            for (const set of targets) for (const connection of set) connection.write(frame);
+          }
+          this.hints.clear();
+        }, 250);
+        this.hintTimer.unref();
+      }
+      return;
+    }
     const set = this.connections.get(wire.recipientId);
     if (set === undefined || set.size === 0) return;
     const frame = frameOf(wire.event, wire.data);

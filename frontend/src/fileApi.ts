@@ -1,3 +1,4 @@
+import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
 /**
  * 文件库客户端（Push 216 · 日报 / 问题附图上传与预览接线；Push 226 · 任务「文件」列 / 抽屉上传接线）。
  * Push 226 续：任务文件删除（recycleFile —— 先读 version 再移入回收站）与图片点击预览（isImageFileName + ensurePreviewUrl）。
@@ -42,7 +43,7 @@
  *   页面见 frontend/src/FileLibraryPage.tsx。
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { apiRequest, apiSend } from "./api";
+import { ApiError, apiRequest, apiSend } from "./api";
 import { sha256Hex } from "./sha256";
 
 type UploadCreateResponse = {
@@ -436,7 +437,7 @@ export type TaskFileRef = { id: string; name: string; status: string };
  *  Push 246 起带 id（下拉里点击文件名 = 预览、行尾「删除」= 移入回收站）；2026-10-08 起带 status（行尾「替换」按状态直替 / 走变更）。 */
 export async function fetchTaskFiles(projectId: string): Promise<Map<string, TaskFileRef[]>> {
   const files = new Map<string, TaskFileRef[]>();
-  for (let page = 1; page <= 20; page += 1) {
+  for (let page = 1; page <= 100; page += 1) {
     const list = await apiRequest<{ items: Array<{ id: string; name: string; taskId: string | null; status: string }>; total: number }>(
       "/api/v1/projects/" + encodeURIComponent(projectId) + "/files?limit=200&page=" + String(page),
     );
@@ -452,15 +453,29 @@ export async function fetchTaskFiles(projectId: string): Promise<Map<string, Tas
       }
     }
     if (list.items.length === 0 || page * 200 >= list.total) {
-      break;
+      return files;
     }
   }
-  return files;
+  throw new ApiError(413, "LIST_TOO_LARGE", "项目文件超过20,000份，请缩小读取范围后重试");
 }
 
 /** fileId → 已就绪的预览签名（无 = 还没取到 / 取不到）。 */
 const previewUrls = new Map<string, string>();
-const previewLoading = new Set<string>();
+const previewLoading = new Map<string, Promise<PreviewOpenOutcome>>();
+const previewExpires = new Map<string, number>();
+const stalePreviews = new Set<string>();
+const activePhotos = new Map<string, number>();
+let previewEpoch = 0;
+const previewRefresh = new RefreshQueue(async () => {
+  await Promise.all([...activePhotos.keys()].map((id) => ensurePreviewUrl(id)));
+  return () => {};
+}, liveReadPaused);
+subscribeLiveHints((resources) => {
+  if (!resources.includes("files")) return;
+  previewEpoch += 1;
+  for (const key of previewUrls.keys()) if (!key.includes("@")) stalePreviews.add(key);
+  previewRefresh.request();
+});
 const previewListeners = new Set<() => void>();
 
 function notifyPreview(): void {
@@ -486,12 +501,14 @@ export function invalidatePreview(fileId: string): void {
   let removed = false;
   for (const key of [...previewUrls.keys()]) {
     if (key === fileId || key.startsWith(fileId + "@")) {
-      previewUrls.delete(key);
+      stalePreviews.add(key);
+      previewExpires.delete(key);
       removed = true;
     }
   }
   if (removed) {
-    notifyPreview();
+    previewEpoch += 1;
+    previewRefresh.request();
   }
 }
 
@@ -505,16 +522,20 @@ export type PreviewOpenOutcome =
  *  就绪轮询预算 = 20 秒（Push 226 续：worker 的 outbox 领取间隔
  *  默认 5 秒 —— 首次预览「点开才排队转换」，6 秒窗口在真机上会偶发拿不到；failed 立即返回，不会白等；
  *  查看器通道（Office / 文本）就绪即签发、无需等待转换）。S4：外壳按响应裁决 viewer / url 两通道。 */
-export async function ensurePreviewOutcome(fileId: string, versionId?: string): Promise<PreviewOpenOutcome> {
+export function ensurePreviewOutcome(fileId: string, versionId?: string): Promise<PreviewOpenOutcome> {
   const key = previewCacheKey(fileId, versionId);
   const cached = previewUrls.get(key);
-  if (cached !== undefined) {
-    return { kind: "url", url: cached };
-  }
-  if (previewLoading.has(key)) {
-    return { kind: "unavailable", reason: null };
-  }
-  previewLoading.add(key);
+  if (cached !== undefined && !stalePreviews.has(key) && (previewExpires.get(key) ?? 0) > Date.now()) return Promise.resolve({ kind: "url", url: cached });
+  const pending = previewLoading.get(key);
+  if (pending !== undefined) return pending;
+  const promise = readPreviewOutcome(fileId, versionId).finally(() => previewLoading.delete(key));
+  previewLoading.set(key, promise);
+  return promise;
+}
+
+async function readPreviewOutcome(fileId: string, versionId?: string): Promise<PreviewOpenOutcome> {
+  const key = previewCacheKey(fileId, versionId);
+  const epoch = previewEpoch;
   const endpoint =
     "/api/v1/files/" + encodeURIComponent(fileId) + "/preview" + (versionId === undefined ? "" : "?versionId=" + encodeURIComponent(versionId));
   try {
@@ -525,8 +546,16 @@ export async function ensurePreviewOutcome(fileId: string, versionId?: string): 
           return { kind: "viewer", viewer: preview.viewer };
         }
         if (preview.url !== null) {
-          previewUrls.set(key, preview.url);
-          notifyPreview();
+          if (activePhotos.has(fileId) && typeof Image !== "undefined") {
+            const loaded = await new Promise<boolean>((resolve) => { const picture = new Image(); const timer = window.setTimeout(() => resolve(false), 10000); picture.onload = () => { window.clearTimeout(timer); resolve(true); }; picture.onerror = () => { window.clearTimeout(timer); resolve(false); }; picture.src = preview.url ?? ""; });
+            if (!loaded) return { kind: "unavailable", reason: null };
+          }
+          if (versionId !== undefined || epoch === previewEpoch) {
+            previewUrls.set(key, preview.url);
+            previewExpires.set(key, Date.now() + 4 * 60 * 1000);
+            stalePreviews.delete(key);
+            notifyPreview();
+          } else previewRefresh.request();
           return { kind: "url", url: preview.url };
         }
         return { kind: "unavailable", reason: null };
@@ -540,7 +569,7 @@ export async function ensurePreviewOutcome(fileId: string, versionId?: string): 
   } catch {
     return { kind: "unavailable", reason: null };
   } finally {
-    previewLoading.delete(key);
+    // Shared pending reads are released by the public wrapper.
   }
 }
 
@@ -555,7 +584,10 @@ export function usePhotoUrl(fileId: string, localUrl: string | null): string | n
   const remote = useSyncExternalStore(subscribePreview, () => (fileId === "" ? null : previewUrls.get(fileId) ?? null));
   useEffect(() => {
     if (fileId !== "" && localUrl === null) {
+      activePhotos.set(fileId, (activePhotos.get(fileId) ?? 0) + 1);
       void ensurePreviewUrl(fileId);
+      const renewal = window.setInterval(() => { previewRefresh.request(); }, 60000);
+      return () => { window.clearInterval(renewal); const count = (activePhotos.get(fileId) ?? 1) - 1; if (count === 0) activePhotos.delete(fileId); else activePhotos.set(fileId, count); };
     }
   }, [fileId, localUrl]);
   return localUrl ?? remote;
@@ -618,20 +650,20 @@ function fileLibraryPageUrl(projectId: string, query: FileLibraryQuery, page: nu
 }
 
 /**
- * 单项目文件库全量（Push 261 · 文件库页跨项目聚合的口子）：按项目分页取满（limit 上限 200、最多 20 页，
+ * 单项目文件库全量（Push 261 · 文件库页跨项目聚合的口子）：按项目分页取满（limit 上限 200、最多100页，超过20,000份明确报错，
  * 与 fetchTaskFiles 同一分页口径）；返回项的服务端序 = 最新在前（默认 createdAt 降序、id 升序兜底）。
  * 单项目失败（非成员 404 / 网络抖动）向调用方抛 —— 由页面逐项目兜底跳过，不阻断整页（见 FileLibraryPage.tsx）。
  */
 export async function fetchProjectFileLibrary(projectId: string, query: FileLibraryQuery): Promise<FileLibraryItem[]> {
   const items: FileLibraryItem[] = [];
-  for (let page = 1; page <= 20; page += 1) {
+  for (let page = 1; page <= 100; page += 1) {
     const list = await apiRequest<{ items: FileLibraryItem[]; total: number }>(fileLibraryPageUrl(projectId, query, page));
     items.push(...list.items);
-    if (items.length >= list.total) {
-      break;
+    if (list.items.length === 0 || items.length >= list.total) {
+      return items;
     }
   }
-  return items;
+  throw new ApiError(413, "LIST_TOO_LARGE", "项目文件超过20,000份，请缩小筛选后重试");
 }
 
 /** 回收站恢复（Push 261 · 文件库「回收站」栏 · 任意账号）：POST /files/{id}/restore ——

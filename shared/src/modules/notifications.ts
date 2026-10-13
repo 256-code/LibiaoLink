@@ -291,14 +291,16 @@ export type NotifyPrefsUpdateBody = z.infer<typeof NotifyPrefsUpdateBodySchema>;
 /**
  * ---- SSE 实时推送（S8-3 · M5-04 余项 · 实时性口径 · 技术设计v0.2 §11.3 `/notifications/stream`）----
  *
- * 事件集：`notification`（单条通知：新投递 / 稍后提醒触发重提醒）+ `unread`（未读角标变更）。
+ * 事件集：`notification`（单条通知：新投递 / 稍后提醒触发重提醒）+ `unread`（未读角标变更）+
+ *   `invalidate`（成功业务写入后的资源失效提示，无记录标识或业务字段）。
  * 心跳 = SSE 注释行（`: ping`，周期落 env）—— 无载荷、无事件名，**不入契约**。
  * 重连补偿 = 不补发（服务端零状态）：客户端重连后等下一次事件 + 立即用读面补拉
  *   （`GET /notifications` + `NotificationListResponse.unreadCount`）对齐；`Last-Event-ID` 补发留二期。
- * 多实例广播（实现口径）：写方事务内 `pg_notify`（通道 `notify_stream`），api 各实例 `LISTEN` 后桥到本地连接。
- * 载荷 shape 不入生成物（先例 `NotifyMessagePayload`）；端点已在 `openapi.ts` 注册（+1 path / +1 operation）。
+ * 多实例广播：个人通知在写方事务内 `pg_notify`；业务失效提示在成功响应后合并发布（尽力而为），
+ *   共用通道 `notify_stream`，api 各实例 `LISTEN` 后桥到本地连接。失效提示重连及周期补取兜底。
+ * `ResourceInvalidationPayload` 单独注册入生成物；端点已在 `openapi.ts` 注册。
  */
-export const NOTIFICATION_STREAM_EVENTS = ["notification", "unread"] as const;
+export const NOTIFICATION_STREAM_EVENTS = ["notification", "unread", "invalidate"] as const;
 export type NotificationStreamEventType = (typeof NOTIFICATION_STREAM_EVENTS)[number];
 
 export const NotificationStreamUnreadPayloadSchema = z
@@ -310,14 +312,22 @@ export const NotificationStreamUnreadPayloadSchema = z
   });
 export type NotificationStreamUnreadPayload = z.infer<typeof NotificationStreamUnreadPayloadSchema>;
 
+export const ResourceInvalidationPayloadSchema = z.object({
+  resources: z.array(z.enum(["projects", "tasks", "reports", "issues", "files", "stakeholders", "templates", "dicts", "users", "audit", "permissions", "preferences"])).min(1).max(12),
+}).openapi("ResourceInvalidationPayload", {
+  description: "业务读面失效提示：仅资源类别，无记录标识或业务数据；客户端按原有鉴权接口静默重取，事件允许合并与丢失，重连及周期补取兜底",
+});
+export type ResourceInvalidationPayload = z.infer<typeof ResourceInvalidationPayloadSchema>;
+
 export const NotificationStreamEventSchema = z
   .discriminatedUnion("event", [
     z.object({ event: z.literal("notification"), data: NotificationSchema }),
     z.object({ event: z.literal("unread"), data: NotificationStreamUnreadPayloadSchema }),
+    z.object({ event: z.literal("invalidate"), data: ResourceInvalidationPayloadSchema }),
   ])
   .openapi("NotificationStreamEvent", {
     description:
-      "SSE 事件（判别联合）：notification = 单条通知（新投递 / 稍后提醒重提醒）；unread = 未读角标（{ unreadCount }）；心跳为注释行不进本契约",
+      "SSE 事件：notification = 单条通知；unread = 未读角标；invalidate = 无业务数据的资源失效提示；心跳为注释行不进本契约",
   });
 export type NotificationStreamEvent = z.infer<typeof NotificationStreamEventSchema>;
 

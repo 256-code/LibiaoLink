@@ -234,7 +234,7 @@ type TaskKanbanProps = {
    */
   onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 任务编辑保存（与表格共用同一张覆盖表）。 */
-  onSubmitTaskEdit?: (values: TaskEditSubmit) => void;
+  onSubmitTaskEdit?: (values: TaskEditSubmit) => Promise<number | null>;
   /** 任务描述改名（Push 196）：抽屉里改临时任务名（节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
   onRenameTask?: (taskId: string, title: string, titleEn: string) => void;
   /** 卡片上直接改字段（Push 98：实际完成日期；与表格行内同一套口径）。 */
@@ -451,7 +451,7 @@ function KanbanCard({
       tabIndex={ghost === true ? -1 : 0}
       aria-label={"任务：" + task.title}
       title={onPointerDownDrag === undefined ? undefined : t("kanban.drag.title")}
-      data-kanban-card="true"
+      data-kanban-card="true" data-live-card={task.id}
       onPointerDown={(event) => {
         if (onPointerDownDrag === undefined) {
           return;

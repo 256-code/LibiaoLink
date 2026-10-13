@@ -79,11 +79,16 @@ export class AuditRepository {
       changes: input.changes,
       metadata: input.metadata,
     });
+    // PostgreSQL releases the hint only at commit; identical hints in one transaction coalesce.
+    await client.execute(sql`select pg_notify('notify_stream', ${JSON.stringify({ recipientId: null, event: "invalidate", data: { resources: ["audit"] } })})`);
+
   }
 
   /** 检索（occurredAt 降序 + id 降序：同毫秒写入也稳定）。 */
-  async listPage(filter: AuditListFilter, limit: number, offset: number): Promise<{ items: AuditRow[]; total: number }> {
+  async listPage(filter: AuditListFilter, limit: number, offset: number, beforeId?: number): Promise<{ items: AuditRow[]; total: number; windowId: number | null }> {
     const where = buildAuditWhere(filter);
+    const totals = await this.database.db.select({ value: count(), maxId: sql<number>`coalesce(max(${auditLogs.id}), 0)` }).from(auditLogs).where(where);
+    const windowId = beforeId ?? Number(totals[0]?.maxId ?? 0);
     const items = await this.database.db
       .select({
         id: auditLogs.id,
@@ -101,12 +106,11 @@ export class AuditRepository {
         metadata: auditLogs.metadata,
       })
       .from(auditLogs)
-      .where(where)
+      .where(and(where, lte(auditLogs.id, windowId)))
       .orderBy(desc(auditLogs.occurredAt), desc(auditLogs.id))
       .limit(limit)
       .offset(offset);
-    const totals = await this.database.db.select({ value: count() }).from(auditLogs).where(where);
-    return { items, total: Number(totals[0]?.value ?? 0) };
+    return { items, total: Number(totals[0]?.value ?? 0), windowId: windowId === 0 ? null : windowId };
   }
 
   /** 操作人姓名快照（只读 users 一列；避免平台模块依赖 identity 的业务出口 —— check:boundaries）。 */

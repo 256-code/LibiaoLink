@@ -5,6 +5,8 @@
  * 契约来源：shared/src/modules/identity.ts。
  */
 
+import { trackLocalWrite } from "./liveSync";
+
 const CSRF_COOKIE = "ll_csrf";
 const CSRF_HEADER = "X-CSRF-Token";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -113,19 +115,52 @@ async function toApiError(response: Response): Promise<ApiError> {
  * - 401：跳 SSO 登录（returnTo = 当前页）并抛错
  * - 其它非 2xx：抛 ApiError（status / code / details 供页面分支）
  */
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await apiFetch(path, init);
-  if (response.status === 401) {
-    redirectToLogin();
-    throw await toApiError(response);
+async function performRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const finishWrite = SAFE_METHODS.has((init.method ?? "GET").toUpperCase()) ? null : trackLocalWrite();
+  try {
+    const response = await apiFetch(path, init);
+    if (response.status === 401) {
+      redirectToLogin();
+      throw await toApiError(response);
+    }
+    if (!response.ok) {
+      throw await toApiError(response);
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
+  } finally {
+    finishWrite?.();
   }
-  if (!response.ok) {
-    throw await toApiError(response);
+}
+
+// Shared reads are deduplicated; project fan-out cannot occupy an unbounded number of connections.
+const reads = new Map<string, Promise<unknown>>();
+const waiting: Array<() => void> = [];
+let activeReads = 0;
+async function boundedRead<T>(path: string, init: RequestInit): Promise<T> {
+  if (activeReads >= 6) await new Promise<void>((resolve) => waiting.push(resolve));
+  else activeReads += 1;
+  try { return await performRequest<T>(path, init); }
+  finally {
+    const next = waiting.shift();
+    if (next === undefined) activeReads -= 1;
+    else next();
   }
-  if (response.status === 204) {
-    return undefined as T;
+}
+export function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (!SAFE_METHODS.has((init.method ?? "GET").toUpperCase())) {
+    // Reads begun before a write must not be reused by its subsequent reconciliation.
+    reads.clear();
+    return performRequest<T>(path, init).finally(() => { reads.clear(); });
   }
-  return (await response.json()) as T;
+  if (init.signal !== undefined || init.headers !== undefined || init.method !== undefined) return boundedRead<T>(path, init);
+  const current = reads.get(path);
+  if (current !== undefined) return current as Promise<T>;
+  const request = boundedRead<T>(path, init).finally(() => { if (reads.get(path) === request) reads.delete(path); });
+  reads.set(path, request);
+  return request;
 }
 
 /** 写请求（JSON body；CSRF 头由 apiFetch 补齐）。 */
@@ -136,4 +171,17 @@ export function apiSend<T>(path: string, method: "POST" | "PATCH" | "PUT" | "DEL
     init.body = JSON.stringify(body);
   }
   return apiRequest<T>(path, init);
+}
+
+/** Existing list APIs share page/limit; never silently treat their first page as the whole collection. */
+export async function readAllPages<T>(path: string): Promise<{ items: T[]; total: number; page: number; limit: number }> {
+  const items: T[] = [];
+  let total = 0;
+  for (let page = 1; page <= 100; page += 1) {
+    const result = await apiRequest<{ items: T[]; total?: number }>(path + (path.includes("?") ? "&" : "?") + "page=" + String(page) + "&limit=200");
+    items.push(...result.items);
+    total = result.total ?? items.length;
+    if (result.items.length === 0 || items.length >= total) return { items, total, page: 1, limit: Math.max(200, items.length) };
+  }
+  throw new ApiError(413, "LIST_TOO_LARGE", "列表超出本次读取范围，请缩小筛选后重试");
 }

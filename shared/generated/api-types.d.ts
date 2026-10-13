@@ -2209,7 +2209,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400；locale 非枚举 400） */
+        /** 更新当前用户偏好（行锁合并；集合键必须expectedRevisions，缺失400、冲突409） */
         patch: {
             parameters: {
                 query?: never;
@@ -2243,6 +2243,15 @@ export interface paths {
                 };
                 /** @description 未认证（AUTH_REQUIRED） */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2628,6 +2637,8 @@ export interface paths {
                     from?: components["schemas"]["DateTime"] & unknown;
                     /** @description 时间上界（含，ISO8601） */
                     to?: components["schemas"]["DateTime"] & unknown;
+                    /** @description 稳定阅读窗口的最大审计序号；总数仍为当前筛选的总数 */
+                    beforeId?: number;
                     page?: number;
                     limit?: number;
                 };
@@ -7106,7 +7117,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 通知实时流（SSE · S8-3）：事件 notification（单条通知）/ unread（未读角标）；心跳注释行不入契约；重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期） */
+        /** 通知及业务同步流（SSE）：事件 notification（单条通知）/ unread（未读角标）/ invalidate（资源类别失效提示，无业务数据）；心跳注释行不入契约；重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期） */
         get: {
             parameters: {
                 query?: never;
@@ -7116,7 +7127,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连） */
+                /** @description SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；event: invalidate → data = { resources: 资源类别[] }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连） */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -7386,6 +7397,8 @@ export interface components {
             page: number;
             limit: number;
             total: number;
+            /** @description 该阅读窗口的最大审计序号，自动回读通过beforeId保持历史页稳定 */
+            windowId: number | null;
         };
         /**
          * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）
@@ -8803,6 +8816,10 @@ export interface components {
             /** @description 该问题附图（文件 id；提交时直接挂到生成的问题） */
             photoFileIds?: components["schemas"]["Uuid"][];
         };
+        /** @description 业务读面失效提示：仅资源类别，无记录标识或业务数据；客户端按原有鉴权接口静默重取，事件允许合并与丢失，重连及周期补取兜底 */
+        ResourceInvalidationPayload: {
+            resources: ("projects" | "tasks" | "reports" | "issues" | "files" | "stakeholders" | "templates" | "dicts" | "users" | "audit" | "permissions" | "preferences")[];
+        };
         /** @description 常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters） */
         SavedHomeFilter: {
             /** @description 组合 id（前端生成 sf- 前缀；跨设备同步后保持不变） */
@@ -9476,19 +9493,28 @@ export interface components {
             focusMode: boolean;
             workspaceOpenProjects: components["schemas"]["WorkspaceOpenProjects"];
             myPlanBoard: components["schemas"]["MyPlanBoard"];
+            /** @description 偏好各键的基线版本；未写过的键为0 */
+            revisions: {
+                [key: string]: number;
+            };
             backgroundTier: components["schemas"]["BackgroundTier"];
             locale: components["schemas"]["Locale"];
             /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true */
             cardWatermark: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔、locale 需为枚举（zh / en），否则 400 VALIDATION_FAILED */
+        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400 */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
             focusMode?: boolean;
             workspaceOpenProjects?: components["schemas"]["WorkspaceOpenProjects"];
             myPlanBoard?: components["schemas"]["MyPlanBoardUpdate"];
+            /** @description 更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。 */
+            expectedRevisions?: {
+                homeSavedFilters?: number;
+                myPlanBoard?: number;
+            };
             backgroundTier?: components["schemas"]["BackgroundTier"] & unknown;
             locale?: components["schemas"]["Locale"] & unknown;
             cardWatermark?: boolean;

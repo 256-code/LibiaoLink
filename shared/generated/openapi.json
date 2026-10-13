@@ -324,13 +324,22 @@
           "total": {
             "type": "integer",
             "minimum": 0
+          },
+          "windowId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "该阅读窗口的最大审计序号，自动回读通过beforeId保持历史页稳定"
           }
         },
         "required": [
           "items",
           "page",
           "limit",
-          "total"
+          "total",
+          "windowId"
         ]
       },
       "AuditObjectType": {
@@ -5852,6 +5861,37 @@
         ],
         "description": "日报内联问题草稿（一次填报 1~N 条；提交时逐条生成问题记录）"
       },
+      "ResourceInvalidationPayload": {
+        "type": "object",
+        "properties": {
+          "resources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "projects",
+                "tasks",
+                "reports",
+                "issues",
+                "files",
+                "stakeholders",
+                "templates",
+                "dicts",
+                "users",
+                "audit",
+                "permissions",
+                "preferences"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 12
+          }
+        },
+        "required": [
+          "resources"
+        ],
+        "description": "业务读面失效提示：仅资源类别，无记录标识或业务数据；客户端按原有鉴权接口静默重取，事件允许合并与丢失，重连及周期补取兜底"
+      },
       "SavedHomeFilter": {
         "type": "object",
         "properties": {
@@ -8473,6 +8513,14 @@
           "myPlanBoard": {
             "$ref": "#/components/schemas/MyPlanBoard"
           },
+          "revisions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "偏好各键的基线版本；未写过的键为0"
+          },
           "backgroundTier": {
             "$ref": "#/components/schemas/BackgroundTier"
           },
@@ -8504,6 +8552,7 @@
           "focusMode",
           "workspaceOpenProjects",
           "myPlanBoard",
+          "revisions",
           "backgroundTier",
           "locale",
           "cardWatermark",
@@ -8537,6 +8586,21 @@
           "myPlanBoard": {
             "$ref": "#/components/schemas/MyPlanBoardUpdate"
           },
+          "expectedRevisions": {
+            "type": "object",
+            "properties": {
+              "homeSavedFilters": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "myPlanBoard": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false,
+            "description": "更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。"
+          },
           "backgroundTier": {
             "allOf": [
               {
@@ -8562,7 +8626,7 @@
           }
         },
         "additionalProperties": {},
-        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔、locale 需为枚举（zh / en），否则 400 VALIDATION_FAILED"
+        "description": "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400"
       },
       "UserStatus": {
         "type": "string",
@@ -11862,7 +11926,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400；locale 非枚举 400）",
+        "summary": "更新当前用户偏好（行锁合并；集合键必须expectedRevisions，缺失400、冲突409）",
         "requestBody": {
           "content": {
             "application/json": {
@@ -11895,6 +11959,16 @@
           },
           "401": {
             "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {
@@ -12404,6 +12478,17 @@
             "required": false,
             "description": "时间上界（含，ISO8601）",
             "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "description": "稳定阅读窗口的最大审计序号；总数仍为当前筛选的总数"
+            },
+            "required": false,
+            "description": "稳定阅读窗口的最大审计序号；总数仍为当前筛选的总数",
+            "name": "beforeId",
             "in": "query"
           },
           {
@@ -17510,10 +17595,10 @@
         "tags": [
           "notifications"
         ],
-        "summary": "通知实时流（SSE · S8-3）：事件 notification（单条通知）/ unread（未读角标）；心跳注释行不入契约；重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期）",
+        "summary": "通知及业务同步流（SSE）：事件 notification（单条通知）/ unread（未读角标）/ invalidate（资源类别失效提示，无业务数据）；心跳注释行不入契约；重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期）",
         "responses": {
           "200": {
-            "description": "SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连）",
+            "description": "SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；event: invalidate → data = { resources: 资源类别[] }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连）",
             "content": {
               "text/event-stream": {
                 "schema": {

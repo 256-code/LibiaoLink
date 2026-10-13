@@ -355,7 +355,7 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
           {activePillar === null
             ? null
             : (pinnedPillar === null ? activePillar.projects.slice(0, PILLAR_MAX_ROWS) : activePillar.projects).map((project) => (
-                <li key={project.id} className="hub-map-projects__row">
+                <li key={project.id} data-live-card={project.id} className="hub-map-projects__row">
                   <span className="hub-map-projects__dot" style={{ background: project.accent }} />
                   <span className="hub-map-projects__name" title={project.name}>{project.name}</span>
                   <span className="hub-map-projects__status">{project.statusText}</span>
