@@ -399,9 +399,9 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
 /** 任务表的行（项目总览 / 工作台「我的任务」共用 · Push 279 起导出给工作台复用）：各列按回调是否传入自动切换
  *  只读 / 可编辑 —— 行内进度（onProgress）/ 项目经理（onChangeManagers）/ 负责人（onPatch.ownerIds）/ 状态
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
- *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）。
+ *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -786,19 +786,23 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
   return (
     <>
       <div
-        role="button"
+        role={onSelect === undefined ? undefined : "button"}
         data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
-        tabIndex={0}
-        title="点击查看任务详情"
+        tabIndex={onSelect === undefined ? -1 : 0}
+        title={onSelect === undefined ? undefined : "点击查看任务详情"}
         onClick={onSelect}
         onKeyDown={(event) => {
+          if (onSelect === undefined) {
+            return;
+          }
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             onSelect();
           }
         }}
         className={
-          "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
+          "group grid items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
+          (onSelect === undefined ? "" : "cursor-pointer ") +
           // 背景档位铺色档（tierTint = medium / vivid）：整行铺任务状态色（浓淡随档），悬停压深一档（app.css 的 .task-row-tint；
           // 选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）。
           (tierTinted
@@ -836,7 +840,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           linkedTaskTitle={task.title}
           members={members}
           deliverableTypes={task.deliverableTypes}
-          onOpenLinkedTask={() => { setChangeModalId(null); onSelect(); }}
+          onOpenLinkedTask={() => { setChangeModalId(null); onSelect?.(); }}
           onClose={() => { setChangeModalId(null); }}
         />
       )}
