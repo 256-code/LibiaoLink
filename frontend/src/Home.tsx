@@ -20,7 +20,9 @@ import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
-import { PROJECT_STATUS_VALUES, projectManagerText, projectStatusText } from "./types";
+import { PROJECT_STATUS_VALUES, projectManagerText } from "./types";
+import { projectStatusTextOf, useLocale, useT } from "./i18n";
+import { prefetchZhToEn } from "./translateApi";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
@@ -52,17 +54,7 @@ type HomeProps = {
   onSavedFiltersChange: (items: SavedFilter[]) => Promise<string | null>;
 };
 
-/**
- * 排序维度显示名（Push 177：业务口径「取消按更新时间排序 只保留创建时间」）——
- * 维度**固定创建时间**，工具条只留方向（降序 / 升序）；这枚文本只作说明用，不可点。
- */
-const SORT_FIELD_LABEL = "创建时间";
-
-/** 该维度的口径说明（挂在方向按钮的悬停提示里）。 */
-const SORT_FIELD_TITLE = "项目创建的那一刻，此后不再变化";
-
-/** 点「新建项目」但缺 project.create 时的提示（Push 173；服务端仍是最终裁决）。 */
-const NO_CREATE_PERMISSION = "当前账号没有建项目权限，请联系管理员分配角色。";
+/** 排序维度固定「创建时间」（Push 177 口径）：显示名 / 口径说明 / 无权限提示均随语言切换，见 i18n 词典 home.sort.* 与 home.noCreatePermission。 */
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -91,7 +83,11 @@ function buildOptions(
 }
 
 export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
-  const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString("zh-CN");
+  const t = useT();
+  const locale = useLocale();
+  /** 无建项目权限提示（Push 173 口径；文案随语言切换）。 */
+  const noCreatePermission = t("home.noCreatePermission");
+  const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString(locale === "en" ? "en-US" : "zh-CN");
 
   const route = useHashRoute();
   /** 背景档位（Push 289 · 同日「先来适中版」→「不同项目类型的颜色不同应该」→「用 c 试试」）：适中 = 项目卡片按项目类型铺「便签同款实色」。 */
@@ -169,6 +165,13 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const [facets, setFacets] = useState<ProjectFacets>(EMPTY_FACETS);
   const [savedCounts, setSavedCounts] = useState<Record<string, number>>({});
   const [reloadToken, setReloadToken] = useState(0);
+  /**
+   * 「手打内容」提前预热（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
+   * 项目数据一到就把项目名（手打文本）丢进译文缓存后台翻好 —— 中文界面浏览时也翻，切英文 / 导出直接命中。
+   */
+  useEffect(() => {
+    prefetchZhToEn(items.map((project) => project.description));
+  }, [items]);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,10 +299,10 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       buildOptions(
         facets.status,
         activeFilters.statuses,
-        (status) => projectStatusText(status),
+        (status) => projectStatusTextOf(locale, status),
         PROJECT_STATUS_VALUES.slice(),
       ),
-    [activeFilters.statuses, facets.status],
+    [activeFilters.statuses, facets.status, locale],
   );
   const newestDay = useMemo(
     () => items.reduce((latest, project) => (project.updatedAt > latest ? project.updatedAt : latest), "").slice(0, 10),
@@ -447,17 +450,17 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           />
           <div
             role="group"
-            aria-label={"按" + SORT_FIELD_LABEL + "排序（降序 / 升序）"}
+            aria-label={t("home.sort.groupAria")}
             className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs"
           >
             {/* 排序维度（Push 177）：固定创建时间，只作说明（不参与点击），维度切换按钮已下线 */}
-            <span className="px-2.5 py-1.5 text-zinc-400 select-none">{SORT_FIELD_LABEL}</span>
+            <span className="px-2.5 py-1.5 text-zinc-400 select-none">{t("home.sort.field")}</span>
             <span className="h-3.5 w-px bg-zinc-200" aria-hidden="true" />
             <button
               type="button"
               aria-pressed={sortDesc}
-              aria-label={"按" + SORT_FIELD_LABEL + "降序排列"}
-              title={"按" + SORT_FIELD_LABEL + "降序排列（新的在前）——" + SORT_FIELD_TITLE}
+              aria-label={t("home.sort.descAria")}
+              title={t("home.sort.descTitle")}
               onClick={() => {
                 updateFilters({ sortDesc: true });
               }}
@@ -469,13 +472,13 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
                 <path d="M12 5v14M12 19l-5-5M12 19l5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              降序
+              {t("home.sort.desc")}
             </button>
             <button
               type="button"
               aria-pressed={!sortDesc}
-              aria-label={"按" + SORT_FIELD_LABEL + "升序排列"}
-              title={"按" + SORT_FIELD_LABEL + "升序排列（旧的在前）——" + SORT_FIELD_TITLE}
+              aria-label={t("home.sort.ascAria")}
+              title={t("home.sort.ascTitle")}
               onClick={() => {
                 updateFilters({ sortDesc: false });
               }}
@@ -487,20 +490,20 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
                 <path d="M12 19V5M12 5l-5 5M12 5l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              升序
+              {t("home.sort.asc")}
             </button>
           </div>
           <span className="text-sm text-zinc-400">
-            {keyword === "" && !hasFilters ? "共 " + total + " 个项目" : "找到 " + total + " 个项目"}
+            {keyword === "" && !hasFilters ? t("home.count.total", { n: total }) : t("home.count.found", { n: total })}
           </span>
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             <button
               type="button"
               aria-disabled={canCreateProject ? undefined : true}
-              title={canCreateProject ? undefined : NO_CREATE_PERMISSION}
+              title={canCreateProject ? undefined : noCreatePermission}
               onClick={() => {
                 if (!canCreateProject) {
-                  setCreateHint(NO_CREATE_PERMISSION);
+                  setCreateHint(noCreatePermission);
                   return;
                 }
                 setIsCreateOpen(true);
@@ -515,14 +518,14 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
-              新建项目
+              {t("home.create")}
             </button>
             <SearchInput
               value={query}
               onChange={(value) => {
                 updateFilters({ q: value });
               }}
-              placeholder="搜索名称、国家、时间或项目经理"
+              placeholder={t("home.search.placeholder")}
               className="w-full sm:w-72"
             />
           </div>
@@ -538,7 +541,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               }}
               className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
             >
-              重试
+              {t("home.retry")}
             </button>
           </div>
         )}
@@ -565,14 +568,14 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
 
         {loading && items.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center">
-            <p className="text-sm text-zinc-500">正在加载项目…</p>
+            <p className="text-sm text-zinc-500">{t("home.loading")}</p>
           </div>
         ) : null}
 
         {!loading && items.length === 0 && loadError === null ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center">
             <p className="text-sm text-zinc-500">
-              {keyword === "" ? "没有符合筛选条件的项目" : "没有匹配「" + keyword + "」的项目"}
+              {keyword === "" ? t("home.empty.filtered") : t("home.empty.keyword", { kw: keyword })}
             </p>
             <div className="mt-4 flex items-center justify-center gap-3">
               {keyword !== "" && (
@@ -583,7 +586,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                   }}
                   className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
                 >
-                  清空搜索
+                  {t("home.clearSearch")}
                 </button>
               )}
               {hasFilters && (
@@ -592,7 +595,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                   onClick={resetFilters}
                   className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
                 >
-                  清空筛选
+                  {t("home.clearFilters")}
                 </button>
               )}
             </div>
@@ -605,7 +608,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               key={project.id}
               role="link"
               tabIndex={0}
-              aria-label={"打开项目 " + project.code}
+              aria-label={t("home.openAria", { code: project.code })}
               onClick={() => openProject(project.id)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -625,7 +628,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 vividInk={backgroundTier === "vivid"}
                 typeLabel={dictLabel(dicts, "projectType", project.projectType)}
                 status={project.status}
-                statusText={projectStatusText(project.status)}
+                statusText={projectStatusTextOf(locale, project.status)}
                 accentColor={typeAccent(dicts, project.projectType).color}
                 accentText={typeAccent(dicts, project.projectType).text}
                 managerNames={projectManagerText(project)}
@@ -651,14 +654,14 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
 
         {total > items.length ? (
           <p className="mt-6 text-center text-xs text-zinc-400">
-            已显示前 {items.length} 条，共 {total} 条（一期列表一次最多 200 条）。
+            {t("home.shown", { shown: items.length, total: total })}
           </p>
         ) : null}
 
         <details className="mt-12 rounded-xl border border-zinc-200 bg-white p-5 text-sm text-zinc-700">
-          <summary className="cursor-pointer text-zinc-500">令牌声明（id_token，已通过 JWKS 验签）</summary>
+          <summary className="cursor-pointer text-zinc-500">{t("home.token.title")}</summary>
           <pre className="mt-3 max-h-64 overflow-auto text-xs">{JSON.stringify(me.claims, null, 2)}</pre>
-          <p className="mt-3 text-xs text-zinc-400">令牌到期时间：{expiresText}</p>
+          <p className="mt-3 text-xs text-zinc-400">{t("home.token.expires", { time: expiresText })}</p>
         </details>
       </main>
 
@@ -693,7 +696,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
             <span>
-              删除常用筛选「<span className="font-semibold">{pendingDeleteFilter.name}</span>」？只删这一组保存的条件，项目数据不受影响。
+              {t("home.deleteFilter.pre")}<span className="font-semibold">{pendingDeleteFilter.name}</span>{t("home.deleteFilter.post")}
             </span>
             <button
               type="button"
@@ -702,7 +705,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               }}
               className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
             >
-              取消
+              {t("home.cancel")}
             </button>
             <button
               type="button"
@@ -710,7 +713,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               onClick={confirmDeleteSavedFilter}
               className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
             >
-              删除
+              {t("home.delete")}
             </button>
           </div>
         </div>

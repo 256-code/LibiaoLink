@@ -4,6 +4,7 @@ import type { TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
 import { PROGRESS_STEPS, TEMP_TASK_STAGE, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
+import { fieldText, stageText, useLocale, useLocalizedTranslator, useT } from "../i18n";
 import { STATUS_DOT_CLASS, TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, type TaskPatch } from "./TaskBoard";
 
 /**
@@ -28,6 +29,9 @@ import { STATUS_DOT_CLASS, TaskRow, resolveColumns, tableGridTemplate, tableMinW
  *   甘特图**上方**出「项目页任务表」同款列表（15 列全列 + TaskRow 复用，口径同工作台「我的任务」表；可编辑列照常能改）；
  *   图表本身能画时仍在下方照常渲染 —— 一条排期齐的都没有时只出列表 + 提示条（业务口径「图二筛选后出现图三的情况
  *   直接把图一这样的列表展现」→「有多个行的话有一个已延期设置日期了 其他的还是要显示」+「甘特图也在下方同时显示」+「筛选栏都没有了 是bug」）；
+ * - 任务列表按阶段分组 + 可折叠（Push 295，业务口径「也要分类可以折叠 在甘特图里」+「要有阶段标题分类的」）：分组口径同左表 / 项目总览
+ *   （九阶段顺序 + 「临时任务」垫底 · 只出有任务的分组），分组头 = 阶段标题行（折叠箭头 + 阶段胶囊），只有折叠箭头可点；
+ *   折叠状态与左表共用一份（工具栏「全部折叠 / 全部展开」一并收放）。
  * - 拖动时边缘自动滚动（业务口径「拖动进度条要移动 也要可以移画面」）：拖条 / 两端 / 进度圆点时指针进到
  *   时间轴左右边缘 72px 内，画面按深度逐帧滚，条跟着新滚到的日期走；
  * - `taskBar.moveable`：拖条整体平移改期（工期不变）；
@@ -570,6 +574,11 @@ function centerOnToday(element: HTMLDivElement | null, todayLeft: number | null,
  * members = 人员目录（负责人筛选项的成员行渲染）。
  */
 export function GanttChart({ tasks, members, managers = "", tierTint = false, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; /** 项目经理展示文本（项目级；空态兜底列表的「项目经理」列用，同项目页任务表）。 */ managers?: string; /** 背景档位（适中 / 炫彩；空态兜底列表的行色与项目页任务行的铺色同口径，Push 294）。 */ tierTint?: TintedTier | false; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
+  const locale = useLocale();
+  const localize = useLocalizedTranslator();
+  /** 手打内容（任务名）机翻显示：英文界面 titleEn 优先 → 机翻 → 原文；中文界面照旧。 */
+  const ganttTitle = (task: ProjectTask): string => (locale === "en" ? (task.titleEn !== "" ? task.titleEn : localize(task.title)) : task.title);
+  const t = useT();
   const today = useMemo(localToday, []);
   const [zoom, setZoom] = useState<ZoomKey>("standard");
   /** 时间轴粒度（官方 timelineHeader.scales：日 / 周 / 月）—— 只换表头与网格密度，条仍按天精确落点。 */
@@ -679,6 +688,22 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   const model = useMemo(() => buildModel(visibleTasks, today, collapsed, filtering, includeToday), [visibleTasks, today, collapsed, filtering, includeToday]);
   const weekendSet = useMemo(() => new Set(model === null ? [] : model.weekends), [model]);
 
+  /**
+   * 任务列表（Push 294）的分组（Push 295，业务口径「也要分类可以折叠 在甘特图里」+「要有阶段标题分类的」）：
+   * 口径同左表 / 项目总览 —— 九个阶段按顺序 + 「临时任务」垫底、只出有任务的分组；
+   * 折叠状态与左表共用同一份 `collapsed`（列表箭头 / 左表箭头 / 工具栏「全部折叠 / 全部展开」三处联动）。
+   */
+  const listGroups = [...STAGE_ORDER, UNGROUPED]
+    .map((stage) => ({
+      stage,
+      items: visibleTasks.filter((task) => (STAGE_ORDER.includes(task.stage) ? task.stage : UNGROUPED) === stage),
+    }))
+    .filter((group) => group.items.length > 0);
+  const listStages = listGroups.map((group) => group.stage);
+  const listAllCollapsed = listStages.length > 0 && listStages.every((stage) => collapsed[stage] === true);
+  /** 工具栏「全部折叠 / 全部展开」的当前态：能画时间轴看左表阶段集；画不出（model === null）看列表分组。 */
+  const allCollapsedNow = model === null ? listAllCollapsed : model.allCollapsed;
+
   const todayIndex = model === null ? null : model.todayIndex;
   const todayLeft = todayIndex === null ? null : todayIndex * dayWidth + dayWidth / 2;
 
@@ -745,17 +770,24 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   };
 
   const toggleAll = () => {
-    if (model === null) {
-      return;
-    }
-    if (model.allCollapsed) {
+    if (allCollapsedNow) {
       setCollapsed({});
       return;
     }
+    /*
+     * 画不出时间轴（model === null）：这枚按钮管的是任务列表的分组（Push 295，原先在空态下是空操作）；
+     * 能画时照旧收左表全部阶段行 —— 列表分组是左表阶段集的子集，两边一起收。
+     */
     const next: Record<string, boolean> = {};
-    for (const row of model.rows) {
-      if (row.kind === "group") {
-        next[row.group.stage] = true;
+    if (model === null) {
+      for (const stage of listStages) {
+        next[stage] = true;
+      }
+    } else {
+      for (const row of model.rows) {
+        if (row.kind === "group") {
+          next[row.group.stage] = true;
+        }
       }
     }
     setCollapsed(next);
@@ -1115,6 +1147,8 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
    * 筛选后（或整个项目）**还有没排期的任务**就出这张表（15 列全列 + TaskRow 复用，口径同工作台「我的任务」表）；
    * 位置在甘特图**上方** —— 图表本身能画时仍在下方照常渲染，列表与甘特同屏，补日期不用离开这一屏。
    * 工具条（含筛选栏）常驻；只有「项目一个任务都没有」才整屏换空态（空态 ①，提前返回）。
+   * Push 295：列表按阶段分组（口径同项目总览：九阶段顺序 +「临时任务」垫底、只出有任务的分组），
+   * 分组头 = 折叠箭头 + 阶段胶囊（已完成 done/总数 + 完成率液面）；折叠状态与左表共用。
    */
   const hasUnscheduled = visibleTasks.some((task) => task.startDate === "" || task.dueDate === "");
   const taskListBlock = (
@@ -1142,34 +1176,75 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
               ),
             )}
           </div>
-          <div className="divide-y divide-zinc-100">
-            {visibleTasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                columns={FALLBACK_TASK_COLUMNS}
-                selected={false}
-                tierTint={tierTint}
-                managers={managers}
-                managerIds={NO_MANAGER_IDS}
-                members={members}
-                onProgress={
-                  onSetProgress === undefined
-                    ? undefined
-                    : (progress) => {
-                        onSetProgress(task.id, progress);
-                      }
-                }
-                onPatch={
-                  onPatchTask === undefined
-                    ? undefined
-                    : (patch) => {
-                        onPatchTask(task.id, patch);
-                      }
-                }
-              />
-            ))}
-          </div>
+          {listGroups.map((group) => {
+            const done = group.items.filter((task) => isTaskDone(task)).length;
+            const pct = Math.round((done / group.items.length) * 100);
+            const isCollapsed = collapsed[group.stage] === true;
+            return (
+              <section key={group.stage} className="border-b border-zinc-100 last:border-b-0">
+                {/* 阶段标题分组头（Push 295）：外观口径同项目总览 —— 只有左边「折叠箭头」可点；这里没有节点 / 模板卡片，
+                    阶段胶囊静态展示（阶段名 + 已完成 done/总数 + 完成率液面；完成数取 isTaskDone，与左表阶段行同一口径）。 */}
+                <div data-gantt-list-stage={group.stage} className="flex w-full items-center gap-2.5 bg-zinc-100 px-5 py-3">
+                  <button
+                    type="button"
+                    aria-label={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    aria-expanded={!isCollapsed}
+                    title={isCollapsed ? "展开这个阶段" : "折叠这个阶段"}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleStage(group.stage);
+                    }}
+                    className="rounded-md p-1 transition hover:bg-zinc-200/70"
+                  >
+                    <svg
+                      viewBox="0 0 12 12"
+                      aria-hidden="true"
+                      className={"h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform " + (isCollapsed ? "" : "rotate-90")}
+                    >
+                      <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  <span className="relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 ring-zinc-200">
+                    <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
+                    <span className="relative text-sm font-semibold text-zinc-800">{group.stage}</span>
+                    <span className="relative text-xs text-zinc-500">
+                      已完成 {done}/{group.items.length}
+                    </span>
+                  </span>
+                </div>
+                {isCollapsed ? null : (
+                  <div className="divide-y divide-zinc-100">
+                    {group.items.map((task) => (
+                      <TaskRow
+                        key={task.id}
+                        task={task}
+                        columns={FALLBACK_TASK_COLUMNS}
+                        selected={false}
+                        tierTint={tierTint}
+                        managers={managers}
+                        managerIds={NO_MANAGER_IDS}
+                        members={members}
+                        onProgress={
+                          onSetProgress === undefined
+                            ? undefined
+                            : (progress) => {
+                                onSetProgress(task.id, progress);
+                              }
+                        }
+                        onPatch={
+                          onPatchTask === undefined
+                            ? undefined
+                            : (patch) => {
+                                onPatchTask(task.id, patch);
+                              }
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -1249,7 +1324,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
             onClick={toggleAll}
             className={"rounded-lg border px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:text-zinc-900 " + GLASS_SURFACE}
           >
-            {model !== null && model.allCollapsed ? "全部展开" : "全部折叠"}
+            {allCollapsedNow ? "全部展开" : "全部折叠"}
           </button>
           <button
             type="button"
@@ -1446,7 +1521,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
    */
   const renderTaskBar = (bar: GanttBar) => {
     if (bar.start === null || bar.end === null) {
-      return <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-400">未排期</span>;
+      return <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-zinc-400">{t("gantt.unscheduled")}</span>;
     }
     const live = liveOf(bar);
     const box = barBox(live.start, live.end);
@@ -1456,7 +1531,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
     const showHandles = barHovered || dragging;
     const percent = Math.round(live.percent);
     // 条内标签对齐官方 labelText「{title} {progress}%」：条够宽写全，窄条只写百分比、再窄就不写。
-    const barLabel = box.width >= 84 ? bar.task.title + " " + String(percent) + "%" : String(percent) + "%";
+    const barLabel = box.width >= 84 ? ganttTitle(bar.task) + " " + String(percent) + "%" : String(percent) + "%";
     // 实际完成日期刻度（B3-01）：按绝对日期落点，拖出条外就不画（免得贴边误导）。
     const done = bar.done;
     const doneLeft =
@@ -1614,7 +1689,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
     <div className="space-y-3">
       {toolbarBlock}
 
-      {/* 任务列表与甘特图同屏（Push 294）：还有没排期的任务就把列表出在甘特上方；图表本身照常在下方渲染（提示条 / 空态 ② 在 model === null 的早退分支里出）。 */}
+      {/* 任务列表与甘特图同屏（Push 294；Push 295 起列表按阶段标题分组可折叠）：还有没排期的任务就把列表出在甘特上方；图表本身照常在下方渲染（提示条 / 空态 ② 在 model === null 的早退分支里出）。 */}
       {hasUnscheduled ? taskListBlock : null}
               {/* 图表：左表（sticky left，横向不滚）+ 时间轴（表头 sticky top，纵向吸顶），两边逐行同一组行高 */}
               {/* 外面这层 relative 给自绘的竖向滑块（隐式浮在右缘）定位；下方横向那条是 fixed 在整个窗口底部的，不随页面滚 */}
@@ -1650,19 +1725,19 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                   style={{ height: HEADER_TOTAL_H, width: LEFT_W_NATURAL }}
                 >
                   <div className="flex h-full items-center justify-center" style={{ width: COL_INDEX_W }}>
-                    行号
+                    {fieldText(locale, "行号")}
                   </div>
                   <div className="flex h-full items-center px-3" style={{ width: COL_TITLE_W }}>
-                    任务
+                    {fieldText(locale, "任务")}
                   </div>
                   <div className="flex h-full items-center px-3" style={{ width: COL_START_W }}>
-                    开始日期
+                    {fieldText(locale, "开始日期")}
                   </div>
                   <div className="flex h-full items-center px-3" style={{ width: COL_END_W }}>
-                    预计完成日期
+                    {fieldText(locale, "预计完成日期")}
                   </div>
                   <div className="flex h-full items-center justify-end pr-3" style={{ width: COL_PROGRESS_W }}>
-                    进展
+                    {fieldText(locale, "进展")}
                   </div>
                 </div>
                 {model.rows.map((row) => {
@@ -1704,11 +1779,11 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                           >
                             <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
-                          <span className="truncate text-[13px] font-semibold text-zinc-800">{row.group.stage}</span>
+                          <span className="truncate text-[13px] font-semibold text-zinc-800">{stageText(locale, row.group.stage)}</span>
                           <span className="ml-auto shrink-0 pr-1 text-[11px] text-zinc-400">
                             {row.group.bars.length === 0
-                              ? "暂无任务"
-                              : "已完成 " + String(row.group.doneCount) + "/" + String(row.group.bars.length)}
+                              ? t("board.stage.empty")
+                              : t("board.stage.done", { done: row.group.doneCount, total: row.group.bars.length })}
                           </span>
                         </button>
                       ) : (
@@ -1724,7 +1799,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                         >
                           <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + STATUS_DOT_CLASS[row.bar.status]} aria-hidden="true" />
                           <span className={"truncate text-[13px] " + (selectedId === row.bar.task.id ? "font-semibold text-zinc-900" : "text-zinc-700")}>
-                            {row.bar.task.title}
+                            {ganttTitle(row.bar.task)}
                           </span>
                         </button>
                       )}
@@ -1738,7 +1813,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                         {row.kind === "group"
                           ? String(row.group.percent) + "%"
                           : row.bar.start === null
-                            ? "未排期"
+                            ? t("gantt.unscheduled")
                             : String(row.bar.percent) + "%"}
                       </div>
                     </div>

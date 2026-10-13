@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { DailySubView } from "../useHashRoute";
+import { subTabGroupText, subTabText, useLocale } from "../i18n";
 
 /**
  * 「日报及问题」的子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）。
@@ -74,6 +75,7 @@ const SUB_TAB_ICON: Record<SubTab, ReactNode> = {
  * 当前子视图：浅灰底 + 深色字（与主标签栏「当前项」同一套语言）。
  */
 export function DailySubMenu({ active, onSelect }: { active: DailySubView; onSelect: (sub: DailySubView) => void }) {
+  const locale = useLocale();
   return (
     <div
       data-daily-submenu
@@ -83,7 +85,7 @@ export function DailySubMenu({ active, onSelect }: { active: DailySubView; onSel
     >
       {SUB_TAB_GROUPS.map((group, index) => (
         <div key={group.label} className={index === 0 ? "" : "mt-1 border-t border-zinc-100 pt-1"}>
-          <p className="px-2.5 pb-0.5 pt-1 text-[11px] font-medium tracking-wide text-zinc-400">{group.label}</p>
+          <p className="px-2.5 pb-0.5 pt-1 text-[11px] font-medium tracking-wide text-zinc-400">{subTabGroupText(locale, group.label)}</p>
           {group.items.map((tab) => {
             const current = SUB_TAB_KEYS[tab] === active;
             return (
@@ -102,7 +104,7 @@ export function DailySubMenu({ active, onSelect }: { active: DailySubView; onSel
                 }
               >
                 {SUB_TAB_ICON[tab]}
-                <span>{tab}</span>
+                <span>{subTabText(locale, tab)}</span>
               </button>
             );
           })}

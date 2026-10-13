@@ -62,6 +62,67 @@ export function normalizeEnglish(text: string): string {
   return out.join("");
 }
 
+/** 领域术语表（Push 297 · 业务口径 2026-10-13「新西兰基督城仓配……是新西兰基督城仓库与配送中心的意思 这个模型翻译是啥逻辑 是不是需要纠正」）：
+ *  内网 LibreTranslate（Argos 小模型 · §6.16 ⑮）是逐句机翻 —— 没有上下文、也不认识行业简称 / 地名别称 / 品牌，
+ *  实测「基督城」→ Christtown / Christian City、「仓配」→ Hammy / Christian Barracks / 直接被吞、
+ *  「立镖」→ A dart、「分拣中心」→ Selection Centre，全部不可用。做法 = **保护式强翻译**：
+ *  出引擎前把命中术语换成「数字占位符」（实测该引擎对 Xq + 无连零数字 + Y 形态原样透传；纯字母 / 全大写 /
+ *  含 00 的数字 / 相邻无分隔的占位符会被吞或改写），回包再把占位符换回这里的固定译法 —— 术语不参与机翻。
+ *  匹配 = **长词优先**（仓配中心 先于 仓配，避免译成「… Center Center」）；人名 / 品牌 / 产品词定稿英文后加一行即可。 */
+const GLOSSARY: ReadonlyArray<{ zh: string; en: string }> = [
+  { zh: "基督城", en: "Christchurch" },
+  { zh: "立镖", en: "Libiao" },
+  { zh: "仓配中心", en: "Warehouse and Distribution Center" },
+  { zh: "仓配", en: "Warehouse and Distribution Center" },
+  { zh: "分拣中心", en: "Sorting Center" },
+  { zh: "分拣线", en: "Sorting Line" },
+  { zh: "分拨中心", en: "Distribution Center" },
+  { zh: "分拣", en: "Sorting" },
+  { zh: "分拨", en: "Distribution" },
+  { zh: "联调", en: "Integration Testing" },
+  { zh: "调试", en: "Commissioning" },
+];
+
+/** 长词优先的匹配序（模块级排一次）。 */
+const GLOSSARY_SORTED: ReadonlyArray<{ zh: string; en: string }> = GLOSSARY.slice().sort((a, b) => b.zh.length - a.zh.length);
+
+/** 占位符号码池（六位、无连零，实测原样透传）：一个术语固定取一枚（同文本内不重号；超池追加一位数字）。 */
+const TOKEN_NUMBERS: readonly string[] = ["8612345", "8612347", "8612361", "8612371", "8612381", "8612391", "8612412", "8612432", "8612452", "8612462", "8612472", "8612482", "8612492", "8612512", "8612532", "8612542"];
+
+function glossaryToken(index: number): string {
+  const base = TOKEN_NUMBERS[index % TOKEN_NUMBERS.length];
+  const extra = index < TOKEN_NUMBERS.length ? "" : String(Math.floor(index / TOKEN_NUMBERS.length) + 1);
+  return "Xq" + base + extra + "Y";
+}
+
+/** 出引擎前：长词优先把命中术语换成占位符（空格包夹，防相邻占位符互相干扰）；返回替换表（无命中 = 空表、原文照发）。 */
+function protectGlossary(text: string): { protectedText: string; tokens: ReadonlyMap<string, string> } {
+  let out = text;
+  const tokens = new Map<string, string>();
+  GLOSSARY_SORTED.forEach((term, index) => {
+    if (!out.includes(term.zh)) {
+      return;
+    }
+    const token = glossaryToken(index);
+    tokens.set(token, term.en);
+    out = out.split(term.zh).join(" " + token + " ");
+  });
+  if (tokens.size === 0) {
+    return { protectedText: text, tokens };
+  }
+  return { protectedText: out.replace(/\s{2,}/g, " ").trim(), tokens };
+}
+
+/** 回包后：占位符换回固定译法（大小写不敏感 + 容忍引擎在字符间塞空格）；随后压掉多余空格与标点前空格。 */
+function restoreGlossary(text: string, tokens: ReadonlyMap<string, string>): string {
+  let out = text;
+  for (const [token, en] of tokens) {
+    const pattern = new RegExp(token.split("").join("\\s*"), "gi");
+    out = out.replace(pattern, " " + en + " ");
+  }
+  return out.replace(/\s{2,}/g, " ").replace(/\s+([,.!?;:])/g, "$1").trim();
+}
+
 /** 并发上限：单条服务 + 导出场景（去重后个位数）小并发即可，同时防批量导入时打满请求。 */
 const MAX_CONCURRENCY = 4;
 
@@ -73,6 +134,30 @@ const PREFETCH_RETRY_MS = 60000;
 
 /** 会话级「原文 → 英文」缓存（同一 SPA 会话内跨页面共用）：写进展描述时预热、导出直接命中。 */
 const translationCache = new Map<string, string>();
+
+/** 译文缓存版本号（每条译文入缓存 +1）：语言切换「手打内容」显示用 —— 组件订阅它，译文到位即重渲染。 */
+let translationRevision = 0;
+
+/** 缓存变更订阅（同上）：返回退订函数。 */
+const translationListeners = new Set<() => void>();
+
+export function subscribeTranslations(listener: () => void): () => void {
+  translationListeners.add(listener);
+  return () => {
+    translationListeners.delete(listener);
+  };
+}
+
+export function getTranslationRevision(): number {
+  return translationRevision;
+}
+
+function notifyTranslations(): void {
+  translationRevision += 1;
+  translationListeners.forEach((listener) => {
+    listener();
+  });
+}
 
 /** 在途请求（原文 → 同一个 Promise）：预热与导出同时要同一条时只打一次机器翻译。 */
 const inFlight = new Map<string, Promise<string | null>>();
@@ -97,15 +182,17 @@ function cachePut(source: string, translated: string): void {
     }
     translationCache.delete(oldest.value);
   }
+  notifyTranslations();
 }
 
 /** 逐条翻译（POST /api/v1/translate），失败返回 null（不抛错；由 translateOneShared 统一记退避 / 写缓存）。 */
 async function translateOne(text: string): Promise<string | null> {
   try {
+    const { protectedText, tokens } = protectGlossary(text);
     const response = await fetch("/api/v1/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q: text, source: "zh", target: "en", format: "text" }),
+      body: JSON.stringify({ q: protectedText, source: "zh", target: "en", format: "text" }),
     });
     if (!response.ok) {
       return null;
@@ -117,7 +204,9 @@ async function translateOne(text: string): Promise<string | null> {
       return null;
     }
     const normalized = normalizeEnglish(translatedText);
-    return normalized === "" ? null : normalized;
+    // 领域术语回换（Push 297）：占位符换回固定译法（没命中术语的文本到此原样返回）。
+    const restored = tokens.size === 0 ? normalized : restoreGlossary(normalized, tokens);
+    return restored === "" ? null : restored;
   } catch {
     return null;
   }

@@ -37,6 +37,8 @@ import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
 import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintOf, type TintedTier } from "../backgroundTier";
+import { fieldText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
+import { prefetchZhToEn } from "../translateApi";
 
 /**
  * 项目详情「日报及问题」视图（Push 128）：页内四块子视图 —— 日报填写 / 日报记录 / 问题追踪 / 问题看板。
@@ -349,6 +351,7 @@ export const ISSUE_CATEGORY_CLASS: Record<string, string> = {
 
 /** 问题归类色签组（契约多值数组逐枚渲染；空数组 = 「未归类」灰签）。 */
 function CategoryTags({ values }: { values: readonly string[] }) {
+  const locale = useLocale();
   const items = values.length === 0 ? ["未归类"] : values;
   return (
     <span className="flex flex-wrap items-center gap-1">
@@ -358,7 +361,7 @@ function CategoryTags({ values }: { values: readonly string[] }) {
           data-issue-category={item}
           className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + (ISSUE_CATEGORY_CLASS[item] ?? "bg-zinc-100")}
         >
-          {item}
+          {fieldText(locale, item)}
         </span>
       ))}
     </span>
@@ -383,13 +386,14 @@ const STAGE_TAG_CLASS: Record<string, string> = {
 /** 关联阶段色签组（Push 208 追加 · 业务口径 2026-09-28「显示也要有颜色」）：多选值逐枚出签，与浮层
  *  小签同一张色表；空值 = 「—」灰字（与列内其它空态一致）。 */
 function StageTags({ names }: { names: readonly string[] }) {
+  const locale = useLocale();
   if (names.length === 0) return <span className="text-zinc-300">—</span>;
   return (
     <span className="flex flex-wrap items-center gap-1">
       {names.map((item, index) => (
         <span key={item + "#" + String(index)} data-report-stage={item}
           className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + (STAGE_TAG_CLASS[item] ?? "bg-zinc-100")}>
-          {item}
+          {stageText(locale, item)}
         </span>
       ))}
     </span>
@@ -416,6 +420,7 @@ export const ISSUE_TAG_SHELL = "rounded-lg px-3 py-1.5 text-[11px] font-medium";
  *  `tierTint` = 背景档位铺色档（适中 / 炫彩；仅追踪表传）：整行已铺行色，色签收口成只留深色字（透明底 + 13px / 700 / 字距
  *  —— 同 TaskBoard 适中档状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
 function IssueStateTag({ state, tierTint = false }: { state: IssueState; tierTint?: TintedTier | false }) {
+  const locale = useLocale();
   return (
     <span
       data-issue-state={state}
@@ -426,16 +431,18 @@ function IssueStateTag({ state, tierTint = false }: { state: IssueState; tierTin
           : ISSUE_TAG_SHELL + " " + ISSUE_TAG_CLASS[state])
       }
     >
-      {ISSUE_STATE_NAMES[state]}
+      {statusText(locale, ISSUE_STATE_NAMES[state])}
     </span>
   );
 }
 
 /** 问题状态行内下拉的可选项（Push 208）：与「项目总览」任务状态同款 —— 弹层里每项 = 该状态的色签胶囊。 */
-const ISSUE_STATE_OPTIONS: SelectOption[] = ISSUE_STATES.map((state) => ({
-  value: state,
-  label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{ISSUE_STATE_NAMES[state]}</span>,
-}));
+function issueStateOptions(locale: Locale): SelectOption[] {
+  return ISSUE_STATES.map((state) => ({
+    value: state,
+    label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state]}>{statusText(locale, ISSUE_STATE_NAMES[state])}</span>,
+  }));
+}
 /** 问题追踪列头（Push 207 · 业务样 = 图五）：六列**纯文字列名**（同批业务口径 2026-09-28「这些图标不需要」——
  *  首版列头曾带日历 / A 字 / 分栏 / 图片 / 对勾圈小图标与排序小漏斗，随后按上面口径整体下架）。
  *  Push 243（业务口径 2026-10-08「图三图四增加列 问题处理人 / 责任人」）：在「问题归类」后补**第七列**
@@ -474,9 +481,9 @@ const ISSUE_CATEGORIES: readonly string[] = [
 
 /** 问题处理人 / 责任人下拉候选（Push 243；Push 244 首项文案收敛为「待分派」—— 撤「（按归类自动分派）」字样）：
  *  首项 = 待分派（缺省按 A3-12 归类分派责任部门；提交时转契约 null），其余 = 成员目录。 */
-function issueOwnerItems(members: readonly Member[]): SearchSelectItem[] {
+function issueOwnerItems(members: readonly Member[], locale: Locale): SearchSelectItem[] {
   return [
-    { kind: "plain", value: "", name: "待分派", hint: "不指定具体处理人" },
+    { kind: "plain", value: "", name: fieldText(locale, "待分派"), hint: textOf(locale, "report.ownerHint") },
     ...members.map((member): SearchSelectItem => ({ kind: "member", value: member.id, member })),
   ];
 }
@@ -505,11 +512,12 @@ export function IssueStateCell({ state, tierTint = false, ariaLabel, onPick }: {
   ariaLabel: string;
   onPick: (next: IssueState) => void;
 }) {
+  const locale = useLocale();
   return (
     <InlineOptionCell
       bare
       value={state}
-      options={ISSUE_STATE_OPTIONS}
+      options={issueStateOptions(locale)}
       ariaLabel={ariaLabel}
       triggerClassName={CELL_EDIT_CHIP}
       display={<IssueStateTag state={state} tierTint={tierTint} />}
@@ -604,6 +612,11 @@ function cnDateOf(iso: string): string {
   return String(Number(match[1])) + "年" + String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
 }
 
+/** 日期显示（英文界面用 ISO YYYY-MM-DD；中文界面沿用「YYYY年M月D日」）。 */
+function isoDateText(locale: Locale, iso: string): string {
+  return locale === "en" ? iso : cnDateOf(iso);
+}
+
 /** 当天 ISO 日期（YYYY-MM-DD）。 */
 function todayIso(): string {
   const now = new Date();
@@ -628,13 +641,13 @@ function readyFileIds(photos: readonly ReportPhoto[]): string[] {
 }
 
 /** 提交 / 暂存前拦「图片还在上传 / 上传失败」（返回空串 = 放行）。 */
-function uploadBlockingMessage(draft: ReportDraft): string {
+function uploadBlockingMessage(draft: ReportDraft, locale: Locale): string {
   const photos = draft.photos.concat(draft.issues.flatMap((item) => item.photos));
   if (photos.some((photo) => photo.pending === "uploading")) {
-    return "还有图片在上传中，请等上传完成后再提交。";
+    return textOf(locale, "report.uploadPending");
   }
   if (photos.some((photo) => photo.pending === "failed")) {
-    return "有图片上传失败，请先移除失败图片（或重新粘贴）再提交。";
+    return textOf(locale, "report.uploadFailed");
   }
   return "";
 }
@@ -986,6 +999,7 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
  *  Push 207 再加 md（40×40 紧凑缩略图、只出图不带文件名 —— 业务样 = 图五；Push 217 起「问题追踪」表改用 lg，
  *  现用于「问题看板」卡片与问题详情抽屉的贴图区）。 */
 function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemove = false }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg"; /** Push 224 续：移除图片二次确认（只开在抽屉口径 —— 抽屉里 × 是即时落库的，业务口径「移除图片要加二次确认」；表单 / 编辑弹窗里的删除仍是一下即摘，保存时才落库）。 */ confirmRemove?: boolean }) {
+  const t = useT();
   const isLarge = size === "lg";
   /** 列表里的紧凑缩略图档（40×40、名字进 title）。 */
   const isThumb = size === "md";
@@ -1075,13 +1089,13 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
             data-remove-attachment-confirm-strip=""
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
-            <span>移除图片「{pendingRemove.name}」？</span>
+            <span>{t("photo.removeConfirm", { name: pendingRemove.name })}</span>
             <button
               type="button"
               onClick={() => { setPendingRemove(null); }}
               className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -1089,7 +1103,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
               onClick={confirmPendingRemove}
               className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
             >
-              移除
+              {t("photo.remove")}
             </button>
           </div>
         </div>,
@@ -1332,6 +1346,9 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
   onPatch: (id: string, patch: ReportPatch) => void;
   onDelete: (id: string) => void;
 }) {
+  const locale = useLocale();
+  const localize = useLocalizedTranslator();
+  const t = useT();
   return (
     <div data-report-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
@@ -1339,7 +1356,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
           <tr>
             {REPORT_COLUMNS.map((title) => (
               <th key={title} className="whitespace-nowrap border-b border-zinc-200 px-4 py-3.5 font-medium">
-                {title}
+                {fieldText(locale, title)}
               </th>
             ))}
             {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
@@ -1359,7 +1376,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                       状态签与「提交 HH:MM」小字一并下架（state 字段仍保留在数据模型里） */}
                   {/* Push 207 同批追加：时间列**去加粗**（业务口径「问题追踪里面的时间不用加粗」· 业务样 = 图里日报记录时间列）
                       —— 字重回常规、字色对齐「问题追踪」日期列 text-zinc-700（不再用 font-semibold / zinc-900） */}
-                  <p data-report-date="" className="text-zinc-700">{cnDateOf(report.date)}</p>
+                  <p data-report-date="" className="text-zinc-700">{isoDateText(locale, report.date)}</p>
                   {report.state === "submitted" ? null : (
                     <span
                       data-report-state={report.state}
@@ -1368,7 +1385,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                         (report.state === "draft" ? "bg-zinc-100 text-zinc-600" : "bg-amber-100 text-amber-800")
                       }
                     >
-                      {REPORT_STATE_NAMES[report.state]}
+                      {statusText(locale, REPORT_STATE_NAMES[report.state])}
                     </span>
                   )}
                 </td>
@@ -1410,7 +1427,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                   {report.doneWork === "" ? (
                     <span className="text-zinc-300">—</span>
                   ) : (
-                    <span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork}</span>
+                    <span data-report-done="" title={locale === "en" ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{localize(report.doneWork)}</span>
                   )}
                 </td>
                 <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
@@ -1418,7 +1435,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                   {report.plan === "" ? (
                     <span className="text-zinc-300">—</span>
                   ) : (
-                    <span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan}</span>
+                    <span data-report-plan="" title={locale === "en" ? report.plan : undefined} className="block whitespace-pre-line break-words">{localize(report.plan)}</span>
                   )}
                 </td>
                 <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
@@ -1433,7 +1450,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                   <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
                     <span data-report-edit-slot="">
                       <RowEditButton
-                        label={"编辑日报（" + report.date + "）"}
+                        label={t("report.row.editReport", { date: report.date })}
                         onEdit={() => {
                           onEdit(report);
                         }}
@@ -1441,7 +1458,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                     </span>
                     <span data-report-delete-slot="">
                       <RowDeleteButton
-                        label={"删除日报（" + report.date + "）—— 会连同这篇日报派生的问题一起删除"}
+                        label={t("report.row.deleteReport", { date: report.date })}
                         onDelete={() => {
                           onDelete(report.id);
                         }}
@@ -1472,6 +1489,8 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
   dragging?: boolean;
   ghost?: boolean;
 }) {
+  const locale = useLocale();
+  const localize = useLocalizedTranslator();
   return (
     <div
       role={ghost ? undefined : "button"}
@@ -1492,13 +1511,13 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
-        <Field label="问题描述" first>
-          <p data-issue-card-title="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{issue.title}</p>
+        <Field label={fieldText(locale, "问题描述")} first>
+          <p data-issue-card-title="" title={locale === "en" ? issue.title : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{localize(issue.title)}</p>
         </Field>
-        <Field label="问题归类">
+        <Field label={fieldText(locale, "问题归类")}>
           <CategoryTags values={issue.categories} />
         </Field>
-        <Field label="问题处理人 / 责任人">
+        <Field label={fieldText(locale, "问题处理人 / 责任人")}>
           {issue.owner === "" ? (
             <p data-issue-card-owner="" className="text-sm leading-5 text-zinc-300">—</p>
           ) : (
@@ -1506,12 +1525,12 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
           )}
         </Field>
         {issue.solution === "" ? null : (
-          <Field label="解决方案或建议">
-            <p data-issue-card-solution="" className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{issue.solution}</p>
+          <Field label={fieldText(locale, "解决方案或建议")}>
+            <p data-issue-card-solution="" title={locale === "en" ? issue.solution : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{localize(issue.solution)}</p>
           </Field>
         )}
         {issue.photos.length === 0 ? null : (
-          <Field label="问题附图">
+          <Field label={fieldText(locale, "问题附图")}>
             <PhotoStrip items={issue.photos} size="md" />
           </Field>
         )}
@@ -1544,6 +1563,8 @@ function IssueBoard({ issues, onPatch, onOpen }: {
   onPatch: (id: string, patch: IssuePatch) => void;
   onOpen: (id: string) => void;
 }) {
+  const locale = useLocale();
+  const t = useT();
   /** 正在拖动的卡片 id（null = 没在拖）。 */
   const [draggingId, setDraggingId] = useState<string | null>(null);
   /** 当前落点列（null = 不在任何别的列上；同列不算落点）。 */
@@ -1750,7 +1771,7 @@ function IssueBoard({ issues, onPatch, onOpen }: {
             >
               <header className="mb-3 flex items-center gap-2 px-1">
                 <IssueStateTag state={state} />
-                <span className="shrink-0 text-xs text-zinc-400">{items.length}项</span>
+                <span className="shrink-0 text-xs text-zinc-400">{t("report.board.count", { n: items.length })}</span>
               </header>
               <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"问题卡片：" + state}>
                 {isTarget ? (
@@ -1758,13 +1779,13 @@ function IssueBoard({ issues, onPatch, onOpen }: {
                     data-issue-drop-slot="true"
                     className="flex items-center justify-center rounded-[35px] border-2 border-dashed border-emerald-400/70 bg-emerald-50/60 px-3 py-6 text-center text-[11px] font-medium text-emerald-700"
                   >
-                    {"放开：移到「" + state + "」"}
+                    {t("report.board.dropTo", { state: statusText(locale, ISSUE_STATE_NAMES[state]) })}
                   </div>
                 ) : null}
                 {items.length === 0 ? (
                   isTarget ? null : (
                     <p className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-zinc-300 px-3 text-center text-xs text-zinc-400">
-                      暂无问题
+                      {t("report.board.none")}
                     </p>
                   )
                 ) : (
@@ -1828,6 +1849,9 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
   onPatch: (id: string, patch: IssuePatch) => void;
   onDelete: (issue: Issue) => void;
 }) {
+  const locale = useLocale();
+  const localize = useLocalizedTranslator();
+  const t = useT();
   return (
     <div data-issue-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
@@ -1835,7 +1859,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
           <tr>
             {ISSUE_TABLE_COLUMNS.map((column) => (
               <th key={column.key} data-issue-head={column.key} className="whitespace-nowrap border-b border-zinc-200 px-4 py-3.5 font-medium">
-                {column.label}
+                {fieldText(locale, column.label)}
               </th>
             ))}
             {/* Push 213（业务口径「日报记录 和 问题追随都要有删除按钮 … 请你看看有没有合适的位置」）：行尾动作列 ——
@@ -1849,14 +1873,14 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => (
             <tr key={issue.id} data-issue-row={issue.id} className={"group align-top transition-colors " + (tierTint ? "issue-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") : "hover:bg-zinc-50/80")} style={tierTint ? ({ "--row-tint": (tierTint === "vivid" ? ISSUE_ROW_TINT_VIVID : ISSUE_ROW_TINT)[issue.state].tint, "--row-tint-hover": (tierTint === "vivid" ? ISSUE_ROW_TINT_VIVID : ISSUE_ROW_TINT)[issue.state].hover } as CSSProperties) : undefined}>
-              <td className="whitespace-nowrap px-4 py-4 text-zinc-700">{cnDateOf(issue.raisedAt)}</td>
+              <td className="whitespace-nowrap px-4 py-4 text-zinc-700">{isoDateText(locale, issue.raisedAt)}</td>
               <td className="min-w-[240px] px-4 py-4">
                 {/* Push 217 续（业务口径「问题归类去左侧一些这个间距不协调」）：min-w 320 → 240 —— 收窄本列与
                     「问题归类」之间的空档，归类列（及其后各列）随之前移；描述 / 「提出人」小行仍按行换行，不截断。 */}
                 {/* Push 223（业务口径「文字和图片编辑要同款」）：问题描述改由行尾「编辑」弹窗落值 ——
                     表格里只做展示，不再是可点目标（点表格不进入任何编辑）。 */}
-                <span data-issue-title="" className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>
-                <p className="mt-1 text-[11px] leading-4 text-zinc-400">提出人：{issue.reporter}</p>
+                <span data-issue-title="" title={locale === "en" ? issue.title : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
+                <p className="mt-1 text-[11px] leading-4 text-zinc-400">{t("report.issue.reporter", { name: issue.reporter })}</p>
               </td>
               <td className="whitespace-nowrap px-4 py-4">
                 {/* Push 208：问题归类行内可改 —— 浮层 = 表单侧同款多选（绿勾 · 点选不收浮层），落值按「、」连接 */}
@@ -1883,7 +1907,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
               </td>
               <td className="min-w-[280px] px-4 py-4">
                 {/* Push 223：解决方案或建议同上（展示only，编辑在行尾弹窗里做）。 */}
-                <span data-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : issue.solution}</span>
+                <span data-issue-solution="" title={locale === "en" ? issue.solution : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : localize(issue.solution)}</span>
               </td>
               <td className="min-w-[440px] px-4 py-4">
                 {/* 展示only（Push 223）：问题附图的增删 / 改名改由行尾「编辑」弹窗（AttachmentPicker）做（点图仍可看大图）。
@@ -1912,7 +1936,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                 <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
                   <span data-issue-edit-slot="">
                     <RowEditButton
-                      label={"编辑问题（" + issue.raisedAt + "）"}
+                      label={t("report.row.editIssue", { date: issue.raisedAt })}
                       onEdit={() => {
                         onEdit(issue);
                       }}
@@ -1920,7 +1944,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                   </span>
                   <span data-issue-delete-slot="">
                     <RowDeleteButton
-                      label={"删除问题（" + issue.raisedAt + "）—— 会连同来源日报一起删除"}
+                      label={t("report.row.deleteIssue", { date: issue.raisedAt })}
                       onDelete={() => {
                         onDelete(issue);
                       }}
@@ -1951,6 +1975,7 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   children: ReactNode;
 }) {
+  const t = useT();
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -1990,7 +2015,7 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
               onClick={onClose}
               className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="submit"
@@ -1998,7 +2023,7 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
               disabled={!canSubmit}
               className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {pending ? "保存中…" : submitLabel}
+              {pending ? t("report.modal.saving") : submitLabel}
             </button>
           </div>
         </form>
@@ -2018,6 +2043,8 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
   /** 提交：返回 null = 成功（父层关窗）；返回文案 = 失败提示，窗口保持打开。 */
   onSubmit: (patch: ReportPatch) => Promise<string | null>;
 }) {
+  const locale = useLocale();
+  const t = useT();
   const [doneWork, setDoneWork] = useState(row.doneWork);
   const [plan, setPlan] = useState(row.plan);
   const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
@@ -2027,7 +2054,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
   const nextDoneWork = renumberLines(doneWork);
   const nextPlan = renumberLines(plan);
   /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
-  const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos });
+  const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos }, locale);
   /** 「当日完成工作」是契约必填 —— 清空不允许保存（与行内编辑同口径）。 */
   const canSubmit = nextDoneWork !== "" && uploadBlocked === "" && !pending;
   /** 只提交改动过的键（与干系人弹窗的 PATCH 合并语义一致）；无改动 = 空 patch（父层直接关窗）。 */
@@ -2060,9 +2087,9 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
   };
   return (
     <RecordEditModal
-      label="编辑日报"
-      hint={cnDateOf(row.date) + " · " + row.author + " —— 只提交改动过的字段；清空「明日计划」= 删除该字段内容。"}
-      submitLabel="保存修改"
+      label={t("report.modal.report.title")}
+      hint={t("report.modal.report.hint", { date: isoDateText(locale, row.date), author: row.author })}
+      submitLabel={t("report.modal.submit")}
       pending={pending}
       canSubmit={canSubmit}
       error={error}
@@ -2071,7 +2098,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
     >
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          当日完成工作<span className="ml-1 text-xs font-normal text-zinc-400">必填</span>
+          {fieldText(locale, "当日完成工作")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.required")}</span>
         </span>
         <GrowingTextarea
           data-record-field="doneWork"
@@ -2079,12 +2106,12 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
           rows={3}
           value={doneWork}
           onChange={(event) => setDoneWork(event.target.value)}
-          placeholder="填写当日完成的工作"
+          placeholder={t("report.placeholder.doneWork")}
         />
       </label>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          明日计划<span className="ml-1 text-xs font-normal text-zinc-400">可选 · 留空 = 清空</span>
+          {fieldText(locale, "明日计划")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.optional.clear")}</span>
         </span>
         <GrowingTextarea
           data-record-field="plan"
@@ -2092,12 +2119,12 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
           rows={3}
           value={plan}
           onChange={(event) => setPlan(event.target.value)}
-          placeholder="填写明日计划（可选）"
+          placeholder={t("report.placeholder.plan")}
         />
       </label>
       <div className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          现场工作附图
+          {fieldText(locale, "现场工作附图")}
         </span>
         <AttachmentPicker
           projectId={projectId}
@@ -2125,19 +2152,21 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   onClose: () => void;
   onSubmit: (patch: IssuePatch) => Promise<string | null>;
 }) {
+  const locale = useLocale();
+  const t = useT();
   const [title, setTitle] = useState(row.title);
   const [solution, setSolution] = useState(row.solution);
   const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
   /** 问题处理人 / 责任人（Push 244）："" = 待分派（落值时转契约 null）。 */
   const [ownerId, setOwnerId] = useState(row.ownerId);
-  const ownerItems = issueOwnerItems(members);
+  const ownerItems = issueOwnerItems(members, locale);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** 保存前统一过一遍自动序号（与表格行内编辑同一口径）。 */
   const nextTitle = renumberLines(title);
   const nextSolution = renumberLines(solution);
   /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
-  const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos });
+  const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos }, locale);
   /** 「问题描述」是契约必填（清空会被服务端拒）—— 前端先拦（与行内编辑同口径）。 */
   const canSubmit = nextTitle !== "" && uploadBlocked === "" && !pending;
   /** 只提交改动过的键（solution 空串 = 清空 → 契约 null，口径同 issueUpdateBody）。 */
@@ -2173,8 +2202,8 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   };
   return (
     <RecordEditModal
-      label="编辑问题"
-      hint={cnDateOf(row.raisedAt) + " · " + row.reporter + " 提出 —— 只提交改动过的字段。"}
+      label={t("report.modal.issue.title")}
+      hint={t("report.modal.issue.hint", { date: isoDateText(locale, row.raisedAt), reporter: row.reporter })}
       submitLabel="保存修改"
       pending={pending}
       canSubmit={canSubmit}
@@ -2184,7 +2213,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
     >
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          问题描述<span className="ml-1 text-xs font-normal text-zinc-400">必填</span>
+          {fieldText(locale, "问题描述")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.required")}</span>
         </span>
         <GrowingTextarea
           data-record-field="title"
@@ -2192,25 +2221,25 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
           rows={3}
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="修改问题描述"
+          placeholder={t("report.placeholder.issueTitleEdit")}
         />
       </label>
       <div className="block">
-        <span className="mb-1.5 block text-sm font-medium text-zinc-700">问题处理人 / 责任人</span>
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "问题处理人 / 责任人")}</span>
         <div data-record-field="owner">
           <SearchSelect
             value={ownerId}
             items={ownerItems}
             onChange={setOwnerId}
             ariaLabel="选择问题处理人 / 责任人"
-            footer={"共 " + String(members.length) + " 人 · 按姓名 / 拼音搜索"}
-            placeholder="待分派"
+            footer={t("report.members.footer", { n: members.length })}
+            placeholder={fieldText(locale, "待分派")}
           />
         </div>
       </div>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          解决方案或建议<span className="ml-1 text-xs font-normal text-zinc-400">可选 · 留空 = 清空</span>
+          {fieldText(locale, "解决方案或建议")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.optional.clear")}</span>
         </span>
         <GrowingTextarea
           data-record-field="solution"
@@ -2218,12 +2247,12 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
           rows={3}
           value={solution}
           onChange={(event) => setSolution(event.target.value)}
-          placeholder="补充解决方案或建议（可选）"
+          placeholder={t("report.placeholder.issueSuggestionEdit")}
         />
       </label>
       <div className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          问题附图
+          {fieldText(locale, "问题附图")}
         </span>
         <AttachmentPicker
           projectId={projectId}
@@ -2327,15 +2356,18 @@ function ReportFillForm({
   onSubmit: () => void;
   onSaveDraft: () => void;
 }) {
+  const locale = useLocale();
+  const localize = useLocalizedTranslator();
+  const t = useT();
   const missing: string[] = [];
   if (draft.dateIso === "") {
-    missing.push("时间");
+    missing.push(t("report.missing.time"));
   }
   if (draft.doneWork.trim() === "") {
-    missing.push("当日完成工作");
+    missing.push(t("report.missing.doneWork"));
   }
   if (draft.plan.trim() === "") {
-    missing.push("明日计划");
+    missing.push(t("report.missing.plan"));
   }
   // 问题块校验（Push 243）：动过的问题块（描述 / 归类 / 处理人 / 附图 / 解决方案任一有内容）必须齐「描述 + 归类」；
   // 全空块 = 没填，提交时忽略（不拦提交）。内容判定先剥行首序号（只剩「1: 」不算填）—— 与自动序号同一口径。
@@ -2346,13 +2378,13 @@ function ReportFillForm({
       return;
     }
     if (title === "") {
-      missing.push("问题 " + String(index + 1) + " 的问题描述");
+      missing.push(t("report.missing.issueTitle", { n: index + 1 }));
     } else if (item.categories.length === 0) {
-      missing.push("问题 " + String(index + 1) + " 的问题归类");
+      missing.push(t("report.missing.issueCategory", { n: index + 1 }));
     }
   });
 
-  const ownerItems = issueOwnerItems(members);
+  const ownerItems = issueOwnerItems(members, locale);
 
   /** 回车「自动序号」（Push 206 续 · 业务口径「自动添加序号可以做到吗」；Push 207 同批扩到「解决方案或建议」·「这个也要1 2 3 同上」）：
    *  在光标处续「下一行序号」（2: / 3: …）并补回光标；序号按**光标前的内容行数**编（Push 242 修：原按物理换行数算，
@@ -2431,14 +2463,14 @@ function ReportFillForm({
     >
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block">
-          <span className={FORM_LABEL}>项目名称</span>
+          <span className={FORM_LABEL}>{fieldText(locale, "项目名称")}</span>
           <span data-field="projectName" className="mt-1 flex items-center rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-2 text-sm text-zinc-600">
-            {project.description}（{project.code}）
+            {localize(project.description)}{locale === "en" ? " (" + project.code + ")" : "（" + project.code + "）"}
           </span>
         </label>
         <div className="block">
           <span className={FORM_LABEL}>
-            时间<span className="ml-1 text-rose-500">*</span>
+            {fieldText(locale, "时间")}<span className="ml-1 text-rose-500">*</span>
           </span>
           {/* 时间 = 站内日期选择器（与分类筛选 / 任务编辑同一套 DateRangePicker，单选模式），不用浏览器原生日期控件 */}
           <div data-field="date" className="mt-1">
@@ -2447,33 +2479,33 @@ function ReportFillForm({
               value={draft.dateIso === "" ? null : { from: draft.dateIso, to: draft.dateIso }}
               onChange={(next) => onChange({ dateIso: next === null ? "" : next.from })}
               hintDate={draft.dateIso}
-              placeholder="选择日期"
+              placeholder={t("report.placeholder.date")}
               ariaLabel="选择填报日期"
               triggerClassName="border-zinc-200 bg-white px-2.5! py-2 text-sm!"
             />
           </div>
         </div>
         <label className="block">
-          <span className={FORM_LABEL}>提交人</span>
+          <span className={FORM_LABEL}>{fieldText(locale, "提交人")}</span>
           <span data-field="author" className="mt-1 flex items-center rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-2 text-sm text-zinc-600">{author}</span>
         </label>
         <label className="block">
-          <span className={FORM_LABEL}>今日施工人数</span>
+          <span className={FORM_LABEL}>{fieldText(locale, "今日施工人数")}</span>
           <input
             data-field="headcount"
             type="number"
             min="0"
             value={draft.headcount}
             onChange={(event) => onChange({ headcount: event.target.value })}
-            placeholder="如 12"
+            placeholder={t("report.placeholder.headcount")}
             className={FORM_INPUT + " mt-1"}
           />
         </label>
       </div>
 
       <div>
-        <span className={FORM_LABEL}>关联阶段</span>
-        <span className="ml-2 text-[11px] text-zinc-400">可多选；标记「当日完成工作」对应的项目阶段</span>
+        <span className={FORM_LABEL}>{fieldText(locale, "关联阶段")}</span>
+        <span className="ml-2 text-[11px] text-zinc-400">{t("report.hint.stages")}</span>
         {/* Push 208：清单本体抽成 StageChecklist —— 「日报记录」的行内编辑浮层复用同一份（两处口径永远一致） */}
         <StageChecklist
           values={draft.stages}
@@ -2485,7 +2517,7 @@ function ReportFillForm({
 
       <label className="block">
         <span className={FORM_LABEL}>
-          当日完成工作Work completed today<span className="ml-1 text-rose-500">*</span>
+          {fieldText(locale, "当日完成工作Work completed today")}<span className="ml-1 text-rose-500">*</span>
         </span>
         {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落（无 placeholder）。
             Push 206：按图 4 复落的分点提示随后按业务口径「有了自动的扩展 那这个提示就不要了」撤回 ——
@@ -2518,7 +2550,7 @@ function ReportFillForm({
         {/* Push 202：表头补英文；占位提示按业务口径「算了 不要提示文字了」不落。
             Push 205：业务口径「明日计划也是必填项」—— 补红色必填星（A3-04 必填口径同步修订） */}
         <span className={FORM_LABEL}>
-          明日计划Tomorrow's plan<span className="ml-1 text-rose-500">*</span>
+          {fieldText(locale, "明日计划Tomorrow's plan")}<span className="ml-1 text-rose-500">*</span>
         </span>
         <GrowingTextarea
           data-field="plan"
@@ -2547,7 +2579,7 @@ function ReportFillForm({
       {/* Push 217（业务口径 2026-09-29「现场工作附图放在明日计划填写下面」）：整块移到「明日计划」正下方
           （原排「解决方案或建议」之后）；字段集 / 交互不变。 */}
       <div>
-        <span className={FORM_LABEL}>现场工作附图</span>
+        <span className={FORM_LABEL}>{fieldText(locale, "现场工作附图")}</span>
         <div className="mt-1">
           <AttachmentPicker projectId={project.id} field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
         </div>
@@ -2559,17 +2591,17 @@ function ReportFillForm({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <span className={FORM_LABEL}>现场发现问题Problem</span>
-            <span className="ml-2 text-[11px] text-zinc-400">填写的问题提交后按条生成独立问题记录（未解决）</span>
+            <span className={FORM_LABEL}>{fieldText(locale, "现场发现问题Problem")}</span>
+            <span className="ml-2 text-[11px] text-zinc-400">{t("report.hint.issues")}</span>
           </div>
           <button type="button" data-action="add-issue" onClick={onAddIssue} className={BTN_SECONDARY + " !px-2.5 !py-1.5 text-xs"}>
-            + 添加问题
+            {t("report.addIssue")}
           </button>
         </div>
         {draft.issues.map((item, index) => (
           <div key={index} data-issue-draft={index} className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3.5">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-zinc-500">问题 {index + 1}</span>
+              <span className="text-xs font-bold text-zinc-500">{t("report.issueNo", { n: index + 1 })}</span>
               {draft.issues.length > 1 ? (
                 <button
                   type="button"
@@ -2577,33 +2609,33 @@ function ReportFillForm({
                   onClick={() => { onRemoveIssue(index); }}
                   className="rounded-md px-2 py-0.5 text-xs text-zinc-400 transition hover:bg-zinc-200/70 hover:text-zinc-600"
                 >
-                  删除
+                  {t("common.delete")}
                 </button>
               ) : null}
             </div>
             <label className="mt-2 block">
               <span className={FORM_LABEL}>
-                问题描述<span className="ml-1 text-rose-500">*</span>
+                {fieldText(locale, "问题描述")}<span className="ml-1 text-rose-500">*</span>
               </span>
-              {numberedTextarea(item.title, (next) => { onPatchIssue(index, { title: next }); }, "issueTitle", 2, "如：液压泵渗油")}
+              {numberedTextarea(item.title, (next) => { onPatchIssue(index, { title: next }); }, "issueTitle", 2, t("report.placeholder.issueTitle"))}
             </label>
             <div className="mt-3 grid gap-4 md:grid-cols-3">
               <label className="block">
                 <span className={FORM_LABEL}>
-                  问题归类<span className="ml-1 text-rose-500">*</span>
+                  {fieldText(locale, "问题归类")}<span className="ml-1 text-rose-500">*</span>
                 </span>
                 <div data-field="issueCategory" className="mt-1">
                   <MultiSelectMenu
                     values={item.categories}
                     options={ISSUE_CATEGORIES}
                     onChange={(next) => { onPatchIssue(index, { categories: next }); }}
-                    placeholder="请选择问题归类（可多选）"
+                    placeholder={t("report.placeholder.issueCategory")}
                     ariaLabel={"问题 " + String(index + 1) + "：选择问题归类（可多选）"}
                   />
                 </div>
               </label>
               <div className="block">
-                <span className={FORM_LABEL}>问题处理人 / 责任人</span>
+                <span className={FORM_LABEL}>{fieldText(locale, "问题处理人 / 责任人")}</span>
                 <div data-field="issueOwner" className="mt-1">
                   <SearchSelect
                     value={item.ownerId}
@@ -2616,7 +2648,7 @@ function ReportFillForm({
                 </div>
               </div>
               <div className="block">
-                <span className={FORM_LABEL}>当前问题附图</span>
+                <span className={FORM_LABEL}>{fieldText(locale, "当前问题附图")}</span>
                 <div className="mt-1">
                   <AttachmentPicker
                     projectId={project.id}
@@ -2629,8 +2661,8 @@ function ReportFillForm({
               </div>
             </div>
             <label className="mt-3 block">
-              <span className={FORM_LABEL}>解决方案或建议</span>
-              {numberedTextarea(item.suggestion, (next) => { onPatchIssue(index, { suggestion: next }); }, "issueSuggestion", 2, "如：建议由采购联系供应商走补件流程")}
+              <span className={FORM_LABEL}>{fieldText(locale, "解决方案或建议")}</span>
+              {numberedTextarea(item.suggestion, (next) => { onPatchIssue(index, { suggestion: next }); }, "issueSuggestion", 2, t("report.placeholder.issueSuggestion"))}
             </label>
           </div>
         ))}
@@ -2638,13 +2670,13 @@ function ReportFillForm({
 
       <div className="flex flex-wrap items-center gap-3 border-t border-zinc-100 pt-4">
         <button type="submit" data-action="submit" disabled={missing.length > 0 || submitting} className={BTN_PRIMARY}>
-          {submitting ? "提交中…" : "提交日报"}
+          {submitting ? t("report.submitting") : t("report.submit")}
         </button>
         <button type="button" data-action="draft" onClick={onSaveDraft} disabled={draft.dateIso === "" || submitting} className={BTN_SECONDARY}>
-          暂存草稿
+          {t("report.saveDraft")}
         </button>
         <span data-fill-hint className={"text-xs " + (missing.length === 0 ? "text-zinc-400" : "text-rose-500")}>
-          {missing.length === 0 ? "填写完成后提交；提交后可在「日报记录」里看到这一篇。" : "还差：" + missing.join("、")}
+          {missing.length === 0 ? t("report.form.footer") : t("report.form.missing", { list: missing.join(locale === "en" ? ", " : "、") })}
         </span>
       </div>
     </form>
@@ -2679,6 +2711,9 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   onPatchReport: (id: string, patch: ReportPatch) => void;
   onClose: () => void;
 }) {
+  const locale = useLocale();
+  const localize = useLocalizedTranslator();
+  const t = useT();
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
 
@@ -2710,13 +2745,13 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   const rows: { key: string; label: string; value: ReactNode }[] = [
     {
       key: "title",
-      label: "问题描述",
+      label: fieldText(locale, "问题描述"),
       value: (
         <InlineTextCell
           value={issue.title}
           ariaLabel={"修改问题描述（" + issue.raisedAt + "）"}
           placeholder="修改问题描述，点「保存」生效"
-          display={<span data-issue-title="" className="block whitespace-pre-line break-words">{issue.title}</span>}
+          display={<span data-issue-title="" title={locale === "en" ? issue.title : undefined} className="block whitespace-pre-line break-words">{localize(issue.title)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { title: renumberLines(text) });
           }}
@@ -2725,7 +2760,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
     },
     {
       key: "category",
-      label: "问题归类",
+      label: fieldText(locale, "问题归类"),
       value: (
         <InlineMultiOptionCell
           wrapContent
@@ -2742,7 +2777,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
     },
     {
       key: "owner",
-      label: "问题处理人 / 责任人",
+      label: fieldText(locale, "问题处理人 / 责任人"),
       // Push 243（业务口径「图三图四增加列 问题处理人 / 责任人」）：生成问题记录时随内联问题清单的处理人落库；
       // 空（旧数据 / 无人）出灰杠（与「施工人数」空态同一枚样式）。
       // Push 244（业务口径「这个负责人要可以编辑」）：改**行内单选**（成员搜索列表 + 首行「待分派」清空），落值走 patchIssue({ ownerId })。
@@ -2771,13 +2806,13 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
     },
     {
       key: "solution",
-      label: "解决方案或建议",
+      label: fieldText(locale, "解决方案或建议"),
       value: (
         <InlineTextCell
           value={issue.solution}
           ariaLabel={"修改解决方案或建议（" + issue.raisedAt + "）"}
           placeholder="补充解决方案或建议，点「保存」生效"
-          display={<span data-issue-solution="" className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : issue.solution}</span>}
+          display={<span data-issue-solution="" title={locale === "en" ? issue.solution : undefined} className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : localize(issue.solution)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { solution: renumberLines(text) });
           }}
@@ -2786,7 +2821,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
     },
     {
       key: "issuePhotos",
-      label: "问题附图",
+      label: fieldText(locale, "问题附图"),
       // Push 212 续（业务口径「图片也要可以增删」）：与「日报填写 → 当前问题附图」同一套 AttachmentPicker —— 复制粘贴 / 选文件增图、
       // × 删图（改名随组件口径）；图幅沿用抽屉原样 md。
       value: (
@@ -2810,27 +2845,27 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
    *  Push 212 同批：当日完成工作 / 明日计划 / 问题是否处理接行内编辑（与「日报记录」「问题追踪」同一套口径）。 */
   const reportRows: { key: string; label: string; value: ReactNode }[] =
     report === null
-      ? [{ key: "report", label: "来源日报", value: <span className="text-zinc-400">未找到（原型内存态可能已复位）</span> }]
+      ? [{ key: "report", label: fieldText(locale, "来源日报"), value: <span className="text-zinc-400">{t("report.drawer.reportMissing")}</span> }]
       : [
           {
             key: "doneWork",
-            label: "当日完成工作",
+            label: fieldText(locale, "当日完成工作"),
             value: (
               <InlineTextCell
                 value={report.doneWork}
                 ariaLabel={"修改当日完成工作（" + report.date + "）"}
                 placeholder="填写当日完成的工作，点「保存」生效"
-                display={<span data-report-done="" className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : report.doneWork}</span>}
+                display={<span data-report-done="" title={locale === "en" ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : localize(report.doneWork)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { doneWork: renumberLines(text) });
                 }}
               />
             ),
           },
-          { key: "date", label: "日期", value: cnDateOf(report.date) },
+          { key: "date", label: fieldText(locale, "日期"), value: isoDateText(locale, report.date) },
           {
             key: "author",
-            label: "填写者",
+            label: fieldText(locale, "填写者"),
             value: (
               <span className="flex items-center gap-1.5">
                 <InitialAvatar name={report.author} />
@@ -2840,13 +2875,13 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           },
           {
             key: "plan",
-            label: "明日计划",
+            label: fieldText(locale, "明日计划"),
             value: (
               <InlineTextCell
                 value={report.plan}
                 ariaLabel={"修改明日计划（" + report.date + "）"}
                 placeholder="填写明日计划，点「保存」生效"
-                display={<span data-report-plan="" className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : report.plan}</span>}
+                display={<span data-report-plan="" title={locale === "en" ? report.plan : undefined} className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : localize(report.plan)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { plan: renumberLines(text) });
                 }}
@@ -2855,7 +2890,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           },
           {
             key: "reportPhotos",
-            label: "现场工作附图",
+            label: fieldText(locale, "现场工作附图"),
             // Push 212 续（业务口径「图片也要可以增删」）：与「日报填写 → 现场工作附图」同一套 AttachmentPicker；图幅沿用抽屉原样 lg。
             value: (
               <AttachmentPicker
@@ -2874,11 +2909,11 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           },
           {
             key: "state",
-            label: "问题是否处理",
+            label: fieldText(locale, "问题是否处理"),
             value: (
               <InlineOptionCell
                 value={issue.state}
-                options={ISSUE_STATE_OPTIONS}
+                options={issueStateOptions(locale)}
                 ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
                 display={<IssueStateTag state={issue.state} />}
                 onPick={(value) => {
@@ -2889,7 +2924,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           },
           {
             key: "headcount",
-            label: "施工人数",
+            label: fieldText(locale, "施工人数"),
             // Push 217 续⑤（业务口径「空用杠来表示 和之前项目总览的抽屉一样」）：headcount 是 number | null，
             // 没填（null）时直接 String() 会渲染出字面量「null」；空值改出灰杠 —— 与「项目总览」任务详情抽屉
             // 里同一字段的空态同一个样式（text-zinc-300 的 —）。
@@ -2900,7 +2935,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
               <InlineNumberCell
                 value={report.headcount ?? 0}
                 ariaLabel={"修改施工人数（" + report.date + "）"}
-                display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + " 人"}
+                display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + (locale === "en" ? "" : " 人")}
                 onSave={(value) => {
                   onPatchReport(report.id, { headcount: value === 0 ? null : value });
                 }}
@@ -2912,7 +2947,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
    *  原「已隐藏 · N」折叠区与其余五枚次要字段整块撤除）；同批接行内多选（与「日报记录」表同款九阶段清单）。 */
   const stagesRow: { key: string; label: string; value: ReactNode } = {
     key: "stages",
-    label: "关联阶段",
+    label: fieldText(locale, "关联阶段"),
     value:
       report === null ? (
         <span className="text-zinc-400">—</span>
@@ -2964,7 +2999,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
       >        <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">问题详情</span>
+              <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{t("report.drawer.tag")}</span>
               <IssueStateTag state={issue.state} />
             </div>
             <button
@@ -2978,10 +3013,10 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
               </svg>
             </button>
           </div>
-          <h2 id="issue-drawer-title" className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
-            {issue.title}
+          <h2 id="issue-drawer-title" title={locale === "en" ? issue.title : undefined} className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
+            {localize(issue.title)}
           </h2>
-          <p className="mt-1 text-xs leading-5 text-zinc-400">{cnDateOf(issue.raisedAt)} · {issue.reporter} 提出</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">{t("report.drawer.raised", { date: isoDateText(locale, issue.raisedAt), reporter: issue.reporter })}</p>
         </header>
         <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="问题详情字段">
           <dl>{rows.map(rowView)}</dl>
@@ -2990,7 +3025,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
         </ScrollArea>
 
         <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
-          <p className="text-[11px] text-zinc-400">来源日报：{issue.reportId}；点空白处或按 Esc 关闭</p>
+          <p className="text-[11px] text-zinc-400">{t("report.drawer.footer", { id: issue.reportId })}</p>
         </footer>
       </aside>
     </div>
@@ -3010,6 +3045,8 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   /** 切页内子视图（写回地址 · replace，不新增历史条目）。 */
   onChangeSub: (sub: DailySubView) => void;
 }) {
+  const locale = useLocale();
+  const t = useT();
   /** 当前子视图（地址是唯一来源：slug → 中文标签；不认识的取值已在路由层落回 form）。 */
   const subTab = SUB_TABS.find((tab) => SUB_TAB_KEYS[tab] === sub) ?? "日报记录";
   /** 背景档位铺色档（Push 290 统一口径 · 原「醒目模式」挂点）：投影到本地（缺省 = 不铺色）。 */
@@ -3058,7 +3095,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       setLoadState("ready");
     } catch (error) {
       setLoadState("error");
-      setNotice(friendlyError(error, "日报 / 问题加载失败。"));
+      setNotice(friendlyError(error, t("report.error.load")));
     }
   }, [project.id]);
 
@@ -3066,12 +3103,24 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     void reload();
   }, [reload]);
 
+  /** 手打内容提前后台机翻（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
+   *  日报与问题数据一到，就把「当日完成工作 / 明日计划 / 问题描述 / 解决方案或建议」静默丢进预热队列 ——
+   *  英文界面下这些列命中会话缓存直接出译文（见 translateApi.ts），不用现场等机器翻译。 */
+  useEffect(() => {
+    prefetchZhToEn([
+      ...reports.map((report) => report.doneWork),
+      ...reports.map((report) => report.plan),
+      ...issues.map((issue) => issue.title),
+      ...issues.map((issue) => issue.solution),
+    ]);
+  }, [reports, issues]);
+
   /** 行内编辑落值（Push 216 接真）：先本地乐观更新，PATCH 回包替换该行；失败提示并重取（409 乐观锁冲突同路）。
    *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）；
    *  「当日完成工作」是契约必填，清空会被服务端拒绝 —— 前端先拦。 */
   const patchReport = (id: string, patch: ReportPatch) => {
     if (patch.doneWork !== undefined && patch.doneWork === "") {
-      setNotice("「当日完成工作」不能为空。");
+      setNotice(t("report.notice.doneRequired"));
       return;
     }
     const current = reportsRef.current.find((item) => item.id === id);
@@ -3084,7 +3133,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setReports((previous) => previous.map((item) => (item.id === id ? updated : item)));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, "日报修改失败。"));
+        setNotice(friendlyError(error, t("report.error.reportSave")));
         void reload();
       });
   };
@@ -3092,11 +3141,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   /** 问题行内编辑落值（Push 216 接真）：同日报一套 —— 乐观更新 + PATCH 回包替换；提出日期不动。 */
   const patchIssue = (id: string, patch: IssuePatch) => {
     if (patch.title !== undefined && patch.title === "") {
-      setNotice("「问题描述」不能为空。");
+      setNotice(t("report.notice.titleRequired"));
       return;
     }
     if (patch.categories !== undefined && patch.categories.length === 0) {
-      setNotice("「问题归类」至少保留一项。");
+      setNotice(t("report.notice.categoryRequired"));
       return;
     }
     const current = issuesRef.current.find((item) => item.id === id);
@@ -3109,7 +3158,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setIssues((previous) => previous.map((item) => (item.id === id ? updated : item)));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, "问题修改失败。"));
+        setNotice(friendlyError(error, t("report.error.issueSave")));
         void reload();
       });
   };
@@ -3130,7 +3179,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       return null;
     } catch (error) {
       void reload();
-      return friendlyError(error, "日报修改失败。");
+      return friendlyError(error, t("report.error.reportSave"));
     }
   };
 
@@ -3149,7 +3198,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       return null;
     } catch (error) {
       void reload();
-      return friendlyError(error, "问题修改失败。");
+      return friendlyError(error, t("report.error.issueSave"));
     }
   };
 
@@ -3167,10 +3216,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           return open !== undefined && open.reportId === reportId ? null : current;
         });
         setDraftId((current) => (current === reportId ? null : current));
-        setNotice("已删除该日报；它派生的全部问题随日报一起删除。");
+        setNotice(t("report.notice.reportDeleted"));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, "日报删除失败。"));
+        setNotice(friendlyError(error, t("report.error.reportDelete")));
         void reload();
       });
   };
@@ -3188,10 +3237,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           setDraftId((current) => (current === cascaded ? null : current));
         }
         setOpenIssueId((current) => (current === issue.id ? null : current));
-        setNotice(result.cascadedReportId === null ? "已删除该问题。" : "已删除该问题；来源日报随问题一起删除。");
+        setNotice(result.cascadedReportId === null ? t("report.notice.issueDeleted") : t("report.notice.issueDeletedWithReport"));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, "问题删除失败。"));
+        setNotice(friendlyError(error, t("report.error.issueDelete")));
         void reload();
       });
   };
@@ -3234,7 +3283,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   const editingReport = editModal !== null && editModal.kind === "report" ? reports.find((item) => item.id === editModal.id) ?? null : null;
   const editingIssue = editModal !== null && editModal.kind === "issue" ? issues.find((item) => item.id === editModal.id) ?? null : null;
 
-  const author = me.user.displayName ?? me.user.name ?? "未署名用户";
+  const author = me.user.displayName ?? me.user.name ?? t("header.unnamed");
 
   /** 问题块增删改（Push 243）：默认保留一条；只剩一条时不允许删除（清内容即可）。 */
   const patchDraftIssue = (index: number, patch: Partial<ReportIssueDraftUi>) => {
@@ -3299,14 +3348,14 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     if (saving) {
       return;
     }
-    const blocking = uploadBlockingMessage(draft);
+    const blocking = uploadBlockingMessage(draft, locale);
     if (blocking !== "") {
       setNotice(blocking);
       return;
     }
     const body = draftWriteBody("submitted");
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
-    const dateCn = cnDateOf(draft.dateIso);
+    const dateText = isoDateText(locale, draft.dateIso);
     const issueCount = body.issues?.length ?? 0;
     setSaving(true);
     const write =
@@ -3318,16 +3367,14 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setDraft(emptyDraft());
         setDraftId(null);
         setNotice(
-          "已提交 " + dateCn + " 的日报" +
-            (issueCount > 0
-              ? "；填写的 " + String(issueCount) + " 条问题已各自生成独立问题记录（未解决），见「问题追踪」/「问题看板」。"
-              : "。"),
+          t("report.notice.submitted", { date: dateText }) +
+            (issueCount > 0 ? t("report.notice.submittedIssues", { n: issueCount }) : t("report.notice.submittedEnd")),
         );
         onChangeSub("records");
         return reload();
       })
       .catch((error) => {
-        setNotice(friendlyError(error, "日报提交失败。"));
+        setNotice(friendlyError(error, t("report.error.submit")));
         void reload();
       })
       .finally(() => {
@@ -3342,10 +3389,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       return;
     }
     if (renumberLines(draft.doneWork) === "") {
-      setNotice("暂存草稿也需要先填「当日完成工作」。");
+      setNotice(t("report.notice.draftNeedsDone"));
       return;
     }
-    const blocking = uploadBlockingMessage(draft);
+    const blocking = uploadBlockingMessage(draft, locale);
     if (blocking !== "") {
       setNotice(blocking);
       return;
@@ -3362,11 +3409,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         if (draftRow === null) {
           setDraftId(saved.id);
         }
-        setNotice("已暂存：草稿已写入「日报记录」（可继续修改，点「提交日报」后生效）。");
+        setNotice(t("report.notice.draftSaved"));
         return reload();
       })
       .catch((error) => {
-        setNotice(friendlyError(error, "草稿暂存失败。"));
+        setNotice(friendlyError(error, t("report.error.draft")));
         void reload();
       })
       .finally(() => {
@@ -3387,7 +3434,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
 
   /** 「问题追踪」过滤：覆盖表里可见的文字列（日期 / 问题描述（含并入的提出人）/ 问题归类 / 解决方案或建议 / 问题是否处理）。 */
   const visibleIssues = issues.filter((issue) =>
-    searchHit(issueKeyword, [issue.raisedAt, issue.reporter, issue.title, issue.categories.join("、"), issue.owner, issue.solution, ISSUE_STATE_NAMES[issue.state]]),
+    searchHit(issueKeyword, [issue.raisedAt, issue.reporter, issue.title, issue.categories.join("、"), issue.owner, issue.solution, statusText(locale, ISSUE_STATE_NAMES[issue.state])]),
   );
 
 
@@ -3422,10 +3469,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         </div>
       ) : loadState === "loading" ? (
         /* Push 216 接真：三个列表子视图共用同一份首屏加载态 */
-        <EmptyCard text="加载中…" hint="正在从服务端取该项目的日报与问题记录。" />
+        <EmptyCard text={t("common.loading")} hint={t("report.loading.hint")} />
       ) : loadState === "error" ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-white/50 px-6 py-12 text-center">
-          <p className="text-sm text-zinc-500">日报 / 问题加载失败。</p>
+          <p className="text-sm text-zinc-500">{t("report.error.load")}</p>
           <button
             type="button"
             onClick={() => {
@@ -3434,28 +3481,28 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
             }}
             className={BTN_SECONDARY}
           >
-            重新加载
+            {t("common.reload")}
           </button>
         </div>
       ) : subTab === "日报记录" ? (
         <section className="space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <SectionHeader
-              title="日报记录"
+              title={t("report.records.title")}
               hint={
                 recordKeyword.trim() === ""
-                  ? "共 " + String(reports.length) + " 篇 · 按日期倒序（新 → 旧）；填写的问题提交后按条生成问题记录"
-                  : "找到 " + String(visibleReports.length) + " 篇 · 共 " + String(reports.length) + " 篇 · 按日期倒序（新 → 旧）"
+                  ? t("report.records.hint", { n: reports.length })
+                  : t("report.records.hintFound", { found: visibleReports.length, total: reports.length })
               }
             />
             <div data-report-search="" className="w-full sm:ml-auto sm:w-72">
-              <SearchInput value={recordKeyword} onChange={setRecordKeyword} placeholder="搜索日期、填写者、阶段或日报内容" className="w-full" />
+              <SearchInput value={recordKeyword} onChange={setRecordKeyword} placeholder={t("report.records.search")} className="w-full" />
             </div>
           </div>
           {reports.length === 0 ? (
-            <EmptyCard text="还没有日报。" hint="到「日报填写」填一篇并提交，这里就会出现。" />
+            <EmptyCard text={t("report.records.empty")} hint={t("report.records.emptyHint")} />
           ) : visibleReports.length === 0 ? (
-            <EmptyCard text={"没有匹配「" + recordKeyword.trim() + "」的日报。"} hint="换个关键词试试，或点搜索框右侧的 × 清空。" />
+            <EmptyCard text={t("report.records.emptyMatch", { kw: recordKeyword.trim() })} hint={t("report.emptyHint")} />
           ) : (
             <ReportList reports={visibleReports} onEdit={(report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={patchReport} onDelete={requestDeleteReport} />
           )}
@@ -3465,30 +3512,30 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           {/* Push 290 起原「醒目模式」开关已随功能下架：观感统一由顶栏「背景 · 档位」驱动，本视图不再有独立开关。 */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <SectionHeader
-              title="问题追踪"
+              title={t("report.issues.title")}
               hint={
                 issueKeyword.trim() === ""
-                  ? "共 " + String(issues.length) + " 条 · 由日报填写的问题逐条生成，按提出日期倒序"
-                  : "找到 " + String(visibleIssues.length) + " 条 · 共 " + String(issues.length) + " 条 · 按提出日期倒序"
+                  ? t("report.issues.hint", { n: issues.length })
+                  : t("report.issues.hintFound", { found: visibleIssues.length, total: issues.length })
               }
             />
             <div data-issue-search="" className="w-full sm:ml-auto sm:w-72">
-              <SearchInput value={issueKeyword} onChange={setIssueKeyword} placeholder="搜索日期、问题描述、归类或解决方案" className="w-full" />
+              <SearchInput value={issueKeyword} onChange={setIssueKeyword} placeholder={t("report.issues.search")} className="w-full" />
             </div>
           </div>
           {issues.length === 0 ? (
-            <EmptyCard text="还没有问题记录。" hint="日报里填了问题并提交，这里就会按条落问题记录。" />
+            <EmptyCard text={t("report.issues.empty")} hint={t("report.issues.emptyHint")} />
           ) : visibleIssues.length === 0 ? (
-            <EmptyCard text={"没有匹配「" + issueKeyword.trim() + "」的问题。"} hint="换个关键词试试，或点搜索框右侧的 × 清空。" />
+            <EmptyCard text={t("report.issues.emptyMatch", { kw: issueKeyword.trim() })} hint={t("report.emptyHint")} />
           ) : (
             <IssueTable issues={visibleIssues} tierTint={tierRows} onEdit={(issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={patchIssue} onDelete={requestDeleteIssue} />
           )}
         </section>
       ) : (
         <section className="space-y-3">
-          <SectionHeader title="问题看板" hint="三态：未解决 → 处理中 → 已完成（空列保留；按住卡片拖到别的列 = 改状态）" />
+          <SectionHeader title={t("report.board.title")} hint={t("report.board.hint")} />
           {issues.length === 0 ? (
-            <EmptyCard text="还没有问题记录。" hint="日报里填了问题并提交，这里就会按条落问题记录。" />
+            <EmptyCard text={t("report.issues.empty")} hint={t("report.issues.emptyHint")} />
           ) : (
             <IssueBoard issues={issues} onPatch={patchIssue} onOpen={(id) => { setOpenIssueId(id); }} />
           )}
@@ -3524,16 +3571,16 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           <div
             ref={deleteConfirmTrapRef}
             role="dialog"
-            aria-label={pendingDelete.kind === "report" ? "确认删除日报" : "确认删除问题"}
+            aria-label={pendingDelete.kind === "report" ? t("report.delete.ariaReport") : t("report.delete.ariaIssue")}
             data-delete-confirm-strip=""
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
             <span>
               {pendingDelete.kind === "report"
-                ? "删除日报（" + pendingDelete.report.date + "）？它派生的全部问题会随这篇日报一起删除，删除后不可恢复。"
+                ? t("report.delete.report", { date: isoDateText(locale, pendingDelete.report.date) })
                 : pendingDelete.issue.reportId === ""
-                  ? "删除问题（" + pendingDelete.issue.raisedAt + "）？这条问题没有来源日报，只删它这一条，删除后不可恢复。"
-                  : "删除问题（" + pendingDelete.issue.raisedAt + "）？它来源的那篇日报会随这条问题一起删除，删除后不可恢复。"}
+                  ? t("report.delete.issueAlone", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })
+                  : t("report.delete.issueWithReport", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })}
             </span>
             <button
               type="button"
@@ -3542,7 +3589,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
               }}
               className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -3550,7 +3597,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
               onClick={confirmPendingDelete}
               className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
             >
-              删除
+              {t("common.delete")}
             </button>
           </div>
         </div>

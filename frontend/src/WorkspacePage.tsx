@@ -107,6 +107,7 @@ import { fetchProject, updateProject, type ApiProject } from "./projectApi";
 import { fetchProjectIssues, ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
 import { displayStatusLabel, fetchProjectTasks, fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask, type ApiTaskListItem } from "./taskApi";
 import { prefetchZhToEn } from "./translateApi";
+import { fieldText, stageText, useLocale, useLocalizedTranslator } from "./i18n";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
 import type { WorkspaceOpenProjects } from "./preferencesApi";
 import { projectViewHref, type WorkspaceIssueView, type WorkspaceTab } from "./useHashRoute";
@@ -287,9 +288,11 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
   /**
    * 「写进展描述即后台翻译」（业务口径 2026-10-13 · §6.16 ㉑）：回填 / 写后刷新带来的任务行一到，
    * 就把非空进展描述丢进译文缓存后台预热 —— 工作台里改的描述，稍后到项目页导出不用再等机器翻译。
+   * 同日追订（「因为页面有些内容是手打的 我建议是提前后台机翻」）：任务名一并预热，切英文即得译文。
    */
   useEffect(() => {
-    prefetchZhToEn(Array.from(full.detail.values()).map((row) => row.note ?? ""));
+    const rows = Array.from(full.detail.values());
+    prefetchZhToEn([...rows.map((row) => row.note ?? ""), ...rows.map((row) => row.title)]);
   }, [full]);
   useEffect(() => {
     const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
@@ -506,6 +509,7 @@ function TaskTable({ projectId, items, full, filesByTask, ready, tierTint, membe
   handlers: TaskTableHandlers;
 }) {
   // 与项目页任务表同一套列宽口径（2026-10-10）：`fr` 列带 minmax 硬下限 + 最小宽算上行内衬 —— 窄窗下横向滚动、不压列。
+  const locale = useLocale();
   const gridTemplate = tableGridTemplate(TASK_COLUMNS);
   const minWidth = tableMinWidth(TASK_COLUMNS);
   const project = full.projects.get(projectId);
@@ -521,10 +525,10 @@ function TaskTable({ projectId, items, full, filesByTask, ready, tierTint, membe
           >
             {TASK_COLUMNS.map((column) =>
               column.key === "title" ? (
-                <span key={column.key} data-column={column.key} className="truncate">{column.label}</span>
+                <span key={column.key} data-column={column.key} className="truncate">{fieldText(locale, column.label)}</span>
               ) : (
-                <span key={column.key} data-column={column.key} title={column.label === "" ? undefined : column.label} className={"truncate text-center " + (column.headerClass ?? "")}>
-                  {column.header ?? column.label}
+                <span key={column.key} data-column={column.key} title={column.label === "" ? undefined : fieldText(locale, column.label)} className={"truncate text-center " + (column.headerClass ?? "")}>
+                  {column.header ?? fieldText(locale, column.label)}
                 </span>
               ),
             )}
@@ -536,7 +540,10 @@ function TaskTable({ projectId, items, full, filesByTask, ready, tierTint, membe
               // 回填命中（有 version）才挂行内编辑入口；降级行只读 —— 点行仍开抽屉（抽屉内单查兜底）。
               const editable = row !== undefined;
               const stage = stageNameOf(task.stageKey);
-              const subtitle = (stage === "" ? TEMP_TASK_STAGE : stage) + (task.titleEn === null || task.titleEn === "" ? "" : " · " + task.titleEn);
+              const stageLabel = stage === "" ? TEMP_TASK_STAGE : stage;
+              const subtitle = locale === "en"
+                ? stageText(locale, stageLabel)
+                : stageLabel + (task.titleEn === null || task.titleEn === "" ? "" : " · " + task.titleEn);
               return (
                 <div
                   key={task.id}
@@ -698,6 +705,8 @@ function toIssueState(state: string): IssueState {
  *  水平居中）—— 单元格保持 align-top 不动（与其它列同一条基线，只收水平向）。 */
 const ISSUE_COL_WIDTHS = ["8%", "19%", "9%", "10%", "18%", "26%", "10%"] as const;
 function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; tierTint: TintedTier | false; /** 行内改状态的本地覆盖（Push 260）：按问题 id 取，同一问题在两个子视图里共用。 */ overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
+  /** 手打内容（问题描述 / 解决方案）机翻显示：英文界面取译文，未就绪回退原文。 */
+  const localize = useLocalizedTranslator();
   return (
     <div data-workspace-issue-table="" data-workspace-issue-tint={tierTint ? "true" : "false"} className="overflow-x-auto rounded-lg border border-zinc-200">
       <table className="w-full min-w-[1400px] table-fixed border-collapse text-left text-sm">
@@ -726,7 +735,7 @@ function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issu
               <tr key={issue.id} data-workspace-issue={issue.id} className={"align-top transition-colors " + (tierTint ? "issue-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") : "hover:bg-zinc-50/80")} style={tierTint && state.tint !== null ? ({ "--row-tint": state.tint.tint, "--row-tint-hover": state.tint.hover } as CSSProperties) : undefined}>
                 <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{cnDateFull(issue.raisedAt)}</td>
                 <td className="px-4 py-3">
-                  <span className="block whitespace-pre-line break-words leading-6 text-zinc-800">{issue.title}</span>
+                  <span className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
                 </td>
                 <td className="px-4 py-3">
                   <CategoryTags values={issue.categories} />
@@ -739,7 +748,7 @@ function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issu
                 </td>
                 <td className="px-4 py-3">
                   <span data-workspace-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">
-                    {detail === undefined || detail.solution === "" ? "—" : detail.solution}
+                    {detail === undefined || detail.solution === "" ? "—" : localize(detail.solution)}
                   </span>
                 </td>
                 <td className="px-4 py-3">

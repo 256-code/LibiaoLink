@@ -20,6 +20,7 @@ import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
 import { prefetchZhToEn } from "./translateApi";
+import { useLocale, useT, viewTabText } from "./i18n";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
 import { projectManagerText } from "./types";
@@ -112,6 +113,8 @@ type ProjectDetailProps = {
 
 export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
+  const locale = useLocale();
+  const t = useT();
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
 
@@ -264,9 +267,15 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 「写进展描述即后台翻译」（业务口径 2026-10-13 · §6.16 ㉑）：项目数据一到 / 每次写入回写（tasks 变化 ——
    * 行内编辑、抽屉保存、进度 / 状态写入……）就把「项目名 + 全部非空进展描述」丢进译文缓存后台预热；
    * 用户写完进展描述几秒内译文就绪，导出时直接命中、不再等机器翻译（缓存与去重见 src/translateApi.ts）。
+   * 同日追订（「因为页面有些内容是手打的 我建议是提前后台机翻」）：无英文名（titleEn 空）的任务名一并预热，
+   * 语言切英文 / 列表显示机翻译文即得（有 titleEn 的任务名直接用自带英文名，不进机翻通道）。
    */
   useEffect(() => {
-    prefetchZhToEn([project === null ? "" : project.description, ...tasks.map((task) => task.note)]);
+    prefetchZhToEn([
+      project === null ? "" : project.description,
+      ...tasks.map((task) => task.note),
+      ...tasks.filter((task) => task.titleEn === "").map((task) => task.title),
+    ]);
   }, [project, tasks]);
 
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
@@ -851,9 +860,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       <div className="min-h-screen">
         <AppHeader me={me} />
         <main className="w-full px-6 py-10">
-          <p className="text-sm text-zinc-500">未找到该项目，可能已被删除。</p>
+          <p className="text-sm text-zinc-500">{t("project.notFound")}</p>
           <a href="#/projects" className="mt-4 inline-block text-sm font-medium text-zinc-700 underline underline-offset-4">
-            返回项目列表
+            {t("project.back")}
           </a>
         </main>
       </div>
@@ -910,7 +919,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
                         : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                     }
                   >
-                    {tab}
+                    {viewTabText(locale, tab)}
                     {withSubmenu ? (
                       <svg
                         viewBox="0 0 20 20"
@@ -978,19 +987,19 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
 
         {dataError === null ? null : (
           <div role="alert" className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700">
-            <span>任务数据加载失败：{dataError}</span>
+            <span>{t("project.dataErrorPre")}{dataError}</span>
             <button
               type="button"
               onClick={reloadAll}
               className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
             >
-              重试
+              {t("common.retry")}
             </button>
           </div>
         )}
 
         {dataLoading && rawTasks.length === 0 && dataError === null ? (
-          <p className="mt-4 text-sm text-zinc-400">正在加载任务数据…</p>
+          <p className="mt-4 text-sm text-zinc-400">{t("project.loadingTasks")}</p>
         ) : null}
 
         <div className="mt-6 space-y-4">
@@ -1066,12 +1075,12 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
           <div
             ref={deleteTaskConfirmTrapRef}
             role="dialog"
-            aria-label="确认删除任务"
+            aria-label={t("project.deleteTaskAria")}
             data-task-delete-confirm=""
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
             <span>
-              删除任务「<span className="font-semibold">{pendingDeleteTask.title}</span>」？删除后这一行从项目里移除；有变更记录引用的任务会被拦下。
+              {t("project.deleteTaskPre")}<span className="font-semibold">{pendingDeleteTask.title}</span>{t("project.deleteTaskPost")}
             </span>
             <button
               type="button"
@@ -1080,7 +1089,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               }}
               className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -1088,7 +1097,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               onClick={confirmDeleteTask}
               className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
             >
-              删除
+              {t("common.delete")}
             </button>
           </div>
         </div>

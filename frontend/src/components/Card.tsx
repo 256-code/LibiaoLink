@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { useLocalizedText, useT } from "../i18n";
 import { RowDeleteButton } from "./RowDeleteButton";
 
 /**
@@ -78,6 +79,9 @@ export function Card({
   onEdit,
   onDelete,
 }: CardProps) {
+  const t = useT();
+  /** 手打内容（项目名）机翻显示：英文界面显示译文（到位后自动切换），悬停看原文。 */
+  const localizedDescription = useLocalizedText(description);
   /** 序号文案：不足两位补零（7 → "07"）；**三位数之后不再有位置问题** —— 数字锚在圆点右内侧（right-6，不再用 left-6），
    *  卡片是 overflow:hidden，用 left-6 摆时三位数的末位会越过卡片右缘被裁掉（Push 188 十追订「这个编号bug」）。 */
   const seqNoText = String(seqNo).padStart(2, "0");
@@ -116,16 +120,16 @@ export function Card({
         </span>
       </span>
       <div className="w-20 h-20 rounded-full absolute -right-5 -top-7 bg-zinc-100">
-        <p className="absolute bottom-5 right-6 whitespace-nowrap text-2xl font-medium text-zinc-500" title={"项目序号 " + seqNoText}>{seqNoText}</p>
+        <p className="absolute bottom-5 right-6 whitespace-nowrap text-2xl font-medium text-zinc-500" title={t("card.seqNo") + " " + seqNoText}>{seqNoText}</p>
       </div>
       <div className="flex w-full items-center gap-3">
         {icon ?? <span style={{ backgroundColor: accentColor }} className="car-icon block h-9 w-12 shrink-0" />}
         <p className="min-w-0 truncate text-sm text-zinc-400">
-          项目经理：<span className="font-medium text-zinc-600" title={managerNames}>{managerNames}</span>
+          {t("card.manager")}<span className="font-medium text-zinc-600" title={managerNames}>{managerNames}</span>
         </p>
       </div>
       <h1 className="font-mono text-xl font-bold tracking-tight">{code}</h1>
-      <p className="text-lg text-zinc-500 leading-7">{description}</p>
+      <p className="text-lg text-zinc-500 leading-7" title={localizedDescription === description ? undefined : description}>{localizedDescription}</p>
       <div className="flex items-center gap-3">
         {onEdit === undefined ? null : (
           <button
@@ -134,8 +138,8 @@ export function Card({
               event.stopPropagation();
               onEdit();
             }}
-            aria-label="编辑项目"
-            title="编辑项目"
+            aria-label={t("card.edit")}
+            title={t("card.edit")}
             className="relative z-10 -ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 opacity-0 transition duration-200 group-hover:text-zinc-400 group-hover:opacity-100 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-amber-400/60"
           >
             <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
@@ -149,7 +153,7 @@ export function Card({
               onDelete={() => {
                 onDelete();
               }}
-              label="删除项目"
+              label={t("card.delete")}
             />
           </span>
         )}
