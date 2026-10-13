@@ -1,7 +1,7 @@
 /**
- * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
+ * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271；背景档位 backgroundTier · Push 291；卡片水印 cardWatermark · Push 292）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
  * 未声明键保留）、读侧规范化（jsonb 是自由对象，脏数据一律收敛不抛错）、契约上限（≤ 20 组 / 名称 ≤ 20 字）、
- * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛、便签墙形状 / 收敛 / 服务端盖章。
+ * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛、便签墙形状 / 收敛 / 服务端盖章、背景档位枚举与读侧收敛、卡片水印布尔与读侧收敛。
  * 不连库：仓储用内存替身（与 admin-audit.test.ts 同口径）；契约 schema 直接解析校验。
  */
 import { readFileSync } from "node:fs";
@@ -71,7 +71,7 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, backgroundTier: "simple", cardWatermark: true, updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
@@ -146,6 +146,45 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: false }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: "yes" }).success).toBe(false);
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: 1 }).success).toBe(false);
+  });
+
+  it("背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：只传 backgroundTier 落库、未传键保持原值；读侧白名单外回 simple", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { taskTableHiddenColumns: ["owner"], backgroundTier: "medium" }, AT);
+    expect((await service.get(USER_ID)).backgroundTier).toBe("medium");
+    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ taskTableHiddenColumns: ["owner"], backgroundTier: "medium" });
+    const after = await service.update(USER_ID, { homeSavedFilters: [filterOf(1)] }, AT);
+    expect(after.backgroundTier).toBe("medium");
+    expect(after.taskTableHiddenColumns).toEqual(["owner"]);
+    expect((await service.update(USER_ID, { backgroundTier: "simple" }, AT)).backgroundTier).toBe("simple");
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { backgroundTier: "neon" }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).backgroundTier).toBe("simple");
+  });
+
+  it("背景档位契约：枚举 simple / medium / vivid 通过，未知档位 / 非字符串 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ backgroundTier: "simple" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ backgroundTier: "medium" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ backgroundTier: "vivid" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ backgroundTier: "neon" }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ backgroundTier: true }).success).toBe(false);
+  });
+
+  it("卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：只传 cardWatermark 落库、未传键保持原值；读侧非布尔回默认 true", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { cardWatermark: false }, AT);
+    expect((await service.get(USER_ID)).cardWatermark).toBe(false);
+    expect(repo.rows.get(USER_ID)?.prefs).toEqual({ cardWatermark: false });
+    expect((await service.update(USER_ID, { focusMode: true }, AT)).cardWatermark).toBe(false);
+    expect((await service.update(USER_ID, { cardWatermark: true }, AT)).cardWatermark).toBe(true);
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { cardWatermark: "off" }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).cardWatermark).toBe(true);
+  });
+
+  it("卡片水印契约：布尔通过，字符串 / 数字 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ cardWatermark: true }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ cardWatermark: false }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ cardWatermark: "off" }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ cardWatermark: 0 }).success).toBe(false);
   });
 
   it("工作台展开态（A31 · Push 233）：只传 workspaceOpenProjects 落库、整体替换；两标签各自独立", async () => {
