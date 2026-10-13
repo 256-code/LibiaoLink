@@ -11,7 +11,7 @@ import { FileRepository, type FileRow, type FileVersionRow } from "./file.reposi
 import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
-import { isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
+import { isCadFile, isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
@@ -90,6 +90,12 @@ export class PreviewReadService {
     // S6-前置（D6）：图片 → 原对象短时签名直签（优先于产物通道判定：不投任务 / 不落产物行 / 不经 deploy/preview）。
     if (isImageFile({ fileName: channelName, mime: version.mime })) {
       return this.serveImageDirect(file, version);
+    }
+
+    // ADR-031（2026-10-13）：CAD 三维族 → 原对象短时签名直签（与图片直签同口径：浏览器端 occt WASM /
+    // three.js Loader 解析渲染，不投转换任务、不落产物行；dwg / dxf 二维走转换管线，另行落地）。
+    if (isCadFile({ fileName: channelName, mime: version.mime })) {
+      return this.serveCadDirect(file, version);
     }
 
     const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
@@ -234,8 +240,35 @@ export class PreviewReadService {
   }
 
   /**
+   * CAD 三维直签 ready（ADR-031 · 2026-10-13）：与图片直签同口径 —— 原对象短时签名直出（status=ready、
+   * target=image —— 契约 FilePreviewResponse.target 渲染通道枚举按「浏览器渲染方式」定义，三维模型在浏览器
+   * WebGL 渲染、前端按 kind=cad3d 分流到 CadViewer 组件）；pipelineVersion / generatedAt 空（无产物语义）；
+   * 不查 / 不落产物行、不投转换任务（解析在浏览器端 occt WASM / three.js Loader 完成）。不写审计（Push 283 口径）。
+   */
+  private async serveCadDirect(
+    file: FileRow,
+    version: FileVersionRow,
+  ): Promise<FilePreviewResponse> {
+    const signed = await this.storage.signDownloadUrl({
+      objectKey: version.objectKey,
+      expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
+    });
+    return {
+      fileId: file.id,
+      versionId: version.id,
+      status: "ready",
+      target: "image",
+      viewer: null,
+      url: signed.url,
+      expiresAt: signed.expiresAt.toISOString(),
+      pipelineVersion: null,
+      reason: null,
+      generatedAt: null,
+    };
+  }
+
+  /**
    * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token），**不写审计**（Push 283 起操作日志
-   * 不记录预览动作；受控端点拉取是服务间行为、本就不落用户审计）。与产物通道互斥：
    * `target` / `url` / `expiresAt` / `pipelineVersion` / `generatedAt` 全空（查看器不产产物、不占缓存三元组）；
    * `document.url` = 受控端点绝对 URL（C1：与校验侧同源生成、不信任 Host 头；不含任何存储凭证）；
    * `document.key` = 内容哈希（同内容同 key —— DocServer 侧会话 / 缓存复用）。
