@@ -102,6 +102,8 @@ export const EnvSchema = z
     OUTBOX_ALERT_DEAD_RECENT_MAX: z.coerce.number().int().min(1).max(100000).default(1),
     /** 死信「近期」窗口（毫秒）。 */
     OUTBOX_ALERT_DEAD_WINDOW_MS: z.coerce.number().int().min(60000).max(86400000).default(3600000),
+    /** 管理员告警群 chatid（企微智能机器人；空 = 告警仅回退结构化日志 —— OUTBOX_ALERT_SINK 出口选择）。 */
+    OUTBOX_ALERT_WECOM_CHATID: z.string().default(""),
     /** done 行保留期（天；ADR-005 约 90 天）。 */
     OUTBOX_DONE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
     /** 单批删除条数（清理循环每批上限）。 */

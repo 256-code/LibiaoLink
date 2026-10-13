@@ -3,6 +3,8 @@ import { ClockService } from "../../common/clock/clock.service.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { IdentityModule } from "../identity/index.js";
+import { NotifyAppRepository } from "./notify.app.repository.js";
+import { NotifyAppService } from "./notify.app.service.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyGroupService } from "./notify.group.service.js";
 import { NotifyController } from "./notify.controller.js";
@@ -11,6 +13,7 @@ import { NotifyService } from "./notify.service.js";
 import { NotifyStreamPublisher } from "./notify.stream.publisher.js";
 import { NotifyStreamService } from "./notify.stream.service.js";
 import { createWecomAibotClientFromEnv, WecomAibotClient } from "./wecom.aibot.js";
+import { createWecomClientFromEnv, WecomClient } from "./wecom.client.js";
 import { PgRateWindowStore } from "./wecom.rate.pg.js";
 
 /**
@@ -22,6 +25,8 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
  * `NotifyStreamPublisher` 供投递 / 标记在事务内 pg_notify（worker 写方同样生效，api 各实例桥到本地连接）。
  * 群通道（M5-03-2 接线段）：`NotifyGroupService` 消费 `notify.group`（worker 注册表）+ 回调 ingest；
  * `WecomAibotClient` 由工厂装配（api 侧构造不建连；worker 侧入口显式 `start()`）。
+ * 应用消息（M5-03-3）：`NotifyAppService` 消费 `notify.message` 的 channel=wecom_app 分支（OutboxModule 路由）；
+ * `WecomClient`（自建应用）由工厂装配，限速计数同走 `PgRateWindowStore`。
  */
 @Module({
   imports: [IdentityModule],
@@ -33,6 +38,8 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     NotifyStreamService,
     NotifyGroupRepository,
     NotifyGroupService,
+    NotifyAppRepository,
+    NotifyAppService,
     PgRateWindowStore,
     {
       // 群通道长连接客户端（M5-03-2 接线段）：构造不建连（start() 由 worker 启动流程显式调用）；
@@ -42,8 +49,15 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
         createWecomAibotClientFromEnv(config.env, { store: new PgRateWindowStore(database) }).aibot,
       inject: [AppConfig, DatabaseService],
     },
+    {
+      // 自建应用消息客户端（M5-03-3）：token 单飞缓存 + app 限速桶；构造无副作用（无后台任务）。
+      provide: WecomClient,
+      useFactory: (config: AppConfig, database: DatabaseService) =>
+        createWecomClientFromEnv(config.env, { store: new PgRateWindowStore(database) }).client,
+      inject: [AppConfig, DatabaseService],
+    },
     ClockService,
   ],
-  exports: [NotifyService, NotifyGroupService, WecomAibotClient],
+  exports: [NotifyService, NotifyGroupService, NotifyAppService, WecomAibotClient, WecomClient],
 })
 export class NotifyModule {}

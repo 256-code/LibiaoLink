@@ -1,7 +1,7 @@
 /**
  * 企微错误分类回归（M5-03-1 · S8-1；M5-03-2 群通道码表切换为智能机器人）：errcode 表（app / group）、
  * 846607 双语义分流、HTTP 状态兜底、网络错误描述掩码。
- * 口径：docs/M5-03-实施方案(企微通道).md §五（5.3A Spike 实测码表）；错误码集合为初始集（M5-03-4 锁定的回归基线）。
+ * 口径：docs/M5-03-实施方案(企微通道).md §五（5.3A Spike 实测码表）；错误码集合为初始集（M5-03-4 锁定的回归基线；93001 移出群已锁 · T3-6 2026-10-13）。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -28,9 +28,10 @@ describe("企微错误分类（M5-03-1 · S8-1）", () => {
     expect(classifyWecomErrcode("wecom_app", -1)).toBe("retryable");
   });
 
-  it("group（智能机器人）：853000 / 846601 → permanent；846609 → retryable", () => {
+  it("group（智能机器人）：853000 / 846601 / 93001 → permanent；846609 → retryable", () => {
     expect(classifyWecomErrcode("wecom_group", 853000)).toBe("permanent"); // bot_id / secret 无效
     expect(classifyWecomErrcode("wecom_group", 846601)).toBe("permanent"); // 未开长连接模式
+    expect(classifyWecomErrcode("wecom_group", 93001)).toBe("permanent"); // 机器人被移出群（T3-6 实测）
     expect(classifyWecomErrcode("wecom_group", 846609)).toBe("retryable"); // 未订阅
   });
 

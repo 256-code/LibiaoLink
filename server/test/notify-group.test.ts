@@ -9,6 +9,7 @@ import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import type { NotifyDeliveryInsert, WecomGroupRow } from "../src/modules/notify/notify.group.repository.js";
 import {
   composeGroupMarkdown,
+  GROUP_DEGRADE_PREFIX,
   GROUP_MARKDOWN_MAX_BYTES,
   GROUP_TRUNCATION_SUFFIX,
   maskChatid,
@@ -39,6 +40,7 @@ class FakeGroupRepository {
   groups: WecomGroupRow[] = [];
   deliveries: NotifyDeliveryInsert[] = [];
   activateCalls: { chatid: string; at: Date }[] = [];
+  managers = new Map<string, string>();
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
     return this.groups.find((row) => row.projectId === projectId) ?? null;
@@ -56,6 +58,10 @@ class FakeGroupRepository {
     }
     row.activatedAt = at;
     return row;
+  }
+
+  async findProjectManagerId(projectId: string): Promise<string | null> {
+    return this.managers.get(projectId) ?? null;
   }
 
   async insertDelivery(input: NotifyDeliveryInsert): Promise<void> {
@@ -77,13 +83,37 @@ class FakeAibot {
   }
 }
 
-function makeService(): { service: NotifyGroupService; repo: FakeGroupRepository; aibot: FakeAibot } {
+/** C5-04 降级站内信替身（NotifyService.deliverInboxCopy 端口）。 */
+class FakeNotifyInbox {
+  copies: { message: Record<string, unknown>; topic: string; dedupeKey: string }[] = [];
+  fail = false;
+
+  async deliverInboxCopy(
+    message: Record<string, unknown>,
+    topic: string,
+    dedupeKey: string,
+  ): Promise<{ duplicate: boolean }> {
+    if (this.fail) {
+      throw new Error("fake 站内信写库失败");
+    }
+    this.copies.push({ message, topic, dedupeKey });
+    return { duplicate: false };
+  }
+}
+
+function makeService(): {
+  service: NotifyGroupService;
+  repo: FakeGroupRepository;
+  aibot: FakeAibot;
+  inbox: FakeNotifyInbox;
+} {
   const repo = new FakeGroupRepository();
   const aibot = new FakeAibot();
+  const inbox = new FakeNotifyInbox();
   const clock = new ClockService();
   clock.setSource(() => AT);
-  const service = new NotifyGroupService(repo as never, aibot as unknown as WecomAibotClient, clock);
-  return { service, repo, aibot };
+  const service = new NotifyGroupService(repo as never, aibot as unknown as WecomAibotClient, inbox as never, clock);
+  return { service, repo, aibot, inbox };
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -229,39 +259,76 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(repo.deliveries[0]).toMatchObject({ state: "failed", attempts: 0, sentAt: null });
   });
 
-  it("permanent（846607 未激活）：dead 行 + dead（降级 B4 随 M5-03-3）", async () => {
-    const { service, repo, aibot } = makeService();
+  it("permanent（846607 未激活）：dead 行 + dead + B4 降级项目经理站内信（播报类型 + 幂等键后缀）", async () => {
+    const { service, repo, aibot, inbox } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+    repo.managers.set(PROJECT_ID, PROJECT_2);
     aibot.result = { ok: false, kind: "permanent", errcode: 846607, errmsg: "send msg not allowed", retryAt: null, attempts: 1, state: "subscribed" };
 
-    const outcome = await service.consume(claimedRow(payload()));
+    const outcome = await service.consume(claimedRow(payload({ templateCode: "A02_GROUP" })));
 
     expect(outcome).toMatchObject({ outcome: "dead" });
     if (outcome.outcome === "dead") {
       expect(outcome.error).toContain("846607");
     }
     expect(repo.deliveries[0]).toMatchObject({ state: "dead", attempts: 1, sentAt: null });
+    expect(inbox.copies).toHaveLength(1);
+    expect(inbox.copies[0]!.topic).toBe("notify.group");
+    expect(inbox.copies[0]!.dedupeKey).toBe("R03:t-1:2026-09-24:c504");
+    expect(inbox.copies[0]!.message).toMatchObject({ recipientId: PROJECT_2, type: "broadcast" });
+    expect(String(inbox.copies[0]!.message.body).startsWith(GROUP_DEGRADE_PREFIX)).toBe(true);
   });
 
-  it("无绑定：dead 且不写投递行（target NOT NULL 无值可落 · 差异登记②）", async () => {
-    const { service, repo, aibot } = makeService();
+  it("无绑定：dead + 不写投递行（target NOT NULL 无值可落 · 差异登记②）+ B4 降级项目经理站内信", async () => {
+    const { service, repo, aibot, inbox } = makeService();
+    repo.managers.set(PROJECT_ID, PROJECT_2);
 
     const outcome = await service.consume(claimedRow(payload()));
 
     expect(outcome).toMatchObject({ outcome: "dead" });
     expect(repo.deliveries).toEqual([]);
     expect(aibot.sends).toEqual([]);
+    expect(inbox.copies).toHaveLength(1);
+    expect(inbox.copies[0]!.message).toMatchObject({ recipientId: PROJECT_2, type: "reminder" });
   });
 
-  it("绑定停用：dead 行（target=chatid）+ dead，不发送", async () => {
-    const { service, repo, aibot } = makeService();
+  it("绑定停用：dead 行（target=chatid）+ dead，不发送 + B4 降级", async () => {
+    const { service, repo, aibot, inbox } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, enabled: false }));
+    repo.managers.set(PROJECT_ID, PROJECT_2);
 
     const outcome = await service.consume(claimedRow(payload()));
 
     expect(outcome).toMatchObject({ outcome: "dead" });
     expect(repo.deliveries[0]).toMatchObject({ state: "dead", target: CHATID, attempts: 0 });
     expect(aibot.sends).toEqual([]);
+    expect(inbox.copies).toHaveLength(1);
+  });
+
+  it("降级：PM 解析不到（项目软删 / 不存在）→ 跳过站内信，仍 dead", async () => {
+    const { service, repo, aibot, inbox } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+    aibot.result = { ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" };
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect(inbox.copies).toEqual([]);
+  });
+
+  it("降级站内信写库失败：retry 收敛（不静默丢消息）", async () => {
+    const { service, repo, aibot, inbox } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+    repo.managers.set(PROJECT_ID, PROJECT_2);
+    aibot.result = { ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" };
+    inbox.fail = true;
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "retry" });
+    if (outcome.outcome === "retry") {
+      expect(outcome.error).toContain("降级站内信失败");
+    }
   });
 
   it("非法载荷：dead（不读绑定、不发送）", async () => {
