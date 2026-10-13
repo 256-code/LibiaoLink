@@ -3,7 +3,13 @@ import { firstValueFrom, of, throwError } from "rxjs";
 import { changedResources, ResourceChangeInterceptor } from "../src/common/realtime/resource-change.js";
 import { ResourceChangePublisher } from "../src/modules/notify/resource-change.publisher.js";
 import { NotifyStreamWireSchema } from "../src/modules/notify/notify.stream.js";
-import { keepLiveOrder, RefreshQueue } from "../../frontend/src/liveSync.ts";
+
+// Load browser code at test runtime; server compilation has no DOM library.
+const clientSyncUrl = new URL("../../frontend/src/liveSync.ts", import.meta.url).href;
+const { keepLiveOrder, RefreshQueue } = await import(clientSyncUrl) as {
+  keepLiveOrder<T extends { id: string | number }>(previous: readonly T[], next: readonly T[]): T[];
+  RefreshQueue: new (read: () => Promise<() => void>, paused?: () => boolean, revision?: () => number) => { request(): void; dispose(): void };
+};
 
 afterEach(() => vi.useRealTimers());
 

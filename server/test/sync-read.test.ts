@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { apiRequest, readAllPages } from "../../frontend/src/api.ts";
 import { AuditRepository } from "../src/modules/audit/audit.repository.js";
+
+// Browser modules are exercised by Vitest without extending server compilation.
+const clientApiUrl = new URL("../../frontend/src/api.ts", import.meta.url).href;
+const { apiRequest, readAllPages } = await import(clientApiUrl) as {
+  apiRequest<T>(path: string, init?: RequestInit): Promise<T>;
+  readAllPages<T>(path: string): Promise<{ items: T[]; total: number }>;
+};
 
 afterEach(() => vi.unstubAllGlobals());
 
