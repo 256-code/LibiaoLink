@@ -41,9 +41,6 @@ export type ProjectFacets = {
 
 export const EMPTY_FACETS: ProjectFacets = { total: 0, region: {}, projectType: {}, managerId: {}, stageKey: {}, status: {} };
 
-/** 列表一次取满（契约 limit 上限 200）；总数用响应 total，超出时页面另提示。 */
-export const PROJECT_PAGE_LIMIT = 200;
-
 /**
  * 计数分组的维度：侧栏各组各自排除自己那一维、其余条件照常参与 ——
  * 选中「华东」后其它地区仍显示各自计数（不是一律 0），项目类型 / 项目经理 / 项目状态计数则跟着收窄。

@@ -11,8 +11,8 @@
  * 我的任务不就好了」（任务表行口径照项目页任务表）→「这些字段一个不能少懂吗」（Push 231：任务表 = 项目页任务表
  * 全 15 列 —— 任务描述 / 项目经理 / 任务负责人 / 任务状态 / 紧急重要度 / 是否按时交付 / 输出成果文件 / 文件 /
  * 项目进展描述 / 开始日期 / 预计所需天数（窄列，表头空）/ 预计完成日期 / 预计所需施工人数 / 实际完成日期 / 变更关联）。
- * 表与项目页任务表逐列对齐（Push 279 起**行内可编辑** —— 读面本身不带任务 version，编辑能力由 useTaskFull 回填行接上，
- * 见文末 Push 279 段）。折叠面板头常驻**「进入项目」**按钮
+ * 表与项目页任务表逐列对齐（Push 279 起**行内可编辑**；Push 302 起行数据 = 聚合读面随行全字段，带 version）。
+ * 折叠面板头常驻**「进入项目」**按钮
  * （Push 232 · 业务口径「增加进入项目按钮」）：落点由调用方给定 —— 「我的任务」= 项目详情缺省标签「项目总览」
  * `#/project/{id}`；「我提出的问题」= 该项目「日报及问题 → 问题追踪」（Push 253 起，见下条；Push 242 时为该页
  * 「日报记录」）；按钮在面板头右侧、不参与展开收起。
@@ -38,12 +38,11 @@
  * - 读面 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）—— 跨项目个人读面，仅会话、无项目路径参数。
  *   四组任务并进本页「按项目」折叠面板：项目顺序 = 组序（已逾期 → 今日待办 → 即将到期 → 未排期）里的首次出现顺序
  *   （最急的在最上），组内保持服务端 plannedEnd 升序；分组 / 排序全由服务端给定，本页不做任何本地日期推导。
- * - 任务表 15 列里聚合读面只带 9 列：项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 按时交付（onTime）/
- *   变更关联**不在 A31 第一刀里** —— 按项目向源接口（GET /projects/{id}/tasks + GET /projects/{id}）回填，
- *   按任务 / 项目 id 对齐（任务表要全，见 useTaskFull）。
- * - 「我提出的问题 / 待我处理的问题」五列（日期 / 描述 / 归类 / 处理人 / 状态）来自聚合读面；**「解决方案或建议 /
- *   问题附图」不在 A31 第一刀里** —— 按项目向源接口（GET /api/v1/projects/{id}/issues）回填，按问题 id 对齐
- *   （问题表要全，见 useIssueFull）。
+ * - 任务表 15 列 / 问题表七列的数据源**全在聚合读面本身**（Push 302 · 2026-10-13 全字段修订）：任务项 = 任务表全字段
+ *   （含成果文件 / 文件摘要与文件名清单 / 进展描述 / 天数 / 人数 / 按时交付 / 变更关联 / version），问题项随行
+ *   solution / photos，另带 projects（涉及项目卡，「项目经理」列与项目经理回写用）—— 首屏一次到位、无分批出现。
+ *   Push 302 之前那套逐项目回填（按项目再打 /projects/{id}/tasks + /projects/{id} + 文件清单 + /projects/{id}/issues
+ *   五路补齐扩列，未命中行降级只读）已整体删除。
  *
  * Push 260（业务口径 2026-10-09「在我提出的问题增加子标签导航栏 和日报那样 增加待我处理的问题」+「页面中的信息
  * 要包括图二的人员信息」+「问题是否解决的颜色要统一和项目里面的一致」+「我处理的问题就是提出问题里面分类的问题」
@@ -72,8 +71,8 @@
  * Push 278（业务口径 2026-10-12「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」）：「我的任务」任务表
  * 行**点击即开任务抽屉**（右侧滑出，与项目页同一枚 TaskDrawer）—— 全能力即时保存：项目经理（项目级回写项目）/
  * 任务负责人 / 日期区间（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 / 输出成果文件 / 四格进度 / 任务状态 /
- * 实际完成日期 / 定档与取消定档 / 文件上传 · 删除 · 改名 / 变更申请与变更记录两页；数据源 = useTaskFull 回填行
- * （带 version，打开零新增请求；行不在回填里时按 id 单查兜底）；写入口径与项目页逐一对齐（同一套 updateTask /
+ * 实际完成日期 / 定档与取消定档 / 文件上传 · 删除 · 改名 / 变更申请与变更记录两页；数据源 = 聚合读面全字段行
+ * （Push 302；带 version，打开零新增请求）；写入口径与项目页逐一对齐（同一套 updateTask /
  * updateTaskProgress / finalizeTask / unfinalizeTask / 文件三件 + 项目经理 updateProject），写后防抖静默刷新
  * 聚合读面（不打断抽屉 —— 抽屉内 task 用写回响应就地更新、version 滚动前进）。任务级深链 `?task=`（跳项目页开
  * 抽屉的地址形态）仍不做：页内抽屉已覆盖「一键编辑」，深链属可分享地址增强、业务未提。
@@ -81,13 +80,17 @@
  * Push 279（业务口径 2026-10-12「不用点开抽屉也要可以编辑」→「和项目总览一样」）：任务表的**行**从只读自绘壳换成
  * 项目页那枚 TaskRow —— 行内逐列可编辑（四格进度 / 项目经理 / 负责人 / 状态 / 紧急重要度 / 成果文件 /「文件」
  * 列下拉（预览 · 上传 · 删除）/ 进展描述 / 三段日期 / 人数；天数随日期联动写回、不单独开编辑，与项目页同口径），
- * 点行照旧开右侧抽屉；行数据 = useTaskFull 回填行（带 version），写后按响应就地更新 + 防抖静默刷新
- * （回填一到本地覆盖即让位）；该项目源接口没取到 = 该行降级只读（fallbackTaskOf），点行仍可开抽屉
- * （抽屉内按 id 单查后照常编辑）。
+ * 点行照旧开右侧抽屉；行数据 = 聚合读面全字段行（带 version），写后按响应就地更新 + 防抖静默刷新
+ * （刷新一到本地覆盖即让位）。
+ *
+ * Push 302（2026-10-13 全字段修订 · 契约 shared/src/modules/workspace.ts 同批扩字段；业务口径「我的任务刷新 为什么会
+ * 卡顿再出现一些字段和ui」的根治）：聚合读面由 9 列抽取面补成任务表全字段 + 问题七列全字段 + 涉及项目卡 ——
+ * 本页删除 useTaskFull / useIssueFull 两段逐项目回填与只读降级行 fallbackTaskOf，行内编辑判定不再看「回填是否命中」，
+ * 首屏即完整可编辑（状态列色框不再先无后有）。
  */
 import { useEffect, useRef, useState } from "react";
 import { keepLiveOrder } from "./liveSync";
-import { useLiveRefresh, useQueuedRefresh } from "./useLiveRefresh";
+import { useLiveRefresh } from "./useLiveRefresh";
 import { createPortal } from "react-dom";
 import type { CSSProperties, ReactNode } from "react";
 import { ApiError } from "./api";
@@ -101,13 +104,13 @@ import { MyPlanBoard } from "./components/MyPlanBoard";
 import { TaskDrawer, type TaskEditSubmit } from "./components/TaskDrawer";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_TINT, ISSUE_ROW_TINT_VIVID, ISSUE_TAG_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
 import { TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, taskPatchBody, type ColumnDef, type TaskPatch } from "./components/TaskBoard";
-import { TEMP_TASK_STAGE, daysBetweenInclusive, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import { memberNameOf, type Member } from "./data/members";
 import type { IssueState, ReportPhoto } from "./data/reports";
-import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
-import { fetchProject, updateProject, type ApiProject } from "./projectApi";
-import { fetchProjectIssues, ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
-import { displayStatusLabel, fetchProjectTasks, fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask, type ApiTaskListItem } from "./taskApi";
+import { recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
+import { updateProject, type ApiProject } from "./projectApi";
+import { ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
+import { fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask } from "./taskApi";
 import { prefetchZhToEn } from "./translateApi";
 import { fieldText, fullDateText, stageText, useLocale, useLocalizedTranslator, useT, workspaceLabelText } from "./i18n";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
@@ -209,188 +212,9 @@ function groupIssuesByProject(issues: readonly ApiWorkspaceIssue[]): ProjectIssu
   return Array.from(byProject.values());
 }
 
-/** 「解决方案或建议 / 问题附图」两列的数据不在工作台聚合读面（A31 第一刀）里 —— 逐项目向源接口
- *  （GET /projects/{id}/issues，一次取满 limit=200）回填、按问题 id 对齐；单个项目取不到不挡全页：
- *  初次取不到的两列落「—」，后续补取失败保留已有值；标题行给一句 partial 提示。 */
-type IssueFull = { solution: string; photos: ReportPhoto[] };
-
-function useIssueFull(issues: readonly ApiWorkspaceIssue[]): { full: Map<string, IssueFull>; partial: boolean } {
-  const [full, setFull] = useState<Map<string, IssueFull>>(new Map());
-  const [partial, setPartial] = useState(false);
-  useQueuedRefresh(async () => {
-    if (issues.length === 0) {
-      return () => { setFull(new Map()); setPartial(false); };
-    }
-    const projectIds = Array.from(new Set(issues.map((issue) => issue.projectId)));
-    const results = await Promise.all(
-      projectIds.map(async (projectId) => {
-        try {
-          return { projectId, list: await fetchProjectIssues(projectId) };
-        } catch {
-          return { projectId, list: null };
-        }
-      }),
-    );
-    const next = new Map<string, IssueFull>();
-    let failed = 0;
-    for (const result of results) {
-      if (result.list === null) {
-        failed += 1;
-        continue;
-      }
-      for (const item of result.list) {
-        next.set(item.id, { solution: item.solution, photos: item.photos });
-      }
-    }
-    const failedProjects = new Set(results.filter((result) => result.list === null).map((result) => result.projectId));
-    return () => {
-      setFull((previous) => {
-        for (const issue of issues) {
-          const retained = previous.get(issue.id);
-          if (failedProjects.has(issue.projectId) && retained !== undefined) next.set(issue.id, retained);
-        }
-        return next;
-      });
-      setPartial(failed > 0);
-    };
-  }, issues);
-  return { full, partial };
-}
-
-/** 「我的任务」任务表扩列（Push 231 · 业务口径「这些字段一个不能少」）：项目页任务表 15 列里，
- *  工作台聚合读面（A31 第一刀）只带 9 列 —— 项目经理 / 输出成果文件 / 文件 / 项目进展描述 / 预计所需天数 /
- *  预计所需施工人数 / 是否按时交付（onTime）/ 变更关联不在那里。按项目向源接口回填
- *  （GET /projects/{id}/tasks 一次取满 + GET /projects/{id} 取项目经理名），按任务 id / 项目 id 对齐；
- *  单个项目取不到不挡全页：初次对应列落「—」，后续保留已有值；标题行给 partial 提示。
- *  Push 279 起同批把「文件」列的清单（fetchTaskFiles）一起回填 —— 行内那一列要项目页同款的下拉入口。 */
-type TaskFull = {
-  /** 任务 id → 列表行（含 ownerNames / fileSummary / deliverableTypes / note / estimatedDays / headcount / onTime / changeLinks / version）。 */
-  detail: Map<string, ApiTaskListItem>;
-  /** 项目 id → 项目卡（Push 278：managerNames 供「项目经理」列与抽屉展示、managerIds + version 供抽屉项目经理多选与项目级回写；未取到 = 无该键）。 */
-  projects: Map<string, ApiProject>;
-  /** 任务 id → 随行文件引用（Push 279 · 行内「文件」列下拉 = 项目页同款 fetchTaskFiles 按项目全量）：未取到 = 无该键，
-   *  该格退回「N 份」计数（文件是次要信息，取不到不算 partial）。 */
-  files: Map<string, TaskFileRef[]>;
-};
-
-function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; ready: boolean } {
-  const [full, setFull] = useState<TaskFull>(() => ({ detail: new Map(), projects: new Map(), files: new Map() }));
-  const [partial, setPartial] = useState(false);
-  /** 回填是否跑完（成功 / 失败都算跑完）：e2e 的等待锚点；跑完前对应列先按「—」渲染。 */
-  const [ready, setReady] = useState(false);
-
-  /**
-   * 「写进展描述即后台翻译」（业务口径 2026-10-13 · §6.16 ㉑）：回填 / 写后刷新带来的任务行一到，
-   * 就把非空进展描述丢进译文缓存后台预热 —— 工作台里改的描述，稍后到项目页导出不用再等机器翻译。
-   * 同日追订（「因为页面有些内容是手打的 我建议是提前后台机翻」）：任务名一并预热，切英文即得译文。
-   */
-  useEffect(() => {
-    const rows = Array.from(full.detail.values());
-    prefetchZhToEn([
-      ...rows.map((row) => row.note ?? ""),
-      ...rows.map((row) => row.title),
-      ...Array.from(full.projects.values()).map((project) => project.name),
-    ]);
-  }, [full]);
-  useQueuedRefresh(async () => {
-    const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
-    if (all.length === 0) {
-      return () => { setFull({ detail: new Map(), projects: new Map(), files: new Map() }); setPartial(false); setReady(true); };
-    }
-    // Push 278：重跑（写后静默刷新触发的重取）不再回落 ready —— 旧值在列上不闪「—」，新数据到了直接替换。
-    const projectIds = Array.from(new Set(all.map((task) => task.projectId)));
-    const results = await Promise.all(
-      projectIds.map(async (projectId) => {
-        const [taskList, project, fileMap] = await Promise.all([
-          fetchProjectTasks(projectId).then((result) => result.items).catch(() => null),
-          fetchProject(projectId).catch(() => null),
-          // 行内「文件」列（Push 279）：与项目页同一个清单接口（按项目全量取满、taskId → 文件引用）。
-          fetchTaskFiles(projectId).catch(() => null),
-        ]);
-        return { projectId, taskList, project, fileMap };
-      }),
-    );
-    const detail = new Map<string, ApiTaskListItem>();
-    const projects = new Map<string, ApiProject>();
-    const files = new Map<string, TaskFileRef[]>();
-    let failed = 0;
-    for (const result of results) {
-      if (result.taskList === null) {
-        failed += 1;
-      } else {
-        for (const item of result.taskList) {
-          detail.set(item.id, item);
-        }
-      }
-      if (result.project === null) {
-        failed += 1;
-      } else {
-        projects.set(result.projectId, result.project);
-      }
-      if (result.fileMap !== null) {
-        for (const [taskId, refs] of result.fileMap) {
-          files.set(taskId, refs);
-        }
-      }
-    }
-    const apply = () => {
-      setFull((previous) => {
-        for (const result of results) {
-          if (result.project === null) {
-            const retained = previous.projects.get(result.projectId);
-            if (retained !== undefined) projects.set(result.projectId, retained);
-          }
-          for (const task of all.filter((item) => item.projectId === result.projectId)) {
-            const retainedDetail = previous.detail.get(task.id);
-            const retainedFiles = previous.files.get(task.id);
-            if (result.taskList === null && retainedDetail !== undefined) detail.set(task.id, retainedDetail);
-            if (result.fileMap === null && retainedFiles !== undefined) files.set(task.id, retainedFiles);
-          }
-        }
-        return { detail, projects, files };
-      });
-      setPartial(failed > 0);
-      setReady(true);
-    };
-    return apply;
-  }, data);
-  return { full, partial, ready };
-}
-
-/** 行内编辑的降级行（Push 279）：该项目任务源接口没取到时（回填没命中 —— 没有 version，写不了），用聚合读面
- *  自带的字段组一条**只读** ProjectTask —— 项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 按时交付 /
- *  变更关联这些扩列落「—」（与扩列回填失败时的旧口径一致）；点行仍可开抽屉（抽屉内按 id 单查后照常编辑）。 */
-function fallbackTaskOf(task: ApiWorkspaceTask): ProjectTask {
-  const startDate = task.plannedStart ?? "";
-  const dueDate = task.plannedEnd ?? "";
-  return {
-    id: task.id,
-    nodeId: null,
-    sourceNodeId: null,
-    stageKey: task.stageKey,
-    stage: stageNameOf(task.stageKey),
-    sortIndex: 0,
-    title: task.title,
-    titleEn: task.titleEn ?? "",
-    ownerIds: [...task.ownerIds],
-    owners: task.ownerNames.map((name) => (name === null || name === "" ? "—" : name)),
-    status: displayStatusLabel(task.displayStatus),
-    progress: task.progress,
-    startDate,
-    dueDate,
-    doneDate: task.actualEnd ?? "",
-    days: startDate !== "" && dueDate !== "" ? daysBetweenInclusive(startDate, dueDate) : 0,
-    deliverableTypes: [],
-    files: { total: 0, draft: 0, final: 0 },
-    changes: [],
-    onTime: null,
-    note: "",
-    headcount: 0,
-    priority: task.priority === "高" || task.priority === "中" || task.priority === "低" ? task.priority : null,
-    version: 0,
-    finalizedAt: null,
-  };
-}
+/** 2026-10-13 全字段修订（Push 302）：原「解决方案 / 问题附图」逐项目回填（useIssueFull）与「任务表扩列」
+ *  逐项目回填（useTaskFull）+ 只读降级行（fallbackTaskOf）随聚合读面全字段化整体删除 ——
+ *  任务 15 列 / 问题七列的数据源现在都在 GET /api/v1/workspace 一次下发里，首屏即完整、行内编辑直接吃随行 version。 */
 
 /** 折叠面板（业务口径「未展开是项目名称和编号 下拉是具体我的任务」「也是折叠面板」）：
  *  收起 = 项目名称 + 编号（+ 右侧摘要 + 「进入项目」按钮）；展开 = 该项目下的内容（任务表 / 问题表）。
@@ -478,8 +302,9 @@ function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
  *  Push 279（业务口径 2026-10-12「不用点开抽屉也要可以编辑」→「和项目总览一样」）：行不再是只读自绘壳 ——
  *  直接用项目页那枚 TaskRow（行内逐列可编辑：四格进度 / 项目经理 / 负责人 / 状态 / 紧急重要度 / 成果文件 /
  *  「文件」列下拉（预览 · 上传 · 删除）/ 进展描述 / 三段日期 / 人数；天数随日期联动写回、不单独开编辑），
- *  点行仍开右侧任务抽屉（onSelect）。行数据 = useTaskFull 回填行（带 version，能写）；回填没命中
- *  （该项目任务源接口没取到）= 该行降级只读（fallbackTaskOf），点行仍可开抽屉（抽屉内按 id 单查后照常编辑）。
+ *  点行仍开右侧任务抽屉（onSelect）。
+ *  Push 302（2026-10-13 全字段修订）：行数据 = 聚合读面随行全字段（带 version），不再有「回填命中才可编辑」的
+ *  降级概念 —— 首屏行即完整可编辑；项目经理列吃随行项目卡（project），「文件」列清单吃行上的 files。
  *  行外壳保留工作台自己的 data-workspace-task* 锚点（回放读数 / 排障），内里就是项目页的同款行。 */
 const TASK_COLUMNS: ColumnDef[] = resolveColumns({});
 
@@ -494,36 +319,31 @@ type TaskTableHandlers = {
   onDeleteFile: (fileId: string) => Promise<void>;
 };
 
-function TaskTable({ projectId, items, full, filesByTask, ready, tierTint, members, onOpenTask, rowOf, handlers }: {
+function TaskTable({ projectId, project, items, tierTint, members, onOpenTask, rowOf, handlers }: {
   projectId: string;
+  /** 随行项目卡（Push 302）：项目经理列与项目经理回写的项目级数据源。 */
+  project: ApiProject | undefined;
   items: ProjectTasks["items"];
-  /** 回填的扩展字段 / 项目卡 / 文件清单（useTaskFull）。 */
-  full: TaskFull;
-  /** 任务文件引用（useTaskFull 回填）：行内「文件」列下拉与文件名胶囊的数据源。 */
-  filesByTask: ReadonlyMap<string, TaskFileRef[]>;
-  /** 回填是否跑完（data-workspace-task-full 锚点；跑完前对应列先按「—」渲染）。 */
-  ready: boolean;
   /** 背景档位「适中」（Push 290 统一口径）：整行铺任务状态行色 + 状态列收口成深色字（口径 = 项目页 TaskBoard）。 */
   tierTint: TintedTier | false;
   /** 人员目录（任务行内「项目经理 / 负责人」多选候选；Push 279）。 */
   members: readonly Member[];
   /** 点任务行打开右侧任务抽屉（Push 278）。 */
   onOpenTask: (task: ApiWorkspaceTask) => void;
-  /** 行的当前数据（本地写回覆盖 → 回填行；undefined = 该行降级只读）。 */
+  /** 行的当前数据（本地写回覆盖 → 聚合读面全字段行；Push 302 起聚合读面即行源，undefined 仅作防御）。 */
   rowOf: (taskId: string) => ProjectTask | undefined;
   /** 行内写入（Push 279）。 */
   handlers: TaskTableHandlers;
 }) {
-  // 与项目页任务表同一套列宽口径（2026-10-10）：`fr` 列带 minmax 硬下限 + 最小宽算上行内衬 —— 窄窗下横向滚动、不压列。
+  // 与项目页任务表同一套列宽口径（2026-10-10）：fr 列带 minmax 硬下限 + 最小宽算上行内衬 —— 窄窗下横向滚动、不压列。
   const locale = useLocale();
   const gridTemplate = tableGridTemplate(TASK_COLUMNS);
   const minWidth = tableMinWidth(TASK_COLUMNS);
-  const project = full.projects.get(projectId);
   const managers = (project?.managerNames ?? []).filter((name): name is string => name !== null && name !== "").join("、");
   return (
-    <div data-workspace-task-table="" data-workspace-task-full={ready ? "true" : "false"} data-workspace-task-tint={tierTint ? "true" : "false"} className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+    <div data-workspace-task-table="" data-workspace-task-full="true" data-workspace-task-tint={tierTint ? "true" : "false"} className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
       <div className="overflow-x-auto">
-        <div style={{ minWidth: minWidth }}>
+        <div style={{ minWidth }}>
           <div
             data-workspace-task-head=""
             className="grid items-center border-b border-zinc-200 bg-zinc-50 px-5 py-2.5 text-xs font-medium text-zinc-400"
@@ -542,9 +362,9 @@ function TaskTable({ projectId, items, full, filesByTask, ready, tierTint, membe
           <div className="divide-y divide-zinc-100">
             {items.map(({ task }) => {
               const row = rowOf(task.id);
-              const ui = row ?? fallbackTaskOf(task);
-              // 回填命中（有 version）才挂行内编辑入口；降级行只读 —— 点行仍开抽屉（抽屉内单查兜底）。
-              const editable = row !== undefined;
+              const ui = row ?? toUiTask(task);
+              // Push 302：聚合读面全字段随行 —— 行内编辑入口一律就位（不再按「回填是否命中」分可编辑 / 只读两态）。
+              const fileRefs: TaskFileRef[] = task.files.map((file) => ({ id: file.id, name: file.name, status: file.status }));
               const stage = stageNameOf(task.stageKey);
               const stageLabel = stage === "" ? TEMP_TASK_STAGE : stage;
               const subtitle = locale === "en"
@@ -567,17 +387,17 @@ function TaskTable({ projectId, items, full, filesByTask, ready, tierTint, membe
                     onSelect={() => {
                       onOpenTask(task);
                     }}
-                    onProgress={editable ? (progress) => { handlers.onProgress(projectId, task.id, progress); } : undefined}
+                    onProgress={(progress) => { handlers.onProgress(projectId, task.id, progress); }}
                     managers={managers}
                     managerIds={project?.managerIds ?? []}
                     members={members}
-                    onSetStatus={editable ? (status) => { handlers.onSetStatus(projectId, task.id, status); } : undefined}
-                    onSetActualEnd={editable ? (iso) => { handlers.onSetActualEnd(projectId, task.id, iso); } : undefined}
-                    onChangeManagers={editable && project !== undefined ? (managerIds) => { handlers.onChangeManagers(projectId, managerIds); } : undefined}
-                    onPatch={editable ? (patch) => { handlers.onPatch(projectId, task.id, patch); } : undefined}
-                    onUploadFiles={editable ? (taskId, files, onProgress, finalize) => handlers.onUploadFiles(projectId, taskId, files, onProgress, finalize) : undefined}
-                    onDeleteFile={editable ? handlers.onDeleteFile : undefined}
-                    files={filesByTask.get(task.id)}
+                    onSetStatus={(status) => { handlers.onSetStatus(projectId, task.id, status); }}
+                    onSetActualEnd={(iso) => { handlers.onSetActualEnd(projectId, task.id, iso); }}
+                    onChangeManagers={project === undefined ? undefined : (managerIds) => { handlers.onChangeManagers(projectId, managerIds); }}
+                    onPatch={(patch) => { handlers.onPatch(projectId, task.id, patch); }}
+                    onUploadFiles={(taskId, files, onProgress, finalize) => handlers.onUploadFiles(projectId, taskId, files, onProgress, finalize)}
+                    onDeleteFile={handlers.onDeleteFile}
+                    files={fileRefs}
                   />
                 </div>
               );
@@ -711,9 +531,16 @@ function toIssueState(state: string): IssueState {
  *  ④ 「问题是否处理」色签改用项目页同一档壳体 ISSUE_TAG_SHELL（原先自带一档更小的壳 `rounded + px-1.5 + py-0.5`，
  *  底色 / 字色本就同源 ISSUE_TAG_CLASS，本刀把壳也收口 —— 业务口径「和项目里面的一致」）；
  *  ⑤ 「问题是否处理」列**整列居中**（业务口径「要居中这个状态」）：表头补 text-center（单元格本就是 text-center，色签在列内
- *  水平居中）—— 单元格保持 align-top 不动（与其它列同一条基线，只收水平向）。 */
+ *  水平居中）—— 单元格保持 align-top 不动（与其它列同一条基线，只收水平向）。
+ *  Push 302（2026-10-13 全字段修订）：「解决方案或建议 / 问题附图」两列改吃聚合读面随行的 solution / photos，
+ *  原「逐项目向 /projects/{id}/issues 回填」整体删除。 */
 const ISSUE_COL_WIDTHS = ["8%", "19%", "9%", "10%", "18%", "26%", "10%"] as const;
-function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; tierTint: TintedTier | false; /** 行内改状态的本地覆盖（Push 260）：按问题 id 取，同一问题在两个子视图里共用。 */ overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
+
+/** 聚合读面的问题附图（契约 FilePhotoRef）→ 展示模型（预览签名由瓦片懒取；url = null 即走 usePhotoUrl）。 */
+function photosOf(issue: ApiWorkspaceIssue): ReportPhoto[] {
+  return issue.photos.map((photo) => ({ fileId: photo.fileId, name: photo.name, url: null }));
+}
+function IssueTable({ issues, tierTint, overrides, onChangeState }: { issues: readonly ApiWorkspaceIssue[]; tierTint: TintedTier | false; /** 行内改状态的本地覆盖（Push 260）：按问题 id 取，同一问题在两个子视图里共用。 */ overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
   /** 手打内容（问题描述 / 解决方案）机翻显示：英文界面取译文，未就绪回退原文。 */
   const localize = useLocalizedTranslator();
   const t = useT();
@@ -741,7 +568,6 @@ function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issu
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => {
             const state = issueStateOf(overrides.get(issue.id)?.state ?? toIssueState(issue.state), tierTint);
-            const detail = full.get(issue.id);
             return (
               <tr key={issue.id} data-workspace-issue={issue.id} className={"align-top transition-colors " + (tierTint ? "issue-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") : "hover:bg-zinc-50/80")} style={tierTint && state.tint !== null ? ({ "--row-tint": state.tint.tint, "--row-tint-hover": state.tint.hover } as CSSProperties) : undefined}>
                 <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{fullDateText(locale, issue.raisedAt)}</td>
@@ -759,11 +585,11 @@ function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issu
                 </td>
                 <td className="px-4 py-3">
                   <span data-workspace-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">
-                    {detail === undefined || detail.solution === "" ? "—" : localize(detail.solution)}
+                    {issue.solution === null || issue.solution === "" ? "—" : localize(issue.solution)}
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <IssuePhotos photos={detail === undefined ? [] : detail.photos} />
+                  <IssuePhotos photos={photosOf(issue)} />
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-center">
                   {/* Push 260：状态列行内可改（业务口径「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」）——
@@ -814,21 +640,24 @@ function sameMemberIds(left: readonly string[], right: readonly string[]): boole
 
 /** 标签 ① 我的任务：按项目的折叠面板 + 照项目页任务表全 15 列的任务表（Push 231）。
  *  Push 278：任务行**点击开任务抽屉**（业务口径「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」）——
- *  抽屉 = 项目页同款 TaskDrawer（全能力即时保存）；数据源 = useTaskFull 回填行（带 version，打开零新增请求），
- *  行不在回填里时按 id 单查兜底；写后防抖静默刷新聚合读面（抽屉不打断：task 用写回响应就地更新、version 滚动前进）。 */
+ *  抽屉 = 项目页同款 TaskDrawer（全能力即时保存）；数据源 = 聚合读面全字段行（Push 302；带 version，打开零新增请求）；
+ *  写后防抖静默刷新聚合读面（抽屉不打断：task 用写回响应就地更新、version 滚动前进）。 */
 function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorName, onReload }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorName: string; onReload: () => void }) {
   const t = useT();
   const locale = useLocale();
   const projects = groupTasksByProject(data);
   const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length + data.myTasks.unscheduled.length;
-  const { full, partial, ready } = useTaskFull(data);
+  /** Push 302：聚合读面全字段（含项目卡）→ 按 id 索引；行数据与项目级数据都取自同一份读面，不再逐项目回填。 */
+  const allTasks = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
+  const taskById = new Map(allTasks.map((task) => [task.id, task]));
+  const projectById = new Map(data.projects.map((project) => [project.id, project]));
 
   /** 抽屉里的当前任务（含 version；null = 抽屉关着）：写回响应就地更新 —— version 滚动前进，连续编辑不撞旧值。 */
   const [drawerTask, setDrawerTask] = useState<{ task: ProjectTask; projectId: string } | null>(null);
   /** 打开 / 保存失败文案（null = 无提示）：抽屉内的失败只出提示条，不回滚已在输入的内容。 */
   const [taskError, setTaskError] = useState<string | null>(null);
   /** 写后静默刷新（Push 278）：防抖 400ms 合并连续编辑 —— 重取聚合读面把行数据（进度 / 状态 / 文件计数 / 变更关联）
-   *  带回来；数据引用一变 useTaskFull 自动重跑（重跑不落 ready，列不闪「—」）。 */
+   *  带回来（Push 302 起聚合读面即全字段行源，重取即整行刷新，无「先骨架后补列」的二次渲染）。 */
   const reloadTimer = useRef<number | null>(null);
   const scheduleReload = (): void => {
     if (reloadTimer.current !== null) {
@@ -845,28 +674,43 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
     }
   }, []);
 
-  /** 人员目录 → 姓名（回填行 / 写回响应补姓名共用）。 */
+  /**
+   * 「写进展描述即后台翻译」（业务口径 2026-10-13 · §6.16 ㉑）：聚合读面一到，就把非空进展描述 / 任务名 / 项目名
+   * 丢进译文缓存后台预热 —— 工作台里改的描述，稍后到项目页导出不用再等机器翻译（Push 302 前本段在 useTaskFull
+   * 回填里，数据源改聚合读面后原样保留；同日追订「因为页面有些内容是手打的 我建议是提前后台机翻」：任务名一并预热）。
+   */
+  useEffect(() => {
+    prefetchZhToEn([
+      ...allTasks.map((task) => task.note ?? ""),
+      ...allTasks.map((task) => task.title),
+      ...data.projects.map((project) => project.name),
+    ]);
+  }, [data]);
+
+  /** 人员目录 → 姓名（聚合读面行 / 写回响应补姓名共用）。 */
   const resolveName = (id: string): string | undefined => memberNameOf(members, id);
-  /** 行内写回覆盖（Push 279）：写成功用响应就地更新这一行（version 滚动前进）—— 回填刷新一到即让位（见下）。 */
+  /** 行内写回覆盖（Push 279）：写成功用响应就地更新这一行（version 滚动前进）—— 聚合读面刷新一到即让位（见下）。 */
   const [patches, setPatches] = useState<Map<string, ProjectTask>>(new Map());
-  // 回填重跑（首次加载 / 写后静默刷新）一到，本地覆盖清空：新回填行已含写后的值，覆盖只在两次回填之间兜住画面。
+  // 聚合读面重取（首次加载 / 写后静默刷新）一到，本地覆盖清空：新读面行已含写后的值，覆盖只在两次读面之间兜住画面。
   useEffect(() => {
     setPatches(new Map());
-  }, [full.detail]);
+  }, [data]);
 
-  /** 回填行派生（不含本地覆盖）：该项目任务源接口没取到 = undefined。 */
-  const detailRowOf = (taskId: string): ProjectTask | undefined => {
-    const item = full.detail.get(taskId);
-    return item === undefined ? undefined : toUiTask(item, undefined, resolveName);
+  /** 行的当前数据：本地写回覆盖优先，其次聚合读面全字段行（Push 302：读面即完整行，无回填 / 降级态）。 */
+  const rowOf = (taskId: string): ProjectTask | undefined => {
+    const patch = patches.get(taskId);
+    if (patch !== undefined) {
+      return patch;
+    }
+    const task = taskById.get(taskId);
+    return task === undefined ? undefined : toUiTask(task);
   };
-  /** 行的当前数据：本地写回覆盖优先，其次回填行（两者都没有 = 该行降级只读，见 TaskTable 的 fallbackTaskOf）。 */
-  const rowOf = (taskId: string): ProjectTask | undefined => patches.get(taskId) ?? detailRowOf(taskId);
 
   /** 写成功后就地更新行（Push 279 · 与项目页 replaceRow 同口径）：文件摘要 / 负责人姓名从旧行继承。 */
   const applyRowUpdate = (updated: ApiTask): void => {
     setPatches((current) => {
       const next = new Map(current);
-      next.set(updated.id, toUiTask(updated, current.get(updated.id) ?? detailRowOf(updated.id), resolveName));
+      next.set(updated.id, toUiTask(updated, current.get(updated.id) ?? rowOf(updated.id), resolveName));
       return next;
     });
   };
@@ -893,24 +737,11 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
     })();
   };
 
-  /** 打开任务抽屉：优先用当前行（本地写回覆盖 → 回填行，零请求 —— 行内刚改过的值也在）；没有（回填未跑完 /
-   *  失败）就按 id 单查兜底。 */
+  /** 打开任务抽屉（Push 302）：聚合读面已带全字段（含 version），直接就地打开、零请求 —— 原「行不在回填里按 id
+   *  单查」的兜底路径随全字段化删除。 */
   const openTask = (task: ApiWorkspaceTask): void => {
-    const current = rowOf(task.id);
-    if (current !== undefined) {
-      setTaskError(null);
-      setDrawerTask({ task: current, projectId: task.projectId });
-      return;
-    }
-    void (async () => {
-      try {
-        const detail = await fetchTaskDetail(task.projectId, task.id);
-        setTaskError(null);
-        setDrawerTask({ task: toUiTask(detail, undefined, resolveName), projectId: task.projectId });
-      } catch (error) {
-        setTaskError(error instanceof ApiError ? error.message : t("ws.err.taskDetail"));
-      }
-    })();
+    setTaskError(null);
+    setDrawerTask({ task: rowOf(task.id) ?? toUiTask(task), projectId: task.projectId });
   };
 
   /** 写操作统一出口：以抽屉当前 version 提交（与项目页同一套写入口径）；成功用响应就地更新抽屉 + 调度静默刷新。 */
@@ -939,7 +770,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
     if (current === null) {
       return null;
     }
-    const project = full.projects.get(current.projectId);
+    const project = projectById.get(current.projectId);
     if (values.managerChanged && project !== undefined && values.managerIds.length > 0 && !sameMemberIds(values.managerIds, project.managerIds)) {
       try {
         await updateProject(project.id, { code: project.code, name: project.name, region: project.region, projectType: project.projectType, managerIds: values.managerIds }, project.version);
@@ -1052,7 +883,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
       runRowWrite(taskId, (row) => updateTask(projectId, taskId, taskPatchBody(row.version, patch)));
     },
     onChangeManagers: (projectId, managerIds) => {
-      const project = full.projects.get(projectId);
+      const project = projectById.get(projectId);
       if (project === undefined || sameMemberIds(managerIds, project.managerIds)) {
         return;
       }
@@ -1090,7 +921,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
     },
   };
 
-  const drawerProject = drawerTask === null ? undefined : full.projects.get(drawerTask.projectId);
+  const drawerProject = drawerTask === null ? undefined : projectById.get(drawerTask.projectId);
   const drawerManagers = (drawerProject?.managerNames ?? []).filter((name): name is string => name !== null && name !== "").join("、");
 
   return (
@@ -1100,11 +931,6 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         <span data-workspace-task-total="" className="text-xs text-zinc-400">
           {t("ws.tasks.summary", { total, projects: projects.length, date: fullDateText(locale, data.today) })}
         </span>
-        {partial ? (
-          <span data-workspace-task-partial="" className="text-xs text-amber-600">
-            {t("ws.tasks.degraded")}
-          </span>
-        ) : null}
       </div>
       {projects.length === 0 ? (
         <EmptyCard text={t("ws.tasks.empty")} hint={t("ws.tasks.emptyHint")} />
@@ -1123,7 +949,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
                 onToggleProject(project.projectId);
               }}
             >
-              <TaskTable projectId={project.projectId} items={project.items} full={full} filesByTask={full.files} ready={ready} tierTint={tierTint} members={members} onOpenTask={openTask} rowOf={rowOf} handlers={rowHandlers} />
+              <TaskTable projectId={project.projectId} project={projectById.get(project.projectId)} items={project.items} tierTint={tierTint} members={members} onOpenTask={openTask} rowOf={rowOf} handlers={rowHandlers} />
             </ProjectPanel>
           ))}
         </div>
@@ -1171,10 +997,9 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
  *  - 「进入项目」落点两栏一致 = 该项目「问题追踪」（`?view=daily&sub=issues`；Push 253 口径）；折叠面板展开态两栏共用
  *  同一组「已展开项目」记忆（openedIds，见页面级说明）。 */
 function IssuesView({ view, issues, tierTint, openIds, onToggleProject, overrides, onChangeState }: { view: WorkspaceIssueView; issues: readonly ApiWorkspaceIssue[]; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
-  // 已完成不显示（Push 260 · 第七项）：按「覆盖值 ?? 接口值」的有效状态过滤；useIssueFull 仍吃全量 issues（数组身份稳定，不触发多余重取）。
+  // 已完成不显示（Push 260 · 第七项）：按「覆盖值 ?? 接口值」的有效状态过滤（Push 302 起 solution / photos 就在行上，过滤不再牵动取数）。
   const visibleIssues = issues.filter((issue) => (overrides.get(issue.id)?.state ?? toIssueState(issue.state)) !== "done");
   const projects = groupIssuesByProject(visibleIssues);
-  const { full, partial } = useIssueFull(issues);
   const t = useT();
   const raised = view === "raised";
   /** 「我提出的问题」（Push 301 追订 · 业务口径「图二为什么有中文有英文」）：问题标题 / 解决方案 / 项目名
@@ -1182,10 +1007,10 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
   useEffect(() => {
     prefetchZhToEn([
       ...issues.map((issue) => issue.title),
-      ...Array.from(full.values()).map((entry) => entry.solution),
+      ...issues.map((issue) => issue.solution ?? ""),
       ...issues.map((issue) => issue.projectName),
     ]);
-  }, [issues, full]);
+  }, [issues]);
   return (
     <section data-workspace-issues="" data-workspace-issues-view={view} className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -1199,11 +1024,6 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
               ? t("ws.issues.summary.oneProject", { n: visibleIssues.length })
               : t("ws.issues.summary", { n: visibleIssues.length, projects: projects.length })}
         </span>
-        {partial ? (
-          <span data-workspace-issue-partial="" className="text-xs text-amber-600">
-            {t("ws.issues.degraded")}
-          </span>
-        ) : null}
       </div>
       {projects.length === 0 ? (
         raised ? (
@@ -1226,7 +1046,7 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
                 onToggleProject(project.projectId);
               }}
             >
-              <IssueTable issues={project.issues} full={full} tierTint={tierTint} overrides={overrides} onChangeState={onChangeState} />
+              <IssueTable issues={project.issues} tierTint={tierTint} overrides={overrides} onChangeState={onChangeState} />
             </ProjectPanel>
           ))}
         </div>

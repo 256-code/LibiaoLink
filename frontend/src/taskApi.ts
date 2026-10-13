@@ -11,7 +11,7 @@
  */
 import { apiRequest, apiSend, readAllPages } from "./api";
 import { textOf, type Locale } from "./i18n";
-import { cnDateFromIso, daysBetweenInclusive, type ProjectTask, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
+import { daysBetweenInclusive, type ProjectTask, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
 
 /** 契约 Task / TaskListItem / TaskDetail（本文件只需用到的字段；服务端可能多给，忽略即可）。 */
 export type ApiTask = {
@@ -69,9 +69,6 @@ export type ApiProjectSummary = {
   done: number;
   total: number;
 };
-
-/** 列表一次取满（契约 limit 上限 200）：项目内任务全量给三块视图共用（与首页项目列表同一口径）。 */
-export const TASK_PAGE_LIMIT = 200;
 
 /** 九阶段字典（契约 STAGE_KEYS / STAGE_NAMES）：阶段名 ↔ key 的双向映射在前端本地维护。 */
 const STAGE_NAMES_BY_KEY: Record<string, string> = {
@@ -358,9 +355,4 @@ export function taskWriteMessage(locale: Locale, error: { code: string; message:
     return textOf(locale, "tw.alreadyExists");
   }
   return error.message;
-}
-
-/** 表格 / 看板 / 甘特的日期展示（ISO → M月D日；空值给「—」由调用方渲染）。 */
-export function taskDateText(iso: string): string {
-  return iso === "" ? "" : cnDateFromIso(iso);
 }

@@ -95,9 +95,6 @@ export type StakeholderPatch = {
   role?: string | null;
 };
 
-/** 列表一次取满（契约 limit 上限 200）；总数用响应 total，超出时页面另提示。 */
-export const STAKEHOLDER_PAGE_LIMIT = 200;
-
 /** 本项目关联的干系人台账（A5-03 按项目查看联系人清单；缺省「最近更新」在前）。 */
 export async function fetchProjectStakeholders(projectId: string): Promise<StakeholderListResult> {
   const payload = await readAllPages<Stakeholder>(

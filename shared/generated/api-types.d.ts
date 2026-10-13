@@ -9771,7 +9771,7 @@ export interface components {
             grouping?: components["schemas"]["ViewGrouping"];
             isDefault?: boolean;
         };
-        /** @description 工作台问题项（跨项目） */
+        /** @description 工作台问题项（跨项目；问题追踪七列数据源随行下发） */
         WorkspaceIssueItem: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
@@ -9787,6 +9787,10 @@ export interface components {
             ownerId: components["schemas"]["Uuid"] & (string | null);
             ownerName: string | null;
             raisedAt: components["schemas"]["DateOnly"] & unknown;
+            /** @description 解决方案或建议（A3-13；2026-10-13 全字段修订随行下发，工作台「提出/负责的问题」表直接渲染） */
+            solution: string | null;
+            /** @description 问题附图（file_links(object_type=issue)，插入序；2026-10-13 全字段修订随行下发，工作台表直接渲染） */
+            photos: components["schemas"]["FilePhotoRef"][];
             updatedAt: components["schemas"]["DateTime"];
             version: components["schemas"]["Version"];
         };
@@ -9804,32 +9808,21 @@ export interface components {
             /** @description 「我提出的问题」标签已展开的项目 id 列表（整体替换语义） */
             raised: components["schemas"]["Uuid"][];
         };
-        /** @description 工作台聚合：我的任务四组 + 我的问题两栏 */
+        /** @description 工作台聚合：我的任务四组 + 我的问题两栏 + 涉及项目卡 */
         WorkspaceResponse: {
             today: components["schemas"]["DateOnly"] & unknown;
             myTasks: components["schemas"]["WorkspaceTasks"];
             myIssues: components["schemas"]["WorkspaceIssues"];
+            /** @description 聚合涉及的项目卡（我的任务或我的问题命中的项目，按首次出现顺序去重；含 managerNames / managerIds / version）—— 2026-10-13 全字段修订：工作台行内「项目经理」列与项目经理回写不再逐项目回查 */
+            projects: components["schemas"]["Project"][];
         };
-        /** @description 工作台任务项（跨项目；按预计完成日期落入四组之一） */
-        WorkspaceTaskItem: {
-            id: components["schemas"]["Uuid"];
-            projectId: components["schemas"]["Uuid"];
+        /** @description 工作台任务项（跨项目；按预计完成日期落入四组之一；任务表 15 列数据源随行下发） */
+        WorkspaceTaskItem: components["schemas"]["TaskListItem"] & {
             /** @description 项目编号（跨项目列表直接展示） */
             projectCode: string;
             projectName: string;
-            stageKey: components["schemas"]["StageKey"] & (string | null);
-            title: string;
-            titleEn: string | null;
-            displayStatus: components["schemas"]["TaskDisplayStatus"] & unknown;
-            progress: components["schemas"]["TaskProgress"];
-            plannedStart: components["schemas"]["DateOnly"] & (string | null);
-            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
-            actualEnd: components["schemas"]["DateOnly"] & (string | null);
-            /** @description 任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评） */
-            ownerIds: components["schemas"]["Uuid"][];
-            /** @description 负责人姓名（与 ownerIds 同下标；缺失为 null） */
-            ownerNames: (string | null)[];
-            priority: components["schemas"]["Priority"];
+            /** @description 任务随行文件清单（口径同任务详情 files：排除回收站、创建时间倒序；工作台行内「文件」列下拉的数据源） */
+            files: components["schemas"]["TaskFileBrief"][];
         };
         /** @description 我的任务四组（A6-01；组内按 plannedEnd 升序、id 升序，未排期置末） */
         WorkspaceTasks: {
