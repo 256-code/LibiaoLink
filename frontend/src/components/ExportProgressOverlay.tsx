@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { lockBodyScroll } from "../scrollLock";
+import { useT } from "../i18n";
 
 /**
  * 导出等待浮层（2026-10-10 · §6.16 ⑳ · 业务口径「导出时间太长了要做加载动画提示用户 大概需要多长时间
@@ -40,6 +41,7 @@ export function estimateRemainingSeconds(elapsedSeconds: number, done: number, t
 }
 
 export function ExportProgressOverlay({ progress }: { progress: ExportTranslateProgress | null }) {
+  const t = useT();
   const [elapsed, setElapsed] = useState(0);
   const [remaining, setRemaining] = useState<number | null>(null);
   const startedAt = useRef(Date.now());
@@ -89,17 +91,17 @@ export function ExportProgressOverlay({ progress }: { progress: ExportTranslateP
             </span>
           </span>
         </div>
-        <p className="export-progress__title">{waiting || translating ? "项目进展描述翻译中…" : "正在生成报告…"}</p>
+        <p className="export-progress__title">{waiting || translating ? t("exp.translating") : t("exp.generating")}</p>
         <p className="export-progress__hint">
           {waiting
-            ? "正在准备导出数据…"
+            ? t("exp.preparing")
             : translating
               ? (
                   <>
-                    预计需要 <span className="export-progress__num">{Math.max(1, Math.round(displayed))}</span> 秒 · 已完成 {done} / {total} 条
+                    {t("exp.etaLead")}<span className="export-progress__num">{Math.max(1, Math.round(displayed))}</span>{t("exp.etaTail", { d: done, t: total })}
                   </>
                 )
-              : "译文已就绪，马上就好"}
+              : t("exp.ready")}
         </p>
         <div className={"export-progress__bar" + (waiting ? " is-waiting" : "")}>
           <span className="export-progress__bar-fill" style={waiting ? undefined : { width: percent + "%" }} />

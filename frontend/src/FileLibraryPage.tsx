@@ -10,6 +10,8 @@ import { Toast } from "./components/Toast";
 import type { DirectoryUser } from "./directory";
 import { keepLiveOrder } from "./liveSync";
 import { useLiveRefresh } from "./useLiveRefresh";
+import { prefetchZhToEn } from "./translateApi";
+import { statusText, textOf, useLocale, useLocalizedTranslator, useT, type Locale, type TextKey } from "./i18n";
 import {
   ensurePreviewOutcome,
   fetchDownloadUrl,
@@ -100,27 +102,27 @@ type PreviewState = {
 
 type Notice = { kind: "ok" | "error"; text: string };
 
-/** 两栏（顺序 = 标签栏顺序）。 */
-const TABS: ReadonlyArray<{ key: FilesTab; label: string }> = [
-  { key: "current", label: "系统现有文件" },
-  { key: "recycled", label: "回收站" },
+/** 两栏（顺序 = 标签栏顺序；Push 301：label 存词典键，随语言切换）。 */
+const TABS: ReadonlyArray<{ key: FilesTab; label: TextKey }> = [
+  { key: "current", label: "lib.tab.current" },
+  { key: "recycled", label: "lib.tab.recycled" },
 ];
 
-/** 写失败 → 面向业务的提示（错误码口径《前端功能需求》§3.7）。 */
-function friendlyError(error: unknown, fallback: string): string {
+/** 写失败 → 面向业务的提示（错误码口径《前端功能需求》§3.7；Push 301：提示随语言切换）。 */
+function friendlyError(locale: Locale, action: string, error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === "VERSION_CONFLICT") {
-      return "数据已被他人更新，请刷新后重试。";
+      return textOf(locale, "lib.err.versionConflict");
     }
     if (error.status === 403) {
-      return "没有权限执行该操作。";
+      return textOf(locale, "lib.err.forbidden");
     }
     if (error.code === "FILE_STATE_INVALID") {
       return error.message;
     }
-    return error.message + "（" + error.code + "）";
+    return textOf(locale, "lib.err.code", { message: error.message, code: error.code });
   }
-  return fallback + "：网络异常，请稍后重试。";
+  return textOf(locale, "lib.err.network", { action });
 }
 
 export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
@@ -129,6 +131,10 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
   onChangeQuery: (next: FilesQueryState) => void;
   directory: readonly DirectoryUser[];
 }) {
+  const t = useT();
+  const locale = useLocale();
+  /** 手打内容（项目名）机翻显示：英文界面取译文，未就绪回退原文；文件名不翻译（业务口径 2026-10-13）。 */
+  const localize = useLocalizedTranslator();
   const [state, setState] = useState<LibraryState>({ kind: "loading" });
   const [projects, setProjects] = useState<ApiProject[] | null>(null);
   const liveProjectsRef = useRef<ApiProject[] | null>(null);
@@ -158,19 +164,21 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     setProjects(null);
     fetchProjectList(EMPTY_LIST_QUERY)
       .then((payload) => {
+        // Push 301：项目名（手打文本）提前后台翻好，切英文直接命中；文件名不翻译。
+        prefetchZhToEn(payload.items.map((project) => project.name));
         if (alive) {
           setProjects(payload.items);
         }
       })
       .catch(() => {
         if (alive) {
-          setState({ kind: "error", message: "项目列表加载失败，请稍后重试。" });
+          setState({ kind: "error", message: t("lib.projectLoadFailed") });
         }
       });
     return () => {
       alive = false;
     };
-  }, [reloadTick]);
+  }, [reloadTick, locale]);
 
   // 多选筛选键（2026-10-09 追订）：数组引用每次解析都会变，用逗号串当依赖键，防误触发整页重取；
   // 上传人是内存过滤（见文件头）：不进 fetch 依赖 —— 勾选 / 取消只重算派生列表、不重发请求。
@@ -270,9 +278,9 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
   };
 
   // 项目筛选 = 多选（2026-10-09 追订）：不再有「全部项目」选项行，空选占位由 placeholder="全部项目" 承担。
-  const projectOptions = (projects ?? []).map((project) => ({ value: project.id, label: project.code + " · " + project.name }));
+  const projectOptions = (projects ?? []).map((project) => ({ value: project.id, label: project.code + " · " + localize(project.name) }));
   // 状态 / 上传人筛选同为多选（2026-10-09 追订二）：不再有「全部…」选项行，空选占位交给 placeholder。
-  const statusOptions = CURRENT_STATUSES.map((status) => ({ value: status, label: FILE_STATUS_LABELS[status] ?? status }));
+  const statusOptions = CURRENT_STATUSES.map((status) => ({ value: status, label: statusText(locale, FILE_STATUS_LABELS[status] ?? status) }));
   const uploaderOptions = directory.map((user) => ({ value: user.id, label: user.displayName }));
 
   /** 预览（与任务抽屉同一套 S4 两通道裁决）：点开才懒取；unavailable = 一行提示（reason 或「请下载查看」口径）。 */
@@ -285,7 +293,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     const outcome = await ensurePreviewOutcome(file.id);
     setPreviewBusy(null);
     if (outcome.kind === "unavailable") {
-      setNotice({ kind: "error", text: outcome.reason ?? "暂不支持在线预览，请下载查看。" });
+      setNotice({ kind: "error", text: outcome.reason ?? t("drawer.preview.unavailable") });
       return;
     }
     const kind = previewKindOf(file.name) ?? "image";
@@ -306,7 +314,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     setPreviewBusy(null);
     if (outcome.kind === "unavailable") {
       setPreview(null);
-      setNotice({ kind: "error", text: outcome.reason ?? "暂不支持在线预览，请下载查看。" });
+      setNotice({ kind: "error", text: outcome.reason ?? t("drawer.preview.unavailable") });
       return;
     }
     const pane = outcome.kind === "viewer"
@@ -325,9 +333,9 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     try {
       const signed = await fetchDownloadUrl(file.id);
       await triggerDownload(signed.url, signed.fileName);
-      setNotice({ kind: "ok", text: "已开始下载：" + signed.fileName });
+      setNotice({ kind: "ok", text: t("lib.download.started", { name: signed.fileName }) });
     } catch (error) {
-      setNotice({ kind: "error", text: error instanceof Error && error.message !== "" ? error.message : "下载失败，请稍后重试。" });
+      setNotice({ kind: "error", text: error instanceof Error && error.message !== "" ? error.message : t("drawer.download.failed") });
     } finally {
       setDownloadBusy(null);
     }
@@ -342,11 +350,11 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     setNotice(null);
     try {
       await restoreFile(file.id);
-      const back = FILE_STATUS_LABELS[file.recycledFromStatus ?? "draft"] ?? "草稿";
-      setNotice({ kind: "ok", text: "已恢复：" + file.name + "（回退到「" + back + "」）" });
+      const back = statusText(locale, FILE_STATUS_LABELS[file.recycledFromStatus ?? "draft"] ?? "草稿");
+      setNotice({ kind: "ok", text: t("lib.restored", { name: file.name, status: back }) });
       setReloadTick((tick) => tick + 1);
     } catch (error) {
-      setNotice({ kind: "error", text: friendlyError(error, "恢复失败。") });
+      setNotice({ kind: "error", text: friendlyError(locale, t("lib.act.restore"), error) });
     } finally {
       setActionBusy(null);
       setPurgeConfirmId(null);
@@ -363,10 +371,10 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     try {
       await purgeFile(file.id);
       setPurgeConfirmId(null);
-      setNotice({ kind: "ok", text: "已彻底删除：" + file.name });
+      setNotice({ kind: "ok", text: t("lib.purged", { name: file.name }) });
       setReloadTick((tick) => tick + 1);
     } catch (error) {
-      setNotice({ kind: "error", text: friendlyError(error, "彻底删除失败。") });
+      setNotice({ kind: "error", text: friendlyError(locale, t("lib.act.purge"), error) });
     } finally {
       setActionBusy(null);
     }
@@ -374,12 +382,12 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
 
   const emptyText = ((): string => {
     if (query.keyword !== null) {
-      return "没有匹配「" + query.keyword + "」的文件，可调整关键词或清除筛选。";
+      return t("lib.empty.keyword", { kw: query.keyword });
     }
     if (hasFilter) {
-      return query.tab === "recycled" ? "当前筛选下没有回收站文件，可清除筛选后重试。" : "当前筛选下没有文件，可清除筛选后重试。";
+      return query.tab === "recycled" ? t("lib.empty.filter.recycled") : t("lib.empty.filter.current");
     }
-    return query.tab === "recycled" ? "回收站是空的。" : "文件库中暂无文件。";
+    return query.tab === "recycled" ? t("lib.empty.recycled") : t("lib.empty.current");
   })();
 
   return (
@@ -389,19 +397,19 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
         <div data-file-library="" className="w-full space-y-4">
           <header className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h1 className="text-lg font-semibold text-zinc-900">文件库</h1>
+              <h1 className="text-lg font-semibold text-zinc-900">{t("lib.title")}</h1>
               <p className="mt-0.5 text-xs text-zinc-500">
-                全站文件的集中入口：系统现有文件（草稿 / 已定档 / 已变更 / 已归档）与回收站（默认保留 30 天，可恢复）；按上传时间倒序，跨项目汇总。
+                {t("lib.subtitle")}
               </p>
             </div>
             {state.kind === "ready" ? (
               <p data-file-count="" className="text-xs text-zinc-500">
-                共 {total} 条
+                {t("lib.count", { n: total })}
               </p>
             ) : null}
           </header>
 
-          <nav data-file-tabs="" aria-label="文件库标签" className="flex gap-1 border-b border-zinc-200">
+          <nav data-file-tabs="" aria-label={t("lib.tabs.aria")} className="flex gap-1 border-b border-zinc-200">
             {TABS.map((item) => {
               const active = item.key === query.tab;
               return (
@@ -418,7 +426,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                     (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                   }
                 >
-                  {item.label}
+                  {t(item.label)}
                 </button>
               );
             })}
@@ -431,19 +439,19 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                 onChange={(value) => {
                   patchFilter({ keyword: value === "" ? null : value });
                 }}
-                placeholder="搜索文件名"
+                placeholder={t("lib.search")}
                 className="w-full"
               />
             </span>
             <span data-file-filter="project" className="w-44 shrink-0">
               <SearchSelect
                 mode="multi"
-                ariaLabel="按项目筛选"
+                ariaLabel={t("lib.filter.project.aria")}
                 values={query.projectIds}
                 options={projectOptions}
-                placeholder="全部项目"
-                searchPlaceholder="搜索项目编号 / 名称"
-                label="项目"
+                placeholder={t("lib.filter.project.placeholder")}
+                searchPlaceholder={t("lib.filter.project.search")}
+                label={t("lib.filter.project.label")}
                 onToggle={(value) => {
                   patchFilter({
                     projectIds: query.projectIds.includes(value)
@@ -457,12 +465,12 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
               <span data-file-filter="status" className="w-32 shrink-0">
                 <SearchSelect
                   mode="multi"
-                  ariaLabel="按状态筛选"
+                  ariaLabel={t("lib.filter.status.aria")}
                   values={query.statuses}
                   options={statusOptions}
-                  placeholder="全部状态"
-                  searchPlaceholder="搜索状态"
-                  label="状态"
+                  placeholder={t("lib.filter.status.placeholder")}
+                  searchPlaceholder={t("lib.filter.status.search")}
+                  label={t("lib.filter.status.label")}
                   onToggle={(value) => {
                     patchFilter({
                       statuses: query.statuses.includes(value)
@@ -476,12 +484,12 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
             <span data-file-filter="uploader" className="w-36 shrink-0">
               <SearchSelect
                 mode="multi"
-                ariaLabel="按上传人筛选"
+                ariaLabel={t("lib.filter.uploader.aria")}
                 values={query.uploaderIds}
                 options={uploaderOptions}
-                placeholder="全部上传人"
-                searchPlaceholder="搜索姓名"
-                label="上传人"
+                placeholder={t("lib.filter.uploader.placeholder")}
+                searchPlaceholder={t("lib.filter.uploader.search")}
+                label={t("lib.filter.uploader.label")}
                 onToggle={(value) => {
                   patchFilter({
                     uploaderIds: query.uploaderIds.includes(value)
@@ -498,7 +506,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                 onClick={clearFilters}
                 className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
               >
-                清除筛选
+                {t("lib.clear")}
               </button>
             ) : null}
           </section>
@@ -530,7 +538,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                 }}
                 className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-medium transition hover:bg-rose-100"
               >
-                重试
+                {t("common.retry")}
               </button>
             </div>
           ) : null}
@@ -547,12 +555,12 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                 <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
                   <thead className="bg-zinc-50 text-zinc-500">
                     <tr>
-                      <th className="border-b border-zinc-200 px-4 py-3 font-medium">文件名</th>
-                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">状态</th>
-                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">项目</th>
-                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">上传人</th>
-                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{query.tab === "recycled" ? "移入回收站" : "上传时间"}</th>
-                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">操作</th>
+                      <th className="border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.file")}</th>
+                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.status")}</th>
+                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.project")}</th>
+                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.uploader")}</th>
+                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{query.tab === "recycled" ? t("lib.col.recycledAt") : t("lib.col.createdAt")}</th>
+                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -571,12 +579,12 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                             data-file-status={file.status}
                             title={
                               query.tab === "recycled" && file.recycledFromStatus !== null
-                                ? "原状态：" + (FILE_STATUS_LABELS[file.recycledFromStatus] ?? file.recycledFromStatus)
+                                ? t("lib.status.original", { status: statusText(locale, FILE_STATUS_LABELS[file.recycledFromStatus] ?? file.recycledFromStatus) })
                                 : undefined
                             }
                             className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + (FILE_STATUS_CLASS[file.status] ?? "bg-zinc-100 text-zinc-600")}
                           >
-                            {FILE_STATUS_LABELS[file.status] ?? file.status}
+                            {statusText(locale, FILE_STATUS_LABELS[file.status] ?? file.status)}
                           </span>
                         </td>
                         <td className="align-middle border-b border-zinc-100 px-4 py-3">
@@ -586,8 +594,8 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                             data-file-project-name={projectNameOf(file.projectId)}
                             className="flex max-w-[240px] flex-col gap-0.5"
                           >
-                            <span className="truncate font-medium text-zinc-700" title={projectNameOf(file.projectId)}>
-                              {projectNameOf(file.projectId)}
+                            <span className="truncate font-medium text-zinc-700" title={localize(projectNameOf(file.projectId))}>
+                              {localize(projectNameOf(file.projectId))}
                             </span>
                             <span className="whitespace-nowrap text-xs text-zinc-500">{projectCodeOf(file.projectId)}</span>
                           </div>
@@ -611,7 +619,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                               }}
                               className="inline-flex w-16 items-center justify-center rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
                             >
-                              {previewBusy === file.id ? "打开中" : "预览"}
+                              {previewBusy === file.id ? t("lib.preview.busy") : t("lib.preview")}
                             </button>
                             {query.tab === "current" ? (
                               <button
@@ -623,7 +631,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                                 }}
                                 className="inline-flex w-16 items-center justify-center rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
                               >
-                                {downloadBusy === file.id ? "下载中" : "下载"}
+                                {downloadBusy === file.id ? t("lib.download.busy") : t("lib.download")}
                               </button>
                             ) : (
                               <>
@@ -636,12 +644,12 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                                   }}
                                   className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
                                 >
-                                  恢复
+                                  {t("lib.restore")}
                                 </button>
                                 {isAdmin ? (
                                   purgeConfirmId === file.id ? (
                                     <>
-                                      <span className="text-[11px] text-rose-600">彻底删除后不可恢复</span>
+                                      <span className="text-[11px] text-rose-600">{t("lib.purge.note")}</span>
                                       <button
                                         type="button"
                                         data-file-purge-confirm={file.id}
@@ -651,7 +659,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                                         }}
                                         className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:text-rose-300"
                                       >
-                                        {actionBusy === file.id ? "删除中…" : "确认彻底删除"}
+                                        {actionBusy === file.id ? t("lib.purge.busy") : t("lib.purge.confirm")}
                                       </button>
                                       <button
                                         type="button"
@@ -661,7 +669,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                                         }}
                                         className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
                                       >
-                                        取消
+                                        {t("common.cancel")}
                                       </button>
                                     </>
                                   ) : (
@@ -674,7 +682,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                                       }}
                                       className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:text-rose-300"
                                     >
-                                      彻底删除
+                                      {t("lib.purge")}
                                     </button>
                                   )
                                 ) : null}
@@ -690,7 +698,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
 
               <footer className="flex flex-wrap items-center justify-between gap-3">
                 <p data-file-page-info="" className="text-xs text-zinc-500">
-                  共 {total} 条 · 第 {page} / {totalPages} 页
+                  {t("lib.page", { total, page, pages: totalPages })}
                 </p>
                 <div className="flex items-center gap-2">
                   <button
@@ -702,7 +710,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                     }}
                     className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
                   >
-                    上一页
+                    {t("lib.prev")}
                   </button>
                   <button
                     type="button"
@@ -713,7 +721,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                     }}
                     className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
                   >
-                    下一页
+                    {t("lib.next")}
                   </button>
                 </div>
               </footer>
@@ -736,7 +744,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                 const signed = await fetchDownloadUrl(preview.fileId);
                 await triggerDownload(signed.url, signed.fileName);
               } catch (error) {
-                setNotice({ kind: "error", text: error instanceof Error && error.message !== "" ? error.message : "下载失败，请稍后重试。" });
+                setNotice({ kind: "error", text: error instanceof Error && error.message !== "" ? error.message : t("drawer.download.failed") });
               }
             })();
           }}

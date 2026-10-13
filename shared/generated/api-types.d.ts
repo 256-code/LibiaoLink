@@ -7320,6 +7320,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/translate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 单条翻译（译文库优先）：命中直出；未命中调内网引擎（HY-MT1.5-1.8B）后落库 —— 引擎不可用 500 INTERNAL（前端静默降级跳过） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TranslateBody"];
+                };
+            };
+            responses: {
+                /** @description 译文（库内或引擎产出，产出即落库） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TranslateResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 翻译引擎不可用（INTERNAL；前端静默降级跳过） */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/translate/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量查库（不调引擎）：一次请求拿整页已存译文（英文界面切页提速）；未命中条目由前端走单条通道 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TranslateBatchBody"];
+                };
+            };
+            responses: {
+                /** @description 命中条目清单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TranslateBatchResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -9357,6 +9482,42 @@ export interface components {
             deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
             version: components["schemas"]["Version"];
+        };
+        /** @description 批量查库请求（英文界面切页提速；只回已存译文） */
+        TranslateBatchBody: {
+            qs: string[];
+            source?: components["schemas"]["TranslateLang"];
+            target?: components["schemas"]["TranslateLang"];
+        };
+        TranslateBatchResponse: {
+            /** @description 命中条目（译文库已存；未命中的由前端走单条通道） */
+            translations: {
+                /** @description 原文（请求时原样回显） */
+                q: string;
+                /** @description 已存译文 */
+                translatedText: string;
+            }[];
+        };
+        /** @description 单条翻译请求：译文库优先、未命中调引擎后落库 */
+        TranslateBody: {
+            q: string;
+            source?: components["schemas"]["TranslateLang"];
+            target?: components["schemas"]["TranslateLang"];
+            /**
+             * @default text
+             * @enum {string}
+             */
+            format: "text";
+        };
+        /**
+         * @description 语言：zh 中文 / en 英文
+         * @default zh
+         * @enum {string}
+         */
+        TranslateLang: "zh" | "en";
+        TranslateResponse: {
+            /** @description 译文（译文库命中或引擎产出后落库） */
+            translatedText: string;
         };
         UploadAbortResponse: {
             upload: components["schemas"]["UploadSession"] & unknown;

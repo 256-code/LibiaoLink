@@ -109,7 +109,7 @@ import { fetchProject, updateProject, type ApiProject } from "./projectApi";
 import { fetchProjectIssues, ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
 import { displayStatusLabel, fetchProjectTasks, fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask, type ApiTaskListItem } from "./taskApi";
 import { prefetchZhToEn } from "./translateApi";
-import { fieldText, stageText, useLocale, useLocalizedTranslator } from "./i18n";
+import { fieldText, fullDateText, stageText, useLocale, useLocalizedTranslator, useT, workspaceLabelText } from "./i18n";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
 import type { WorkspaceOpenProjects } from "./preferencesApi";
 import { projectViewHref, type WorkspaceIssueView, type WorkspaceTab } from "./useHashRoute";
@@ -152,14 +152,8 @@ const TASK_GROUP_CHIP: Record<TaskGroupKey, string> = {
 const BTN_SECONDARY =
   "rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:border-zinc-400 hover:bg-zinc-100 hover:text-zinc-900";
 
-/** ISO（YYYY-MM-DD）→「YYYY年M月D日」（与「问题追踪」日期列同一口径；跨项目列表可能跨年，年份要带）。 */
-function cnDateFull(iso: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (match === null) {
-    return iso;
-  }
-  return String(Number(match[1])) + "年" + String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
-}
+/** 含年份的完整日期文案（Push 301）：中文「2026年9月5日」/ 英文「Sep 5, 2026」—— 统一走 i18n.fullDateText
+ *  （跨项目列表可能跨年，年份要带；与「问题追踪」日期列同一口径）。 */
 
 /** 契约三态（open / in_progress / done）→ 中文 + 色签；与「问题追踪」同源（ISSUE_STATE_NAMES / ISSUE_TAG_CLASS）。
  *  Push 290 起同源补背景档位铺色行色对（适中 = ISSUE_ROW_TINT 便签同款兑白；炫彩 = ISSUE_ROW_TINT_VIVID 高饱和配方）；
@@ -292,7 +286,11 @@ function useTaskFull(data: ApiWorkspace): { full: TaskFull; partial: boolean; re
    */
   useEffect(() => {
     const rows = Array.from(full.detail.values());
-    prefetchZhToEn([...rows.map((row) => row.note ?? ""), ...rows.map((row) => row.title)]);
+    prefetchZhToEn([
+      ...rows.map((row) => row.note ?? ""),
+      ...rows.map((row) => row.title),
+      ...Array.from(full.projects.values()).map((project) => project.name),
+    ]);
   }, [full]);
   useQueuedRefresh(async () => {
     const all = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
@@ -414,6 +412,8 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, href, open
   onToggle: () => void;
   children: ReactNode;
 }) {
+  const t = useT();
+  const localize = useLocalizedTranslator();
   return (
     <section data-workspace-panel={projectId} data-open={open ? "true" : "false"} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
       <div className="flex items-center gap-3 py-3 pl-4 pr-3 transition hover:bg-zinc-50">
@@ -427,17 +427,17 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, href, open
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={"h-4 w-4 shrink-0 text-zinc-400 transition-transform " + (open ? "rotate-90" : "")}>
             <path d="M9.5 5.5 16 12l-6.5 6.5" />
           </svg>
-          <span className="min-w-0 truncate text-sm font-semibold text-zinc-900">{projectName}</span>
+          <span className="min-w-0 truncate text-sm font-semibold text-zinc-900">{localize(projectName)}</span>
           <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-zinc-600">{projectCode}</span>
           <span className="ml-auto flex shrink-0 items-center gap-2">{summary}</span>
         </button>
         <a
           href={href}
           data-workspace-project-link={projectId}
-          title={"进入项目：" + projectName + "（" + projectCode + "）"}
+          title={t("ws.openProject.title", { name: localize(projectName), code: projectCode })}
           className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
         >
-          进入项目
+          {t("ws.openProject")}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-3 w-3">
             <path d="M9.5 5.5 16 12l-6.5 6.5" />
           </svg>
@@ -450,20 +450,21 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, href, open
 
 /** 收起态摘要（我的任务）：共 N 项 + 逾期 / 今日 / 未排期三枚小签（要不要展开一眼能判）。 */
 function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
+  const t = useT();
   const overdue = items.filter((item) => item.group === "overdue").length;
   const today = items.filter((item) => item.group === "today").length;
   const unscheduled = items.filter((item) => item.group === "unscheduled").length;
   return (
     <>
-      <span className="text-xs font-normal text-zinc-400">{"共 " + String(items.length) + " 项"}</span>
+      <span className="text-xs font-normal text-zinc-400">{t("ws.count.items", { n: items.length })}</span>
       {overdue === 0 ? null : (
-        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.overdue}>{"已逾期 " + String(overdue)}</span>
+        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.overdue}>{t("ws.chip.overdue", { n: overdue })}</span>
       )}
       {today === 0 ? null : (
-        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.today}>{"今日 " + String(today)}</span>
+        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.today}>{t("ws.chip.today", { n: today })}</span>
       )}
       {unscheduled === 0 ? null : (
-        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.unscheduled}>{"未排期 " + String(unscheduled)}</span>
+        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.unscheduled}>{t("ws.chip.unscheduled", { n: unscheduled })}</span>
       )}
     </>
   );
@@ -590,12 +591,13 @@ function TaskTable({ projectId, items, full, filesByTask, ready, tierTint, membe
 
 /** 问题归类色签组（与「问题追踪」同一张色表 ISSUE_CATEGORY_CLASS；空数组 = 「未归类」灰签）。 */
 function CategoryTags({ values }: { values: readonly string[] }) {
+  const locale = useLocale();
   const items = values.length === 0 ? ["未归类"] : values;
   return (
     <span className="flex flex-wrap items-center gap-1">
       {items.map((item, index) => (
         <span key={item + "#" + String(index)} data-issue-category={item} className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-800 " + (ISSUE_CATEGORY_CLASS[item] ?? "bg-zinc-100")}>
-          {item}
+          {fieldText(locale, item)}
         </span>
       ))}
     </span>
@@ -620,12 +622,13 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
   }, [onClose]);
   /** 键盘焦点陷阱（Push 264 追订）：预览层打开时焦点进层内、Tab 在层内循环、关闭还原到缩略图。 */
   const trapRef = useFocusTrap<HTMLDivElement>();
+  const t = useT();
   return createPortal(
     <div
       ref={trapRef}
       data-photo-preview=""
       role="dialog" data-live-sync-readonly="true"
-      aria-label={"预览 " + name}
+      aria-label={t("ws.previewNamed", { name })}
       onClick={(event) => {
         event.stopPropagation();
         onClose();
@@ -647,6 +650,7 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
 /** 单枚问题附图瓦片：懒取服务端预览签名（usePhotoUrl），点开 = 大图预览层。 */
 function IssuePhotoTile({ photo, onPreview }: { photo: ReportPhoto; onPreview: (url: string, name: string) => void }) {
   const url = usePhotoUrl(photo.fileId, photo.url);
+  const t = useT();
   if (url === null) {
     return <span aria-hidden="true" className="inline-block h-24 w-32 shrink-0 animate-pulse rounded-lg border border-zinc-200 bg-zinc-100" />;
   }
@@ -655,7 +659,7 @@ function IssuePhotoTile({ photo, onPreview }: { photo: ReportPhoto; onPreview: (
       type="button"
       data-issue-photo={photo.name}
       title={photo.name}
-      aria-label={"预览 " + photo.name}
+      aria-label={t("ws.previewNamed", { name: photo.name })}
       onClick={() => {
         onPreview(url, photo.name);
       }}
@@ -712,6 +716,8 @@ const ISSUE_COL_WIDTHS = ["8%", "19%", "9%", "10%", "18%", "26%", "10%"] as cons
 function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issues: readonly ApiWorkspaceIssue[]; full: Map<string, IssueFull>; tierTint: TintedTier | false; /** 行内改状态的本地覆盖（Push 260）：按问题 id 取，同一问题在两个子视图里共用。 */ overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
   /** 手打内容（问题描述 / 解决方案）机翻显示：英文界面取译文，未就绪回退原文。 */
   const localize = useLocalizedTranslator();
+  const t = useT();
+  const locale = useLocale();
   return (
     <div data-workspace-issue-table="" data-workspace-issue-tint={tierTint ? "true" : "false"} className="overflow-x-auto rounded-lg border border-zinc-200">
       <table className="w-full min-w-[1400px] table-fixed border-collapse text-left text-sm">
@@ -723,13 +729,13 @@ function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issu
         </colgroup>
         <thead className="bg-zinc-50 text-zinc-500">
           <tr>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">日期</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题描述</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题归类</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题处理人 / 责任人</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">解决方案或建议</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">问题附图</th>
-            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 text-center font-medium">问题是否处理</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">{fieldText(locale, "日期")}</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">{fieldText(locale, "问题描述")}</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">{fieldText(locale, "问题归类")}</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">{fieldText(locale, "问题处理人 / 责任人")}</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">{fieldText(locale, "解决方案或建议")}</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 font-medium">{fieldText(locale, "问题附图")}</th>
+            <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-2.5 text-center font-medium">{fieldText(locale, "问题是否处理")}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
@@ -738,7 +744,7 @@ function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issu
             const detail = full.get(issue.id);
             return (
               <tr key={issue.id} data-workspace-issue={issue.id} className={"align-top transition-colors " + (tierTint ? "issue-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") : "hover:bg-zinc-50/80")} style={tierTint && state.tint !== null ? ({ "--row-tint": state.tint.tint, "--row-tint-hover": state.tint.hover } as CSSProperties) : undefined}>
-                <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{cnDateFull(issue.raisedAt)}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{fullDateText(locale, issue.raisedAt)}</td>
                 <td className="px-4 py-3">
                   <span className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
                 </td>
@@ -766,7 +772,7 @@ function IssueTable({ issues, full, tierTint, overrides, onChangeState }: { issu
                   <IssueStateCell
                     state={overrides.get(issue.id)?.state ?? toIssueState(issue.state)}
                     tierTint={tierTint}
-                    ariaLabel={"修改问题状态（" + cnDateFull(issue.raisedAt) + "）"}
+                    ariaLabel={t("ws.issue.editAria", { date: fullDateText(locale, issue.raisedAt) })}
                     onPick={(next) => {
                       onChangeState(issue, next);
                     }}
@@ -811,6 +817,8 @@ function sameMemberIds(left: readonly string[], right: readonly string[]): boole
  *  抽屉 = 项目页同款 TaskDrawer（全能力即时保存）；数据源 = useTaskFull 回填行（带 version，打开零新增请求），
  *  行不在回填里时按 id 单查兜底；写后防抖静默刷新聚合读面（抽屉不打断：task 用写回响应就地更新、version 滚动前进）。 */
 function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorName, onReload }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorName: string; onReload: () => void }) {
+  const t = useT();
+  const locale = useLocale();
   const projects = groupTasksByProject(data);
   const total = data.myTasks.overdue.length + data.myTasks.today.length + data.myTasks.upcoming.length + data.myTasks.unscheduled.length;
   const { full, partial, ready } = useTaskFull(data);
@@ -877,7 +885,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         setTaskError(null);
         scheduleReload();
       } catch (error) {
-        setTaskError(error instanceof ApiError ? error.message : "任务保存失败。");
+        setTaskError(error instanceof ApiError ? error.message : t("ws.err.task"));
         if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
           scheduleReload();
         }
@@ -900,7 +908,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         setTaskError(null);
         setDrawerTask({ task: toUiTask(detail, undefined, resolveName), projectId: task.projectId });
       } catch (error) {
-        setTaskError(error instanceof ApiError ? error.message : "任务详情取不到，请稍后重试。");
+        setTaskError(error instanceof ApiError ? error.message : t("ws.err.taskDetail"));
       }
     })();
   };
@@ -920,7 +928,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
       scheduleReload();
       return updated.version;
     } catch (error) {
-      setTaskError(error instanceof ApiError ? error.message : "任务保存失败。");
+      setTaskError(error instanceof ApiError ? error.message : t("ws.err.task"));
       return null;
     }
   };
@@ -937,7 +945,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         await updateProject(project.id, { code: project.code, name: project.name, region: project.region, projectType: project.projectType, managerIds: values.managerIds }, project.version);
         scheduleReload();
       } catch (error) {
-        setTaskError(error instanceof ApiError ? error.message : "项目经理保存失败。");
+        setTaskError(error instanceof ApiError ? error.message : t("ws.err.manager"));
         return null;
       }
     }
@@ -987,7 +995,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         scheduleReload();
       } catch (error) {
         scheduleReload();
-        setTaskError(error instanceof ApiError ? error.message : "文件上传失败。");
+        setTaskError(error instanceof ApiError ? error.message : t("ws.err.upload"));
       }
     })();
   };
@@ -997,7 +1005,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         await recycleFile(fileId);
         scheduleReload();
       } catch (error) {
-        setTaskError(error instanceof ApiError ? error.message : "文件删除失败。");
+        setTaskError(error instanceof ApiError ? error.message : t("ws.err.delete"));
       }
     })();
   };
@@ -1007,7 +1015,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         await renameFile(fileId, name);
         scheduleReload();
       } catch (error) {
-        setTaskError(error instanceof ApiError ? error.message : "文件改名失败。");
+        setTaskError(error instanceof ApiError ? error.message : t("ws.err.rename"));
       }
     })();
   };
@@ -1054,7 +1062,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
           setTaskError(null);
           scheduleReload();
         } catch (error) {
-          setTaskError(error instanceof ApiError ? error.message : "项目经理保存失败。");
+          setTaskError(error instanceof ApiError ? error.message : t("ws.err.manager"));
         }
       })();
     },
@@ -1066,7 +1074,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         } catch (error) {
           // 可能已部分成功（逐份直传中途失败 / 定档被拦）：先静默刷新让计数归位，再走统一错误出口。
           scheduleReload();
-          setTaskError(error instanceof ApiError ? error.message : "文件上传失败。");
+          setTaskError(error instanceof ApiError ? error.message : t("ws.err.upload"));
         }
       })();
     },
@@ -1076,7 +1084,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
           await recycleFile(fileId);
           scheduleReload();
         } catch (error) {
-          setTaskError(error instanceof ApiError ? error.message : "文件删除失败。");
+          setTaskError(error instanceof ApiError ? error.message : t("ws.err.delete"));
         }
       })();
     },
@@ -1088,18 +1096,18 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
   return (
     <section data-workspace-tasks="" className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h2 className="text-sm font-semibold text-zinc-900">我的任务</h2>
+        <h2 className="text-sm font-semibold text-zinc-900">{t("ws.title.myTasks")}</h2>
         <span data-workspace-task-total="" className="text-xs text-zinc-400">
-          {"共 " + String(total) + " 项 · 跨 " + String(projects.length) + " 个项目 · 基准日 " + cnDateFull(data.today)}
+          {t("ws.tasks.summary", { total, projects: projects.length, date: fullDateText(locale, data.today) })}
         </span>
         {partial ? (
           <span data-workspace-task-partial="" className="text-xs text-amber-600">
-            有项目的任务全列（项目经理 / 成果文件 / 文件 / 进展描述 / 天数 / 人数 / 变更关联）没取到（那几列显示「—」）—— 刷新重试。
+            {t("ws.tasks.degraded")}
           </span>
         ) : null}
       </div>
       {projects.length === 0 ? (
-        <EmptyCard text="当前没有需要推进的任务。" hint="口径：我是任务负责人或项目项目经理、任务未完成；不限完成日期（已逾期 / 今天 / 远期 / 未排期都收）。" />
+        <EmptyCard text={t("ws.tasks.empty")} hint={t("ws.tasks.emptyHint")} />
       ) : (
         <div className="space-y-2">
           {projects.map((project) => (
@@ -1167,25 +1175,41 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
   const visibleIssues = issues.filter((issue) => (overrides.get(issue.id)?.state ?? toIssueState(issue.state)) !== "done");
   const projects = groupIssuesByProject(visibleIssues);
   const { full, partial } = useIssueFull(issues);
+  const t = useT();
   const raised = view === "raised";
+  /** 「我提出的问题」（Push 301 追订 · 业务口径「图二为什么有中文有英文」）：问题标题 / 解决方案 / 项目名
+   *  一到就后台预热译文 —— 英文界面整块出英文，不再一半中文一半英文（未就绪仍先显示原文）。 */
+  useEffect(() => {
+    prefetchZhToEn([
+      ...issues.map((issue) => issue.title),
+      ...Array.from(full.values()).map((entry) => entry.solution),
+      ...issues.map((issue) => issue.projectName),
+    ]);
+  }, [issues, full]);
   return (
     <section data-workspace-issues="" data-workspace-issues-view={view} className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h2 className="text-sm font-semibold text-zinc-900">{raised ? "我提出的问题" : "待我处理的问题"}</h2>
+        <h2 className="text-sm font-semibold text-zinc-900">{raised ? t("ws.title.raised") : t("ws.title.assigned")}</h2>
         <span data-workspace-issue-total="" className="text-xs text-zinc-400">
-          {"共 " + String(visibleIssues.length) + " 条 · 跨 " + String(projects.length) + " 个项目 · 已完成不显示"}
+          {visibleIssues.length === 1
+            ? projects.length === 1
+              ? t("ws.issues.summary.single")
+              : t("ws.issues.summary.oneIssue", { projects: projects.length })
+            : projects.length === 1
+              ? t("ws.issues.summary.oneProject", { n: visibleIssues.length })
+              : t("ws.issues.summary", { n: visibleIssues.length, projects: projects.length })}
         </span>
         {partial ? (
           <span data-workspace-issue-partial="" className="text-xs text-amber-600">
-            有项目的「解决方案或建议 / 问题附图」没取到（那几行显示「—」）—— 刷新重试。
+            {t("ws.issues.degraded")}
           </span>
         ) : null}
       </div>
       {projects.length === 0 ? (
         raised ? (
-          <EmptyCard text="当前没有你提出的未完成问题。" hint="口径：问题提出人（reporterId）是你 —— 在项目「日报及问题 → 问题追踪」里由你记录的问题会出现在这里；已完成的不再显示（在项目「问题追踪」里可查）。" />
+          <EmptyCard text={t("ws.issues.raisedEmpty")} hint={t("ws.issues.raisedHint")} />
         ) : (
-          <EmptyCard text="当前没有待你处理的问题。" hint="口径：问题处理人（ownerId）是你 —— 在项目「日报及问题 → 问题追踪」里分派给你的问题会出现在这里；已完成的不再显示（在项目「问题追踪」里可查）。" />
+          <EmptyCard text={t("ws.issues.assignedEmpty")} hint={t("ws.issues.assignedHint")} />
         )
       ) : (
         <div className="space-y-2">
@@ -1195,7 +1219,7 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
               projectId={project.projectId}
               projectCode={project.projectCode}
               projectName={project.projectName}
-              summary={<span className="text-xs font-normal text-zinc-400">{"共 " + String(project.issues.length) + " 条"}</span>}
+              summary={<span className="text-xs font-normal text-zinc-400">{project.issues.length === 1 ? t("ws.issue.count.one") : t("ws.issue.count", { n: project.issues.length })}</span>}
               href={projectViewHref(project.projectId, "daily", "issues")}
               open={openIds.has(project.projectId)}
               onToggle={() => {
@@ -1231,6 +1255,8 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
    *  档位 = 适中 / 炫彩 → 任务 / 问题表整行铺行色（浓淡随档）+ 状态列收口；切回「简约」= 原样。 */
   const backgroundTier = useBackgroundTier();
   const tierTint: TintedTier | false = backgroundTier === "simple" ? false : backgroundTier;
+  const t = useT();
+  const locale = useLocale();
 
   /** 展开态（Push 233 · 业务口径「这个下拉要有记忆」）：偏好由 App 层持有并单键 PATCH；null / 缺省 = 偏好尚未取到 → 按全收起渲染。
    *  未接 onWorkspaceOpenProjectsChange 时退回本页内存态（面板仍可展开 / 收起，只是不跨刷新）。 */
@@ -1283,7 +1309,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
           }
           return rolled;
         });
-        setIssueError(error instanceof ApiError ? error.message : "问题状态修改失败。");
+        setIssueError(error instanceof ApiError ? error.message : t("ws.err.issue"));
       });
   };
 
@@ -1421,7 +1447,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
               Push 260：「提出/负责的问题」标签下挂**下拉子菜单**（业务口径 2026-10-09「然后导航栏还是改成这样的吧」，
               = 项目页「日报及问题」那套「子视图集成到页面导航栏」；面板见 components/WorkspaceIssueSubMenu.tsx）——
               两枚子视图（我提出的问题 / 待我处理的问题）不占另一排子标签栏，收在主标签的下拉里；栏高回到单排 59px。 */}
-          <nav data-workspace-tabs="" ref={maintabsRef} aria-label="工作台标签" className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
+          <nav data-workspace-tabs="" ref={maintabsRef} aria-label={t("ws.tabs.aria")} className="sticky top-16 z-20 -mx-6 -mt-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
             <div className="flex items-center gap-3">
               <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onScroll={submenuOpen ? closeSubmenu : undefined}>
                 {TABS.map((item) => {
@@ -1458,7 +1484,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
                         (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                       }
                     >
-                      {item.label}
+                      {workspaceLabelText(locale, item.label)}
                       {withSubmenu ? (
                         <svg
                           viewBox="0 0 20 20"
@@ -1515,11 +1541,11 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
           {tab === "plan" ? (
             <MyPlanBoard />
           ) : state.kind === "loading" ? (
-            <EmptyCard text="加载中…" hint="正在拉取工作台聚合数据（GET /api/v1/workspace）。" />
+            <EmptyCard text={t("common.loading")} hint={t("ws.loading.hint")} />
           ) : state.kind === "error" ? (
             <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-white/50 px-6 py-12 text-center">
-              <p className="text-sm text-zinc-500">工作台加载失败。</p>
-              <p className="text-xs text-zinc-400">请检查网络后重试；持续失败请联系运维排查接口 GET /api/v1/workspace。</p>
+              <p className="text-sm text-zinc-500">{t("ws.error")}</p>
+              <p className="text-xs text-zinc-400">{t("ws.error.hint")}</p>
               <button
                 type="button"
                 onClick={() => {
@@ -1527,7 +1553,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
                 }}
                 className={BTN_SECONDARY}
               >
-                重新加载
+                {t("common.reload")}
               </button>
             </div>
           ) : tab === "raised" ? (

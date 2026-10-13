@@ -25,6 +25,15 @@ export type RegionPickerOption = {
 /** 洲间按 REGION_CONTINENT_GROUPS 排；洲内按中文名拼音（zh-Hans-CN 排序规则）。 */
 const collator = new Intl.Collator("zh-Hans-CN");
 
+/** 地区英文名（英文界面显示用）：标准国名 / 常用别名走 matchRegion 认名；认不出返回空串（调用方回退中文）。 */
+export function regionNameEn(name: string): string {
+  const hit = matchRegion(name, "");
+  if (hit === null) {
+    return "";
+  }
+  return hit.kind === "country" ? hit.country.name : hit.micro.name;
+}
+
 /**
  * 候选构建：字典条目先占位（码可能与标准中文名不同，如「阿联酋 / 阿拉伯联合酋长国」——命中国家的字典条目
  * 以字典行为准，同一国家不拆成两条），再把标准清单里没被覆盖的国家补上。

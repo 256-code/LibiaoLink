@@ -115,6 +115,12 @@ import {
   ResourceInvalidationPayloadSchema,
 } from "./modules/notifications.ts";
 import {
+  TranslateBatchBodySchema,
+  TranslateBatchResponseSchema,
+  TranslateBodySchema,
+  TranslateResponseSchema,
+} from "./modules/translate.ts";
+import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
   BlueprintSaveBodySchema,
@@ -1905,6 +1911,35 @@ export function buildOpenApiDocument() {
     },
   });
 
+
+  // ---- 翻译通道（§6.16 ㉕ · Push 301：手打内容英译落库 / 读库直出 · px 线）----
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/translate",
+    tags: ["translate"],
+    summary: "单条翻译（译文库优先）：命中直出；未命中调内网引擎（HY-MT1.5-1.8B）后落库 —— 引擎不可用 500 INTERNAL（前端静默降级跳过）",
+    request: { body: json(TranslateBodySchema) },
+    responses: {
+      200: { description: "译文（库内或引擎产出，产出即落库）", ...json(TranslateResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      500: errorResponse("翻译引擎不可用（INTERNAL；前端静默降级跳过）"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/translate/batch",
+    tags: ["translate"],
+    summary: "批量查库（不调引擎）：一次请求拿整页已存译文（英文界面切页提速）；未命中条目由前端走单条通道",
+    request: { body: json(TranslateBatchBodySchema) },
+    responses: {
+      200: { description: "命中条目清单", ...json(TranslateBatchResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1934,6 +1969,7 @@ export function buildOpenApiDocument() {
       { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
       { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },
       { name: "notifications", description: "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流与稍后提醒（S8-3）" },
+      { name: "translate", description: "翻译通道（§6.16 ㉕）：手打内容英译译文库 —— 单条（库优先 + 引擎兜底落库）与批量查库（切页提速）" },
     ],
   });
 }

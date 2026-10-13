@@ -26,7 +26,7 @@
  *   ⑪ 英文小字不重复阿拉伯数字（业务 2026-10-10 追加「然后导出的阿拉伯数字是不需要翻译的」）：分组头英文收成 completed、任务明细 note 英文去掉条数、整体进度英文去掉（已完成 X / Y）、页脚英文去掉生成时间、超量截断提示英文去掉条数 —— 数字属数据、语言无关，只保留在中文主文案一处。
  *   ⑫ 进展描述单列（业务 2026-10-10 追加「项目进展描述单例一列吧 然后需要翻译」）：任务描述副行只留英文名；「项目进展描述 Progress Description」独立成列（第 3 列），列数 9 → 10、列宽重排（3 / 20 / 17 / 8 / 8 / 8.5 / 7.5 / 7.5 / 8 / 12.5 %）、分组头 colspan 同步；列内中文原文 + 英文小字译文（⑬ 追订接线）。
  *   ⑬ 进展描述译文接线（业务 2026-10-10「现在导出没有接入翻译」）：导出前把该列去重非空文本经 translateApi.ts
- *      （POST /api/v1/translate，契约对齐内网 LibreTranslate）翻成英文、补在中文原文下方小字；通道不通静默降级为只出中文
+ *      （POST /api/v1/translate，契约对齐翻译服务 /translate）翻成英文、补在中文原文下方小字；通道不通静默降级为只出中文
  *      （导出照常、不报错）；开发环境代理见 vite.config.ts（TRANSLATE_ORIGIN），生产由后端按同契约实现 —— 见 §6.16 ⑯。
  *      **2026-10-13 追订（§6.16 ㉑）：译文改为「写进展描述时后台预热」（translateApi.ts 会话缓存 + prefetchZhToEn），
  *      导出命中缓存即取、仅未预热条目现场翻（通道不通仍静默降级只出中文）。**
@@ -39,6 +39,7 @@
 import { type ProjectTask, type TaskStatus } from "./data/tasks";
 import { stageNameOf } from "./taskApi";
 import { translateZhToEn } from "./translateApi";
+import { getLocale, textOf } from "./i18n";
 import { projectManagerText } from "./types";
 import {
   STAGE_NAMES,
@@ -464,7 +465,7 @@ function printHtmlDocument(html: string): void {
   }
   const frame = document.createElement("iframe");
   frame.id = PRINT_FRAME_ID;
-  frame.title = "项目总览导出（打印）";
+  frame.title = textOf(getLocale(), "exp.frameTitle");
   frame.setAttribute("aria-hidden", "true");
   // 离屏但要保持渲染（display:none 的 iframe 在部分浏览器里会打印空白）：挪到视口外、尺寸给足
   frame.style.cssText = "position: fixed; left: -20000px; top: 0; width: 1280px; height: 900px; border: 0;";

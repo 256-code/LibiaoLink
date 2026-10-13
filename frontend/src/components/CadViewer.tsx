@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
+import { textOf, useLocale, useT } from "../i18n";
 
 /** CAD 三维查看器（ADR-031 · cad3d 前端直读通道）：STEP/IGES 走 occt-import-js（OpenCASCADE WASM）
  *  浏览器内解析 B-Rep，STL/3MF 走 three.js 原生 Loader —— 零服务端转换、零产物缓存、数据不出内网
@@ -74,6 +75,10 @@ export function CadViewer({ src, name }: { src: string; name: string }) {
   const [clipAxis, setClipAxis] = useState<"x" | "y" | "z">("x");
   const [clipPos, setClipPos] = useState(0);
   const [explodeOn, setExplodeOn] = useState(false);
+  const t = useT();
+  const locale = useLocale();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
 
   /** three.js 场景引用（命令式操作：测量 / 剖切 / 爆炸）。 */
   const engineRef = useRef<{
@@ -243,7 +248,7 @@ export function CadViewer({ src, name }: { src: string; name: string }) {
           if (mi === 0) {
             stdMat.color.setHex(c !== null ? c.getHex() : PALETTE[0]!);
           }
-          partNames.push(m.name || "零件" + (mi + 1));
+          partNames.push(m.name || textOf(localeRef.current, "cv.partFallback", { n: mi + 1 }));
           triTotal += m.index ? m.index.array.length / 3 : m.attributes.position.array.length / 9;
           mi += 1;
         }
@@ -268,11 +273,11 @@ export function CadViewer({ src, name }: { src: string; name: string }) {
         });
         partNames.push(name);
       } else {
-        throw new Error("不支持的 CAD 格式: ." + ext);
+        throw new Error(textOf(localeRef.current, "cv.unsupported", { ext }));
       }
 
       if (meshes.length === 0) {
-        throw new Error("模型不含可渲染网格");
+        throw new Error(textOf(localeRef.current, "cv.noMesh"));
       }
 
       // 归位:Z-up→Y-up,再包围盒居中(旋转中心 = 视觉中心)
@@ -480,7 +485,7 @@ export function CadViewer({ src, name }: { src: string; name: string }) {
   return (
     <div className="flex h-[80vh] w-[min(92vw,calc(100vw-3rem))] flex-col overflow-hidden rounded-xl bg-[#14181f] shadow-2xl" data-cad-viewer="true">
       <div className="flex items-center gap-2 border-b border-[#2c3444] bg-[#1a1f2b] px-3 py-2 text-[12px]">
-        <span className="font-semibold text-zinc-200">CAD 三维预览</span>
+        <span className="font-semibold text-zinc-200">{t("cv.title")}</span>
         <span className="text-[#6ea8ff]">{name}</span>
         <div className="mx-2 h-4 w-px bg-[#2c3444]" />
         <button
@@ -488,34 +493,34 @@ export function CadViewer({ src, name }: { src: string; name: string }) {
           className={measureToolClass(measureMode === "dist")}
           onClick={() => setMeasureMode(measureMode === "dist" ? null : "dist")}
         >
-          测量
+          {t("cv.measure")}
         </button>
         <button
           type="button"
           className={measureToolClass(measureMode === "circ")}
           onClick={() => setMeasureMode(measureMode === "circ" ? null : "circ")}
         >
-          直径
+          {t("cv.diameter")}
         </button>
         <button
           type="button"
           className={measureToolClass(clipOn)}
           onClick={() => setClipOn(!clipOn)}
         >
-          剖切
+          {t("cv.section")}
         </button>
         <button
           type="button"
           className={measureToolClass(explodeOn)}
           onClick={() => setExplodeOn(!explodeOn)}
         >
-          爆炸图
+          {t("cv.explode")}
         </button>
         {measure !== null ? (
           <span className="ml-2 rounded bg-[#2d4a8a] px-2 py-0.5 text-[11px] text-white">
             {measure.kind === "dist"
               ? "d = " + formatLength(measure.d) + " (ΔX " + formatLength(measure.dx) + " / ΔY " + formatLength(measure.dy) + " / ΔZ " + formatLength(measure.dz) + ")"
-              : "Ø " + formatLength(measure.d) + " (R " + formatLength(measure.r) + " · 圆度 " + measure.circularity.toFixed(3) + ")"}
+              : t("cv.circText", { d: formatLength(measure.d), r: formatLength(measure.r), c: measure.circularity.toFixed(3) })}
           </span>
         ) : null}
       </div>
@@ -524,11 +529,11 @@ export function CadViewer({ src, name }: { src: string; name: string }) {
         {stats !== null ? (
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-black/40 px-2 py-1 font-mono text-[11px] text-zinc-400">
             {stats.error !== undefined ? (
-              <span className="text-red-400">加载失败: {stats.error}</span>
+              <span className="text-red-400">{t("cv.loadFailed")}: {stats.error}</span>
             ) : (
               <>
-                {stats.parseMs !== null ? "STEP 解析 " + stats.parseMs + "ms" + (stats.gbk ? " · GBK 已转码" : "") + " · " : ""}
-                {stats.parts} 零件 · {stats.tris} 三角形 · 加载 {stats.totalMs}ms
+                {stats.parseMs !== null ? t("cv.stepParse", { ms: stats.parseMs }) + (stats.gbk ? " · " + t("cv.gbk") : "") + " · " : ""}
+                {t("cv.stats", { parts: stats.parts, tris: stats.tris, ms: stats.totalMs })}
               </>
             )}
           </div>
@@ -556,15 +561,15 @@ export function CadViewer({ src, name }: { src: string; name: string }) {
         ) : null}
         {clipOn ? (
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-[#2c3444] bg-[#1a1f2b]/90 px-4 py-2 text-[12px] text-zinc-300">
-            <span>剖切面</span>
+            <span>{t("cv.sectionPlane")}</span>
             <select
               className="rounded bg-[#232a38] px-1 py-0.5 text-zinc-200"
               value={clipAxis}
               onChange={(e) => setClipAxis(e.target.value as "x" | "y" | "z")}
             >
-              <option value="x">X 轴</option>
-              <option value="y">Y 轴</option>
-              <option value="z">Z 轴</option>
+              <option value="x">{t("cv.axis", { axis: "X" })}</option>
+              <option value="y">{t("cv.axis", { axis: "Y" })}</option>
+              <option value="z">{t("cv.axis", { axis: "Z" })}</option>
             </select>
             <input
               type="range"

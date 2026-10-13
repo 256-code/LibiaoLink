@@ -23,7 +23,9 @@ import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
 import { PROJECT_STATUS_VALUES, projectManagerText } from "./types";
-import { projectStatusTextOf, useLocale, useT } from "./i18n";
+import { projectStatusTextOf, projectTypeText, useLocale, useT } from "./i18n";
+import type { Locale } from "./i18n";
+import { regionNameEn } from "./data/regionPicker";
 import { prefetchZhToEn } from "./translateApi";
 import type { MeResponse, Project } from "./types";
 
@@ -60,6 +62,18 @@ type HomeProps = {
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+/** 地区显示名（Push 301）：英文界面按标准英文国名（regionNameEn），认不出的值原样返回 —— 侧栏地区胶囊用（卡片水印的回退值同源）。 */
+function regionText(locale: Locale, dicts: Dicts, code: string): string {
+  const label = dictLabel(dicts, "region", code);
+  return locale === "en" ? regionNameEn(label) || label : label;
+}
+
+/** 卡片水印文本（Push 301 追订 · 业务口径「中文模式和英文模式水印不一样」「之前的中文不要改」+「缩写不好看 试试全称吧」）：中文界面 = 地区中文名（Push 289 原样，不改）；英文界面 = 英文全称（认不出回退中文名）。 */
+function regionWatermarkText(locale: Locale, dicts: Dicts, code: string): string {
+  const label = dictLabel(dicts, "region", code);
+  return locale === "zh" ? label : regionNameEn(label) || label;
+}
+
 /** 计数 → 侧栏选项：字典顺序优先、未知码排后；已选但零命中的值保留（否则没办法取消勾选）。 */
 function buildOptions(
   counts: Record<string, number>,
@@ -83,6 +97,12 @@ function buildOptions(
       return right.count - left.count;
     });
 }
+
+/** 加载失败提示的种类（Push 301）：文案取词典，语言切换后提示跟着变。 */
+type LoadError =
+  | { kind: "reset" }
+  | { kind: "network" }
+  | { kind: "api"; message: string; code: string };
 
 export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
@@ -163,7 +183,16 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const [items, setItems] = useState<Project[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  /** 加载失败提示（Push 301）：存种类不存死文案 —— 语言切换后提示跟着变。 */
+  const [loadError, setLoadError] = useState<LoadError | null>(null);
+  const loadErrorText =
+    loadError === null
+      ? null
+      : loadError.kind === "reset"
+        ? t("home.err.reset")
+        : loadError.kind === "network"
+          ? t("home.err.network")
+          : t("home.err.api", { message: loadError.message, code: loadError.code });
   const [facets, setFacets] = useState<ProjectFacets>(EMPTY_FACETS);
   const [savedCounts, setSavedCounts] = useState<Record<string, number>>({});
   const [reloadToken, setReloadToken] = useState(0);
@@ -228,11 +257,11 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         if (error instanceof ApiError && error.status === 400) {
           // 非法筛选值（UUID / 日期 / limit）：丢弃整组条件并归一化地址栏，让页面回到可用状态
           replaceListQuery(EMPTY_LIST_QUERY);
-          setLoadError("筛选条件无效，已重置为全部项目。");
+          setLoadError({ kind: "reset" });
         } else if (error instanceof ApiError) {
-          setLoadError(error.message + "（" + error.code + "）");
+          setLoadError({ kind: "api", message: error.message, code: error.code });
         } else {
-          setLoadError("网络异常，未能加载项目列表。");
+          setLoadError({ kind: "network" });
         }
       } finally {
         if (!cancelled) {
@@ -290,20 +319,20 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       buildOptions(
         facets.region,
         activeFilters.regions,
-        (code) => dictLabel(dicts, "region", code),
+        (code) => regionText(locale, dicts, code),
         dicts.region.map((item) => item.code),
       ),
-    [activeFilters.regions, dicts, facets.region],
+    [activeFilters.regions, dicts, facets.region, locale],
   );
   const typeOptions = useMemo(
     () =>
       buildOptions(
         facets.projectType,
         activeFilters.projectTypes,
-        (code) => dictLabel(dicts, "projectType", code),
+        (code) => projectTypeText(locale, dictLabel(dicts, "projectType", code)),
         dicts.projectType.map((item) => item.code),
       ),
-    [activeFilters.projectTypes, dicts, facets.projectType],
+    [activeFilters.projectTypes, dicts, facets.projectType, locale],
   );
   const managerOptions = useMemo(
     () =>
@@ -554,7 +583,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
 
         {loadError === null ? null : (
           <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            <span>{loadError}</span>
+            <span>{loadErrorText}</span>
             <button
               type="button"
               onClick={() => {
@@ -644,11 +673,12 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 seqNo={project.seqNo}
                 code={project.code}
                 description={project.description}
-                watermark={cardWatermark ? dictLabel(dicts, "region", project.region) : undefined}
+                watermark={cardWatermark ? regionWatermarkText(locale, dicts, project.region) : undefined}
+                watermarkBleed={locale === "zh"}
                 tint={cardTintOf(backgroundTier, typeAccent(dicts, project.projectType).color)}
                 tintBorder={cardBorderOf(backgroundTier, typeAccent(dicts, project.projectType).color)}
                 vividInk={backgroundTier === "vivid"}
-                typeLabel={dictLabel(dicts, "projectType", project.projectType)}
+                typeLabel={projectTypeText(locale, dictLabel(dicts, "projectType", project.projectType))}
                 status={project.status}
                 statusText={projectStatusTextOf(locale, project.status)}
                 accentColor={typeAccent(dicts, project.projectType).color}
@@ -713,7 +743,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           <div
             ref={deleteFilterConfirmTrapRef}
             role="dialog"
-            aria-label="确认删除常用筛选"
+            aria-label={t("home.deleteFilter.aria")}
             data-saved-filter-delete-confirm=""
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
