@@ -8,7 +8,7 @@
  * role（干系人角色 · Push 225 契约增列）未登记字段级策略：恒返回（空为 null），不参与缺键口径。
  * 页面按「键是否存在」渲染占位（见 components/StakeholderPanel.tsx），缺键绝不回写（否则会把无权字段清空）。
  */
-import { ApiError, apiRequest, apiSend } from "./api";
+import { ApiError, apiSend, readAllPages } from "./api";
 
 /** 公司分类（契约 STAKEHOLDER_COMPANY_TYPES 同序；A5-02）。 */
 export const STAKEHOLDER_COMPANY_TYPES = ["libiao", "supplier", "general_contractor", "customer"] as const;
@@ -99,8 +99,8 @@ export const STAKEHOLDER_PAGE_LIMIT = 200;
 
 /** 本项目关联的干系人台账（A5-03 按项目查看联系人清单；缺省「最近更新」在前）。 */
 export async function fetchProjectStakeholders(projectId: string): Promise<StakeholderListResult> {
-  const payload = await apiRequest<{ items: Stakeholder[]; page: number; limit: number; total: number }>(
-    "/api/v1/stakeholders?filter[projectId]=" + encodeURIComponent(projectId) + "&limit=" + String(STAKEHOLDER_PAGE_LIMIT),
+  const payload = await readAllPages<Stakeholder>(
+    "/api/v1/stakeholders?filter[projectId]=" + encodeURIComponent(projectId),
   );
   return { items: payload.items, total: payload.total };
 }

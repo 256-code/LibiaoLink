@@ -84,7 +84,7 @@ export type AuditLogItem = {
   metadata: Record<string, unknown>;
 };
 
-export type AuditLogListResult = { items: AuditLogItem[]; page: number; limit: number; total: number };
+export type AuditLogListResult = { items: AuditLogItem[]; windowId?: number | null; page: number; limit: number; total: number };
 
 /** 每页条数（契约 limit 上限 200；一期取 50，与表宽 / 摘要长度相称）。 */
 export const AUDIT_PAGE_LIMIT = 50;
@@ -102,6 +102,7 @@ export type AuditApiQuery = {
   from: string | null;
   /** 时间上界（日，YYYY-MM-DD，Asia/Shanghai，含当日 23:59:59.999）。 */
   to: string | null;
+  beforeId?: number;
   page: number;
 };
 
@@ -142,6 +143,7 @@ export function buildAuditApiQuery(query: AuditApiQuery): string {
   if (query.to !== null) {
     parts.push("to=" + encodeURIComponent(auditDayEndIso(query.to)));
   }
+  if (query.beforeId !== undefined) parts.push("beforeId=" + String(query.beforeId));
   parts.push("page=" + String(query.page));
   parts.push("limit=" + String(AUDIT_PAGE_LIMIT));
   return parts.join("&");

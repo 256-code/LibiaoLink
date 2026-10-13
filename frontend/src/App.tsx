@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { startLiveSync } from "./liveSync";
+import { useLiveRefresh } from "./useLiveRefresh";
 import { AuditLogPage } from "./AuditLogPage";
 import { FileLibraryPage } from "./FileLibraryPage";
 import Hub from "./Hub";
@@ -14,7 +16,7 @@ import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
-import { hasPermission, loadMyPermissions, type MyPermissions } from "./permissions";
+import { hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
 import {
   createDictItem,
   deleteDictItem,
@@ -27,7 +29,7 @@ import {
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { archiveProject, createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
+import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
 import { projectStatusOf, type MeResponse, type Project } from "./types";
@@ -45,7 +47,7 @@ function errorMessageOf(error: unknown, fallback: string): string {
       return "项目编号已存在，请换一个编号。";
     }
     if (error.code === "VERSION_CONFLICT") {
-      return "数据已被他人更新，请刷新后重试。";
+      return "数据已被他人更新，本次改动未保存。请核对最新内容后重试。";
     }
     if (error.code === "PROJECT_ARCHIVED") {
       return "项目已归档，不能修改。";
@@ -106,6 +108,8 @@ export default function App() {
   const [dicts, setDicts] = useState<Dicts>(EMPTY_DICTS);
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
   // 常用筛选（A24 · Push 169 落库）：按账号存服务端，换设备同账号可见（契约 users.ts homeSavedFilters）
+  const filterRevision = useRef(0);
+  const archiveAttempt = useRef<{ id: string; version: number; fields: string } | null>(null);
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   // 任务表列显隐（A4 · Push 170）：同样按账号存服务端；null = 偏好尚未取到（先用页面默认列）
   const [taskTableHiddenColumns, setTaskTableHiddenColumns] = useState<string[] | null>(null);
@@ -119,12 +123,42 @@ export default function App() {
   const [dataVersion, setDataVersion] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   /** 权限画像（Push 172 重新接线）：管理入口的呈现层收敛 —— 字典治理（dict.manage）与删除项目（project.delete）。 */
-  const [permissions, setPermissions] = useState<MyPermissions | null>(null);
+  const permissions = useMyPermissions();
   /** 待确认删除的项目（卡片删除先出确认条，第二下才真删）：null = 没有待确认的删除。 */
   const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在背景卡片）、Tab 在条内循环、关闭还原。 */
   const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const route = useHashRoute();
+
+  const signedIn = state.kind === "signed-in";
+  useEffect(() => signedIn ? startLiveSync() : undefined, [signedIn]);
+  useLiveRefresh(["dicts", "projects"], async () => {
+    const next = await loadDicts();
+    return () => setDicts(next);
+  }, "dicts", signedIn);
+  useLiveRefresh(["users"], async () => {
+    const next = await loadDirectory();
+    return () => setDirectory(next);
+  }, "directory", signedIn);
+
+  useLiveRefresh(["permissions", "users"], async () => {
+    await loadMyPermissions(true);
+    return () => {};
+  }, "permissions", signedIn, { readOnly: true });
+
+  useLiveRefresh(["preferences"], async () => {
+    const prefs = await loadMyPreferences();
+    return () => {
+      filterRevision.current = prefs.revisions?.homeSavedFilters ?? 0;
+      setSavedFilters(prefs.homeSavedFilters);
+      setTaskTableHiddenColumns(prefs.taskTableHiddenColumns);
+      applyBackgroundTier(asBackgroundTier(prefs.backgroundTier));
+      applyCardWatermark(asCardWatermark(prefs.cardWatermark));
+      applyLocale(asLocale(prefs.locale));
+      // Expansion is local while this workspace is open; use the remote value on the next visit.
+      if (route.kind !== "workspace") setWorkspaceOpenProjects(prefs.workspaceOpenProjects);
+    };
+  }, "preferences", signedIn);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,7 +180,7 @@ export default function App() {
           return;
         }
         setState({ kind: "signed-in", me });
-        const [dictResult, directoryResult, prefsResult, permissionsResult] = await Promise.allSettled([
+        const [dictResult, directoryResult, prefsResult] = await Promise.allSettled([
           loadDicts(),
           loadDirectory(),
           loadMyPreferencesWithLegacyMigration(),
@@ -158,14 +192,12 @@ export default function App() {
         if (dictResult.status === "fulfilled") {
           setDicts(dictResult.value);
         }
-        if (permissionsResult.status === "fulfilled") {
-          setPermissions(permissionsResult.value);
-        }
         if (directoryResult.status === "fulfilled") {
           setDirectory(directoryResult.value);
         }
         if (prefsResult.status === "fulfilled") {
           setSavedFilters(prefsResult.value.homeSavedFilters);
+          filterRevision.current = prefsResult.value.revisions?.homeSavedFilters ?? 0;
           setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
           setWorkspaceOpenProjects(prefsResult.value.workspaceOpenProjects);
           // 外观偏好（Push 291 背景档位 / Push 292 卡片水印）：登录后从账号偏好静默落位（坏值 / 缺键回落默认）
@@ -193,6 +225,16 @@ export default function App() {
   }, [state]);
 
   const detailId = route.kind === "project" ? route.id : null;
+  useLiveRefresh(["projects"], async () => {
+    if (detailId === null) return () => {};
+    try {
+      const view = await fetchProject(detailId);
+      return () => setDetail(toUiProject(view));
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 403)) return () => setDetail(null);
+      throw error;
+    }
+  }, String(detailId) + ":" + String(dataVersion), signedIn && detailId !== null && !detailLoading && detail !== null);
   useEffect(() => {
     if (detailId === null) {
       setDetail(null);
@@ -313,8 +355,9 @@ export default function App() {
     const previous = savedFilters;
     setSavedFilters(items);
     try {
-      const prefs = await saveHomeSavedFilters(items);
+      const prefs = await saveHomeSavedFilters(items, filterRevision.current);
       setSavedFilters(prefs.homeSavedFilters);
+      filterRevision.current = prefs.revisions?.homeSavedFilters ?? 0;
       return null;
     } catch (error: unknown) {
       setSavedFilters((current) => (current === items ? previous : current));
@@ -365,7 +408,7 @@ export default function App() {
   const handleUpdateProject = async (
     project: Project,
     draft: ProjectDraft,
-    options?: { archiveConfirm?: boolean },
+    options?: { archiveConfirm?: boolean; version?: number },
   ): Promise<ProjectSubmitResult> => {
     const fields = {
       code: draft.code.trim(),
@@ -377,20 +420,31 @@ export default function App() {
     };
     try {
       if (draft.status !== "archived") {
-        await updateProject(project.id, fields, project.version, draft.status);
+        await updateProject(project.id, fields, options?.version ?? project.version, draft.status);
         setDataVersion((value) => value + 1);
         return { kind: "ok" };
       }
-      // 已归档：其余字段有改动先落（二次确认重试时跳过 PATCH）；归档端点始终用「最新 version」（PATCH / 他人改动都会前移）。
-      if (projectFieldsChanged(project, fields)) {
-        const latest = await fetchProject(project.id);
-        await updateProject(project.id, fields, latest.version);
+      const signature = JSON.stringify(fields);
+      const attempt = archiveAttempt.current;
+      let version = options?.archiveConfirm && attempt?.id === project.id && attempt.fields === signature ? attempt.version : options?.version ?? project.version;
+      if (!options?.archiveConfirm && (options?.version !== undefined || projectFieldsChanged(project, fields))) {
+        const saved = await updateProject(project.id, fields, version);
+        version = saved.version;
       }
-      const fresh = await fetchProject(project.id);
-      await archiveProject(project.id, fresh.version, options?.archiveConfirm === true);
+      archiveAttempt.current = { id: project.id, version, fields: signature };
+      await archiveProject(project.id, version, options?.archiveConfirm === true);
+      archiveAttempt.current = null;
       setDataVersion((value) => value + 1);
       return { kind: "ok" };
     } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
+        try {
+          const latest = toUiProject(await fetchProject(project.id));
+          return { kind: "conflict", version: latest.version, latest: { code: latest.code, description: latest.description, note: latest.remark, managerIds: latest.managerIds, projectType: latest.projectType, region: latest.region, status: projectStatusOf(latest.status) ?? "active" } };
+        } catch {
+          return { kind: "error", message: "项目已被修改或已不可见，当前输入已保留，暂时无法读取最新内容。" };
+        }
+      }
       if (error instanceof ApiError && error.code === "ARCHIVE_GATE_NOT_PASSED" && options?.archiveConfirm !== true) {
         return { kind: "archive-confirm", missing: error.details.map((detail) => detail.message) };
       }
@@ -399,29 +453,30 @@ export default function App() {
   };
 
   /** 任务抽屉 / 任务表里改「项目经理」：项目级字段，走 PATCH（乐观锁 version）。 */
-  const handleChangeManagers = (id: string, managerIds: string[]): void => {
+  const handleChangeManagers = async (id: string, managerIds: string[]): Promise<boolean> => {
     if (detail === null || detail.id !== id) {
-      return;
+      return false;
     }
     const current = detail;
-    void updateProject(
-      id,
-      {
-        code: current.code,
-        name: current.description,
-        region: current.region,
-        projectType: current.projectType,
-        managerIds,
-      },
-      current.version,
-    )
-      .then((view) => {
-        setDetail(toUiProject(view));
-        setDataVersion((value) => value + 1);
-      })
-      .catch((error: unknown) => {
-        setNotice(errorMessageOf(error, "项目经理修改失败"));
-      });
+    try {
+      const view = await updateProject(
+        id,
+        {
+          code: current.code,
+          name: current.description,
+          region: current.region,
+          projectType: current.projectType,
+          managerIds,
+        },
+        current.version,
+      );
+      setDetail(toUiProject(view));
+      setDataVersion((value) => value + 1);
+      return true;
+    } catch (error: unknown) {
+      setNotice(errorMessageOf(error, "项目经理修改失败"));
+      return false;
+    }
   };
 
   /**

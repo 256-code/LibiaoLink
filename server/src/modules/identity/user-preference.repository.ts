@@ -1,13 +1,13 @@
 import { Injectable } from "@nestjs/common";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import { userPreferences } from "../../db/schema/identity.js";
 
 export type UserPreferenceRow = typeof userPreferences.$inferSelect;
 
 /**
- * user_preferences 数据访问（A4 / A24 · 0028）：一人一行，prefs 整体读写 ——
- * 合并语义（只传变更键 / 未声明键保留）在服务层做，仓储只负责「读一行 / 覆盖写一行」。
+ * user_preferences 数据访问（A4 / A24 · 0028）：一人一行，在事务内锁定账号行后合并变更键；
+ * 同键集合由服务层比较版本，不同键更新保留已提交值。
  */
 @Injectable()
 export class UserPreferenceRepository {
@@ -18,17 +18,18 @@ export class UserPreferenceRepository {
     return rows[0] ?? null;
   }
 
-  /** 覆盖写（不存在则插入）：prefs 整体替换为传入对象，updated_at 刷新为写入时间。 */
-  async upsert(userId: string, prefs: Record<string, unknown>, at: Date): Promise<UserPreferenceRow> {
-    const rows = await this.database.db
-      .insert(userPreferences)
-      .values({ userId, prefs, updatedAt: at })
-      .onConflictDoUpdate({ target: userPreferences.userId, set: { prefs, updatedAt: at } })
-      .returning();
-    const row = rows[0];
-    if (row === undefined) {
-      throw new Error("user_preferences upsert 未返回记录");
-    }
-    return row;
+  /** Lock even the first write: merging a previously read JSON object outside this transaction loses concurrent keys. */
+  async mutate(userId: string, update: (current: Record<string, unknown>) => Record<string, unknown>, at: Date): Promise<UserPreferenceRow> {
+    return this.database.db.transaction(async (tx) => {
+      await tx.insert(userPreferences).values({ userId, prefs: {}, updatedAt: at }).onConflictDoNothing();
+      const [current] = await tx.select().from(userPreferences).where(eq(userPreferences.userId, userId)).for("update");
+      if (current === undefined) throw new Error("user_preferences lock 未返回记录");
+      const prefs = update(current.prefs);
+      const [row] = await tx.update(userPreferences).set({ prefs, updatedAt: at }).where(eq(userPreferences.userId, userId)).returning();
+      if (row === undefined) throw new Error("user_preferences update 未返回记录");
+      await tx.execute(sql`select pg_notify('notify_stream', ${JSON.stringify({ recipientId: userId, event: "invalidate", data: { resources: ["preferences"] } })})`);
+      return row;
+    });
   }
+
 }

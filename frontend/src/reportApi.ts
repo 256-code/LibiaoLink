@@ -8,7 +8,7 @@
  * - 成对删除：DELETE …/reports/{reportId}（连带派生问题）/ DELETE …/issues/{issueId}（有来源日报时连带）
  * 口径：同日多条（无唯一约束）；草稿写库；关联阶段走 stageKeys；归类多值；附图 = file_links 引用（fileId）。
  */
-import { apiRequest, apiSend } from "./api";
+import { apiSend, readAllPages } from "./api";
 import { stageNameOf } from "./taskApi";
 import type { DailyReport, Issue, IssueState, ReportPhoto, ReportState } from "./data/reports";
 
@@ -115,8 +115,8 @@ export function toUiIssue(api: ApiIssue): Issue {
 
 /** 日报列表：日期倒序；同日多条按创建时间倒序（新的在前）。 */
 export function fetchProjectReports(projectId: string): Promise<DailyReport[]> {
-  return apiRequest<{ items: ApiDailyReport[] }>(
-    "/api/v1/projects/" + encodeURIComponent(projectId) + "/reports?limit=" + String(REPORT_PAGE_LIMIT),
+  return readAllPages<ApiDailyReport>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/reports",
   ).then((response) =>
     response.items
       .slice()
@@ -127,8 +127,8 @@ export function fetchProjectReports(projectId: string): Promise<DailyReport[]> {
 
 /** 问题列表：提出日期倒序；同日按创建时间倒序。 */
 export function fetchProjectIssues(projectId: string): Promise<Issue[]> {
-  return apiRequest<{ items: ApiIssue[] }>(
-    "/api/v1/projects/" + encodeURIComponent(projectId) + "/issues?limit=" + String(REPORT_PAGE_LIMIT),
+  return readAllPages<ApiIssue>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/issues",
   ).then((response) =>
     response.items
       .slice()

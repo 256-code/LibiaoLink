@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
 import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
@@ -8,6 +8,8 @@ import { SearchInput } from "./components/SearchInput";
 import { SearchSelect } from "./components/SearchSelect";
 import { Toast } from "./components/Toast";
 import type { DirectoryUser } from "./directory";
+import { keepLiveOrder } from "./liveSync";
+import { useLiveRefresh } from "./useLiveRefresh";
 import {
   ensurePreviewOutcome,
   fetchDownloadUrl,
@@ -20,7 +22,7 @@ import {
   type FilePreviewKind,
   type PreviewViewerConfig,
 } from "./fileApi";
-import { loadMyPermissions, type MyPermissions } from "./permissions";
+import { useMyPermissions } from "./permissions";
 import { fetchProjectList, formatDateTime, type ApiProject } from "./projectApi";
 import type { MeResponse } from "./types";
 import { EMPTY_FILES_QUERY, EMPTY_LIST_QUERY, type FilesQueryState, type FilesTab } from "./useHashRoute";
@@ -129,9 +131,10 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
 }) {
   const [state, setState] = useState<LibraryState>({ kind: "loading" });
   const [projects, setProjects] = useState<ApiProject[] | null>(null);
+  const liveProjectsRef = useRef<ApiProject[] | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [permissions, setPermissions] = useState<MyPermissions | null>(null);
+  const permissions = useMyPermissions();
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [previewBusy, setPreviewBusy] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState<string | null>(null);
@@ -174,13 +177,29 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
   const projectIdKey = query.projectIds.join(",");
   const statusKey = query.statuses.join(",");
 
+  useLiveRefresh(["files", "projects", "permissions", "users"], async () => {
+    const list = await fetchProjectList(EMPTY_LIST_QUERY);
+    const targetIds = projectIdKey === "" ? [] : projectIdKey.split(",");
+    const targets = targetIds.length === 0 ? list.items : list.items.filter((project) => targetIds.includes(project.id));
+    const statuses = query.tab === "recycled" ? ["recycled"] : statusKey === "" ? CURRENT_STATUSES : statusKey.split(",");
+    const results = await Promise.all(targets.map(async (project) => { try { return await fetchProjectFileLibrary(project.id, { statuses, keyword: debouncedKeyword.trim() || undefined }); } catch (error) { if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return []; throw error; } }));
+    const nextProjects = keepLiveOrder(projects ?? [], list.items);
+    return () => {
+      // The file results and project labels belong to one completed snapshot.
+      liveProjectsRef.current = nextProjects;
+      setProjects(nextProjects);
+      setState((previous) => previous.kind === "ready" ? { kind: "ready", items: keepLiveOrder(previous.items, results.flat()) } : previous);
+    };
+  }, query.tab + ":" + projectIdKey + ":" + statusKey + ":" + debouncedKeyword + ":" + String(reloadTick), projects !== null && state.kind === "ready");
+
   // 文件列表：按项目列表逐项目取满再合并（见文件头「数据面」；单项目失败跳过；多选 = 选中项目并集）。
   useEffect(() => {
     if (projects === null) {
       return;
     }
+    if (liveProjectsRef.current === projects) { liveProjectsRef.current = null; return; }
     let alive = true;
-    setState({ kind: "loading" });
+    setState((previous) => previous.kind === "ready" ? previous : { kind: "loading" });
     const keyword = debouncedKeyword.trim();
     const statuses = query.tab === "recycled" ? ["recycled"] : statusKey === "" ? CURRENT_STATUSES : statusKey.split(",");
     const targetIds = projectIdKey === "" ? [] : projectIdKey.split(",");
@@ -211,19 +230,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
   }, [projects, debouncedKeyword, query.tab, projectIdKey, statusKey, reloadTick]);
 
   // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：只用来裁决「彻底删除」入口的渲染 —— 服务端逐请求仍是最终裁决
-  useEffect(() => {
-    let alive = true;
-    loadMyPermissions()
-      .then((profile) => {
-        if (alive) {
-          setPermissions(profile);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+
   const isAdmin = permissions !== null && permissions.roleCodes.includes("admin");
 
   // 上传人多选 = 内存过滤（服务端 filter[uploadedBy] 单值口径，见文件头）：空选不筛、多选取并集。

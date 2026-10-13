@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { keepLiveOrder } from "./liveSync";
+import { useLiveRefresh } from "./useLiveRefresh";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { DailySubMenu } from "./components/DailySubMenu";
@@ -100,7 +102,7 @@ type ProjectDetailProps = {
   /** 人员候选（GET /api/v1/users → directoryMemberOptions）：项目经理列 / 任务负责人 / 任务详情抽屉的多选共用。 */
   members: readonly Member[];
   /** 任务编辑里改「项目经理」时回写项目（项目经理是项目级字段，Push 136 起可多位）。 */
-  onChangeManagers?: (projectId: string, managerIds: string[]) => void;
+  onChangeManagers?: (projectId: string, managerIds: string[]) => Promise<boolean>;
   /** 任务字段被编辑（按口径刷新项目时间 updatedAt）。 */
   onTaskEdited?: (projectId: string) => void;
   /** 任务表列显隐（A4 · Push 170）：服务端偏好里的隐藏列 key；null / 缺省 = 尚未取到（先用页面默认列）。 */
@@ -123,6 +125,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 原「五层内存覆盖」（进度 / 字段编辑 / 看板顺序 / 行内删除 / 新增任务）随接线整体下线 —— 写成功即回读。
    */
   const [rawTasks, setRawTasks] = useState<ProjectTask[]>([]);
+  const [preserveTaskOrder, setPreserveTaskOrder] = useState(false);
   /** 任务 → 文件引用数组（Push 226 续二；Push 246 起携 id——「文件」列下拉预览 / 删除用）：随整表重取一起刷新
    *  （列表接口不带文件名，这里按项目走文件库列表一次拉全量，见 fileApi.fetchTaskFiles）。 */
   const [taskFiles, setTaskFiles] = useState<Map<string, TaskFileRef[]>>(new Map());
@@ -211,6 +214,18 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     setDataVersion((previous) => previous + 1);
   };
 
+  useLiveRefresh(["tasks", "projects", "files", "templates", "permissions", "users"], async () => {
+    if (projectId === null) return () => {};
+    const [list, card, files] = await Promise.all([fetchProjectTasks(projectId), fetchProjectSummary(projectId), fetchTaskFiles(projectId)]);
+    return () => {
+      setRawTasks((previous) => keepLiveOrder(previous, list.items.map((item) => toUiTask(item))));
+      setPreserveTaskOrder(true);
+      setSummary(card);
+      setTaskFiles(files);
+      setDataError(null);
+    };
+  }, String(projectId) + ":" + String(dataVersion), projectId !== null && !dataLoading && summary !== null);
+
   useEffect(() => {
     if (projectId === null) {
       setRawTasks([]);
@@ -232,6 +247,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
           return;
         }
         setRawTasks(list.items.map((item) => toUiTask(item)));
+        setPreserveTaskOrder(false);
         setSummary(card);
         setTaskFiles(files);
         setDataError(null);
@@ -259,8 +275,8 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 与服务端默认读序（阶段序 → sort_index → id）同一口径；三块视图共用这一份顺序。
    */
   const tasks = useMemo(
-    () => [...rawTasks].sort((left, right) => stageRankOf(left.stage) - stageRankOf(right.stage) || left.sortIndex - right.sortIndex),
-    [rawTasks],
+    () => preserveTaskOrder ? rawTasks : [...rawTasks].sort((left, right) => stageRankOf(left.stage) - stageRankOf(right.stage) || left.sortIndex - right.sortIndex),
+    [rawTasks, preserveTaskOrder],
   );
 
   /**
@@ -468,32 +484,33 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   };
 
   /** 表格行内 / 甘特拖动改字段（Push 88）：负责人、开始与预计完成日期（含联动天数）、施工人数、紧急重要度、进展描述。 */
-  const handlePatchTask = (taskId: string, patch: TaskPatch) => {
+  const handlePatchTask = async (taskId: string, patch: TaskPatch, version?: number): Promise<number | null> => {
     const row = rowOf(taskId);
     if (projectId === null || row === undefined) {
-      return;
+      return null;
     }
     // patch → body 的字段口径（空串 = 清空等）抽到 TaskBoard.taskPatchBody（Push 279）：与工作台行内编辑同源
-    const body = taskPatchBody(row.version, patch);
-    void (async () => {
-      try {
-        replaceRow(await updateTask(projectId, taskId, body));
-        await afterWrite();
-      } catch (error) {
-        reportWriteError(error);
-      }
-    })();
+    const body = taskPatchBody(version ?? row.version, patch);
+    try {
+      const updated = await updateTask(projectId, taskId, body);
+      replaceRow(updated);
+      void afterWrite();
+      return updated.version;
+    } catch (error) {
+      reportWriteError(error);
+      return null;
+    }
   };
 
   /** 任务详情抽屉保存：项目经理（项目级）回写项目，其余字段与行内编辑同一套写入口径。 */
-  const handleSubmitTaskEdit = (values: TaskEditSubmit) => {
+  const handleSubmitTaskEdit = async (values: TaskEditSubmit): Promise<number | null> => {
     if (project === null) {
-      return;
+      return null;
     }
-    if (values.managerIds.length > 0 && !sameIds(values.managerIds, project.managerIds)) {
-      onChangeManagers?.(project.id, values.managerIds);
+    if (values.managerChanged && values.managerIds.length > 0 && !sameIds(values.managerIds, project.managerIds)) {
+      if (onChangeManagers === undefined || !(await onChangeManagers(project.id, values.managerIds))) return null;
     }
-    handlePatchTask(values.taskId, {
+    return handlePatchTask(values.taskId, {
       ownerIds: values.ownerIds,
       startDate: values.startDate,
       dueDate: values.dueDate,
@@ -502,7 +519,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       priority: values.priority,
       deliverableTypes: values.deliverableTypes,
       note: values.note,
-    });
+    }, values.version);
   };
 
   /**

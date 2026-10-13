@@ -1,3 +1,6 @@
+import { useLiveRefresh } from "../useLiveRefresh";
+import { keepLiveOrder } from "../liveSync";
+import { ApiError } from "../api";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { memberNameOf, type Member } from "../data/members";
@@ -14,7 +17,7 @@ import {
 } from "../data/tasks";
 import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
-import { fetchTaskDetail, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
+import { fetchTaskDetail, toUiTask, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { cachedZhToEn, translateZhToEn } from "../translateApi";
 import { fieldText, useLocale, useLocalizedText, useT } from "../i18n";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
@@ -153,8 +156,11 @@ const NOTE_BOX_CLASS =
 /** 任务编辑保存值：可编辑字段 = 项目经理（项目级，多位）/ 任务负责人（多位）/ 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
 export type TaskEditSubmit = {
   taskId: string;
+  version: number;
   /** 项目经理 id 名单（项目级字段，Push 136）：至少一位，回写项目。 */
   managerIds: string[];
+  /** Only an explicit manager edit may write this project-level field. */
+  managerChanged: boolean;
   /** 任务负责人 id（多位，契约 ownerIds）：空数组 = 待分配。 */
   ownerIds: string[];
   /** 开始 / 预计完成日期（ISO，YYYY-MM-DD；空串 = 未填）。 */
@@ -209,7 +215,7 @@ type TaskDrawerProps = {
   managerIds?: string[];
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
-  onSubmit?: (values: TaskEditSubmit) => void;
+  onSubmit?: (values: TaskEditSubmit) => Promise<number | null>;
   /**
    * 任务描述改名（Push 196 / Push 197 收窄）：只对**未归入阶段的「临时任务」**开放（阶段任务与节点 / 模板生成的任务按 A1-17 锁定，抽屉内只读）；
    * 失焦即存；不传 = 该行不渲染。
@@ -285,6 +291,15 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
   const [draft, setDraft] = useState<Draft>(() => draftOf(task, managerIds));
+  const baseDraft = useRef(draft);
+  const baseVersion = useRef(task?.version ?? 0);
+  const [unavailable, setUnavailable] = useState(false);
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const saveFailed = useRef(false);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const [latestDraft, setLatestDraft] = useState<{ version: number; draft: Draft } | null>(null);
+  const identityRef = useRef(taskId);
+  identityRef.current = taskId;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   /** 抽屉键盘焦点陷阱（Push 264 追订）：开着时 Tab 在抽屉内循环、关闭后焦点还回触发行；换任务（aside 重建）也能继续认门。 */
@@ -415,10 +430,46 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     setChangeDetailId(null);
     setChangeEntries({});
     setChangeDetailTick(0);
-    setDraft(draftOf(task, managerIds));
+    const initial = draftOf(task, managerIds);
+    baseDraft.current = initial;
+    baseVersion.current = task?.version ?? 0;
+    setUnavailable(false);
+    saveFailed.current = false;
+    setSaveNote(null);
+    setLatestDraft(null);
+    setDraft(initial);
     // 换任务时把草稿重置成新任务的字段；同一个任务上父级刷新不重置，避免打断正在输入的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
+
+  const draftDirty = JSON.stringify(draft) !== JSON.stringify(baseDraft.current);
+  const protectingDraft = draftDirty || saveNote !== null || changeContent !== "" || changeCause !== "" || changeBefore !== "" || changeAfter !== "" || changeFile !== null || renamingId !== null || pendingDelete !== null || finalizeConfirm || unfinalizeConfirm;
+  useEffect(() => {
+    if (task === null || protectingDraft || (document.activeElement instanceof HTMLElement && drawerRef.current?.contains(document.activeElement) && document.activeElement.matches('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]'))) return;
+    const next = draftOf(task, managerIds);
+    baseDraft.current = next;
+    baseVersion.current = task.version;
+    setDraft(next);
+  }, [task?.version, managerIds.join(","), protectingDraft]);
+
+  useLiveRefresh(["files", "tasks", "permissions"], async () => {
+    if (projectId === undefined || taskId === null) return () => {};
+    try {
+      const detail = await fetchTaskDetail(projectId, taskId);
+      const entries: Record<string, ChangeEntry> = {};
+      if (tab === "history") {
+        for (const change of detail.changeLinks ?? []) {
+          const row = await fetchChangeRequest(change.id);
+          const versions = await fetchFileVersions(row.fileId);
+          entries[change.id] = { state: "ready", detail: row, versions };
+        }
+      }
+      return () => { setFiles((previous) => keepLiveOrder(previous ?? [], detail.files)); setUnavailable(false); if (tab === "history") setChangeEntries(entries); };
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return () => { setUnavailable(true); setFiles([]); setPreviewNote("该任务已被删除或不可见，输入仍保留，不能继续保存。"); };
+      throw error;
+    }
+  }, String(projectId) + ":" + String(taskId) + ":" + tab, taskId !== null, { readOnly: true });
 
   useEffect(() => {
     if (projectId === undefined || taskId === null) {
@@ -595,34 +646,52 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const commit = useCallback(
     (patch: Partial<Draft>) => {
       const current = task;
-      if (current === null || onSubmit === undefined) {
+      if (current === null || onSubmit === undefined || unavailable) {
         return;
       }
       const next = updateDraft(patch);
-      const headcountText = next.headcount.trim();
-      const headcountValue = headcountText === "" ? 0 : Number(headcountText);
-      onSubmit({
-        taskId: current.id,
-        managerIds: next.managerIds,
-        ownerIds: next.ownerIds,
-        startDate: next.range === null ? "" : next.range.from,
-        dueDate: next.range === null ? "" : next.range.to,
-        days: next.range === null ? 0 : daysBetweenInclusive(next.range.from, next.range.to),
-        headcount: headcountText === "" || Number.isNaN(headcountValue) ? 0 : Math.floor(headcountValue),
-        priority: next.priority,
-        deliverableTypes: next.deliverableTypes,
-        note: next.note.trim(),
+      saveChain.current = saveChain.current.then(async () => {
+        if (identityRef.current !== current.id || saveFailed.current) return;
+        const headcountText = next.headcount.trim();
+        const headcountValue = headcountText === "" ? 0 : Number(headcountText);
+        const version = await onSubmit({
+          taskId: current.id,
+          version: baseVersion.current,
+          managerIds: next.managerIds,
+          managerChanged: next.managerIds.length !== baseDraft.current.managerIds.length || next.managerIds.some((id) => !baseDraft.current.managerIds.includes(id)),
+          ownerIds: next.ownerIds,
+          startDate: next.range === null ? "" : next.range.from,
+          dueDate: next.range === null ? "" : next.range.to,
+          days: next.range === null ? 0 : daysBetweenInclusive(next.range.from, next.range.to),
+          headcount: headcountText === "" || Number.isNaN(headcountValue) ? 0 : Math.floor(headcountValue),
+          priority: next.priority,
+          deliverableTypes: next.deliverableTypes,
+          note: next.note.trim(),
+        });
+        if (identityRef.current !== current.id) return;
+        if (version === null) {
+          saveFailed.current = true;
+          setSaveNote("保存失败，当前输入已保留。请读取最新内容核对后重试。");
+          return;
+        }
+        baseVersion.current = version;
+        baseDraft.current = next;
+        setSavedTick(Date.now());
+        setSaveNote(null);
+      }).catch(() => {
+        if (identityRef.current !== current.id) return;
+        saveFailed.current = true;
+        setSaveNote("保存失败，当前输入已保留。请读取最新内容核对后重试。");
       });
-      setSavedTick(Date.now());
     },
-    [onSubmit, task, updateDraft],
+    [onSubmit, task, updateDraft, unavailable],
   );
 
   if (task === null) {
     return null;
   }
 
-  const editable = onSubmit !== undefined;
+  const editable = onSubmit !== undefined && !unavailable;
   /** 任务描述改名（Push 196 / Push 197 收窄）：只有**未归入阶段**的「临时任务」能改 —— 归入阶段的任务即便没有来源节点也锁定（A1-17；服务端同口径 400 兜底）。 */
   const titleEditable = onRename !== undefined && task.stage === "" && task.nodeId === null && task.sourceNodeId === null;
   const canEditStatus = onSetStatus !== undefined;
@@ -1407,6 +1476,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         ref={drawerRef}
         key={task.id}
         role="dialog"
+        data-live-sync-readonly={protectingDraft ? "false" : "true"}
         aria-modal="true"
         aria-labelledby="task-drawer-title"
         className={
@@ -1939,6 +2009,34 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           </ScrollArea>
         )}
 
+        {saveNote === null ? null : (
+          <div role="status" className="shrink-0 border-t border-amber-200 bg-amber-50 px-6 py-3 text-xs text-amber-900">
+            <p>{saveNote}</p>
+            {latestDraft === null ? (
+              <button type="button" className="mt-2 underline" onClick={() => {
+                if (projectId === undefined) return;
+                void fetchTaskDetail(projectId, task.id).then((latest) => {
+                  if (identityRef.current !== latest.id) return;
+                  setLatestDraft({ version: latest.version, draft: draftOf(toUiTask(latest, task, (id) => memberNameOf(members, id) ?? id), managerIds) });
+                }).catch((error: unknown) => {
+                  if (error instanceof ApiError && (error.status === 403 || error.status === 404)) setUnavailable(true);
+                  setSaveNote("最新内容暂时无法读取，当前输入仍保留。");
+                });
+              }}>读取最新内容核对</button>
+            ) : (
+              <>
+                <details className="mt-2"><summary>查看最新任务字段</summary><p className="whitespace-pre-wrap">负责人：{latestDraft.draft.ownerIds.map((id) => memberNameOf(members, id) ?? id).join("、")}；人数：{latestDraft.draft.headcount || "0"}；日期：{latestDraft.draft.range?.from ?? "—"} 至 {latestDraft.draft.range?.to ?? "—"}；优先级：{latestDraft.draft.priority}；成果：{latestDraft.draft.deliverableTypes.join("、")}<br />进展：{latestDraft.draft.note}</p></details>
+                <button type="button" disabled={unavailable} className="mt-2 underline disabled:opacity-50" onClick={() => {
+                  baseVersion.current = latestDraft.version;
+                  baseDraft.current = latestDraft.draft;
+                  saveFailed.current = false;
+                  setLatestDraft(null);
+                  commit({});
+                }}>核对后，用当前填写内容重新保存</button>
+              </>
+            )}
+          </div>
+        )}
         <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
           <p className="text-[11px] text-zinc-400">点空白处或按 Esc 关闭</p>
           {savedTick !== 0 ? (

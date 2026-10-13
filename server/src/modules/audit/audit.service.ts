@@ -20,6 +20,7 @@ export interface AuditListQueryInput {
   q?: string;
   from?: string;
   to?: string;
+  beforeId?: number;
   page: number;
   limit: number;
 }
@@ -117,8 +118,8 @@ export class AuditService implements AuditSink {
       to: query.to === undefined ? undefined : new Date(query.to),
     };
     const offset = (query.page - 1) * query.limit;
-    const { items, total } = await this.repository.listPage(filter, query.limit, offset);
-    return { items: items.map(toAuditLog), page: query.page, limit: query.limit, total };
+    const { items, total, windowId } = await this.repository.listPage(filter, query.limit, offset, query.beforeId);
+    return { items: items.map(toAuditLog), page: query.page, limit: query.limit, total, windowId: windowId ?? null };
   }
 
   /** 操作人姓名快照（写审计时冗余；带 60s 缓存，避免每写一条查一次 users）。 */

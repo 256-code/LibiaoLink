@@ -4,6 +4,9 @@ import { Loader } from "./Loader";
 import { PlanNoteCard } from "./PlanNoteCard";
 import { PlanNoteEditor, type PlanNoteDraft } from "./PlanNoteEditor";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { ApiError } from "../api";
+import { useLiveRefresh } from "../useLiveRefresh";
+import { keepLiveOrder } from "../liveSync";
 import { loadMyPreferences, saveMyPlanBoard } from "../preferencesApi";
 import {
   PLAN_BOARD_BGS,
@@ -373,6 +376,13 @@ export function MyPlanBoard() {
   const [categoryConfirm, setCategoryConfirm] = useState<string | null>(null);
   /** 上云串行链：多笔提交按顺序落库（每笔都是整面便签墙，顺序错乱会互相覆盖）。 */
   const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const revision = useRef(0);
+  const createdNoteId = useRef<string | null>(null);
+  const pendingSaves = useRef(0);
+  const failed = useRef(false);
+  const [unsaved, setUnsaved] = useState(false);
+  const [conflict, setConflict] = useState<{ board: PlanBoard; revision: number } | null>(null);
+
 
   /** 拖拽（Push 269）：便签卡按下后交给这里（超 6px 阈值才算拖）；中途高亮落点，松手落点决定完成 / 恢复。 */
   const [drag, setDrag] = useState<PlanDragState | null>(null);
@@ -396,19 +406,28 @@ export function MyPlanBoard() {
           return;
         }
         const remote = prefs.myPlanBoard;
+        revision.current = prefs.revisions?.myPlanBoard ?? 0;
         const legacy = readLegacyPlanBoard();
         if (legacy !== null) {
           const shouldMigrate = remote.updatedAt === null || (remote.notes.length === 0 && legacy.notes.length > 0);
           if (shouldMigrate) {
             try {
-              const saved = await saveMyPlanBoard(legacy);
+              const saved = await saveMyPlanBoard(legacy, revision.current);
               if (!alive) {
                 return;
               }
+              revision.current = saved.revisions?.myPlanBoard ?? revision.current + 1;
               clearLegacyPlanBoard();
               setBoard({ notes: saved.myPlanBoard.notes, categories: saved.myPlanBoard.categories, bg: planBoardBgOf(saved.myPlanBoard.bg).id });
               return;
-            } catch {
+            } catch (error) {
+              if (error instanceof ApiError && error.status === 409) {
+                const latest = await loadMyPreferences();
+                if (alive) { revision.current = latest.revisions?.myPlanBoard ?? 0; setBoard(latest.myPlanBoard); }
+                return;
+              }
+              failed.current = true;
+              setUnsaved(true);
               if (!alive) {
                 return;
               }
@@ -424,9 +443,13 @@ export function MyPlanBoard() {
           const seeded = seedPlanBoard();
           setBoard(seeded);
           try {
-            await saveMyPlanBoard(seeded);
-          } catch {
-            // 预置上云失败静默：本次照常可用，之后任何一次保存都会把整面便签墙带上云
+            const saved = await saveMyPlanBoard(seeded, revision.current);
+            revision.current = saved.revisions?.myPlanBoard ?? revision.current + 1;
+          } catch (error) {
+            if (error instanceof ApiError && error.status === 409) {
+              const latest = await loadMyPreferences();
+              if (alive) { revision.current = latest.revisions?.myPlanBoard ?? 0; setBoard(latest.myPlanBoard); }
+            } else { failed.current = true; setUnsaved(true); }
           }
           return;
         }
@@ -442,24 +465,46 @@ export function MyPlanBoard() {
     };
   }, [reloadToken]);
 
-  /** 乐观提交：先更新界面，再整面 PATCH 上云（串行）；失败保留界面改动 + 出错误提示。 */
-  const commit = (next: PlanBoard, okText?: string): void => {
+  useLiveRefresh(["preferences"], async () => {
+    const prefs = await loadMyPreferences();
+    return () => {
+      revision.current = prefs.revisions?.myPlanBoard ?? 0;
+      setBoard((previous) => previous === null ? prefs.myPlanBoard : { ...prefs.myPlanBoard, notes: keepLiveOrder(previous.notes, prefs.myPlanBoard.notes) });
+    };
+  }, "my-plan", board !== null, { paused: () => failed.current || pendingSaves.current > 0 || editor !== null || addingCategory || categoryConfirm !== null || drag !== null });
+
+  /** Failed queued writes remain dirty; only an explicit conflict decision advances their baseline. */
+  const commit = (next: PlanBoard, okText?: string): Promise<boolean> => {
     setBoard(next);
-    saveChain.current = saveChain.current
-      .then(() => saveMyPlanBoard(next))
-      .then(() => {
-        if (okText !== undefined) {
-          setNotice({ kind: "ok", text: okText });
+    setUnsaved(true);
+    pendingSaves.current += 1;
+    const operation = saveChain.current.then(async () => {
+      if (failed.current) { pendingSaves.current -= 1; return false; }
+      try {
+        const saved = await saveMyPlanBoard(next, revision.current);
+        revision.current = saved.revisions?.myPlanBoard ?? revision.current + 1;
+        if (okText !== undefined) setNotice({ kind: "ok", text: okText });
+        return true;
+      } catch (error) {
+        failed.current = true;
+        if (error instanceof ApiError && error.status === 409) {
+          const latest = await loadMyPreferences().catch(() => null);
+          if (latest !== null) setConflict({ board: latest.myPlanBoard, revision: latest.revisions?.myPlanBoard ?? 0 });
         }
-      })
-      .catch(() => {
-        setNotice({ kind: "error", text: "保存失败（网络或服务不可用）—— 改动只在本页，刷新会回滚到账号里最后一次保存。" });
-      });
+        setNotice({ kind: "error", text: error instanceof ApiError ? error.message : "保存失败，改动仍在本页，可重试保存。" });
+        return false;
+      } finally {
+        pendingSaves.current -= 1;
+        if (pendingSaves.current === 0 && !failed.current) setUnsaved(false);
+      }
+    });
+    saveChain.current = operation.then(() => {});
+    return operation;
   };
 
-  const handleSaveNote = (draft: PlanNoteDraft): void => {
+  const handleSaveNote = (draft: PlanNoteDraft): Promise<boolean> => {
     if (editor === null || board === null) {
-      return;
+      return Promise.resolve(false);
     }
     const now = new Date().toISOString();
     const existing = editor.note;
@@ -467,18 +512,18 @@ export function MyPlanBoard() {
       if (board.notes.length >= PLAN_NOTE_LIMIT) {
         setEditor(null);
         setNotice({ kind: "error", text: "便签已达上限（" + String(PLAN_NOTE_LIMIT) + " 条）—— 先删掉一些再新建。" });
-        return;
+        return Promise.resolve(false);
       }
-      const note: PlanNote = { id: newPlanNoteId(), title: draft.title, content: draft.content, category: draft.category, colorId: draft.colorId, fontId: draft.fontId, done: false, createdAt: now, updatedAt: now };
-      commit({ notes: [note].concat(board.notes), categories: board.categories, bg: board.bg });
+      const note: PlanNote = { id: createdNoteId.current ?? newPlanNoteId(), title: draft.title, content: draft.content, category: draft.category, colorId: draft.colorId, fontId: draft.fontId, done: false, createdAt: now, updatedAt: now };
+      createdNoteId.current = note.id;
       if (doneOnly) {
         setDoneOnly(false);
       }
+      return commit({ notes: [note].concat(board.notes.filter((item) => item.id !== note.id)), categories: board.categories, bg: board.bg });
     } else {
       const notes = board.notes.map((item) => (item.id === existing.id ? { ...item, ...draft, updatedAt: now } : item));
-      commit({ notes, categories: board.categories, bg: board.bg });
+      return commit({ notes, categories: board.categories, bg: board.bg });
     }
-    setEditor(null);
   };
 
   const handleDeleteNote = (): void => {
@@ -486,8 +531,7 @@ export function MyPlanBoard() {
       return;
     }
     const target = editor.note;
-    commit({ notes: board.notes.filter((item) => item.id !== target.id), categories: board.categories, bg: board.bg }, "已删除便签。");
-    setEditor(null);
+    void commit({ notes: board.notes.filter((item) => item.id !== target.id), categories: board.categories, bg: board.bg }, "已删除便签。").then((ok) => { if (ok) { setEditor(null); createdNoteId.current = null; } });
   };
 
   /** 完成 / 恢复（Push 269 · 拖拽）：落一次整面 PATCH（乐观更新 + 串行上云）。 */
@@ -728,7 +772,8 @@ export function MyPlanBoard() {
               type="button"
               data-plan-new=""
               onClick={() => {
-                setEditor({ note: null });
+                createdNoteId.current = null;
+    setEditor({ note: null });
               }}
               className={BTN_PRIMARY}
             >
@@ -902,6 +947,7 @@ export function MyPlanBoard() {
                 title="还没有便签"
                 text="点「新建便签」，写下第一条计划。"
                 onNew={() => {
+                  createdNoteId.current = null;
                   setEditor({ note: null });
                 }}
               />
@@ -912,6 +958,7 @@ export function MyPlanBoard() {
                 title="没有找到匹配的便签"
                 text="换个关键字，或把左侧分类切回「全部便签」。"
                 onNew={() => {
+                  createdNoteId.current = null;
                   setEditor({ note: null });
                 }}
               />
@@ -920,7 +967,7 @@ export function MyPlanBoard() {
                 {visible.map((note) => {
                   const lifted = drag !== null && drag.noteId === note.id;
                   return (
-                    <div key={note.id} className="relative min-w-0">
+                    <div key={note.id} data-live-card={note.id} className="relative min-w-0">
                       <PlanNoteCard
                         note={note}
                         lifted={lifted}
@@ -961,6 +1008,20 @@ export function MyPlanBoard() {
         </div>
       )}
 
+      {unsaved && failed.current ? (
+        <div data-plan-unsaved="" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+          <p>本页改动尚未保存。{conflict === null ? "可重试，原版本冲突仍会受到保护。" : "另一个窗口已修改账号内容；请核对后选择。"}</p>
+          {conflict === null ? (
+            <button type="button" className="mt-2 underline" onClick={() => { failed.current = false; void commit(board); }}>重试保存</button>
+          ) : (
+            <>
+              <details className="mt-2"><summary>查看账号里的内容</summary>{conflict.board.notes.map((note) => <p key={note.id} className="whitespace-pre-wrap py-1">{note.title + "：" + note.content}</p>)}</details>
+              <button type="button" className="mt-2 mr-4 underline" onClick={() => { setBoard(conflict.board); revision.current = conflict.revision; setConflict(null); failed.current = false; setUnsaved(false); setEditor(null); }}>采用账号内容（放弃本页改动）</button>
+              <button type="button" className="mt-2 underline" onClick={() => { revision.current = conflict.revision; setConflict(null); failed.current = false; void commit(board); }}>确认以本页整板替换账号内容</button>
+            </>
+          )}
+        </div>
+      ) : null}
       {notice === null ? null : (
         <Toast
           kind={notice.kind}
@@ -977,10 +1038,19 @@ export function MyPlanBoard() {
           note={editor.note}
           categories={board.categories}
           onSave={handleSaveNote}
+          saveError={unsaved && failed.current ? notice?.text ?? "本页改动未保存，输入仍保留。" : undefined}
+          conflictSummary={conflict === null ? undefined : "分类：" + conflict.board.categories.join("、") + "；背景：" + conflict.board.bg + "\n" + conflict.board.notes.map((note) => note.title + "：" + note.content + "（" + note.category + (note.done ? "，已完成" : "") + "）").join("\n")}
+          onConfirmConflict={conflict === null ? undefined : (draft) => {
+            revision.current = conflict.revision;
+            failed.current = false;
+            setConflict(null);
+            return handleSaveNote(draft);
+          }}
           onDelete={handleDeleteNote}
           onAddCategory={handleAddCategory}
           onClose={() => {
             setEditor(null);
+            createdNoteId.current = null;
           }}
         />
       )}

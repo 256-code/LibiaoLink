@@ -39,6 +39,7 @@ export type ProjectDraft = {
 export type ProjectSubmitResult =
   | { kind: "ok" }
   | { kind: "error"; message: string }
+  | { kind: "conflict"; latest: ProjectDraft; version: number }
   | { kind: "archive-confirm"; missing: string[] };
 
 type ProjectModalProps = {
@@ -56,7 +57,7 @@ type ProjectModalProps = {
   canArchive?: boolean;
   onClose: () => void;
   /** 提交（Push 262 起返回结构化结果）：ok = 成功（父层负责关窗 / 刷新列表）；error = 失败提示；archive-confirm = 归档缺项，弹窗内二次确认。 */
-  onSubmit: (draft: ProjectDraft, options?: { archiveConfirm?: boolean }) => Promise<ProjectSubmitResult>;
+  onSubmit: (draft: ProjectDraft, options?: { archiveConfirm?: boolean; version?: number }) => Promise<ProjectSubmitResult>;
 };
 
 const fieldClass =
@@ -95,6 +96,8 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const [regionPopoverOpen, setRegionPopoverOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{ latest: ProjectDraft; version: number } | null>(null);
+  const [confirmedVersion, setConfirmedVersion] = useState<number | undefined>(undefined);
   /** 归档缺项（Push 262）：非空 = 显示二次确认区（仍要归档 / 取消）。 */
   const [archiveMissing, setArchiveMissing] = useState<string[] | null>(null);
   /** 缺项面板出现时滚进视野（Push 262 追订：弹窗内容高过视口时可滚动，面板在折叠区外）。 */
@@ -190,6 +193,12 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const regionLabel = dictLabel(dicts, "region", region);
 
   const applyResult = (result: ProjectSubmitResult): void => {
+    if (result.kind === "conflict") {
+      setConflict(result);
+      setError("项目已被他人修改，当前填写内容已保留。核对最新内容后再保存。");
+      setArchiveMissing(null);
+      return;
+    }
     if (result.kind === "error") {
       setError(result.message);
       setArchiveMissing(null);
@@ -210,7 +219,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     }
     setPending(true);
     setError(null);
-    const result = await onSubmit({ code, description, note, managerIds, projectType, region, status });
+    const result = await onSubmit({ code, description, note, managerIds, projectType, region, status }, { version: confirmedVersion });
     setPending(false);
     applyResult(result);
   };
@@ -222,7 +231,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     }
     setPending(true);
     setError(null);
-    const result = await onSubmit({ code, description, note, managerIds, projectType, region, status }, { archiveConfirm: true });
+    const result = await onSubmit({ code, description, note, managerIds, projectType, region, status }, { archiveConfirm: true, version: confirmedVersion });
     setPending(false);
     applyResult(result);
   };
@@ -425,6 +434,16 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
             <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </p>
+          )}
+          {conflict === null ? null : (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <details><summary>查看最新项目内容</summary><p className="mt-2 whitespace-pre-wrap">编号：{conflict.latest.code}<br />描述：{conflict.latest.description}<br />备注：{conflict.latest.note || "—"}<br />经理：{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join("、")}<br />类型：{conflict.latest.projectType}；地区：{conflict.latest.region}；状态：{PROJECT_STATUS_TEXT[conflict.latest.status]}</p></details>
+              <button type="button" disabled={pending || conflict.latest.status === "archived"} className="mt-2 underline disabled:opacity-50" onClick={() => {
+                setConfirmedVersion(conflict.version);
+                setConflict(null);
+                setError("已确认最新版本，当前填写内容保留。点击保存修改提交。");
+              }}>核对后，确认按当前填写内容保存</button>
+            </div>
           )}
 
         </form>

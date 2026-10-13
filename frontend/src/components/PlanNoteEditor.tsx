@@ -44,14 +44,20 @@ export function PlanNoteEditor({
   onDelete,
   onAddCategory,
   onClose,
+  saveError,
+  conflictSummary,
+  onConfirmConflict,
 }: {
   /** null = 新建。 */
   note: PlanNote | null;
   categories: readonly string[];
-  onSave: (draft: PlanNoteDraft) => void;
+  onSave: (draft: PlanNoteDraft) => Promise<boolean>;
   onDelete: () => void;
   onAddCategory: (name: string) => void;
   onClose: () => void;
+  saveError?: string;
+  conflictSummary?: string;
+  onConfirmConflict?: (draft: PlanNoteDraft) => Promise<boolean>;
 }) {
   const [title, setTitle] = useState(note?.title ?? "");
   const [content, setContent] = useState(note?.content ?? "");
@@ -61,6 +67,10 @@ export function PlanNoteEditor({
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const currentDraft = useRef<PlanNoteDraft | null>(null);
+  currentDraft.current = { title: normalizePlanTitle(title), content: normalizePlanContent(content), category, colorId, fontId };
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useFocusTrapFor(dialogRef);
   useEffect(() => lockBodyScroll(), []);
@@ -81,17 +91,18 @@ export function PlanNoteEditor({
   const color = planColorOf(colorId);
   const fontClass = planFontOf(fontId).className;
   const canSave = title.trim() !== "" || content.trim() !== "";
-  const handleSave = () => {
-    if (!canSave) {
+  const handleSave = async (confirmConflict = false) => {
+    if (!canSave || savingRef.current || currentDraft.current === null) {
       return;
     }
-    onSave({
-      title: normalizePlanTitle(title),
-      content: normalizePlanContent(content),
-      category,
-      colorId,
-      fontId,
-    });
+    const submitted = currentDraft.current;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const ok = await (confirmConflict && onConfirmConflict !== undefined ? onConfirmConflict(submitted) : onSave(submitted));
+      // Keep text typed while this save was in flight; the next save uses our own returned revision.
+      if (ok && JSON.stringify(currentDraft.current) === JSON.stringify(submitted)) onClose();
+    } finally { savingRef.current = false; setSaving(false); }
   };
 
   /** 新建分类：回车 / 失焦提交（空 = 放弃）；已在表里 = 直接选中；到 12 类上限 = 不加也不选。 */
@@ -267,6 +278,7 @@ export function PlanNoteEditor({
           )}
         </div>
 
+        {saveError === undefined ? null : <div role="status" className="shrink-0 border-t border-black/10 px-5 py-3 text-xs"><p>{saveError}</p>{conflictSummary === undefined ? null : <><details className="mt-2"><summary>核对账号里的整板内容</summary><p className="max-h-32 overflow-auto whitespace-pre-wrap">{conflictSummary}</p></details><button type="button" disabled={saving} className="mt-2 underline" onClick={() => { void handleSave(true); }}>核对后，保存当前便签并替换整板</button></>}</div>}
         <footer className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-t border-black/[0.08] bg-white/35 px-5 py-3">
           {isEdit && confirmingDelete ? (
             <div data-plan-editor-delete-confirm="" className="ml-auto flex flex-wrap items-center gap-2.5 text-[12.5px] font-semibold text-[#b91c1c]">
@@ -309,14 +321,14 @@ export function PlanNoteEditor({
                 <button
                   type="button"
                   data-plan-editor-save=""
-                  disabled={!canSave}
-                  onClick={handleSave}
+                  disabled={!canSave || saving}
+                  onClick={() => { void handleSave(); }}
                   className="inline-flex items-center gap-1.5 rounded-[11px] border border-[#1c1917] bg-[#1c1917] px-3.5 py-2 text-[13px] font-medium text-[#fdfbf7] shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] transition hover:-translate-y-px hover:bg-[#292524] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
                 >
                   <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                     <path d="M5 12.5 10 17.5 19 7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  保存
+                  {saving ? "保存中…" : "保存"}
                 </button>
               </div>
             </>
