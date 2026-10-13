@@ -13,8 +13,9 @@
  *
  * 群通道（`wecom_group`）自 M5-03-2 起 = 智能机器人长连接（P5 定案 2026-10-12）—— webhook 面退役，
  * 93000 一类 webhook 码表同批移除（先例：ONLYOFFICE 承接后 LibreOffice 退役）。码表 = Spike 实测
- * 2026-10-10 ~ 10-12（见 §五 5.3A）+ 官方文档：
+ * 2026-10-10 ~ 10-13（含 T3-6 补测 · 见 §五 5.3A）+ 官方文档：
  *   853000（bot_id / secret 无效 · 订阅回执实测复现）/ 846601（未开长连接模式）→ permanent；
+ *   93001（机器人被移出群 · T3-6 实测 2026-10-13 —— 群内不可见；重拉后恢复推送）→ permanent；
  *   846609（未订阅 —— 连接恢复后重试）→ retryable；
  *   846607 双语义（未激活 / 超频，errmsg 不可区分）—— 按调用方传入的 `groupActivated` 分流：
  *     false（会话未激活）→ permanent（不重试 + 降级 B4 + 留痕）；否则 → rate_limited（超频，延期重排）。
@@ -45,10 +46,11 @@ const APP_ERRCODE_KINDS: ReadonlyMap<number, WecomFailureKind> = new Map<number,
 /** 846607：未激活 / 超频双语义（errmsg 不可区分）—— 分流依赖调用方传入的会话激活态。 */
 export const WECOM_BOT_FREQ_ERRCODE = 846607;
 
-/** 智能机器人（群通道）错误码分类（Spike 实测 2026-10-10 ~ 10-12；846607 在函数内按激活态分流）。 */
+/** 智能机器人（群通道）错误码分类（Spike 实测 2026-10-10 ~ 10-13；846607 在函数内按激活态分流）。 */
 const GROUP_ERRCODE_KINDS: ReadonlyMap<number, WecomFailureKind> = new Map<number, WecomFailureKind>([
   [853000, "permanent"], // bot_id / secret 无效（订阅回执实测复现）
   [846601, "permanent"], // 未开启长连接模式（配置 / 部署类）
+  [93001, "permanent"], // 机器人被移出群（T3-6 实测 2026-10-13 —— 重拉后恢复）
   [846609, "retryable"], // 未订阅（连接恢复后重试）
 ]);
 
