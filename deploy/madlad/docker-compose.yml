@@ -1,0 +1,50 @@
+# ============================================================
+# LibiaoLink MADLAD 内网翻译服务（CTranslate2 int8 · 沙箱/交付通用形态）
+# ------------------------------------------------------------
+# 用途：接替 LibreTranslate（deploy/libretranslate）承担 zh→en 机器翻译 —— 引擎升级为
+#       google/madlad400-3b-mt（T5 · Apache-2.0）；接口与 LibreTranslate 完全兼容
+#       （POST /translate），前端只需把 TRANSLATE_ORIGIN 指到本服务端口。
+#
+# 用法（本目录下）：
+#   bash scripts/prepare-model.sh        # 第一步：准备模型（下载+转换，一次性）
+#   docker compose up -d                 # 第二步：起服务
+#   docker compose logs -f translate     # 看日志（模型加载完毕才监听）
+#
+# 端口默认只发回环 127.0.0.1（局域网联调在 .env 覆盖 MADLAD_BIND_IP）。
+# ============================================================
+name: libiaolink-madlad
+
+services:
+  translate:
+    build: .
+    image: "${MADLAD_IMAGE:-libiaolink/madlad-translate:1.0.0}"
+    container_name: libiaolink-madlad
+    restart: unless-stopped
+    init: true
+    environment:
+      MADLAD_MODEL_DIR: /models/model_ct2
+      MADLAD_BEAM_SIZE: "${MADLAD_BEAM_SIZE:-4}"
+      MADLAD_INTRA_THREADS: "${MADLAD_INTRA_THREADS:-4}"
+    ports:
+      - "${MADLAD_BIND_IP:-127.0.0.1}:${MADLAD_PORT:-5006}:5000"
+    volumes:
+      - ./data/model_ct2:/models/model_ct2:ro
+    mem_limit: ${MADLAD_MEM_LIMIT:-8g}
+    cpus: ${MADLAD_CPUS:-4}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request, sys;
+          sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:5000/health", timeout=5).status == 200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
