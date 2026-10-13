@@ -1002,7 +1002,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
-            <GanttChart tasks={tasks} members={members} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
+            <GanttChart tasks={tasks} members={members} managers={managers} tierTint={tintRows} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 290：背景档位「适中」透传给「问题追踪」做表格呈现（原醒目模式挂点，随功能下架改吃档位）；失败提示沿用同一条 toolError
