@@ -28,6 +28,7 @@ import { NotifyAppRepository } from "./notify.app.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { WecomSendResult } from "./wecom.client.js";
 import { WecomClient } from "./wecom.client.js";
+import { describeWecomFailure } from "./wecom.errors.js";
 import { truncateUtf8Bytes } from "./wecom.text.js";
 
 /** 应用文本字节上限（官方 2048；取 2000 留余量 —— B5 定案「投递层按字节截断留痕」）。 */
@@ -57,12 +58,9 @@ export function truncateAppText(content: string, maxBytes: number = APP_TEXT_MAX
   return truncateUtf8Bytes(content, maxBytes, APP_TRUNCATION_SUFFIX);
 }
 
-/** 失败描述（errcode / 类型 / HTTP 态；不含 userid 明文 —— 载荷与库值都不含）。 */
+/** 失败描述（核心语义：errcode + 白话标签 / errmsg 概要；不含 kind / HTTP 内部态与企微机器尾巴；不含 userid 明文）。 */
 function describeAppFailure(result: Extract<WecomSendResult, { ok: false }>): string {
-  const http = result.httpStatus === null ? "" : " http=" + String(result.httpStatus);
-  const code = result.errcode === null ? "" : " errcode=" + String(result.errcode);
-  const errmsg = result.errmsg === null || result.errmsg === "" ? "" : "：" + result.errmsg;
-  return "应用消息失败（kind=" + result.kind + http + code + "）" + errmsg;
+  return "应用消息未送达" + describeWecomFailure(result.errcode, result.errmsg);
 }
 
 function messageOf(error: unknown): string {

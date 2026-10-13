@@ -270,9 +270,9 @@ async function main() {
 
   // ---- 告警出口（WecomAlertSink · 智能机器人推管理员告警群） ----
   assertEqual(
-    "W1 告警文本：含 code / message / detail JSON",
+    "W1 告警文本：含 code / message（detail 不再原样 JSON 回显）",
     alert.composeAlertText({ code: "outbox.dead_letter", level: "error", message: "近期死信 2 条", detail: { deadRecent: 2 } }),
-    "【LibiaoLink 告警】outbox.dead_letter\n近期死信 2 条\n{\"deadRecent\":2}",
+    "【LibiaoLink 告警】outbox.dead_letter\n近期死信 2 条",
   );
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));

@@ -8,6 +8,8 @@ import {
   classifyWecomErrcode,
   classifyWecomHttpStatus,
   describeNetworkError,
+  describeWecomFailure,
+  summarizeWecomErrmsg,
 } from "../src/modules/notify/wecom.errors.js";
 
 describe("企微错误分类（M5-03-1 · S8-1）", () => {
@@ -75,5 +77,26 @@ describe("企微错误分类（M5-03-1 · S8-1）", () => {
 
   it("describeNetworkError：非 Error 输入给占位描述", () => {
     expect(describeNetworkError("boom")).toBe("unknown error");
+  });
+});
+
+describe("失败描述收敛（告警 / 留痕文案核心语义 · 2026-10-13）", () => {
+  it("summarizeWecomErrmsg：去企微 hint / from ip / more info 机器尾巴", () => {
+    expect(
+      summarizeWecomErrmsg(
+        "not allow send msg in room, hint: [1791862401423410269083567], from ip: 183.129.199.210, more info at https://open.work.weixin.qq.com/devtool/query?e=93001",
+      ),
+    ).toBe("not allow send msg in room");
+    expect(summarizeWecomErrmsg("系统繁忙, hint: [abc], from ip: 10.0.0.1")).toBe("系统繁忙");
+  });
+
+  it("去内部连接态标记；已知码 → 白话标签；未收录码 / 无码 → errmsg 概要", () => {
+    expect(summarizeWecomErrmsg("长连接未就绪（state=backoff）")).toBe("长连接未就绪");
+    expect(describeWecomFailure(93001, "not allow send msg in room, hint: [x], from ip: y")).toBe(
+      "（errcode=93001：机器人已被移出群）",
+    );
+    expect(describeWecomFailure(99999, "unknown failure, hint: [x]")).toBe("（errcode=99999：unknown failure）");
+    expect(describeWecomFailure(null, "长连接未就绪（state=backoff）")).toBe("：长连接未就绪");
+    expect(describeWecomFailure(null, null)).toBe("");
   });
 });
