@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Member } from "../data/members";
+import type { TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
 import { PROGRESS_STEPS, TEMP_TASK_STAGE, cnDateFromIso, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
-import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
+import { STATUS_DOT_CLASS, TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, type TaskPatch } from "./TaskBoard";
 
 /**
  * 项目详情「甘特图」视图（Push 142，业务口径「我想做甘特图 —— 在标签导航栏加一个甘特图页面」；
@@ -23,6 +24,10 @@ import { STATUS_DOT_CLASS, type TaskPatch } from "./TaskBoard";
  *   只滚容器、不改任何任务字段；位移没过阈值仍算点击（左表行定位 / 阶段折叠 / 点空白清选中照常）；
  * - `timelineHeader.scales`：时间轴粒度可切日 / 周 / 月（表头分段与网格密度跟着换，条仍按天精确落点）；
  * - 甘特内筛选：按负责人（含「待分配」）、只看已延期、只看未排期（时间轴范围 / 阶段汇总跟着筛完的任务走）；
+ * - 任务列表与甘特图同屏（Push 294）：工具条（含筛选栏）常驻；筛选后（或整个项目）**还有没排期的任务**时，
+ *   甘特图**上方**出「项目页任务表」同款列表（15 列全列 + TaskRow 复用，口径同工作台「我的任务」表；可编辑列照常能改）；
+ *   图表本身能画时仍在下方照常渲染 —— 一条排期齐的都没有时只出列表 + 提示条（业务口径「图二筛选后出现图三的情况
+ *   直接把图一这样的列表展现」→「有多个行的话有一个已延期设置日期了 其他的还是要显示」+「甘特图也在下方同时显示」+「筛选栏都没有了 是bug」）；
  * - 拖动时边缘自动滚动（业务口径「拖动进度条要移动 也要可以移画面」）：拖条 / 两端 / 进度圆点时指针进到
  *   时间轴左右边缘 72px 内，画面按深度逐帧滚，条跟着新滚到的日期走；
  * - `taskBar.moveable`：拖条整体平移改期（工期不变）；
@@ -53,6 +58,13 @@ const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !=
 
 /** 阶段不在九阶段里的任务（看板「添加 → 临时任务」建的空任务）→「临时任务」垫底（Push 196 起，原「未分组」；与项目总览最后一组同口径）。 */
 const UNGROUPED = TEMP_TASK_STAGE;
+
+/** 甘特图上方任务列表的列（Push 294）= 项目页任务表全列（口径同工作台「我的任务」表：resolveColumns({}) 一个不少）。 */
+const FALLBACK_TASK_COLUMNS = resolveColumns({});
+const FALLBACK_TASK_GRID = tableGridTemplate(FALLBACK_TASK_COLUMNS);
+const FALLBACK_TASK_MIN_W = tableMinWidth(FALLBACK_TASK_COLUMNS);
+/** 任务列表不带「项目经理」行内编辑（只读文本）：managerIds 占位同一份空数组（免得每行新建一个）。 */
+const NO_MANAGER_IDS: string[] = [];
 
 /**
  * 左表列宽 / 行高：左表与时间轴靠这一组常量逐行对齐。**列宽固定、不随可见宽度变** ——
@@ -557,7 +569,7 @@ function centerOnToday(element: HTMLDivElement | null, todayLeft: number | null,
  * 传了 onPatchTask / onSetProgress 就能拖动改期 / 改进度（不传 = 拖动照常预览、松手不写回）。
  * members = 人员目录（负责人筛选项的成员行渲染）。
  */
-export function GanttChart({ tasks, members, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
+export function GanttChart({ tasks, members, managers = "", tierTint = false, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; /** 项目经理展示文本（项目级；空态兜底列表的「项目经理」列用，同项目页任务表）。 */ managers?: string; /** 背景档位（适中 / 炫彩；空态兜底列表的行色与项目页任务行的铺色同口径，Push 294）。 */ tierTint?: TintedTier | false; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
   const today = useMemo(localToday, []);
   const [zoom, setZoom] = useState<ZoomKey>("standard");
   /** 时间轴粒度（官方 timelineHeader.scales：日 / 周 / 月）—— 只换表头与网格密度，条仍按天精确落点。 */
@@ -1097,43 +1109,251 @@ export function GanttChart({ tasks, members, onPatchTask, onSetProgress }: { tas
     );
   }
 
-  // 空态 ②：筛选后一个都不剩（负责人 / 行筛选把任务全筛掉了）。
-  if (visibleTasks.length === 0) {
-    return (
-      <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-14 text-center text-sm text-zinc-500">
-        <p>当前筛选下没有任务：{tasks.length} 条任务全被筛掉了。</p>
-        <button
-          type="button"
-          onClick={clearFilters}
-          className="mt-3 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900"
-        >
-          清空筛选
-        </button>
+  /**
+   * 任务列表（业务口径 2026-10-13「图二筛选后出现图三的情况直接把图一这样的列表展现」→ 同日追订
+   * 「有多个行的话有一个已延期设置日期了 其他的还是要显示」+「甘特图也在下方同时显示」+「只看未排期上分的甘特图筛选栏都没有了 是bug」）：
+   * 筛选后（或整个项目）**还有没排期的任务**就出这张表（15 列全列 + TaskRow 复用，口径同工作台「我的任务」表）；
+   * 位置在甘特图**上方** —— 图表本身能画时仍在下方照常渲染，列表与甘特同屏，补日期不用离开这一屏。
+   * 工具条（含筛选栏）常驻；只有「项目一个任务都没有」才整屏换空态（空态 ①，提前返回）。
+   */
+  const hasUnscheduled = visibleTasks.some((task) => task.startDate === "" || task.dueDate === "");
+  const taskListBlock = (
+    <div data-gantt-task-list="true" className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <div className="overflow-x-auto">
+        <div style={{ minWidth: FALLBACK_TASK_MIN_W }}>
+          <div
+            className="grid items-center border-b border-zinc-200 bg-zinc-50 px-5 py-2.5 text-xs font-medium text-zinc-400"
+            style={{ gridTemplateColumns: FALLBACK_TASK_GRID, minWidth: FALLBACK_TASK_MIN_W }}
+          >
+            {FALLBACK_TASK_COLUMNS.map((column) =>
+              column.key === "title" ? (
+                <span key={column.key} data-column={column.key} className="truncate">
+                  {column.label}
+                </span>
+              ) : (
+                <span
+                  key={column.key}
+                  data-column={column.key}
+                  title={column.label === "" ? undefined : column.label}
+                  className={"truncate text-center " + (column.headerClass ?? "")}
+                >
+                  {column.header ?? column.label}
+                </span>
+              ),
+            )}
+          </div>
+          <div className="divide-y divide-zinc-100">
+            {visibleTasks.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                columns={FALLBACK_TASK_COLUMNS}
+                selected={false}
+                tierTint={tierTint}
+                managers={managers}
+                managerIds={NO_MANAGER_IDS}
+                members={members}
+                onProgress={
+                  onSetProgress === undefined
+                    ? undefined
+                    : (progress) => {
+                        onSetProgress(task.id, progress);
+                      }
+                }
+                onPatch={
+                  onPatchTask === undefined
+                    ? undefined
+                    : (patch) => {
+                        onPatchTask(task.id, patch);
+                      }
+                }
+              />
+            ))}
+          </div>
+        </div>
       </div>
-    );
-  }
+    </div>
+  );
 
-  // 空态 ③：有任务、但（筛选后）一个都没排期（没有「开始 + 预计完成」都齐的任务）—— 画不出时间轴。
-  if (model === null) {
-    return (
-      <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-14 text-center text-sm text-zinc-500">
-        {filtering ? (
-          <p>当前筛选出的 {visibleTasks.length} 条任务都还没填「开始日期 / 预计完成日期」，画不出时间轴。</p>
-        ) : (
-          <>
-            <p>这个项目有 {tasks.length} 个任务，但都还没填「开始日期 / 预计完成日期」，暂时画不出时间轴。</p>
-            <p className="mt-1.5 text-xs text-zinc-400">到「项目总览」点开任务，在详情抽屉里把两个日期补上，这里就会出现甘特条。</p>
-          </>
-        )}
-        {filtering ? (
+  /** 工具条（常驻，空态 ② / ③ 也在）：图例 + 粒度 / 缩放 / 折叠 / 回到今天 + 甘特内筛选 + 两行操作提示。 */
+  const toolbarBlock = (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
+          <li className="flex items-center gap-1.5">
+            <span className={"h-2.5 w-4 rounded-[3px] " + BAR_DONE_CLASS} aria-hidden="true" />
+            已完成进度
+          </li>
+          <li className="flex items-center gap-1.5">
+            <span className={"h-2.5 w-4 rounded-[3px] " + BAR_TODO_CLASS} aria-hidden="true" />
+            剩余工期
+          </li>
+          <li className="flex items-center gap-1.5">
+            <span className="h-2.5 w-4 rounded-[3px] bg-[#f7a63c] shadow-[inset_3px_0_0_0_#ef4444]" aria-hidden="true" />
+            已延期
+          </li>
+          <li className="flex items-center gap-1.5" title="单日任务（开始 = 预计完成）：已完成 = 绿色、未完成 = 灰色、已延期 = 红色">
+            <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-emerald-500 ring-1 ring-emerald-700/60" aria-hidden="true" />
+            单日任务
+          </li>
+          <li className="flex items-center gap-1.5">
+            <span className="h-3 w-[2px] bg-zinc-900/60" aria-hidden="true" />
+            实际完成日期
+          </li>
+          <li className="flex items-center gap-1.5">
+            <span className="h-3 border-l border-dashed border-blue-500" aria-hidden="true" />
+            今天
+          </li>
+        </ul>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <span className="text-[11px] text-zinc-400">粒度</span>
+          <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
+            {SCALE_KEYS.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setScale(key);
+                }}
+                title={"时间轴按「" + SCALES[key].label + "」展开（官方 timelineHeader.scales）：只换表头分段与网格密度，条 / 里程碑 / 今天线仍按天精确落点"}
+                className={
+                  "rounded-md px-2.5 py-1 text-xs font-medium transition " +
+                  (key === scale ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
+                }
+              >
+                {SCALES[key].label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-zinc-400">缩放</span>
+          <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
+            {ZOOM_LEVELS.map((level) => (
+              <button
+                key={level.key}
+                type="button"
+                onClick={() => {
+                  setZoom(level.key);
+                }}
+                title={"时间轴列宽：" + (scale === "month" ? "每月约 " : "每" + scaleConfig.label + " ") + String(Math.round(scaleConfig.unitDays * scaleConfig.dayWidth[level.key])) + "px"}
+                className={
+                  "rounded-md px-2.5 py-1 text-xs font-medium transition " +
+                  (level.key === zoom ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
+                }
+              >
+                {level.label}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
-            onClick={clearFilters}
-            className="mt-3 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900"
+            onClick={toggleAll}
+            className={"rounded-lg border px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:text-zinc-900 " + GLASS_SURFACE}
           >
-            清空筛选
+            {model !== null && model.allCollapsed ? "全部展开" : "全部折叠"}
           </button>
+          <button
+            type="button"
+            onClick={goToToday}
+            disabled={model === null}
+            title={
+              todayIndex === null
+                ? "今天不在当前时间轴范围内（范围跟着筛完剩下的任务走）：点一下把时间轴延到今天并居中"
+                : "把时间轴滚到今天（今天所在列落在可视区左 1/3）"
+            }
+            className={
+              "rounded-lg border px-2.5 py-1 text-xs font-medium transition " +
+              (model === null
+                ? "cursor-not-allowed border-zinc-200/60 bg-white/50 text-zinc-300"
+                : GLASS_SURFACE + " text-zinc-600 hover:text-zinc-900")
+            }
+          >
+            回到今天
+          </button>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-zinc-100 pt-2">
+        <span className="text-[11px] text-zinc-400">筛选</span>
+        <label className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+          负责人
+          <SearchSelect
+            value={ownerFilter}
+            items={ownerItems}
+            onChange={(next) => {
+              setOwnerFilter(next);
+            }}
+            ariaLabel="按负责人筛选"
+            footer={"共 " + String(ownerOptions.ids.length) + " 位负责人 · 按姓名 / 工号搜索"}
+            triggerClassName={"flex min-w-[88px] items-center gap-1 rounded-lg border py-1 pl-2 pr-1.5 text-xs text-zinc-600 transition " + GLASS_SURFACE}
+          />
+        </label>
+        <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
+          {ROW_FILTERS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => {
+                setRowFilter(item.key);
+              }}
+              title={item.hint}
+              className={
+                "rounded-md px-2.5 py-1 text-xs font-medium transition " +
+                (item.key === rowFilter ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
+              }
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        {filtering ? (
+          <>
+            <span className="text-[11px] tabular-nums text-zinc-500">
+              {"筛选后 " + String(visibleTasks.length) + " / 共 " + String(tasks.length) + " 条任务"}
+            </span>
+            <button
+              type="button"
+              onClick={clearFilters}
+              className={"rounded-lg border px-2 py-1 text-[11px] font-medium text-zinc-500 transition hover:text-zinc-900 " + GLASS_SURFACE}
+            >
+              清空筛选
+            </button>
+          </>
         ) : null}
+      </div>
+      <p className="mt-2 border-t border-zinc-100 pt-2 text-[11px] leading-4 text-zinc-400">
+        条上操作（对齐参考样例）：拖条 = 整体改期 · 拖条两端 = 改工期 · 拖条上圆点 = 改进度（四档）· 拖到时间轴左右边缘 = 画面自动跟着走 · 点条 = 选中 · 点左表任务行 = 定位到条 · 拖空白 = 平移画面（横向 / 纵向跟手）· 拖左表右边线 = 移动分隔线（左表被时间轴盖住多少，双击复位）· Esc = 取消
+      </p>
+    </div>
+  );
+
+  // 空态 ② / ③：工具条（含筛选栏）常驻 —— ② 筛选到一条不剩出提示卡；③ 画不出时间轴出提示条 + 任务列表
+  // （列表与甘特图同屏的口径见 taskListBlock 注释）。此分支不进入下面的图表区 —— 那边的常量 / 闭包按 model 非空写。
+  if (model === null) {
+    return (
+      <div className="space-y-3">
+        {toolbarBlock}
+        {visibleTasks.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-14 text-center text-sm text-zinc-500">
+            <p>当前筛选下没有任务：{tasks.length} 条任务全被筛掉了。</p>
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="mt-3 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900"
+            >
+              清空筛选
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs text-zinc-500">
+              {filtering ? (
+                <p>当前筛选出的 {visibleTasks.length} 条任务都还没填「开始日期 / 预计完成日期」，画不出时间轴 —— 先在下面按列表把日期补上，就能出甘特条。</p>
+              ) : (
+                <p>这个项目有 {tasks.length} 个任务，但都还没填「开始日期 / 预计完成日期」，暂时画不出时间轴 —— 先在下面按列表把日期补上，就能出甘特条。</p>
+              )}
+            </div>
+            {taskListBlock}
+          </>
+        )}
       </div>
     );
   }
@@ -1392,157 +1612,13 @@ export function GanttChart({ tasks, members, onPatchTask, onSetProgress }: { tas
 
   return (
     <div className="space-y-3">
-      {/* 工具条：图例 + 粒度 / 缩放 / 折叠 / 回到今天 + 甘特内筛选 + 两行操作提示（官方那几个开关得让人看得见） */}
-      <div className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
-            <li className="flex items-center gap-1.5">
-              <span className={"h-2.5 w-4 rounded-[3px] " + BAR_DONE_CLASS} aria-hidden="true" />
-              已完成进度
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className={"h-2.5 w-4 rounded-[3px] " + BAR_TODO_CLASS} aria-hidden="true" />
-              剩余工期
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="h-2.5 w-4 rounded-[3px] bg-[#f7a63c] shadow-[inset_3px_0_0_0_#ef4444]" aria-hidden="true" />
-              已延期
-            </li>
-            <li className="flex items-center gap-1.5" title="单日任务（开始 = 预计完成）：已完成 = 绿色、未完成 = 灰色、已延期 = 红色">
-              <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-emerald-500 ring-1 ring-emerald-700/60" aria-hidden="true" />
-              单日任务
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="h-3 w-[2px] bg-zinc-900/60" aria-hidden="true" />
-              实际完成日期
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="h-3 border-l border-dashed border-blue-500" aria-hidden="true" />
-              今天
-            </li>
-          </ul>
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <span className="text-[11px] text-zinc-400">粒度</span>
-            <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
-              {SCALE_KEYS.map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    setScale(key);
-                  }}
-                  title={"时间轴按「" + SCALES[key].label + "」展开（官方 timelineHeader.scales）：只换表头分段与网格密度，条 / 里程碑 / 今天线仍按天精确落点"}
-                  className={
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition " +
-                    (key === scale ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
-                  }
-                >
-                  {SCALES[key].label}
-                </button>
-              ))}
-            </div>
-            <span className="text-[11px] text-zinc-400">缩放</span>
-            <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
-              {ZOOM_LEVELS.map((level) => (
-                <button
-                  key={level.key}
-                  type="button"
-                  onClick={() => {
-                    setZoom(level.key);
-                  }}
-                  title={"时间轴列宽：" + (scale === "month" ? "每月约 " : "每" + scaleConfig.label + " ") + String(Math.round(scaleConfig.unitDays * scaleConfig.dayWidth[level.key])) + "px"}
-                  className={
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition " +
-                    (level.key === zoom ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
-                  }
-                >
-                  {level.label}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={toggleAll}
-              className={"rounded-lg border px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:text-zinc-900 " + GLASS_SURFACE}
-            >
-              {model.allCollapsed ? "全部展开" : "全部折叠"}
-            </button>
-            <button
-              type="button"
-              onClick={goToToday}
-              disabled={model === null}
-              title={
-                todayIndex === null
-                  ? "今天不在当前时间轴范围内（范围跟着筛完剩下的任务走）：点一下把时间轴延到今天并居中"
-                  : "把时间轴滚到今天（今天所在列落在可视区左 1/3）"
-              }
-              className={
-                "rounded-lg border px-2.5 py-1 text-xs font-medium transition " +
-                (model === null
-                  ? "cursor-not-allowed border-zinc-200/60 bg-white/50 text-zinc-300"
-                  : GLASS_SURFACE + " text-zinc-600 hover:text-zinc-900")
-              }
-            >
-              回到今天
-            </button>
-          </div>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-zinc-100 pt-2">
-          <span className="text-[11px] text-zinc-400">筛选</span>
-          <label className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-            负责人
-            <SearchSelect
-              value={ownerFilter}
-              items={ownerItems}
-              onChange={(next) => {
-                setOwnerFilter(next);
-              }}
-              ariaLabel="按负责人筛选"
-              footer={"共 " + String(ownerOptions.ids.length) + " 位负责人 · 按姓名 / 工号搜索"}
-              triggerClassName={"flex min-w-[88px] items-center gap-1 rounded-lg border py-1 pl-2 pr-1.5 text-xs text-zinc-600 transition " + GLASS_SURFACE}
-            />
-          </label>
-          <div className={"flex items-center gap-0.5 rounded-lg border p-0.5 " + GLASS_TRACK}>
-            {ROW_FILTERS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => {
-                  setRowFilter(item.key);
-                }}
-                title={item.hint}
-                className={
-                  "rounded-md px-2.5 py-1 text-xs font-medium transition " +
-                  (item.key === rowFilter ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")
-                }
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          {filtering ? (
-            <>
-              <span className="text-[11px] tabular-nums text-zinc-500">
-                {"筛选后 " + String(visibleTasks.length) + " / 共 " + String(tasks.length) + " 条任务"}
-              </span>
-              <button
-                type="button"
-                onClick={clearFilters}
-                className={"rounded-lg border px-2 py-1 text-[11px] font-medium text-zinc-500 transition hover:text-zinc-900 " + GLASS_SURFACE}
-              >
-                清空筛选
-              </button>
-            </>
-          ) : null}
-        </div>
-        <p className="mt-2 border-t border-zinc-100 pt-2 text-[11px] leading-4 text-zinc-400">
-          条上操作（对齐参考样例）：拖条 = 整体改期 · 拖条两端 = 改工期 · 拖条上圆点 = 改进度（四档）· 拖到时间轴左右边缘 = 画面自动跟着走 · 点条 = 选中 · 点左表任务行 = 定位到条 · 拖空白 = 平移画面（横向 / 纵向跟手）· 拖左表右边线 = 移动分隔线（左表被时间轴盖住多少，双击复位）· Esc = 取消
-        </p>
-      </div>
+      {toolbarBlock}
 
-      {/* 图表：左表（sticky left，横向不滚）+ 时间轴（表头 sticky top，纵向吸顶），两边逐行同一组行高 */}
-      {/* 外面这层 relative 给自绘的竖向滑块（隐式浮在右缘）定位；下方横向那条是 fixed 在整个窗口底部的，不随页面滚 */}
-      <div className="relative">
+      {/* 任务列表与甘特图同屏（Push 294）：还有没排期的任务就把列表出在甘特上方；图表本身照常在下方渲染（提示条 / 空态 ② 在 model === null 的早退分支里出）。 */}
+      {hasUnscheduled ? taskListBlock : null}
+              {/* 图表：左表（sticky left，横向不滚）+ 时间轴（表头 sticky top，纵向吸顶），两边逐行同一组行高 */}
+              {/* 外面这层 relative 给自绘的竖向滑块（隐式浮在右缘）定位；下方横向那条是 fixed 在整个窗口底部的，不随页面滚 */}
+              <div className="relative">
         <div
           ref={scrollRef}
           className={
