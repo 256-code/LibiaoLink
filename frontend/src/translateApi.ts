@@ -72,8 +72,8 @@ export function normalizeEnglish(text: string): string {
 const GLOSSARY: ReadonlyArray<{ zh: string; en: string }> = [
   { zh: "基督城", en: "Christchurch" },
   { zh: "立镖", en: "Libiao" },
-  { zh: "仓配中心", en: "Warehouse & Distribution Center" },
-  { zh: "仓配", en: "Warehouse & Distribution Center" },
+  { zh: "仓配中心", en: "Warehouse and Distribution Center" },
+  { zh: "仓配", en: "Warehouse and Distribution Center" },
   { zh: "分拣中心", en: "Sorting Center" },
   { zh: "分拣线", en: "Sorting Line" },
   { zh: "分拨中心", en: "Distribution Center" },
