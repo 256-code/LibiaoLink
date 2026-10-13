@@ -26,6 +26,10 @@ type CardProps = {
   description: string;
   /** 项目类型展示名（字典 name；未知码回落码本身）。 */
   typeLabel: string;
+  /** 项目状态取值（契约 projects.status —— 回放钩子 data-card-status）。 */
+  status: string;
+  /** 项目状态展示文案（Push 262：跟在分类徽标右侧的淡灰字）。 */
+  statusText: string;
   /** 主题色（字典 metadata.accent）。 */
   accentColor?: string;
   /** 徽标文字色（字典 metadata.accentText；浅色底用深灰）。 */
@@ -45,6 +49,8 @@ export function Card({
   code,
   description,
   typeLabel,
+  status,
+  statusText,
   accentColor = "#feca04",
   accentText = "#313033",
   icon,
@@ -62,11 +68,16 @@ export function Card({
       style={style}
       className="project-card group w-full bg-white shadow-[0px_0px_15px_rgba(0,0,0,0.09)] p-7 space-y-3 relative overflow-hidden transition-all duration-300 hover:scale-[1.02]"
     >
-      <span
-        style={{ backgroundColor: accentColor, color: accentText }}
-        className="absolute top-0 left-0 rounded-br-xl px-3 py-1 text-[11px] font-semibold tracking-wide"
-      >
-        {typeLabel}
+      <span className="absolute top-0 left-0 flex items-center whitespace-nowrap">
+        <span
+          style={{ backgroundColor: accentColor, color: accentText }}
+          className="rounded-br-xl px-3 py-1 text-[11px] font-semibold tracking-wide"
+        >
+          {typeLabel}
+        </span>
+        <span data-card-status={status} className="pl-2 text-[11px] text-zinc-400">
+          {statusText}
+        </span>
       </span>
       <div className="w-20 h-20 rounded-full absolute -right-5 -top-7 bg-zinc-100">
         <p className="absolute bottom-5 right-6 whitespace-nowrap text-2xl font-medium text-zinc-500" title={"项目序号 " + seqNoText}>{seqNoText}</p>

@@ -86,7 +86,7 @@
     },
     {
       "name": "notifications",
-      "description": "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好"
+      "description": "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流与稍后提醒（S8-3）"
     }
   ],
   "components": {
@@ -174,7 +174,7 @@
           "download",
           "deny"
         ],
-        "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝"
+        "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（**已停用 · 2026-10-12**：操作日志不再记录预览动作 —— 值保留供历史行回读 / 筛选，服务端不再产生新行） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝"
       },
       "AuditChange": {
         "type": "object",
@@ -354,7 +354,7 @@
           "task_template",
           "user"
         ],
-        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）"
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）"
       },
       "AuditResult": {
         "type": "string",
@@ -1213,11 +1213,19 @@
               },
               "version": {
                 "$ref": "#/components/schemas/FileVersion"
+              },
+              "filePreviousName": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null）"
               }
             },
             "required": [
               "file",
-              "version"
+              "version",
+              "filePreviousName"
             ]
           }
         ],
@@ -3524,6 +3532,147 @@
         ],
         "description": "/auth/me 响应（会话由 HttpOnly Cookie 承载）"
       },
+      "MyPlanBoard": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MyPlanBoardUpdate"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "bg": {
+                "$ref": "#/components/schemas/PlanBoardBg"
+              },
+              "updatedAt": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/DateTime"
+                  },
+                  {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "该键最后一次保存时间（服务端盖章）；从未保存 = null（前端据此判断首次进入 → 预置 6 条示例并上云）"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "bg",
+              "updatedAt"
+            ]
+          }
+        ],
+        "description": "「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛"
+      },
+      "MyPlanBoardUpdate": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MyPlanNote"
+            },
+            "maxItems": 300,
+            "description": "便签列表（整体替换语义；≤ 300 条）"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10
+            },
+            "maxItems": 12,
+            "description": "分类表（整体替换语义；≤ 12 类）"
+          },
+          "bg": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PlanBoardBg"
+              },
+              {
+                "description": "背景色（Push 271；不传 = 沿用库内现值 · 老客户端兼容；白名单外由 schema 拒绝）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "notes",
+          "categories"
+        ],
+        "description": "「我的计划」便签墙 PATCH 体（客户端只传 notes / categories / bg；updatedAt 由服务端盖章）"
+      },
+      "MyPlanNote": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "便签 id（前端生成 pn- 前缀；跨设备同步后保持不变）"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "标题（≤ 40 字；与内容可各自为空，但不同时为空）"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "内容（≤ 2000 字）"
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "description": "分类名（≤ 10 字；引用 categories 表）"
+          },
+          "colorId": {
+            "$ref": "#/components/schemas/PlanBoardColor"
+          },
+          "fontId": {
+            "$ref": "#/components/schemas/PlanBoardFont"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "完成态（Push 268）：true = 收进「已完成」，便签墙（含分类视图）不再显示"
+          },
+          "createdAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "创建时间（ISO 8601；跨设备同步后保持原值）"
+              }
+            ]
+          },
+          "updatedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "最后更新时间（排序 / 卡片角标用）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "content",
+          "category",
+          "colorId",
+          "fontId",
+          "done",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "「我的计划」单条便签（Push 268）"
+      },
       "NodeCompleteBody": {
         "type": "object",
         "properties": {
@@ -3726,6 +3875,20 @@
             "minimum": 1,
             "description": "合并条数：同期同合并键的消息条数（未合并 = 1）"
           },
+          "snoozeUntil": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "未触发的稍后提醒时刻（C5-05）；null = 未设置 / 已触发 / 已取消（触发不改写 deliveredAt —— 首投时刻留档，重提醒时刻见记录）"
+              }
+            ]
+          },
           "deliveredAt": {
             "allOf": [
               {
@@ -3757,6 +3920,7 @@
           "refId",
           "templateCode",
           "mergedCount",
+          "snoozeUntil",
           "deliveredAt",
           "createdAt"
         ],
@@ -3830,6 +3994,106 @@
           "status"
         ],
         "description": "标记收件箱状态（幂等；已处理可退回已读）"
+      },
+      "NotificationSnoozeBody": {
+        "type": "object",
+        "properties": {
+          "snoozeUntil": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "稍后提醒时刻（绝对时刻；校验范围 = now + 5 分钟 ~ now + 30 天；预设枚举由前端换算）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "snoozeUntil"
+        ],
+        "description": "设置稍后提醒（重复设置 = 覆盖旧记录 + 新记录）"
+      },
+      "NotificationSnoozeListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationSnoozeRecord"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "稍后提醒记录清单（按 id 降序，不翻页）"
+      },
+      "NotificationSnoozeRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "记录 id（自增；读面按 id 降序）"
+          },
+          "setAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "设置时刻"
+              }
+            ]
+          },
+          "snoozeUntil": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "设定时的稍后提醒时刻"
+              }
+            ]
+          },
+          "triggeredAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "触发时刻；null = 未触发（或已取消）"
+              }
+            ]
+          },
+          "cancelledAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "取消时刻（覆盖 / 手动取消）；null = 未取消"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "setAt",
+          "snoozeUntil",
+          "triggeredAt",
+          "cancelledAt"
+        ],
+        "description": "稍后提醒记录（C5-05「设置与触发记录可查」；一次设置一条，触发 / 取消回填对应时刻）"
       },
       "NotificationStatus": {
         "type": "string",
@@ -3983,6 +4247,45 @@
         ],
         "description": "当前用户授权画像（未登录 401）"
       },
+      "PlanBoardBg": {
+        "type": "string",
+        "enum": [
+          "white",
+          "cream",
+          "pink",
+          "orange",
+          "yellow",
+          "lime",
+          "emerald",
+          "sky",
+          "blue",
+          "violet",
+          "lavender"
+        ],
+        "description": "背景色（Push 271）：读侧白名单外 / 缺省一律收敛为 white（与前端 myPlan.ts 同口径）"
+      },
+      "PlanBoardColor": {
+        "type": "string",
+        "enum": [
+          "white",
+          "yellow",
+          "green",
+          "blue",
+          "purple",
+          "pink",
+          "orange"
+        ],
+        "description": "便签颜色 id（7 色 hex 调色板，与前端 myPlan.ts 同源）"
+      },
+      "PlanBoardFont": {
+        "type": "string",
+        "enum": [
+          "sans",
+          "serif",
+          "mono"
+        ],
+        "description": "便签字体 id（简约 / 优雅 / 等宽，与前端 myPlan.ts 同源）"
+      },
       "PreviewStatus": {
         "type": "string",
         "enum": [
@@ -4027,12 +4330,9 @@
           "editorConfig": {
             "$ref": "#/components/schemas/PreviewViewerEditorConfig"
           },
-          "permissions": {
-            "$ref": "#/components/schemas/PreviewViewerPermissions"
-          },
           "token": {
             "type": "string",
-            "description": "查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）"
+            "description": "查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）"
           }
         },
         "required": [
@@ -4041,7 +4341,6 @@
           "documentType",
           "document",
           "editorConfig",
-          "permissions",
           "token"
         ],
         "description": "在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发）"
@@ -4064,13 +4363,17 @@
           "key": {
             "type": "string",
             "description": "文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效）"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PreviewViewerPermissions"
           }
         },
         "required": [
           "title",
           "url",
           "fileType",
-          "key"
+          "key",
+          "permissions"
         ]
       },
       "PreviewViewerDocumentType": {
@@ -4160,7 +4463,8 @@
           "chat",
           "fillForms",
           "protect"
-        ]
+        ],
+        "description": "查看器权限段（Push 258 起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见、点击由前端命中层接管 → 原文件下载链）"
       },
       "Priority": {
         "type": [
@@ -4821,6 +5125,82 @@
           "stages"
         ],
         "description": "项目流程（阶段 + 节点 + 约束 + 状态）；导入即快照"
+      },
+      "ProjectGroupBinding": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "bound": {
+            "type": "boolean",
+            "description": "是否已绑定（false = 未绑定，其余字段为 null / false）"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "群名 / 备注（绑定维护用）；未绑定 = null"
+          },
+          "chatidMasked": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "绑定 chatid 掩码（只回末 4 位）；未绑定 = null"
+          },
+          "activated": {
+            "type": "boolean",
+            "description": "会话已激活（群内有人给机器人发过消息）；未绑定 = false"
+          },
+          "updatedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "绑定 / 换绑 / 解绑时点；未绑定 = null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "bound",
+          "name",
+          "chatidMasked",
+          "activated",
+          "updatedAt"
+        ],
+        "description": "项目群绑定状态（GET 恒 200；未绑定 = bound:false）"
+      },
+      "ProjectGroupPutBody": {
+        "type": "object",
+        "properties": {
+          "chatid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,128}$",
+            "description": "企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串）"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空）"
+          }
+        },
+        "required": [
+          "chatid"
+        ],
+        "description": "绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义"
       },
       "ProjectListResponse": {
         "type": "object",
@@ -5600,7 +5980,7 @@
       "Sha256": {
         "type": "string",
         "pattern": "^[a-f0-9]{64}$/i",
-        "description": "客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传"
+        "description": "客户端计算的内容哈希；附件上传（未给 taskId / nodeId / docType）命中同项目既有同内容附件时直接秒传复用（reused=true、upload=null，不建新文件 / 会话）；其余命中返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传"
       },
       "StageAdvanceBody": {
         "type": "object",
@@ -6212,7 +6592,7 @@
                   "string",
                   "null"
                 ],
-                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档"
+                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260（业务口径「把现在的定档改成 再次点击取消定档吧」）：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）"
               }
             ]
           },
@@ -7474,6 +7854,25 @@
         ],
         "description": "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）"
       },
+      "TaskUnfinalizeBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "description": "乐观锁版本（已定档路径必校验；未定档幂等短路不校验）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "任务取消定档提交（version = 抽屉当前行版本）"
+      },
       "TaskUpdateBody": {
         "type": "object",
         "properties": {
@@ -7585,7 +7984,14 @@
         "type": "object",
         "properties": {
           "upload": {
-            "$ref": "#/components/schemas/UploadSession"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UploadSession"
+              },
+              {
+                "description": "上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准）"
+              }
+            ]
           }
         },
         "required": [
@@ -7640,7 +8046,8 @@
               "name": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 255
+                "maxLength": 255,
+                "description": "文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称）"
               },
               "sizeBytes": {
                 "type": "integer",
@@ -7696,7 +8103,8 @@
               "name": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 255
+                "maxLength": 255,
+                "description": "文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称）"
               },
               "sizeBytes": {
                 "type": "integer",
@@ -7731,7 +8139,7 @@
                     "$ref": "#/components/schemas/Uuid"
                   },
                   {
-                    "description": "变更目标文件（必填，A4-13）：须为已定档（final / changed）状态；非该状态 → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；名称与归属（name / docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；duplicateHint 恒为空"
+                    "description": "变更目标文件（必填，A4-13）：须为已定档（final / changed）状态；非该状态 → 409 FILE_STATE_INVALID；不存在 / 无权 → 404；与 projectId 不一致 → 400；归属（docType / nodeId / taskId）以目标文件现状为准 —— 可省略，填写则须与目标文件一致（不一致 400）；**name = 变更后文件名称（Push 256）**：可与目标文件名不同（不一致不再 400）—— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称；duplicateHint 恒为空"
                   }
                 ]
               },
@@ -7749,7 +8157,7 @@
             ]
           }
         ],
-        "description": "发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效）"
+        "description": "发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效；name = 变更后文件名称 —— 完成时文件更名为该名称）"
       },
       "UploadCreateResponse": {
         "type": "object",
@@ -7760,6 +8168,10 @@
           "upload": {
             "$ref": "#/components/schemas/UploadSession"
           },
+          "reused": {
+            "type": "boolean",
+            "description": "是否复用了同项目既有的同内容附件（2026-10-12 口径）：true = 未新建文件、未建会话（file = 既有文件）；任务成果上传（带 taskId 等归属）恒 false"
+          },
           "duplicateHint": {
             "$ref": "#/components/schemas/DuplicateHint"
           }
@@ -7767,8 +8179,10 @@
         "required": [
           "file",
           "upload",
+          "reused",
           "duplicateHint"
-        ]
+        ],
+        "description": "发起上传结果：新建 / 追加版本返回上传会话；附件域命中同内容既有文件则秒传复用（reused=true、upload=null）"
       },
       "UploadIntent": {
         "type": "string",
@@ -7847,7 +8261,10 @@
         ]
       },
       "UploadSession": {
-        "type": "object",
+        "type": [
+          "object",
+          "null"
+        ],
         "properties": {
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -7886,7 +8303,7 @@
           "createdAt",
           "expiresAt"
         ],
-        "description": "上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准）"
+        "description": "上传会话；附件域秒传复用命中时 = null（无需传分片，直接把 file.id 挂到日报 / 问题等对象）"
       },
       "UploadSessionStatus": {
         "type": "string",
@@ -8036,6 +8453,9 @@
           "workspaceOpenProjects": {
             "$ref": "#/components/schemas/WorkspaceOpenProjects"
           },
+          "myPlanBoard": {
+            "$ref": "#/components/schemas/MyPlanBoard"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -8056,6 +8476,7 @@
           "homeSavedFilters",
           "focusMode",
           "workspaceOpenProjects",
+          "myPlanBoard",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -8082,6 +8503,9 @@
           },
           "workspaceOpenProjects": {
             "$ref": "#/components/schemas/WorkspaceOpenProjects"
+          },
+          "myPlanBoard": {
+            "$ref": "#/components/schemas/MyPlanBoardUpdate"
           }
         },
         "additionalProperties": {},
@@ -9390,6 +9814,184 @@
         }
       }
     },
+    "/api/v1/projects/{id}/group": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "项目群绑定状态（未绑定 = bound:false；chatid 掩码回显，activated = 群内已激活）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "群绑定状态（GET 恒 200；项目不存在 / 不可见 = 404）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGroupBinding"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectGroupPutBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "绑定后的群状态（chatid 掩码回显）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGroupBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "解绑项目群（幂等：未绑定也返回 bound:false；权限 project.update）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "解绑后的群状态（bound:false）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGroupBinding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{id}/members": {
       "get": {
         "tags": [
@@ -10246,6 +10848,85 @@
         "responses": {
           "200": {
             "description": "定档后的任务（Task 同形；幂等路径原样返回）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/tasks/{taskId}/unfinalize": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskUnfinalizeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "取消定档后的任务（Task 同形；幂等路径原样返回）",
             "content": {
               "application/json": {
                 "schema": {
@@ -11569,10 +12250,11 @@
         "parameters": [
           {
             "schema": {
-              "$ref": "#/components/schemas/AuditObjectType"
+              "type": "string",
+              "description": "对象类型（多值逗号分隔，取值见 AuditObjectType）"
             },
             "required": false,
-            "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）",
+            "description": "对象类型（多值逗号分隔，取值见 AuditObjectType）",
             "name": "objectType",
             "in": "query"
           },
@@ -11590,52 +12272,53 @@
           },
           {
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/Uuid"
-                },
-                {
-                  "description": "操作人（按人检索 —— h7 验收项②）"
-                }
-              ]
+              "type": "string",
+              "description": "操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②）"
             },
             "required": false,
-            "description": "操作人（按人检索 —— h7 验收项②）",
+            "description": "操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②）",
             "name": "actorId",
             "in": "query"
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/AuditAction"
+              "type": "string",
+              "description": "审计动作（多值逗号分隔，取值见 AuditAction）"
             },
             "required": false,
-            "description": "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝",
+            "description": "审计动作（多值逗号分隔，取值见 AuditAction）",
             "name": "action",
             "in": "query"
           },
           {
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/AuditResult"
-                },
-                {
-                  "description": "result=denied 即越权尝试（C7-03）"
-                }
-              ]
+              "type": "string",
+              "description": "审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03）"
             },
             "required": false,
-            "description": "result=denied 即越权尝试（C7-03）",
+            "description": "审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03）",
             "name": "result",
             "in": "query"
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/Uuid"
+              "type": "string",
+              "description": "所属项目（多值逗号分隔）"
             },
             "required": false,
-            "description": "UUID（主键与关联 ID）",
+            "description": "所属项目（多值逗号分隔）",
             "name": "projectId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感）"
+            },
+            "required": false,
+            "description": "关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感）",
+            "name": "q",
             "in": "query"
           },
           {
@@ -16758,6 +17441,206 @@
           },
           "401": {
             "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/stream": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "通知实时流（SSE · S8-3）：事件 notification（单条通知）/ unread（未读角标）；心跳注释行不入契约；重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期）",
+        "responses": {
+          "200": {
+            "description": "SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连）",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/{id}/snooze": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "设置稍后提醒（C5-05）：绝对时刻（now + 5 分钟 ~ now + 30 天）；设置即置读；重复设置 = 覆盖（旧记录标 cancelledAt + 写新记录）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSnoozeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "设置后的通知（snoozeUntil 已更新、该行置读）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notification"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "取消稍后提醒（C5-05）：幂等（无未触发稍后提醒也 200）；返回更新后的通知（snoozeUntil = null）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "取消后的通知（snoozeUntil = null）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notification"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/{id}/snoozes": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "稍后提醒记录（C5-05「设置与触发记录可查」）：一次设置一条（触发 / 取消回填时刻）；按 id 降序，不翻页",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "稍后提醒记录清单",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSnoozeListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {

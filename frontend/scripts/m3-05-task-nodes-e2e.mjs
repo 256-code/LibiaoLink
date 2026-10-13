@@ -34,7 +34,7 @@ const API = process.env.API_BASE ?? "http://127.0.0.1:3001";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9397);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 /** 探针里的引号一律用 String.fromCharCode 生成（这个脚本自己也是被这样写出来的）。 */
 const Q = String.fromCharCode(34);
@@ -42,7 +42,7 @@ const q = (text) => Q + text + Q;
 
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) {
   console.error("回放用户不存在：" + REPLAY_USER);
   process.exit(1);

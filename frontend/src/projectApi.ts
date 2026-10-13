@@ -45,10 +45,10 @@ export const EMPTY_FACETS: ProjectFacets = { total: 0, region: {}, projectType: 
 export const PROJECT_PAGE_LIMIT = 200;
 
 /**
- * 计数分组的维度：侧栏三组各自排除自己那一维、其余条件照常参与 ——
- * 选中「华东」后其它地区仍显示各自计数（不是一律 0），项目类型 / 项目经理计数则跟着收窄。
+ * 计数分组的维度：侧栏各组各自排除自己那一维、其余条件照常参与 ——
+ * 选中「华东」后其它地区仍显示各自计数（不是一律 0），项目类型 / 项目经理 / 项目状态计数则跟着收窄。
  */
-export type FacetSkip = "regions" | "projectTypes" | "managerIds";
+export type FacetSkip = "regions" | "projectTypes" | "managerIds" | "statuses";
 
 /** 组装列表 / 计数的同一套查询串（契约 §3.2 参数命名）。 */
 export function buildListQuery(filters: ListQueryState, skip: FacetSkip | null = null): string {
@@ -66,6 +66,9 @@ export function buildListQuery(filters: ListQueryState, skip: FacetSkip | null =
   }
   if (skip !== "managerIds") {
     pushList("filter[managerId]", filters.managerIds);
+  }
+  if (skip !== "statuses") {
+    pushList("filter[status]", filters.statuses);
   }
   if (filters.timeFrom !== null && filters.timeTo !== null) {
     parts.push("filter[timeFrom]=" + encodeURIComponent(filters.timeFrom));
@@ -98,21 +101,50 @@ export function fetchProject(id: string): Promise<ApiProject> {
   return apiRequest<ApiProject>("/api/v1/projects/" + encodeURIComponent(id));
 }
 
-/** 写请求字段（新建 / 编辑同一套；customer / 备注 description 表单暂未采集，不发送即不改）。 */
+/**
+ * 写请求字段（新建 / 编辑同一套）。
+ * Push 280：`remark` = 备注（契约 `description`）—— undefined = 不发送（不改）；空串 = 新建不发送（留空）、编辑发送 null（清空）。
+ * customer（客户）仍未采集（不发送即不改）。
+ */
 export type ProjectWriteInput = {
   code: string;
   name: string;
   region: string;
   projectType: string;
   managerIds: string[];
+  /** 备注（契约 description）：undefined = 不发送；空串 = 新建留空不发送 / 编辑发 null 清空。 */
+  remark?: string;
 };
 
 export function createProject(input: ProjectWriteInput): Promise<ApiProject> {
-  return apiSend<ApiProject>("/api/v1/projects", "POST", input);
+  const body: { code: string; name: string; region: string; projectType: string; managerIds: string[]; description?: string } = {
+    code: input.code,
+    name: input.name,
+    region: input.region,
+    projectType: input.projectType,
+    managerIds: input.managerIds,
+  };
+  // 备注（Push 280）：新建留空不发送（契约 description 可选）；有值才带上。
+  if (input.remark !== undefined && input.remark !== "") {
+    body.description = input.remark;
+  }
+  return apiSend<ApiProject>("/api/v1/projects", "POST", body);
 }
 
-export function updateProject(id: string, input: ProjectWriteInput, version: number): Promise<ApiProject> {
-  const body: ProjectWriteInput & { version: number } = {
+/** PATCH 可写状态（契约 ProjectUpdateBody：archived 不接受 PATCH —— 归档只能走归档端点；Push 262 编辑弹窗口径）。 */
+export type ProjectStatusPatch = "active" | "paused" | "done";
+
+export function updateProject(id: string, input: ProjectWriteInput, version: number, status?: ProjectStatusPatch): Promise<ApiProject> {
+  const body: {
+    code: string;
+    name: string;
+    region: string;
+    projectType: string;
+    managerIds: string[];
+    version: number;
+    status?: ProjectStatusPatch;
+    description?: string | null;
+  } = {
     code: input.code,
     name: input.name,
     region: input.region,
@@ -120,7 +152,31 @@ export function updateProject(id: string, input: ProjectWriteInput, version: num
     managerIds: input.managerIds,
     version,
   };
+  if (status !== undefined) {
+    body.status = status;
+  }
+  // 备注（Push 280）：undefined = 不发送（不改）；空串 = 发 null 清空（契约 description 可空）。
+  if (input.remark !== undefined) {
+    body.description = input.remark === "" ? null : input.remark;
+  }
   return apiSend<ApiProject>("/api/v1/projects/" + encodeURIComponent(id), "PATCH", body);
+}
+
+/**
+ * 项目归档（M7-04 · C4-02 / C4-03 · ADR-027；Push 262 编辑弹窗「已归档」接线）：`PATCH` 不收 archived，归档只能走本端点 ——
+ * 硬前置 = 验收阶段完成（未完成 409 ARCHIVE_NOT_READY，不可越过）；缺项首次 422 ARCHIVE_GATE_NOT_PASSED（明细在 ApiError.details），
+ * `confirm=true` 二次确认后带缺项归档（缺项随清单 acknowledgedMissing 留痕）。
+ */
+export type ProjectArchiveResult = {
+  id: string;
+  projectId: string;
+  archivedAt: string;
+  archivedBy: string;
+  archivedByName: string | null;
+};
+
+export function archiveProject(id: string, version: number, confirm: boolean): Promise<ProjectArchiveResult> {
+  return apiSend<ProjectArchiveResult>("/api/v1/projects/" + encodeURIComponent(id) + "/archive", "POST", { version, confirm });
 }
 
 /**
@@ -164,6 +220,7 @@ export function toUiProject(view: ApiProject): Project {
     seqNo: view.seqNo,
     code: view.code,
     description: view.name,
+    remark: view.description ?? "",
     region: view.region,
     projectType: view.projectType,
     createdAt: formatDateTime(view.createdAt),

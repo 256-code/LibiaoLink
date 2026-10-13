@@ -29,10 +29,13 @@
  *      替换输入框 / 变更原因区 / 替换提示（④r0 断言）；接口层保留（fileApi.replaceFileContent 未接线，服务端变更通道不动）；
  *   ⑬ 定档入口（Push 249 → Push 251 改版 · 业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」）：
  *      顶部「＋ 添加文件」/「＋ 添加定档文件」一行两个按钮（添加文件在前、定档文件在后）= 点哪个直接开选文件框、不出定档一问（无取消按钮）——定档版传完即定档
- *      （任务随定档锁定：任务 / 文件写口全 409 TASK_FINALIZED、下拉顶常驻提示、两个添加入口关闭）；
+ *      （任务随定档锁定：任务 / 文件写口全 409 TASK_FINALIZED、下拉顶常驻提示、两个添加入口关闭；
+ *      Push 260 补漏 · 业务口径「定档后还能删除是bug 不能删除定档后」——下拉 / 抽屉的删除入口整体下架 + recycle 409，④s2b / ④s6 / ④s7）；
  *   ⑭ 抽屉定档开关（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」）：
  *      开关在状态签旁（未定档 = 灰底「未」；已定档 = logo 黄底「已」）；点开 = 就地二次确认条（不落库）、取消 = 收条（③d 段）；
  *      确认定档 = POST …/tasks/{taskId}/finalize → tasks.finalized_at 置位（幂等 + 此后写口 409 TASK_FINALIZED，第二个任务端到端 · ④t 段）；
+ *      Push 260 改版（业务口径「点击定档按钮应该也要计入操作记录」+「把现在的定档改成 再次点击取消定档吧」）：定档后「已」开关可**再次点击** →
+ *      二段确认 → POST …/tasks/{taskId}/unfinalize 清位重开（version+1、审计「任务定档」/「取消定档」各一条；文件级定档不回退）—— ④t9~④t14 段；
  *   ⑮ 「定档」侧签（Push 252 · 业务口径演进：「不是在表格内 要在表格外部懂吗 延伸出一个小标签」→「黄色变淡」→「竖排／横排」→ 定稿「竖着的定档二字的在表格外」）：
  *      定档任务的签不落行内 / 表内 —— 在**表格左边缘外侧**挂一颗竖排小签（2 字 · amber-50 底 + amber-700 字）；#task-board-scroll 会裁越界内容，
  *      所以签画在卡片外这一层、y 按行中心量出；定档前无签、定档后才有（④t0b / ④t8 段）；
@@ -41,7 +44,14 @@
  *      变更阶段（九阶段下拉）/ 变更文件（已定档可选、未定档置灰 + 行尾「定档」就地补门）/ 变更内容描述（必填，落契约 reason）/ 变更前 /
  *      变更后（文本摘要）/ 变更原因（选填，合并记入 reason）/ 变更申请人（只读 = 当前登录人）/ 变更后文件版本（只读：
  *      系统递增）/ 变更后文件（必传）/ 关联（只读：R01 回写任务变更关联）→ 提交即生效（intent=change 分片直传）；
- *      「变更记录」= 任务 changeLinks 逐条回溯（最新在前）+ 按需取详情全文（④u 段）；
+ *      「变更记录」= 任务 changeLinks 逐条回溯（最新在前）+ 详情全文（Push 255 起进页即预取 · ④u 段）；
+ *   ⑯b 变更记录 / 关联回写（Push 255 · 业务反馈「文件显示 已变更 不如直接替换成变更后的啊 直接显示变更后添加的文件 不要显示已变更」+
+ *      「同时相关的关联也没有显示啊 变更记录也要显示 之前是什么文件 这次是什么文件 按照时间排序上下 文件可以预览在变更里面 变更可以看到详细内容」）：
+ *      ① 任务详情文件行不再挂「已变更」签（行内显示的就是变更后的文件本身，④u6）；
+ *      ② 变更记录每条直接出「变更前 v(n-1) → 变更后 v(n)」两个版本行（名称 / 版本号 / 大小）+ 各自「预览 / 下载」
+ *      （版本态 A4-06：变更前点预览 = 历史版本预览浮层，④u7b / ④u8b / ④u8c）；「详情」仍出全文（阶段 / 原因 / 前后摘要 / 申请人 / 审批状态，④u8）；
+ *      ③ 变更回写任务「变更关联」= 「变更文件所属任务」∪ R01 成果类型命中（去重）—— 无成果类型文件（doc_type 空、
+ *      前端上传口默认口径）的变更也必回写所属任务（④v4 端到端：任务 change_refs 含该变更）；
  *   ⑰ 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行不可选但不再死路 ——
  *      行尾「定档」→ 就地二次确认（锁版 + 任务一并锁定）→ POST /files/{id}/finalize → 该行转「已定档」随即可选、
  *      自动选中 + 绿字指引（④v 段：阻断说明 / 二次确认 / 定档转可选 + 写面 files.status=final、tasks.finalized_at 非空）；
@@ -49,7 +59,20 @@
  *      任务定档是业务可见的定档动作（抽屉开关 / 表格侧签）—— 任务已定档时，其名下 draft 文件在「变更文件」里
  *      显示「已定档」、直接可选可提交（服务端 change 闸同口径放行：final / changed 或所属任务已定档；
  *      ④w 段：可选面 + 全链路提交 + 写面 files.status=changed / 版本 v2 / R01）；
- *   ⑲ 收尾：八份文件回收 + purge、临时项目物理删、会话撤销 → 零残留。
+ *   ⑲ 变更 = 替换（Push 256 · 业务反馈「懂不懂变更啊 我要的是替换的效果」+「变更后文件的名字后后缀为什么还要用原来的啊 要用变更选择的 不然都不能预览」）：
+ *      变更后文件 = **变更选择的文件本身**（不再要求与目标同名）—— 完成变更时把文件更名为「变更后文件名」
+ *      （base 名 + 扩展名全随上传文件）；对象键 / 预览通道 / 下载名按该版本对象键的扩展名（变更后版本 = 新扩展名，
+ *      历史版本保持各自旧扩展名）；「变更记录」的「变更前」行显示更名前名称（读面 filePreviousName = 变更审计 name.from）
+ *      —— ④u0 夹具（.txt → .pdf 真换扩展名）/ ④u4（写面更名 + 对象键 .pdf）/ ④u7b（前后行各自名称）/ ④u8d（新扩展名可预览）；
+ *   ⑳ 变更关联点击 = 居中「变更管理」详情弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：
+ *      任务详情「变更关联」行 / 任务表「变更关联」列点击 → 屏幕中央弹窗（来自 ▦变更管理 + 大日期 + 13 行：变更时间 / 变更阶段 /
+ *      变更文件 / 变更内容描述 / 变更前 / 变更后 / 变更原因 / 变更申请人 / 填写者 / 进度 / 变更后文件版本 / 变更后文件 / 关联）；
+ *      Esc / 点遮罩只关弹窗（抽屉 / 页面仍在 · ④u6b 段）；
+ *   ⑳b 弹窗两个可点击（Push 256 续 · 业务反馈「这两个要可以点击 点击文件预览 点击布局定档抽屉显示」）：
+ *      ①「变更后文件」卡 → 弹内版本态预览（浮层 z 高于弹窗；Esc 先关预览、弹窗仍在 —— ④u6c / ④u6d 段）；
+ *      ②「关联」→ 关弹窗打开回写任务抽屉（任务表 chip 路径 = 选中该行开抽屉，④u6g / ④u6h；抽屉内路径 = 露出抽屉本身，④u6f）；
+ *      ③「变更文件」行 = 输出成果文件类型（业务口径「变更文件就是输出文件成果这个类型」）：文件 doc_type 空 → 回退任务输出成果文件（④v5）；
+ *   ㉑ 收尾：定档任务先取消定档（recycle 闸不绕过）→ 八份文件回收 + purge → 临时项目物理删、会话撤销 → 零残留。
  * 证据：docs/m4-07-回放证据(任务文件上传·前端).md
  */
 
@@ -68,7 +91,7 @@ const API = process.env.API_BASE ?? "http://127.0.0.1:3001";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9414);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR ?? tmpdir();
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const Q = String.fromCharCode(34);
@@ -77,7 +100,7 @@ const TASK_TITLE = "回放任务·文件上传";
 
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) {
   console.error("回放用户不存在：" + REPLAY_USER);
   process.exit(1);
@@ -106,8 +129,14 @@ function check(name, ok, detail) {
   console.log((ok === true ? "PASS  " : "FAIL  ") + name + (detail === undefined ? "" : "   [" + detail + "]"));
 }
 
-/** 项目清场前把项目内文件先「回收站 → purge」清掉（与 m6 回放同一绕行：files.current_version_id 外键）。 */
+/** 项目清场前把项目内文件先「回收站 → purge」清掉（与 m6 回放同一绕行：files.current_version_id 外键）。
+ *  Push 260 补：定档任务的文件不可回收（recycle 409 TASK_FINALIZED · 业务口径「定档后还能删除是bug」）——
+ *  先经 POST …/unfinalize 取消定档（真实接口路径、不绕过闸门），再逐份回收 → purge。 */
 async function purgeProjectFiles(projectId) {
+  const lockedTasks = (await db.query("select id, version from tasks where project_id = $1 and finalized_at is not null and deleted_at is null", [projectId])).rows;
+  for (const task of lockedTasks) {
+    await api("/api/v1/projects/" + projectId + "/tasks/" + task.id + "/unfinalize", "POST", { version: Number(task.version) });
+  }
   const rows = (await db.query("select id, version, status from files where project_id = $1", [projectId])).rows;
   let purged = 0;
   for (const row of rows) {
@@ -745,8 +774,13 @@ check("④s1 「＋ 添加定档文件」→ 上传完成即定档：files.statu
   JSON.stringify({ file: cFinalRow, task: taskFinalRow, audit: taskFinalAudit }));
 const finalNoteShown = await waitFor("document.querySelector(" + j(FINALIZE_NOTE) + ")!==null", 20000);
 const finalNoteText = finalNoteShown === true ? String(await ev("(function(){var n=document.querySelector(" + j(FINALIZE_NOTE) + ");return n===null?" + j("") + ":n.textContent.trim();})()")) : "";
-check("④s2 定档后下拉顶出常驻提示（整表重取后随任务定档态出现：不支持新增 / 改名等修改）",
-  finalNoteShown === true && finalNoteText.indexOf("任务已定档") >= 0 && finalNoteText.indexOf("不支持新增") >= 0, finalNoteText.slice(0, 120));
+check("④s2 定档后下拉顶出常驻提示（整表重取后随任务定档态出现：不支持新增 / 改名 / 删除等修改）",
+  finalNoteShown === true && finalNoteText.indexOf("任务已定档") >= 0 && finalNoteText.indexOf("不支持新增") >= 0 && finalNoteText.indexOf("删除") >= 0, finalNoteText.slice(0, 120));
+// ④s2b（Push 260 · 业务口径「定档后还能删除是bug 不能删除定档后」）：定档任务的下拉里，文件行尾「删除」入口
+// 整体下架（幽灵胶囊 / 确认删除条都不出现）—— 删除走不了，修改走变更（服务端 recycle 同闸，见 ④s6）。
+const finalDeleteGone = await ev("(function(){var p=document.querySelector(" + j(TASK_FILES_POPOVER) + ");if(p===null){return null;}var n=p.querySelector(" + j(FINALIZE_NOTE) + ");return {deletes:p.querySelectorAll(" + j("[data-task-files-delete]") + ").length,confirms:p.querySelectorAll(" + j("[data-task-files-delete-confirm]") + ").length,noteDelete:n!==null&&n.textContent.indexOf(" + j("删除") + ")>=0};})()");
+check("④s2b 定档后下拉里「删除」入口整体下架（无幽灵胶囊 / 无确认删除条；常驻提示点明「删除」）",
+  finalDeleteGone !== null && finalDeleteGone.deletes === 0 && finalDeleteGone.confirms === 0 && finalDeleteGone.noteDelete === true, JSON.stringify(finalDeleteGone));
 const blockAddFinalizePoint = await clickSelector("[data-task-files-add-finalize]");
 const blockAddNoteFinalize = await waitFor("(function(){var n=document.querySelector(" + j(FINALIZE_BLOCK_NOTE) + ");return n!==null&&n.textContent.indexOf(" + j("不支持新增文件") + ")>=0;})()", 6000);
 const blockAddPoint = await clickSelector("[data-task-files-add]");
@@ -767,11 +801,26 @@ const uploadBlocked = await api("/api/v1/files/uploads", "POST", { projectId, na
 const aDetailForBlock = await api("/api/v1/files/" + fileAId);
 const renameBlocked = await api("/api/v1/files/" + fileAId, "PATCH", { name: "回放-任务文件-A-改名尝试.txt", version: aDetailForBlock.json.version });
 const directReplaceBlocked = await api("/api/v1/files/uploads", "POST", { projectId, name: fileAName, sizeBytes: 12, contentHash: sha256("blocked-replace-" + fixtureCode), intent: "version", fileId: fileAId });
-check("④s6 定档后文件直接写口全拦（服务端）：挂本任务新增上传（intent=version）409 + 改名 409 + 直替（fileId=A）409（全为 TASK_FINALIZED）",
+const recycleBlocked260 = await api("/api/v1/files/" + fileAId + "/recycle", "POST", { version: aDetailForBlock.json.version });
+check("④s6 定档后文件直接写口全拦（服务端）：挂本任务新增上传（intent=version）409 + 改名 409 + 直替（fileId=A）409 + 删除（recycle）409（全为 TASK_FINALIZED）",
   uploadBlocked.status === 409 && uploadBlocked.json !== null && uploadBlocked.json.code === "TASK_FINALIZED"
   && renameBlocked.status === 409 && renameBlocked.json !== null && renameBlocked.json.code === "TASK_FINALIZED"
-  && directReplaceBlocked.status === 409 && directReplaceBlocked.json !== null && directReplaceBlocked.json.code === "TASK_FINALIZED",
-  JSON.stringify({ upload: uploadBlocked.status + " " + uploadBlocked.text.slice(0, 60), rename: renameBlocked.status + " " + renameBlocked.text.slice(0, 60), replace: directReplaceBlocked.status + " " + directReplaceBlocked.text.slice(0, 60) }));
+  && directReplaceBlocked.status === 409 && directReplaceBlocked.json !== null && directReplaceBlocked.json.code === "TASK_FINALIZED"
+  && recycleBlocked260.status === 409 && recycleBlocked260.json !== null && recycleBlocked260.json.code === "TASK_FINALIZED",
+  JSON.stringify({ upload: uploadBlocked.status + " " + uploadBlocked.text.slice(0, 60), rename: renameBlocked.status + " " + renameBlocked.text.slice(0, 60), replace: directReplaceBlocked.status + " " + directReplaceBlocked.text.slice(0, 60), recycle: recycleBlocked260.status + " " + recycleBlocked260.text.slice(0, 60) }));
+// ④s7（Push 260 · 同 ④s2b 口径）：抽屉「文件」行 = 删除入口整体下架（幽灵胶囊 / 确认条都不出现）+ 顶一行定档提示。
+await page.send("Page.reload", { ignoreCache: true });
+await waitFor("document.querySelector(" + j(FILE_CELL_BUTTON) + ")!==null", 20000);
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(TASK_TITLE) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
+const row1FinalPoint = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(TASK_TITLE) + ")>=0){var b=rows[i].getBoundingClientRect();return {x:Math.round(b.left+60),y:Math.round(b.top+b.height/2)};}}return null;})()");
+if (row1FinalPoint === null || row1FinalPoint === undefined) await bail("定档任务行没渲染出来（抽屉删除入口用例）");
+await clickAt(row1FinalPoint);
+await waitFor("document.querySelector(" + j(DRAWER) + ")!==null", 8000);
+await waitFor("document.querySelectorAll(" + j("[data-drawer-file-item]") + ").length > 0", 15000);
+const drawerDeleteGone = await ev("(function(){var d=document.querySelector(" + j(DRAWER) + ");if(d===null){return null;}var n=d.querySelector(" + j("[data-drawer-files-note-finalized]") + ");return {items:d.querySelectorAll(" + j("[data-drawer-file-item]") + ").length,deletes:d.querySelectorAll(" + j("[data-file-delete]") + ").length,confirms:d.querySelectorAll(" + j("[data-file-delete-confirm]") + ").length,note:n===null?null:n.textContent.trim()};})()");
+check("④s7 定档任务的抽屉「文件」行：删除入口整体下架（幽灵胶囊 / 确认条都不出现）+ 顶一行定档提示（不支持新增 / 改名 / 删除）",
+  drawerDeleteGone !== null && drawerDeleteGone.items > 0 && drawerDeleteGone.deletes === 0 && drawerDeleteGone.confirms === 0 && typeof drawerDeleteGone.note === "string" && drawerDeleteGone.note.indexOf("删除") >= 0, JSON.stringify(drawerDeleteGone));
 // ④t 抽屉「定档」开关端到端（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」）：
 //   第二条任务（本任务已随文件定档锁定，确认路径要在未定档任务上验证）—— 建任务 → 重载 → 开抽屉 → 点开关 → 二次确认「确认定档」
 //   → tasks.finalized_at / finalized_by 置位（version+1）+ 任务定档审计 + 开关转「已（on）」并置灰；接口幂等（重复 POST 原样返回）+ 定档后写口 409。
@@ -823,10 +872,10 @@ check("④t4 二次确认「确认定档」→ tasks.finalized_at / finalized_by
   confirm2Clicked === true && task2Finalized === true && task2Row.finalized_at !== null && task2Row.finalized_by === userRow.id && Number(task2Row.version) === task2Ver0 + 1
   && Number(task2Audit.c) === 1 && String(task2Audit.summary).indexOf("任务定档") >= 0,
   JSON.stringify({ row: task2Row, audit: task2Audit, version0: task2Ver0 }));
-const sw2On = await waitFor("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s!==null&&s.getAttribute(" + Q + "data-task-finalize" + Q + ")===" + j("on") + "&&s.disabled===true;})()", 15000);
-const sw2After = await ev("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s===null?null:{state:s.getAttribute(" + Q + "data-task-finalize" + Q + "),knob:s.textContent.trim(),disabled:s.disabled};})()");
-check("④t5 确认后开关转「已（on）」并置灰（旋钮「已」· disabled · 不可再点）",
-  sw2On === true && sw2After !== null && sw2After !== undefined && sw2After.state === "on" && sw2After.knob === "已" && sw2After.disabled === true,
+const sw2On = await waitFor("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s!==null&&s.getAttribute(" + Q + "data-task-finalize" + Q + ")===" + j("on") + "&&s.disabled!==true;})()", 15000);
+const sw2After = await ev("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s===null?null:{state:s.getAttribute(" + Q + "data-task-finalize" + Q + "),knob:s.textContent.trim(),disabled:s.disabled===true,title:s.getAttribute(" + Q + "title" + Q + ")};})()");
+check("④t5 确认后开关转「已（on）」且可再点（旋钮「已」· 不置灰 · title 提示取消定档 —— Push 260 改版）",
+  sw2On === true && sw2After !== null && sw2After !== undefined && sw2After.state === "on" && sw2After.knob === "已" && sw2After.disabled === false && String(sw2After.title).indexOf("取消定档") >= 0,
   JSON.stringify(sw2After));
 const shotFinalized = await page.send("Page.captureScreenshot", { format: "png" });
 writeFileSync(join(SCREENSHOT_DIR, "m4-07-drawer-finalized.png"), Buffer.from(shotFinalized.data, "base64"));
@@ -854,6 +903,50 @@ check("④t8 两个定档任务各挂一颗表格外的竖排「定档」侧签�
   tagsAfter.length === 2 && tagsAfter.every(tagStyled) && tagsAfter.every(tagOutside)
   && tagsAfter.filter((tag) => tagOnRow(tag, row1After)).length === 1 && tagsAfter.filter((tag) => tagOnRow(tag, row2After)).length === 1,
   JSON.stringify({ tags: tagsAfter, row1: row1After, row2: row2After }));
+// ④t9 取消定档（Push 260 · 业务口径「点击定档按钮应该也要计入操作记录」+「把现在的定档改成 再次点击取消定档吧」）：
+//   抽屉「已（on）」开关再次点击 = 就地二次确认（确认前仍定档、不落库）→「确认取消定档」→ tasks.finalized_at / finalized_by 清空
+//   （version+1、留痕「取消定档」—— 定档 / 取消定档都进操作记录）→ 开关回「未（off）」+ 任务写口恢复（PATCH 200）；
+//   表格外「定档」侧签随之消失；接口幂等（未定档重复 POST → 200 原样返回、审计不重复）。
+await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(task2Title) + ")>=0){rows[i].scrollIntoView({block:" + j("center") + ",inline:" + j("start") + "});return true;}}return false;})()");
+await sleep(400);
+const row2PointAgain = await ev("(function(){var rows=document.querySelectorAll(" + j("[role=button]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(task2Title) + ")>=0){var b=rows[i].getBoundingClientRect();return {x:Math.round(b.left+60),y:Math.round(b.top+b.height/2)};}}return null;})()");
+if (row2PointAgain === null || row2PointAgain === undefined) await bail("取消定档用例：第二条任务行没渲染出来");
+await clickAt(row2PointAgain);
+const drawer2Reopen = await waitFor("document.querySelector(" + j(DRAWER) + ")!==null&&document.querySelector(" + j("[data-task-finalize]") + ")!==null", 8000);
+const sw2CancelClicked = await clickSelector("[data-task-finalize]");
+const cancel2ConfirmShown = await waitFor("document.querySelector(" + j("[data-task-unfinalize-confirm]") + ")!==null", 6000);
+const task2BeforeCancel = (await db.query("select finalized_at from tasks where id = $1", [task2Id])).rows[0];
+check("④t9 已定档开关再次点击 = 就地二次确认（确认前仍定档 · 不落库）",
+  drawer2Reopen === true && sw2CancelClicked === true && cancel2ConfirmShown === true && task2BeforeCancel.finalized_at !== null,
+  JSON.stringify({ open: drawer2Reopen, clicked: sw2CancelClicked, confirm: cancel2ConfirmShown, finalizedAt: task2BeforeCancel.finalized_at }));
+const cancel2ConfirmClicked = await clickSelector("[data-task-unfinalize-confirm-btn]");
+const task2Unfinalized = await waitForAsync(async () => (await db.query("select finalized_at from tasks where id = $1", [task2Id])).rows[0].finalized_at === null, 20000);
+const task2RowAfterCancel = (await db.query("select finalized_at, finalized_by, version from tasks where id = $1", [task2Id])).rows[0];
+const task2UnfinalAudit = (await db.query("select count(*)::int as c, max(summary) as summary from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%取消定档%"])).rows[0];
+check("④t10 确认取消定档：finalized_at / finalized_by 清空（version+1）+ 审计「取消定档」（定档 / 取消定档都计入操作记录）",
+  cancel2ConfirmClicked === true && task2Unfinalized === true && task2RowAfterCancel.finalized_at === null && task2RowAfterCancel.finalized_by === null
+  && Number(task2RowAfterCancel.version) === task2Ver0 + 2 && Number(task2UnfinalAudit.c) === 1 && String(task2UnfinalAudit.summary).indexOf("取消定档") >= 0,
+  JSON.stringify({ row: task2RowAfterCancel, audit: task2UnfinalAudit, version0: task2Ver0 }));
+const sw2OffAgain = await waitFor("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s!==null&&s.getAttribute(" + Q + "data-task-finalize" + Q + ")===" + j("off") + "&&s.disabled!==true;})()", 15000);
+check("④t11 取消定档后开关回「未（off）」（旋钮「未」· 可再次定档）", sw2OffAgain === true, JSON.stringify({ off: sw2OffAgain }));
+const patch2Allowed = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id, "PATCH", { version: task2Ver0 + 2, note: "取消定档后写口恢复（回放）" });
+const task2RowAfterPatch = (await db.query("select version, note from tasks where id = $1", [task2Id])).rows[0];
+check("④t12 取消定档后任务写口恢复：PATCH 200（version+1 · note 落库；与 ④t7 定档态 409 对照）",
+  patch2Allowed.status === 200 && task2RowAfterPatch.note === "取消定档后写口恢复（回放）" && Number(task2RowAfterPatch.version) === task2Ver0 + 3,
+  String(patch2Allowed.status) + " " + JSON.stringify(task2RowAfterPatch));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
+const tagsAfterCancel = (await scanFinalizedTags()) ?? [];
+const row1AfterCancel = await rowBoxOf(TASK_TITLE);
+const row2AfterCancel = await rowBoxOf(task2Title);
+check("④t13 取消定档后该任务的「定档」侧签消失（只剩第一个任务的 1 颗 · 竖排淡黄仍在）",
+  tagsAfterCancel.length === 1 && tagStyled(tagsAfterCancel[0]) && tagOnRow(tagsAfterCancel[0], row1AfterCancel) && tagsAfterCancel.filter((tag) => tagOnRow(tag, row2AfterCancel)).length === 0,
+  JSON.stringify({ tags: tagsAfterCancel, row1: row1AfterCancel, row2: row2AfterCancel }));
+const cancel2Again = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/unfinalize", "POST", { version: task2Ver0 + 3 });
+const task2UnfinalAuditAgain = (await db.query("select count(*)::int as c from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%取消定档%"])).rows[0];
+check("④t14 未定档重复 POST /unfinalize 幂等（200 原样返回 · 不递增版本 · 审计不重复）",
+  cancel2Again.status === 200 && cancel2Again.json !== null && Number(cancel2Again.json.version) === task2Ver0 + 3 && Number(task2UnfinalAuditAgain.c) === 1,
+  JSON.stringify({ status: cancel2Again.status, version: cancel2Again.json === null ? null : cancel2Again.json.version, audit: task2UnfinalAuditAgain.c }));
 const aDetail = await api("/api/v1/files/" + fileAId);
 const finalized = await api("/api/v1/files/" + fileAId + "/finalize", "POST", { version: aDetail.json.version });
 const aStatusFinal = (await db.query("select status from files where id = $1", [fileAId])).rows[0].status;
@@ -875,11 +968,12 @@ const task3Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", {
 check("④u0 夹具：建第三条任务（输出成果文件 = CAD图纸）", task3Res.status === 201, String(task3Res.status) + " " + task3Res.text.slice(0, 140));
 const task3Id = task3Res.json === null ? "" : task3Res.json.id;
 const changedTargetName = "回放-变更目标-图纸.txt";
-const changeAfterName = "回放-变更后-图纸-v2.txt";
+const changeAfterName = "回放-变更后-图纸-v2.pdf";
 const changedTargetPath = join(fileDir, changedTargetName);
 const changeAfterPath = join(fileDir, changeAfterName);
 const changedTargetBuf = Buffer.from("LibiaoLink 回放变更目标 v1 " + fixtureCode + String.fromCharCode(10), "utf8");
-const changeAfterBuf = Buffer.from("LibiaoLink 回放变更后 v2 " + fixtureCode + String.fromCharCode(10), "utf8");
+// Push 256：变更后文件 = 变更选择的文件本身（换扩展名 .txt → .pdf，真 PDF 字节 —— 通道 / 下载名 / 对象键按新扩展名）。
+const changeAfterBuf = minimalPdf("LibiaoLink 回放变更后 v2 " + fixtureCode);
 writeFileSync(changedTargetPath, changedTargetBuf);
 writeFileSync(changeAfterPath, changeAfterBuf);
 /** 经 API 分片直传一份文件（带 docType / taskId；变更夹具）→ finalize=true 时完成即定档（file final + 任务随定档锁定）；
@@ -920,8 +1014,9 @@ const task4Id = task4Res.json === null ? "" : task4Res.json.id;
 const draftName = "回放-先定档-草图.txt";
 const draftBuf = Buffer.from("LibiaoLink 回放先定档 v0 " + fixtureCode + String.fromCharCode(10), "utf8");
 writeFileSync(join(fileDir, draftName), draftBuf);
-const draftUpload = await uploadViaApi(draftName, draftBuf, "CAD图纸", task4Id, false);
-check("④v0b 夹具：未定档文件（docType=CAD图纸）分片直传（不定档 · 任务保持未定档）", draftUpload.ok === true, String(draftUpload.detail));
+// Push 255：本文件**不带成果类型**（doc_type 空，与业务真机口径一致）—— 变更后只能靠「所属任务」回写变更关联（R01 匹配不到）。
+const draftUpload = await uploadViaApi(draftName, draftBuf, undefined, task4Id, false);
+check("④v0b 夹具：未定档文件（不带成果类型）分片直传（不定档 · 任务保持未定档）", draftUpload.ok === true, String(draftUpload.detail));
 
 // 第五条任务夹具（任务定档后变更用例 · ④w · 业务反馈「不是已经定档了吗 为什么变更申请里面还是未定档」）：
 // 任务经定档端点置位（与抽屉开关同端点），文件保持 draft —— 变更申请里该文件应显示「已定档」、直接可变更。
@@ -1026,23 +1121,106 @@ const changeLanded = await waitForAsync(async () => {
   return rows.length === 1 && rows[0].status === "changed";
 }, 30000);
 const changeRow = (await db.query("select id, reason, before_summary, after_summary, stage_key, status, applied_by from change_requests where project_id = $1", [projectId])).rows[0];
-const dVersions = (await db.query("select seq, change_request_id from file_versions where file_id = $1 order by seq", [dUpload.fileId])).rows;
+const dVersions = (await db.query("select seq, change_request_id, object_key from file_versions where file_id = $1 order by seq", [dUpload.fileId])).rows;
+const dFileRow = (await db.query("select name from files where id = $1", [dUpload.fileId])).rows[0];
 const task3Refs = (await db.query("select change_refs from tasks where id = $1", [task3Id])).rows[0].change_refs;
-check("④u4 提交变更（申请即通过）：files.status=changed + 变更记录（内容+原因合并 / 前后摘要 / 阶段 design / status=applied / 申请人）+ 版本 v2 挂 change_request_id + R01 回写任务变更关联",
+// Push 256「替换的效果」：完成变更 = 文件更名为变更选择的文件（base 名 + 扩展名全替换）；读面回捞更名前名称。
+const dDetailApi = changeRow === undefined ? null : await api("/api/v1/change-requests/" + changeRow.id);
+check("④u4 提交变更（申请即通过）：files.status=changed + 变更记录（内容+原因合并 / 前后摘要 / 阶段 design / status=applied / 申请人）+ 版本 v2 挂 change_request_id + R01 回写任务变更关联 + 替换效果（name/扩展名 = 变更选择：files.name 更名 + 新版本对象键 .pdf + 读面 filePreviousName = 更名前）",
   pickedName === true && submitPoint === true && changeLanded === true
   && changeRow !== undefined && changeRow.reason === expectedReason && changeRow.before_summary === beforeText && changeRow.after_summary === afterText
   && changeRow.stage_key === "design" && changeRow.status === "applied" && changeRow.applied_by === userRow.id
   && dVersions.length === 2 && Number(dVersions[1].seq) === 2 && dVersions[1].change_request_id === changeRow.id
+  && String(dVersions[1].object_key).slice(-4) === ".pdf" && String(dVersions[0].object_key).slice(-4) === ".txt"
+  && dFileRow !== undefined && dFileRow.name === changeAfterName
+  && dDetailApi !== null && dDetailApi.status === 200 && dDetailApi.json.file.name === changeAfterName && dDetailApi.json.filePreviousName === changedTargetName
   && Array.isArray(task3Refs) && task3Refs.indexOf(changeRow.id) >= 0,
-  JSON.stringify({ change: { reason: changeRow === undefined ? null : changeRow.reason, stage: changeRow === undefined ? null : changeRow.stage_key }, versions: dVersions, refs: task3Refs }));
+  JSON.stringify({ change: { reason: changeRow === undefined ? null : changeRow.reason, stage: changeRow === undefined ? null : changeRow.stage_key }, file: dFileRow, keys: dVersions.map((v) => v.object_key), detail: dDetailApi === null ? null : { name: dDetailApi.json === null ? null : dDetailApi.json.file.name, prev: dDetailApi.json === null ? null : dDetailApi.json.filePreviousName }, refs: task3Refs }));
 const doneShown = await waitFor("document.querySelector(" + j("[data-change-done]") + ")!==null", 15000);
 check("④u5 提交成功 = 页面绿条「变更已提交生效」", doneShown === true, String(doneShown));
 
 const backToDetail = await clickScrolled("[data-drawer-tab=detail]");
-const changedChip = await waitFor("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(changedTargetName) + ")>=0&&items[i].textContent.indexOf(" + j("已变更") + ")>=0){return true;}}return false;})()", 20000);
+// Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊 直接显示变更后添加的文件 不要显示已变更」）：
+// 变更后清单行直接显示变更后的文件本身，不再挂「已变更」色签；Push 256：显示的就是 **变更选择的文件**（名称/扩展名已替换）。
+const changedRowShown = await waitFor("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(changeAfterName) + ")>=0&&items[i].textContent.indexOf(" + j("已变更") + ")<0){return true;}}return false;})()", 20000);
+const changedRowText = changedRowShown === true ? await ev("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(changeAfterName) + ")>=0){return items[i].innerText;}}return null;})()") : null;
 const linkedShown = await waitFor("(function(){var d=document.querySelector(" + j(DRAWER) + ");return d!==null&&d.innerText.indexOf(" + j(contentText) + ")>=0;})()", 20000);
-check("④u6 回「任务详情」：文件行转「已变更」色签（清单重取）+ 「变更关联」行回流（R01 + 整表重取）",
-  backToDetail === true && changedChip === true && linkedShown === true, JSON.stringify({ back: backToDetail, chip: changedChip, linked: linkedShown }));
+check("④u6 回「任务详情」：文件行直接显示变更后的文件（Push 255：不再挂「已变更」签；Push 256：名称/扩展名 = 变更选择的文件）+ 「变更关联」行回流（整表重取）",
+  backToDetail === true && changedRowShown === true && linkedShown === true,
+  JSON.stringify({ back: backToDetail, row: changedRowText === null ? null : String(changedRowText).slice(0, 120), linked: linkedShown }));
+
+// ④u6b（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：点「变更关联」行 → 屏幕中央弹「变更管理」详情弹窗
+// （对齐源表版式：来自 ▦变更管理 + 大日期 + 13 行明细）。选择器限定抽屉内（任务表「变更关联」列同一 data 标记 —— 表格 chip 在抽屉遮罩之后）。
+const linkPoint = await clickScrolled(DRAWER + " [data-change-link-open]");
+// 等详情取回（大日期行 = 详情就绪标记；加载中只有「加载中…」）再读行。
+const modalShown = await waitFor("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");return m!==null&&m.querySelector(" + j("[data-change-modal-date]") + ")!==null;})()", 15000);
+const modalInfo = modalShown === true ? await ev("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");if(m===null){return null;}var row=function(k){var n=m.querySelector(\"[data-change-modal-row=\\\"\"+k+\"\\\"]\");return n===null?null:n.innerText;};var h=m.querySelector(\"header\");var d=m.querySelector(" + j("[data-change-modal-date]") + ");var dt=m.querySelector(" + j("[data-change-modal-doc-type]") + ");return {head:h===null?null:h.innerText,date:d===null?null:d.textContent.trim(),docType:dt===null?null:dt.textContent.trim(),stage:row(\"stage\"),content:row(\"content\"),cause:row(\"cause\"),applicant:row(\"applicant\"),writer:row(\"writer\"),version:row(\"version\"),file:row(\"after-file\"),link:row(\"links\"),card:m.querySelector(" + j("[data-change-modal-file-card]") + ")!==null};})()") : null;
+check("④u6b 点「变更关联」= 居中「变更管理」详情弹窗（来自 ▦变更管理 / 大日期 / 变更文件=输出成果文件类型 CAD图纸 / 阶段=设计开发 / 内容+原因 / 申请人=潘兴 / 变更后文件版本=变更名（v2） / 文件卡 / 关联=本任务）",
+  linkPoint === true && modalShown === true && modalInfo !== null && modalInfo !== undefined
+  && String(modalInfo.head).indexOf("来自") >= 0 && String(modalInfo.head).indexOf("变更管理") >= 0 && String(modalInfo.date).indexOf("/") >= 0
+  && String(modalInfo.docType) === "CAD图纸"
+  && String(modalInfo.stage).indexOf("设计开发") >= 0 && String(modalInfo.content).indexOf(contentText) >= 0 && String(modalInfo.cause).indexOf(causeText) >= 0
+  && String(modalInfo.applicant).indexOf("潘兴") >= 0 && String(modalInfo.writer).indexOf("潘兴") >= 0
+  && String(modalInfo.version).indexOf(changeAfterName) >= 0 && String(modalInfo.version).indexOf("v2") >= 0
+  && modalInfo.card === true && String(modalInfo.file).indexOf(changeAfterName) >= 0 && String(modalInfo.link).indexOf(changeTaskTitle) >= 0,
+  JSON.stringify(modalInfo));
+const shotChangeModal = await page.send("Page.captureScreenshot", { format: "png" });
+writeFileSync(join(SCREENSHOT_DIR, "m4-07-drawer-change-modal.png"), Buffer.from(shotChangeModal.data, "base64"));
+console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-drawer-change-modal.png"));
+
+// ④u6c（Push 256 续 · 业务口径「这两个要可以点击 点击文件预览」）：点弹窗「变更后文件」卡 → 弹内版本态预览（z 高于弹窗）；
+// Esc 先关预览浮层（弹窗仍在 —— 「Esc 先关内层」两层）。
+const modalCardPoint = await clickScrolled("[data-change-modal] [data-change-modal-file-open]");
+const modalPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-change-modal]") + ")!==null", 25000);
+const modalPreviewInfo = modalPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}return {kind:el.getAttribute(" + j("data-file-preview-kind") + "),oo:el.querySelector(" + j("[data-oo-status]") + ")!==null,frame:el.querySelector(" + j("[data-file-preview-frame]") + ")!==null,caption:el.innerText.slice(0,120)};})()") : null;
+check("④u6c 弹窗「变更后文件」卡可点击 = 预览（查看器外壳 / iframe 在位 + 标题 = 变更选择的文件名；PDF 自 2026-10-08 统一 ONLYOFFICE）",
+  modalCardPoint === true && modalPreviewShown === true && modalPreviewInfo !== null && modalPreviewInfo !== undefined
+  && (modalPreviewInfo.oo === true || modalPreviewInfo.frame === true) && String(modalPreviewInfo.caption).indexOf(changeAfterName) >= 0,
+  JSON.stringify(modalPreviewInfo));
+// 关弹内预览：先 Esc；若按键被 ONLYOFFICE 编辑器 iframe 吞掉（DocServer 在线时焦点在编辑器内）→ 点遮罩关闭。
+// 两种关法都要求「弹窗 + 抽屉仍在」（Esc 先关内层）。
+await pressKey("Escape", "Escape", 27);
+let modalKeptAfterEsc = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j("[data-change-modal]") + ")!==null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 2500);
+let modalPreviewClosedBy = modalKeptAfterEsc === true ? "esc" : "backdrop";
+if (modalKeptAfterEsc !== true) {
+  // 点浮层左上角空白（遮罩区）——避开居中查看器自身的 stopPropagation。
+  const backdropPoint = await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {x:Math.round(r.left+12),y:Math.round(r.top+12)};})()");
+  if (backdropPoint !== null && backdropPoint !== undefined) {
+    await clickAt(backdropPoint);
+  }
+  modalKeptAfterEsc = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j("[data-change-modal]") + ")!==null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 8000);
+}
+check("④u6d 关弹内预览（Esc；ONLYOFFICE 编辑器持焦吞键时点遮罩）= 变更管理弹窗 + 抽屉都仍在（Esc 先关内层）",
+  modalKeptAfterEsc === true, JSON.stringify({ closedBy: modalPreviewClosedBy }));
+
+// ④u6e Esc 再关弹窗本身（抽屉「任务详情」仍在）；随后重开弹窗验证「关联」口径。
+await pressKey("Escape", "Escape", 27);
+const modalClosed = await waitFor("(function(){return document.querySelector(" + j("[data-change-modal]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 8000);
+check("④u6e Esc 只关弹窗（抽屉「任务详情」仍在 —— 「Esc 先关内层」）", modalClosed === true, String(modalClosed));
+const linkPoint2 = await clickScrolled(DRAWER + " [data-change-link-open]");
+const modalShown2 = await waitFor("document.querySelector(" + j("[data-change-modal]") + ")!==null", 12000);
+const linkedPoint = await clickScrolled("[data-change-modal] [data-change-modal-link-open]");
+const linkedBackToDrawer = await waitFor("(function(){return document.querySelector(" + j("[data-change-modal]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 8000);
+check("④u6f 弹窗「关联」可点击（点击布局定档抽屉显示）：点关联 = 关弹窗露出回写任务抽屉（抽屉内 任务详情 仍在）",
+  linkPoint2 === true && modalShown2 === true && linkedPoint === true && linkedBackToDrawer === true,
+  JSON.stringify({ reopen: modalShown2, link: linkedPoint, back: linkedBackToDrawer }));
+
+// ④u6g（Push 256 续 · 任务表口径）：关抽屉 → 点任务表行内「变更关联」列 chip → 同一弹窗（表格行的 stopPropagation 不连带开抽屉）；
+// 点「关联」→ 选中该行开抽屉（「点击布局定档抽屉显示」）。
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
+const boardChipPoint = await clickScrolled("[data-change-link-open]");
+const boardModalShown = await waitFor("document.querySelector(" + j("[data-change-modal]") + ")!==null&&document.querySelector(" + j(DRAWER) + ")==null", 12000);
+const boardModalInfo = boardModalShown === true ? await ev("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");if(m===null){return null;}var r=m.querySelector(\"[data-change-modal-row=\\\"links\\\"]\");return {link:r===null?null:r.innerText};})()") : null;
+check("④u6g 任务表「变更关联」列 chip 可点击 = 同一「变更管理」弹窗（未连带开抽屉）；关联行 = 本任务",
+  boardChipPoint === true && boardModalShown === true && boardModalInfo !== null && boardModalInfo !== undefined && String(boardModalInfo.link).indexOf(changeTaskTitle) >= 0,
+  JSON.stringify(boardModalInfo));
+const boardLinkedPoint = await clickScrolled("[data-change-modal] [data-change-modal-link-open]");
+const boardDrawerShown = await waitFor("(function(){var d=document.querySelector(" + j(DRAWER) + ");return d!==null&&d.innerText.indexOf(" + j(changeTaskTitle) + ")>=0;})()", 10000);
+check("④u6h 表格弹窗点「关联」= 打开该任务抽屉（布局定档抽屉显示 · 标题 = 关联任务）",
+  boardLinkedPoint === true && boardDrawerShown === true,
+  JSON.stringify({ link: boardLinkedPoint, drawer: boardDrawerShown }));
+// 抽屉保持打开（表格路径开的就是本任务抽屉 · 任务详情页）——下一段 ④u7 直接点「变更记录」页签继续。
 
 const historyTabPoint = await clickScrolled("[data-drawer-tab=history]");
 const historyShown = await waitFor("(function(){var p=document.querySelector(" + j("[data-drawer-page=history]") + ");return p!==null&&p.querySelectorAll(" + j("[data-change-item]") + ").length===1;})()", 10000);
@@ -1052,18 +1230,67 @@ check("④u7 点「变更记录」= 本任务一条变更（日期签 + 短原�
   && String(historyItemInfo.text).indexOf(contentText) >= 0 && String(historyItemInfo.text).indexOf("变更") >= 0 && historyItemInfo.open === "详情",
   JSON.stringify(historyItemInfo));
 
+// ④u7b（Push 255 · 业务口径「变更记录也要显示 之前是什么文件 这次是什么文件」；Push 256 起更名口径）：
+// 列表行直接出「变更前 v1 → 变更后 v2」两行，各自带「预览 / 下载」入口（不必先点「详情」）——
+// 变更前 = **更名前名称**（filePreviousName）+ v1；变更后 = **变更选择的文件名**（含新扩展名）+ v2。
+const historyFilesShown = await waitFor("(function(){var f=document.querySelector(" + j("[data-change-item-files]") + ");if(f===null){return false;}var b=f.querySelector(" + j("[data-change-file=before]") + ");var a=f.querySelector(" + j("[data-change-file=after]") + ");if(b===null||a===null){return false;}return b.innerText.indexOf(" + j("变更前") + ")>=0&&b.innerText.indexOf(" + j(changedTargetName) + ")>=0&&b.innerText.indexOf(" + j(changeAfterName) + ")<0&&b.innerText.indexOf(" + j("v1") + ")>=0&&a.innerText.indexOf(" + j("变更后") + ")>=0&&a.innerText.indexOf(" + j(changeAfterName) + ")>=0&&a.innerText.indexOf(" + j("v2") + ")>=0&&b.querySelector(" + j("[data-change-preview=before]") + ")!==null&&b.querySelector(" + j("[data-change-download=before]") + ")!==null&&a.querySelector(" + j("[data-change-preview=after]") + ")!==null&&a.querySelector(" + j("[data-change-download=after]") + ")!==null;})()", 15000);
+const historyFilesText = historyFilesShown === true ? await ev("(function(){var f=document.querySelector(" + j("[data-change-item-files]") + ");return f===null?null:f.innerText;})()") : null;
+check("④u7b 变更记录行显示「变更前 v1（更名前名称）→ 变更后 v2（变更选择的文件名）」+ 各自「预览 / 下载」入口（进页即取，不必先点详情）",
+  historyFilesShown === true, JSON.stringify({ shown: historyFilesShown, text: historyFilesText === null ? null : String(historyFilesText).slice(0, 200) }));
+
 const detailOpenPoint = await clickScrolled("[data-change-item-open]");
-// 变更后文件 = 目标文件本体（变更 = 同一文件的新版本：名称沿用、版本号递增）—— 读面 file.name 即目标文件名。
-const itemDetailShown = await waitFor("(function(){var d=document.querySelector(" + j("[data-change-item-detail]") + ");return d!==null&&d.innerText.indexOf(" + j(changedTargetName) + ")>=0&&d.innerText.indexOf(" + j("v2") + ")>=0;})()", 10000);
+// 变更后文件 = 目标文件本体（变更 = 同一文件的新版本）；Push 256：更名后读面 file.name = 变更选择的文件名。
+const itemDetailShown = await waitFor("(function(){var d=document.querySelector(" + j("[data-change-item-detail]") + ");return d!==null&&d.innerText.indexOf(" + j(changeAfterName) + ")>=0&&d.innerText.indexOf(" + j("v2") + ")>=0;})()", 10000);
 const itemDetailText = await ev("(function(){var d=document.querySelector(" + j("[data-change-item-detail]") + ");return d===null?" + j("") + ":d.innerText;})()");
 const historyText = await ev("(function(){var p=document.querySelector(" + j("[data-drawer-page=history]") + ");return p===null?" + j("") + ":p.innerText;})()");
 check("④u8 点「详情」按需取全文（13 列读面）：变更后文件 + 版本 v2 + 变更阶段（设计开发）+ 原因全文 + 前后摘要 + 申请人（潘兴）+ 审批状态（已通过）",
   detailOpenPoint === true && itemDetailShown === true
-  && String(itemDetailText).indexOf(changedTargetName) >= 0 && String(itemDetailText).indexOf("v2") >= 0 && String(itemDetailText).indexOf("设计开发") >= 0
+  && String(itemDetailText).indexOf(changeAfterName) >= 0 && String(itemDetailText).indexOf("v2") >= 0 && String(itemDetailText).indexOf("设计开发") >= 0
   && String(itemDetailText).indexOf(expectedReason) >= 0 && String(itemDetailText).indexOf(beforeText) >= 0 && String(itemDetailText).indexOf(afterText) >= 0
   && String(itemDetailText).indexOf("潘兴") >= 0 && String(itemDetailText).indexOf("已通过") >= 0,
   JSON.stringify({ clicked: detailOpenPoint, shown: itemDetailShown, detail: String(itemDetailText).slice(0, 220), page: String(historyText).slice(0, 120) }));
 await shotDrawerClip("m4-07-drawer-history.png");
+
+// ④u8b（Push 255 · 业务口径「文件可以预览在变更里面」）：变更记录里的「变更前」文件可预览 —— 版本态预览（A4-06 历史版本）；
+// 点「预览」→ 查看器浮层打开且抽屉仍在；Esc 先关浮层、抽屉（变更记录页）仍在。
+const beforePreviewPoint = await clickScrolled("[data-change-preview=before]");
+const beforePreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-drawer-page=history]") + ")!==null", 25000);
+const beforePreviewInfo = beforePreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}return {open:true,kind:el.getAttribute(" + j("data-file-preview-kind") + "),caption:el.innerText.slice(0,120)};})()") : null;
+check("④u8b 变更记录「变更前」版本可预览（版本态预览浮层打开 + 变更记录页仍在）",
+  beforePreviewPoint === true && beforePreviewShown === true && beforePreviewInfo !== null && beforePreviewInfo !== undefined && String(beforePreviewInfo.caption).indexOf(changedTargetName) >= 0,
+  JSON.stringify(beforePreviewInfo));
+await pressKey("Escape", "Escape", 27);
+let beforePreviewClosed = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 2500);
+if (beforePreviewClosed !== true) {
+  // DocServer 在线时 ONLYOFFICE 编辑器 iframe 持焦会吞 Esc —— 回退点遮罩左上角空白（两种关法都要求抽屉仍在）。
+  const beforeBackdropPoint = await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {x:Math.round(r.left+12),y:Math.round(r.top+12)};})()");
+  if (beforeBackdropPoint !== null && beforeBackdropPoint !== undefined) {
+    await clickAt(beforeBackdropPoint);
+  }
+  beforePreviewClosed = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 8000);
+}
+check("④u8c 关预览浮层（Esc；编辑器持焦时点遮罩）= 变更记录页仍在（「Esc 先关内层」）", beforePreviewClosed === true, String(beforePreviewClosed));
+
+// ④u8d（Push 256 · 业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：变更后版本按**新扩展名**预览 ——
+// v2 对象键 = .pdf → 预览通道 = pdf（浏览器内置查看器 iframe；不再因沿用旧扩展名被 ONLYOFFICE 判「扩展名不一致」拒开）；
+// 浮层标题 = 变更选择的文件名（当前名 + v2 扩展名）。Esc 关浮层后抽屉仍在。
+const afterPreviewPoint = await clickScrolled("[data-change-preview=after]");
+const afterPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-drawer-page=history]") + ")!==null", 25000);
+const afterPreviewInfo = afterPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}return {open:true,kind:el.getAttribute(" + j("data-file-preview-kind") + "),oo:el.querySelector(" + j("[data-oo-status]") + ")!==null,frame:el.querySelector(" + j("[data-file-preview-frame]") + ")!==null,caption:el.innerText.slice(0,120)};})()") : null;
+check("④u8d 变更记录「变更后」版本按新扩展名预览（查看器外壳 / iframe 在位 + 标题 = 变更选择的文件名 .pdf —— 替换效果生效，不再被「扩展名不一致」拒开）",
+  afterPreviewPoint === true && afterPreviewShown === true && afterPreviewInfo !== null && afterPreviewInfo !== undefined
+  && (afterPreviewInfo.oo === true || afterPreviewInfo.frame === true) && String(afterPreviewInfo.caption).indexOf(changeAfterName) >= 0,
+  JSON.stringify(afterPreviewInfo));
+await pressKey("Escape", "Escape", 27);
+let afterPreviewClosed = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 2500);
+if (afterPreviewClosed !== true) {
+  const afterBackdropPoint = await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {x:Math.round(r.left+12),y:Math.round(r.top+12)};})()");
+  if (afterBackdropPoint !== null && afterBackdropPoint !== undefined) {
+    await clickAt(afterBackdropPoint);
+  }
+  afterPreviewClosed = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 8000);
+}
+check("④u8e 关「变更后」预览浮层（Esc；编辑器持焦时点遮罩）= 变更记录页仍在", afterPreviewClosed === true, String(afterPreviewClosed));
 
 // ---------- ④v 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）----------
 // 业务口径：未定档文件不能直接变更（A4-13 前置门）—— 但页面不能死路：行尾「定档」→ 就地二次确认 → 定档后随即可选。
@@ -1105,6 +1332,45 @@ check("④v3 确认定档：行转「已定档」随即可选（自动选中 + �
   && draftDb !== undefined && draftDb.status === "final"
   && task4Row !== undefined && task4Row.locked === true,
   JSON.stringify({ row: finalizedRow, db: draftDb, task: task4Row }));
+
+// ④v4（Push 255 · 业务反馈「同时相关的关联也没有显示啊」）：变更文件**不带成果类型**（doc_type 空，R01 匹配不到任何任务）——
+// 变更仍必须回写「变更文件所属任务」（task4 由抽屉内变更），任务「变更关联 / 变更记录」不再空白。
+const noDocAfterName = "回放-先定档-变更后-v2.txt";
+const noDocAfterBuf = Buffer.from("LibiaoLink 回放先定档变更后 v2 " + fixtureCode + String.fromCharCode(10), "utf8");
+writeFileSync(join(fileDir, noDocAfterName), noDocAfterBuf);
+const noDocContent = "回放变更内容：无成果类型文件变更 " + fixtureCode;
+await fillField("[data-change-reason]", noDocContent);
+await setFileInput("[data-change-upload-input=true]", join(fileDir, noDocAfterName));
+const noDocPicked = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-file]") + ");return n!==null&&n.textContent.indexOf(" + j(noDocAfterName) + ")>=0;})()", 6000);
+const noDocSubmit = await clickScrolled("[data-change-submit]");
+const noDocLanded = await waitForAsync(async () => {
+  const rows = (await db.query("select status from files where id = $1", [draftUpload.fileId])).rows;
+  return rows.length === 1 && rows[0].status === "changed";
+}, 30000);
+const noDocChange = (await db.query("select id, reason, stage_key, status from change_requests where project_id = $1 order by applied_at desc limit 1", [projectId])).rows[0];
+const noDocFileRow = (await db.query("select doc_type from files where id = $1", [draftUpload.fileId])).rows[0];
+const task4Refs = (await db.query("select change_refs from tasks where id = $1", [task4Id])).rows[0].change_refs;
+check("④v4 无成果类型文件的变更（doc_type 空 · R01 零匹配）→ 所属任务 change_refs 直接回写（变更关联 / 变更记录不再空白）",
+  noDocPicked === true && noDocSubmit === true && noDocLanded === true
+  && noDocFileRow !== undefined && noDocFileRow.doc_type === null
+  && noDocChange !== undefined && noDocChange.reason === noDocContent && noDocChange.status === "applied"
+  && Array.isArray(task4Refs) && task4Refs.indexOf(noDocChange.id) >= 0,
+  JSON.stringify({ change: noDocChange === undefined ? null : noDocChange, file: noDocFileRow, refs: task4Refs }));
+
+// ④v5（Push 256 续 · 业务口径「变更文件就是输出文件成果这个类型」）：无成果类型文件（doc_type 空）的变更 ——
+// 弹窗「变更文件」行回退显示任务「输出成果文件」类型（CAD图纸），不再是「—」；「变更后文件」卡 = 变更选择的文件名（替换效果同口径）。
+const v5Tab = await clickScrolled("[data-drawer-tab=detail]");
+// 抽屉「变更关联」可能有多条变更（R01 会把兄弟任务的变更也回写进来）——按短原因文本选中本用例那条（无成果类型变更）。
+const v5ChipReady = await waitFor("(function(){var bs=document.querySelectorAll(" + j(DRAWER + " [data-change-link-open]") + ");for(var i=0;i<bs.length;i++){if(bs[i].innerText.indexOf(" + j(noDocContent) + ")>=0){return true;}}return false;})()", 15000);
+const v5Link = await ev("(function(){var bs=document.querySelectorAll(" + j(DRAWER + " [data-change-link-open]") + ");for(var i=0;i<bs.length;i++){if(bs[i].innerText.indexOf(" + j(noDocContent) + ")>=0){bs[i].click();return true;}}return false;})()");
+const v5Modal = await waitFor("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");return m!==null&&m.querySelector(" + j("[data-change-modal-date]") + ")!==null;})()", 15000);
+const v5Info = v5Modal === true ? await ev("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");if(m===null){return null;}var dt=m.querySelector(" + j("[data-change-modal-doc-type]") + ");var r=m.querySelector(\"[data-change-modal-row=\\\"after-file\\\"]\");return {docType:dt===null?null:dt.textContent.trim(),file:r===null?null:r.innerText};})()") : null;
+check("④v5 无成果类型文件的变更：弹窗「变更文件」回退显示任务「输出成果文件」类型（CAD图纸）+ 变更后文件 = 变更选择的文件名",
+  v5Tab === true && v5ChipReady === true && v5Link === true && v5Modal === true && v5Info !== null && v5Info !== undefined
+  && String(v5Info.docType) === "CAD图纸" && String(v5Info.file).indexOf(noDocAfterName) >= 0,
+  JSON.stringify(v5Info));
+await pressKey("Escape", "Escape", 27);
+await waitFor("document.querySelector(" + j("[data-change-modal]") + ")===null", 8000);
 
 // ---------- ④w 任务已定档 → 其文件视为已定档（Push 254 续之二 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）----------
 // 场景：任务经定档开关 / 端点已定档，文件未做文件级定档（保持 draft）—— 变更申请里该文件应显示「已定档」、

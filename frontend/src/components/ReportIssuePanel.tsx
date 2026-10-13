@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
+import { ImageZoomViewer } from "./ImageZoomViewer";
 import { InlineCell, InlineMemberCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
@@ -32,6 +33,7 @@ import { RowDeleteButton } from "./RowDeleteButton";
 import { RowEditButton } from "./RowEditButton";
 import { ScrollArea } from "./ScrollArea";
 import { SearchInput } from "./SearchInput";
+import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
 
@@ -397,10 +399,15 @@ const categoryChip = (name: string) => tagChip(name, ISSUE_CATEGORY_CLASS[name] 
 
 /** 关联阶段的小色签（浮层用）。 */
 const stageChip = (name: string) => tagChip(name, STAGE_TAG_CLASS[name] ?? "bg-zinc-100");
+/** 三态色签壳体（「问题追踪」与工作台问题表共用一处）：与「项目总览」任务状态胶囊同款 —— rounded-lg +
+ *  px-3 py-1.5 + text-[11px] font-medium。Push 260 抽出：工作台问题表原先自带一档更小的壳（rounded + px-1.5 +
+ *  py-0.5），业务口径「问题是否解决的颜色要统一和项目里面的一致」收口到本常量，两处不再各写各的。 */
+export const ISSUE_TAG_SHELL = "rounded-lg px-3 py-1.5 text-[11px] font-medium";
+
 /** 问题状态色签（一处出签：追踪表「问题是否处理」列 + 看板卡片 / 列头共用）。Push 207 追加：壳体与「项目总览」
- *  任务状态胶囊同款（rounded-lg + px-3 py-1.5 + text-[11px] font-medium —— 项目总览侧是可点下拉、悬停深一档；
- *  静态签不挂悬停加深，其余逐项对齐）。`focus` = 醒目模式（仅追踪表传 true）：整行已铺状态底色，色签收口成
- *  只留深色字（透明底 + 加粗 —— 同 TaskBoard 醒目模式状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
+ *  任务状态胶囊同款（壳 = ISSUE_TAG_SHELL，见上；项目总览侧是可点下拉、悬停深一档；静态签不挂悬停加深，其余逐项对齐）。
+ *  `focus` = 醒目模式（仅追踪表传 true）：整行已铺状态底色，色签收口成只留深色字（透明底 + 加粗 —— 同 TaskBoard
+ *  醒目模式状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
 function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: boolean }) {
   return (
     <span
@@ -409,7 +416,7 @@ function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: bo
         "inline-block " +
         (focus
           ? "text-xs font-semibold " + ISSUE_TAG_TEXT_CLASS[state]
-          : "rounded-lg px-3 py-1.5 text-[11px] font-medium " + ISSUE_TAG_CLASS[state])
+          : ISSUE_TAG_SHELL + " " + ISSUE_TAG_CLASS[state])
       }
     >
       {ISSUE_STATE_NAMES[state]}
@@ -479,6 +486,32 @@ const FORM_LABEL = "text-xs font-bold text-zinc-500";
 
 /** 行内编辑触发器 · 色签列（Push 208）：问题归类 / 问题状态用 —— 触发器贴着内容（不满宽），四周留 2px 可点外沿。 */
 const CELL_EDIT_CHIP = "-m-0.5 rounded-lg p-0.5 hover:bg-zinc-900/[0.04]";
+
+/** 行内可改的「问题是否处理」单元格（Push 260）：项目页「问题追踪」与工作台问题表**共用同一枚** ——
+ *  显示器 = IssueStateTag（三态色签 / 醒目模式只留深色字），点色签弹三态下拉（每项 = 该状态色签胶囊），
+ *  选中即落值（onPick）并关掉浮层。原先这段内联在追踪表里；抽出本组件的口径 = 业务口径 2026-10-09
+ *  「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」—— 两处壳 / 触发器 / aria 名一处出、不走样。 */
+export function IssueStateCell({ state, focus = false, ariaLabel, onPick }: {
+  state: IssueState;
+  /** 醒目模式（整行已铺状态底色）：色签收口成只留深色字 —— 同追踪表口径。 */
+  focus?: boolean;
+  ariaLabel: string;
+  onPick: (next: IssueState) => void;
+}) {
+  return (
+    <InlineOptionCell
+      bare
+      value={state}
+      options={ISSUE_STATE_OPTIONS}
+      ariaLabel={ariaLabel}
+      triggerClassName={CELL_EDIT_CHIP}
+      display={<IssueStateTag state={state} focus={focus} />}
+      onPick={(value) => {
+        onPick(value as IssueState);
+      }}
+    />
+  );
+}
 
 
 /** 行首序号（自动序号用：1: / 2. / 3、/ 4：都算 —— 重排时先剥掉，再统一按 1: / 2: / 3: 编）。 */
@@ -772,7 +805,9 @@ function PasteIcon({ className = "h-5 w-5" }: { className?: string }) {
  *  3) 预览层自带 stopPropagation（click / pointerdown）—— React 的 portal 事件沿 **React 树**继续冒泡：
  *     看板卡片的整卡 onClick / onPointerDown 会把「点预览层关掉」当成「点卡片」，预览一关抽屉就被带着打开
  *     （业务截图里「看板预览 + 抽屉预览」两层同屏的另一半原因）。同 InlineEdit 浮层的 portal 口径。
- *  4) Esc 改**捕获阶段**监听并止住传播：预览层在最上层时 Esc 只关预览层（再按一次才轮到抽屉自己的 Esc）。 */
+ *  4) Esc 改**捕获阶段**监听并止住传播：预览层在最上层时 Esc 只关预览层（再按一次才轮到抽屉自己的 Esc）。
+ *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图改挂共享组件 ImageZoomViewer —— 滚轮 / ＋− / 双击 /
+ *  拖动平移（25% ~ 800%）；点图不再关（留给缩放 / 拖动），关浮层 = 点遮罩 / Esc。 */
 function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -784,8 +819,11 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
+  /** 键盘焦点陷阱（Push 264 追订）：预览层打开时焦点进层内、Tab 在层内循环、关闭还原到缩略图。 */
+  const trapRef = useFocusTrap<HTMLDivElement>();
   return createPortal(
     <div
+      ref={trapRef}
       data-photo-preview=""
       role="dialog"
       aria-label={"预览 " + name}
@@ -799,8 +837,8 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
       className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
     >
       <figure className="flex max-h-full max-w-full flex-col items-center">
-        <img src={url} alt={name} className="max-h-[80vh] max-w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white p-1 shadow-2xl" />
-        <figcaption className="mt-2 text-center text-xs text-white/80">{name}</figcaption>
+        <ImageZoomViewer src={url} alt={name} />
+        <figcaption className="relative z-10 mt-2 rounded-md bg-zinc-900/35 px-2 py-1 text-center text-xs text-white/80 backdrop-blur-sm">{name}</figcaption>
       </figure>
     </div>,
     document.body,
@@ -950,6 +988,8 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
    *  第一下「×」只出底部确认条（与行删除二次提示同款固定底栏），第二下「移除」才真摘。
    *  确认条 portal 到 body —— 抽屉壳 .drawer-panel 的入场动画会当 containing block，留在组件里会偏移。 */
   const [pendingRemove, setPendingRemove] = useState<{ at: number; name: string } | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：移除图片确认条开着时焦点进条内、Tab 在条内循环、关闭还原到缩略图删除按钮。 */
+  const removeConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingRemove !== null);
   const requestRemove = (at: number) => {
     const item = items[at];
     if (item === undefined) {
@@ -1022,6 +1062,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
       {pendingRemove === null ? null : createPortal(
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
           <div
+            ref={removeConfirmTrapRef}
             role="dialog"
             aria-label="确认移除图片"
             data-remove-attachment-confirm-strip=""
@@ -1846,16 +1887,14 @@ function IssueTable({ issues, focus, onEdit, onPatch, onDelete }: {
               <td className="whitespace-nowrap px-4 py-4 text-center">
                 {/* Push 217 续（业务口径「这个在表格里面始终居中」）：text-center —— 触发器是行内级盒（inline-flex），
                     状态色签在列内**始终水平居中**（三态 / 醒目模式 / 行内改后同款；列宽再变也不贴左沿）。 */}
-                {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚），色签壳直接复用 IssueStateTag */}
-                <InlineOptionCell
-                  bare
-                  value={issue.state}
-                  options={ISSUE_STATE_OPTIONS}
+                {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚）。
+                    Push 260：抽成 IssueStateCell 与工作台问题表共用（那边要「和项目内部一样可以点击」）。 */}
+                <IssueStateCell
+                  state={issue.state}
+                  focus={focus}
                   ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
-                  triggerClassName={CELL_EDIT_CHIP}
-                  display={<IssueStateTag state={issue.state} focus={focus} />}
-                  onPick={(value) => {
-                    onPatch(issue.id, { state: value as IssueState });
+                  onPick={(next) => {
+                    onPatch(issue.id, { state: next });
                   }}
                 />
               </td>
@@ -1916,10 +1955,13 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
+  /** 键盘焦点陷阱（Push 264 追订）：编辑弹窗打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发按钮。 */
+  const trapRef = useFocusTrap<HTMLDivElement>();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-zinc-900/40" onClick={onClose} />
       <div
+        ref={trapRef}
         role="dialog"
         aria-modal="true"
         aria-label={label}
@@ -2634,6 +2676,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   const closingRef = useRef(false);
 
   useEffect(() => lockBodyScroll(), [issue.id]);
+  /** 键盘焦点陷阱（Push 264 追订）：抽屉打开时焦点进抽屉、Tab 在抽屉内循环、关闭还原到行内触发按钮。 */
+  const drawerTrapRef = useFocusTrap<HTMLElement>();
 
   const requestClose = useCallback(() => {
     if (closingRef.current) {
@@ -2901,6 +2945,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
         aria-hidden="true"
       />
       <aside
+        ref={drawerTrapRef}
         data-issue-drawer=""
         role="dialog"
         aria-modal="true"
@@ -2982,6 +3027,8 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
   /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到底部确认条
    *  （与首页「删除项目」/ 模板面板同款非阻断浮条），第二下「删除」才真删 —— 成对删除的连带范围写进文案。 */
   const [pendingDelete, setPendingDelete] = useState<{ kind: "report"; report: DailyReport } | { kind: "issue"; issue: Issue } | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行尾删除按钮。 */
+  const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
    *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
@@ -3467,6 +3514,7 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
       {pendingDelete === null ? null : (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
           <div
+            ref={deleteConfirmTrapRef}
             role="dialog"
             aria-label={pendingDelete.kind === "report" ? "确认删除日报" : "确认删除问题"}
             data-delete-confirm-strip=""

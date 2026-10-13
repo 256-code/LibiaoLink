@@ -100,9 +100,10 @@ export interface TaskUpdatePatch {
   headcount?: number | null;
   priority?: string | null;
   note?: string | null;
-  /** 任务定档（Push 252 · 抽屉「定档」开关入口）：与 finalizedAt 成对写入；已定档任务任何写口 409 TASK_FINALIZED。 */
-  finalizedAt?: Date;
-  finalizedBy?: string;
+  /** 任务定档（Push 252 · 抽屉「定档」开关入口）：与 finalizedAt 成对写入；已定档任务任何写口 409 TASK_FINALIZED。
+   *  Push 260（取消定档）：原值可回写 null（unfinalize 清位、任务重新开放修改 —— 文件级定档不回退，文件修改仍走变更）。 */
+  finalizedAt?: Date | null;
+  finalizedBy?: string | null;
 }
 
 /** 完成门禁目标（M3-03）：任务行上判定门禁需要的字段（含无节点任务的 deliverable_types 兜底）。 */

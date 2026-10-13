@@ -102,9 +102,75 @@ export const WorkspaceOpenProjectsSchema = z
   });
 
 /**
+ * 「我的计划」便签墙（Push 268 · 业务口径 2026-10-10「数据接入数据库」）：便签墙整体按账号存
+ * `user_preferences.prefs.myPlanBoard`（与 workspaceOpenProjects 同一条偏好通道）—— 换设备可见。
+ * PATCH 时客户端只传 { notes, categories, bg }，updatedAt 由服务端盖章（同 prefs 行 updated_at 口径）；
+ * Push 271 起便签墙增加背景色 bg（white = 与全站页面统一纯白（默认）；cream = MiniMemo 奶白；另 10 色参考组件色板）—— 客户端整面 PATCH 时一并带上，未传（老客户端）服务端沿用库内现值；
+ * 读侧坏形状逐条收敛（非法便签整条丢弃、分类表去空去重截断），与前端 `myPlan.ts` 同口径。
+ */
+export const PLAN_BOARD_NOTE_LIMIT = 300;
+export const PLAN_BOARD_CATEGORY_LIMIT = 12;
+export const PLAN_BOARD_TITLE_MAX = 40;
+export const PLAN_BOARD_CONTENT_MAX = 2000;
+export const PLAN_BOARD_CATEGORY_NAME_MAX = 10;
+
+/** 便签颜色 id（7 色 hex 调色板；与前端 `myPlan.ts` 的 `PLAN_COLORS` 同源）。 */
+export const PLAN_BOARD_COLOR_IDS = ["white", "yellow", "green", "blue", "purple", "pink", "orange"] as const;
+
+export const PlanBoardColorSchema = z
+  .enum(PLAN_BOARD_COLOR_IDS)
+  .openapi("PlanBoardColor", { description: "便签颜色 id（7 色 hex 调色板，与前端 myPlan.ts 同源）" });
+
+/** 便签墙背景色 id（Push 271 · 业务口径「默认是和别的页面统一颜色 第二个颜色是minimemo的默认颜色」；与前端 `myPlan.ts` 的 `PLAN_BOARD_BGS` 同源）。 */
+export const PLAN_BOARD_BG_IDS = ["white", "cream", "pink", "orange", "yellow", "lime", "emerald", "sky", "blue", "violet", "lavender"] as const;
+
+export const PlanBoardBgSchema = z
+  .enum(PLAN_BOARD_BG_IDS)
+  .openapi("PlanBoardBg", { description: "便签墙背景色 id（Push 271）：white = 与全站页面统一纯白（默认）；cream = 奶白（#fdfbf7 + 左上暖色径向渐变）；pink / orange / yellow / lime / emerald / sky / blue / violet / lavender = 参考组件 9 色板（实色铺底；玫红已下架）" });
+
+/** 便签字体 id（简约 / 优雅 / 等宽；与前端 `myPlan.ts` 的 `PLAN_FONTS` 同源）。 */
+export const PLAN_BOARD_FONT_IDS = ["sans", "serif", "mono"] as const;
+
+export const PlanBoardFontSchema = z
+  .enum(PLAN_BOARD_FONT_IDS)
+  .openapi("PlanBoardFont", { description: "便签字体 id（简约 / 优雅 / 等宽，与前端 myPlan.ts 同源）" });
+
+export const MyPlanNoteSchema = z
+  .object({
+    id: z.string().min(1).max(64).openapi({ description: "便签 id（前端生成 pn- 前缀；跨设备同步后保持不变）" }),
+    title: z.string().max(PLAN_BOARD_TITLE_MAX).openapi({ description: "标题（≤ 40 字；与内容可各自为空，但不同时为空）" }),
+    content: z.string().max(PLAN_BOARD_CONTENT_MAX).openapi({ description: "内容（≤ 2000 字）" }),
+    category: z.string().min(1).max(PLAN_BOARD_CATEGORY_NAME_MAX).openapi({ description: "分类名（≤ 10 字；引用 categories 表）" }),
+    colorId: PlanBoardColorSchema,
+    fontId: PlanBoardFontSchema,
+    done: z.boolean().openapi({ description: "完成态（Push 268）：true = 收进「已完成」，便签墙（含分类视图）不再显示" }),
+    createdAt: DateTimeSchema.openapi({ description: "创建时间（ISO 8601；跨设备同步后保持原值）" }),
+    updatedAt: DateTimeSchema.openapi({ description: "最后更新时间（排序 / 卡片角标用）" }),
+  })
+  .openapi("MyPlanNote", { description: "「我的计划」单条便签（Push 268）" });
+
+export const MyPlanBoardUpdateSchema = z
+  .object({
+    notes: z.array(MyPlanNoteSchema).max(PLAN_BOARD_NOTE_LIMIT).openapi({ description: "便签列表（整体替换语义；≤ 300 条）" }),
+    categories: z
+      .array(z.string().min(1).max(PLAN_BOARD_CATEGORY_NAME_MAX))
+      .max(PLAN_BOARD_CATEGORY_LIMIT)
+      .openapi({ description: "分类表（整体替换语义；≤ 12 类）" }),
+    bg: PlanBoardBgSchema.optional().openapi({ description: "背景色（Push 271；不传 = 沿用库内现值 · 老客户端兼容；白名单外由 schema 拒绝）" }),
+  })
+  .openapi("MyPlanBoardUpdate", { description: "「我的计划」便签墙 PATCH 体（客户端只传 notes / categories / bg；updatedAt 由服务端盖章）" });
+
+export const MyPlanBoardSchema = MyPlanBoardUpdateSchema
+  .extend({
+    bg: PlanBoardBgSchema.openapi({ description: "背景色（Push 271）：读侧白名单外 / 缺省一律收敛为 white（与前端 myPlan.ts 同口径）" }),
+    updatedAt: DateTimeSchema.nullable().openapi({ description: "该键最后一次保存时间（服务端盖章）；从未保存 = null（前端据此判断首次进入 → 预置 6 条示例并上云）" }),
+  })
+  .openapi("MyPlanBoard", { description: "「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛" });
+
+/**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）；
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）；
  * 未声明键按 `.catchall` 原样保存（前向兼容），但不回读 —— 新增偏好键必须同时补这里与 service 的 toContract。
  */
 export const UserPreferencesSchema = z
@@ -124,17 +190,19 @@ export const UserPreferencesSchema = z
           "醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false",
       }),
     workspaceOpenProjects: WorkspaceOpenProjectsSchema,
+    myPlanBoard: MyPlanBoardSchema,
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
   .openapi("UserPreferences", { description: "用户偏好（全量；GET 返回当前值）" });
 
-/** PATCH 合并语义：只传变更键，未传键保持原值（数组键为整体替换）；未声明键原样保存（新增偏好键不必改契约即可前向兼容）。 */
+/** PATCH 合并语义：只传变更键，未传键保持原值（数组键为整体替换）；未声明键原样保存（新增偏好键不必改契约即可前向兼容）。myPlanBoard 特殊：客户端只传 notes / categories，updatedAt 由服务端盖章。 */
 export const UserPreferencesUpdateBodySchema = z
   .object({
     taskTableHiddenColumns: z.array(TaskTableColumnKeySchema).max(30).optional(),
     homeSavedFilters: z.array(SavedHomeFilterSchema).max(SAVED_HOME_FILTER_LIMIT).optional(),
     focusMode: z.boolean().optional(),
     workspaceOpenProjects: WorkspaceOpenProjectsSchema.optional(),
+    myPlanBoard: MyPlanBoardUpdateSchema.optional(),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
@@ -146,5 +214,9 @@ export const UserPreferencesUpdateBodySchema = z
 export type TaskTableColumnKey = z.infer<typeof TaskTableColumnKeySchema>;
 export type SavedHomeFilter = z.infer<typeof SavedHomeFilterSchema>;
 export type WorkspaceOpenProjects = z.infer<typeof WorkspaceOpenProjectsSchema>;
+export type PlanBoardBg = z.infer<typeof PlanBoardBgSchema>;
+export type MyPlanNote = z.infer<typeof MyPlanNoteSchema>;
+export type MyPlanBoard = z.infer<typeof MyPlanBoardSchema>;
+export type MyPlanBoardUpdate = z.infer<typeof MyPlanBoardUpdateSchema>;
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 export type UserPreferencesUpdateBody = z.infer<typeof UserPreferencesUpdateBodySchema>;

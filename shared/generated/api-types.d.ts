@@ -459,6 +459,167 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目群绑定状态（未绑定 = bound:false；chatid 掩码回显，activated = 群内已激活） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 群绑定状态（GET 恒 200；项目不存在 / 不可见 = 404） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupBinding"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        /** 绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update） */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectGroupPutBody"];
+                };
+            };
+            responses: {
+                /** @description 绑定后的群状态（chatid 掩码回显） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupBinding"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 解绑项目群（幂等：未绑定也返回 bound:false；权限 project.update） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 解绑后的群状态（bound:false） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupBinding"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/members": {
         parameters: {
             query?: never;
@@ -1170,6 +1331,78 @@ export interface paths {
             };
             responses: {
                 /** @description 定档后的任务（Task 同形；幂等路径原样返回） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/tasks/{taskId}/unfinalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    taskId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskUnfinalizeBody"];
+                };
+            };
+            responses: {
+                /** @description 取消定档后的任务（Task 同形；幂等路径原样返回） */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -2377,18 +2610,20 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删） */
-                    objectType?: components["schemas"]["AuditObjectType"];
+                    /** @description 对象类型（多值逗号分隔，取值见 AuditObjectType） */
+                    objectType?: string;
                     /** @description 对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②） */
                     objectId?: string;
-                    /** @description 操作人（按人检索 —— h7 验收项②） */
-                    actorId?: components["schemas"]["Uuid"] & unknown;
-                    /** @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝 */
-                    action?: components["schemas"]["AuditAction"];
-                    /** @description result=denied 即越权尝试（C7-03） */
-                    result?: components["schemas"]["AuditResult"] & unknown;
-                    /** @description UUID（主键与关联 ID） */
-                    projectId?: components["schemas"]["Uuid"];
+                    /** @description 操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②） */
+                    actorId?: string;
+                    /** @description 审计动作（多值逗号分隔，取值见 AuditAction） */
+                    action?: string;
+                    /** @description 审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03） */
+                    result?: string;
+                    /** @description 所属项目（多值逗号分隔） */
+                    projectId?: string;
+                    /** @description 关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感） */
+                    q?: string;
                     /** @description 时间下界（含，ISO8601） */
                     from?: components["schemas"]["DateTime"] & unknown;
                     /** @description 时间上界（含，ISO8601） */
@@ -6864,6 +7099,216 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/notifications/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 通知实时流（SSE · S8-3）：事件 notification（单条通知）/ unread（未读角标）；心跳注释行不入契约；重连不补发（客户端读面补拉对齐；Last-Event-ID 补发留二期） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description SSE 事件流（text/event-stream）：event: notification → data = Notification；event: unread → data = { unreadCount }；心跳 = 注释行（: ping，周期落 env）；服务优雅关闭先发注释行告知（客户端自动重连） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{id}/snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 设置稍后提醒（C5-05）：绝对时刻（now + 5 分钟 ~ now + 30 天）；设置即置读；重复设置 = 覆盖（旧记录标 cancelledAt + 写新记录） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotificationSnoozeBody"];
+                };
+            };
+            responses: {
+                /** @description 设置后的通知（snoozeUntil 已更新、该行置读） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        /** 取消稍后提醒（C5-05）：幂等（无未触发稍后提醒也 200）；返回更新后的通知（snoozeUntil = null） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 取消后的通知（snoozeUntil = null） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{id}/snoozes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 稍后提醒记录（C5-05「设置与触发记录可查」）：一次设置一条（触发 / 取消回填时刻）；按 id 降序，不翻页 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 稍后提醒记录清单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationSnoozeListResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6894,7 +7339,7 @@ export interface components {
             traceId: string;
         };
         /**
-         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（**已停用 · 2026-10-12**：操作日志不再记录预览动作 —— 值保留供历史行回读 / 筛选，服务端不再产生新行） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
          * @enum {string}
          */
         AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "archive" | "preview" | "download" | "deny";
@@ -6943,7 +7388,7 @@ export interface components {
             total: number;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）
          * @enum {string}
          */
         AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user";
@@ -7164,6 +7609,8 @@ export interface components {
         ChangeRequestDetail: components["schemas"]["ChangeRequest"] & {
             file: components["schemas"]["File"];
             version: components["schemas"]["FileVersion"];
+            /** @description 变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null） */
+            filePreviousName: string | null;
         };
         ChangeRequestListResponse: {
             items: (components["schemas"]["ChangeRequest"] & unknown)[];
@@ -7757,6 +8204,36 @@ export interface components {
              */
             expiresAt: number | null;
         };
+        /** @description 「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛 */
+        MyPlanBoard: components["schemas"]["MyPlanBoardUpdate"] & {
+            bg: components["schemas"]["PlanBoardBg"];
+            updatedAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 「我的计划」便签墙 PATCH 体（客户端只传 notes / categories / bg；updatedAt 由服务端盖章） */
+        MyPlanBoardUpdate: {
+            /** @description 便签列表（整体替换语义；≤ 300 条） */
+            notes: components["schemas"]["MyPlanNote"][];
+            /** @description 分类表（整体替换语义；≤ 12 类） */
+            categories: string[];
+            bg?: components["schemas"]["PlanBoardBg"] & unknown;
+        };
+        /** @description 「我的计划」单条便签（Push 268） */
+        MyPlanNote: {
+            /** @description 便签 id（前端生成 pn- 前缀；跨设备同步后保持不变） */
+            id: string;
+            /** @description 标题（≤ 40 字；与内容可各自为空，但不同时为空） */
+            title: string;
+            /** @description 内容（≤ 2000 字） */
+            content: string;
+            /** @description 分类名（≤ 10 字；引用 categories 表） */
+            category: string;
+            colorId: components["schemas"]["PlanBoardColor"];
+            fontId: components["schemas"]["PlanBoardFont"];
+            /** @description 完成态（Push 268）：true = 收进「已完成」，便签墙（含分类视图）不再显示 */
+            done: boolean;
+            createdAt: components["schemas"]["DateTime"] & unknown;
+            updatedAt: components["schemas"]["DateTime"] & unknown;
+        };
         NodeCompleteBody: {
             version: components["schemas"]["Version"];
         };
@@ -7818,6 +8295,7 @@ export interface components {
             templateCode: string | null;
             /** @description 合并条数：同期同合并键的消息条数（未合并 = 1） */
             mergedCount: number;
+            snoozeUntil: components["schemas"]["DateTime"] & (string | null);
             deliveredAt: components["schemas"]["DateTime"] & unknown;
             createdAt: components["schemas"]["DateTime"] & unknown;
         };
@@ -7841,6 +8319,23 @@ export interface components {
         /** @description 标记收件箱状态（幂等；已处理可退回已读） */
         NotificationMarkBody: {
             status: components["schemas"]["NotificationStatus"];
+        };
+        /** @description 设置稍后提醒（重复设置 = 覆盖旧记录 + 新记录） */
+        NotificationSnoozeBody: {
+            snoozeUntil: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 稍后提醒记录清单（按 id 降序，不翻页） */
+        NotificationSnoozeListResponse: {
+            items: components["schemas"]["NotificationSnoozeRecord"][];
+        };
+        /** @description 稍后提醒记录（C5-05「设置与触发记录可查」；一次设置一条，触发 / 取消回填对应时刻） */
+        NotificationSnoozeRecord: {
+            /** @description 记录 id（自增；读面按 id 降序） */
+            id: number;
+            setAt: components["schemas"]["DateTime"] & unknown;
+            snoozeUntil: components["schemas"]["DateTime"] & unknown;
+            triggeredAt: components["schemas"]["DateTime"] & (string | null);
+            cancelledAt: components["schemas"]["DateTime"] & (string | null);
         };
         /**
          * @description 收件箱状态：unread 未读 / read 已读 / handled 已处理（标记接口幂等；允许回退到更早状态）
@@ -7883,6 +8378,21 @@ export interface components {
             permissions: components["schemas"]["ActorPermissions"];
         };
         /**
+         * @description 背景色（Push 271）：读侧白名单外 / 缺省一律收敛为 white（与前端 myPlan.ts 同口径）
+         * @enum {string}
+         */
+        PlanBoardBg: "white" | "cream" | "pink" | "orange" | "yellow" | "lime" | "emerald" | "sky" | "blue" | "violet" | "lavender";
+        /**
+         * @description 便签颜色 id（7 色 hex 调色板，与前端 myPlan.ts 同源）
+         * @enum {string}
+         */
+        PlanBoardColor: "white" | "yellow" | "green" | "blue" | "purple" | "pink" | "orange";
+        /**
+         * @description 便签字体 id（简约 / 优雅 / 等宽，与前端 myPlan.ts 同源）
+         * @enum {string}
+         */
+        PlanBoardFont: "sans" | "serif" | "mono";
+        /**
          * @description 预览状态：ready 产物就绪（附短时签名 URL） / not_ready 尚未生成（服务端幂等补投生成任务、按三元组去重，前端轮询至 ready / failed —— 不引入请求约定） / failed 转换失败（记原因并降级「请下载」）
          * @enum {string}
          */
@@ -7900,8 +8410,7 @@ export interface components {
             documentType: components["schemas"]["PreviewViewerDocumentType"];
             document: components["schemas"]["PreviewViewerDocument"];
             editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
-            permissions: components["schemas"]["PreviewViewerPermissions"];
-            /** @description 查看器 JWT（HS256；载荷 = documentType / document / editorConfig / permissions 四段逐字签发；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
+            /** @description 查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
             token: string;
         } | null;
         PreviewViewerDocument: {
@@ -7913,6 +8422,7 @@ export interface components {
             fileType: string;
             /** @description 文档 key（内容哈希派生：同内容同 key —— DocServer 侧会话与缓存复用；S3 起生效） */
             key: string;
+            permissions: components["schemas"]["PreviewViewerPermissions"];
         };
         /**
          * @description 文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）
@@ -7938,6 +8448,7 @@ export interface components {
          * @enum {string}
          */
         PreviewViewerKind: "onlyoffice";
+        /** @description 查看器权限段（Push 258 起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见、点击由前端命中层接管 → 原文件下载链） */
         PreviewViewerPermissions: {
             edit: boolean;
             download: boolean;
@@ -8132,6 +8643,26 @@ export interface components {
             blueprintVersion: number;
             stages: components["schemas"]["ProjectStage"][];
         };
+        /** @description 项目群绑定状态（GET 恒 200；未绑定 = bound:false） */
+        ProjectGroupBinding: {
+            projectId: components["schemas"]["Uuid"];
+            /** @description 是否已绑定（false = 未绑定，其余字段为 null / false） */
+            bound: boolean;
+            /** @description 群名 / 备注（绑定维护用）；未绑定 = null */
+            name: string | null;
+            /** @description 绑定 chatid 掩码（只回末 4 位）；未绑定 = null */
+            chatidMasked: string | null;
+            /** @description 会话已激活（群内有人给机器人发过消息）；未绑定 = false */
+            activated: boolean;
+            updatedAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义 */
+        ProjectGroupPutBody: {
+            /** @description 企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串） */
+            chatid: string;
+            /** @description 群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空） */
+            name?: string | null;
+        };
         ProjectListResponse: {
             items: components["schemas"]["Project"][];
             page: number;
@@ -8295,7 +8826,7 @@ export interface components {
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
         };
-        /** @description 客户端计算的内容哈希；传入时若命中已有内容则返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
+        /** @description 客户端计算的内容哈希；附件上传（未给 taskId / nodeId / docType）命中同项目既有同内容附件时直接秒传复用（reused=true、upload=null，不建新文件 / 会话）；其余命中返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传 */
         Sha256: string;
         /** @description 推进当前阶段：过门禁才生效；失败 422 STAGE_GATE_NOT_PASSED + 缺项明细（不部分推进） */
         StageAdvanceBody: {
@@ -8775,6 +9306,10 @@ export interface components {
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
+        /** @description 任务取消定档提交（version = 抽屉当前行版本） */
+        TaskUnfinalizeBody: {
+            version: components["schemas"]["Version"] & unknown;
+        };
         /** @description 编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架 */
         TaskUpdateBody: {
             /** @description 任务描述（中文；Push 196）：仅**无来源节点**的任务可改（看板「添加 → 临时任务」手工创建）；节点 / 模板生成的任务按 A1-17 锁定，带该字段请求 400 */
@@ -8797,7 +9332,7 @@ export interface components {
             version: components["schemas"]["Version"];
         };
         UploadAbortResponse: {
-            upload: components["schemas"]["UploadSession"];
+            upload: components["schemas"]["UploadSession"] & unknown;
         };
         UploadCompleteBody: {
             contentHash: components["schemas"]["Sha256"] & unknown;
@@ -8807,9 +9342,10 @@ export interface components {
             version: components["schemas"]["FileVersion"];
             changeRequest: components["schemas"]["ChangeRequest"];
         };
-        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效） */
+        /** @description 发起上传（分片直传；返回预签名分片 URL 的获取入口）。intent=version：fileId 省略 = 新建文件、给出 = 对既有 draft 文件替换 / 追加版本；intent=change：fileId 必填 = 定档后变更（申请即通过，完成上传时同事务生效；name = 变更后文件名称 —— 完成时文件更名为该名称） */
         UploadCreateBody: {
             projectId: components["schemas"]["Uuid"];
+            /** @description 文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称） */
             name: string;
             /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
             sizeBytes: number;
@@ -8823,6 +9359,7 @@ export interface components {
             fileId?: components["schemas"]["Uuid"] & unknown;
         } | {
             projectId: components["schemas"]["Uuid"];
+            /** @description 文件名：fileId 省略（新建）= 新文件名；intent=version 且给出 fileId = 目标文件名称（须与现状一致，不一致 400）；intent=change = 变更后文件名称（Push 256：必填，可不同于目标文件名 —— 完成变更时文件更名为该名称，扩展名随之更新，预览 / 下载按新名称） */
             name: string;
             /** @description 字节数；上限由服务端配置（UPLOAD_MAX_SIZE_MB），超出返回 400 VALIDATION_FAILED */
             sizeBytes: number;
@@ -8836,9 +9373,12 @@ export interface components {
             fileId: components["schemas"]["Uuid"] & unknown;
             change: components["schemas"]["ChangeIntentBody"];
         };
+        /** @description 发起上传结果：新建 / 追加版本返回上传会话；附件域命中同内容既有文件则秒传复用（reused=true、upload=null） */
         UploadCreateResponse: {
             file: components["schemas"]["File"];
             upload: components["schemas"]["UploadSession"];
+            /** @description 是否复用了同项目既有的同内容附件（2026-10-12 口径）：true = 未新建文件、未建会话（file = 既有文件）；任务成果上传（带 taskId 等归属）恒 false */
+            reused: boolean;
             duplicateHint: components["schemas"]["DuplicateHint"];
         };
         /**
@@ -8862,7 +9402,7 @@ export interface components {
             url: string;
             expiresAt: components["schemas"]["DateTime"];
         };
-        /** @description 上传会话（服务端只登记元数据；分片状态以对象存储 ListParts 为准） */
+        /** @description 上传会话；附件域秒传复用命中时 = null（无需传分片，直接把 file.id 挂到日报 / 问题等对象） */
         UploadSession: {
             id: components["schemas"]["Uuid"];
             fileId: components["schemas"]["Uuid"];
@@ -8872,7 +9412,7 @@ export interface components {
             status: components["schemas"]["UploadSessionStatus"];
             createdAt: components["schemas"]["DateTime"];
             expiresAt: components["schemas"]["DateTime"];
-        };
+        } | null;
         /**
          * @description 上传会话状态；active 可续传，completed/aborted/expired 不可再用
          * @enum {string}
@@ -8925,6 +9465,7 @@ export interface components {
             /** @description 醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false */
             focusMode: boolean;
             workspaceOpenProjects: components["schemas"]["WorkspaceOpenProjects"];
+            myPlanBoard: components["schemas"]["MyPlanBoard"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED */
@@ -8933,6 +9474,7 @@ export interface components {
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
             focusMode?: boolean;
             workspaceOpenProjects?: components["schemas"]["WorkspaceOpenProjects"];
+            myPlanBoard?: components["schemas"]["MyPlanBoardUpdate"];
         } & {
             [key: string]: unknown;
         };

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { InlineCell } from "./InlineEdit";
+import { DOC_TYPE_OPTIONS } from "../docTypes";
 
 /**
  * 输出成果文件（deliverableTypes）选择器（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：
@@ -10,19 +11,6 @@ import { InlineCell } from "./InlineEdit";
  * 任务表「输出成果文件」列与任务详情抽屉「输出成果文件」行共用（DeliverableCell）。
  */
 
-/** 十类成果文件（顺序 = 契约 DOC_TYPES；不进字典接口）。 */
-export const DOC_TYPE_OPTIONS = [
-  "CAD图纸",
-  "技术协议",
-  "合同",
-  "评审单",
-  "设备清单",
-  "物料总清单",
-  "发货装箱单",
-  "到货单",
-  "安装完成证明",
-  "验收单",
-] as const;
 
 /** 彩签色表（十类色相：CAD图纸粉 / 技术协议蓝 / 合同青 / 评审单绿 / 设备清单红 / 物料总清单橙 /
  *  发货装箱单黄 / 到货单紫 / 安装完成证明黄 / 验收单橙）：50 档浅彩底 + 同色系深字（同「是否按时交付」徽标口径，2026-10-08 业务口径「和这个相同即可 简约一点」）。 */
@@ -123,11 +111,15 @@ type DeliverableCellProps = {
   onChange: (next: string[]) => void;
   /** 全量摊开（抽屉行用：色签折行全显）；缺省 = 首枚 + 「+N」（任务表列用，窄列单行）。 */
   all?: boolean;
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
+  disabled?: boolean;
+  /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
+  disabledHint?: string;
 };
 
 /** 行内选择单元格（任务表列 / 抽屉行共用）：空值 = 「—」（液态玻璃小框，同列内其它空态口径）；
  *  有值 = 浅彩底小色签（首枚 + 「+N」；抽屉行 all = 全量摊开逐枚）—— 点开 = DeliverablePanel。 */
-export function DeliverableCell({ values, onChange, all = false }: DeliverableCellProps) {
+export function DeliverableCell({ values, onChange, all = false, disabled = false, disabledHint }: DeliverableCellProps) {
   const filled = values.length > 0;
   const shown = all ? values : values.slice(0, 1);
   const display = filled ? (
@@ -146,6 +138,8 @@ export function DeliverableCell({ values, onChange, all = false }: DeliverableCe
       title="点击选择（可多选）"
       width={200}
       height={DOC_TYPE_OPTIONS.length * 34 + 40 + 26 + 12}
+      disabled={disabled}
+      disabledHint={disabledHint}
       bare={filled}
       wrapContent={all}
       triggerClassName={filled ? "p-0" : undefined}

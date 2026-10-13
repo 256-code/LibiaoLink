@@ -19,6 +19,8 @@ export interface OutboxDrainStats {
   claimed: number;
   done: number;
   retried: number;
+  /** 延期重排（deferred）：回 pending 至指定时刻，不消耗重试次数（attempts 不累计）。 */
+  deferred: number;
   dead: number;
 }
 
@@ -49,7 +51,7 @@ export class OutboxDispatcher {
   }
 
   async drainOnce(): Promise<OutboxDrainStats> {
-    const stats: OutboxDrainStats = { claimed: 0, done: 0, retried: 0, dead: 0 };
+    const stats: OutboxDrainStats = { claimed: 0, done: 0, retried: 0, deferred: 0, dead: 0 };
     const topics = [...this.registry.keys()].sort();
     if (topics.length === 0) {
       return stats;
@@ -108,6 +110,19 @@ export class OutboxDispatcher {
     }
 
     const error = typeof outcome.error === "string" && outcome.error !== "" ? outcome.error : "(未附原因)";
+    if (outcome.outcome === "deferred") {
+      // 延期重排（rate_limited 一类）：attempts 原值回写 = 不消耗重试预算；availableAt 非法时兜底 now+60s。
+      const availableAt =
+        outcome.availableAt instanceof Date && Number.isFinite(outcome.availableAt.getTime())
+          ? outcome.availableAt
+          : new Date(this.clock.now().getTime() + 60_000);
+      await this.store.markRetry(row.id, { attempts: row.attempts, availableAt, error });
+      stats.deferred += 1;
+      this.logger.warn(
+        "outbox 延期重排（不消耗重试次数，至 " + availableAt.toISOString() + "）：" + topic + "#" + row.id + " —— " + error,
+      );
+      return;
+    }
     const attempts = row.attempts + 1;
     if (outcome.outcome === "dead") {
       await this.declareDead(topic, handler, policy, row, attempts, error, stats);

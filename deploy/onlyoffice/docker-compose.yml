@@ -37,7 +37,8 @@ services:
       GENERATE_FONTS: "false"
       EXAMPLE_ENABLED: "false"
     ports:
-      - "127.0.0.1:${OO_PORT:-8001}:80"
+      # 绑定地址默认只发到回环；局域网协作沙箱在 .env 覆盖 OO_BIND_IP=0.0.0.0
+      - "${OO_BIND_IP:-127.0.0.1}:${OO_PORT:-8001}:80"
     mem_limit: ${OO_MEM_LIMIT:-4g}
     cpus: ${OO_CPUS:-2}
     tmpfs:

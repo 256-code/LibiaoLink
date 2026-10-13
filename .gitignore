@@ -17,3 +17,6 @@ npm-debug.log*
 # 系统
 .DS_Store
 Thumbs.db
+
+# LibreTranslate 运行数据（预置模型与语言包，约 170MB，不进库）
+deploy/libretranslate/data/

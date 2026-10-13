@@ -5,7 +5,7 @@ import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
 import { FileService, PreviewService } from "../modules/file/index.js";
-import { NotifyService } from "../modules/notify/index.js";
+import { NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
 import { JobScheduler, OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
@@ -28,10 +28,12 @@ async function bootstrap(): Promise<void> {
   const files = app.get(FileService);
   const previews = app.get(PreviewService);
   const notify = app.get(NotifyService);
+  const groupNotify = app.get(NotifyGroupService);
   const dispatcher = app.get(OutboxDispatcher);
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
   const scheduler = app.get(JobScheduler);
+  const aibot = app.get(WecomAibotClient);
 
   if (process.argv.includes("--health-check")) {
     try {
@@ -47,7 +49,7 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限））",
+    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
@@ -91,6 +93,21 @@ async function bootstrap(): Promise<void> {
     logger.warn("预览转换队列已关闭（PREVIEW_JOB_ENABLED=false）：preview.job 只投递不消费");
   }
 
+  // 企微群通道长连接（M5-03-2 接线段 · P5 定案）：凭据齐备才启动 —— 订阅 + 30s 心跳 + 自动重连；
+  // 回调 ingest = 群会话激活置位（主动推送前置，846607 双语义切分依据）。未配置 = 「只存不投」
+  // （与 OutboxModule 注册表门控同口径）；api 进程同模块但从不 start()（构造无副作用）。
+  if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
+    aibot.onMessage((message) => {
+      void groupNotify.activateFromCallback(message).catch((error) => {
+        logger.warn("群回调 ingest 失败（忽略本次；待下次回调或人工核查）：" + messageOf(error));
+      });
+    });
+    aibot.start();
+    logger.log("企微智能机器人长连接已启动（群通道：订阅 + 心跳 + 会话激活 ingest）");
+  } else {
+    logger.warn("企微群通道未启动（WECOM_BOT_ID / WECOM_BOT_SECRET 未配置或通知投递关闭）：notify.group 只存不投");
+  }
+
   // Outbox 分派（S7-1）：一轮 = 按注册主题各领一批（每主题 OUTBOX_BATCH_LIMIT 条，SKIP LOCKED）后串行收敛；
   // 单条预览最长占满客户端超时（默认 90s），用 draining 闸门避免上一轮没跑完就叠加下一轮。
   let draining = false;
@@ -103,8 +120,8 @@ async function bootstrap(): Promise<void> {
       const stats = await dispatcher.drainOnce();
       if (stats.claimed > 0) {
         logger.log(
-          "outbox 分派：领取 " + stats.claimed + " / done " + stats.done + " / 重试 " + stats.retried + " / 死信 " +
-            stats.dead,
+          "outbox 分派：领取 " + stats.claimed + " / done " + stats.done + " / 重试 " + stats.retried + " / 延期 " +
+            stats.deferred + " / 死信 " + stats.dead,
         );
       }
     } catch (error) {
@@ -167,6 +184,31 @@ async function bootstrap(): Promise<void> {
   const notifyFlush = setInterval(() => void flushNotify(), env.NOTIFY_FLUSH_INTERVAL_MS);
   void flushNotify();
 
+  // 稍后提醒到点触发（S8-3 · M5-04-2 · C5-05）：与通知延迟投递并列、语义独立 —— 到点置回 unread +
+  // 推 notification / unread 事件（handled 行照提醒）；落免打扰时段顺延到时段结束；不消耗每日上限。
+  // 同用 draining 闸门避免上一轮叠加。
+  let snoozing = false;
+  const flushSnoozes = async (): Promise<void> => {
+    if (snoozing) {
+      return;
+    }
+    snoozing = true;
+    try {
+      const stats = await notify.flushSnoozes();
+      if (stats.scanned > 0) {
+        logger.log(
+          "稍后提醒触发：扫描 " + stats.scanned + " / 触发 " + stats.triggered + " / 顺延 " + stats.deferred,
+        );
+      }
+    } catch (error) {
+      logger.error("稍后提醒触发扫描失败：" + messageOf(error));
+    } finally {
+      snoozing = false;
+    }
+  };
+  const snoozeSweep = setInterval(() => void flushSnoozes(), env.NOTIFY_SNOOZE_SWEEP_INTERVAL_MS);
+  void flushSnoozes();
+
   // 积压 / 最老待领取 / 近期死信告警（ADR-005）；死信单条即时告警不依赖本循环（dispatcher 直发）。
   const probeAlerts = async (): Promise<void> => {
     try {
@@ -196,8 +238,10 @@ async function bootstrap(): Promise<void> {
     clearInterval(outboxPoll);
     clearInterval(schedulerTick);
     clearInterval(notifyFlush);
+    clearInterval(snoozeSweep);
     clearInterval(alertProbe);
     clearInterval(retentionSweep);
+    aibot.stop();
     logger.log("worker 收到 " + signal + "，正在退出");
     await app.close();
     process.exit(0);

@@ -147,6 +147,8 @@ export interface FileCompletePatch {
   version: number;
   /** M4-04：变更流完成时置 changed（final → changed）；非变更流不传。 */
   status?: string;
+  /** Push 256：变更流采纳「变更后文件名称」（更名 + 扩展名随上传）；未更名不传。 */
+  name?: string;
   updatedAt: Date;
 }
 
@@ -280,6 +282,7 @@ export class FileRepository {
         currentVersionId: patch.currentVersionId,
         version: patch.version,
         ...(patch.status === undefined ? {} : { status: patch.status }),
+        ...(patch.name === undefined ? {} : { name: patch.name }),
         updatedAt: patch.updatedAt,
       })
       .where(eq(files.id, fileId))
@@ -453,6 +456,41 @@ export class FileRepository {
           eq(fileVersions.contentHash, contentHash),
           ne(files.status, "recycled"),
           ne(files.id, excludeFileId),
+        ),
+      )
+      .orderBy(desc(fileVersions.uploadedAt))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * 附件域秒传复用（2026-10-12）：同项目、同内容哈希、无任务 / 节点 / 类型归属（纯附图）的既有文件。
+   * 命中 = 上传发起直接复用（不建新文件 / 会话）；只认完成版本（join file_versions），空 draft 与上传中的会话不参与。
+   * 任务成果上传不查本口（文件按 files.task_id 单归属，跨任务复用会吞掉新任务的文件列）。
+   */
+  async findAttachmentDuplicateByHash(
+    projectId: string,
+    contentHash: string,
+    client: DbClient = this.database.db,
+  ): Promise<DuplicateFileRow | null> {
+    const rows = await client
+      .select({
+        fileId: files.id,
+        name: files.name,
+        sizeBytes: fileVersions.sizeBytes,
+        uploadedBy: fileVersions.uploadedBy,
+        uploadedAt: fileVersions.uploadedAt,
+      })
+      .from(files)
+      .innerJoin(fileVersions, eq(fileVersions.fileId, files.id))
+      .where(
+        and(
+          eq(files.projectId, projectId),
+          eq(fileVersions.contentHash, contentHash),
+          ne(files.status, "recycled"),
+          isNull(files.taskId),
+          isNull(files.nodeId),
+          isNull(files.docType),
         ),
       )
       .orderBy(desc(fileVersions.uploadedAt))

@@ -148,6 +148,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "å…¨é
         ? createPortal(
             <div
               ref={popoverRef}
+              data-focus-scope="true"
               className="fixed z-50 w-[264px] rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_16px_40px_rgba(0,0,0,0.18)]"
               style={{ top: position.top, left: position.left }}
             >

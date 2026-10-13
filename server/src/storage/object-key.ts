@@ -26,6 +26,27 @@ export function extensionOf(fileName: string): string {
   return raw;
 }
 
+/** 主名（去扩展名；无扩展名 / 非法扩展名 = 原名）—— 版本态文件名拼接用。 */
+function baseNameOf(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  return dot <= 0 ? fileName : fileName.slice(0, dot);
+}
+
+/**
+ * 版本态展示 / 下载文件名（Push 256 · 业务口径「变更后文件的名字后后缀要用变更选择的」）：
+ * 主名取当前文件名、扩展名取**版本对象键里的扩展名**（该版本落库时定下的真实扩展名）——
+ * 变更更名（如 .xls → .pptx）后：新版本按新扩展名预览 / 下载；历史版本仍按各自旧扩展名
+ * （视口通道判定同口径，见 preview-read.service），不会把历史的 xls 内容标成 pptx。
+ * 对象键扩展名 = `bin`（原来就没有合法扩展名）→ 原样返回当前文件名。
+ */
+export function versionFileName(currentName: string, objectKey: string): string {
+  const extension = extensionOf(objectKey);
+  if (extension === FALLBACK_EXTENSION) {
+    return currentName;
+  }
+  return baseNameOf(currentName) + "." + extension;
+}
+
 export interface ObjectKeyInput {
   projectId: string;
   fileId: string;

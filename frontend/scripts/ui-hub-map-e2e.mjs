@@ -44,7 +44,7 @@ const FRONTEND = process.env.FRONTEND_BASE ?? "http://localhost:3000";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9402);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const SHOTS = process.env.SHOT_DIR ?? join(tmpdir(), "px-hub-map-shots");
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const Q = String.fromCharCode(34);
@@ -99,7 +99,7 @@ const HOVER_CANDIDATES = ["墨西哥", "阿尔及利亚", "伊朗", "蒙古", "�
 mkdirSync(SHOTS, { recursive: true });
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) {
   console.error("回放用户不存在：" + REPLAY_USER);
   process.exit(1);

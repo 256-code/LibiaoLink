@@ -8,11 +8,13 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from "@nestjs/common";
 import {
   ProjectCreateBodySchema,
+  ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectMemberCreateBodySchema,
   ProjectUpdateBodySchema,
@@ -24,6 +26,8 @@ import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
+import { ProjectGroupService } from "./project-group.service.js";
+import type { ProjectGroupBindingView } from "./project-group.service.js";
 import { ProjectMemberService } from "./project-member.service.js";
 import type { ProjectMemberListResult, ProjectMemberView } from "./project-member.service.js";
 import { ProjectService } from "./project.service.js";
@@ -33,6 +37,7 @@ type ProjectListQuery = z.infer<typeof ProjectListQuerySchema>;
 type ProjectCreateBody = z.infer<typeof ProjectCreateBodySchema>;
 type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 type ProjectMemberCreateBody = z.infer<typeof ProjectMemberCreateBodySchema>;
+type ProjectGroupPutBody = z.input<typeof ProjectGroupPutBodySchema>;
 
 /** 路径参数 id 校验：非法 uuid 直接 400 VALIDATION_FAILED（不落到 SQL 层）。 */
 const uuidParam = new ZodValidationPipe(UuidSchema);
@@ -49,6 +54,7 @@ export class ProjectsController {
   constructor(
     private readonly projects: ProjectService,
     private readonly members: ProjectMemberService,
+    private readonly groups: ProjectGroupService,
   ) {}
 
   /** 列表（M2-04）：多维筛选 + 时间闭区间 + 分页 + 排序；软删项目不可见（A5）。 */
@@ -134,6 +140,35 @@ export class ProjectsController {
     @CurrentActorId() actorId: string,
   ): Promise<ProjectMemberView> {
     return this.members.removeMember(id, userId, actorId);
+  }
+
+  /** 项目群绑定状态（M5-03-2 接线段）：GET 恒 200；未绑定 = bound:false；chatid 只回末 4 位掩码。 */
+  @Get(":id/group")
+  getGroup(@Param("id", uuidParam) id: string): Promise<ProjectGroupBindingView> {
+    return this.groups.getGroup(id);
+  }
+
+  /** 绑定 / 换绑（B3 定案：project.update 权限档）：PUT 覆盖语义；chatid 变更 = 换绑（重置会话激活态）；归档 409。 */
+  @Put(":id/group")
+  @HttpCode(200)
+  @RequirePermission("project.update")
+  putGroup(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(ProjectGroupPutBodySchema)) body: ProjectGroupPutBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectGroupBindingView> {
+    return this.groups.putGroup(id, body, actorId);
+  }
+
+  /** 解绑（幂等：未绑定也返回 bound:false）。需 project.update。 */
+  @Delete(":id/group")
+  @HttpCode(200)
+  @RequirePermission("project.update")
+  deleteGroup(
+    @Param("id", uuidParam) id: string,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectGroupBindingView> {
+    return this.groups.deleteGroup(id, actorId);
   }
 }
 

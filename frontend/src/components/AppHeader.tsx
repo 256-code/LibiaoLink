@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
-import { goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { clearLegacyPlanBoard } from "../myPlan";
+import { hasPermission, loadMyPermissions, type MyPermissions } from "../permissions";
+import { AUDIT_BASE_HASH, FILES_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { TopNav } from "./TopNav";
 import type { MeResponse, Project } from "../types";
 
@@ -16,10 +18,15 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const contact = user.email ?? user.name ?? "—";
   const initial = Array.from(displayName)[0] ?? "—";
   const [menuOpen, setMenuOpen] = useState(false);
+  const [permissions, setPermissions] = useState<MyPermissions | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const homeHref = listHref();
   const upHref = upLevelHref();
   const seqNoText = project ? String(project.seqNo).padStart(2, "0") : "";
+  /** 「操作记录」菜单项（audit.view）：管理面入口，画像未到 / 无权限不渲染。 */
+  const canViewAudit = hasPermission(permissions, "audit.view");
+  /** 「文件库」菜单项（Push 261）：文件库页（#/files）全账号可见 —— 读面按项目可见性放开（无单独权限位），
+   *  「彻底删除」入口在页面内按 admin 角色收敛。 */
 
   useEffect(() => {
     if (!menuOpen) {
@@ -42,6 +49,21 @@ export function AppHeader({ me, project }: AppHeaderProps) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [menuOpen]);
+
+  // 「操作记录」入口的权限位（audit.view · C7-04 管理员查询页）：画像未到 / 拉取失败 = 不渲染入口（服务端逐请求仍是最终裁决）。
+  useEffect(() => {
+    let alive = true;
+    loadMyPermissions()
+      .then((profile) => {
+        if (alive) {
+          setPermissions(profile);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 站内跳转统一拦截：带修饰键点击（新标签 / 新窗口）交给浏览器默认行为
   const interceptNav = (action: () => void) => (event: ReactMouseEvent<HTMLAnchorElement>) => {
@@ -107,10 +129,36 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                   onClick={() => {
                     // 退出登录清除本地记忆：多人共用设备时，避免把上一位用户的筛选选择带给下一位
                     clearHomePrefs();
+                    // 「我的计划」便签墙：数据在账号里（Push 268 起）；这里只清尚未迁移上云的本机旧键，不带给下一位用户
+                    clearLegacyPlanBoard();
                   }}
                   className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
                   退出登录
+                </a>
+                {canViewAudit ? (
+                  <a
+                    role="menuitem"
+                    data-account-audit="true"
+                    href={AUDIT_BASE_HASH}
+                    onClick={() => {
+                      setMenuOpen(false);
+                    }}
+                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  >
+                    操作记录
+                  </a>
+                ) : null}
+                <a
+                  role="menuitem"
+                  data-account-files="true"
+                  href={FILES_BASE_HASH}
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                >
+                  文件库
                 </a>
               </div>
             ) : null}

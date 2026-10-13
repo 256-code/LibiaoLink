@@ -267,6 +267,11 @@ type TaskKanbanProps = {
    */
   onFinalize?: (taskId: string) => void;
   /**
+   * 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：透传给任务详情抽屉 —— 已定档开关
+   * 再次点击 → 二次确认 → 由调用方 POST …/unfinalize（清位重开）；不传 = 已定档开关保持只读置灰。
+   */
+  onUnfinalize?: (taskId: string) => void;
+  /**
    * 变更生效后的父级刷新（Push 254 · 抽屉「变更申请」页）：透传给任务详情抽屉 —— 提交变更是变更记录 +
    * 新版本 + 任务「变更关联」（R01）的合并落库，完成后由调用方整表重取刷新；不传 = 抽屉只刷新自己的文件清单。
    */
@@ -792,7 +797,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
    * 新建的临时任务等列表刷新回来即自动打开详情，不依赖点击那一刻的快照。
@@ -1198,6 +1203,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
         onDeleteFile={onDeleteFile}
         onRenameFile={onRenameFile}
         onFinalize={onFinalize}
+        onUnfinalize={onUnfinalize}
         onChanged={onChanged}
         actorName={actorName}
         projectId={projectId}

@@ -3,6 +3,7 @@ import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
 import type { OutboxStatsSnapshot, OutboxStore } from "../src/db/outbox.store.js";
 import type { OutboxTopicBacklog } from "../src/db/outbox.store.js";
+import type { AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
 import {
   evaluateOutboxAlerts,
   type OutboxAlert,
@@ -10,6 +11,7 @@ import {
   type OutboxAlertThresholds,
 } from "../src/outbox/alert.js";
 import { OutboxAlertProbe } from "../src/outbox/probe.js";
+import { ALERT_SUPPRESS_MS, WecomAlertSink } from "../src/outbox/wecom-alert.sink.js";
 
 /** S7-1 告警门禁：阈值判定（纯函数）与探针接线（读快照 → 发告警）。 */
 
@@ -115,5 +117,99 @@ describe("OutboxAlertProbe.probeOnce（S7-1）", () => {
 
     expect(alerts).toHaveLength(0);
     expect(sink.emitted).toHaveLength(0);
+  });
+});
+
+/** 企微告警群出口（M5-03-3）：智能机器人推管理员告警群 + 同 code 抑制 + 失败回退日志出口。 */
+const ALERT_CHATID = "AlertChatIdAbcDef-99";
+
+class FakeAibot {
+  readonly sends: { chatid: string; content: string; groupActivated?: boolean | null }[] = [];
+  result: AibotSendResult = { ok: true, attempts: 1 };
+  throwNext = false;
+
+  async sendGroupMarkdown(params: {
+    chatid: string;
+    content: string;
+    groupActivated?: boolean | null;
+  }): Promise<AibotSendResult> {
+    this.sends.push(params);
+    if (this.throwNext) {
+      this.throwNext = false;
+      throw new Error("socket 已断开");
+    }
+    return this.result;
+  }
+}
+
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("WecomAlertSink（M5-03-3 告警群出口）", () => {
+  it("emit：经智能机器人推告警群（文本含 code / message / detail JSON），不回退", async () => {
+    const aibot = new FakeAibot();
+    const fallback = new FakeAlertSink();
+    const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, fallback, () => 0);
+    const alert: OutboxAlert = { code: "outbox.dead_letter", level: "error", message: "近期死信 2 条", detail: { deadRecent: 2 } };
+
+    sink.emit(alert);
+    await flush();
+
+    expect(aibot.sends).toHaveLength(1);
+    expect(aibot.sends[0]!.chatid).toBe(ALERT_CHATID);
+    expect(aibot.sends[0]!.content).toContain("LibiaoLink 告警");
+    expect(aibot.sends[0]!.content).toContain("outbox.dead_letter");
+    expect(aibot.sends[0]!.content).toContain("近期死信 2 条");
+    expect(aibot.sends[0]!.content).toContain('{"deadRecent":2}');
+    expect(fallback.emitted).toHaveLength(0);
+  });
+
+  it("同 code 抑制：窗口内只推首条；不同 code 不受影响；窗口过期恢复", async () => {
+    const aibot = new FakeAibot();
+    const fallback = new FakeAlertSink();
+    let nowMs = 1_000_000;
+    const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, fallback, () => nowMs);
+    const backlogAlert: OutboxAlert = { code: "outbox.backlog", level: "warn", message: "积压 1001 条" };
+    const deadAlert: OutboxAlert = { code: "outbox.dead_letter", level: "error", message: "近期死信 1 条" };
+
+    sink.emit(backlogAlert);
+    await flush();
+    nowMs += ALERT_SUPPRESS_MS - 1;
+    sink.emit(backlogAlert);
+    sink.emit(deadAlert);
+    await flush();
+    expect(aibot.sends).toHaveLength(2);
+
+    nowMs += 1;
+    sink.emit(backlogAlert);
+    await flush();
+    expect(aibot.sends).toHaveLength(3);
+    expect(fallback.emitted).toHaveLength(0);
+  });
+
+  it("发送失败（ok=false）：回退日志出口", async () => {
+    const aibot = new FakeAibot();
+    aibot.result = { ok: false, kind: "retryable", errcode: null, errmsg: "长连接未就绪", retryAt: null, attempts: 0, state: "connecting" };
+    const fallback = new FakeAlertSink();
+    const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, fallback, () => 0);
+    const alert: OutboxAlert = { code: "outbox.oldest_due", level: "error", message: "最老待领取超阈值" };
+
+    sink.emit(alert);
+    await flush();
+
+    expect(aibot.sends).toHaveLength(1);
+    expect(fallback.emitted).toEqual([alert]);
+  });
+
+  it("发送异常（抛错）：回退日志出口（告警链不断）", async () => {
+    const aibot = new FakeAibot();
+    aibot.throwNext = true;
+    const fallback = new FakeAlertSink();
+    const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, fallback, () => 0);
+    const alert: OutboxAlert = { code: "outbox.backlog", level: "warn", message: "积压 1001 条" };
+
+    sink.emit(alert);
+    await flush();
+
+    expect(fallback.emitted).toEqual([alert]);
   });
 });

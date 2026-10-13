@@ -20,10 +20,11 @@
  * 它做什么（一条临时会话 + 一个临时项目，跑完零残留）：
  *   ① 抽屉内上传真 XLSX → 点「预览」：api.js 被 CDP 网络阻断 → 查看器外壳降级「暂无在线预览」+「重试」（R5）；
  *   ② 解除阻断 → 点「重试」→ 重取配置 + nonce 重建 → data-oo-status=ready（重试路径闭环）；
- *   ③ 上传真 DOCX → 点「预览」→ 就绪（编辑器 iframe 在位；Esc 先关浮层、抽屉仍在）；
- *   ④ 直取 GET /files/{id}/preview 复核查看器四段：viewer 非空 / url 空 / document.url 无 X-Amz- /
- *      token 三段 + HS256 复算一致 + exp-iat=900 + mode=view + permissions.download=false；
- *   ⑤ 审计：每次签发一条 preview（metadata.viewerKind=onlyoffice / documentType）；
+ *   ③ 上传真 DOCX → 点「预览」→ 就绪（编辑器 iframe 在位；原生下载 ⬇ 可见、原位命中层接管——悬停对齐原生：pointer 小手 + #EAEAEA 灰底；Esc 先关浮层、抽屉仍在）；
+ *   ③d 命中层真点击 → 原文件字节落盘（原名 + sha256 = 夹具 · 无 crdownload）+ download 审计 +1；
+ *   ④ 直取 GET /files/{id}/preview 复核查看器配置（Push 258 修订：permissions 嵌 document）：viewer 非空 / url 空 /
+ *      document.url 无 X-Amz- / token 三段 + HS256 复算一致 + exp-iat=900 + mode=view + document.permissions.download=true（保持可见 · 点击由浮层命中层接管）；
+ *   ⑤ 审计：预览不写审计（Push 283 起操作日志不记录预览动作 —— 两次签发 = 0 条）；
  *   ⑥ 反例：无 token 直取 document.url 同路径 → 401 且无重定向；
  *   ⑦ 收尾：purge 两份文件 → 物理删项目 → 撤销会话 → 零残留；控制台无「非预期」异常。
  * 证据：docs/s4-回放证据(ONLYOFFICE查看器外壳·前端).md
@@ -31,7 +32,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,7 +50,7 @@ const OO_DOCSERVER = process.env.OO_DOCSERVER_URL ?? "http://127.0.0.1:8001";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9412);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR ?? tmpdir();
 const FIXTURE_DIR = process.env.FIXTURE_DIR ?? fileURLToPath(new URL("../../server/scripts/poc10/fixtures/", import.meta.url));
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
@@ -71,7 +72,7 @@ function readOnlyOfficeSecret() {
 
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) {
   console.error("回放用户不存在：" + REPLAY_USER);
   process.exit(1);
@@ -229,6 +230,7 @@ async function fileRowPoint(fileName, selector) {
   return await ev("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");"
     + "for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(fileName) + ")>=0){"
     + "var b=items[i].querySelector(" + j(selector) + ");if(b===null){return null;}"
+    + "b.scrollIntoView({block:" + j("center") + "});"
     + "var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}}return null;})()");
 }
 async function clickAt(point) {
@@ -282,8 +284,13 @@ const xlsxLanded = await waitForAsync(async () => (await db.query("select count(
 const xlsxRow = (await db.query("select id, name, status from files where task_id = $1 and name = $2", [taskId, XLSX_NAME])).rows[0];
 check("①a 抽屉内上传 XLSX（真夹具）→ 落库（draft）", xlsxLanded === true && xlsxRow !== undefined && xlsxRow.name === XLSX_NAME && xlsxRow.status === "draft", JSON.stringify(xlsxRow === undefined ? null : xlsxRow));
 const drawerOne = await waitFor("(function(){var d=document.querySelector(" + j(DRAWER) + ");return d!==null&&d.querySelectorAll(" + j("[data-drawer-file-item]") + ").length===1;})()", 15000);
-const xlsxTitle = await ev("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(XLSX_NAME) + ")>=0){var b=items[i].querySelector(" + j("[data-file-preview-open=true]") + ");return b===null?null:b.getAttribute(" + j("title") + ");}}return null;})()");
-check("①b Office 行有「预览」入口（title = 在线预览（ONLYOFFICE 查看器））", drawerOne === true && xlsxTitle === "在线预览（ONLYOFFICE 查看器）", String(xlsxTitle));
+let xlsxLabel = null;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  xlsxLabel = await ev("(function(){var items=document.querySelectorAll(" + j("[data-drawer-file-item]") + ");for(var i=0;i<items.length;i++){if(items[i].textContent.indexOf(" + j(XLSX_NAME) + ")>=0){var b=items[i].querySelector(" + j("[data-file-preview-open=true]") + ");return b===null?null:b.textContent.trim();}}return null;})()");
+  if (xlsxLabel === "预览") break;
+  await sleep(250);
+}
+check("①b Office 行有「预览」入口（data-file-preview-open · 文案「预览」）", drawerOne === true && xlsxLabel === "预览", String(xlsxLabel));
 
 // ---------- ①（续）阻断 api.js → 降级 UI（R5） ----------
 await page.send("Network.setBlockedURLs", { urls: ["*api.js*"] });
@@ -329,16 +336,65 @@ const docxProbe = await ev("(function(){var v=document.querySelector(" + j("[dat
   + "return {found:true,status:v.getAttribute(" + j("data-oo-status") + "),frames:v.querySelectorAll(" + j("iframe") + ").length,"
   + "overlayKind:ov===null?null:ov.getAttribute(" + j("data-file-preview-kind") + "),"
   + "download:ov===null?false:ov.querySelector(" + j("[data-file-preview-download=true]") + ")!==null,"
+  + "nativeDownload:ov===null?false:ov.querySelector(" + j("[data-file-preview-native-download=true]") + ")!==null,"
   + "drawer:document.querySelector(" + j("aside[role=dialog]") + ")!==null};})()");
-check("③b 点「预览」→ 查看器就绪（kind=office / 编辑器 iframe 在位 / caption「下载原文件」/ 抽屉仍在）", docxReady === true && docxProbe.found === true && docxProbe.status === "ready" && docxProbe.frames >= 1 && docxProbe.overlayKind === "office" && docxProbe.download === true && docxProbe.drawer === true, JSON.stringify(docxProbe));
+check("③b 点「预览」→ 查看器就绪（kind=office / 编辑器 iframe 在位 / caption + 原位命中层「下载」入口 / 抽屉仍在）", docxReady === true && docxProbe.found === true && docxProbe.status === "ready" && docxProbe.frames >= 1 && docxProbe.overlayKind === "office" && docxProbe.download === true && docxProbe.nativeDownload === true && docxProbe.drawer === true, JSON.stringify(docxProbe));
+await ev("(function(){var el=document.querySelector(" + j("[data-file-preview-native-download=true]") + ");if(el===null){return false;}el.style.outline=" + j("2px solid #ef4444") + ";return true;})()");
+await shot("s4-onlyoffice-native-hit.png");
+await ev("(function(){var el=document.querySelector(" + j("[data-file-preview-native-download=true]") + ");if(el!==null){el.style.outline=" + j("") + ";}return true;})()");
 await shot("s4-onlyoffice-ready-docx.png");
+
+// ---------- ③（续）命中层悬停反馈对齐原生（Push 258：鼠标小手 + 与旁边搜索一致） ----------
+const hitGeom = await ev("(function(){var el=document.querySelector(" + j("[data-file-preview-native-download=true]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),left:Math.round(r.left),top:Math.round(r.top),vw:innerWidth,vh:innerHeight};})()");
+let hoverOk = false;
+if (hitGeom !== null && hitGeom !== undefined) {
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: hitGeom.x, y: hitGeom.y, button: "none" });
+  await sleep(400);
+  hoverOk = await ev("(function(){var el=document.querySelector(" + j("[data-file-preview-native-download=true]") + ");if(el===null){return false;}var s=getComputedStyle(el);return el.matches(" + j(":hover") + ")===true&&s.cursor===" + j("pointer") + "&&s.backgroundColor!==" + j("rgba(0, 0, 0, 0)") + ";})()");
+  const clipX = Math.max(0, Math.round(hitGeom.left - 60));
+  const clipY = Math.max(0, Math.round(hitGeom.top - 40));
+  const hoverShot = await page.send("Page.captureScreenshot", { format: "png", clip: { x: clipX, y: clipY, width: Math.min(240, hitGeom.vw - clipX), height: Math.min(120, hitGeom.vh - clipY), scale: 2 } });
+  writeFileSync(join(SCREENSHOT_DIR, "s4-onlyoffice-native-hit-hover.png"), Buffer.from(hoverShot.data, "base64"));
+  console.log("截图：" + join(SCREENSHOT_DIR, "s4-onlyoffice-native-hit-hover.png"));
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 4, y: 4, button: "none" });
+  await sleep(200);
+}
+check("③c 命中层悬停反馈对齐原生（pointer 小手 + 灰底 #EAEAEA）", hoverOk === true, JSON.stringify(hitGeom));
+//
+// ---------- ③（续二）命中层真点击 → 原文件字节落盘 + download 审计（Push 258 续：fetch + Blob 落盘 —— 校验字节 sha256 与原名；headless + CDP 下载放行，真机 http 源另有「保留」步，见 docs/s4 证据） ----------
+const DL_DIR = mkdtempSync(join(tmpdir(), "pxs4oo-dl-"));
+try { await page.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: DL_DIR, eventsEnabled: true }); }
+catch (dlError1) { try { await page.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: DL_DIR }); } catch (dlError2) { /* 下载行为设不上：③d 会因无落盘文件而失败 */ } }
+let downloadLanded = null;
+if (hitGeom !== null && hitGeom !== undefined) {
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: hitGeom.x, y: hitGeom.y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: hitGeom.x, y: hitGeom.y, button: "left", clickCount: 1 });
+  const dlDeadline = Date.now() + 20000;
+  while (Date.now() < dlDeadline && downloadLanded === null) {
+    for (const f of readdirSync(DL_DIR)) {
+      const full = join(DL_DIR, f);
+      if (statSync(full).isFile() === true && f.endsWith(".crdownload") === false) {
+        const bytes = readFileSync(full);
+        downloadLanded = { name: f, bytes: statSync(full).size, head: bytes.subarray(0, 8).toString("hex"), sha256: createHash("sha256").update(bytes).digest("hex") };
+        break;
+      }
+    }
+    if (downloadLanded === null) { await sleep(400); }
+  }
+}
+const fixtureSha = createHash("sha256").update(readFileSync(docxPath)).digest("hex");
+const downloadAudit = (await db.query("select count(*)::int as c from audit_logs where object_id = $1 and action = $2", [docxRow.id, "download"])).rows[0].c;
+check("③d 点右上角命中层 → 原文件字节落盘（原名 + sha256 与夹具一致 · 无 crdownload）+ download 审计 +1",
+  downloadLanded !== null && downloadLanded.name === DOCX_NAME && downloadLanded.sha256 === fixtureSha && Number(downloadAudit) === 1,
+  j({ landed: downloadLanded === null ? null : { name: downloadLanded.name, bytes: downloadLanded.bytes, head: downloadLanded.head }, fixtureBytes: statSync(docxPath).size, audit: downloadAudit }));
+rmSync(DL_DIR, { recursive: true, force: true });
 
 // ---------- ④ 直取 /preview 复核查看器四段（契约 + 安全断言） ----------
 const previewRes = await api("/api/v1/files/" + docxRow.id + "/preview");
 const preview = previewRes.json;
 const viewer = preview === null ? null : preview.viewer;
-check("④a 查看器签发形状：ready + viewer 非空 / url / target 空 + 只读权限（edit/download=false · protect=true）",
-  previewRes.status === 200 && preview !== null && preview.status === "ready" && viewer !== null && preview.url === null && preview.target === null && viewer.kind === "onlyoffice" && viewer.docServerUrl === OO_DOCSERVER && viewer.documentType === "word" && viewer.document.fileType === "docx" && viewer.editorConfig.mode === "view" && viewer.permissions.edit === false && viewer.permissions.download === false && viewer.permissions.protect === true,
+check("④a 查看器签发形状：ready + viewer 非空 / url / target 空 + 只读权限（edit=false / download=true 保持可见 / protect=true）",
+  previewRes.status === 200 && preview !== null && preview.status === "ready" && viewer !== null && preview.url === null && preview.target === null && viewer.kind === "onlyoffice" && viewer.docServerUrl === OO_DOCSERVER && viewer.documentType === "word" && viewer.document.fileType === "docx" && viewer.editorConfig.mode === "view" && viewer.document.permissions.edit === false && viewer.document.permissions.download === true && viewer.document.permissions.protect === true && viewer.permissions === undefined,
   j({ status: previewRes.status, viewerKind: viewer === null ? null : viewer.kind, documentType: viewer === null ? null : viewer.documentType, mode: viewer === null ? null : viewer.editorConfig.mode }));
 const docUrl = viewer === null ? "" : viewer.document.url;
 check("④b document.url = 受控端点绝对 URL（DocServer 视角基址 + /preview-content）+ 无 X-Amz- 预签名参数",
@@ -349,18 +405,17 @@ const payload = parts.length === 3 ? JSON.parse(Buffer.from(parts[1], "base64url
 const secret = readOnlyOfficeSecret();
 const expectedSig = secret === null || parts.length !== 3 ? null : createHmac("sha256", secret).update(parts[0] + "." + parts[1]).digest("base64url");
 const contentHash = (await db.query("select content_hash from file_versions where file_id = $1 order by seq desc limit 1", [docxRow.id])).rows[0].content_hash;
-check("④c token 三段 JWT：HS256 复算一致 + exp-iat=900 + 四段逐字（documentType / document.key=内容哈希 / editorConfig.mode=view / permissions.download=false）",
-  parts.length === 3 && payload !== null && expectedSig !== null && expectedSig === parts[2] && payload.exp - payload.iat === 900 && payload.documentType === "word" && payload.document !== undefined && payload.document.key === contentHash && payload.document.url === docUrl && payload.editorConfig !== undefined && payload.editorConfig.mode === "view" && payload.permissions !== undefined && payload.permissions.download === false,
+check("④c token 三段 JWT：HS256 复算一致 + exp-iat=900 + 逐字签发（documentType / document.key=内容哈希 / document.permissions.download=true 嵌 document（保持可见）/ editorConfig.mode=view；顶层无 permissions）",
+  parts.length === 3 && payload !== null && expectedSig !== null && expectedSig === parts[2] && payload.exp - payload.iat === 900 && payload.documentType === "word" && payload.document !== undefined && payload.document.key === contentHash && payload.document.url === docUrl && payload.document.permissions !== undefined && payload.document.permissions.download === true && payload.permissions === undefined && payload.editorConfig !== undefined && payload.editorConfig.mode === "view",
   j({ parts: parts.length, signatureMatch: expectedSig === parts[2], ttl: payload === null ? null : payload.exp - payload.iat, keyMatchesHash: payload !== null && payload.document !== undefined && payload.document.key === contentHash, secret: secret === null ? "missing" : "loaded" }));
 
-// ---------- ⑤ 审计：每次签发一条 preview ----------
-const auditDocx = (await db.query("select count(*)::int as c, min(summary) as s from audit_logs where object_id = $1 and action = $2", [docxRow.id, "preview"])).rows[0];
-const auditMeta = (await db.query("select metadata from audit_logs where object_id = $1 and action = $2 order by occurred_at desc limit 1", [docxRow.id, "preview"])).rows[0];
-check("⑤a DOCX：UI 开查看器 1 条 + 直取 1 条 = 2 条 preview（viewerKind=onlyoffice / documentType=word / 摘要含「ONLYOFFICE 查看器」）",
-  Number(auditDocx.c) === 2 && auditMeta !== undefined && auditMeta.metadata.viewerKind === "onlyoffice" && auditMeta.metadata.documentType === "word" && String(auditDocx.s).indexOf("ONLYOFFICE 查看器") >= 0,
-  j({ count: auditDocx.c, summary: auditDocx.s, metadata: auditMeta === undefined ? null : auditMeta.metadata }));
+// ---------- ⑤ 审计：预览不写审计（Push 283 起操作日志不记录预览动作） ----------
+const auditDocx = (await db.query("select count(*)::int as c from audit_logs where object_id = $1 and action = $2", [docxRow.id, "preview"])).rows[0];
+check("⑤a DOCX：UI 开查看器 + 直取 = 0 条 preview 审计",
+  Number(auditDocx.c) === 0,
+  j({ count: auditDocx.c }));
 const auditXlsx = (await db.query("select count(*)::int as c from audit_logs where object_id = $1 and action = $2", [xlsxRow.id, "preview"])).rows[0];
-check("⑤b XLSX：首开 + 重试 = 2 条（每次签发一条，重试重取配置）", Number(auditXlsx.c) === 2, String(auditXlsx.c));
+check("⑤b XLSX：首开 + 重试 = 0 条（重试重取配置也不落审计）", Number(auditXlsx.c) === 0, String(auditXlsx.c));
 
 // ---------- ⑥ 受控端点反例：无 token 直取 → 401 ----------
 const docPath = new URL(String(docUrl)).pathname;

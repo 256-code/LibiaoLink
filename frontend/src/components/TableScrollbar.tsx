@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 
+/**
+ * 表格底部滑块（Push 221）：项目总览 / 干系人宽表共用的横向滚动条 —— 吸附在视口底部（外层 `#table-scrollbar-bar`），
+ * 拖块即拖横向滚动，聚焦后可用方向键步进。
+ * 2026-10-10 修「浮动滑块盖住末行 / 遮挡行内按钮点击」（业务反馈）：整条不再铺白底、不拦截指针（外层容器
+ * pointer-events-none），轨道只作视觉（本组件根节点 pointer-events-none）—— 吸附在视口底时不再遮字、点击穿透到
+ * 行内按钮；可交互面只剩滑块本体（pointer-events-auto，拖拽 / 悬停 / 键盘）。为免遮挡行内点击，轨道点击跳转
+ * 随之**下架**；拖拽 / 键盘方向键 / 触控板（含 Shift+滚轮）横向滚动不受影响。
+ */
 type TableScrollbarProps = {
   scrollRef: RefObject<HTMLDivElement | null>;
   onOverflowChange?: (overflowing: boolean) => void;
@@ -115,23 +123,6 @@ export function TableScrollbar({ scrollRef, onOverflowChange, controlsId = "task
     element.scrollLeft = Math.max(0, Math.min(element.scrollWidth - element.clientWidth, target));
   };
 
-  const handleTrackPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || metrics.visible === false) {
-      return;
-    }
-    const element = scrollRef.current;
-    const track = trackRef.current;
-    if (element === null || track === null) {
-      return;
-    }
-    const maxScroll = element.scrollWidth - element.clientWidth;
-    const maxOffset = Math.max(1, track.clientWidth - metrics.thumbWidth);
-    const rect = track.getBoundingClientRect();
-    const position = event.clientX - rect.left - metrics.thumbWidth / 2;
-    event.preventDefault();
-    scrollTo((Math.max(0, Math.min(maxOffset, position)) / maxOffset) * maxScroll);
-  };
-
   const handleThumbPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const element = scrollRef.current;
     const track = trackRef.current;
@@ -186,12 +177,7 @@ export function TableScrollbar({ scrollRef, onOverflowChange, controlsId = "task
   };
 
   return (
-    <div
-      ref={trackRef}
-      onPointerDown={handleTrackPointerDown}
-      title={metrics.visible ? "拖动查看右侧更多列" : undefined}
-      className={"relative h-6 w-full select-none " + (metrics.visible ? "cursor-pointer" : "pointer-events-none")}
-    >
+    <div ref={trackRef} className="pointer-events-none relative h-6 w-full select-none">
       <div
         className={
           "absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full transition-colors " +
@@ -212,8 +198,9 @@ export function TableScrollbar({ scrollRef, onOverflowChange, controlsId = "task
           onPointerUp={handleThumbPointerUp}
           onPointerCancel={handleThumbPointerUp}
           onKeyDown={handleKeyDown}
+          title="拖动查看右侧更多列"
           style={{ width: metrics.thumbWidth, left: metrics.offset }}
-          className="absolute top-1/2 h-3 -translate-y-1/2 cursor-grab rounded-full bg-zinc-400 transition-colors hover:bg-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 active:cursor-grabbing active:bg-zinc-600"
+          className="pointer-events-auto absolute top-1/2 h-3 -translate-y-1/2 cursor-grab rounded-full bg-zinc-400 transition-colors hover:bg-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 active:cursor-grabbing active:bg-zinc-600"
         />
       ) : null}
     </div>

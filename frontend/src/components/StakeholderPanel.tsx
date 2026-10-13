@@ -13,8 +13,11 @@ import {
   type StakeholderPatch,
 } from "../stakeholderApi";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { Toast } from "./Toast";
 import { RowEditButton } from "./RowEditButton";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
+import { ScrollArea } from "./ScrollArea";
+import { useFocusTrap } from "./useFocusTrap";
 
 /**
  * 项目详情「干系人」面板（A27 · M6-06 前端接线；标签排在最右侧）：表格形态与「项目总览」同一套 ——
@@ -168,7 +171,7 @@ function CellText({ value }: { value: { text: string; className: string; title?:
   );
 }
 
-/** 新建 / 编辑弹窗（与 ProjectModal 同款：遮罩 + max-w-md 圆角卡片 + 品牌黄主按钮）。 */
+/** 新建 / 编辑弹窗（与 ProjectModal 同款：遮罩 + max-w-md 圆角卡片 + 品牌黄主按钮）。Push 265：卡片补 max-h-[calc(100dvh-2rem)] + flex-col + 表单区内滚动（矮视口下底部「取消 / 创建干系人」不再被裁；业务反馈 2026-10-10「干系人新建/编辑弹窗无高度自适应」）。 */
 function StakeholderModal({
   mode,
   row,
@@ -182,6 +185,8 @@ function StakeholderModal({
   /** 提交：返回 null = 成功（父层关窗 + 重取列表）；返回文案 = 失败提示，窗口保持打开。 */
   onSubmit: (draft: StakeholderDraft) => Promise<string | null>;
 }) {
+  /** 键盘焦点陷阱（Push 264 追订）：弹窗打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发按钮。 */
+  const modalTrapRef = useFocusTrap<HTMLDivElement>();
   const [draft, setDraft] = useState<StakeholderDraft>(() =>
     row === null
       ? { name: "", companyType: "", role: "", title: "", phone: "", wechat: "", email: "" }
@@ -228,17 +233,19 @@ function StakeholderModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-zinc-900/40" onClick={onClose} />
       <div
+        ref={modalTrapRef}
         role="dialog"
         aria-modal="true"
         aria-label={mode === "create" ? "新建干系人" : "编辑干系人"}
         data-stakeholder-modal=""
-        className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
+        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
       >
         <h2 className="text-lg font-bold text-zinc-900">{mode === "create" ? "新建干系人" : "编辑干系人"}</h2>
         <p className="mt-1 text-sm text-zinc-500">
           {mode === "create" ? "录入后自动关联到当前项目（A5-03）。" : "只提交改动过的字段；清空输入框 = 删除该字段内容。"}
         </p>
-        <form className="mt-5 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+        <ScrollArea viewportClassName="mt-5 min-h-0 flex-1" className="overscroll-contain space-y-4 px-0.5 pb-1" ariaLabel="干系人表单" thumbAlwaysVisible>
+        <form id="stakeholder-modal-form" className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">干系人姓名</span>
             <input data-stakeholder-field="name" className={fieldClass} value={draft.name} onChange={(event) => edit("name", event.target.value)} placeholder="如 Christian Winkler" />
@@ -316,24 +323,27 @@ function StakeholderModal({
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              data-stakeholder-submit=""
-              disabled={!canSubmit}
-              className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {pending ? "提交中…" : mode === "create" ? "创建干系人" : "保存修改"}
-            </button>
-          </div>
         </form>
+        </ScrollArea>
+
+        <div className="mt-4 flex shrink-0 justify-end gap-3 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+          >
+            取消
+          </button>
+          <button
+            type="submit"
+            form="stakeholder-modal-form"
+            data-stakeholder-submit=""
+            disabled={!canSubmit}
+            className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {pending ? "提交中…" : mode === "create" ? "创建干系人" : "保存修改"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -436,6 +446,8 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; row: Stakeholder } | null>(null);
   /** 删除二次确认（与首页删项目 / 模板 / 日报问题同一套：第一下只开口，第二下才真删）。 */
   const [pendingDelete, setPendingDelete] = useState<Stakeholder | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在行内「删除」按钮上）、Tab 在条内循环、关闭还原。 */
+  const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const [deletePending, setDeletePending] = useState(false);
   /** 写失败提示（删除）；加载失败走上面的 error 块。 */
   const [actionError, setActionError] = useState<string | null>(null);
@@ -577,18 +589,13 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       )}
 
       {actionError === null ? null : (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-          <span>{actionError}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setActionError(null);
-            }}
-            className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-          >
-            关闭
-          </button>
-        </div>
+        <Toast
+          kind="error"
+          text={actionError}
+          onClose={() => {
+            setActionError(null);
+          }}
+        />
       )}
 
       <div data-stakeholder-table="" className="rounded-xl border border-zinc-200 bg-white">
@@ -648,6 +655,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       {pendingDelete === null ? null : (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
           <div
+            ref={deleteConfirmTrapRef}
             role="dialog"
             aria-label="确认删除干系人"
             data-delete-confirm-strip=""

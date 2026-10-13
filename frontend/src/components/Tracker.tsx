@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PROGRESS_STEPS, progressStep } from "../data/tasks";
+import { PROGRESS_LABELS, PROGRESS_STEPS, progressStep } from "../data/tasks";
 
 type TrackerProps = {
   progress: number;
@@ -9,7 +9,8 @@ type TrackerProps = {
 
 export const TRACKER_STEPS = PROGRESS_STEPS;
 
-export const TRACKER_LABELS = ["未开始", "刚开工", "完成一半", "快完成了", "已完成"];
+/** 档位名定义已收敛到 `data/tasks.ts` 的 `PROGRESS_LABELS`（导出报告同源引用）；此处保留历史导出名。 */
+export const TRACKER_LABELS = PROGRESS_LABELS;
 
 /** 格数换算与 `data/tasks.ts` 共用一套口径（Push 65 起任务状态与进度条联动）。 */
 export const trackerStep = progressStep;

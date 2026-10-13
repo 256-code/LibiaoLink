@@ -85,10 +85,10 @@ export function nodeWriteMessage(error: { code: string; message: string }): stri
     return "该阶段已有同名节点，换个名字试试";
   }
   if (error.code === "FORBIDDEN") {
-    return "只有系统管理员能维护节点库（blueprint.manage）";
+    return "只有系统管理员能维护节点库";
   }
   if (error.code === "VERSION_CONFLICT") {
-    return "这个节点刚被别人改过，刷新后再试（version 过期）";
+    return "这个节点刚被别人改过，刷新后再试";
   }
   if (error.code === "NOT_FOUND") {
     return "这个节点已经不在节点库里了，刷新看看";
@@ -176,13 +176,13 @@ export async function deleteTaskTemplate(id: string, version: number): Promise<{
 /** 模板写入失败的统一文案（409 VERSION_CONFLICT / 403 FORBIDDEN 等；服务端仍是最终裁决）。 */
 export function templateWriteMessage(error: { code: string; message: string }): string {
   if (error.code === "FORBIDDEN") {
-    return "只有系统管理员能维护任务模板（blueprint.manage）";
+    return "只有系统管理员能维护任务模板";
   }
   if (error.code === "VERSION_CONFLICT") {
-    return "这份模板刚被别人改过，刷新后再试（version 过期）";
+    return "此份模板已被他人改过";
   }
   if (error.code === "NOT_FOUND") {
-    return "这份模板已经不在模板库里了，刷新看看";
+    return "这份模板已经不在模板库里了";
   }
   if (error.code === "VALIDATION_FAILED") {
     return "模板内容不合规：" + error.message;

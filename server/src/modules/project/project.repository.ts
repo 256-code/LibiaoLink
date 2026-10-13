@@ -237,7 +237,8 @@ export class ProjectRepository {
    * 硬删（Push 190 · 业务口径「删除要硬删不要软删，同一编号删了要能再建」）：
    * 同事务按外键依赖序清空项目聚合子表 → 删 projects 行；编号随行一起释放。
    * 子表顺序（全部 NO ACTION 外键，顺序错会撞 FK）：
-   *   issue_events → task_events → file_versions → files → change_requests → issues → daily_reports
+   *   issue_events → task_events → 置空 files.current_version_id（files ⇄ file_versions 循环外键，删版本行前必须解环）
+   *   → file_versions → files → change_requests → issues → daily_reports
    *   → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders
    *   → follows（M2-06 · 0037：多态 object_id 无外键，项目与其任务两族按关系键一并清掉）。
    * version 守卫落在最后一行 delete：不匹配返回 null（调用方抛 409，整事务回滚，子表一行不动）。
@@ -257,6 +258,8 @@ export class ProjectRepository {
     // 关注行清理（M2-06 · 0037 · A1-15）：项目关注 + 该项目下任务关注
     await client.delete(follows).where(and(eq(follows.objectType, "project"), eq(follows.objectId, id)));
     await client.delete(follows).where(and(eq(follows.objectType, "task"), inArray(follows.objectId, taskIds)));
+    // files.current_version_id → file_versions.id 为 NO ACTION 外键：删版本行前先置空该列，否则撞 23503（fk_files_current_version）。
+    await client.update(files).set({ currentVersionId: null }).where(eq(files.projectId, id));
     await client.delete(fileVersions).where(inArray(fileVersions.fileId, fileIds));
     await client.delete(files).where(eq(files.projectId, id));
     await client.delete(changeRequests).where(eq(changeRequests.projectId, id));

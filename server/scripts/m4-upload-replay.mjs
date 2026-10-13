@@ -2,7 +2,8 @@
 /**
  * M4-01 真机回放（S7·file 上传管道 · PR-4）：
  *   证据一（发起上传）：POST /files/uploads 建 draft 文件 + 上传会话（暂存键 …/staging/{sessionId}），服务端给分片计划
- *           （partSizeBytes / totalParts）与 expiresAt；带 contentHash 命中既有内容回秒传提示（不阻断）。
+ *           （partSizeBytes / totalParts）与 expiresAt；附件域（无 taskId / nodeId / docType）带 contentHash 命中既有
+ *           同内容 → 秒传复用（reused=true、upload=null，不新建文件 / 会话；2026-10-12）。
  *   证据二（分片直传 + 断点续传）：分片预签名 URL 由「浏览器同口径」直接 PUT 到对象存储（api 不代理大文件流量）；
  *           分片状态以对象存储 ListParts 为唯一真相（不落 upload_parts 表）；GET 会话状态回已传 / 缺失分片，只补缺失的。
  *   证据三（完成 = 复制到契约键 + 落版本）：complete 校验分片齐全 → 合并 → HEAD 校大小 → contentHash 一致性
@@ -14,7 +15,7 @@
  *   证据五（过期与清理）：过期会话访问即 410（惰性置 expired + 清暂存 + system 审计）；worker 启动即跑一轮定时清理并留痕。
  *   证据六（权限）：file.upload 项目成员平权（非成员 404 防 IDOR）。
  *
- * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL）。本脚本只在本地沙箱 / 联调库跑：
+ * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL）；U20（非成员 404）需 api 以 PERMISSION_ENFORCED=true 起（一期默认 false = 等效管理员，非成员反例恒 201）。本脚本只在本地沙箱 / 联调库跑：
  *      铸两个临时会话（管理员 + 名册成员，跑完撤销）、建 M4- 回放项目（跑完硬删项目及其文件 / 版本 / 会话 / 审计 / outbox 事件 + 清桶内前缀）。
  * 用法：cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
  *       node --env-file-if-exists=.env scripts/m4-upload-replay.mjs [--out <报告.md>] [--json <证据.json>] [--keep]
@@ -199,7 +200,11 @@ try {
   );
   const adminId = adminRow.rows[0]?.id;
   if (adminId === undefined) throw new Error("找不到可用的管理员账号（roles.code = admin）");
-  const otherUsers = await db.query("select id from users where id <> $1 and status = 'active' order by id limit 1", [adminId]);
+  // 非成员基准账号需无 admin 角色：admin 数据范围为 all，任何项目都可见，构不成「非成员」404 反例。
+  const otherUsers = await db.query(
+    "select u.id from users u where u.id <> $1 and u.status = 'active' and not exists (select 1 from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = u.id and r.code = 'admin') order by u.id limit 1",
+    [adminId],
+  );
   const memberId = args.actor ?? otherUsers.rows[0]?.id;
   if (memberId === undefined) throw new Error("找不到第二个账号（名册成员基准账号）");
   admin = await makeSession(adminId, "m4-replay-admin");
@@ -415,10 +420,36 @@ try {
   const dupInit = await createUpload({ projectId: projectA, name: "另一份同名内容.docx", sizeBytes: FILE_SIZE, contentHash, intent: "version" });
   check(
     "U12",
-    "秒传提示（A4-04）：同项目同内容哈希 → duplicateHint 指向既有文件（不阻断继续上传）",
+    "秒传提示（A4-04）：同项目同内容哈希 → duplicateHint 指向既有文件（不阻断继续上传；U1 文件带 docType / nodeId 归属，不参与附件域秒传复用）",
     "duplicateHint.fileId=" + String(fileId),
     dupInit.status + " " + short({ hint: dupInit.body?.duplicateHint, newFileId: dupInit.body?.file?.id }, 240),
     dupInit.status === 201 && dupInit.body?.duplicateHint?.fileId === fileId && dupInit.body?.duplicateHint?.name === fileName && dupInit.body?.file?.id !== fileId,
+  );
+
+  // U12b（2026-10-12 附件域秒传复用）：无 taskId / nodeId / docType 的纯附图上传，同内容二次发起 → 直接复用既有文件。
+  const attachBytes = Buffer.from("m4-01 附件域秒传复用回放 " + stamp, "utf8");
+  const attachHash = sha256(attachBytes);
+  const attachInit = await createUpload({ projectId: projectA, name: "回放-附件域复用.png", sizeBytes: attachBytes.length, mime: "image/png", contentHash: attachHash, intent: "version" });
+  if (attachInit.body?.upload === null || attachInit.body?.upload === undefined) throw new Error("U12b 前置上传未建会话");
+  const attachSigned = await signParts(attachInit.body.file.id, attachInit.body.upload.id, [1]);
+  await putPart(attachSigned.body.parts[0].url, attachBytes);
+  const attachDone = await completeUpload(attachInit.body.file.id, attachInit.body.upload.id, attachHash);
+  const attachDup = await createUpload({ projectId: projectA, name: "回放-附件域复用-第二处.png", sizeBytes: attachBytes.length, mime: "image/png", contentHash: attachHash, intent: "version" });
+  const attachFileRows = await db.query("select count(*)::int as n from files where id = $1", [attachInit.body.file.id]);
+  const attachSessionRows = await db.query("select count(*)::int as n from upload_sessions where file_id = $1", [attachInit.body.file.id]);
+  check(
+    "U12b",
+    "附件域秒传复用（2026-10-12）：同项目同内容附件再次发起 → 不新建文件 / 会话，直接复用既有文件",
+    "201 + reused=true + upload=null + file.id=" + String(attachInit.body?.file?.id),
+    attachDone.status + " / " + attachDup.status + " " + short({ reused: attachDup.body?.reused, upload: attachDup.body?.upload, fileId: attachDup.body?.file?.id, hintFileId: attachDup.body?.duplicateHint?.fileId }, 260),
+    attachDone.status === 200 &&
+      attachDup.status === 201 &&
+      attachDup.body?.reused === true &&
+      attachDup.body?.upload === null &&
+      attachDup.body?.file?.id === attachInit.body.file.id &&
+      attachDup.body?.duplicateHint?.fileId === attachInit.body.file.id &&
+      attachFileRows.rows[0]?.n === 1 &&
+      attachSessionRows.rows[0]?.n === 1,
   );
 
   const statusDone = await sessionStatus(fileId, uploadId);
@@ -655,7 +686,7 @@ lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filte
 lines.push("");
 lines.push("## 验收对照（M4-01）");
 lines.push("");
-lines.push("- 发起上传 = U1 / U2：POST /files/uploads 建 draft 文件 + 上传会话；会话先写暂存键（ADR-006），contentHash 命中回秒传提示（U12）。");
+lines.push("- 发起上传 = U1 / U2：POST /files/uploads 建 draft 文件 + 上传会话；会话先写暂存键（ADR-006），附件域同内容命中即复用既有文件（U12，2026-10-12）。");
 lines.push("- 分片直传 / 断点续传 = U3 ~ U7：预签名 URL 由浏览器裸 PUT（api 不代理流量）；GET 会话状态回已传 / 缺失分片；分片状态不落表（T1）。");
 lines.push("- 完成上传 = U8 ~ U11：合并 → HEAD 校大小 → 哈希一致性 → copyObject 到契约键 → 事务写版本 / 文件 / 会话 + 审计 + outbox → 按版本清暂存。");
 lines.push("- 失败面 = U13 ~ U17：缺片 409 / 大小不符 409 / 哈希不符 422 / 已完成 409 / 取消幂等 + 取消后 410。");

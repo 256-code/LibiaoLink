@@ -5,6 +5,7 @@ import type { TemplatePresetNode } from "../data/templatePresets";
 import { fetchStageNodes, fetchStageTemplates, type TemplateItem } from "../templateApi";
 import { ScrollArea } from "./ScrollArea";
 import { usePopover } from "./usePopover";
+import { useFocusTrapFor } from "./useFocusTrap";
 
 /**
  * 插入位置（Push 111，业务口径「人员要指定位置放入」）：新加的任务放进该阶段里的哪一格 ——
@@ -45,6 +46,8 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
       onClose();
     }
   }, [open, onClose]);
+  /** 键盘焦点陷阱（Push 264 追订）：浮层开着时焦点进浮层、Tab 在浮层内循环、关闭还原到触发按钮。 */
+  useFocusTrapFor(popoverRef, open && position !== null);
   const pick = (next: StagePlacement) => {
     onPick(next);
     setOpen(false);
@@ -243,6 +246,8 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
   const [templatesRetry, setTemplatesRetry] = useState(0);
   const [activeTab, setActiveTab] = useState("nodes");
   const cardRef = useRef<HTMLElement | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：面板开着时焦点进面板、Tab 在面板内循环、关闭还原到阶段标签。 */
+  useFocusTrapFor(cardRef);
 
   // 换阶段（点了别的阶段标签）时回到第一个标签（Push 207：原「收起临时任务表单」随入口下架）
   useEffect(() => {

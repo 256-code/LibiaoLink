@@ -4,8 +4,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutboxIfAbsent } from "../../db/outbox.js";
-import { ObjectStorage } from "../../storage/index.js";
-import { AuditService } from "../admin/index.js";
+import { ObjectStorage, versionFileName } from "../../storage/index.js";
 import { UserService } from "../identity/index.js";
 import { PermissionService } from "../permission/index.js";
 import { FileRepository, type FileRow, type FileVersionRow } from "./file.repository.js";
@@ -16,10 +15,15 @@ import { isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } 
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
-/** 查看器权限段（固定只读；S8-2 契约 / 首关 PoC 口径 —— download=false 只约束查看器自身，防直取依赖受控端点鉴权）。 */
+/** 查看器权限段（固定只读；S8-2 契约 / 首关 PoC 口径）。
+ * **Push 258 错层修正**：必须嵌进 document 签发 —— ONLYOFFICE api.js 只认 document.permissions（发顶层会被忽略、
+ * 按默认值渲染）；token 载荷与前端组装配置须逐字一致，否则 DocServer 拒 -20。
+ * **download 保持可见（业务口径「原本的下载不要隐藏」）**：图标原样保留、不再隐藏，点击由浮层透明命中层原位接管 →
+ * 我方 download-url 原文件链 + download 审计；print 维持关闭（只读口径，业务未提）。 */
+
 const VIEWER_PERMISSIONS = {
   edit: false,
-  download: false,
+  download: true,
   print: false,
   comment: false,
   chat: false,
@@ -32,14 +36,14 @@ const VIEWER_PERMISSIONS = {
  *
  * 就绪通道（S6-前置 起图片直签 + 查看器通道均同步 ready；产物通道段保留但无投递，见下）：
  * - **图片直签**（S6-前置 · D6）：`isImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
- *   status=ready、target=image、`pipelineVersion` / `generatedAt` 空（无产物语义），签发即写**一条**
- *   `action = preview` 审计；不查 / 不落产物行、不投转换任务、不经 `deploy/preview`（字节 = 原对象）。
+ *   status=ready、target=image、`pipelineVersion` / `generatedAt` 空（无产物语义）；不查 / 不落产物行、
+ *   不投转换任务、不经 `deploy/preview`（字节 = 原对象）。
  * - **查看器通道**（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `viewer` 非空、`target` / `url` 空，
- *   与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置 + 审计。
+ *   与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置。
  *
  * **产物通道三态（M4-05d · 保留段）**：S6-前置 起 `previewTargetsFor` 无投递通道（图片改直签、其余走查看器）——
  * 该段对新请求**不可达**，保留 = structured 二期启用投递后复用（S6 退役评审另行处置）：
- * - `ready`：三元组命中产物 → 短时签名地址 + **一条** `action = preview` 审计；
+ * - `ready`：三元组命中产物 → 短时签名地址；
  * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组）→ 前端轮询；
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
  *   （缓存态：管线修复靠 `PREVIEW_PIPELINE_VERSION` 递增失效）。
@@ -51,9 +55,9 @@ const VIEWER_PERMISSIONS = {
  *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
  * 版本 404：`versionId` 给定但不属于该文件 / 不存在（A4-06「任意历史版本可预览」，缺省 = 当前版本）。
- * 审计只记**用户访问**（`object_type = file`；图片直签 = `versionId` / `target`，查看器 = `versionId` / `viewerKind` /
- * `documentType`，产物通道 = `versionId` / `target` / `pipelineVersion`）：生成侧不写审计（否则一次预览两条，
- * 把「查看 / 下载」审计计数翻倍）。
+ * **审计（Push 283 · 2026-10-12 起）**：预览**不写审计**（业务口径「操作日志中不需要记录预览的动作」—— 缩略图等
+ * 高频预览不再刷屏操作日志）；原「图片直签 / 查看器 / 产物通道各写一条 `action = preview`」口径撤销，
+ * `audit_logs.action = preview` 值保留供历史行回读 / 筛选（本模块不再产生新行）。
  */
 @Injectable()
 export class PreviewReadService {
@@ -66,7 +70,6 @@ export class PreviewReadService {
     private readonly storage: ObjectStorage,
     private readonly permission: PermissionService,
     private readonly users: UserService,
-    private readonly audit: AuditService,
     private readonly config: AppConfig,
   ) {}
 
@@ -78,15 +81,21 @@ export class PreviewReadService {
       return this.degrade(file.id, null, "文件尚无任何版本（未完成过上传），请下载查看");
     }
 
+    // Push 256（业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：通道判定的文件名取**该版本**
+    // 的真实名称 —— 主名取当前文件名、扩展名取版本对象键（落库时定下的扩展名）。变更更名（.xls → .pptx）后，
+    // 新版本按新扩展名判通道（否则 ONLYOFFICE 报 -85「扩展名不一致」）；历史版本仍按各自旧扩展名判通道
+    //（否则历史的 xls 内容会被当成 pptx）。
+    const channelName = versionFileName(file.name, version.objectKey);
+
     // S6-前置（D6）：图片 → 原对象短时签名直签（优先于产物通道判定：不投任务 / 不落产物行 / 不经 deploy/preview）。
-    if (isImageFile({ fileName: file.name, mime: version.mime })) {
-      return this.serveImageDirect(file, version, actorId);
+    if (isImageFile({ fileName: channelName, mime: version.mime })) {
+      return this.serveImageDirect(file, version);
     }
 
-    const targets = previewTargetsFor({ fileName: file.name, mime: version.mime });
+    const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
     if (targets.length === 0) {
       // S3（ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
-      const viewerChannel = viewerChannelFor({ fileName: file.name, mime: version.mime });
+      const viewerChannel = viewerChannelFor({ fileName: channelName, mime: version.mime });
       if (viewerChannel !== null) {
         return this.serveViewer(file, version, viewerChannel, actorId);
       }
@@ -109,7 +118,7 @@ export class PreviewReadService {
 
     const readyIndex = rows.findIndex((row) => row !== null && row.status === "ready");
     if (readyIndex >= 0) {
-      return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!, actorId);
+      return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!);
     }
 
     const failed = rows.filter((row): row is PreviewArtifactRow => row !== null && row.status === "failed");
@@ -166,13 +175,12 @@ export class PreviewReadService {
     return version;
   }
 
-  /** ready：短时签名 + 审计（先签名后审计 —— 地址没签发成功就不算一次「查看」）。 */
+  /** ready：短时签名（Push 283 起不写审计 —— 操作日志不记录预览动作）。 */
   private async serveReady(
     file: FileRow,
     version: FileVersionRow,
     key: PreviewArtifactKey,
     row: PreviewArtifactRow,
-    actorId: string,
   ): Promise<FilePreviewResponse> {
     if (row.objectKey === null) {
       // 库侧 CHECK（ck_preview_artifacts_ready_pair）保证 ready ⇔ object_key，这里只做不变量兜底。
@@ -182,15 +190,6 @@ export class PreviewReadService {
     const signed = await this.storage.signDownloadUrl({
       objectKey: row.objectKey,
       expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
-    });
-    await this.audit.record(this.database.db, {
-      actorId,
-      action: "preview",
-      objectType: "file",
-      objectId: file.id,
-      projectId: file.projectId,
-      summary: "预览文件：" + file.name + "（版本 v" + version.seq + " · 通道 " + key.target + "）",
-      metadata: { versionId: version.id, target: key.target, pipelineVersion: key.pipelineVersion },
     });
     return {
       fileId: file.id,
@@ -209,26 +208,16 @@ export class PreviewReadService {
   /**
    * 图片直签 ready（S6-前置 · D6）：原对象短时签名 —— 对齐产物通道 ready 的响应形状（契约不变）：
    * status=ready、target=image、url=短时签名（**不传 fileName** → 内联渲染，缩略图 / 浮层共用）；
-   * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；签发即写**一条** `action = preview`
-   * 审计（D2-07：先签名后审计，地址没签发成功就不算一次「查看」）。
+   * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；**不写审计**（Push 283 起操作日志
+   * 不记录预览动作 —— 原 D2-07「签发即写一条 preview」撤销）。
    */
   private async serveImageDirect(
     file: FileRow,
     version: FileVersionRow,
-    actorId: string,
   ): Promise<FilePreviewResponse> {
     const signed = await this.storage.signDownloadUrl({
       objectKey: version.objectKey,
       expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
-    });
-    await this.audit.record(this.database.db, {
-      actorId,
-      action: "preview",
-      objectType: "file",
-      objectId: file.id,
-      projectId: file.projectId,
-      summary: "预览文件：" + file.name + "（版本 v" + version.seq + " · 图片直签）",
-      metadata: { versionId: version.id, target: "image" },
     });
     return {
       fileId: file.id,
@@ -245,8 +234,8 @@ export class PreviewReadService {
   }
 
   /**
-   * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token）+ 写**一条** `action = preview`
-   * 审计（D2-07 语义不变 —— 审计记在签发时点，端点拉取是服务间行为不落用户审计）。与产物通道互斥：
+   * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token），**不写审计**（Push 283 起操作日志
+   * 不记录预览动作；受控端点拉取是服务间行为、本就不落用户审计）。与产物通道互斥：
    * `target` / `url` / `expiresAt` / `pipelineVersion` / `generatedAt` 全空（查看器不产产物、不占缓存三元组）；
    * `document.url` = 受控端点绝对 URL（C1：与校验侧同源生成、不信任 Host 头；不含任何存储凭证）；
    * `document.key` = 内容哈希（同内容同 key —— DocServer 侧会话 / 缓存复用）。
@@ -268,33 +257,26 @@ export class PreviewReadService {
       url: buildPreviewContentUrl(this.config.env.ONLYOFFICE_DOCSERVER_API_BASE_URL, file.id, version.id),
       fileType: channel.fileType,
       key: version.contentHash,
+      // Push 258 错层修正：权限段嵌 document（ONLYOFFICE 只认该位置；token 与响应体同源，逐字一致）。
+      permissions: { ...VIEWER_PERMISSIONS },
     };
     const editorConfig = {
       mode: "view" as const,
       lang: "zh-CN",
       user: { id: actorId, name: await this.displayNameOf(actorId) },
     };
-    // token 载荷 = 四段逐字签发（S8-2）+ iat / exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS，契约不含该字段）。
+    // token 载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发（S8-2 · Push 258 修订）
+    // + iat / exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS，契约不含该字段）。
     const token = signHs256Jwt(
       {
         documentType: channel.documentType,
         document,
         editorConfig,
-        permissions: { ...VIEWER_PERMISSIONS },
         iat: issuedAt,
         exp: issuedAt + this.config.env.ONLYOFFICE_JWT_TTL_SECONDS,
       },
       secret,
     );
-    await this.audit.record(this.database.db, {
-      actorId,
-      action: "preview",
-      objectType: "file",
-      objectId: file.id,
-      projectId: file.projectId,
-      summary: "预览文件：" + file.name + "（版本 v" + version.seq + " · ONLYOFFICE 查看器）",
-      metadata: { versionId: version.id, viewerKind: "onlyoffice", documentType: channel.documentType },
-    });
     return {
       fileId: file.id,
       versionId: version.id,
@@ -306,7 +288,6 @@ export class PreviewReadService {
         documentType: channel.documentType,
         document,
         editorConfig,
-        permissions: { ...VIEWER_PERMISSIONS },
         token,
       },
       url: null,

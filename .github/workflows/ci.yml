@@ -111,6 +111,27 @@ jobs:
       - name: Build
         working-directory: server
         run: npm run build
+      # 企微内核 stub 回放（M5-03-1 · 无网络 / 无 PG：本机 HTTP 桩模拟 gettoken / message/send，
+      # 覆盖失败分类 / token 重取 / 限速短路分支）。脚本语法面由上方 syntax gate 覆盖。
+      - name: WeCom kernel stub replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-1-wecom-stub-replay.mjs
+      # 智能机器人长连接 stub 回放（M5-03-2 · 无网络 / 无 PG：假 socket 驱动客户端，
+      # 覆盖订阅 / 推送帧 / 846607 双语义 / 限速短路 / 心跳重连 / stop 清理）。
+      - name: WeCom aibot stub replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-2-aibot-stub-replay.mjs
+      # 群播报接线段回放（M5-03-2 接线段 · 无网络 / 无 PG：假仓储 / 假长连接端子驱动消费链，
+      # 覆盖三分类 / 未绑定与停用 / 回调 ingest / dispatcher deferred 收敛）。
+      - name: WeCom group delivery replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-2-group-replay.mjs
+      # 应用消息 + 告警出口回放（M5-03-3 · 无网络 / 无 PG：假仓储 / 假 HTTP 客户端 / 假站内信驱动应用消费链，
+      # 覆盖三分类 / C5-04 降级 / 收件人不可投递 / 渠道路由防御 / 告警抑制与回退 · lan 线，Push 226）：
+      # 请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: WeCom app delivery replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-3-app-replay.mjs
       - name: Boundary rules
         working-directory: server
         run: npm run check:boundaries
@@ -200,6 +221,8 @@ jobs:
           PORT: "3011"
           LOG_LEVEL: warn
           DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+          # SSE 心跳周期收紧（M5-04-1 回放 S6 断言；生产缺省 25s —— S8-3 定案 §三-4）
+          NOTIFY_STREAM_HEARTBEAT_MS: "1500"
         run: |
           set -euo pipefail
           setsid nohup node dist/entry/api.js > api.log 2>&1 < /dev/null &
@@ -261,3 +284,17 @@ jobs:
         env:
           S7_4_WIRING_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
         run: node scripts/s7-4-automation-wiring-replay.mjs
+      # M5-04-1（SSE 实时推送：notification / unread 事件扇出 + 每用户连接上限 + 心跳 · S8-3 · lan 线，Push 211）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: M5-04-1 SSE replay (stream fan-out + per-user limit + heartbeat)
+        working-directory: server
+        env:
+          M5_04_1_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M5_04_1_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m5-04-1-sse-replay.mjs
+      # M5-04-2（稍后提醒：端点三件套 + 迁移 0045 + 触发循环 + SSE 联动 · S8-3 · lan 线，Push 212）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: M5-04-2 snooze replay (set / cancel / trigger / quiet deferral / handled + SSE)
+        working-directory: server
+        env:
+          M5_04_2_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M5_04_2_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m5-04-2-snooze-replay.mjs

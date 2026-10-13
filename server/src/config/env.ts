@@ -102,6 +102,8 @@ export const EnvSchema = z
     OUTBOX_ALERT_DEAD_RECENT_MAX: z.coerce.number().int().min(1).max(100000).default(1),
     /** 死信「近期」窗口（毫秒）。 */
     OUTBOX_ALERT_DEAD_WINDOW_MS: z.coerce.number().int().min(60000).max(86400000).default(3600000),
+    /** 管理员告警群 chatid（企微智能机器人；空 = 告警仅回退结构化日志 —— OUTBOX_ALERT_SINK 出口选择）。 */
+    OUTBOX_ALERT_WECOM_CHATID: z.string().default(""),
     /** done 行保留期（天；ADR-005 约 90 天）。 */
     OUTBOX_DONE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
     /** 单批删除条数（清理循环每批上限）。 */
@@ -128,6 +130,48 @@ export const EnvSchema = z
     NOTIFY_DAILY_LIMIT: z.coerce.number().int().min(0).max(1000).default(200),
     /** 次日投递窗口起点（分钟，Asia/Shanghai；480 = 08:00）：每日上限溢出 / 静默后补发的落点。 */
     NOTIFY_DAILY_WINDOW_START_MINUTE: z.coerce.number().int().min(0).max(1439).default(480),
+    // ---- SSE 实时流（S8-3 · M5-04-1：notification / unread 事件推送 · Push 211） ----
+    /** 每用户最大并发 SSE 连接数（超出拒新 = 429；定案 §三-4 缺省 3）。 */
+    NOTIFY_STREAM_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(100).default(3),
+    /** SSE 心跳注释行周期（毫秒；`: ping`，不入契约；定案 §三-4 缺省 25s）。 */
+    NOTIFY_STREAM_HEARTBEAT_MS: z.coerce.number().int().min(100).max(3600000).default(25000),
+    /** SSE 轮询兜底周期（毫秒；0 = 关 —— LISTEN/NOTIFY 为主案，本档弱实时仅补 unread 角标快照）。 */
+    NOTIFY_STREAM_POLL_MS: z.coerce.number().int().min(0).max(3600000).default(0),
+    // ---- 稍后提醒到点触发（S8-3 · M5-04-2：C5-05 设置 / 取消 / 记录读面 + 触发循环 · Push 212） ----
+    /** 稍后提醒到点扫描周期（毫秒）：worker 常驻循环按 `snooze_until` 到期重提醒（免打扰顺延、不消耗每日上限）。 */
+    NOTIFY_SNOOZE_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).max(3600000).default(60000),
+    /** 单轮稍后提醒扫描条数上限。 */
+    NOTIFY_SNOOZE_BATCH: z.coerce.number().int().min(1).max(500).default(50),
+    // ---- 企微通道（M5-03-1 · S8-1：客户端内核 · token 单飞 / 限速桶 / 错误码分类） ----
+    /** 企微 API 基址：联调 / stub 回放可替换；生产 = https://qyapi.weixin.qq.com。 */
+    WECOM_BASE_URL: z.string().min(1).default("https://qyapi.weixin.qq.com"),
+    /** 自建应用 CorpID / AgentId / Secret（Secret 属凭据，只走密钥渠道，真实值不落仓库；生产必填校验随 M5-03-3 接线启用）。 */
+    WECOM_CORP_ID: z.string().default(""),
+    WECOM_AGENT_ID: z.coerce.number().int().min(0).default(0),
+    WECOM_APP_SECRET: z.string().default(""),
+    /** 单次 HTTP 超时（毫秒）：gettoken / message/send 共用。 */
+    WECOM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(10000),
+    /** token 提前刷新余量（毫秒）：过期前多久主动重取（token_invalid 另走失效重取一次）。 */
+    WECOM_TOKEN_SAFETY_MS: z.coerce.number().int().min(0).max(3600000).default(300000),
+    /** 自建应用限速窗口（毫秒）+ 窗口内上限（0 = 未启用；待 A5 实测回填）。 */
+    WECOM_RATE_WINDOW_MS: z.coerce.number().int().min(1000).max(3600000).default(60000),
+    WECOM_RATE_LIMIT_APP: z.coerce.number().int().min(0).max(1000000).default(0),
+    // ---- 企微智能机器人长连接（M5-03-2 · P5 定案：群通道唯一发送面 · webhook 面已退役） ----
+    /** 长连接地址（联调 / stub 回放可替换；生产 = wss://openws.work.weixin.qq.com）。 */
+    WECOM_BOT_WS_URL: z.string().min(1).default("wss://openws.work.weixin.qq.com"),
+    /** 智能机器人 BotID / Secret（Secret 属凭据，只走密钥渠道；生产必填校验随接线刀启用）。 */
+    WECOM_BOT_ID: z.string().default(""),
+    WECOM_BOT_SECRET: z.string().default(""),
+    /** 心跳周期（毫秒）：连续 2 个周期无 pong → 判失联重连。 */
+    WECOM_BOT_PING_INTERVAL_MS: z.coerce.number().int().min(1000).max(600000).default(30000),
+    /** 单帧回执超时（毫秒）：订阅 / 推送共用。 */
+    WECOM_BOT_ACK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(10000),
+    /** 重连退避下限 / 上限（毫秒）：指数退避封顶。 */
+    WECOM_BOT_RECONNECT_MIN_MS: z.coerce.number().int().min(100).max(60000).default(1000),
+    WECOM_BOT_RECONNECT_MAX_MS: z.coerce.number().int().min(1000).max(600000).default(60000),
+    /** 按会话限速（Spike 实测口径：30 条/分钟 + 1000 条/小时；0 = 未启用）。 */
+    WECOM_BOT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(1000000).default(30),
+    WECOM_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(0).max(10000000).default(1000),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),

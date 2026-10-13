@@ -9,6 +9,8 @@ import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
+import { Toast } from "./components/Toast";
+import { useFocusTrap } from "./components/useFocusTrap";
 import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
@@ -17,7 +19,7 @@ import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
-import { projectManagerText } from "./types";
+import { PROJECT_STATUS_VALUES, projectManagerText, projectStatusText } from "./types";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
@@ -96,6 +98,10 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   // 常用筛选（Push 138；Push 169 起按账号存服务端）：组合由父层持有（同账号换设备可见），点一下套用到当前筛选
   // 「哪组正在生效」由条件比较派生，不另存状态；保存 / 删除失败的提示条见 savedFilterError
   const [savedFilterError, setSavedFilterError] = useState<string | null>(null);
+  // 待确认删除的常用筛选（Push 264 追订）：第一下只开底部确认条（与删除项目 / 模板同款非阻断），第二下才真删
+  const [pendingDeleteFilter, setPendingDeleteFilter] = useState<SavedFilter | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到胶囊行的删除按钮。 */
+  const deleteFilterConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteFilter !== null);
   // 无建项目权限时点「新建项目」的提示（Push 173；与 savedFilterError 同款琥珀提示条）
   const [createHint, setCreateHint] = useState<string | null>(null);
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
@@ -165,11 +171,12 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       const current = requestRef.current;
       setLoading(true);
       try {
-        const [page, regionFacets, typeFacets, managerFacets] = await Promise.all([
+        const [page, regionFacets, typeFacets, managerFacets, statusFacets] = await Promise.all([
           fetchProjectList(current),
           fetchProjectFacets(current, "regions"),
           fetchProjectFacets(current, "projectTypes"),
           fetchProjectFacets(current, "managerIds"),
+          fetchProjectFacets(current, "statuses"),
         ]);
         if (cancelled) {
           return;
@@ -182,7 +189,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           projectType: typeFacets.projectType,
           managerId: managerFacets.managerId,
           stageKey: regionFacets.stageKey,
-          status: regionFacets.status,
+          status: statusFacets.status,
         });
         setLoadError(null);
       } catch (error: unknown) {
@@ -225,6 +232,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               regions: filter.regions,
               projectTypes: filter.projectTypes,
               managerIds: filter.managerIds,
+              statuses: [],
               timeFrom: filter.timeFrom,
               timeTo: filter.timeTo,
               q: "",
@@ -278,6 +286,16 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       ),
     [activeFilters.managerIds, directory, facets.managerId],
   );
+  const statusOptions = useMemo(
+    () =>
+      buildOptions(
+        facets.status,
+        activeFilters.statuses,
+        (status) => projectStatusText(status),
+        PROJECT_STATUS_VALUES.slice(),
+      ),
+    [activeFilters.statuses, facets.status],
+  );
   const newestDay = useMemo(
     () => items.reduce((latest, project) => (project.updatedAt > latest ? project.updatedAt : latest), "").slice(0, 10),
     [items],
@@ -285,7 +303,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const managerChoices = useMemo(() => directoryMemberOptions(directory), [directory]);
 
   const resetFilters = () => {
-    updateFilters({ regions: [], projectTypes: [], managerIds: [], timeFrom: null, timeTo: null });
+    updateFilters({ regions: [], projectTypes: [], managerIds: [], statuses: [], timeFrom: null, timeTo: null });
   };
   // 正在生效的常用筛选：条件与某一组等价即高亮（排序 / 关键字不影响判定）
   const appliedSavedFilterId = useMemo(() => {
@@ -300,6 +318,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       regions: filter.regions.slice(),
       projectTypes: filter.projectTypes.slice(),
       managerIds: filter.managerIds.slice(),
+      // 常用筛选不含项目状态：应用组合时把状态筛选归零，避免「高亮的组合 ≠ 当前视图」
+      statuses: [],
       timeFrom: filter.timeFrom,
       timeTo: filter.timeTo,
     });
@@ -310,6 +330,19 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   };
   const deleteSavedFilter = (id: string) => {
     void persistSavedFilters(savedFilters.filter((item) => item.id !== id));
+  };
+  /** 常用筛选删除第一下：只挂起（不落库），等底部确认条的第二下（业务口径 2026-10-10「删除常用筛选无二次确认」）。 */
+  const requestDeleteSavedFilter = (filter: SavedFilter) => {
+    setPendingDeleteFilter(filter);
+  };
+  /** 底部确认条的第二下：真删（整体替换 PATCH —— 失败仍走 savedFilterError 提示条，不静默吞）。 */
+  const confirmDeleteSavedFilter = () => {
+    const filter = pendingDeleteFilter;
+    if (filter === null) {
+      return;
+    }
+    setPendingDeleteFilter(null);
+    deleteSavedFilter(filter.id);
   };
   const saveSavedFilter = ({ id, name, criteria }: { id: string | null; name: string; criteria: FilterCriteria }) => {
     // 保存前按当前字典 / 计数兜底：丢弃已不存在的地区 / 类型 / 经理（与 URL 参数归一化同一收敛口径）
@@ -333,6 +366,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       regions: normalized.regions,
       projectTypes: normalized.projectTypes,
       managerIds: normalized.managerIds,
+      statuses: [],
       timeFrom: normalized.timeFrom,
       timeTo: normalized.timeTo,
     });
@@ -348,16 +382,18 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         regions={regionOptions}
         types={typeOptions}
         managers={managerOptions}
+        statuses={statusOptions}
         savedFilterCounts={savedCounts}
         newestDay={newestDay}
         selectedRegions={activeFilters.regions}
         selectedManagerIds={activeFilters.managerIds}
         selectedTypes={activeFilters.projectTypes}
+        selectedStatuses={activeFilters.statuses}
         dateRange={dateRange}
         savedFilters={savedFilters}
         appliedSavedFilterId={appliedSavedFilterId}
         onApplySavedFilter={applySavedFilter}
-        onDeleteSavedFilter={deleteSavedFilter}
+        onRequestDeleteSavedFilter={requestDeleteSavedFilter}
         onSaveSavedFilter={saveSavedFilter}
         onToggleRegion={(region) => {
           updateFilters({ regions: toggleValue(activeFilters.regions, region) });
@@ -378,6 +414,9 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         }}
         onToggleType={(projectType) => {
           updateFilters({ projectTypes: toggleValue(activeFilters.projectTypes, projectType) });
+        }}
+        onToggleStatus={(status) => {
+          updateFilters({ statuses: toggleValue(activeFilters.statuses, status) });
         }}
         onDateRangeChange={(range) => {
           updateFilters({
@@ -500,33 +539,23 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         )}
 
         {createHint === null ? null : (
-          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <span>{createHint}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setCreateHint(null);
-              }}
-              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-            >
-              关闭
-            </button>
-          </div>
+          <Toast
+            kind="info"
+            text={createHint}
+            onClose={() => {
+              setCreateHint(null);
+            }}
+          />
         )}
 
         {savedFilterError === null ? null : (
-          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <span>{savedFilterError}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setSavedFilterError(null);
-              }}
-              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-            >
-              关闭
-            </button>
-          </div>
+          <Toast
+            kind="error"
+            text={savedFilterError}
+            onClose={() => {
+              setSavedFilterError(null);
+            }}
+          />
         )}
 
         {loading && items.length === 0 ? (
@@ -586,6 +615,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 code={project.code}
                 description={project.description}
                 typeLabel={dictLabel(dicts, "projectType", project.projectType)}
+                status={project.status}
+                statusText={projectStatusText(project.status)}
                 accentColor={typeAccent(dicts, project.projectType).color}
                 accentText={typeAccent(dicts, project.projectType).text}
                 managerNames={projectManagerText(project)}
@@ -634,10 +665,46 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             const message = await onCreate(draft);
             if (message === null) {
               setIsCreateOpen(false);
+              return { kind: "ok" };
             }
-            return message;
+            return { kind: "error", message: message };
           }}
         />
+      )}
+
+      {/* 常用筛选删除的第二下确认条（Push 264 追订 · 业务口径「删除常用筛选无二次确认」）：与「删除项目 / 模板」同款
+          非阻断固定底栏 —— 第一下只开口，第二下「删除」才落库。 */}
+      {pendingDeleteFilter === null ? null : (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+          <div
+            ref={deleteFilterConfirmTrapRef}
+            role="dialog"
+            aria-label="确认删除常用筛选"
+            data-saved-filter-delete-confirm=""
+            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+          >
+            <span>
+              删除常用筛选「<span className="font-semibold">{pendingDeleteFilter.name}</span>」？只删这一组保存的条件，项目数据不受影响。
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDeleteFilter(null);
+              }}
+              className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              data-saved-filter-delete=""
+              onClick={confirmDeleteSavedFilter}
+              className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+            >
+              删除
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -223,6 +223,19 @@ describe("FileDownloadService.getDownloadUrl（M4-05f 下载切片）", () => {
     expect(result.url).toContain(OBJECT_KEY_DOCX);
   });
 
+  it("（Push 256）变更更名后：各版本按版本对象键扩展名落盘 —— 当前版本 .pptx 不变、历史版本 .xls 主名取当前名 + 旧扩展名", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "回放-变更后.pptx" });
+    h.repo.versions.set(VERSION, makeVersionRow({ objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v2/" + HASH + ".pptx", mime: MIME_DOCX }));
+    h.repo.versions.set(HISTORY, makeVersionRow({ id: HISTORY, seq: 1, objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH_HISTORY + ".xls", contentHash: HASH_HISTORY }));
+
+    const current = await h.service.getDownloadUrl(FILE, VERSION, ACTOR);
+    expect(current.fileName).toBe("回放-变更后.pptx");
+
+    const history = await h.service.getDownloadUrl(FILE, HISTORY, ACTOR);
+    expect(history.fileName).toBe("回放-变更后.xls");
+  });
+
   it("先签名后审计：签名失败上抛且不写审计（地址没签发就不算一次下载）", async () => {
     const h = makeService();
     h.storage.fail = true;

@@ -1,18 +1,27 @@
 /**
- * notifications / notify_prefs（0040 · S7-4 · j1 / M5-04 首刀 · lan 线）。
- * 表口径见 database/migrations/0040_notify_delivery.sql：一行 = 一条投递事件（source_dedupe_key 唯一 =
- * 消费幂等）；合并子行（merged_into_id 非空）仅库内留档、不进收件箱；deliver_at / delivered_at 承载
- * 免打扰次日补发与每日上限排队的延迟投递；notify_prefs 一人一行、可空列 = 继承 env 缺省。
+ * notifications / notify_prefs（0040 · S7-4 · j1 / M5-04 首刀 · lan 线）+ notification_snoozes /
+ * notifications.snooze_until（0045 · S8-3 / M5-04-2 · C5-05 稍后提醒）。
+ * 表口径见 database/migrations/0040_notify_delivery.sql 与 0045_notification_snooze.sql：一行 = 一条投递事件
+ * （source_dedupe_key 唯一 = 消费幂等）；合并子行（merged_into_id 非空）仅库内留档、不进收件箱；
+ * deliver_at / delivered_at 承载免打扰次日补发与每日上限排队的延迟投递；snooze_until = 当前未触发的稍后
+ * 提醒时刻（null = 未设置 / 已触发 / 已取消）；notification_snoozes 一次设置一条（触发 / 取消回填时刻）；
+ * notify_prefs 一人一行、可空列 = 继承 env 缺省。
+ *
+ * 0046 · M5-03-2 追加：wecom_groups（项目群绑定 · P5 智能机器人 + chatid）/ notify_deliveries
+ * （外部渠道投递留痕 · C2-07 + C5-03）/ notify_rate_counters（固定窗口限速计数 · C2-10）；
+ * 表口径见 database/migrations/0046_wecom_group_notify_delivery.sql。
  */
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
   bigserial,
+  boolean,
   check,
   index,
   integer,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -20,6 +29,8 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
 import { NOTIFICATION_STATUS_KEYS, NOTIFICATION_TYPE_KEYS, sqlValueList } from "./literals.js";
+import { outboxEvents } from "./platform.js";
+import { projects } from "./projects.js";
 
 /** 站内信（C5-01 / C5-03）：收件箱主行 + 合并子行（全量留档）。 */
 export const notifications = pgTable(
@@ -53,6 +64,8 @@ export const notifications = pgTable(
     deliverAt: timestamp("deliver_at", { withTimezone: true }).notNull().defaultNow(),
     /** 实际投递时刻；null = 尚未投递（子行恒为 null）。 */
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /** 当前未触发的稍后提醒时刻（C5-05）：null = 未设置 / 已触发 / 已取消；触发不改写 delivered_at。 */
+    snoozeUntil: timestamp("snooze_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -69,6 +82,9 @@ export const notifications = pgTable(
     index("ix_notifications_daily")
       .on(table.recipientId, table.deliveredAt)
       .where(sql`merged_into_id is null and delivered_at is not null`),
+    index("ix_notifications_snooze")
+      .on(table.snoozeUntil)
+      .where(sql`merged_into_id is null and snooze_until is not null`),
     check("ck_notifications_type", sql`${table.type} in ${sql.raw(sqlValueList(NOTIFICATION_TYPE_KEYS))}`),
     check("ck_notifications_status", sql`${table.status} in ${sql.raw(sqlValueList(NOTIFICATION_STATUS_KEYS))}`),
     check("ck_notifications_title", sql`char_length(btrim(${table.title})) between 1 and 200`),
@@ -77,6 +93,29 @@ export const notifications = pgTable(
     check("ck_notifications_merged_count", sql`${table.mergedCount} >= 1`),
     check("ck_notifications_merged_into", sql`${table.mergedIntoId} is null or ${table.mergedIntoId} <> ${table.id}`),
     check("ck_notifications_delivery", sql`${table.mergedIntoId} is null or ${table.deliveredAt} is null`),
+  ],
+);
+
+/** 稍后提醒记录（C5-05「设置与触发记录可查」）：一次设置一条；触发 / 取消（含覆盖）回填对应时刻、二者互斥。 */
+export const notificationSnoozes = pgTable(
+  "notification_snoozes",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    notificationId: bigint("notification_id", { mode: "number" })
+      .notNull()
+      .references(() => notifications.id, { onDelete: "cascade" }),
+    /** 设置时刻（进读面 setAt）。 */
+    setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 设定时的稍后提醒时刻（读面原样回显；触发可能晚于本时刻 —— 免打扰顺延）。 */
+    snoozeUntil: timestamp("snooze_until", { withTimezone: true }).notNull(),
+    /** 触发时刻；null = 未触发（或已取消）。 */
+    triggeredAt: timestamp("triggered_at", { withTimezone: true }),
+    /** 取消时刻（重复设置 = 覆盖旧记录 / 手动取消）；null = 未取消。 */
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("ix_notification_snoozes_notification").on(table.notificationId, table.id.desc()),
+    check("ck_notification_snoozes_exclusive", sql`${table.triggeredAt} is null or ${table.cancelledAt} is null`),
   ],
 );
 
@@ -109,5 +148,93 @@ export const notifyPrefs = pgTable(
       "ck_notify_prefs_merge_window",
       sql`${table.mergeWindowMs} is null or (${table.mergeWindowMs} >= 0 and ${table.mergeWindowMs} <= 86400000)`,
     ),
+  ],
+);
+
+/**
+ * 项目群绑定（M5-03-2 · P5 定案：智能机器人 + chatid · 0046）：一个项目最多一个群（project_id 唯一）、
+ * 一个群最多绑一个项目（chatid 唯一，防重复播报 —— 换绑 = 先解绑再绑）；enabled = 绑定启用态
+ * （群失效 / 人工暂停置 false，投递层跳过并留痕）；activated_at = 会话激活态（群内有人给机器人发过消息 ——
+ * 主动推送前置；换绑（chatid 变更）视为新会话、重置 null）。
+ */
+export const wecomGroups = pgTable(
+  "wecom_groups",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** 企微会话 id（群消息回调 body.chatid 自动落库；契约同形正则）。 */
+    chatid: text("chatid").notNull(),
+    /** 群名 / 备注（维护用；可空）。 */
+    name: text("name"),
+    /** 绑定启用态（false = 暂停播报 / 群失效标记；投递层跳过）。 */
+    enabled: boolean("enabled").notNull().default(true),
+    /** 会话激活时刻（null = 未激活；主动推送前置）。 */
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_wecom_groups_project").on(table.projectId),
+    uniqueIndex("uq_wecom_groups_chatid").on(table.chatid),
+    check("ck_wecom_groups_chatid", sql`${table.chatid} ~ '^[A-Za-z0-9_-]{8,128}$'`),
+    check("ck_wecom_groups_name", sql`${table.name} is null or char_length(btrim(${table.name})) between 1 and 64`),
+  ],
+);
+
+/**
+ * 外部渠道投递留痕（C2-07 / C5-03 共用底座 · 0046）：每次尝试一行；state = 处置三分类映射 ——
+ * sent（API 受理成功）/ failed（retryable，将退避重试）/ deferred（rate_limited，延期重排、不消耗重试次数）/
+ * dead（permanent 或重试到顶）；outbox_id 指向来源事件（outbox 行清理后置 null，留档不回删）。
+ */
+export const notifyDeliveries = pgTable(
+  "notify_deliveries",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    outboxId: bigint("outbox_id", { mode: "number" }).references(() => outboxEvents.id, { onDelete: "set null" }),
+    /** 投递渠道（NOTIFY_CHANNELS 的企微 / 邮件交集；inbox 不落本表 —— 收件箱行即留档）。 */
+    channel: text("channel").notNull(),
+    /** 投递目标全文（wecom_app = userid / wecom_group = chatid；读面掩码，库内全文供排障）。 */
+    target: text("target").notNull(),
+    /** 本次尝试状态（sent / failed / deferred / dead —— 见 0046 迁移头注）。 */
+    state: text("state").notNull(),
+    /** 本次为第几次发送尝试（deferred = 被延期的计划尝试序号、未发起 HTTP）。 */
+    attempts: integer("attempts").notNull().default(0),
+    /** 失败 / 延期描述（掩码后，不含凭据；sent 恒 null）。 */
+    error: text("error"),
+    /** API 受理成功时刻（sent 恒非空，其余恒 null）。 */
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("ix_notify_deliveries_outbox").on(table.outboxId, table.id.desc()),
+    index("ix_notify_deliveries_recent").on(table.channel, table.createdAt.desc()),
+    check("ck_notify_deliveries_channel", sql`${table.channel} in ('wecom_app', 'wecom_group', 'email')`),
+    check("ck_notify_deliveries_state", sql`${table.state} in ('sent', 'failed', 'deferred', 'dead')`),
+    check("ck_notify_deliveries_attempts", sql`${table.attempts} >= 0`),
+    check("ck_notify_deliveries_sent", sql`(${table.state} = 'sent') = (${table.sentAt} is not null)`),
+    check("ck_notify_deliveries_error", sql`(${table.state} = 'sent') = (${table.error} is null)`),
+  ],
+);
+
+/**
+ * 固定窗口限速计数（C2-10 按队列限速发送 · 0046）：bucket 由调用方构造（含渠道桶 id + 窗口长度，
+ * 避免 1 分钟 / 1 小时窗口在同起点互污）；消费 = 单语句 upsert（`on conflict (bucket, window_start)
+ * do update set count = count + 1 returning count`，先增量后判定、跨进程并发安全）；
+ * 过期窗口行由运维 / 后续清理作业按 updated_at 裁剪。
+ */
+export const notifyRateCounters = pgTable(
+  "notify_rate_counters",
+  {
+    bucket: text("bucket").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "notify_rate_counters_pkey", columns: [table.bucket, table.windowStart] }),
+    index("ix_notify_rate_counters_updated").on(table.updatedAt),
+    check("ck_notify_rate_counters_count", sql`${table.count} >= 0`),
   ],
 );

@@ -12,6 +12,7 @@ import {
   TaskDeleteResponseSchema,
   TaskDetailSchema,
   TaskFinalizeBodySchema,
+  TaskUnfinalizeBodySchema,
   TaskListItemSchema,
   TaskListQuerySchema,
   TaskListResponseSchema,
@@ -34,6 +35,7 @@ type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
 type TaskCompleteBody = z.infer<typeof TaskCompleteBodySchema>;
 type TaskFinalizeBody = z.infer<typeof TaskFinalizeBodySchema>;
+type TaskUnfinalizeBody = z.infer<typeof TaskUnfinalizeBodySchema>;
 type TaskBatchBody = z.infer<typeof TaskBatchBodySchema>;
 type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchema>;
 
@@ -190,6 +192,22 @@ export class TaskController {
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
     return this.tasks.finalize(id, taskId, body, actorId);
+  }
+
+  /**
+   * 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：抽屉「已」开关再次点击 → 二次确认后调用；
+   * 已定档 → 清位重新开放修改（留痕「取消定档」，文件修改仍走变更）；未定档 → 幂等原样返回。
+   */
+  @Post(":id/tasks/:taskId/unfinalize")
+  @HttpCode(200)
+  @RequirePermission("task.update")
+  unfinalize(
+    @Param("id", uuidParam) id: string,
+    @Param("taskId", uuidParam) taskId: string,
+    @Body(new ZodValidationPipe(TaskUnfinalizeBodySchema)) body: TaskUnfinalizeBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<z.infer<typeof TaskSchema>> {
+    return this.tasks.unfinalize(id, taskId, body, actorId);
   }
 
   /** 更新四格进度（联动状态与完成日期；progress<1 清完成日期 —— 清除的唯一方式）。 */

@@ -6,11 +6,14 @@ import { DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../commo
  * 表口径见 database/migrations/0013_admin_dict_audit.sql 与技术设计v0.3 §3.2。
  */
 
-/** 审计动作（audit_logs.action）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 归档 / 预览 / 越权拒绝（C7-03；preview 随 M4-05 预览管道；archive 随 M7-04 归档）。 */
+/**
+ * 审计动作（audit_logs.action）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 归档 / 预览 / 越权拒绝（C7-03；archive 随 M7-04 归档）。
+ * preview（预览）自 2026-10-12 起**不再写入**（Push 283：操作日志不记录预览动作）—— 值保留兼容历史行回读 / 筛选。
+ */
 export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "archive", "preview", "download", "deny"] as const;
 export const AuditActionSchema = z.enum(AUDIT_ACTIONS).openapi("AuditAction", {
   description:
-    "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（D2-07：预览计入查看 / 下载审计；对象类型仍为 file，经 metadata 记 versionId / target / pipelineVersion） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝",
+    "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（**已停用 · 2026-10-12**：操作日志不再记录预览动作 —— 值保留供历史行回读 / 筛选，服务端不再产生新行） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝",
 });
 
 /** 审计对象类型（audit_logs.object_type）：覆盖 h7 全部写入点 + h8 工作日历 + M4 file（文件与上传会话生命周期 / 预览）+ 变更记录 + M6 日报 / 问题 + M3-05 余任务节点库。 */
@@ -35,7 +38,7 @@ export const AUDIT_OBJECT_TYPES = [
 ] as const;
 export const AuditObjectTypeSchema = z.enum(AUDIT_OBJECT_TYPES).openapi("AuditObjectType", {
   description:
-    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位，预览事件 action = preview 并记 metadata.versionId / target / pipelineVersion —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）",
+    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）",
 });
 
 /** 审计结果：成功 / 越权拒绝（C7-03，管理员可按 result=denied 筛出）/ 失败（门禁拒绝等）。 */
@@ -79,21 +82,25 @@ export const AuditLogSchema = z
 
 export const AuditLogListQuerySchema = z
   .object({
-    objectType: AuditObjectTypeSchema.optional(),
+    objectType: z.string().optional().openapi({ description: "对象类型（多值逗号分隔，取值见 AuditObjectType）" }),
     objectId: z.string().min(1).max(200).optional().openapi({
       description: "对象 id（与 objectType 组合 = 按对象检索 —— h7 验收项②）",
     }),
-    actorId: UuidSchema.optional().openapi({ description: "操作人（按人检索 —— h7 验收项②）" }),
-    action: AuditActionSchema.optional(),
-    result: AuditResultSchema.optional().openapi({ description: "result=denied 即越权尝试（C7-03）" }),
-    projectId: UuidSchema.optional(),
+    actorId: z.string().optional().openapi({ description: "操作人 users.id（多值逗号分隔，按人检索 —— h7 验收项②）" }),
+    action: z.string().optional().openapi({ description: "审计动作（多值逗号分隔，取值见 AuditAction）" }),
+    result: z.string().optional().openapi({ description: "审计结果（多值逗号分隔，取值见 AuditResult）；result=denied 即越权尝试（C7-03）" }),
+    projectId: z.string().optional().openapi({ description: "所属项目（多值逗号分隔）" }),
+    q: z.string().max(200).optional().openapi({
+      description: "关键字：操作内容（摘要 / 字段级修改明细）或操作人姓名快照（包含即命中，大小写不敏感）",
+    }),
     from: DateTimeSchema.optional().openapi({ description: "时间下界（含，ISO8601）" }),
     to: DateTimeSchema.optional().openapi({ description: "时间上界（含，ISO8601）" }),
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
   })
   .openapi("AuditLogListQuery", {
-    description: "审计检索（C7-04）：按对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间过滤；固定 occurredAt 降序",
+    description:
+      "审计检索（C7-04）：按关键字 / 对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间过滤；多个筛选值以逗号分隔（去重保序，2026-10-09 追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」），逐值白名单校验、非法值 400；固定 occurredAt 降序",
   });
 
 export const AuditLogListResponseSchema = paginated(AuditLogSchema).openapi("AuditLogListResponse");

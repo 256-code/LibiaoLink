@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { DailySubMenu } from "./components/DailySubMenu";
+import { ExportOverviewButton } from "./components/ExportOverviewButton";
 import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
+import { Toast } from "./components/Toast";
+import { useFocusTrap } from "./components/useFocusTrap";
 import { TableScrollbar } from "./components/TableScrollbar";
-import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
+import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, taskPatchBody, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
 import type { TaskEditSubmit } from "./components/TaskDrawer";
 import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
@@ -16,6 +19,8 @@ import { memberNameOf, type Member } from "./data/members";
 import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
+import { exportProjectOverviewPdf } from "./exportOverviewPdf";
+import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
@@ -30,6 +35,7 @@ import {
   statusWriteValue,
   taskWriteMessage,
   toUiTask,
+  unfinalizeTask,
   updateTask,
   updateTaskProgress,
   type ApiProjectSummary,
@@ -37,7 +43,6 @@ import {
   type ApiTaskListItem,
   type TaskCreateInput,
   createTasksFromTemplate,
-  type TaskUpdateInput,
 } from "./taskApi";
 
 /** 阶段名（不含「项目总览」汇总视图）。 */
@@ -126,6 +131,10 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [dataVersion, setDataVersion] = useState(0);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+  /** 待确认删除的任务行（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：第一下只开底部确认条，第二下才真删。 */
+  const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
+  /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行内删除按钮。 */
+  const deleteTaskConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTaskId !== null);
 
   /**
    * 「日报及问题」子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
@@ -409,6 +418,24 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       }
     })();
   };
+  /**
+   * 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：已定档开关再次点击 → 二次确认 →
+   * 清位重开（version+1、留痕「取消定档」；文件级定档不回退，文件修改仍走变更）；未定档 → 服务端幂等原样返回。
+   */
+  const handleUnfinalizeTask = (taskId: string) => {
+    const row = rowOf(taskId);
+    if (projectId === null || row === undefined) {
+      return;
+    }
+    void (async () => {
+      try {
+        replaceRow(await unfinalizeTask(projectId, taskId, row.version));
+        await afterWrite();
+      } catch (error) {
+        reportWriteError(error);
+      }
+    })();
+  };
   const handleSetActualEnd = (taskId: string, iso: string) => {
     const row = rowOf(taskId);
     if (projectId === null || row === undefined) {
@@ -431,40 +458,8 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (projectId === null || row === undefined) {
       return;
     }
-    const body: TaskUpdateInput = { version: row.version };
-    if (patch.title !== undefined) {
-      body.title = patch.title;
-    }
-    // 任务描述（英文）：空串 = 清空（契约 nullable），与日期空串口径一致
-    if (patch.titleEn !== undefined) {
-      body.titleEn = patch.titleEn === "" ? null : patch.titleEn;
-    }
-    if (patch.ownerIds !== undefined) {
-      body.ownerIds = patch.ownerIds;
-    }
-    // 日期空串 = 未填（契约 nullable）：清空走显式 null
-    if (patch.startDate !== undefined) {
-      body.plannedStart = patch.startDate === "" ? null : patch.startDate;
-    }
-    if (patch.dueDate !== undefined) {
-      body.plannedEnd = patch.dueDate === "" ? null : patch.dueDate;
-    }
-    if (patch.days !== undefined) {
-      body.estimatedDays = patch.days;
-    }
-    if (patch.headcount !== undefined) {
-      body.headcount = patch.headcount;
-    }
-    if (patch.priority !== undefined) {
-      body.priority = patch.priority;
-    }
-    // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：常规编辑开放，传数组 = 整体替换
-    if (patch.deliverableTypes !== undefined) {
-      body.deliverableTypes = patch.deliverableTypes;
-    }
-    if (patch.note !== undefined) {
-      body.note = patch.note;
-    }
+    // patch → body 的字段口径（空串 = 清空等）抽到 TaskBoard.taskPatchBody（Push 279）：与工作台行内编辑同源
+    const body = taskPatchBody(row.version, patch);
     void (async () => {
       try {
         replaceRow(await updateTask(projectId, taskId, body));
@@ -511,10 +506,25 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     onChangeManagers?.(project.id, nextManagerIds);
   };
 
-  /** 任务表行内删除（Push 141 / A25）：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
-  const handleDeleteTask = (taskId: string) => {
+  /** 任务表行内删除第一下（Push 141 / A25；Push 264 追订加二次确认 · 业务口径「任务行内删除无二次确认」）：只挂起这一行，第二下在底部确认条上。
+   *  已定档任务的删除服务端一律 409（assertTaskMutable 覆盖 remove）—— 照定档行「点击即弹提示」的口径，不进入确认条。 */
+  const requestDeleteTask = (taskId: string) => {
     const row = rowOf(taskId);
-    if (projectId === null || row === undefined) {
+    if (row === undefined) {
+      return;
+    }
+    if (row.finalizedAt !== null) {
+      setToolError(taskWriteMessage({ code: "TASK_FINALIZED", message: "" }));
+      return;
+    }
+    setPendingDeleteTaskId(taskId);
+  };
+  /** 底部确认条的第二下：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
+  const confirmDeleteTask = () => {
+    const taskId = pendingDeleteTaskId;
+    const row = taskId === null ? undefined : rowOf(taskId);
+    setPendingDeleteTaskId(null);
+    if (projectId === null || taskId === null || row === undefined) {
       return;
     }
     void (async () => {
@@ -796,6 +806,32 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     void persistColumns(next);
   };
 
+  // 导出等待期（导出前先补「项目进展描述」列英译，§6.16 ⑯）：按钮转「生成中…」并防重复点击。
+  const [exportingOverview, setExportingOverview] = useState(false);
+  /** 译文进度（§6.16 ⑳ 导出等待浮层）：done / total；null = 翻译尚未开始（数据准备中，浮层走扫描态）。 */
+  const [exportTranslateProgress, setExportTranslateProgress] = useState<ExportTranslateProgress | null>(null);
+
+  /**
+   * 导出项目总览（PDF · 业务口径 2026-10-09 · §6.16）：把页面当前的 project / tasks / summary 交给报告模块
+   * （exportOverviewPdf.ts）拼 A4 横版报告，唤起系统打印窗口由用户选「另存为 PDF」；
+   * 2026-10-10 起导出前经翻译通道补「项目进展描述」列英文小字（translateApi.ts；通道不通静默降级）；导出不改数据。
+   */
+  const exportOverview = async (): Promise<void> => {
+    if (project === null || exportingOverview) {
+      return;
+    }
+    setExportingOverview(true);
+    setExportTranslateProgress(null);
+    try {
+      await exportProjectOverviewPdf({ project, tasks, summary }, (done, total) => {
+        setExportTranslateProgress({ done, total });
+      });
+    } finally {
+      setExportingOverview(false);
+      setExportTranslateProgress(null);
+    }
+  };
+
   if (project === null) {
     return (
       <div className="min-h-screen">
@@ -809,6 +845,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       </div>
     );
   }
+
+  /** 底部确认条上的那一行（从最新任务列表里取标题 / 版本；任务已被别处删除时自动为 undefined = 不显示确认条）。 */
+  const pendingDeleteTask = pendingDeleteTaskId === null ? undefined : rowOf(pendingDeleteTaskId);
 
   return (
     <div className="min-h-screen">
@@ -879,9 +918,16 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             {/* 标签栏右侧工具区：醒目模式（Push 134）项目总览 / 日报及问题两处都有 —— 业务口径 2026-09-28
                 「增加项目总览 同款醒目模式在问题追踪里面」+「醒目模式放在标签导航栏的最右侧」：日报及问题视图
                 没有列显隐按钮，开关落在标签栏最右侧；两处同一枚开关、同一个账号偏好（Push 171 起按账号存服务端）。
-                列显隐（ColumnPicker）仍按原口径只在项目总览出现。 */}
+                列显隐（ColumnPicker）仍按原口径只在项目总览出现。
+                2026-10-09 起工具区最左侧再补一枚「导出 PDF」（§6.16）：只在项目总览出现，导出的是这块视图的数据。 */}
             {activeView === "项目总览" || activeView === "日报及问题" ? (
               <div className="flex shrink-0 items-center gap-4">
+                {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：排在「醒目模式 / 筛选」左侧（两枚既有按钮位置不动）；
+                    数据 = 页面已取到的 project / tasks / summary，生成 A4 横版报告后在系统打印窗口里另存为 PDF；
+                    任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}
+                {activeView === "项目总览" ? (
+                  <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={() => { void exportOverview(); }} />
+                ) : null}
                 <FocusModeToggle checked={focus} onToggle={(checked) => { void handleToggleFocusMode(checked); }} />
                 {activeView === "项目总览" ? (
                   <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
@@ -915,18 +961,13 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         </div>
 
         {toolError === null ? null : (
-          <div role="alert" className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-            <span>{toolError}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setToolError(null);
-              }}
-              className="ml-auto rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium transition hover:bg-amber-100"
-            >
-              关闭
-            </button>
-          </div>
+          <Toast
+            kind="error"
+            text={toolError}
+            onClose={() => {
+              setToolError(null);
+            }}
+          />
         )}
 
         {dataError === null ? null : (
@@ -951,7 +992,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={handleDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={requestDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -983,6 +1024,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               onDeleteFile={handleDeleteTaskFile}
               onRenameFile={handleRenameTaskFile}
               onFinalize={handleFinalizeTask}
+              onUnfinalize={handleUnfinalizeTask}
               onChanged={reloadAll}
               actorName={me.user.displayName ?? ""}
               projectId={project.id}
@@ -991,19 +1033,60 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         </div>
 
         {/* 底部滑块（Push 221 起）：项目总览与干系人两个表格共用同一枚 —— 两视图互斥，scrollRef / 溢出态复用；
-            滚动容器 id 由 controlsId 按当前视图切换（task-board-scroll / stakeholder-board-scroll）。 */}
+            滚动容器 id 由 controlsId 按当前视图切换（task-board-scroll / stakeholder-board-scroll）。
+            2026-10-10 修「浮动滑块盖住末行 / 遮挡行内按钮点击」（业务反馈）：吸附条不再铺白底分隔、整条
+            pointer-events-none —— 吸附在视口底时不再遮字、点击穿透到行内按钮；可交互面只剩滑块本体
+            （pointer-events-auto，见 TableScrollbar 组件注释）。 */}
         {activeView === "项目总览" || activeView === "干系人" ? (
         <div
           id="table-scrollbar-bar"
           className={
-            "sticky bottom-0 z-10 flex items-center " +
-            (tableOverflow ? "mt-4 border-t border-zinc-200 bg-white/95 py-2.5 backdrop-blur" : "h-0 overflow-hidden")
+            "pointer-events-none sticky bottom-0 z-10 flex items-center " +
+            (tableOverflow ? "mt-4 py-2.5" : "h-0 overflow-hidden")
           }
         >
           <TableScrollbar scrollRef={tableScrollRef} onOverflowChange={setTableOverflow} controlsId={activeView === "干系人" ? "stakeholder-board-scroll" : "task-board-scroll"} />
         </div>
         ) : null}
       </main>
+
+      {/* 导出等待浮层（§6.16 ⑳）：翻译进行中显示小车动画 + 预计秒数；打印窗口唤起前随 exportingOverview 收起。 */}
+      {exportingOverview ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
+
+      {/* 任务行内删除的第二下确认条（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款
+          非阻断固定底栏 —— 第一下只开口，第二下「删除」才真删。 */}
+      {pendingDeleteTask === undefined ? null : (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+          <div
+            ref={deleteTaskConfirmTrapRef}
+            role="dialog"
+            aria-label="确认删除任务"
+            data-task-delete-confirm=""
+            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
+          >
+            <span>
+              删除任务「<span className="font-semibold">{pendingDeleteTask.title}</span>」？删除后这一行从项目里移除；有变更记录引用的任务会被拦下。
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDeleteTaskId(null);
+              }}
+              className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              data-task-delete=""
+              onClick={confirmDeleteTask}
+              className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
+            >
+              删除
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

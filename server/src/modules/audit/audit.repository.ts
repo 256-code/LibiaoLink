@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, count, desc, eq, gte, lte, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { auditLogs, type AuditChangeEntry } from "../../db/schema/admin.js";
@@ -21,14 +21,20 @@ export interface AuditInsertInput {
   metadata: Record<string, unknown>;
 }
 
-/** 审计检索条件（h7 验收项②：按对象 / 操作人；其余为 C7-04 查询页预留）。 */
+/**
+ * 审计检索条件（h7 验收项②：按对象 / 操作人；动作 / 结果 / 项目 / 时间 / 关键字为 C7-04 查询页）。
+ * 2026-10-09 追订：对象类型 / 操作人 / 动作 / 结果 / 项目改**多值**（数组，OR 语义；undefined = 不筛）——
+ * 由 AuditService 解析逗号分隔参数并逐值校验白名单（非法 400），与文件列表 filter[status] 同一先例。
+ */
 export interface AuditListFilter {
-  objectType?: string;
+  objectTypes?: string[];
   objectId?: string;
-  actorId?: string;
-  action?: string;
-  result?: string;
-  projectId?: string;
+  actorIds?: string[];
+  actions?: string[];
+  results?: string[];
+  projectIds?: string[];
+  /** 关键字（Push 260 · C7-04 搜索）：操作内容摘要 / 操作人姓名快照 / 字段级修改明细（ILIKE 包含，大小写不敏感）。 */
+  keyword?: string;
   from?: Date;
   to?: Date;
 }
@@ -114,17 +120,32 @@ export class AuditRepository {
   }
 }
 
-/** 条件构造：等值 + 时间闭区间（索引 ix_audit_logs_object / ix_audit_logs_actor / ix_audit_logs_time 覆盖）。 */
+/** 条件构造：多值 IN（单值数组 = 等值）+ 关键字 ILIKE（摘要 / 操作人姓名 / 变化明细）+ 时间闭区间（索引覆盖）。 */
 function buildAuditWhere(filter: AuditListFilter): SQL | undefined {
   const conditions: SQL[] = [];
-  if (filter.objectType !== undefined) conditions.push(eq(auditLogs.objectType, filter.objectType));
+  if (filter.objectTypes !== undefined) conditions.push(inArray(auditLogs.objectType, filter.objectTypes));
   if (filter.objectId !== undefined) conditions.push(eq(auditLogs.objectId, filter.objectId));
-  if (filter.actorId !== undefined) conditions.push(eq(auditLogs.actorId, filter.actorId));
-  if (filter.action !== undefined) conditions.push(eq(auditLogs.action, filter.action));
-  if (filter.result !== undefined) conditions.push(eq(auditLogs.result, filter.result));
-  if (filter.projectId !== undefined) conditions.push(eq(auditLogs.projectId, filter.projectId));
+  if (filter.actorIds !== undefined) conditions.push(inArray(auditLogs.actorId, filter.actorIds));
+  if (filter.actions !== undefined) conditions.push(inArray(auditLogs.action, filter.actions));
+  if (filter.results !== undefined) conditions.push(inArray(auditLogs.result, filter.results));
+  if (filter.projectIds !== undefined) conditions.push(inArray(auditLogs.projectId, filter.projectIds));
+  if (filter.keyword !== undefined && filter.keyword !== "") {
+    const pattern = "%" + escapeLikePattern(filter.keyword) + "%";
+    const keywordMatch = or(
+      ilike(auditLogs.summary, pattern),
+      ilike(auditLogs.actorName, pattern),
+      sql`${auditLogs.changes}::text ilike ${pattern}`,
+    );
+    if (keywordMatch !== undefined) conditions.push(keywordMatch);
+  }
   if (filter.from !== undefined) conditions.push(gte(auditLogs.occurredAt, filter.from));
   if (filter.to !== undefined) conditions.push(lte(auditLogs.occurredAt, filter.to));
   if (conditions.length === 0) return undefined;
   return and(...conditions);
+}
+
+/** LIKE 通配符转义（PG 默认转义符为反斜杠；与 project / file 仓储同口径）。 */
+function escapeLikePattern(value: string): string {
+  const backslash = String.fromCharCode(92);
+  return value.split(backslash).join(backslash + backslash).split("%").join(backslash + "%").split("_").join(backslash + "_");
 }

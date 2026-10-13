@@ -6,16 +6,20 @@
  *   toReportMemberSubject）在 automation 模块内（wmj 线）—— 本层只负责读库与快照组装，不算「应发给谁」。
  *
  * 读面（全部只读；接线层不写业务表）：
- *   - 任务类（R02 ~ R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）；
- *   - 日报名册槽位（A01）：projects（在办）× project_members（名册）× daily_reports（当日提交）× 工作日历。
+ *   - 任务类（R02 ~ R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）+ wecom_groups（群绑定）；
+ *   - 日报名册槽位（A01）：projects（在办）× project_members（名册）× daily_reports（当日提交）× 工作日历；
+ *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）+ wecom_groups。
  *
  * 口径与差异（README / PR 同步登记）：
  *   - actual_start：无库列 → 恒 null（R04 的「尚未实际开始」条件据此恒真，待实际开始字段落地后收口）；
- *   - project.group：无群绑定列 → 恒 null（R03 ~ R06 / A02 的群收件人恒 recipient_missing，随 M5-03 企微落地补）；
+ *   - project.group：读 `wecom_groups`（enabled = 启用态）—— 一期寻址键 = projectId（一项目一群：投递层按项目 id 解析
+ *     chatid 绑定，换绑后未投递消息仍可送出）；未绑定 / 已停用 → null（引擎按 recipient_missing 收口：不产出不误发）；
  *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 供 R06；
  *   - task.urgency：直接透传 tasks.priority（三档「高 / 中 / 低」）；R07 条件已按三档定案（高 + 中命中 · wmj · Push 171）；
  *   - task.file_count：与任务详情「文件摘要」同口径（draft / final / changed / archived，排除回收站）；
- *   - A02（群渠道未落地）与 A14（todos 表未落）本层不产主体 —— 登记差异，随 M5-03 / 待办表落地补。
+ *   - A02（project_day）已产主体（接线段 Push 224）：项目 × 业务日聚合（entryCount / headcountTotal / issueCount /
+ *     summaryText —— 与 reports/summary 数据面同口径：draft 之外一律算已提交；条目按提交时刻升序，逐条「作者：当日完成工作」换行拼接）；
+ *     A14（todos 表未落）本层仍不产主体 —— 登记差异，随待办表落地补。
  *
  * 边界：窗口主体池排除软删项目 / 任务与归档项目（归档 = 冻结，不再提醒）；事件形态按事件载荷的实体 id 直读
  * （含软删行 —— 事件发生在删除前，快照仍可求值），行不存在 → null（消费侧按确定性失败收口）。
@@ -27,10 +31,12 @@ import type { DbClient } from "../db/db-client.js";
 import { DatabaseService } from "../db/database.service.js";
 import { files } from "../db/schema/files.js";
 import { users } from "../db/schema/identity.js";
+import { wecomGroups } from "../db/schema/notify.js";
 import { projectMembers, projects } from "../db/schema/projects.js";
 import { dailyReports } from "../db/schema/reports.js";
 import { tasks } from "../db/schema/tasks.js";
 import {
+  toProjectDaySubject,
   toReportMemberSubject,
   toTaskSubject,
   type ReplaySubject,
@@ -69,6 +75,47 @@ function datesBetween(from: string, to: string): string[] {
   const dates: string[] = [];
   for (let date = from; date <= to; date = addDays(date, 1)) dates.push(date);
   return dates;
+}
+
+/** A02 聚合输入行（daily_reports 读面列；state = draft 之外一律算已提交）。 */
+export interface ReportDayRow {
+  projectId: string;
+  authorId: string;
+  reportDate: string;
+  state: string;
+  headcount: number | null;
+  doneWork: string;
+  foundIssue: string | null;
+  submittedAt: Date | null;
+  createdAt: Date;
+}
+
+/**
+ * A02 聚合（纯函数 · 可单测）：已提交日报行 → entryCount / headcountTotal / issueCount / summaryText。
+ * headcountTotal = 已提交条目 headcount 求和；issueCount = 现场发现问题非空条目数；
+ * summaryText = 逐条「作者名：当日完成工作」换行拼接（条目顺序 = 调用方排序后的提交时刻升序）。
+ */
+export function summarizeProjectDay(
+  rows: readonly ReportDayRow[],
+  nameOf: (userId: string) => string,
+): { entryCount: number; headcountTotal: number; issueCount: number; summaryText: string } {
+  return {
+    entryCount: rows.length,
+    headcountTotal: rows.reduce((sum, row) => sum + (row.headcount ?? 0), 0),
+    issueCount: rows.filter((row) => row.foundIssue !== null && row.foundIssue.trim() !== "").length,
+    summaryText: rows.map((row) => nameOf(row.authorId) + "：" + row.doneWork).join("\n"),
+  };
+}
+/** 日报提交序（与 reports/summary 同口径：submittedAt 升序、同刻按创建时间 / 作者 id 兜底；空提交时刻排最后）。 */
+function byReportSubmittedAt(
+  left: { submittedAt: Date | null; createdAt: Date; authorId: string },
+  right: { submittedAt: Date | null; createdAt: Date; authorId: string },
+): number {
+  const leftAt = left.submittedAt === null ? 0 : left.submittedAt.getTime();
+  const rightAt = right.submittedAt === null ? 0 : right.submittedAt.getTime();
+  if (leftAt !== rightAt) return leftAt - rightAt;
+  if (left.createdAt.getTime() !== right.createdAt.getTime()) return left.createdAt.getTime() - right.createdAt.getTime();
+  return left.authorId < right.authorId ? -1 : left.authorId > right.authorId ? 1 : 0;
 }
 
 /** 调度 handler 一次取齐的窗口素材：主体池 + 覆盖窗口的工作日历（planWindowMessages 直接消费）。 */
@@ -152,9 +199,11 @@ export class AutomationSubjectReader {
     const firstDate = businessDateOf(window.from);
     const lastDate = businessDateOf(window.to);
     const calendar = await this.calendarWindowFor(firstDate, lastDate, client);
+    const dates = datesBetween(firstDate, lastDate);
     const subjects: ReplaySubject[] = [
       ...(await this.allTaskSubjects(at, client)),
-      ...(await this.reportSlotSubjects(datesBetween(firstDate, lastDate), calendar, client)),
+      ...(await this.reportSlotSubjects(dates, calendar, client)),
+      ...(await this.projectDaySubjects(dates, client)),
     ];
     return { subjects, calendar };
   }
@@ -243,6 +292,7 @@ export class AutomationSubjectReader {
       .from(projects)
       .where(inArray(projects.id, projectIds));
     const managerByProject = new Map(projectRows.map((row) => [row.id, row.managerIds[0] ?? null]));
+    const groupProjectIds = await this.enabledGroupProjectIds(projectIds, client);
     const progressByProject = await this.projectProgress(projectIds, client);
     const nameIds = new Set<string>();
     for (const row of rows) {
@@ -281,7 +331,7 @@ export class AutomationSubjectReader {
         managerName: managerId === null ? null : (nameById.get(managerId) ?? null),
         projectId: row.projectId,
         projectProgress: progressByProject.get(row.projectId) ?? 0,
-        projectGroupId: null,
+        projectGroupId: groupProjectIds.has(row.projectId) ? row.projectId : null,
         deliverableTypes: row.deliverableTypes,
         fileCount: fileCountByTask.get(row.id) ?? 0,
       };
@@ -290,6 +340,74 @@ export class AutomationSubjectReader {
     return result;
   }
 
+  /** 启用中的群绑定项目集（project.group 寻址键解析：一项目一群；未绑定 / 已停用 = 不在集内 → 收件人缺省）。 */
+  private async enabledGroupProjectIds(projectIds: readonly string[], client: DbClient): Promise<Set<string>> {
+    const result = new Set<string>();
+    if (projectIds.length === 0) return result;
+    const rows = await client
+      .select({ projectId: wecomGroups.projectId })
+      .from(wecomGroups)
+      .where(and(eq(wecomGroups.enabled, true), inArray(wecomGroups.projectId, [...projectIds])));
+    for (const row of rows) result.add(row.projectId);
+    return result;
+  }
+
+  /**
+   * 项目日报槽位池（A02 · project_day）：在办项目 × 窗口内每个业务日（entry_count > 0 才产主体 —— 当日无提交不刷空汇总）。
+   * 聚合口径与 reports/summary 数据面同源（draft 之外算已提交；条目按提交时刻升序，同刻按创建时间 / 作者 id 兜底）——
+   * 逐字段口径见 summarizeProjectDay（纯函数 · 与 A02 补充设计逐字口径同源 · docs/rules/A01-A03-A14-扩展规则文案.md）。
+   */
+  private async projectDaySubjects(dates: readonly string[], client: DbClient): Promise<ReplaySubject[]> {
+    const subjects: ReplaySubject[] = [];
+    if (dates.length === 0) return subjects;
+    const projectRows = await client
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(and(isNull(projects.deletedAt), ne(projects.status, "archived")));
+    if (projectRows.length === 0) return subjects;
+    const projectIds = projectRows.map((row) => row.id);
+    const nameByProject = new Map(projectRows.map((row) => [row.id, row.name]));
+    const rows = await client
+      .select({
+        projectId: dailyReports.projectId,
+        authorId: dailyReports.authorId,
+        reportDate: dailyReports.reportDate,
+        state: dailyReports.state,
+        headcount: dailyReports.headcount,
+        doneWork: dailyReports.doneWork,
+        foundIssue: dailyReports.foundIssue,
+        submittedAt: dailyReports.submittedAt,
+        createdAt: dailyReports.createdAt,
+      })
+      .from(dailyReports)
+      .where(and(inArray(dailyReports.projectId, projectIds), inArray(dailyReports.reportDate, [...dates])));
+    const submitted = rows.filter((row) => row.state !== "draft");
+    if (submitted.length === 0) return subjects;
+    const groupProjectIds = await this.enabledGroupProjectIds(projectIds, client);
+    const nameById = await this.userNames([...new Set(submitted.map((row) => row.authorId))], client);
+    const buckets = new Map<string, typeof submitted>();
+    for (const row of submitted) {
+      const key = row.projectId + "|" + row.reportDate;
+      const bucket = buckets.get(key);
+      if (bucket === undefined) buckets.set(key, [row]);
+      else bucket.push(row);
+    }
+    for (const bucket of buckets.values()) {
+      const sorted = [...bucket].sort(byReportSubmittedAt);
+      const first = sorted[0];
+      if (first === undefined) continue;
+      subjects.push(
+        toProjectDaySubject({
+          projectId: first.projectId,
+          projectName: nameByProject.get(first.projectId) ?? "",
+          date: first.reportDate,
+          ...summarizeProjectDay(sorted, (authorId) => nameById.get(authorId) ?? ""),
+          groupId: groupProjectIds.has(first.projectId) ? first.projectId : null,
+        }),
+      );
+    }
+    return subjects;
+  }
   /** 项目完成度（R06 的 project.progress）：未删任务 status=done 占比四舍五入取整；无任务 = 0。 */
   private async projectProgress(projectIds: readonly string[], client: DbClient): Promise<Map<string, number>> {
     const result = new Map<string, number>();

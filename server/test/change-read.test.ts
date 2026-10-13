@@ -8,6 +8,7 @@ import type {
   FileRow,
   FileVersionRow,
 } from "../src/modules/file/file.repository.js";
+import type { AuditService } from "../src/modules/admin/index.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -96,6 +97,19 @@ class FakePermissionService {
   }
 }
 
+/** 审计替身（Push 256）：详情读面回捞「变更前文件名」—— 预置 items，记录下推条件。 */
+type FakeAuditItem = { changes: Array<{ field: string; from: unknown; to: unknown }> | null };
+
+class FakeAuditService {
+  items: FakeAuditItem[] = [];
+  queries: Array<Record<string, unknown>> = [];
+
+  async list(query: Record<string, unknown>): Promise<{ items: FakeAuditItem[]; page: number; limit: number; total: number }> {
+    this.queries.push(query);
+    return { items: this.items, page: 1, limit: 10, total: this.items.length };
+  }
+}
+
 /** 仓储替身：记录列表下推参数，返回预置行（类型经 as unknown as FileRepository 桥接）。 */
 class FakeFileRepository {
   changeItems: ChangeRequestJoinedRow[] = [];
@@ -140,13 +154,19 @@ interface Harness {
   service: ChangeService;
   repo: FakeFileRepository;
   permission: FakePermissionService;
+  audit: FakeAuditService;
 }
 
 function makeService(): Harness {
   const repo = new FakeFileRepository();
   const permission = new FakePermissionService();
-  const service = new ChangeService(repo as unknown as FileRepository, permission as unknown as PermissionService);
-  return { service, repo, permission };
+  const audit = new FakeAuditService();
+  const service = new ChangeService(
+    repo as unknown as FileRepository,
+    permission as unknown as PermissionService,
+    audit as unknown as AuditService,
+  );
+  return { service, repo, permission, audit };
 }
 
 describe("ChangeService.listProjectChanges（M4-04 变更读面 · 列表）", () => {
@@ -258,8 +278,24 @@ describe("ChangeService.getChange（M4-04 变更读面 · 详情）", () => {
     expect(detail.versionSeq).toBe(2);
     expect(detail.file).toMatchObject({ id: FILE, status: "changed", name: "机械设计图纸.pdf" });
     expect(detail.version).toMatchObject({ id: VERSION, seq: 2, changeRequestId: CHANGE });
+    // Push 256：未更名的变更 = 无 name 审计 → 变更前文件名 null（前端回退显示当前名）。
+    expect(detail.filePreviousName).toBeNull();
+    expect(h.audit.queries[0]).toMatchObject({ objectType: "change", objectId: CHANGE, action: "create", page: 1 });
     // 可见性按「变更所属项目」判定（详情路径不含项目 id）。
     expect(h.permission.seen).toEqual([{ actorId: ACTOR, projectId: PROJECT }]);
+  });
+
+  it("（Push 256）详情：本次变更同时更名 → filePreviousName = 审计 name.from（未更名 null）", async () => {
+    const h = makeService();
+    h.repo.joined = makeChangeRow();
+    h.repo.file = makeFileRow();
+    h.repo.version = makeVersionRow();
+    h.audit.items = [{ changes: [{ field: "status", from: "final", to: "changed" }, { field: "name", from: "回放-变更目标-图纸.xls", to: "回放-变更后-图纸.pptx" }] }];
+
+    const detail = await h.service.getChange(CHANGE, ACTOR);
+
+    expect(detail.file.name).toBe("机械设计图纸.pdf");
+    expect(detail.filePreviousName).toBe("回放-变更目标-图纸.xls");
   });
 
   it("详情：变更不存在 → 404", async () => {

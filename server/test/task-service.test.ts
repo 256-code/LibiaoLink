@@ -798,3 +798,59 @@ describe("任务定档入口（Push 252 · 抽屉「定档」开关 + 二次确�
     await expect(makeService(repo).update(PROJECT, TASK, { version: 4, note: "改备注" }, ACTOR)).rejects.toMatchObject({ code: "TASK_FINALIZED" });
   });
 });
+
+describe("任务取消定档入口（Push 260 · 「已」开关再次点击 + 二次确认）", () => {
+  it("已定档任务：unfinalize 清位 finalizedAt / finalizedBy + version+1 + 审计「取消定档」+ 项目触点", async () => {
+    const repo = new FakeTaskRepository();
+    const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR, version: 9 });
+    const audit = new FakeAuditService();
+    const updated = await makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit).unfinalize(PROJECT, TASK, { version: 9 }, ACTOR);
+    expect(updated.finalizedAt).toBeNull();
+    expect(updated.finalizedBy).toBeNull();
+    expect(updated.version).toBe(10);
+    expect(repo.task?.finalizedAt).toBeNull();
+    expect(repo.touched).toEqual([PROJECT]);
+    expect(audit.entries).toHaveLength(1);
+    const entry = audit.entries[0] as { action: string; objectType: string; objectId: string; summary: string; changes?: unknown };
+    expect(entry.action).toBe("update");
+    expect(entry.objectType).toBe("task");
+    expect(entry.objectId).toBe(TASK);
+    expect(entry.summary).toContain("取消定档");
+    expect(entry.changes).toEqual([{ field: "finalizedAt", from: FINALIZED_AT.toISOString(), to: null }]);
+  });
+
+  it("未定档任务：unfinalize 幂等短路（原样返回、不递增版本、不再写审计）", async () => {
+    const repo = new FakeTaskRepository();
+    const audit = new FakeAuditService();
+    const returned = await makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit).unfinalize(PROJECT, TASK, { version: 3 }, ACTOR);
+    expect(returned.finalizedAt).toBeNull();
+    expect(returned.version).toBe(3);
+    expect(repo.task?.version).toBe(3);
+    expect(audit.entries).toHaveLength(0);
+    expect(repo.touched).toEqual([]);
+  });
+
+  it("已定档任务：version 不匹配 → 409 VERSION_CONFLICT（不写库）", async () => {
+    const repo = new FakeTaskRepository();
+    const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR, version: 9 });
+    await expect(makeService(repo).unfinalize(PROJECT, TASK, { version: 8 }, ACTOR)).rejects.toMatchObject({ code: "VERSION_CONFLICT", httpStatus: 409 });
+    expect(repo.task?.finalizedAt).toBe(FINALIZED_AT);
+  });
+
+  it("取消定档后写口恢复：unfinalize 清位后 update 照常（与 finalize 置位后 409 对照）", async () => {
+    const repo = new FakeTaskRepository();
+    const service = makeService(repo);
+    await service.finalize(PROJECT, TASK, { version: 3 }, ACTOR);
+    await service.unfinalize(PROJECT, TASK, { version: 4 }, ACTOR);
+    const updated = await service.update(PROJECT, TASK, { version: 5, note: "取消定档后改备注" }, ACTOR);
+    expect(updated.note).toBe("取消定档后改备注");
+  });
+
+  it("已删除任务：unfinalize → 404（记录级 404 语义）", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ finalizedAt: new Date("2026-10-08T02:00:00Z"), finalizedBy: ACTOR, deletedAt: new Date("2026-10-08T03:00:00Z"), deletedBy: ACTOR });
+    await expect(makeService(repo).unfinalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});

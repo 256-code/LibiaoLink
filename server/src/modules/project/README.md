@@ -5,7 +5,7 @@
 | 类型 | 领域模块（domain） |
 | 职责 | 项目主数据、首页分类字段（地区 / 项目类型 / 项目经理）、项目硬删（物理删聚合子表 · Push 190 起）；阶段推进 / 成员 / 视图随 M2-03 / M2-05 / M2-06 |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject）、ProjectMemberService（listMembers / addMember / removeMember）、ArchiveService（archiveProject / getArchive）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、POST / GET /api/v1/projects/{id}/archive、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
+| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject）、ProjectMemberService（listMembers / addMember / removeMember）、ArchiveService（archiveProject / getArchive）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、GET / PUT / DELETE /api/v1/projects/{id}/group、POST / GET /api/v1/projects/{id}/archive、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
 
 ## 已实现（h2 第一批）
 
@@ -13,7 +13,7 @@
 - M2-01 项目 CRUD：
   - 创建 `POST /api/v1/projects` → 201；`seq_no` 由数据库序列分配（请求不接受 `seqNo`）；`code` 唯一由约束兜底，23505 + `projects_code_key` → 409 `PROJECT_CODE_EXISTS`；缺省 `stageKey = presale`。
   - 更新 `PATCH /api/v1/projects/{id}`：乐观锁（正文回传 `version`，命中则 `version + 1` 并刷新 `updated_at`）；不匹配 409 `VERSION_CONFLICT`；期间被删 → 404。
-  - 硬删 `DELETE /api/v1/projects/{id}`（Push 190 起，原软删口径作废）：`If-Match` 头回传当前 `version`（缺失 / 非纯数字 400；不匹配 409）；事务内先数 9 张聚合子表行数（进审计 `metadata.children`），再按外键依赖序物理删 15 步（issue_events → task_events → file_versions → files → change_requests → issues → daily_reports → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders → projects），删除前快照写审计（`action=delete` + `metadata.hardDelete=true` + `changes` 每条 `to=null`）；返回**删除前快照**。**编号随行释放 → 同编号可再建**（撞库内其它项目仍 409）；`seq_no` 不回收。
+  - 硬删 `DELETE /api/v1/projects/{id}`（Push 190 起，原软删口径作废）：`If-Match` 头回传当前 `version`（缺失 / 非纯数字 400；不匹配 409）；事务内先数 9 张聚合子表行数（进审计 `metadata.children`），再按外键依赖序物理删 15 步 + 1 步解环（issue_events → task_events → 置空 `files.current_version_id`（files ⇄ file_versions 循环外键，删版本行前必须解环）→ file_versions → files → change_requests → issues → daily_reports → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders → projects），删除前快照写审计（`action=delete` + `metadata.hardDelete=true` + `changes` 每条 `to=null`）；返回**删除前快照**。**编号随行释放 → 同编号可再建**（撞库内其它项目仍 409）；`seq_no` 不回收。
   - 归档（M7-04 · Push 167）：走专门端点 —— `POST /api/v1/projects/{id}/archive`（门禁 + 置位 + 引用式清单 + 撤销上传会话 + 审计）与 `GET /api/v1/projects/{id}/archive`（清单读面，未归档 404）；`PATCH` 的 `status` 收紧为 active / paused / done（**不再接受 archived**）；列表增 `filter[archivedYear]`（C4-07 检索）。写保护不变：`status = archived` 的项目 PATCH / DELETE 一律 409 `PROJECT_ARCHIVED`。
 - M2-04 首页列表 / facets：`GET /api/v1/projects` 与 `GET /api/v1/projects/facets` 共用 `buildProjectFilter`（v0.3 §3.3「禁止两套 SQL」）——多值 `filter[region|projectType|managerId|stageKey|status]`（英文逗号分隔；`managerId` 命中口径 = 项目挂的任意一位经理，A22 · Push 136）；facets 的项目经理维度 = 数组展开后按人头计数（一个项目挂多位经理时每位各计一次）、`q` 命中编号 / 名称 / 客户 / 序号、`filter[timeFrom] / filter[timeTo]` 闭区间（`updated_at`）；facets 五组固定返回（A6），`total` 与列表同口径。
 - 时间口径（ADR-028 · **Push 175 维度修订**）：区间按 Asia/Shanghai 日界（固定 `+08:00`，中国无夏令时）——下界含当日 00:00，上界取次日 00:00 不含；**区间维度 = `projects.created_at`（项目创建时间；原「最近活动 `updated_at`」口径作废）**；`timeFrom` 晚于 `timeTo` 或 `status` / `stageKey` / `managerId` 含非法值一律 400（不返回静默空列表）。
@@ -52,8 +52,15 @@
 - 门禁（ADR-027）：① 硬前置 = 验收阶段（`project_stages.stage_key = acceptance`）已完成（未完成 409 `ARCHIVE_NOT_READY`，不可确认越过）；② 缺项清单 = 未完成任务（task_not_done）→ 未定档文件（file_not_final）→ A4-20 必交成果缺件（doc_missing，逐节点跑 `GateService.evaluateNode`）；有缺项且未确认 → 422 `ARCHIVE_GATE_NOT_PASSED`（details 带明细 + 写 `action=archive` / `result=failed` 审计、项目不置位）；`confirm=true` 确认越过，缺项随清单留痕。
 - 归档事务（单事务）：锁项目行（`FOR UPDATE`）→ 乐观锁 `version` 判定 → 置 `status = archived` + `archived_at` / `archived_by` → 生成 `project_archives` 引用式清单（阶段 / 任务分布 / 文件含版本 / 变更 / 日报 / 问题统计）→ 撤销进行中的上传会话 → 审计 `action=archive`；不删数据、不改阶段、不做解冻（冻结口径）。
 - 检索与投影：列表 `filter[archivedYear]`（四位年份 1900-2100、多值逗号分隔；按 `archived_at` 的 Asia/Shanghai 年）—— 归档检索（C4-07）的服务端读面；`search_docs` 搜索投影随 M7-01（lan）。
-- 数据面：迁移 `0036_project_archive.sql`（`projects.archived_at` / `archived_by` 成对 CHECK + `project_archives` 表 + `ck_audit_logs_action` 十值 → 十一值）；`project_archives` 已并入硬删外键依赖序（本模块 README 上节 15 步）。
+- 数据面：迁移 `0036_project_archive.sql`（`projects.archived_at` / `archived_by` 成对 CHECK + `project_archives` 表 + `ck_audit_logs_action` 十值 → 十一值）；`project_archives` 已并入硬删外键依赖序（本模块 README 上节删除序列）。
 - 差异登记：① 清单为引用式（只记 id 与摘要，ADR-027；不做全库快照表）；② 清单导出（归档目录 / 压缩包）随 M7-03（lan）、C4-04 二期；③ 归档解冻不做（恢复走 DBA / 迁移器脚本，非产品口径）；④ 归档状态不可再编辑（`PATCH` 拒绝 archived；`filter[status]=archived` 只用于读 / 检索）。
+
+## 已实现（M5-03-2 接线段 · 项目群绑定 · C2-05 · Push 224）
+
+- 端点（契约 `shared/src/modules/projects.ts`，OpenAPI tags = projects；类级 `SessionGuard + CsrfGuard + ProjectAccessGuard`，**PUT / DELETE 需 `project.update`** —— B3 定案，GET 为登录 + 记录级可见的读面）：`GET /api/v1/projects/{id}/group`（恒 200；未绑定 = `bound:false` 全 null）、`PUT /api/v1/projects/{id}/group`（body `{ chatid, name? }`；**覆盖语义**：name 缺省 = 清空；chatid 变更 = 换绑（`activated_at` 重置 null —— 新会话需重新激活）、同 chatid 幂等；chatid 撞其它项目唯一约束 → 400 `VALIDATION_FAILED`）、`DELETE /api/v1/projects/{id}/group`（幂等；未绑定不落审计 / 不触 `updatedAt`）。
+- 安全口径：读面 / 审计 / 日志**只回掩码**（`"****" + 末 4 位`；chatid 全文只落库 —— 等同机器人寻址凭据，防外泄）；审计 objectType=`project` 记掩码级 diff（`groupChatid` / `groupName`）；归档 409 `PROJECT_ARCHIVED`（写路径保护同主数据 · ADR-027）；变更刷新项目 `updatedAt`（ADR-022 触点）。
+- 数据面：`wecom_groups`（迁移 `0046` · Push 222；`project_id` / `chatid` 双唯一 = 一个项目一群 / 一个群一项目 —— 换绑到别的项目需先解绑）；会话激活态 `activated_at` 由**企微回调 ingest** 置位（worker · M5-03-2 接线段；未绑定回调忽略）。消费侧（`notify.group` 寻址）见 `server/src/modules/notify/README.md`。
+- 单测 `test/project-group.test.ts` **14 例**；差异登记：chatid 撞唯一约束 = 400（无新错误码，待 wmj 复核）；绑定维护 UI 随 M5-07（px）；一期 = 一项目一群（多群广播不在本期口径）。
 
 ## 边界与后续
 

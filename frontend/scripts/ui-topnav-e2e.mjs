@@ -41,7 +41,7 @@ const FRONTEND = process.env.FRONTEND_BASE ?? "http://localhost:3000";
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9412);
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
-const REPLAY_USER = process.env.REPLAY_USER ?? "panxing";
+const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const SHOTS = process.env.SHOT_DIR ?? join(tmpdir(), "px-topnav-shots");
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const Q = String.fromCharCode(34);
@@ -52,7 +52,7 @@ const check = (name, ok, detail) => { checks.push({ name: name, ok: ok === true 
 mkdirSync(SHOTS, { recursive: true });
 const db = new Client({ connectionString: DB });
 await db.connect();
-const userRow = (await db.query("select id, username, display_name from users where username = $1", [REPLAY_USER])).rows[0];
+const userRow = (await db.query("select id, username, display_name from users where username = $1 and status = 'active'", [REPLAY_USER])).rows[0];
 if (userRow === undefined) { console.error("回放用户不存在：" + REPLAY_USER); process.exit(1); }
 const token = "pxtopnav-" + randomBytes(16).toString("hex");
 const csrf = randomBytes(16).toString("hex");

@@ -3,21 +3,27 @@ import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
 import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
-import { stageNameOf, type ApiProjectSummary } from "../taskApi";
+import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
+import { ChangeDetailModal } from "./ChangeDetailModal";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
-import { Tracker } from "./Tracker";
+import { Tracker, TrackerDots } from "./Tracker";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { DeliverableCell, docTypeCapsule } from "./DeliverablePicker";
 import { StageAddCard } from "./StageAddCard";
 import type { StagePlacement } from "./StageAddCard";
 import { TempTaskCreateForm } from "./TempTaskCreateForm";
+import { useFocusTrap } from "./useFocusTrap";
 import type { TemplatePresetNode } from "../data/templatePresets";
 
 const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+
+/** 定档任务的行内编辑入口锁定提示（Push 264 · P1-1）：与 409 TASK_FINALIZED 的提示文案同一句；
+ *  2026-10-10 业务追订「定档后不能修改就点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」—— 锁定入口保留可点，点击弹站点同款顶部 Toast（这句文案）。 */
+const FINALIZED_EDIT_HINT = "任务已定档，不支持任何修改（文件修改走变更）";
 
 export type ColumnKey =
   | "title"
@@ -50,13 +56,16 @@ export const TABLE_COLUMNS: ColumnDef[] = [
   { key: "title", label: "任务描述", width: "340px", min: 340, locked: true },
   { key: "manager", label: "项目经理", width: "0.66fr", min: 66 },
   { key: "owner", label: "任务负责人", width: "0.76fr", min: 76 },
-  { key: "status", label: "任务状态", width: "0.68fr", min: 68 },
+  // 状态列最小宽 84（2026-10-10 业务口径「屏幕太小就要左右滑动，不要牺牲这个组件的可视化」）：
+  // 最长档位「提前完成」实测 = 44px 文字 + 胶囊 / 单元格内衬 36px = 80px（刚好贴边）—— 抬到 84 留余量，
+  // 68px 时代（最小宽下实际只剩约 65px）会截成「提…」/「已…」。
+  { key: "status", label: "任务状态", width: "0.84fr", min: 84 },
   { key: "priority", label: "紧急重要度", width: "0.74fr", min: 74 },
   { key: "onTime", label: "是否按时交付", width: "0.86fr", min: 86 },
   { key: "deliverable", label: "输出成果文件", width: "0.86fr", min: 86 },
   { key: "files", label: "文件", width: "0.96fr", min: 96 },
   { key: "note", label: "项目进展描述", width: "0.9fr", min: 90 },
-  { key: "start", label: "开始日期", width: "0.66fr", min: 66 },
+  { key: "start", label: "开始日期", width: "0.7fr", min: 70 }, // 日期文案（「9月12日」）最小宽下也要完整：66 → 70
   { key: "days", label: "预计所需天数", width: "56px", min: 56, header: "" },
   { key: "due", label: "预计完成日期", width: "0.86fr", min: 86 },
   { key: "headcount", label: "预计所需施工人数", width: "1.08fr", min: 108 },
@@ -66,9 +75,12 @@ export const TABLE_COLUMNS: ColumnDef[] = [
 
 export type VisibleColumns = Partial<Record<ColumnKey, boolean>>;
 
-export const DEFAULT_VISIBLE_COLUMNS: VisibleColumns = {
-  headcount: false,
-};
+/**
+ * 默认显示的全部列（2026-10-10 业务口径「表格字段默认全部加上去吧 全选」）——
+ * 「预计所需施工人数」原先默认隐藏，现改为**默认全选**：没有偏好记录（新账号 / 清空偏好）时表头 15 列一个不少，
+ * 列显隐面板的「重置」也回到这份全选默认（落库值仍是「隐藏列 key 列表」，全选 = 空数组 = 不写任何隐藏列）。
+ */
+export const DEFAULT_VISIBLE_COLUMNS: VisibleColumns = {};
 
 export function resolveColumns(visible: VisibleColumns): ColumnDef[] {
   const columns = TABLE_COLUMNS.filter((column) => column.locked === true || visible[column.key] !== false);
@@ -77,6 +89,28 @@ export function resolveColumns(visible: VisibleColumns): ColumnDef[] {
     return columns.filter((column) => column.key !== "days");
   }
   return columns;
+}
+
+/**
+ * 表头 / 数据行的左右内衬（`px-5` = 20px × 2）：算表格最小宽度时必须带上 —— 内衬吃的是同一根 grid 的可用宽，
+ * 漏掉它每个 `fr` 列都会各少约 4%（2026-10-10 业务口径「屏幕太小就要左右滑动，不要牺牲这个组件的可视化」：
+ * 状态胶囊 / 日期在最小宽下被挤到省略号，根因就是这 40px 没算进去）。
+ */
+export const TABLE_ROW_PADDING_X = 40;
+
+/**
+ * 网格列模板：`fr` 列一律套 `minmax(最小宽, fr)` —— 视口不够时列**不再被压到最小宽以下**，
+ * 而是整张表撑到最小宽、由外层横向滚动接住（`#task-board-scroll` / 工作台表同套模板）。
+ */
+export function tableGridTemplate(columns: readonly ColumnDef[]): string {
+  return columns
+    .map((column) => (column.width.endsWith("fr") ? "minmax(" + column.min + "px, " + column.width + ")" : column.width))
+    .join(" ");
+}
+
+/** 表格最小宽度 = 各显示列最小宽之和 + 行内衬（`TABLE_ROW_PADDING_X`）：窄于它的视口出横向滚动，各列保持最小宽不变。 */
+export function tableMinWidth(columns: readonly ColumnDef[]): number {
+  return columns.reduce((total, column) => total + column.min, TABLE_ROW_PADDING_X);
 }
 
 /**
@@ -188,6 +222,45 @@ const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", 
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
 export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
+/**
+ * 行内编辑 / 抽屉编辑共用的「patch → PATCH body」映射（Push 279 从项目页 handlePatchTask 抽出 · version 由调用方带）：
+ * 空串 = 清空（契约 nullable）这类字段口径只维护这一处 —— 项目页任务表与工作台「我的任务」的行内编辑同源。
+ */
+export function taskPatchBody(version: number, patch: TaskPatch): TaskUpdateInput {
+  const body: TaskUpdateInput = { version };
+  if (patch.title !== undefined) {
+    body.title = patch.title;
+  }
+  if (patch.titleEn !== undefined) {
+    body.titleEn = patch.titleEn === "" ? null : patch.titleEn;
+  }
+  if (patch.ownerIds !== undefined) {
+    body.ownerIds = patch.ownerIds;
+  }
+  if (patch.startDate !== undefined) {
+    body.plannedStart = patch.startDate === "" ? null : patch.startDate;
+  }
+  if (patch.dueDate !== undefined) {
+    body.plannedEnd = patch.dueDate === "" ? null : patch.dueDate;
+  }
+  if (patch.days !== undefined) {
+    body.estimatedDays = patch.days;
+  }
+  if (patch.headcount !== undefined) {
+    body.headcount = patch.headcount;
+  }
+  if (patch.priority !== undefined) {
+    body.priority = patch.priority;
+  }
+  if (patch.deliverableTypes !== undefined) {
+    body.deliverableTypes = patch.deliverableTypes;
+  }
+  if (patch.note !== undefined) {
+    body.note = patch.note;
+  }
+  return body;
+}
+
 
 const PRIORITY_OPTIONS = [
   { value: "高", label: "高" },
@@ -262,6 +335,11 @@ type TaskBoardProps = {
    */
   onFinalize?: (taskId: string) => void;
   /**
+   * 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：透传给任务详情抽屉 —— 已定档开关
+   * 再次点击 → 二次确认 → 由调用方 POST …/unfinalize（清位重开）；不传 = 已定档开关保持只读置灰。
+   */
+  onUnfinalize?: (taskId: string) => void;
+  /**
    * 变更生效后的父级刷新（Push 254 · 抽屉「变更申请」页）：透传给任务详情抽屉 —— 提交变更是变更记录 +
    * 新版本 + 任务「变更关联」（R01）的合并落库，完成后由调用方整表重取刷新；不传 = 抽屉只刷新自己的文件清单。
    */
@@ -290,10 +368,18 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean }) {
+/** 任务表的行（项目总览 / 工作台「我的任务」共用 · Push 279 起导出给工作台复用）：各列按回调是否传入自动切换
+ *  只读 / 可编辑 —— 行内进度（onProgress）/ 项目经理（onChangeManagers）/ 负责人（onPatch.ownerIds）/ 状态
+ *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
+ *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）。
+ *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, focusMode, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; focusMode: boolean; subtitle?: string }) {
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
+  /** 定档锁定（Push 264 · P1-1）：行内任务字段入口一律锁定（点击弹顶部 Toast、不弹编辑浮层）；
+   *  2026-10-10 业务追订「项目经理也不可以修改」——「项目经理」列随行一并锁定；「文件」列仍走既有 taskFinalized 门控（修改走变更）。 */
+  const taskFinalized = task.finalizedAt !== null;
   const dotClass = STATUS_DOT_CLASS[status];
   /** 负责人展示（多位按「、」连接，Push 136；2026-09-24 定案「只按名字」—— 拼音口径下线）。 */
   const fullOwners = ownersLabel(task.owners);
@@ -312,6 +398,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
     });
   };
 
+  /** 「变更关联」列点击弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：非空 = 中央展示该变更的「变更管理」详情。 */
+  const [changeModalId, setChangeModalId] = useState<string | null>(null);
   /** 「文件」列胶囊内容（Push 226 续二 · 业务口径「应该是文件名字 超出长度后面写+1 +2」；Push 246 起兼作下拉触发器）：
    *  与「输出成果文件」列同套 —— 第一份出名字（截断 + title 全名）、后面还有就「+N」；
    *  文件清单没取到（老数据 / 请求失败）退回「N 份」计数。 */
@@ -336,16 +424,22 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
 
   const cells: Record<ColumnKey, ReactNode> = {
     title: (
-      <div className="flex min-w-0 items-center gap-4 self-stretch">
+      <div data-column="title" className="flex min-w-0 items-center gap-4 self-stretch">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-zinc-900" title={task.title + (task.titleEn === "" ? "" : " / " + task.titleEn)}>
             {task.title}
           </p>
-          {task.titleEn === "" ? null : (
-            <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={task.titleEn}>{task.titleEn}</p>
+          {(subtitle ?? task.titleEn) === "" ? null : (
+            <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subtitle ?? task.titleEn}>{subtitle ?? task.titleEn}</p>
           )}
         </div>
-        <Tracker progress={task.progress} onChange={onProgress} />
+        {onProgress === undefined ? (
+          <span className="shrink-0">
+            <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读行：不接悬停预览 */ }} />
+          </span>
+        ) : (
+          <Tracker progress={task.progress} onChange={onProgress} />
+        )}
         {onDelete === undefined ? null : (
           // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
           // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
@@ -363,6 +457,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           values={managerIds}
           options={members}
           ariaLabel="修改项目经理"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
             if (managerIds.includes(member.id)) {
@@ -391,6 +487,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           values={task.ownerIds}
           options={members}
           ariaLabel="修改任务负责人"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           display={
             task.owners.length === 0 ? (
               <span className="text-zinc-300">待分配</span>
@@ -420,6 +518,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           value={status}
           options={STATUS_OPTIONS}
           ariaLabel="修改任务状态"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           // Push 134：状态列改成裸框胶囊 —— 正常模式 = 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗），
           // 醒目模式 = 整行已有状态色，只留深色字（悬停给一点淡淡的可点提示）。
           bare
@@ -448,6 +548,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
             value={task.priority}
             options={PRIORITY_OPTIONS}
             ariaLabel="修改紧急重要度"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             // Push 134：紧急重要度同状态列 —— 裸框胶囊，色签底色**填满整颗胶囊**（业务口径「紧急程度也要」）
             bare
             triggerClassName={PRIORITY_CAPSULE_CLASS[task.priority] + " px-3 py-1.5 text-[11px] font-medium"}
@@ -489,6 +591,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
       ) : (
         <DeliverableCell
           values={task.deliverableTypes}
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           onChange={(next) => {
             onPatch({ deliverableTypes: next });
           }}
@@ -524,6 +628,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <InlineTextCell
             value={task.note}
             ariaLabel="修改项目进展描述"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             display={task.note === "" ? <span className="text-zinc-300">—</span> : <span className="text-zinc-600" title={task.note}>{task.note}</span>}
             onSave={(value) => {
               onPatch({ note: value });
@@ -539,6 +645,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         <InlineDateCell
           valueIso={startIso}
           ariaLabel="修改开始日期"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           triggerClassName="tabular-nums text-zinc-600"
           display={startText === "" ? <span className="text-zinc-300">—</span> : startText}
           onChange={(iso) => {
@@ -559,6 +667,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         <InlineDateCell
           valueIso={dueIso}
           ariaLabel="修改预计完成日期"
+          disabled={taskFinalized}
+          disabledHint={FINALIZED_EDIT_HINT}
           triggerClassName="tabular-nums text-zinc-600"
           display={dueText === "" ? <span className="text-zinc-300">—</span> : dueText}
           onChange={(iso) => {
@@ -578,6 +688,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <InlineNumberCell
             value={task.headcount}
             ariaLabel="修改预计所需施工人数"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             display={task.headcount > 0 ? task.headcount + " 人" : <span className="text-zinc-300">—</span>}
             onSave={(value) => {
               onPatch({ headcount: value });
@@ -598,6 +710,8 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
           <InlineDateCell
             valueIso={doneIso}
             ariaLabel="修改实际完成日期"
+            disabled={taskFinalized}
+            disabledHint={FINALIZED_EDIT_HINT}
             triggerClassName="tabular-nums"
             display={task.doneDate !== "" ? <span className="text-zinc-600">{doneText}</span> : <span className="text-zinc-400">—</span>}
             onChange={(iso) => {
@@ -618,52 +732,73 @@ function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, mana
         }
       >
         {task.changes.length === 0 ? null : (
-          <>
-            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">变更</span>
+          <button
+            type="button"
+            data-change-link-open="true"
+            title="点击查看变更详情"
+            onClick={(event) => {
+              event.stopPropagation();
+              setChangeModalId(task.changes[0].id);
+            }}
+            className="flex items-center gap-1"
+          >
+            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200">变更</span>
             {task.changes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.changes.length - 1}</span> : null}
-          </>
+          </button>
         )}
       </span>
     ),
   };
 
   return (
-    <div
-      role="button"
-      data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
-      tabIndex={0}
-      title="点击查看任务详情"
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect();
+    <>
+      <div
+        role="button"
+        data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
+        tabIndex={0}
+        title="点击查看任务详情"
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect();
+          }
+        }}
+        className={
+          "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
+          // 醒目模式（Push 134）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
+          (focusMode
+            ? STATUS_ROW_CLASS[status] + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
+            : selected
+              ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]"
+              : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
         }
-      }}
-      className={
-        "group grid cursor-pointer items-center px-5 py-2.5 transition-colors focus-visible:outline-none " +
-        // 醒目模式（Push 134）：整行铺该任务状态的底色（选中行的黄色竖标线照旧；键盘焦点圈走 inset ring，不换底色）
-        (focusMode
-          ? STATUS_ROW_CLASS[status] + " focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-900/25" + (selected ? " shadow-[inset_3px_0_0_0_#feca04]" : "")
-          : selected
-            ? "bg-amber-50/70 shadow-[inset_3px_0_0_0_#feca04]"
-            : "hover:bg-zinc-50/80 focus-visible:bg-zinc-50")
-      }
-      style={{ gridTemplateColumns: columns.map((column) => column.width).join(" ") }}
-    >
-      {columns.map((column) => (
-        <Fragment key={column.key}>
-          {column.key === "title" ? (
-            cells[column.key]
-          ) : (
-            // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）。
-            // 左右各留 4px 内衬（业务口径 2026-09-30「这个触碰到了 要优化一下」）：满宽内容（文件名胶囊 / 进展描述胶囊）
-            // 与相邻列不再贴边 —— 两格相邻时天然留出 8px 空隙；内容居中口径不变。
-            <div className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
-          )}
-        </Fragment>
-      ))}
-    </div>
+        style={{ gridTemplateColumns: tableGridTemplate(columns) }}
+      >
+        {columns.map((column) => (
+          <Fragment key={column.key}>
+            {column.key === "title" ? (
+              cells[column.key]
+            ) : (
+              // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）。
+              // 左右各留 4px 内衬（业务口径 2026-09-30「这个触碰到了 要优化一下」）：满宽内容（文件名胶囊 / 进展描述胶囊）
+              // 与相邻列不再贴边 —— 两格相邻时天然留出 8px 空隙；内容居中口径不变。
+              <div data-column={column.key} className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
+            )}
+          </Fragment>
+        ))}
+      </div>
+      {changeModalId === null ? null : (
+        <ChangeDetailModal
+          changeId={changeModalId}
+          linkedTaskTitle={task.title}
+          members={members}
+          deliverableTypes={task.deliverableTypes}
+          onOpenLinkedTask={() => { setChangeModalId(null); onSelect(); }}
+          onClose={() => { setChangeModalId(null); }}
+        />
+      )}
+    </>
   );
 }
 
@@ -702,7 +837,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onChanged, actorName, filesByTask, projectId, focusMode }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, focusMode }: TaskBoardProps) {
   /**
    * 打开的任务详情抽屉（Push 197 起存 **id** 不存快照）：底部「临时任务」入口建完先落 id、列表重取后自动开
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
@@ -712,6 +847,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   const [cardStage, setCardStage] = useState<string | null>(null);
   /** 底部「临时任务」分组头的新建表单开着没有（Push 197；与阶段卡片互斥）。 */
   const [tempFormOpen, setTempFormOpen] = useState(false);
+  /** 键盘焦点陷阱（Push 264 追订）：临时任务新建浮层开着时焦点进浮层、Tab 在浮层内循环。 */
+  const tempFormTrapRef = useFocusTrap<HTMLDivElement>(tempFormOpen && onCreateTempTask !== undefined);
   /** 卡片的落点（Push 67：固定在表格表头正下方、左边缘对齐「项目经理」列，不浮在页面右上角、也不跟着点击跑）。 */
   const [cardBox, setCardBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
@@ -723,8 +860,8 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
    *  先落 id、列表重取回来才找得到行（找得到才开抽屉）。 */
   const drawerTask = selectedTaskId === null ? null : tasks.find((task) => task.id === selectedTaskId) ?? null;
   const columns = resolveColumns(visibleColumns ?? DEFAULT_VISIBLE_COLUMNS);
-  const gridTemplate = columns.map((column) => column.width).join(" ");
-  const minWidth = columns.reduce((total, column) => total + column.min, 0);
+  const gridTemplate = tableGridTemplate(columns);
+  const minWidth = tableMinWidth(columns);
   /** 项目里已添加的节点判重键（见 `addedNodeKeysOf`）：添加卡片的节点 / 模板条目按它显示「已添加」并跳过重复。 */
   const addedNodeKeys = addedNodeKeysOf(tasks);
   /** 来源节点 id 集合（见 `addedNodeIdsOf` · M3-07 刀 3）：精确判重，优先于上面的同阶段同名兜底。 */
@@ -1092,6 +1229,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
       ))}
       {tempFormOpen && onCreateTempTask !== undefined ? (
         <div
+          ref={tempFormTrapRef}
           role="dialog"
           aria-label={TEMP_TASK_STAGE + "：新建"}
           style={cardBox === null ? { top: 10, left: 24 } : cardBox}
@@ -1139,6 +1277,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         onDeleteFile={onDeleteFile}
         onRenameFile={onRenameFile}
         onFinalize={onFinalize}
+        onUnfinalize={onUnfinalize}
         onChanged={onChanged}
         actorName={actorName}
         projectId={projectId}
