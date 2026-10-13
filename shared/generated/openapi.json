@@ -3514,6 +3514,14 @@
         ],
         "description": "问题更新（状态流转 / 描述 / 归类 / 解决方案 / 分派 / 附图；前五类变化写一条事件）"
       },
+      "Locale": {
+        "type": "string",
+        "enum": [
+          "zh",
+          "en"
+        ],
+        "description": "界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh"
+      },
       "MeResponse": {
         "type": "object",
         "properties": {
@@ -8468,6 +8476,9 @@
           "backgroundTier": {
             "$ref": "#/components/schemas/BackgroundTier"
           },
+          "locale": {
+            "$ref": "#/components/schemas/Locale"
+          },
           "cardWatermark": {
             "type": "boolean",
             "description": "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true"
@@ -8494,6 +8505,7 @@
           "workspaceOpenProjects",
           "myPlanBoard",
           "backgroundTier",
+          "locale",
           "cardWatermark",
           "updatedAt"
         ],
@@ -8535,12 +8547,22 @@
               }
             ]
           },
+          "locale": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Locale"
+              },
+              {
+                "description": "界面语言 id（Push 296）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh"
+              }
+            ]
+          },
           "cardWatermark": {
             "type": "boolean"
           }
         },
         "additionalProperties": {},
-        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔，否则 400 VALIDATION_FAILED"
+        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔、locale 需为枚举（zh / en），否则 400 VALIDATION_FAILED"
       },
       "UserStatus": {
         "type": "string",
@@ -11840,7 +11862,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400）",
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400；locale 非枚举 400）",
         "requestBody": {
           "content": {
             "application/json": {

@@ -16,6 +16,7 @@ import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloa
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { cachedZhToEn, translateZhToEn } from "../translateApi";
+import { fieldText, useLocale, useLocalizedText, useT } from "../i18n";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { ChangeDetailModal } from "./ChangeDetailModal";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
@@ -362,6 +363,17 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
    * text 与当前原文一致才显示，改了输入就自动隐藏到新译文回来（防旧译文配新中文）。
    */
   const [noteEn, setNoteEn] = useState<{ text: string; en: string } | null>(null);
+  /**
+   * 语言切换（Push 296 追订 · 业务口径「因为页面有些内容是手打的 我建议是提前后台机翻」）：
+   * 英文界面下抽屉标题按「titleEn 优先 → 机翻 → 原文」显示、副行给中文原名对照；
+   * 只读态「项目进展描述」显示机翻译文（悬停看原文）；编辑态仍编辑中文原文（下方英译小字保留）。
+   */
+  const locale = useLocale();
+  const t = useT();
+  const localizedTitle = useLocalizedText(task === null ? "" : task.title);
+  const localizedReadNote = useLocalizedText(task === null ? "" : task.note);
+  const drawerTitleText = task === null ? "" : locale === "en" ? (task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
+  const drawerTitleSub = task === null ? "" : locale === "en" ? (drawerTitleText === task.title ? "" : task.title) : task.titleEn;
   /** 「项目进展描述」输入框（随内容自适应高度，见下面的 resize effect）。 */
   const noteFieldRef = useRef<HTMLTextAreaElement | null>(null);
   /** 预取循环读的最新快照（避免闭包拿到旧值重复取）。 */
@@ -1272,8 +1284,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         </div>
       ) : (
         <div>
-          {task.note === "" ? dash : task.note}
-          {noteEnLine}
+          {task.note === "" ? dash : locale === "en" ? <span title={task.note}>{localizedReadNote}</span> : task.note}
+          {locale === "en" ? null : noteEnLine}
         </div>
       ),
     },
@@ -1298,7 +1310,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         (task.startDate === "" ? "—" : cnDateFromIso(task.startDate)) + " → " + (task.dueDate === "" ? "—" : cnDateFromIso(task.dueDate))
       ),
     },
-    { label: "预计所需天数", value: shownDays > 0 ? shownDays + " 天" : dash },
+    { label: "预计所需天数", value: shownDays > 0 ? shownDays + " " + fieldText(locale, "天") : dash },
     {
       label: "预计所需施工人数",
       value: editable ? (
@@ -1514,9 +1526,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
             </div>
           ) : null}
           <h2 id="task-drawer-title" className="mt-3.5 text-lg font-semibold leading-7 text-zinc-900">
-            {task.title}
+            {drawerTitleText}
           </h2>
-          {task.titleEn === "" ? null : <p className="mt-1 text-xs leading-5 text-zinc-400">{task.titleEn}</p>}
+          {drawerTitleSub === "" ? null : <p className="mt-1 text-xs leading-5 text-zinc-400">{drawerTitleSub}</p>}
         </header>
 
         {/* 页标签导航栏（Push 254 · 业务口径「抽屉上方增加 页面标签导航栏 任务详情 变更申请 变更记录三个页面」）：
@@ -1539,7 +1551,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                     (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
                   }
                 >
-                  {item.label}
+                  {fieldText(locale, item.label)}
                 </button>
               );
             })}
@@ -1575,7 +1587,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               )}
               {overdue ? (
                 <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">
-                  已超过预计完成日期（{cnDateFromIso(task.dueDate)}），当前仍未完成。
+                  {t("drawer.overdue", { date: cnDateFromIso(task.dueDate) })}
                 </p>
               ) : null}
             </div>
@@ -1587,7 +1599,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                     key={row.label}
                     className="grid grid-cols-[96px_1fr] items-start gap-x-4 border-b border-zinc-50 py-3 last:border-b-0"
                   >
-                    <dt className="pt-px text-xs leading-5 text-zinc-400">{row.label}</dt>
+                    <dt className="pt-px text-xs leading-5 text-zinc-400">{fieldText(locale, row.label)}</dt>
                     <dd className="min-w-0 text-sm leading-5 text-zinc-800">{row.value}</dd>
                   </div>
                 ))}

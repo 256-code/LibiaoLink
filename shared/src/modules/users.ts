@@ -176,10 +176,18 @@ export const BackgroundTierSchema = z
   .enum(BACKGROUND_TIER_IDS)
   .openapi("BackgroundTier", { description: "背景档位 id（Push 291）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple" });
 
+/** 界面语言 id（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」；与前端 i18n.ts 的 LOCALES 同源）：
+ *  zh = 中文（默认）/ en = English。 */
+export const LOCALE_IDS = ["zh", "en"] as const;
+
+export const LocaleSchema = z
+  .enum(LOCALE_IDS)
+  .openapi("Locale", { description: "界面语言 id（Push 296）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" });
+
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）；
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）；
  * 未声明键按 `.catchall` 原样保存（前向兼容），但不回读 —— 新增偏好键必须同时补这里与 service 的 toContract。
  */
 export const UserPreferencesSchema = z
@@ -201,6 +209,7 @@ export const UserPreferencesSchema = z
     workspaceOpenProjects: WorkspaceOpenProjectsSchema,
     myPlanBoard: MyPlanBoardSchema,
     backgroundTier: BackgroundTierSchema.openapi({ description: "背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple" }),
+    locale: LocaleSchema.openapi({ description: "界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" }),
     cardWatermark: z
       .boolean()
       .openapi({
@@ -219,12 +228,13 @@ export const UserPreferencesUpdateBodySchema = z
     workspaceOpenProjects: WorkspaceOpenProjectsSchema.optional(),
     myPlanBoard: MyPlanBoardUpdateSchema.optional(),
     backgroundTier: BackgroundTierSchema.optional(),
+    locale: LocaleSchema.optional(),
     cardWatermark: z.boolean().optional(),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔，否则 400 VALIDATION_FAILED"
+      "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔、locale 需为枚举（zh / en），否则 400 VALIDATION_FAILED"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */
@@ -232,6 +242,7 @@ export type TaskTableColumnKey = z.infer<typeof TaskTableColumnKeySchema>;
 export type SavedHomeFilter = z.infer<typeof SavedHomeFilterSchema>;
 export type WorkspaceOpenProjects = z.infer<typeof WorkspaceOpenProjectsSchema>;
 export type BackgroundTier = z.infer<typeof BackgroundTierSchema>;
+export type Locale = z.infer<typeof LocaleSchema>;
 export type PlanBoardBg = z.infer<typeof PlanBoardBgSchema>;
 export type MyPlanNote = z.infer<typeof MyPlanNoteSchema>;
 export type MyPlanBoard = z.infer<typeof MyPlanBoardSchema>;
