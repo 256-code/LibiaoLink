@@ -19,10 +19,6 @@ export const TRACKER_LABELS = PROGRESS_LABELS;
 /** 格数换算与 `data/tasks.ts` 共用一套口径（Push 65 起任务状态与进度条联动）。 */
 export const trackerStep = progressStep;
 
-export function trackerLabel(progress: number, steps: number = TRACKER_STEPS): string {
-  return TRACKER_LABELS[trackerStep(progress, steps)] ?? "";
-}
-
 /** 点第 N 格的换算（口径见 §6.4）：点当前已点亮的最后一格回退一格（误点修正），其余点哪格就是几格。 */
 export function trackerNextProgress(progress: number, step: number, steps: number = TRACKER_STEPS): number {
   const filled = trackerStep(progress, steps);

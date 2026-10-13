@@ -9068,6 +9068,20 @@
               }
             ]
           },
+          "solution": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "解决方案或建议（A3-13；2026-10-13 全字段修订随行下发，工作台「提出/负责的问题」表直接渲染）"
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilePhotoRef"
+            },
+            "description": "问题附图（file_links(object_type=issue)，插入序；2026-10-13 全字段修订随行下发，工作台表直接渲染）"
+          },
           "updatedAt": {
             "$ref": "#/components/schemas/DateTime"
           },
@@ -9090,10 +9104,12 @@
           "ownerId",
           "ownerName",
           "raisedAt",
+          "solution",
+          "photos",
           "updatedAt",
           "version"
         ],
-        "description": "工作台问题项（跨项目）"
+        "description": "工作台问题项（跨项目；问题追踪七列数据源随行下发）"
       },
       "WorkspaceIssues": {
         "type": "object",
@@ -9163,148 +9179,54 @@
           },
           "myIssues": {
             "$ref": "#/components/schemas/WorkspaceIssues"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            },
+            "description": "聚合涉及的项目卡（我的任务或我的问题命中的项目，按首次出现顺序去重；含 managerNames / managerIds / version）—— 2026-10-13 全字段修订：工作台行内「项目经理」列与项目经理回写不再逐项目回查"
           }
         },
         "required": [
           "today",
           "myTasks",
-          "myIssues"
+          "myIssues",
+          "projects"
         ],
-        "description": "工作台聚合：我的任务四组 + 我的问题两栏"
+        "description": "工作台聚合：我的任务四组 + 我的问题两栏 + 涉及项目卡"
       },
       "WorkspaceTaskItem": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TaskListItem"
           },
-          "projectId": {
-            "$ref": "#/components/schemas/Uuid"
-          },
-          "projectCode": {
-            "type": "string",
-            "description": "项目编号（跨项目列表直接展示）"
-          },
-          "projectName": {
-            "type": "string"
-          },
-          "stageKey": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/StageKey"
+          {
+            "type": "object",
+            "properties": {
+              "projectCode": {
+                "type": "string",
+                "description": "项目编号（跨项目列表直接展示）"
               },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "所属阶段；null = 「未分组」（A15）"
-              }
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "titleEn": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "displayStatus": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/TaskDisplayStatus"
+              "projectName": {
+                "type": "string"
               },
-              {
-                "description": "展示五态（A1-06 读时派生，含显式覆盖 · Push 179）：待开始 / 进行中 / 已完成 / 提前完成 / 已延期"
+              "files": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TaskFileBrief"
+                },
+                "description": "任务随行文件清单（口径同任务详情 files：排除回收站、创建时间倒序；工作台行内「文件」列下拉的数据源）"
               }
-            ]
-          },
-          "progress": {
-            "$ref": "#/components/schemas/TaskProgress"
-          },
-          "plannedStart": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DateOnly"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "业务日期 YYYY-MM-DD（不携带时区）"
-              }
-            ]
-          },
-          "plannedEnd": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DateOnly"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "预计完成日期（分组依据；未排期组为空）"
-              }
-            ]
-          },
-          "actualEnd": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DateOnly"
-              },
-              {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "业务日期 YYYY-MM-DD（不携带时区）"
-              }
-            ]
-          },
-          "ownerIds": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Uuid"
             },
-            "description": "任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评）"
-          },
-          "ownerNames": {
-            "type": "array",
-            "items": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "description": "负责人姓名（与 ownerIds 同下标；缺失为 null）"
-          },
-          "priority": {
-            "$ref": "#/components/schemas/Priority"
+            "required": [
+              "projectCode",
+              "projectName",
+              "files"
+            ]
           }
-        },
-        "required": [
-          "id",
-          "projectId",
-          "projectCode",
-          "projectName",
-          "stageKey",
-          "title",
-          "titleEn",
-          "displayStatus",
-          "progress",
-          "plannedStart",
-          "plannedEnd",
-          "actualEnd",
-          "ownerIds",
-          "ownerNames",
-          "priority"
         ],
-        "description": "工作台任务项（跨项目；按预计完成日期落入四组之一）"
+        "description": "工作台任务项（跨项目；按预计完成日期落入四组之一；任务表 15 列数据源随行下发）"
       },
       "WorkspaceTasks": {
         "type": "object",
