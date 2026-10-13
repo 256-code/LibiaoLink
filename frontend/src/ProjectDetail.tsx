@@ -3,7 +3,6 @@ import { AppHeader } from "./components/AppHeader";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { DailySubMenu } from "./components/DailySubMenu";
 import { ExportOverviewButton } from "./components/ExportOverviewButton";
-import { FocusModeToggle } from "./components/FocusModeToggle";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
@@ -20,7 +19,9 @@ import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
+import { prefetchZhToEn } from "./translateApi";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
+import { useBackgroundTier, type TintedTier } from "./backgroundTier";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
@@ -105,15 +106,11 @@ type ProjectDetailProps = {
   taskHiddenColumns?: string[] | null;
   /** 保存列显隐（整体替换 PATCH）；返回 null = 成功，返回文案 = 失败提示。 */
   onTaskHiddenColumnsChange?: (keys: string[]) => Promise<string | null>;
-  /** 醒目模式（A4 · §6.13 · Push 171）：服务端偏好里的开关值；null / 缺省 = 偏好尚未取到（按默认「关」渲染）。 */
-  focusMode?: boolean | null;
-  /** 保存醒目模式（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。 */
-  onFocusModeChange?: (value: boolean) => Promise<string | null>;
   /** 干系人写入口（Push 221 · A27）：= stakeholder.manage（画像未到时乐观放行，服务端逐请求仍是最终裁决）。 */
   canManageStakeholders: boolean;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, focusMode, onFocusModeChange, canManageStakeholders }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
@@ -262,6 +259,15 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     () => [...rawTasks].sort((left, right) => stageRankOf(left.stage) - stageRankOf(right.stage) || left.sortIndex - right.sortIndex),
     [rawTasks],
   );
+
+  /**
+   * 「写进展描述即后台翻译」（业务口径 2026-10-13 · §6.16 ㉑）：项目数据一到 / 每次写入回写（tasks 变化 ——
+   * 行内编辑、抽屉保存、进度 / 状态写入……）就把「项目名 + 全部非空进展描述」丢进译文缓存后台预热；
+   * 用户写完进展描述几秒内译文就绪，导出时直接命中、不再等机器翻译（缓存与去重见 src/translateApi.ts）。
+   */
+  useEffect(() => {
+    prefetchZhToEn([project === null ? "" : project.description, ...tasks.map((task) => task.note)]);
+  }, [project, tasks]);
 
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);
@@ -748,7 +754,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
   // 列显隐偏好异步到达：只在首次拿到时套用（之后以用户自己的勾选为准，不被回写覆盖）；保存失败的提示条见 toolError
   const appliedColumnPrefsRef = useRef(false);
-  /** 标签栏右侧工具区（列显隐 / 醒目模式）的保存失败文案；null = 无提示。 */
+  /** 标签栏右侧工具区（列显隐）的保存失败文案；null = 无提示。 */
   const [toolError, setToolError] = useState<string | null>(null);
   useEffect(() => {
     if (appliedColumnPrefsRef.current || taskHiddenColumns === null || taskHiddenColumns === undefined) {
@@ -758,11 +764,14 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     setVisibleColumns(visibleColumnsFromHidden(taskHiddenColumns));
   }, [taskHiddenColumns]);
   /**
-   * 醒目模式（Push 134，业务口径「默认不启用」）：打开后项目总览的每张任务卡片整行铺该任务状态的底色；关掉 = 保持现状。
-   * Push 171 起改**按账号存服务端**（用户偏好键 focusMode，`前端功能需求.md` §6.13）：值由父层给
-   * （null = 偏好尚未取到 → 按默认「关」渲染），点击即生效 + 单键 PATCH（父层乐观更新 + 失败回滚）。
+   * 背景档位（Push 289 追订「选择适中模式 进入某个项目内部 项目总览的颜色应该也要变」→ 定稿「用 c」；
+   * Push 290 起「醒目模式」下架，档位 = 项目总览 / 问题追踪观感的唯一开关；Push 293 起含「炫彩」档）：
+   * 项目总览任务行整行铺**任务状态色**，深浅随档（适中 = 状态色 × 0.15 兑白便签同款、悬停 × 0.32；
+   * 炫彩 = 同色相高饱和 × 0.62 兑白、悬停 × 0.82 —— 见 TaskBoard 的 STATUS_ROW_TINT / STATUS_ROW_TINT_VIVID）——
+   * 行色仍然承载状态（业务口径「颜色本身不要换 不然我怎么区分状态啊」），状态列收口成深色字。
    */
-  const focus = focusMode === true;
+  const backgroundTier = useBackgroundTier();
+  const tintRows: TintedTier | false = backgroundTier === "simple" ? false : backgroundTier;
   const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
   /**
    * 阶段骨架常显（Push 61 调整）：没有任务的阶段也保留分组头（只有阶段名、组内没有任务行），
@@ -790,10 +799,6 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const persistColumns = async (next: VisibleColumns): Promise<void> => {
     setToolError((await onTaskHiddenColumnsChange?.(hiddenColumnsOf(next))) ?? null);
   };
-  // 醒目模式改动 = 立即生效（父层乐观更新）+ 单键 PATCH；失败回滚并在同一提示条出文案。
-  const handleToggleFocusMode = async (checked: boolean): Promise<void> => {
-    setToolError((await onFocusModeChange?.(checked)) ?? null);
-  };
   const handleToggleColumn = (key: ColumnKey, checked: boolean) => {
     const next = { ...visibleColumns, [key]: checked };
     setVisibleColumns(next);
@@ -810,11 +815,14 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [exportingOverview, setExportingOverview] = useState(false);
   /** 译文进度（§6.16 ⑳ 导出等待浮层）：done / total；null = 翻译尚未开始（数据准备中，浮层走扫描态）。 */
   const [exportTranslateProgress, setExportTranslateProgress] = useState<ExportTranslateProgress | null>(null);
+  /** 导出等待浮层可见性（§6.16 ㉑ 防闪烁）：译文全命中缓存时导出近乎瞬时，浮层迟 250ms 才出现。 */
+  const [exportOverlayVisible, setExportOverlayVisible] = useState(false);
 
   /**
    * 导出项目总览（PDF · 业务口径 2026-10-09 · §6.16）：把页面当前的 project / tasks / summary 交给报告模块
    * （exportOverviewPdf.ts）拼 A4 横版报告，唤起系统打印窗口由用户选「另存为 PDF」；
    * 2026-10-10 起导出前经翻译通道补「项目进展描述」列英文小字（translateApi.ts；通道不通静默降级）；导出不改数据。
+   * 2026-10-13 起译文已在「写进展描述」时后台预热（§6.16 ㉑）—— 命中缓存即取，只有未预热条目才现场翻。
    */
   const exportOverview = async (): Promise<void> => {
     if (project === null || exportingOverview) {
@@ -822,13 +830,19 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     }
     setExportingOverview(true);
     setExportTranslateProgress(null);
+    // 译文全命中缓存时导出近乎瞬时（§6.16 ㉑）：浮层迟 250ms 出现，避免「没有等待」的导出闪一层小车动画
+    const overlayTimer = window.setTimeout(() => {
+      setExportOverlayVisible(true);
+    }, 250);
     try {
       await exportProjectOverviewPdf({ project, tasks, summary }, (done, total) => {
         setExportTranslateProgress({ done, total });
       });
     } finally {
+      window.clearTimeout(overlayTimer);
       setExportingOverview(false);
       setExportTranslateProgress(null);
+      setExportOverlayVisible(false);
     }
   };
 
@@ -915,23 +929,15 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
                 );
               })}
             </div>
-            {/* 标签栏右侧工具区：醒目模式（Push 134）项目总览 / 日报及问题两处都有 —— 业务口径 2026-09-28
-                「增加项目总览 同款醒目模式在问题追踪里面」+「醒目模式放在标签导航栏的最右侧」：日报及问题视图
-                没有列显隐按钮，开关落在标签栏最右侧；两处同一枚开关、同一个账号偏好（Push 171 起按账号存服务端）。
-                列显隐（ColumnPicker）仍按原口径只在项目总览出现。
-                2026-10-09 起工具区最左侧再补一枚「导出 PDF」（§6.16）：只在项目总览出现，导出的是这块视图的数据。 */}
-            {activeView === "项目总览" || activeView === "日报及问题" ? (
+            {/* 标签栏右侧工具区（Push 290 起「醒目模式」已下架、观感统一走顶栏背景档位）：只剩「导出 PDF」+ 列显隐，
+                两枚都按原口径只在「项目总览」出现 —— 原「日报及问题」视图最右侧那枚醒目模式开关随功能一并删除。 */}
+            {activeView === "项目总览" ? (
               <div className="flex shrink-0 items-center gap-4">
-                {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：排在「醒目模式 / 筛选」左侧（两枚既有按钮位置不动）；
-                    数据 = 页面已取到的 project / tasks / summary，生成 A4 横版报告后在系统打印窗口里另存为 PDF；
+                {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：数据 = 页面已取到的 project / tasks / summary，
+                    生成 A4 横版报告后在系统打印窗口里另存为 PDF；
                     任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}
-                {activeView === "项目总览" ? (
-                  <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={() => { void exportOverview(); }} />
-                ) : null}
-                <FocusModeToggle checked={focus} onToggle={(checked) => { void handleToggleFocusMode(checked); }} />
-                {activeView === "项目总览" ? (
-                  <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
-                ) : null}
+                <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={() => { void exportOverview(); }} />
+                <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
               </div>
             ) : null}
           </div>
@@ -992,15 +998,15 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={requestDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} focusMode={focus} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={requestDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} tierTint={tintRows} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
             <GanttChart tasks={tasks} members={members} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
-            // Push 207 同批追加：醒目模式值透传给「问题追踪」做表格呈现（开关本体在标签栏最右侧，见上）；失败提示沿用同一条 toolError
-            <ReportIssuePanel key={project.id} project={project} me={me} members={members} focusMode={focus} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+            // Push 290：背景档位「适中」透传给「问题追踪」做表格呈现（原醒目模式挂点，随功能下架改吃档位）；失败提示沿用同一条 toolError
+            <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
             <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />
@@ -1050,8 +1056,8 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         ) : null}
       </main>
 
-      {/* 导出等待浮层（§6.16 ⑳）：翻译进行中显示小车动画 + 预计秒数；打印窗口唤起前随 exportingOverview 收起。 */}
-      {exportingOverview ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
+      {/* 导出等待浮层（§6.16 ⑳ / ㉑）：真在等（翻译 / 生成超过 250ms）才显示小车动画 + 预计秒数；打印窗口唤起前收起。 */}
+      {exportOverlayVisible ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
 
       {/* 任务行内删除的第二下确认条（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款
           非阻断固定底栏 —— 第一下只开口，第二下「删除」才真删。 */}

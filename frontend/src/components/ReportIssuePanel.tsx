@@ -5,7 +5,7 @@ import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMen
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { ImageZoomViewer } from "./ImageZoomViewer";
 import { InlineCell, InlineMemberCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
-import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
+import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
 import {
   ISSUE_STATE_NAMES,
@@ -36,6 +36,7 @@ import { SearchInput } from "./SearchInput";
 import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
+import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintOf, type TintedTier } from "../backgroundTier";
 
 /**
  * 项目详情「日报及问题」视图（Push 128）：页内四块子视图 —— 日报填写 / 日报记录 / 问题追踪 / 问题看板。
@@ -130,17 +131,14 @@ import type { MeResponse, Project } from "../types";
  *      列里出 40×40 缩略图（点开看大图 · PhotoStrip 新增 `md` 档位）、空 = 「—」；演示问题补内联 SVG 占位图；
  *   ⑥ （同批追加 ·「这个也要1 2 3 同上」）「解决方案或建议」并进自动序号一套 —— 解禁后空框聚焦预置 1: 、
  *      回车续号（2: / 3: …）、失焦与提交前 "renumberLines" 重排（与上三个多行框同一套口径；Push 242 同修续号基准）。
- *   ⑦ （同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」+「醒目模式放在标签导航栏的最右侧」）「问题追踪」接**醒目模式**——
- *      开关本体由 ProjectDetail 渲染在**标签栏最右侧**（与项目总览同一枚 `FocusModeToggle`、同一个账号偏好；
- *      本视图没有列显隐按钮，它就落在最右），本组件只吃 `focusMode` 布尔做表格呈现：开 = 问题表整行铺该问题状态的
- *      底色 —— 未解决 = 天蓝 sky / 处理中 = 琥珀 amber / 已完成 = emerald，同样压到 **6% 不透明度**、
- *      行悬停抬到 **12%**（与项目总览任务表同一套马卡龙口径），状态列同时收口 = 撤色签底、只留深色字（加粗、透明底）；
- *      关掉 = 行还原（白底 + 行悬停灰）、状态列回「项目总览同款」色签胶囊。
+ *   ⑦ （同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」；Push 290 起「醒目模式」下架、统一改吃**背景档位**）「问题追踪」跟随顶栏背景档位 ——
+ *      档位「适中」= 问题表整行铺该问题状态的行色（便签同款兑白配方）+ 状态列收口（撤色签底、只留深色字）；
+ *      档位「简约」= 行还原（白底 + 行悬停灰）、状态列回「项目总览同款」色签胶囊。
  * - Push 208（业务口径 2026-09-28「问题追溯里面也要可以这样编辑 文字 以及问题归类都要可以修改 文字修改需要点击保存
  *   编辑后时间不变 日报记录同理」）：两块表接**行内编辑**（复用项目总览那套 InlineEdit，业务样 = 项目总览状态列的行内下拉）——
  *   ① 「问题追踪」：**问题描述 / 解决方案或建议**（文字列）= InlineTextCell 多行框 —— **点「保存」才落值**（Esc / 点浮层外 =
  *      取消，原值不动）；**问题归类** = InlineMultiOptionCell（与「问题归类」表单侧同款多选：绿勾选中项、点选不收浮层、
- *      再点取消，落值仍按「、」连接）；**问题是否处理** = InlineOptionCell 三态下拉（色签同项目总览，醒目模式下只留深色字）；
+ *      再点取消，落值仍按「、」连接）；**问题是否处理** = InlineOptionCell 三态下拉（色签同项目总览，适中档下只留深色字）；
  *   ② 「日报记录」：「当日完成工作 / 明日计划」两列同款文字编辑（业务口径「日报记录同理」）；
  *   ⑤ 「日报记录」的**关联阶段**同批追加行内编辑（业务口径 2026-09-28「这个也要可以编辑筛选选择」）——
  *      浮层 = 与「日报填写」表单侧完全同款的九阶段勾选清单（勾选不收浮层 · 值仍是同一份 REPORT_STAGES 口径）；
@@ -184,7 +182,7 @@ import type { MeResponse, Project } from "../types";
  *      字段集 / 必填口径 / 自动序号 / 前置开关等交互不变，只调块序；
  *   ③ 表格间距收口（业务口径「问题归类去左侧一些这个间距不协调」+「这个在表格里面始终居中」）：
  *      「问题描述」列 min-w-[320px] → min-w-[240px]（描述与「问题归类」之间的空档收窄，归类列及其后各列随之前移）、
- *      「问题是否处理」列单元格 text-center（状态色签在列内**始终水平居中**，三态 / 醒目模式 / 行内改后同款）；
+ *      「问题是否处理」列单元格 text-center（状态色签在列内**始终水平居中**，三态 / 适中档 / 行内改后同款）；
  *   ④ 「问题归类」色签不裁剪（业务口径「会出现截断的问题」）：行内编辑壳 `InlineCell` 加 `wrapContent` 档 ——
  *      「问题追踪」表与问题详情抽屉的归类单元格撤包裹层 `truncate` 裁剪（窄窗 / 列被挤到最小时色签不再被裁掉一角），
  *      色签折行与触发器内衬等其余表现不变；
@@ -305,22 +303,31 @@ export const ISSUE_TAG_CLASS: Record<IssueState, string> = {
   done: "bg-emerald-100 text-emerald-700",
 };
 
-/** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）的整行底色：与项目总览任务表的
- *  STATUS_ROW_CLASS 同一套口径 —— 状态色系压到 **6% 不透明**、行悬停抬到 **12%**；三态色系对照 =
- *  未解决 / sky（项目总览「待开始」）、处理中 / amber（「进行中」）、已完成 / emerald（「已完成」）。
- *  Push 232：导出给工作台「我提出的问题」表复用（同款醒目模式口径，避免两处色表漂移）。 */
-export const ISSUE_ROW_CLASS: Record<IssueState, string> = {
-  open: "bg-sky-500/[0.06] hover:bg-sky-500/[0.12]",
-  in_progress: "bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
-  done: "bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12]",
+/** 背景档位「适中」（Push 290 统一口径 · 原醒目模式挂点）的整行色对：与项目总览任务表的 STATUS_ROW_TINT 同一套
+ *  配方 —— 底色 = 状态色 × 0.15 + 白、悬停 = × 0.32 + 白（复用 backgroundTier.ts 的 mediumCardTintOf / mediumCardBorderOf）；
+ *  三态色系对照 = 未解决 / sky（项目总览「待开始」）、处理中 / amber（「进行中」）、已完成 / emerald（「已完成」）。
+ *  导出给工作台「我提出的问题」表复用（避免两处色表漂移）。 */
+export const ISSUE_ROW_TINT: Record<IssueState, { tint: string; hover: string }> = {
+  open: { tint: mediumCardTintOf("#0ea5e9") ?? "", hover: mediumCardBorderOf("#0ea5e9") ?? "" },
+  in_progress: { tint: mediumCardTintOf("#f59e0b") ?? "", hover: mediumCardBorderOf("#f59e0b") ?? "" },
+  done: { tint: mediumCardTintOf("#10b981") ?? "", hover: mediumCardBorderOf("#10b981") ?? "" },
 };
 
-/** 醒目模式下的状态字色：整行已有状态色，撤色签底只留深色字（同 TaskBoard 的 STATUS_TAG_TEXT_CLASS 口径）。
- *  Push 232：导出给工作台「我提出的问题」表复用。 */
-export const ISSUE_TAG_TEXT_CLASS: Record<IssueState, string> = {
-  open: "text-sky-700",
-  in_progress: "text-amber-800",
-  done: "text-emerald-700",
+/** 背景档位 · 炫彩档的问题行色（Push 293 · 与 STATUS_ROW_TINT_VIVID 同一套高饱和配方：底色 × 0.62 / 悬停 × 0.82 兑白）；
+ *  三态色系照旧（未解决 sky / 处理中 amber / 已完成 emerald）；工作台「我提出的问题」与项目页问题追踪共用本表。 */
+export const ISSUE_ROW_TINT_VIVID: Record<IssueState, { tint: string; hover: string }> = {
+  open: { tint: vividCardTintOf("#0ea5e9") ?? "", hover: vividCardBorderOf("#0ea5e9") ?? "" },
+  in_progress: { tint: vividCardTintOf("#f59e0b") ?? "", hover: vividCardBorderOf("#f59e0b") ?? "" },
+  done: { tint: vividCardTintOf("#10b981") ?? "", hover: vividCardBorderOf("#10b981") ?? "" },
+};
+
+/** 背景档位铺色档（适中 / 炫彩）的问题状态字色：整行已有行色，撤色签底只留深色字（口径 = TaskBoard 的 STATUS_TAG_TEXT_TIER_CLASS ——
+ *  自定 oklch：彩度 500 档 ×1.08、明度 52~58%；三态与任务表同源：未解决 = 待开始蓝 / 处理中 = 进行中琥珀 / 已完成 = 已完成绿）。
+ *  导出给工作台「我提出的问题」表复用。 */
+export const ISSUE_TAG_TEXT_TIER_CLASS: Record<IssueState, string> = {
+  open: "text-[oklch(53%_.18_237.32)]",
+  in_progress: "text-[oklch(58%_.20_70.08)]",
+  done: "text-[oklch(53%_.18_162.48)]",
 };
 
 /** 问题归类色签（Push 207 · 业务样 = 图三 / 图四「问题归类也要用不同颜色来展示」）：浅底 + 深字，
@@ -406,16 +413,16 @@ export const ISSUE_TAG_SHELL = "rounded-lg px-3 py-1.5 text-[11px] font-medium";
 
 /** 问题状态色签（一处出签：追踪表「问题是否处理」列 + 看板卡片 / 列头共用）。Push 207 追加：壳体与「项目总览」
  *  任务状态胶囊同款（壳 = ISSUE_TAG_SHELL，见上；项目总览侧是可点下拉、悬停深一档；静态签不挂悬停加深，其余逐项对齐）。
- *  `focus` = 醒目模式（仅追踪表传 true）：整行已铺状态底色，色签收口成只留深色字（透明底 + 加粗 —— 同 TaskBoard
- *  醒目模式状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
-function IssueStateTag({ state, focus = false }: { state: IssueState; focus?: boolean }) {
+ *  `tierTint` = 背景档位铺色档（适中 / 炫彩；仅追踪表传）：整行已铺行色，色签收口成只留深色字（透明底 + 13px / 700 / 字距
+ *  —— 同 TaskBoard 适中档状态列口径）；看板卡片 / 列头不传 = 胶囊照旧。 */
+function IssueStateTag({ state, tierTint = false }: { state: IssueState; tierTint?: TintedTier | false }) {
   return (
     <span
       data-issue-state={state}
       className={
         "inline-block " +
-        (focus
-          ? "text-xs font-semibold " + ISSUE_TAG_TEXT_CLASS[state]
+        (tierTint
+          ? "text-[13px] font-bold tracking-wide " + ISSUE_TAG_TEXT_TIER_CLASS[state]
           : ISSUE_TAG_SHELL + " " + ISSUE_TAG_CLASS[state])
       }
     >
@@ -488,13 +495,13 @@ const FORM_LABEL = "text-xs font-bold text-zinc-500";
 const CELL_EDIT_CHIP = "-m-0.5 rounded-lg p-0.5 hover:bg-zinc-900/[0.04]";
 
 /** 行内可改的「问题是否处理」单元格（Push 260）：项目页「问题追踪」与工作台问题表**共用同一枚** ——
- *  显示器 = IssueStateTag（三态色签 / 醒目模式只留深色字），点色签弹三态下拉（每项 = 该状态色签胶囊），
+ *  显示器 = IssueStateTag（三态色签 / 适中档只留深色字），点色签弹三态下拉（每项 = 该状态色签胶囊），
  *  选中即落值（onPick）并关掉浮层。原先这段内联在追踪表里；抽出本组件的口径 = 业务口径 2026-10-09
  *  「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」—— 两处壳 / 触发器 / aria 名一处出、不走样。 */
-export function IssueStateCell({ state, focus = false, ariaLabel, onPick }: {
+export function IssueStateCell({ state, tierTint = false, ariaLabel, onPick }: {
   state: IssueState;
-  /** 醒目模式（整行已铺状态底色）：色签收口成只留深色字 —— 同追踪表口径。 */
-  focus?: boolean;
+  /** 背景档位铺色档（适中 / 炫彩 · 整行已铺行色）：色签收口成只留深色字 —— 同追踪表口径。 */
+  tierTint?: TintedTier | false;
   ariaLabel: string;
   onPick: (next: IssueState) => void;
 }) {
@@ -505,7 +512,7 @@ export function IssueStateCell({ state, focus = false, ariaLabel, onPick }: {
       options={ISSUE_STATE_OPTIONS}
       ariaLabel={ariaLabel}
       triggerClassName={CELL_EDIT_CHIP}
-      display={<IssueStateTag state={state} focus={focus} />}
+      display={<IssueStateTag state={state} tierTint={tierTint} />}
       onPick={(value) => {
         onPick(value as IssueState);
       }}
@@ -1808,14 +1815,14 @@ function IssueBoard({ issues, onPatch, onOpen }: {
  *  「问题描述」列 min-w-[320px] → min-w-[240px] —— 收窄描述与「问题归类」之间的空档，归类列（及其后各列）随之前移；
  *  「问题是否处理」列单元格补 text-center —— 状态色签（InlineOptionCell 触发器 = 行内级盒）在列内**始终水平居中**；
  *  另（业务口径「会出现截断的问题」）：归类单元格改 `wrapContent` —— 包裹层撤 `truncate` 裁剪，窄窗 / 列被挤到最小时色签不再被裁掉一角。
- *  Push 207 同批追加「增加项目总览 同款醒目模式在问题追踪里面」：`focus` = 醒目模式开 —— 整行铺该问题状态的
- *  底色（ISSUE_ROW_CLASS · 6% / 悬停 12%，与项目总览任务表同一套口径），状态列只留深色字；关 = 原样。
+ *  Push 207 同批追加「增加项目总览 同款醒目模式在问题追踪里面」（Push 290 起改吃**背景档位**）：`tierTint` = 档位「适中」——
+ *  整行铺该问题状态的行色（适中 = ISSUE_ROW_TINT 便签同款兑白 / 炫彩 = ISSUE_ROW_TINT_VIVID 高饱和，与项目总览任务表同一套口径），状态列只留深色字；否则 = 原样。
  *  Push 223（业务口径 2026-09-29「日报记录 问题追溯里面 这个编辑也要和干系人同款」+「文字和图片编辑要同款 下拉框的保持原来的」）：
  *  行尾补一枚干系人同款「编辑」按钮 —— 「问题描述 / 解决方案或建议 / 问题附图」改走编辑弹窗（IssueEditModal）
  *  落值（表格里只做展示）；「问题归类」「问题是否处理」是下拉口径、保持原来的行内编辑。 */
-function IssueTable({ issues, focus, onEdit, onPatch, onDelete }: {
+function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
   issues: readonly Issue[];
-  focus: boolean;
+  tierTint: TintedTier | false;
   /** 行尾「编辑」按钮（Push 223）：打开问题编辑弹窗 —— 文字两列 + 问题附图（归类 / 状态是下拉口径，保持行内）。 */
   onEdit: (issue: Issue) => void;
   onPatch: (id: string, patch: IssuePatch) => void;
@@ -1841,7 +1848,7 @@ function IssueTable({ issues, focus, onEdit, onPatch, onDelete }: {
         </thead>
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => (
-            <tr key={issue.id} data-issue-row={issue.id} className={"group align-top transition-colors " + (focus ? ISSUE_ROW_CLASS[issue.state] : "hover:bg-zinc-50/80")}>
+            <tr key={issue.id} data-issue-row={issue.id} className={"group align-top transition-colors " + (tierTint ? "issue-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") : "hover:bg-zinc-50/80")} style={tierTint ? ({ "--row-tint": (tierTint === "vivid" ? ISSUE_ROW_TINT_VIVID : ISSUE_ROW_TINT)[issue.state].tint, "--row-tint-hover": (tierTint === "vivid" ? ISSUE_ROW_TINT_VIVID : ISSUE_ROW_TINT)[issue.state].hover } as CSSProperties) : undefined}>
               <td className="whitespace-nowrap px-4 py-4 text-zinc-700">{cnDateOf(issue.raisedAt)}</td>
               <td className="min-w-[240px] px-4 py-4">
                 {/* Push 217 续（业务口径「问题归类去左侧一些这个间距不协调」）：min-w 320 → 240 —— 收窄本列与
@@ -1886,12 +1893,12 @@ function IssueTable({ issues, focus, onEdit, onPatch, onDelete }: {
               </td>
               <td className="whitespace-nowrap px-4 py-4 text-center">
                 {/* Push 217 续（业务口径「这个在表格里面始终居中」）：text-center —— 触发器是行内级盒（inline-flex），
-                    状态色签在列内**始终水平居中**（三态 / 醒目模式 / 行内改后同款；列宽再变也不贴左沿）。 */}
+                    状态色签在列内**始终水平居中**（三态 / 适中档 / 行内改后同款；列宽再变也不贴左沿）。 */}
                 {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚）。
                     Push 260：抽成 IssueStateCell 与工作台问题表共用（那边要「和项目内部一样可以点击」）。 */}
                 <IssueStateCell
                   state={issue.state}
-                  focus={focus}
+                  tierTint={tierTint}
                   ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
                   onPick={(next) => {
                     onPatch(issue.id, { state: next });
@@ -2990,13 +2997,14 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   );
 }
 
-export function ReportIssuePanel({ project, me, members, focusMode, sub, onChangeSub }: {
+export function ReportIssuePanel({ project, me, members, tierTint, sub, onChangeSub }: {
   project: Project;
   me: MeResponse;
   /** 项目成员（Push 243：问题处理人 / 责任人下拉的候选）。 */
   members: readonly Member[];
-  /** 醒目模式（Push 207 同批追加）：与项目总览**同一个账号偏好**（App 层持有、ProjectDetail 透传）；开关本体在标签栏最右侧，这里只吃值做表格呈现；null = 偏好尚未取到 → 按默认「关」渲染。 */
-  focusMode?: boolean | null;
+  /** 背景档位铺色档（Push 290 统一口径 · 原醒目模式挂点；Push 293 加炫彩）：ProjectDetail 透传；
+   *  medium / vivid = 问题表整行铺行色（浓淡随档）+ 状态列收口。 */
+  tierTint?: TintedTier | false;
   /** 当前页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生：form = 日报填写（缺省）/ records / issues / board）。 */
   sub: DailySubView;
   /** 切页内子视图（写回地址 · replace，不新增历史条目）。 */
@@ -3004,8 +3012,8 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
 }) {
   /** 当前子视图（地址是唯一来源：slug → 中文标签；不认识的取值已在路由层落回 form）。 */
   const subTab = SUB_TABS.find((tab) => SUB_TAB_KEYS[tab] === sub) ?? "日报记录";
-  /** 醒目模式（Push 207 同批追加 ·「增加项目总览 同款醒目模式在问题追踪里面」）：投影到本地布尔（null = 关）。 */
-  const focus = focusMode === true;
+  /** 背景档位铺色档（Push 290 统一口径 · 原「醒目模式」挂点）：投影到本地（缺省 = 不铺色）。 */
+  const tierRows: TintedTier | false = tierTint ?? false;
   /** 日报 / 问题（Push 216 接真：来自服务端；项目内成员读写）。 */
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -3454,7 +3462,7 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
         </section>
       ) : subTab === "问题追踪" ? (
         <section className="space-y-3">
-          {/* 醒目模式开关不在这里：按业务口径「醒目模式放在标签导航栏的最右侧」由 ProjectDetail 渲染在主标签栏右侧工具区 */}
+          {/* Push 290 起原「醒目模式」开关已随功能下架：观感统一由顶栏「背景 · 档位」驱动，本视图不再有独立开关。 */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <SectionHeader
               title="问题追踪"
@@ -3473,7 +3481,7 @@ export function ReportIssuePanel({ project, me, members, focusMode, sub, onChang
           ) : visibleIssues.length === 0 ? (
             <EmptyCard text={"没有匹配「" + issueKeyword.trim() + "」的问题。"} hint="换个关键词试试，或点搜索框右侧的 × 清空。" />
           ) : (
-            <IssueTable issues={visibleIssues} focus={focus} onEdit={(issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={patchIssue} onDelete={requestDeleteIssue} />
+            <IssueTable issues={visibleIssues} tierTint={tierRows} onEdit={(issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={patchIssue} onDelete={requestDeleteIssue} />
           )}
         </section>
       ) : (

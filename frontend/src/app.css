@@ -422,7 +422,50 @@ body {
 }
 
 
-/* 入口页右侧平面地图（Push 188）：逐国底图 + 鼠标触碰动画 */
+/* 背景档位 · 适中档的任务行色（Push 289 追订定稿「用 c」）：项目总览 / 工作台「我的任务」整行铺任务状态行色
+   —— 色值由 TaskRow 内联注入 --row-tint / --row-tint-hover（与项目空间卡片同一套便签同款兑白配方），
+   状态列收口成深色字；悬停压深一档 = 同款描边色，留住「这一行可点」的手感。 */
+.task-row-tint {
+  background-color: var(--row-tint, transparent);
+}
+
+.task-row-tint:hover {
+  background-color: var(--row-tint-hover, var(--row-tint, transparent));
+}
+
+
+/* 背景档位 · 适中档的问题行色（Push 290 统一口径）：问题追踪 / 工作台「我提出的问题」整行铺该问题状态的行色
+   —— 同样由行内注入 --row-tint / --row-tint-hover（与任务行 / 项目空间卡片同一套便签同款兑白配方）。 */
+.issue-row-tint {
+  background-color: var(--row-tint, transparent);
+}
+
+.issue-row-tint:hover {
+  background-color: var(--row-tint-hover, var(--row-tint, transparent));
+}
+
+
+/* 炫彩档文字加深（Push 293 追订「炫彩模式文字不明显 看不出来」）：高饱和彩底上的次要灰字整体提深一档
+   —— 只动深浅、不动色相（口径同档位）：zinc-300 → 500 / zinc-400 → 700 / zinc-500 → 800 / zinc-600 → 900。
+   作用域 = 行 / 卡根上挂 .tint-vivid（TaskRow / 问题行 / Card 按「炫彩」档挂），不波及白底区域与浮层。 */
+.tint-vivid .text-zinc-300 {
+  color: #71717a;
+}
+
+.tint-vivid .text-zinc-400 {
+  color: #3f3f46;
+}
+
+.tint-vivid .text-zinc-500 {
+  color: #27272a;
+}
+
+.tint-vivid .text-zinc-600 {
+  color: #18181b;
+}
+
+
+/* 蓝图页平面地图（Push 188 起占满内容区 · Push 285 前叫「入口页 / 首页」）：逐国底图 + 鼠标触碰动画 */
 .hub-map {
   display: block;
   width: 100%;

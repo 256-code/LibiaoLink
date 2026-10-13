@@ -365,6 +365,15 @@
         ],
         "description": "审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）"
       },
+      "BackgroundTier": {
+        "type": "string",
+        "enum": [
+          "simple",
+          "medium",
+          "vivid"
+        ],
+        "description": "背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple"
+      },
       "Blueprint": {
         "type": "object",
         "properties": {
@@ -8456,6 +8465,13 @@
           "myPlanBoard": {
             "$ref": "#/components/schemas/MyPlanBoard"
           },
+          "backgroundTier": {
+            "$ref": "#/components/schemas/BackgroundTier"
+          },
+          "cardWatermark": {
+            "type": "boolean",
+            "description": "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -8477,6 +8493,8 @@
           "focusMode",
           "workspaceOpenProjects",
           "myPlanBoard",
+          "backgroundTier",
+          "cardWatermark",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -8506,10 +8524,23 @@
           },
           "myPlanBoard": {
             "$ref": "#/components/schemas/MyPlanBoardUpdate"
+          },
+          "backgroundTier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BackgroundTier"
+              },
+              {
+                "description": "背景档位 id（Push 291）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple"
+              }
+            ]
+          },
+          "cardWatermark": {
+            "type": "boolean"
           }
         },
         "additionalProperties": {},
-        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔，否则 400 VALIDATION_FAILED"
+        "description": "PATCH 合并语义：只传变更键（数组键整体替换）；未声明键原样保存；taskTableHiddenColumns 的 key 需在白名单（TaskTableColumnKey）内、focusMode 需为布尔、backgroundTier 需为枚举（simple / medium / vivid）、cardWatermark 需为布尔，否则 400 VALIDATION_FAILED"
       },
       "UserStatus": {
         "type": "string",
@@ -11781,7 +11812,7 @@
         "tags": [
           "users"
         ],
-        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态）",
+        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态 / 背景档位 / 卡片水印）",
         "responses": {
           "200": {
             "description": "偏好全量",
@@ -11809,7 +11840,7 @@
         "tags": [
           "users"
         ],
-        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400）",
+        "summary": "更新当前用户偏好（PATCH 合并语义：只传变更键，数组键整体替换；taskTableHiddenColumns 未知 key 400；focusMode 非布尔 400；workspaceOpenProjects 形状不合法 400；backgroundTier 非枚举 400；cardWatermark 非布尔 400）",
         "requestBody": {
           "content": {
             "application/json": {

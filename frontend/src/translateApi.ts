@@ -9,6 +9,12 @@
  *
  * 容错（重要）：本模块**从不抛错** —— 任何一条拿不到译文就跳过（返回表里没有该条），
  * 调用方（导出流程）保持中文原文照出：通道不可用不影响导出的可用性。
+ *
+ * 「写进展描述即后台翻译」（业务口径 2026-10-13「当前项目总览导出翻译需要等待时间 我们现在换一种方式
+ * 当用户写项目进展描述时直接后台翻译」，§6.16 ㉑）：会话级译文缓存 + 后台预热 ——
+ * 页面数据一到 / 每次写入回写就把「项目名 + 全部非空进展描述」丢进 prefetchZhToEn
+ * （去重、跳过已缓存 / 在途 / 刚失败过的，限并发静默跑）；导出时 translateZhToEn 命中缓存即取，
+ * 只有没预热到的条目才现场翻（行为与原来一致），常用路径下导出不再等机器翻译。
  */
 
 /** 常见缩写词（全大写译文规整时保留原样；Argos 小模型偶发整句大写，实测 2026-10-10）。 */
@@ -59,8 +65,42 @@ export function normalizeEnglish(text: string): string {
 /** 并发上限：单条服务 + 导出场景（去重后个位数）小并发即可，同时防批量导入时打满请求。 */
 const MAX_CONCURRENCY = 4;
 
-/** 逐条翻译（POST /api/v1/translate），失败条目直接跳过（不抛错）。 */
-async function translateOne(text: string): Promise<[string, string] | null> {
+/** 会话级译文缓存上限（Map 插入序淘汰最老一条）：防长会话里无限攒；进展描述一般几十条量级，600 条足够宽松。 */
+const CACHE_LIMIT = 600;
+
+/** 预热失败后的静默退避（毫秒）：通道不可用时，别让每次页面数据刷新都重打一遍失败请求；导出路径不受退避限制（用户正等着）。 */
+const PREFETCH_RETRY_MS = 60000;
+
+/** 会话级「原文 → 英文」缓存（同一 SPA 会话内跨页面共用）：写进展描述时预热、导出直接命中。 */
+const translationCache = new Map<string, string>();
+
+/** 在途请求（原文 → 同一个 Promise）：预热与导出同时要同一条时只打一次机器翻译。 */
+const inFlight = new Map<string, Promise<string | null>>();
+
+/** 预热失败时间（原文 → 时间戳）：退避窗口内不再为它发起预热。 */
+const failedAt = new Map<string, number>();
+
+/** 去重 + 去空（缓存键与请求体都用原文整串，与导出查表口径一致）。 */
+function uniqueTexts(texts: readonly string[]): string[] {
+  return Array.from(new Set(texts.filter((text) => text.trim() !== "")));
+}
+
+/** 写缓存（顺带清失败标记；超限时按插入序丢最老一条）。 */
+function cachePut(source: string, translated: string): void {
+  failedAt.delete(source);
+  translationCache.delete(source);
+  translationCache.set(source, translated);
+  while (translationCache.size > CACHE_LIMIT) {
+    const oldest = translationCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    translationCache.delete(oldest.value);
+  }
+}
+
+/** 逐条翻译（POST /api/v1/translate），失败返回 null（不抛错；由 translateOneShared 统一记退避 / 写缓存）。 */
+async function translateOne(text: string): Promise<string | null> {
   try {
     const response = await fetch("/api/v1/translate", {
       method: "POST",
@@ -77,36 +117,93 @@ async function translateOne(text: string): Promise<[string, string] | null> {
       return null;
     }
     const normalized = normalizeEnglish(translatedText);
-    return normalized === "" ? null : [text, normalized];
+    return normalized === "" ? null : normalized;
   } catch {
     return null;
   }
 }
 
-/** 把一批中文文本翻成英文（去重 + 限并发 + 逐条容错）；返回「原文 → 英文」映射，失败条目不在表里。
- * onProgress(done, total)：翻译进度回调（去重后每完成一条回报一次，含失败条目）—— 导出等待浮层用它显示
- * 「项目进展描述翻译中 + 预计需要 XX 秒」（§6.16 ⑳，见 components/ExportProgressOverlay.tsx）。 */
+/** 同一原文共用一次在途请求（预热与导出并发时只打一条机器翻译）；成功后写缓存、失败记退避时间。 */
+function translateOneShared(text: string): Promise<string | null> {
+  const existing = inFlight.get(text);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const task = (async () => {
+    try {
+      const translated = await translateOne(text);
+      if (translated === null) {
+        failedAt.set(text, Date.now());
+        return null;
+      }
+      cachePut(text, translated);
+      return translated;
+    } finally {
+      inFlight.delete(text);
+    }
+  })();
+  inFlight.set(text, task);
+  return task;
+}
+
+/**
+ * 后台预热（「写进展描述即后台翻译」· §6.16 ㉑）：把一批中文文本静默翻好放进会话缓存 —— 不等待、不抛错。
+ * 已缓存 / 在途 / 退避窗口内失败过的条目直接跳过（失败不弹提示；导出时仍按原行为现场重试、静默降级）。
+ */
+export function prefetchZhToEn(texts: readonly string[]): void {
+  const now = Date.now();
+  const queue = uniqueTexts(texts).filter(
+    (text) => !translationCache.has(text) && !inFlight.has(text) && (failedAt.get(text) ?? 0) + PREFETCH_RETRY_MS <= now,
+  );
+  if (queue.length === 0) {
+    return;
+  }
+  let cursor = 0;
+  void Promise.all(
+    Array.from({ length: Math.min(MAX_CONCURRENCY, queue.length) }, async () => {
+      while (cursor < queue.length) {
+        const at = cursor;
+        cursor += 1;
+        await translateOneShared(queue[at]);
+      }
+    }),
+  );
+}
+
+/** 会话缓存直取（不打请求）：给「抽屉打开即显示译文」这类场景用；没命中返回 null（调用方再走 translateZhToEn）。 */
+export function cachedZhToEn(text: string): string | null {
+  return translationCache.get(text) ?? null;
+}
+
+/** 把一批中文文本翻成英文（会话缓存优先 + 缺的现场翻：去重 + 限并发 + 逐条容错）；返回「原文 → 英文」映射
+ * （含命中缓存的条目），失败 / 拿不到译文的条目不在表里。
+ * onProgress(done, total)：命中缓存的条目一开始即计入 done、未缓存的每完成一条回报一次（含失败条目）——
+ * 导出等待浮层用它显示「项目进展描述翻译中 + 预计需要 XX 秒」（§6.16 ⑳，见 components/ExportProgressOverlay.tsx）。 */
 export async function translateZhToEn(
   texts: readonly string[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<ReadonlyMap<string, string>> {
-  const unique = Array.from(new Set(texts.filter((text) => text.trim() !== "")));
-  onProgress?.(0, unique.length);
-  const results = new Map<string, string>();
+  const unique = uniqueTexts(texts);
+  const missing = unique.filter((text) => !translationCache.has(text));
+  let done = unique.length - missing.length;
+  onProgress?.(done, unique.length);
   let cursor = 0;
-  let done = 0;
-  const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, unique.length) }, async () => {
-    while (cursor < unique.length) {
+  const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, missing.length) }, async () => {
+    while (cursor < missing.length) {
       const at = cursor;
       cursor += 1;
-      const hit = await translateOne(unique[at]);
-      if (hit !== null) {
-        results.set(hit[0], hit[1]);
-      }
+      await translateOneShared(missing[at]);
       done += 1;
       onProgress?.(done, unique.length);
     }
   });
   await Promise.all(workers);
+  const results = new Map<string, string>();
+  for (const text of unique) {
+    const hit = translationCache.get(text);
+    if (hit !== undefined) {
+      results.set(text, hit);
+    }
+  }
   return results;
 }
