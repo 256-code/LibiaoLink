@@ -167,10 +167,27 @@ export const MyPlanBoardSchema = MyPlanBoardUpdateSchema
   })
   .openapi("MyPlanBoard", { description: "「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛" });
 
+/** 背景档位 id（Push 289 前端内存态 → Push 291 按账号落库 · 业务口径 2026-10-13「当前背景选择后刷新就没了 要按账号记住」；
+ *  与前端 backgroundTier.ts 的 BG_TIERS 同源）：simple = 简约（默认，当前系统观感不含铺色）/
+ *  medium = 适中（行 / 卡铺状态色 + 状态列收口深色字）/ vivid = 炫彩（观感后续定档，先占位）。 */
+export const BACKGROUND_TIER_IDS = ["simple", "medium", "vivid"] as const;
+
+export const BackgroundTierSchema = z
+  .enum(BACKGROUND_TIER_IDS)
+  .openapi("BackgroundTier", { description: "背景档位 id（Push 291）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple" });
+
+/** 界面语言 id（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」；与前端 i18n.ts 的 LOCALES 同源）：
+ *  zh = 中文（默认）/ en = English。 */
+export const LOCALE_IDS = ["zh", "en"] as const;
+
+export const LocaleSchema = z
+  .enum(LOCALE_IDS)
+  .openapi("Locale", { description: "界面语言 id（Push 296）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" });
+
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）；
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）；
  * 未声明键按 `.catchall` 原样保存（前向兼容），但不回读 —— 新增偏好键必须同时补这里与 service 的 toContract。
  */
 export const UserPreferencesSchema = z
@@ -192,6 +209,13 @@ export const UserPreferencesSchema = z
     workspaceOpenProjects: WorkspaceOpenProjectsSchema,
     myPlanBoard: MyPlanBoardSchema,
     revisions: z.record(z.string(), z.number().int().nonnegative()).openapi({ description: "偏好各键的基线版本；未写过的键为0" }),
+    backgroundTier: BackgroundTierSchema.openapi({ description: "背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple" }),
+    locale: LocaleSchema.openapi({ description: "界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" }),
+    cardWatermark: z
+      .boolean()
+      .openapi({
+        description: "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true",
+      }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
   .openapi("UserPreferences", { description: "用户偏好（全量；GET 返回当前值）" });
@@ -205,17 +229,22 @@ export const UserPreferencesUpdateBodySchema = z
     workspaceOpenProjects: WorkspaceOpenProjectsSchema.optional(),
     myPlanBoard: MyPlanBoardUpdateSchema.optional(),
     expectedRevisions: z.object({ homeSavedFilters: z.number().int().nonnegative().optional(), myPlanBoard: z.number().int().nonnegative().optional() }).strict().optional().openapi({ description: "更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。" }),
+    backgroundTier: BackgroundTierSchema.optional(),
+    locale: LocaleSchema.optional(),
+    cardWatermark: z.boolean().optional(),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单、focusMode为布尔，否则400"
+      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */
 export type TaskTableColumnKey = z.infer<typeof TaskTableColumnKeySchema>;
 export type SavedHomeFilter = z.infer<typeof SavedHomeFilterSchema>;
 export type WorkspaceOpenProjects = z.infer<typeof WorkspaceOpenProjectsSchema>;
+export type BackgroundTier = z.infer<typeof BackgroundTierSchema>;
+export type Locale = z.infer<typeof LocaleSchema>;
 export type PlanBoardBg = z.infer<typeof PlanBoardBgSchema>;
 export type MyPlanNote = z.infer<typeof MyPlanNoteSchema>;
 export type MyPlanBoard = z.infer<typeof MyPlanBoardSchema>;

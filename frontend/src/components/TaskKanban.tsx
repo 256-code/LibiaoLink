@@ -11,6 +11,7 @@ import { StageAddCard } from "./StageAddCard";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { STATUS_TAG_CLASS, type TaskPatch } from "./TaskBoard";
+import { fieldText, stageText, useLocale, useLocalizedText, useT } from "../i18n";
 import { trackerLabel } from "./Tracker";
 
 /**
@@ -369,9 +370,10 @@ function ProgressBar({ progress }: { progress: number }) {
 
 /** 「所属阶段」：任务所属的施工阶段（看板里直接建的任务没有阶段，显示「临时任务」· Push 196 起）。 */
 function StageChip({ stage }: { stage: string }) {
+  const locale = useLocale();
   return (
     <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + (STAGE_TAG_CLASS[stage] ?? "bg-zinc-200 text-zinc-600")}>
-      {stage === "" ? TEMP_TASK_STAGE : stage}
+      {stageText(locale, stage === "" ? TEMP_TASK_STAGE : stage)}
     </span>
   );
 }
@@ -416,9 +418,15 @@ function KanbanCard({
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下看详情 / 按住拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
+  const locale = useLocale();
+  /** 手打内容（任务名）机翻显示：英文界面 titleEn 优先 → 机翻 → 原文；副行给中文原名；中文界面照旧。 */
+  const localizedTitle = useLocalizedText(task.title);
+  const titleText = locale === "en" ? (task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
+  const subText = locale === "en" ? (titleText === task.title ? "" : task.title) : task.titleEn;
+  const t = useT();
   const status = task.status;
   /** 卡片上的负责人展示（多位按「、」连接，Push 136；2026-09-24 定案「只按名字」—— 拼音口径下线）。 */
-  const ownerLabel = task.owners.length === 0 ? "待分配" : ownersLabel(task.owners);
+  const ownerLabel = task.owners.length === 0 ? fieldText(locale, "待分配") : ownersLabel(task.owners);
   /** 头像取第一位负责人（目录里查不到 id 时回落首字圆圈）。 */
   const owner = task.ownerIds.length === 0 ? undefined : members.find((member) => member.id === task.ownerIds[0]);
   /** 实际完成日期（Push 98）：空值「—」也带框，点开就是单日期小日历（上 / 下月、清除、今天）。 */
@@ -442,7 +450,7 @@ function KanbanCard({
       role="button"
       tabIndex={ghost === true ? -1 : 0}
       aria-label={"任务：" + task.title}
-      title={onPointerDownDrag === undefined ? undefined : "按住拖到别的列 = 移到那个组（负责人 / 状态跟着改）；拖动中滚轮翻卡片、Shift + 滚轮翻列；点一下看任务详情"}
+      title={onPointerDownDrag === undefined ? undefined : t("kanban.drag.title")}
       data-kanban-card="true" data-live-card={task.id}
       onPointerDown={(event) => {
         if (onPointerDownDrag === undefined) {
@@ -469,41 +477,41 @@ function KanbanCard({
     >
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
-        <p className="text-sm font-bold leading-5 text-zinc-900">{task.title}</p>
-        {task.titleEn === "" ? null : <p className="mt-0.5 text-[11px] leading-4 text-zinc-500">{task.titleEn}</p>}
+        <p className="text-sm font-bold leading-5 text-zinc-900">{titleText}</p>
+        {subText === "" ? null : <p className="mt-0.5 text-[11px] leading-4 text-zinc-500">{subText}</p>}
 
         {mode === "owner" ? (
           <>
-            <Field label="预计完成日期">
+            <Field label={fieldText(locale, "预计完成日期")}>
               <span className="text-sm text-zinc-800">{task.dueDate === "" ? "—" : cnDateFromIso(task.dueDate)}</span>
             </Field>
-            <Field label="任务状态">
+            <Field label={fieldText(locale, "任务状态")}>
               <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{status}</span>
             </Field>
-            <Field label="实际完成日期">{doneField}</Field>
+            <Field label={fieldText(locale, "实际完成日期")}>{doneField}</Field>
           </>
         ) : (
           <>
-            <Field label="任务负责人">
+            <Field label={fieldText(locale, "任务负责人")}>
               <span className="flex min-w-0 items-center gap-1.5">
                 {owner === undefined ? <InitialAvatar name={task.owners[0] ?? ""} /> : <MemberAvatar member={owner} />}
                 <span className="truncate text-sm text-zinc-800" title={ownerLabel}>{ownerLabel}</span>
               </span>
             </Field>
-            <Field label="开始日期">
+            <Field label={fieldText(locale, "开始日期")}>
               <span className="text-sm text-zinc-800">{task.startDate === "" ? "—" : cnDateFromIso(task.startDate)}</span>
             </Field>
-            <Field label="实际完成日期">{doneField}</Field>
+            <Field label={fieldText(locale, "实际完成日期")}>{doneField}</Field>
           </>
         )}
 
-        <Field label="项目进度">
+        <Field label={fieldText(locale, "项目进度")}>
           <ProgressBar progress={task.progress} />
         </Field>
-        <Field label="是否按时交付">
+        <Field label={fieldText(locale, "是否按时交付")}>
           <OnTimeChip task={task} />
         </Field>
-        <Field label="所属阶段">
+        <Field label={fieldText(locale, "所属阶段")}>
           <StageChip stage={task.stage} />
         </Field>
       </div>

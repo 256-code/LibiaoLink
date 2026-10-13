@@ -5,6 +5,9 @@ type TrackerProps = {
   progress: number;
   steps?: number;
   onChange?: (progress: number) => void;
+  /** 炫彩档（Push 293 追订「炫彩下点这个进度条看不清」→「背景留白」→「带弧度的」→「胶囊的绿回到之前的版本」）：
+   *  四格点底挖出一块胶囊白槽（rounded-full + bg-white），点回标配绿（点亮 emerald-500 / 空格 zinc-200）；缺省 = 原观感（简约 / 适中不改）。 */
+  vivid?: boolean;
 };
 
 export const TRACKER_STEPS = PROGRESS_STEPS;
@@ -36,6 +39,7 @@ export function TrackerDots({
   hovered,
   onHoverChange,
   onChange,
+  vivid = false,
 }: {
   progress: number;
   steps?: number;
@@ -43,12 +47,14 @@ export function TrackerDots({
   hovered: number;
   onHoverChange: (step: number) => void;
   onChange?: (progress: number) => void;
+  /** 炫彩档（Push 293 追订「背景留白」+「带弧度的」+「绿回标配」）：四格点外包一块胶囊白槽，点亮 = emerald-500、空格 = zinc-200 —— 白槽上清晰不打糊。 */
+  vivid?: boolean;
 }) {
   const filled = trackerStep(progress, steps);
 
   return (
     <span
-      className="flex items-end gap-1"
+      className={"flex items-end gap-1" + (vivid ? " rounded-full bg-white px-2 py-1" : "")}
       onMouseLeave={() => {
         onHoverChange(0);
       }}
@@ -167,7 +173,7 @@ export function TrackerBar({
   );
 }
 
-export function Tracker({ progress, steps = TRACKER_STEPS, onChange }: TrackerProps) {
+export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = false }: TrackerProps) {
   const [hovered, setHovered] = useState(0);
   const filled = trackerStep(progress, steps);
   const active = hovered > 0 ? hovered : filled;
@@ -182,7 +188,7 @@ export function Tracker({ progress, steps = TRACKER_STEPS, onChange }: TrackerPr
       >
         {label}
       </span>
-      <TrackerDots progress={progress} steps={steps} hovered={hovered} onHoverChange={setHovered} onChange={onChange} />
+      <TrackerDots progress={progress} steps={steps} hovered={hovered} onHoverChange={setHovered} onChange={onChange} vivid={vivid} />
     </span>
   );
 }

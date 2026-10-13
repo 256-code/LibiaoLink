@@ -9,12 +9,14 @@ import { EMPTY_LIST_QUERY } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 /**
- * 登录后的入口页（Push 188 改版）：**平面世界地图占满内容区**。
+ * 蓝图页（顶层 · Push 285 业务口径 2026-10-12「登录后默认进入项目空间 首页名称改成蓝图」：本页由
+ * 「入口页 / 首页」改名「**蓝图**」，登录后的默认落地改为项目空间 `#/projects`，本页由导航首项 / `#/` 直连进入）。
+ * Push 188 改版起：**平面世界地图占满内容区**。
  * 地图口径见 components/HubMap.tsx；项目立柱的数据口径见 data/mapProjects.ts —— 联动键是 projects.region，
  * 取数复用现有接口（GET /api/v1/projects + GET /api/v1/dicts），**没有新增契约**。
  *
  * 业务口径 2026-09-30「这三个按钮删除吧」：原来最左侧竖排的三个入口胶囊（项目空间 / 任务模板 / 我的任务，
- * components/HubButton.tsx）与顶部导航栏（TopNav：首页 / 项目空间 / 任务模板 / 我的任务）重复，整列下架
+ * components/HubButton.tsx）与顶部导航栏（TopNav：蓝图 / 项目空间 / 任务模板 / 我的任务）重复，整列下架
  * （组件文件一并删除），地图从此占满整行；项目空间 / 任务模板 / 我的任务三个落点地址不变，改由顶部导航栏承接。
  */
 export default function Hub({ me }: { me: MeResponse }) {
@@ -42,7 +44,7 @@ export default function Hub({ me }: { me: MeResponse }) {
         if (cancelled) {
           return;
         }
-        // 取数失败不挡入口页：地图照常可触碰，只是没有立柱
+        // 取数失败不挡蓝图页：地图照常可触碰，只是没有立柱
         setDistribution(null);
         setNote("项目数据加载失败，地图仍可触碰；刷新重试。");
       }

@@ -4,7 +4,7 @@ import { MAP_PROJECT_STATUS_TEXT, type HubMapDistribution, type HubMapPillar } f
 import { buildListHash, EMPTY_LIST_QUERY } from "../useHashRoute";
 
 /**
- * 入口页右侧的平面世界地图（Push 188）。
+ * 蓝图页的平面世界地图（Push 188；Push 285 起本页由「入口页 / 首页」改名「蓝图」）。
  *
  * 底图 = 生成物 data/worldMap.ts（等距圆柱投影，生成脚本 scripts/generate-world-map.mjs）：
  * 世界国界取 Natural Earth 1:110m，**中国国界取中国标准地图口径**（含台湾、藏南、阿克赛钦、钓鱼岛，

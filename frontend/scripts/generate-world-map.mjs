@@ -1,5 +1,5 @@
 /**
- * 入口页世界地图 SVG 路径生成（一次性脚本；运行需联网，产物入库 —— 构建与运行时不联网）。
+ * 蓝图页世界地图 SVG 路径生成（一次性脚本；运行需联网，产物入库 —— 构建与运行时不联网）。
  * 数据源：
  *   ① 世界国界：Natural Earth 1:110m Admin 0（public domain），经 world-atlas@2 打包为 TopoJSON；
  *   ② 中国国界（中国标准地图口径：含台湾、藏南、阿克赛钦、钓鱼岛）+ 南海断续线：阿里云 DataV GeoAtlas（areas_v3）；
@@ -500,7 +500,7 @@ const literalOf = (value) => {
 
 const lines = [
   "/**",
-  " * 入口页世界地图的国家路径（等距圆柱投影），一个国家一条闭合路径。",
+  " * 蓝图页世界地图的国家路径（等距圆柱投影），一个国家一条闭合路径。",
   " * 本文件由 scripts/generate-world-map.mjs 生成，请勿手改；",
   " * 数据源：Natural Earth 1:110m Admin 0（public domain，经 world-atlas@2 打包）＋ 中国国界与南海断续线取",
   " * 阿里云 DataV GeoAtlas（中国标准地图口径）＋ world-countries（MIT）中文国名。",

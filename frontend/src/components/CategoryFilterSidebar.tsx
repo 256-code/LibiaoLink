@@ -12,6 +12,7 @@ import {
 } from "../savedFilters";
 import type { FilterCriteria, SavedFilter } from "../savedFilters";
 import { groupByContinent, type ContinentGroup } from "../data/regionContinents";
+import { continentText, useLocale, useT } from "../i18n";
 
 /** 「液态玻璃」材质（与任务表行内编辑单元格同口径，Push 66 / 67 定稿）：白底 + 发丝描边 + 顶部内高光 + 极轻投影。 */
 const GLASS_SURFACE =
@@ -59,11 +60,12 @@ type CategoryFilterSidebarProps = {
   onClose: () => void;
 };
 
-/** 添加 / 编辑常用筛选的编辑态（id = null 为新建）。 */
+/** 添加 / 编辑常用筛选的编辑态（id = null 为新建；prefilled = 由「一键添加」带入当前筛选、勾选还没动过）。 */
 type ComposeState = {
   id: string | null;
   name: string;
   criteria: FilterCriteria;
+  prefilled: boolean;
 };
 
 function criteriaCount(criteria: FilterCriteria): number {
@@ -102,6 +104,8 @@ export function CategoryFilterSidebar({
   onReset,
   onClose,
 }: CategoryFilterSidebarProps) {
+  const t = useT();
+  const locale = useLocale();
   // 「添加」后的编辑态：勾选落在草稿上（不动当前筛选），保存 = 入库 + 立即生效（见《前端功能需求》§一.3）
   const [compose, setCompose] = useState<ComposeState | null>(null);
 
@@ -149,6 +153,20 @@ export function CategoryFilterSidebar({
       : compose.criteria.timeFrom !== null && compose.criteria.timeTo !== null
         ? { from: compose.criteria.timeFrom, to: compose.criteria.timeTo }
         : null;
+
+  /**
+   * 「一键添加」（Push 286）：当前筛选里可存入常用筛选的部分（项目状态不参与组合保存）。
+   * 任一条件有值（地区 / 项目类型 / 项目经理 / 项目时间）时，分组标题右侧的「+ 添加」改显「一键添加」：
+   * 点一下把当前条件整组带进新建草稿 —— 当前筛选原样不动（不重置），直接让用户取名保存。
+   */
+  const currentCriteria: FilterCriteria = {
+    regions: selectedRegions.slice(),
+    projectTypes: selectedTypes.slice(),
+    managerIds: selectedManagerIds.slice(),
+    timeFrom: dateRange === null ? null : dateRange.from,
+    timeTo: dateRange === null ? null : dateRange.to,
+  };
+  const canQuickAdd = hasCriteria(currentCriteria);
 
   /**
    * 「地区」按洲分组（Push 192；业务口径 2026-09-28「我觉得这里太乱了 要根据各个州分类 可以展开」）：
@@ -298,43 +316,53 @@ export function CategoryFilterSidebar({
       />
       <aside
         id="category-filter-panel"
-        aria-label="分类筛选"
+        aria-label={t("filter.aria")}
         className={
           (open ? "translate-x-0" : "-translate-x-full") +
           " fixed bottom-0 left-0 top-16 z-20 flex w-[280px] flex-col transition-transform duration-300 ease-out " + GLASS_PANEL
         }
       >
-        <ScrollArea viewportClassName="min-h-0 flex-1" className="space-y-6 px-5 py-5" ariaLabel="筛选条件">
+        <ScrollArea viewportClassName="min-h-0 flex-1" className="space-y-6 px-5 py-5" ariaLabel={t("filter.scrollAria")}>
           <section>
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold tracking-wide text-zinc-700">常用筛选</p>
+              <p className="text-sm font-semibold tracking-wide text-zinc-700">{t("filter.saved")}</p>
               <button
                 type="button"
                 onClick={() => {
-                  setCompose({ id: null, name: "", criteria: emptyCriteria() });
+                  // 「一键添加」：把当前筛选整组带进草稿（不重置当前筛选）；没有任何可保存条件时才从空草稿开始
+                  setCompose({
+                    id: null,
+                    name: "",
+                    criteria: canQuickAdd ? currentCriteria : emptyCriteria(),
+                    prefilled: canQuickAdd,
+                  });
                 }}
                 disabled={!canCompose}
                 title={
                   savedFilters.length >= SAVED_FILTER_LIMIT
-                    ? "最多保存 " + SAVED_FILTER_LIMIT + " 组常用筛选"
-                    : "把常看的分类勾成一组，命名保存"
+                    ? t("filter.limitTitle", { n: SAVED_FILTER_LIMIT })
+                    : canQuickAdd
+                      ? t("filter.quickAddTitle")
+                      : t("filter.addTitle")
                 }
                 className={
                   "rounded-lg px-2 py-1 text-xs font-medium transition " +
                   (canCompose ? "text-zinc-700 hover:bg-zinc-100" : "cursor-not-allowed text-zinc-300")
                 }
               >
-                + 添加
+                {canQuickAdd ? t("filter.quickAdd") : t("filter.add")}
               </button>
             </div>
 
             {compose !== null && (
               <div className="mt-3 rounded-xl border border-amber-300/80 bg-amber-50/80 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
                 <p className="text-xs font-semibold text-zinc-700">
-                  {compose.id === null ? "新建常用筛选" : "编辑常用筛选"}
+                  {compose.id === null ? t("filter.compose.new") : t("filter.compose.edit")}
                 </p>
                 <p className="mt-1 text-[11px] leading-4 text-zinc-500">
-                  在下方分类里勾选多项（可跨组），名称可自定义；保存后即出现在「常用筛选」并立即生效。
+                  {compose.prefilled
+                    ? t("filter.compose.prefilled")
+                    : t("filter.compose.blank")}
                 </p>
                 <input
                   value={compose.name}
@@ -349,14 +377,14 @@ export function CategoryFilterSidebar({
                   }}
                   maxLength={SAVED_FILTER_NAME_MAX}
                   autoFocus
-                  placeholder="筛选名称（自定义，如：我关注的项目）"
-                  aria-label="常用筛选名称"
+                  placeholder={t("filter.name.placeholder")}
+                  aria-label={t("filter.name.aria")}
                   className="mt-2 w-full rounded-lg border border-zinc-200/90 bg-white/85 px-2.5 py-1.5 text-xs text-zinc-700 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none"
                 />
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                   <span className="text-[11px] text-zinc-500">
-                    已选 {draftCount} 项
-                    {!hasCriteria(compose.criteria) ? "（至少选 1 项）" : ""}
+                    {t("filter.draft.count", { n: draftCount })}
+                    {!hasCriteria(compose.criteria) ? t("filter.draft.needOne") : ""}
                   </span>
                   <span className="ml-auto flex shrink-0 items-center gap-1.5">
                     <button
@@ -366,7 +394,7 @@ export function CategoryFilterSidebar({
                       }}
                       className="whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
                     >
-                      取消
+                      {t("filter.cancel")}
                     </button>
                     <button
                       type="button"
@@ -377,7 +405,7 @@ export function CategoryFilterSidebar({
                         (canSave ? "bg-zinc-900 text-white hover:bg-zinc-700" : "cursor-not-allowed bg-zinc-200 text-zinc-400")
                       }
                     >
-                      保存
+                      {t("filter.save")}
                     </button>
                   </span>
                 </div>
@@ -387,7 +415,9 @@ export function CategoryFilterSidebar({
             {savedFilters.length === 0 ? (
               compose === null ? (
                 <p className="mt-3 text-xs leading-5 text-zinc-400">
-                  还没有常用筛选 —— 点「添加」，勾选常看的分类、起个名字保存。
+                  {canQuickAdd
+                    ? t("filter.empty.quickAdd")
+                    : t("filter.empty.add")}
                 </p>
               ) : null
             ) : (
@@ -410,7 +440,7 @@ export function CategoryFilterSidebar({
                         onClick={() => {
                           onApplySavedFilter(filter);
                         }}
-                        title={"应用「" + filter.name + "」（命中 " + count + " 个项目）"}
+                        title={t("filter.applyTitle", { name: filter.name, n: count })}
                         className="inline-flex max-w-[168px] items-center px-3 py-1 text-xs"
                       >
                         <span className="truncate">{filter.name}</span>
@@ -426,10 +456,10 @@ export function CategoryFilterSidebar({
                         <button
                           type="button"
                           onClick={() => {
-                            setCompose({ id: filter.id, name: filter.name, criteria: criteriaOf(filter) });
+                            setCompose({ id: filter.id, name: filter.name, criteria: criteriaOf(filter), prefilled: false });
                           }}
-                          aria-label={"编辑常用筛选 " + filter.name}
-                          title="编辑 / 改名"
+                          aria-label={t("filter.editAria", { name: filter.name })}
+                          title={t("filter.editTitle")}
                           className={
                             "shrink-0 rounded-full py-0.5 pl-1.5 pr-0.5 transition " +
                             (applied ? "hover:text-white" : "hover:text-zinc-900")
@@ -444,8 +474,8 @@ export function CategoryFilterSidebar({
                           onClick={() => {
                             onRequestDeleteSavedFilter(filter);
                           }}
-                          aria-label={"删除常用筛选 " + filter.name}
-                          title="删除"
+                          aria-label={t("filter.deleteAria", { name: filter.name })}
+                          title={t("filter.deleteTitle")}
                           className={
                             "shrink-0 rounded-full py-0.5 pl-0.5 pr-2 transition " +
                             (applied ? "hover:text-white" : "hover:text-zinc-900")
@@ -464,7 +494,7 @@ export function CategoryFilterSidebar({
           </section>
           <section data-region-section="true">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold tracking-wide text-zinc-700">地区</p>
+              <p className="text-sm font-semibold tracking-wide text-zinc-700">{t("filter.region")}</p>
               {regionGroups.length === 0 ? null : (
                 <button
                   type="button"
@@ -474,7 +504,7 @@ export function CategoryFilterSidebar({
                   }}
                   className="text-[11px] text-zinc-400 transition hover:text-zinc-700"
                 >
-                  {allGroupsExpanded ? "全部收起" : "全部展开"}
+                  {allGroupsExpanded ? t("filter.collapseAll") : t("filter.expandAll")}
                 </button>
               )}
             </div>
@@ -507,23 +537,23 @@ export function CategoryFilterSidebar({
                         >
                           <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
-                        <span className="text-xs font-medium text-zinc-700">{group.continent}</span>
-                        <span className="text-[11px] text-zinc-400">{group.items.length} 个地区</span>
+                        <span className="text-xs font-medium text-zinc-700">{continentText(locale, group.continent)}</span>
+                        <span className="text-[11px] text-zinc-400">{t("filter.regionCount", { n: group.items.length })}</span>
                       </button>
                       {picked === 0 ? null : (
-                        <span className="shrink-0 rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10px] font-medium text-white">已选 {picked}</span>
+                        <span className="shrink-0 rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10px] font-medium text-white">{t("filter.picked", { n: picked })}</span>
                       )}
                       {/* 整洲筛选复选框（Push 193 追订 · 业务参考代码）：行最右侧；勾上 = 该洲全部地区一起选中（再点取消） */}
                       <label
                         className="group/continent-check -m-1 flex shrink-0 cursor-pointer items-center p-1"
-                        title={allPicked ? "取消筛选整个" + group.continent : "筛选整个" + group.continent + "（" + String(group.items.length) + " 个地区）"}
+                        title={allPicked ? t("filter.continent.uncheckAll", { name: continentText(locale, group.continent) }) : t("filter.continent.checkAllCount", { name: continentText(locale, group.continent), n: group.items.length })}
                       >
                         <input
                           type="checkbox"
                           data-continent-check={group.continent}
                           className="peer sr-only"
                           checked={allPicked}
-                          aria-label={"筛选整个" + group.continent}
+                          aria-label={t("filter.continent.checkAll", { name: continentText(locale, group.continent) })}
                           onChange={() => {
                             handleToggleContinent(group);
                           }}
@@ -553,28 +583,28 @@ export function CategoryFilterSidebar({
             </div>
           </section>
           <section>
-            <p className="text-sm font-semibold tracking-wide text-zinc-700">项目类型</p>
+            <p className="text-sm font-semibold tracking-wide text-zinc-700">{t("filter.types")}</p>
             {renderChips(types, typeSelection, handleToggleType)}
           </section>
           <section>
-            <p className="text-sm font-semibold tracking-wide text-zinc-700">项目经理</p>
+            <p className="text-sm font-semibold tracking-wide text-zinc-700">{t("filter.managers")}</p>
             {renderChips(managers, managerSelection, handleToggleManager)}
           </section>
           <section data-status-section="true">
-            <p className="text-sm font-semibold tracking-wide text-zinc-700">项目状态</p>
+            <p className="text-sm font-semibold tracking-wide text-zinc-700">{t("filter.statuses")}</p>
             {renderChips(statuses, selectedStatuses, handleToggleStatus)}
             {compose === null ? null : (
-              <p className="mt-2 text-[11px] leading-4 text-zinc-400">项目状态是当前列表的即时筛选，不保存进常用筛选。</p>
+              <p className="mt-2 text-[11px] leading-4 text-zinc-400">{t("filter.status.note")}</p>
             )}
           </section>
           <section>
             <p className="flex items-center gap-1.5 text-sm font-semibold tracking-wide text-zinc-700">
-              项目时间
+              {t("filter.time")}
               <span
                 role="img"
                 tabIndex={0}
-                aria-label="项目时间口径：按项目创建时间筛选（Push 175 修订；原「最近活动时间」口径已作废）"
-                title="按项目创建时间筛选（与卡片上的创建时间同一口径）。"
+                aria-label={t("filter.time.aria")}
+                title={t("filter.time.title")}
                 className="inline-flex h-4 w-4 shrink-0 cursor-help items-center justify-center rounded-full border border-zinc-300 text-[10px] font-semibold tracking-normal text-zinc-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
               >
                 i
@@ -590,9 +620,9 @@ export function CategoryFilterSidebar({
           <span className="text-xs text-zinc-400">
             {compose === null
               ? activeCount === 0
-                ? "未选择筛选条件"
-                : "已选 " + activeCount + " 项"
-              : "常用筛选编辑中：已勾选 " + draftCount + " 项"}
+                ? t("filter.footer.none")
+                : t("filter.footer.count", { n: activeCount })
+              : t("filter.footer.compose", { n: draftCount })}
           </span>
           <button
             type="button"
@@ -604,7 +634,7 @@ export function CategoryFilterSidebar({
               (activeCount === 0 ? "cursor-not-allowed text-zinc-300" : "text-zinc-700 hover:bg-zinc-100")
             }
           >
-            重置
+            {t("filter.reset")}
           </button>
         </div>
       </aside>

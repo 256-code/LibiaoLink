@@ -1,9 +1,12 @@
+import { useT } from "../i18n";
+
 type CategorySwitchProps = {
   checked: boolean;
   onChange: (checked: boolean) => void;
 };
 
 export function CategorySwitch({ checked, onChange }: CategorySwitchProps) {
+  const t = useT();
   const sliderClass =
     "absolute inset-0 cursor-pointer rounded-[30px] transition-all duration-[400ms] peer-focus-visible:shadow-[10px_10px_100px_#7f8996] " +
     (checked ? "bg-[#feca04]" : "bg-[#313033]");
@@ -26,7 +29,7 @@ export function CategorySwitch({ checked, onChange }: CategorySwitchProps) {
         aria-controls="category-filter-panel"
       />
       <span className={sliderClass}>
-        <span className={titleClass}>分类筛选</span>
+        <span className={titleClass}>{t("filter.switch")}</span>
         <span className={ballClass}>
           <span className="absolute left-[53%] top-[58%] -translate-x-1/2 -translate-y-1/2 text-[#313033]">
             <svg className="h-6 w-6" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

@@ -9,6 +9,8 @@ import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
+import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
+import { applyLocale, asLocale } from "./i18n";
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
@@ -27,7 +29,7 @@ import {
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { archiveProject, createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveFocusMode, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
+import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
 import { projectStatusOf, type MeResponse, type Project } from "./types";
@@ -111,8 +113,6 @@ export default function App() {
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   // 任务表列显隐（A4 · Push 170）：同样按账号存服务端；null = 偏好尚未取到（先用页面默认列）
   const [taskTableHiddenColumns, setTaskTableHiddenColumns] = useState<string[] | null>(null);
-  // 醒目模式（A4 · §6.13 · Push 171）：同样按账号存服务端；null = 偏好尚未取到（页面按默认「关」渲染，不回写）
-  const [focusMode, setFocusMode] = useState<boolean | null>(null);
   /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；null = 偏好尚未取到（按全收起渲染，不回写）。 */
   const [workspaceOpenProjects, setWorkspaceOpenProjects] = useState<WorkspaceOpenProjects | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -152,7 +152,9 @@ export default function App() {
       filterRevision.current = prefs.revisions?.homeSavedFilters ?? 0;
       setSavedFilters(prefs.homeSavedFilters);
       setTaskTableHiddenColumns(prefs.taskTableHiddenColumns);
-      setFocusMode(prefs.focusMode);
+      applyBackgroundTier(asBackgroundTier(prefs.backgroundTier));
+      applyCardWatermark(asCardWatermark(prefs.cardWatermark));
+      applyLocale(asLocale(prefs.locale));
       // Expansion is local while this workspace is open; use the remote value on the next visit.
       if (route.kind !== "workspace") setWorkspaceOpenProjects(prefs.workspaceOpenProjects);
     };
@@ -197,8 +199,12 @@ export default function App() {
           setSavedFilters(prefsResult.value.homeSavedFilters);
           filterRevision.current = prefsResult.value.revisions?.homeSavedFilters ?? 0;
           setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
-          setFocusMode(prefsResult.value.focusMode);
           setWorkspaceOpenProjects(prefsResult.value.workspaceOpenProjects);
+          // 外观偏好（Push 291 背景档位 / Push 292 卡片水印）：登录后从账号偏好静默落位（坏值 / 缺键回落默认）
+          applyBackgroundTier(asBackgroundTier(prefsResult.value.backgroundTier));
+          applyCardWatermark(asCardWatermark(prefsResult.value.cardWatermark));
+          // 界面语言（Push 296）：按账号静默落位（刷新 / 换设备同账号保持；坏值 / 缺键回落中文）
+          applyLocale(asLocale(prefsResult.value.locale));
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -373,23 +379,6 @@ export default function App() {
     } catch (error: unknown) {
       setTaskTableHiddenColumns((current) => (current === keys ? previous : current));
       return errorMessageOf(error, "列显隐保存失败");
-    }
-  };
-
-  /**
-   * 醒目模式（A4 · §6.13 · Push 171）：点一下即生效 + 单键 PATCH —— 与列显隐同一套乐观更新 + 失败回滚；
-   * 返回文案交给 ProjectDetail 的提示条（服务端没落库，界面不能停在假状态）。
-   */
-  const handleSaveFocusMode = async (value: boolean): Promise<string | null> => {
-    const previous = focusMode;
-    setFocusMode(value);
-    try {
-      const prefs = await saveFocusMode(value);
-      setFocusMode(prefs.focusMode);
-      return null;
-    } catch (error: unknown) {
-      setFocusMode((current) => (current === value ? previous : current));
-      return errorMessageOf(error, "醒目模式保存失败");
     }
   };
 
@@ -652,6 +641,7 @@ export default function App() {
     );
 
   if (route.kind === "hub") {
+    // 蓝图页（顶层 · Push 285 前叫「入口页 / 首页」）：地图占满内容区；登录后的默认落地已改项目空间 `#/projects`
     return (
       <>
         <Hub me={state.me} />
@@ -666,7 +656,6 @@ export default function App() {
     // 数据 = GET /api/v1/workspace（frontend/src/workspaceApi.ts）；标签走地址（?tab= / ?sub=，见 useHashRoute）。
     return (
       <>
-        {/* 醒目模式（Push 232）：与项目详情同一个账号偏好（App 层持有 / 单键 PATCH），工作台只吃值 + 回显保存失败文案 */}
         <WorkspacePage
           me={state.me}
           members={directoryMemberOptions(directory)}
@@ -674,8 +663,6 @@ export default function App() {
           onChangeTab={replaceWorkspaceTab}
           sub={route.sub}
           onChangeSub={replaceWorkspaceSub}
-          focusMode={focusMode}
-          onFocusModeChange={handleSaveFocusMode}
           workspaceOpenProjects={workspaceOpenProjects}
           onWorkspaceOpenProjectsChange={handleSaveWorkspaceOpenProjects}
         />
@@ -713,8 +700,6 @@ export default function App() {
           onTaskEdited={handleTaskEdited}
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
-          focusMode={focusMode}
-          onFocusModeChange={handleSaveFocusMode}
           canManageStakeholders={canManageStakeholders}
         />
         {editModal}

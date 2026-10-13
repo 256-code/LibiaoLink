@@ -725,7 +725,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态）",
+    summary: "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态 / 背景档位 / 卡片水印）",
     responses: {
       200: { description: "偏好全量", ...json(UserPreferencesSchema) },
       401: commonErrors[401],

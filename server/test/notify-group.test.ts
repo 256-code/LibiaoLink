@@ -232,7 +232,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 
     expect(outcome).toMatchObject({ outcome: "deferred", availableAt: retryAt });
     expect(repo.deliveries[0]).toMatchObject({ state: "deferred", attempts: 0, sentAt: null });
-    expect(repo.deliveries[0]!.error).toContain("rate_limited");
+    expect(repo.deliveries[0]!.error).toContain("群播报未送达：本地限速桶已满（31/30）");
   });
 
   it("rate_limited 无 retryAt（846607 超频）→ 兜底 now+60s", async () => {

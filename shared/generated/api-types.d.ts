@@ -2174,7 +2174,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态） */
+        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态 / 背景档位 / 卡片水印） */
         get: {
             parameters: {
                 query?: never;
@@ -7410,6 +7410,11 @@ export interface components {
          * @enum {string}
          */
         AuditResult: "succeeded" | "denied" | "failed";
+        /**
+         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple
+         * @enum {string}
+         */
+        BackgroundTier: "simple" | "medium" | "vivid";
         /** @description 自建蓝图 JSON（v0.2 §3.2 + ADR-019）；导入校验 = schema + 引用 + 幂等 */
         Blueprint: {
             /** @enum {number} */
@@ -8204,6 +8209,11 @@ export interface components {
             /** @description 问题附图整体替换（file_links(object_type=issue)；缺省 = 不改；空数组 = 清空） */
             photoFileIds?: components["schemas"]["Uuid"][];
         };
+        /**
+         * @description 界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh
+         * @enum {string}
+         */
+        Locale: "zh" | "en";
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
         MeResponse: {
             user: components["schemas"]["User"];
@@ -9487,9 +9497,13 @@ export interface components {
             revisions: {
                 [key: string]: number;
             };
+            backgroundTier: components["schemas"]["BackgroundTier"];
+            locale: components["schemas"]["Locale"];
+            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true */
+            cardWatermark: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单、focusMode为布尔，否则400 */
+        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400 */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
@@ -9501,6 +9515,9 @@ export interface components {
                 homeSavedFilters?: number;
                 myPlanBoard?: number;
             };
+            backgroundTier?: components["schemas"]["BackgroundTier"] & unknown;
+            locale?: components["schemas"]["Locale"] & unknown;
+            cardWatermark?: boolean;
         } & {
             [key: string]: unknown;
         };

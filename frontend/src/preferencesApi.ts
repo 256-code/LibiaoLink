@@ -1,11 +1,14 @@
 /**
  * 用户偏好（A4 / A24）：GET / PATCH /api/v1/users/me/preferences。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）。
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）。
+ * （focusMode「A4 醒目模式 · Push 171」已随 Push 290「醒目模式下架、观感统一走背景档位」停用：前端不再读写，服务端键保留不动。）
  * 常用筛选（A24）自 Push 169 起按账号存服务端（user_preferences.prefs.homeSavedFilters）——
  * 同一账号换设备可见；同一设备换账号互不可见（服务端按会话 actorId 隔离，路径不接受用户 id）。
  * 契约 shared/src/modules/users.ts：PATCH 为合并语义（只传变更键、数组键整体替换）。
  */
 import { apiRequest, apiSend } from "./api";
+import type { BackgroundTier } from "./backgroundTier";
+import type { Locale } from "./i18n";
 import { clearLegacySavedFilters, readLegacySavedFilters } from "./savedFilters";
 import type { SavedFilter } from "./savedFilters";
 import type { PlanBoardBgId, PlanNote } from "./myPlan";
@@ -29,13 +32,17 @@ export type MyPlanBoardPrefs = {
 export type UserPreferences = {
   taskTableHiddenColumns: string[];
   homeSavedFilters: SavedFilter[];
-  /** 醒目模式（A4 · §6.13 · Push 171）：按账号记住开关状态；默认 false。 */
-  focusMode: boolean;
   /** 工作台折叠面板展开态（A31 · Push 233）：按标签记住已展开的项目 id；默认两空数组 = 全部收起。 */
   workspaceOpenProjects: WorkspaceOpenProjects;
   /** 「我的计划」便签墙（Push 268）：整面便签墙按账号存；从未保存 = updatedAt null（前端据此预置示例 / 迁移旧键）。 */
   myPlanBoard: MyPlanBoardPrefs;
   revisions: Record<string, number>;
+  /** 背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：顶栏「背景 · 档位」按账号存 —— 刷新 / 换设备同账号保持；默认 simple。 */
+  backgroundTier: BackgroundTier;
+  /** 卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：项目卡片右下角国家名水印按账号存；默认 true（显示）。 */
+  cardWatermark: boolean;
+  /** 界面语言（Push 296 · 业务口径「按账号记住 刷新不会回中文」）：顶栏「语言 · 中文 / English」按账号存 —— 刷新 / 换设备同账号保持；默认 zh。 */
+  locale: Locale;
   updatedAt: string | null;
 };
 
@@ -54,11 +61,6 @@ export function saveTaskTableHiddenColumns(keys: string[]): Promise<UserPreferen
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { taskTableHiddenColumns: keys });
 }
 
-/** 醒目模式（A4 · §6.13 · Push 171）单键 PATCH：返回服务端收敛后的全量偏好，前端以返回值覆盖本地。 */
-export function saveFocusMode(value: boolean): Promise<UserPreferences> {
-  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { focusMode: value });
-}
-
 /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）单键 PATCH：整体替换两标签的项目 id 列表。 */
 export function saveWorkspaceOpenProjects(value: WorkspaceOpenProjects): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { workspaceOpenProjects: value });
@@ -67,6 +69,21 @@ export function saveWorkspaceOpenProjects(value: WorkspaceOpenProjects): Promise
 /** 「我的计划」便签墙整体替换（Push 268 · 业务口径「数据接入数据库」；Push 271 起带上 bg 背景色）：只传这一个键（notes / categories / bg），返回服务端收敛 + 盖章后的全量偏好。 */
 export function saveMyPlanBoard(board: { notes: PlanNote[]; categories: string[]; bg: PlanBoardBgId }, revision: number): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { myPlanBoard: board, expectedRevisions: { myPlanBoard: revision } });
+}
+
+/** 背景档位单键 PATCH（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：只传这一个键，返回服务端收敛后的全量偏好。 */
+export function saveBackgroundTier(tier: BackgroundTier): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { backgroundTier: tier });
+}
+
+/** 卡片水印开关单键 PATCH（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：只传这一个键，返回服务端收敛后的全量偏好。 */
+export function saveCardWatermark(value: boolean): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { cardWatermark: value });
+}
+
+/** 界面语言单键 PATCH（Push 296 · 业务口径「按账号记住 刷新不会回中文」）：只传这一个键，返回服务端收敛后的全量偏好。 */
+export function saveLocale(locale: Locale): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { locale });
 }
 
 /**

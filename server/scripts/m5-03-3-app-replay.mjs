@@ -7,7 +7,7 @@
  *      failed 行 / permanent（60011 / token 失效重取后仍失败）→ dead + dead 行 + C5-04 降级（站内信副本 :c504）；
  *   ③ 收件人不可投递收敛 —— 不存在 → dead + 不降级；停用 / 离职 / userid 缺失 → dead + 降级；
  *   ④ 渠道路由防御（非 wecom_app → dead；生产装配在 OutboxModule 按 channel 分流）；
- *   ⑤ 告警出口（WecomAlertSink）—— 推管理员告警群 / 同 code 5 分钟抑制 / 失败回退结构化日志。
+ *   ⑤ 告警出口（WecomAlertSink）—— 推管理员告警群 / 同族 15 分钟抑制（死信即时 / 探针同族）/ 失败回退结构化日志。
  *
  * 前置：已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && node scripts/m5-03-3-app-replay.mjs [--out <报告.md>] [--json <证据.json>]
@@ -270,9 +270,9 @@ async function main() {
 
   // ---- 告警出口（WecomAlertSink · 智能机器人推管理员告警群） ----
   assertEqual(
-    "W1 告警文本：含 code / message / detail JSON",
+    "W1 告警文本：含 code / message（detail 不再原样 JSON 回显）",
     alert.composeAlertText({ code: "outbox.dead_letter", level: "error", message: "近期死信 2 条", detail: { deadRecent: 2 } }),
-    "【LibiaoLink 告警】outbox.dead_letter\n近期死信 2 条\n{\"deadRecent\":2}",
+    "【LibiaoLink 告警】outbox.dead_letter\n近期死信 2 条",
   );
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -316,7 +316,7 @@ async function main() {
     sink.emit(backlog);
     await flush();
     assertTrue(
-      "W3 告警抑制：同 code 5 分钟内只推首条（不同 code 不受影响）、窗口过期恢复",
+      "W3 告警抑制：同 code 15 分钟内只推首条（不同 code 不受影响）、窗口过期恢复",
       suppressedOk && aibot.sends.length === 3 && fallback.emitted.length === 0,
     );
   }

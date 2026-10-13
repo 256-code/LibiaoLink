@@ -23,6 +23,7 @@ import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { WecomAibotClient } from "./wecom.aibot.js";
+import { describeWecomFailure } from "./wecom.errors.js";
 import { truncateUtf8Bytes } from "./wecom.text.js";
 
 /** 群 markdown 字节上限（官方口径 20480；取 20000 留余量 —— B5 定案「投递层按字节截断留痕」）。 */
@@ -81,11 +82,9 @@ function degradeTypeOf(templateCode: string | null): "broadcast" | "reminder" {
   return templateCode !== null && /^(A02|R06)/.test(templateCode) ? "broadcast" : "reminder";
 }
 
-/** 失败描述（errcode / 类型 / 连接态；不含 chatid 明文 —— 载荷与库值都不含）。 */
+/** 失败描述（核心语义：errcode + 白话标签 / errmsg 概要；不含 kind / state 内部态与企微机器尾巴；不含 chatid 明文）。 */
 function describeAibotFailure(result: Extract<AibotSendResult, { ok: false }>): string {
-  const code = result.errcode === null ? "" : " errcode=" + String(result.errcode);
-  const errmsg = result.errmsg === null || result.errmsg === "" ? "" : "：" + result.errmsg;
-  return "群播报失败（kind=" + result.kind + " state=" + result.state + code + "）" + errmsg;
+  return "群播报未送达" + describeWecomFailure(result.errcode, result.errmsg);
 }
 
 /**

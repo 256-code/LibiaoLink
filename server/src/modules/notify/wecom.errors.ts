@@ -92,6 +92,54 @@ export function classifyWecomHttpStatus(status: number): WecomFailureKind {
   return "retryable";
 }
 
+/**
+ * errcode → 白话标签（告警 / 留痕文案）：只收录码表中语义唯一的高频码；未收录返回 null
+ * （调用方回退 errmsg 概要 —— 见 describeWecomFailure）。
+ */
+const ERRCODE_LABELS: ReadonlyMap<number, string> = new Map<number, string>([
+  // 自建应用
+  [40001, "appsecret 无效"],
+  [40013, "corpid 无效"],
+  [40056, "agentid 无效"],
+  [41002, "缺少 corpid"],
+  [41004, "缺少 appsecret"],
+  [45002, "消息内容超长"],
+  [45009, "接口频率超限"],
+  [60011, "userid 不存在或不可见"],
+  [-1, "系统繁忙"],
+  // 智能机器人（群通道）
+  [853000, "机器人凭据无效（bot_id / secret）"],
+  [846601, "未开启长连接模式"],
+  [846607, "会话未激活或发送超频"],
+  [846609, "长连接未订阅"],
+  [93001, "机器人已被移出群"],
+]);
+
+export function wecomErrcodeLabel(errcode: number): string | null {
+  return ERRCODE_LABELS.get(errcode) ?? null;
+}
+
+/**
+ * errmsg 概要（告警 / 留痕文案）：收敛企微机器尾巴 —— `xx, hint: [..], from ip: .., more info at <url>` 只留 `xx`；
+ * 并去内部连接态标记（`（state=…）`）。
+ */
+export function summarizeWecomErrmsg(errmsg: string): string {
+  const tail = errmsg.search(/,\s*(?:hint:|from ip:|more info at\b)/i);
+  return (tail === -1 ? errmsg : errmsg.slice(0, tail))
+    .replace(/（state=(?:stopped|connecting|subscribed|backoff)）/g, "")
+    .trim();
+}
+
+/** 失败描述尾串（errcode + 白话标签 / errmsg 概要）：群 / 应用通道共用 —— 告警群文案核心语义口径（2026-10-13）。 */
+export function describeWecomFailure(errcode: number | null, errmsg: string | null): string {
+  const reason = errmsg === null || errmsg.trim() === "" ? null : summarizeWecomErrmsg(errmsg);
+  if (errcode === null) {
+    return reason === null || reason === "" ? "" : "：" + reason;
+  }
+  const label = wecomErrcodeLabel(errcode) ?? reason;
+  return "（errcode=" + String(errcode) + (label === null || label === "" ? "" : "：" + label) + "）";
+}
+
 /** 网络异常（超时 / 连接失败 / DNS / 中断）→ 统一 retryable；描述文本过掩码（key / secret / access_token 不回显）。 */
 export function describeNetworkError(error: unknown): string {
   if (error instanceof Error) {
