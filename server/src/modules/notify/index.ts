@@ -22,6 +22,17 @@ export {
 } from "./notify.app.service.js";
 export { NotifyAppRepository } from "./notify.app.repository.js";
 export type { NotifyAppDeliveryInsert, WecomAppContact } from "./notify.app.repository.js";
+export {
+  composeDmMarkdown,
+  DM_ACTIVATION_DEGRADE_PREFIX,
+  DM_DEGRADE_PREFIX,
+  DM_MARKDOWN_MAX_BYTES,
+  DM_TRUNCATION_SUFFIX,
+  NotifyDmService,
+  truncateDmMarkdown,
+} from "./notify.dm.service.js";
+export { NotifyDmRepository } from "./notify.dm.repository.js";
+export type { DmActivationRow, NotifyDmDeliveryInsert, WecomDmContact } from "./notify.dm.repository.js";
 export { PgRateWindowStore } from "./wecom.rate.pg.js";
 export { NotifyService } from "./notify.service.js";
 export type { NotifyFlushStats, NotifySnoozeFlushStats } from "./notify.service.js";
@@ -51,7 +62,7 @@ export {
   WECOM_CHANNELS,
 } from "./wecom.errors.js";
 export type { WecomChannel, WecomFailureKind } from "./wecom.errors.js";
-export { chatBucketId, InMemoryRateWindowStore, WECOM_APP_BUCKET_ID, WecomRateLimiter } from "./wecom.rate.js";
+export { chatBucketId, InMemoryRateWindowStore, userBucketId, WECOM_APP_BUCKET_ID, WecomRateLimiter } from "./wecom.rate.js";
 export type {
   RateWindowStore,
   WecomRateDecision,

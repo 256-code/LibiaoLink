@@ -1,6 +1,8 @@
 /**
- * 企微智能机器人长连接客户端回归（M5-03-2 · P5 定案）：假 socket 驱动 —— 订阅成败 / 状态机与统计 /
- * 推送帧形状 / 846607 双语义 / 846609 与回执超时 / 双窗口限速拒绝 / 心跳失联重连 / 回调分发 / stop 清理。
+ * 企微智能机器人长连接客户端回归（M5-03-2 · P5 定案；M5-03-5-3 扩单聊面）：假 socket 驱动 —— 订阅成败 /
+ * 状态机与统计 / 推送帧形状（群 chat_type=2 / 单聊 chatid 填 userid + chat_type=1 · P4 锁帧）/
+ * 846607 双语义（群 groupActivated / 单聊 dmActivated）/ 846609 与回执超时 / 双窗口限速拒绝（group / single）/
+ * 心跳失联重连 / 回调分发 / stop 清理。
  * 不触外网（socketFactory 全替身；生产 `ws` 实现见 wecom.aibot.ts createWsSocketFactory）。
  */
 import { describe, expect, it } from "vitest";
@@ -228,6 +230,96 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
       expect(blocked.retryAt?.getTime()).toBe(WECOM_BOT_WINDOW_PER_HOUR_MS); // max(分钟下一窗口, 小时下一窗口)
     }
     expect(socket.sent.length).toBe(framesAfterFirst); // 拒绝不发帧
+    await client.stop();
+  });
+
+  it("单聊 markdown 推送（M5-03-5-3 · P4 锁帧）：帧形状 chatid=userid / chat_type=1 / markdown.content，回执 ok", async () => {
+    const { client, sockets } = makeClient({
+      windows: [
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: 0 },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: 0 },
+      ],
+    });
+    const socket = await connect(client, sockets);
+
+    const pending = client.sendUserMarkdown({ userid: "zhangsan", content: "**标题**\n\n正文" });
+    await sleep(0);
+    expect(socket.lastFrame()).toMatchObject({ cmd: "aibot_send_msg" });
+    // 锁帧：body 逐字段全等（chatid 填 userid + chat_type 1 —— 官方 SDK 语义核对 + 探针 T5-1b 真机锁定）
+    expect(socket.lastFrame()["body"]).toEqual({
+      chatid: "zhangsan",
+      chat_type: 1,
+      msgtype: "markdown",
+      markdown: { content: "**标题**\n\n正文" },
+    });
+    socket.ackLast(0);
+    expect(await pending).toEqual({ ok: true, attempts: 1 });
+    await client.stop();
+  });
+
+  it("单聊 846607 分流：dmActivated=false（未命中激活表）→ permanent；true / 缺省 → rate_limited（超频）", async () => {
+    const { client, sockets } = makeClient();
+    const socket = await connect(client, sockets);
+
+    const unactivated = client.sendUserMarkdown({ userid: "u-1", content: "x", dmActivated: false });
+    await sleep(0);
+    socket.ackLast(846607, "aibot send msg frequency limit exceeded");
+    expect(await unactivated).toMatchObject({ ok: false, kind: "permanent", errcode: 846607 });
+
+    const throttled = client.sendUserMarkdown({ userid: "u-1", content: "x", dmActivated: true });
+    await sleep(0);
+    socket.ackLast(846607, "aibot send msg frequency limit exceeded");
+    expect(await throttled).toMatchObject({ ok: false, kind: "rate_limited", errcode: 846607 });
+
+    const unknown = client.sendUserMarkdown({ userid: "u-1", content: "x" });
+    await sleep(0);
+    socket.ackLast(846607, "aibot send msg frequency limit exceeded");
+    expect(await unknown).toMatchObject({ ok: false, kind: "rate_limited", errcode: 846607 });
+    await client.stop();
+  });
+
+  it("单聊未就绪发送：state ≠ subscribed → retryable、attempts=0（不发帧）", async () => {
+    const { client, sockets } = makeClient();
+    const result = await client.sendUserMarkdown({ userid: "u-1", content: "x", dmActivated: true });
+    expect(result).toMatchObject({ ok: false, kind: "retryable", attempts: 0, errcode: null });
+    if (!result.ok) {
+      expect(result.errmsg).toContain("长连接未就绪");
+    }
+    expect(sockets.length).toBe(0);
+    await client.stop();
+  });
+
+  it("单聊本地双窗口限速：第二次拒绝（不发帧、attempts=0、retryAt = 被拒窗口最大值）；群 / 单聊桶隔离", async () => {
+    const fixedNow = 1_000;
+    const { client, sockets } = makeClient({
+      now: () => fixedNow,
+      windows: [
+        { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: 1 },
+        { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: 1 },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: 1 },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: 1 },
+      ],
+    });
+    const socket = await connect(client, sockets);
+
+    const first = client.sendUserMarkdown({ userid: "u-1", content: "1", dmActivated: true });
+    await sleep(0);
+    socket.ackLast(0);
+    expect(await first).toEqual({ ok: true, attempts: 1 });
+    const framesAfterFirst = socket.sent.length;
+
+    const blocked = await client.sendUserMarkdown({ userid: "u-1", content: "2", dmActivated: true });
+    expect(blocked).toMatchObject({ ok: false, kind: "rate_limited", attempts: 0 });
+    if (!blocked.ok) {
+      expect(blocked.retryAt?.getTime()).toBe(WECOM_BOT_WINDOW_PER_HOUR_MS); // max(分钟下一窗口, 小时下一窗口)
+    }
+    expect(socket.sent.length).toBe(framesAfterFirst); // 拒绝不发帧
+
+    // kind 隔离：单聊桶耗尽不影响群桶（同摘要不互污）
+    const groupOk = client.sendGroupMarkdown({ chatid: "u-1", content: "g" });
+    await sleep(0);
+    socket.ackLast(0);
+    expect(await groupOk).toEqual({ ok: true, attempts: 1 });
     await client.stop();
   });
 
