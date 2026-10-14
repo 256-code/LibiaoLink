@@ -42,7 +42,7 @@ describe("R02 成果文件自动化通知（事件型 · 逐字）", () => {
     expect(report.messages).toHaveLength(2);
     const [inbox, wecom] = report.messages;
     expect(inbox?.channel).toBe("inbox");
-    expect(wecom?.channel).toBe("wecom_app");
+    expect(wecom?.channel).toBe("wecom_aibot");
     for (const message of report.messages) {
       expect(message.title).toBe("及时添加文件");
       expect(message.body).toBe("请为项目任务安装摄像头及时添加成果文件");

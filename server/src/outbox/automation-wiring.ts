@@ -8,10 +8,11 @@
  * ② 调度（OutboxJobHandler；kind = automation-schedule.job）：读窗口主体池 → planWindowMessages → 同上产出，
  *    与 last_run_at 推进同一事务（JobRunContext.tx）—— 崩溃回滚后窗口重放，幂等键兜底不重发。
  *
- * 渠道口径（M5-03-3 起）：inbox → `notify.message`（S7-4 j1）；wecom_app → `notify.message`（channel=wecom_app，
- *   幂等键加 ":app" 后缀避免与同规则 inbox 行撞 outbox 唯一约束；投递层按 users.username 解析 userid）；
- *   wecom_group → `notify.group`（群播报：载荷只带 projectId（寻址键）+ 文案，投递层按绑定解析 chatid +
- *   按会话限速）；email 仍未落地（随 M5-04）—— 逐条 warn 留痕 + 计数入日志/note（与投递层护栏 wmj PR #197 配对）。
+ * 渠道口径（M5-03-3 起；M5-03-5 契约段注记）：inbox → `notify.message`（S7-4 j1）；wecom_app → `notify.message`
+ *   （channel=wecom_app，幂等键加 ":app" 后缀避免与同规则 inbox 行撞 outbox 唯一约束；投递层按 users.username
+ *   解析 userid）；wecom_group → `notify.group`（群播报：载荷只带 projectId（寻址键）+ 文案，投递层按绑定解析
+ *   chatid + 按会话限速）；未落地渠道（email 随 M5-04；wecom_aibot 自 M5-03-5 契约段起由规则产出、产出接线随
+ *   M5-03-5-4）—— 逐条 warn 留痕 + 计数入日志/note（与投递层护栏 wmj PR #197 配对）。
  * 冷启动保护（事件形态）：AUTOMATION_EVENT_MAX_AGE_MS 透传引擎 —— 接线前积压的历史事件按 `event_too_old`
  *   消费掉、不补发业务通知（投递层免打扰的「次日补发」不受影响）。
  * 边界：本层只做「主体读库 + 引擎求值 + 产出落库」；投递 / 合并 / 免打扰 / 重试 / 死信归 notify + outbox 运行时。
@@ -86,7 +87,7 @@ export interface ProduceStats {
   appProduced: number;
   /** notify.group（群播报）产出行数（M5-03-2 接线段起）。 */
   groupProduced: number;
-  /** 未落地渠道跳过（email —— 随 M5-04 落地）条数。 */
+  /** 未落地渠道跳过（email 随 M5-04；wecom_aibot 随 M5-03-5-4 接线）条数。 */
   channelSkipped: number;
 }
 /** 单条产出上下文（事件形态 / 调度形态共用；append 由调用方绑定事务或主连接）。 */
@@ -128,7 +129,7 @@ function logSkips(logger: WiringLogger, scope: string, skipped: readonly { reaso
 
 /**
  * 逐条产出（inbox / wecom_app → notify.message；wecom_group → notify.group）：
- *   - 未落地渠道（email）：不产行 + warn（与投递层「非白名单 → dead」护栏配对；计入 channelSkipped）；
+ *   - 未落地渠道（email · wecom_aibot 过渡期）：不产行 + warn（与投递层「非白名单 → dead」护栏配对；计入 channelSkipped）；
  *   - 应用消息寻址：recipientId = 用户 id（投递层按 users.username 解析 userid）；幂等键 = 引擎键 + ":app"
  *     后缀（同规则同实体的 inbox 行占原始键 —— outbox_events.dedupe_key 全局唯一，不加后缀两行会互相吞）；
  *   - 载荷不合规（无收件人 / 正文为空；站内信另要求标题非空）：不产行，收 invalid 由调用方按确定性失败收口（模板配置问题）；
@@ -197,7 +198,7 @@ async function produceMessages(
     }
     if (!isDeliverableChannel(message.channel)) {
       stats.channelSkipped += 1;
-      context.logger.warn("规则接线：渠道未落地（email —— 随 M5-04 接线）：" + message.channel + " · " + message.dedupeKey);
+      context.logger.warn("规则接线：渠道未落地（email 随 M5-04；wecom_aibot 随 M5-03-5-4 · 期间不产出）：" + message.channel + " · " + message.dedupeKey);
       continue;
     }
     const title = message.title === null ? null : message.title.trim();
