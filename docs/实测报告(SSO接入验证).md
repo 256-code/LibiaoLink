@@ -159,7 +159,7 @@ cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 | 原因 | `/auth/logout` 的 `post_logout_redirect_uri` 原为「站点根地址」（`origin + "/"`）；authtest 应用 Redirect URIs 只登记了 `https://test-pm.libiaorobot.com/auth/callback`（+ 两条 localhost），根地址不在册 → Casdoor `redirectToPostLogout` 拒绝并返回错误 JSON |
 | 修正（repo · 2026-10-14） | `post_logout_redirect_uri` 复用已登记的 `CASDOOR_REDIRECT_URI`；`/auth/callback` 收到无 `code` / `state` / `error` 的请求视为登出回跳 → 302 回站点首页（未登录态由前端统一转登录页） |
 | 落点 | `server/src/modules/identity/oidc.service.ts`（buildLogoutUrl）、`auth.controller.ts`（callback 回跳分支）、`server/test/auth.e2e.test.ts`（断言更新 + 回跳用例）；不动 Casdoor / SSO 侧配置 |
-| 验证 | 单测：登出 302 带 `id_token_hint` + `post_logout_redirect_uri = CASDOOR_REDIRECT_URI`；无参 `/auth/callback` → 302 `/`（本地 vitest；待随下一次部署在 test-pm 真机复验「退出登录 → 回登录页」） |
+| 验证 | 单测：登出 302 带 `id_token_hint` + `post_logout_redirect_uri = CASDOOR_REDIRECT_URI`；无参 `/auth/callback` → 302 `/`（本地 vitest + 2026-10-14 部署 v1.28 后 test-pm 真机探针：`/auth/logout` 302 携 `post_logout_redirect_uri=https://test-pm.libiaorobot.com/auth/callback`、无参 `/auth/callback` 302 → `/` 均过；浏览器人工点验「退出登录 → 回登录页」待业务侧确认） |
 
 ## 五、公司正式环境（auth.libiaorobot.com）：只读核对
 
