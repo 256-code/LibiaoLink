@@ -95,7 +95,66 @@ export type UploadFileOptions = {
  * 上传一个文件 / Blob 到站内文件库（M4-01 分片直传；任务成果文件与日报附图共用一条链路）。
  * name 单独传：剪贴板图片的 File 名与业务名不一致（见 uploadPhoto）；options.taskId 关联任务。返回新文件的 id。
  */
-/** 分片直传公共尾段（uploadFile / replaceFileContent 共用）：取分片签名 → 逐片原样 PUT → complete。 */
+/** 单片上传最大尝试次数（含首次）：浏览器侧取消流 / 网络瞬断等单次失败重试后继续，不再整单报废。 */
+const PART_UPLOAD_MAX_ATTEMPTS = 3;
+/** 重试退避基数（毫秒）：第 N 次失败后等待 N × 该值再重试。 */
+const PART_UPLOAD_RETRY_DELAY_MS = 500;
+
+/** 分片签名接口路径（首传整批签 / 重试单签共用）。 */
+function uploadPartsPath(fileId: string, uploadId: string): string {
+  return "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/parts";
+}
+
+/** 失败响应体摘要（MinIO 错误 XML / 网关页等）：压平空白并截断，仅用于错误文案。 */
+async function readErrorSnippet(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.replace(/\s+/g, " ").trim().slice(0, 140);
+  } catch {
+    return "";
+  }
+}
+
+/** 单分片上传（带重试）：重试前重新签该分片（顺带规避签名过期）；全部尝试失败抛末次原因。 */
+async function putPartWithRetry(
+  fileId: string,
+  uploadId: string,
+  part: { partNumber: number; url: string },
+  slice: ArrayBuffer,
+): Promise<void> {
+  let lastReason = "";
+  for (let attempt = 1; attempt <= PART_UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+    let url = part.url;
+    if (attempt > 1) {
+      const refreshed = await apiSend<UploadPartsResponse>(uploadPartsPath(fileId, uploadId), "POST", {
+        partNumbers: [part.partNumber],
+      });
+      const next = refreshed.parts.find((item) => item.partNumber === part.partNumber);
+      if (next !== undefined) {
+        url = next.url;
+      }
+    }
+    try {
+      const response = await fetch(url, { method: "PUT", body: slice });
+      if (response.ok) {
+        return;
+      }
+      const snippet = await readErrorSnippet(response);
+      lastReason = "第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + (snippet === "" ? "" : "：" + snippet);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastReason = "第 " + String(part.partNumber) + " 片，请求中断：" + message;
+    }
+    if (attempt < PART_UPLOAD_MAX_ATTEMPTS) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, attempt * PART_UPLOAD_RETRY_DELAY_MS);
+      });
+    }
+  }
+  throw new Error("文件上传失败（" + lastReason + "；已尝试 " + String(PART_UPLOAD_MAX_ATTEMPTS) + " 次）");
+}
+
+/** 分片直传公共尾段（uploadFile / replaceFileContent 共用）：取分片签名 → 逐片代重试 PUT → complete。 */
 async function transferChunks(
   fileId: string,
   upload: { id: string; partSizeBytes: number; totalParts: number },
@@ -107,17 +166,14 @@ async function transferChunks(
     partNumbers.push(index);
   }
   const signed = await apiSend<UploadPartsResponse>(
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/parts",
+    uploadPartsPath(fileId, upload.id),
     "POST",
     { partNumbers },
   );
   for (const part of signed.parts) {
     const start = (part.partNumber - 1) * upload.partSizeBytes;
     const slice = buffer.slice(start, Math.min(start + upload.partSizeBytes, buffer.byteLength));
-    const response = await fetch(part.url, { method: "PUT", body: slice });
-    if (!response.ok) {
-      throw new Error("文件上传失败（第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + "）");
-    }
+    await putPartWithRetry(fileId, upload.id, part, slice);
   }
   await apiSend<UploadCompleteResponse>(
     "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/complete",
