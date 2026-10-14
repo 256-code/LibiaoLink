@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { accentOfItem, dictLabel, type Dicts } from "../dicts";
-import { projectTypeText, useLocale, useT } from "../i18n";
+import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type Dicts } from "../dicts";
+import type { DictTools } from "../dictTools";
+import { fieldText, projectTypeText, useLocale, useT } from "../i18n";
 import {
   commitProjectImport,
   IMPORT_MAX_FILE_BYTES,
@@ -37,6 +38,10 @@ export type ImportProjectPanelProps = {
   file: File;
   /** 字典（项目地区选择小窗用）。 */
   dicts: Dicts;
+  /** 字典工具（项目类型「＋ 添加项目类型」用；口径同新建项目弹窗）。 */
+  dictTools: DictTools;
+  /** 是否可管理字典（dict.manage；控制项目类型「新建」入口显隐）。 */
+  canManageDicts: boolean;
   /** 重新选择文件（父层点同一个隐藏 input；选中后本面板自动重新解析）。 */
   onReselect: () => void;
   /** 关闭面板（父层清空已选文件）。 */
@@ -138,7 +143,7 @@ function ManualImageList({ images }: { images: ImportManualImage[] }) {
   );
 }
 
-export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImported }: ImportProjectPanelProps) {
+export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onReselect, onClose, onImported }: ImportProjectPanelProps) {
   const t = useT();
   const [phase, setPhase] = useState<Phase>({ kind: "parsing" });
   const locale = useLocale();
@@ -445,9 +450,17 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
                               <span className="truncate">{projectTypeText(locale, name)}</span>
                             </span>
                           )}
+                          onAdd={canManageDicts ? (input) => dictTools.onAdd("projectType", input) : undefined}
+                          addText={{
+                            label: t("import.type.add"),
+                            placeholder: t("import.type.namePlaceholder"),
+                          }}
+                          palette={{
+                            label: fieldText(locale, "颜色模板"),
+                            options: DICT_ACCENT_PALETTE,
+                          }}
                           onChange={setProjectType}
                         />
-                        <span className="mt-1 block text-[11px] text-zinc-400">{t("import.type.hint")}</span>
                       </dd>
                     </div>
                     <div>

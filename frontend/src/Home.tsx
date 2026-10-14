@@ -566,7 +566,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               type="button"
               data-import-project=""
               aria-disabled={canCreateProject ? undefined : true}
-              title={canCreateProject ? t("home.import.title") : noCreatePermission}
+              title={canCreateProject ? undefined : noCreatePermission}
               onClick={() => {
                 if (!canCreateProject) {
                   setCreateHint(noCreatePermission);
@@ -769,6 +769,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         <ImportProjectPanel
           file={importFile}
           dicts={dicts}
+          dictTools={dictTools}
+          canManageDicts={canManageDicts}
           onReselect={() => {
             importInputRef.current?.click();
           }}
