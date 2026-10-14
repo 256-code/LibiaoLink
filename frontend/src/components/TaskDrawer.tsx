@@ -4,6 +4,7 @@ import { ApiError } from "../api";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { memberNameOf, type Member } from "../data/members";
+import type { ReportPhoto } from "../data/reports";
 import {
   TEMP_TASK_STAGE,
   dateOnlyText,
@@ -29,6 +30,7 @@ import { RowDeleteButton } from "./RowDeleteButton";
 import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
+import { AttachmentPicker, PhotoStrip } from "./ReportIssuePanel";
 import { TRACKER_STEPS, TrackerBar, trackerStep } from "./Tracker";
 import { useFocusTrapFor } from "./useFocusTrap";
 const CLOSE_ANIMATION_MS = 170;
@@ -355,6 +357,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const [changeBefore, setChangeBefore] = useState("");
   const [changeAfter, setChangeAfter] = useState("");
   const [changeFile, setChangeFile] = useState<File | null>(null);
+  /** Push 314（业务口径「这个变更要可以填图片」）：变更前 / 变更后摘要附图（粘贴 / 选图；随会话 fileIds 提交）。 */
+  const [changeBeforePhotos, setChangeBeforePhotos] = useState<ReportPhoto[]>([]);
+  const [changeAfterPhotos, setChangeAfterPhotos] = useState<ReportPhoto[]>([]);
   const changeInputRef = useRef<HTMLInputElement | null>(null);
   /** 变更提交中（防连点）与提交结果（成功绿条 / 失败红条）。 */
   const [changeBusy, setChangeBusy] = useState(false);
@@ -443,7 +448,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   }, [taskId]);
 
   const draftDirty = JSON.stringify(draft) !== JSON.stringify(baseDraft.current);
-  const protectingDraft = draftDirty || saveNote !== null || changeContent !== "" || changeCause !== "" || changeBefore !== "" || changeAfter !== "" || changeFile !== null || renamingId !== null || pendingDelete !== null || finalizeConfirm || unfinalizeConfirm;
+  const protectingDraft = draftDirty || saveNote !== null || changeContent !== "" || changeCause !== "" || changeBefore !== "" || changeAfter !== "" || changeBeforePhotos.length > 0 || changeAfterPhotos.length > 0 || changeFile !== null || renamingId !== null || pendingDelete !== null || finalizeConfirm || unfinalizeConfirm;
   useEffect(() => {
     if (task === null || protectingDraft || (document.activeElement instanceof HTMLElement && drawerRef.current?.contains(document.activeElement) && document.activeElement.matches('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]'))) return;
     const next = draftOf(task, managerIds);
@@ -921,6 +926,14 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
    * 分片直传（intent=change）完成即生效：变更记录 + 新版本 + 文件状态 changed + R01 回写任务关联。
    * 成功后重取抽屉内文件清单，并让调用方整表重取（文件计数 / 变更关联回流）。
    */
+  /** Push 314：可随变更提交的摘要附图 fileIds（上传中 / 失败的不在内 —— 提交入口先拦上传态）。 */
+  const readySummaryFileIds = (photos: readonly ReportPhoto[]) =>
+    photos.filter((photo) => photo.pending === undefined && photo.fileId !== "").map((photo) => photo.fileId);
+
+  /** Push 314：读面摘要附图（只给 fileId）→ 展示条目（占位名作标题 / 预览字幕，图片按 id 懒取签名）。 */
+  const summaryPhotoItems = (fileIds: readonly string[]): ReportPhoto[] =>
+    fileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }));
+
   const submitChange = () => {
     if (changeBusy || projectId === undefined) {
       return;
@@ -941,6 +954,14 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       setChangeError(t("drawer.change.err.newFile"));
       return;
     }
+    if (changeBeforePhotos.some((photo) => photo.pending === "uploading") || changeAfterPhotos.some((photo) => photo.pending === "uploading")) {
+      setChangeError(t("report.uploadPending"));
+      return;
+    }
+    if (changeBeforePhotos.some((photo) => photo.pending === "failed") || changeAfterPhotos.some((photo) => photo.pending === "failed")) {
+      setChangeError(t("report.uploadFailed"));
+      return;
+    }
     const cause = changeCause.trim();
     const reason = cause === "" ? changeContent.trim() : changeContent.trim() + t("drawer.change.reasonJoin") + cause;
     setChangeBusy(true);
@@ -950,6 +971,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       reason,
       beforeSummary: changeBefore,
       afterSummary: changeAfter,
+      beforeSummaryFileIds: readySummaryFileIds(changeBeforePhotos),
+      afterSummaryFileIds: readySummaryFileIds(changeAfterPhotos),
       stageKey: changeStage,
     }, taskFinalized)
       .then(() => {
@@ -959,6 +982,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         setChangeCause("");
         setChangeBefore("");
         setChangeAfter("");
+        setChangeBeforePhotos([]);
+        setChangeAfterPhotos([]);
         setChangeFile(null);
         setFilesTick((tick) => tick + 1);
         onChanged?.();
@@ -1833,6 +1858,16 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                   aria-label={fieldText(locale, "变更前")}
                   className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
                 />
+                <AttachmentPicker
+                  projectId={projectId ?? ""}
+                  field="change-before"
+                  items={changeBeforePhotos}
+                  onChange={(items) => { setChangeBeforePhotos(items); setChangeDone(false); setChangeError(null); }}
+                  ariaLabel={t("drawer.change.beforePhotos.aria")}
+                  disabled={projectId === undefined || changeBusy}
+                  variant="compact"
+                  size="md"
+                />
               </section>
 
               <section>
@@ -1846,6 +1881,16 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                   placeholder={t("drawer.change.after.placeholder")}
                   aria-label={fieldText(locale, "变更后")}
                   className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
+                />
+                <AttachmentPicker
+                  projectId={projectId ?? ""}
+                  field="change-after"
+                  items={changeAfterPhotos}
+                  onChange={(items) => { setChangeAfterPhotos(items); setChangeDone(false); setChangeError(null); }}
+                  ariaLabel={t("drawer.change.afterPhotos.aria")}
+                  disabled={projectId === undefined || changeBusy}
+                  variant="compact"
+                  size="md"
                 />
                 <span className={CAPTION_CLASS}>{t("drawer.change.summary.caption")}</span>
               </section>
@@ -1993,7 +2038,9 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                                 <span>{t("drawer.history.reason", { text: entry.detail.reason })}</span>
                                 <span>{t("drawer.history.status", { text: entry.detail.status === "applied" ? t("drawer.history.applied") : entry.detail.status })}</span>
                                 {entry.detail.beforeSummary === null || entry.detail.beforeSummary === "" ? null : <span>{t("drawer.history.before", { text: entry.detail.beforeSummary })}</span>}
+                                {entry.detail.beforeSummaryFileIds.length === 0 ? null : <PhotoStrip strip="change-before" size="md" items={summaryPhotoItems(entry.detail.beforeSummaryFileIds)} />}
                                 {entry.detail.afterSummary === null || entry.detail.afterSummary === "" ? null : <span>{t("drawer.history.after", { text: entry.detail.afterSummary })}</span>}
+                                {entry.detail.afterSummaryFileIds.length === 0 ? null : <PhotoStrip strip="change-after" size="md" items={summaryPhotoItems(entry.detail.afterSummaryFileIds)} />}
                                 <span className="text-zinc-400">{t("drawer.history.applicant", { name: memberNameOf(members, entry.detail.appliedBy) ?? t("drawer.member"), date: dateOnlyText(entry.detail.appliedAt) })}</span>
                               </>
                             ) : entry !== undefined && entry.state === "error" ? (

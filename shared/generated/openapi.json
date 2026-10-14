@@ -1101,6 +1101,22 @@
             "type": "string",
             "maxLength": 2000
           },
+          "beforeSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "变更前摘要附图（文件 id 有序，≤ 30；须为本项目未回收文件，否则 400 VALIDATION_FAILED）"
+          },
+          "afterSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "变更后摘要附图（文件 id 有序，≤ 30；同左口径）"
+          },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           }
@@ -1167,6 +1183,20 @@
             ],
             "description": "变更后摘要"
           },
+          "beforeSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "变更前摘要附图（文件 id 有序；Push 314 变更前后可填图）"
+          },
+          "afterSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "变更后摘要附图（文件 id 有序；Push 314 变更前后可填图）"
+          },
           "status": {
             "$ref": "#/components/schemas/ChangeStatus"
           },
@@ -1212,6 +1242,8 @@
           "reason",
           "beforeSummary",
           "afterSummary",
+          "beforeSummaryFileIds",
+          "afterSummaryFileIds",
           "status",
           "appliedBy",
           "appliedAt",

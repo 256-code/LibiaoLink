@@ -238,6 +238,9 @@ export type FileChangePayload = {
   reason: string;
   beforeSummary?: string;
   afterSummary?: string;
+  /** Push 314（业务口径「这个变更要可以填图片」）：变更前 / 变更后摘要附图（files.id 有序，各 ≤ 30；须为本项目未回收文件）。 */
+  beforeSummaryFileIds?: string[];
+  afterSummaryFileIds?: string[];
   stageKey?: string;
 };
 
@@ -276,6 +279,8 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
       reason,
       beforeSummary: before === "" ? undefined : before,
       afterSummary: after === "" ? undefined : after,
+      beforeSummaryFileIds: change.beforeSummaryFileIds === undefined || change.beforeSummaryFileIds.length === 0 ? undefined : change.beforeSummaryFileIds,
+      afterSummaryFileIds: change.afterSummaryFileIds === undefined || change.afterSummaryFileIds.length === 0 ? undefined : change.afterSummaryFileIds,
       stageKey: change.stageKey === undefined || change.stageKey === "" ? undefined : change.stageKey,
     },
   });
@@ -295,6 +300,9 @@ export type ChangeRequestDetail = {
   reason: string;
   beforeSummary: string | null;
   afterSummary: string | null;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；读面按 id 懒取预览签名）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   status: string;
   appliedBy: string;
   appliedAt: string;

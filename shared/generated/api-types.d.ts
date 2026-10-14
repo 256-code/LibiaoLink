@@ -7726,6 +7726,10 @@ export interface components {
             reason: string;
             beforeSummary?: string;
             afterSummary?: string;
+            /** @description 变更前摘要附图（文件 id 有序，≤ 30；须为本项目未回收文件，否则 400 VALIDATION_FAILED） */
+            beforeSummaryFileIds?: components["schemas"]["Uuid"][];
+            /** @description 变更后摘要附图（文件 id 有序，≤ 30；同左口径） */
+            afterSummaryFileIds?: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
         };
         /** @description intent=change 时的变更记录；version 意图为空 */
@@ -7740,6 +7744,10 @@ export interface components {
             beforeSummary: string | null;
             /** @description 变更后摘要 */
             afterSummary: string | null;
+            /** @description 变更前摘要附图（文件 id 有序；Push 314 变更前后可填图） */
+            beforeSummaryFileIds: components["schemas"]["Uuid"][];
+            /** @description 变更后摘要附图（文件 id 有序；Push 314 变更前后可填图） */
+            afterSummaryFileIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["ChangeStatus"];
             appliedBy: components["schemas"]["Uuid"];
             appliedAt: components["schemas"]["DateTime"];

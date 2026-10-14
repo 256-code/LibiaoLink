@@ -91,6 +91,9 @@ interface ChangePayload {
   beforeSummary: string | null;
   afterSummary: string | null;
   stageKey: string | null;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；随会话 JSONB 落库，完成变更时入 change_requests）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   /** Push 256：变更后文件名称（完成变更时采纳为 files.name —— 更名 + 扩展名随上传）。 */
   fileName: string | null;
 }
@@ -192,6 +195,13 @@ export class FileService {
       ]);
     }
     await this.assertLinksInProject(body.projectId, effectiveNodeId, effectiveTaskId);
+    // Push 314（变更前后可填图）：摘要附图归属校验（存在 / 属本项目 / 未进回收站；非法 400 VALIDATION_FAILED）。
+    if (isChange) {
+      await this.assertSummaryFilesInProject(body.projectId, [
+        ...(changePayload?.beforeSummaryFileIds ?? []),
+        ...(changePayload?.afterSummaryFileIds ?? []),
+      ]);
+    }
     // 任务定档（Push 249）：任务已定档时禁止直接新增 / 替换 / 追加版本（intent=version）；修改走变更（A4-13）。
     if (body.intent !== "change" && effectiveTaskId !== undefined) {
       await this.assertTaskNotFinalized(effectiveTaskId);
@@ -613,6 +623,8 @@ export class FileService {
         reason: payload.reason,
         beforeSummary: payload.beforeSummary,
         afterSummary: payload.afterSummary,
+        beforeSummaryFileIds: payload.beforeSummaryFileIds,
+        afterSummaryFileIds: payload.afterSummaryFileIds,
         appliedBy: input.actorId,
         appliedAt: input.at,
         createdAt: input.at,
@@ -1020,7 +1032,7 @@ export class FileService {
           : await this.insertChangeInTx(tx, {
               changeRequestId,
               file: locked,
-              payload: { reason: body.reason, beforeSummary: null, afterSummary: null, stageKey: null, fileName: null },
+              payload: { reason: body.reason, beforeSummary: null, afterSummary: null, beforeSummaryFileIds: [], afterSummaryFileIds: [], stageKey: null, fileName: null },
               actorId,
               at,
             });
@@ -1514,6 +1526,20 @@ export class FileService {
     }
   }
 
+  /** Push 314：变更前 / 变更后摘要附图校验（须为本项目未回收文件；缺失 / 跨项目 / 已回收 → 400）。 */
+  private async assertSummaryFilesInProject(projectId: string, fileIds: readonly string[]): Promise<void> {
+    const unique = [...new Set(fileIds)];
+    if (unique.length === 0) {
+      return;
+    }
+    const rows = await this.repository.listSummaryFileBriefs(unique);
+    const usable = new Set(rows.filter((row) => row.projectId === projectId && row.status !== "recycled").map((row) => row.id));
+    const missing = unique.filter((id) => !usable.has(id));
+    if (missing.length > 0) {
+      throw new AppError("VALIDATION_FAILED", "摘要附图文件不存在 / 不属于本项目，或已进回收站", missing.map((id) => ({ code: "unknown_file", message: "文件：" + id, path: "change.beforeSummaryFileIds" })));
+    }
+  }
+
   /** 惰性 / 定时过期的公共实现（先清存储、后置状态；重复调用安全）。 */
   private async expireSession(projectId: string, session: UploadSessionRow, at: Date): Promise<void> {
     await this.discardStaging(session, "expire");
@@ -1637,6 +1663,8 @@ export function toChangeRequestView(
     reason: row.reason,
     beforeSummary: row.beforeSummary,
     afterSummary: row.afterSummary,
+    beforeSummaryFileIds: row.beforeSummaryFileIds,
+    afterSummaryFileIds: row.afterSummaryFileIds,
     status: row.status as ChangeRequestView["status"],
     appliedBy: row.appliedBy,
     appliedAt: row.appliedAt.toISOString(),
@@ -1653,6 +1681,8 @@ function normalizeChangePayload(change: ChangeIntentBody, fileName: string): Cha
     reason: change.reason,
     beforeSummary: change.beforeSummary ?? null,
     afterSummary: change.afterSummary ?? null,
+    beforeSummaryFileIds: dedupeIds(change.beforeSummaryFileIds),
+    afterSummaryFileIds: dedupeIds(change.afterSummaryFileIds),
     stageKey: change.stageKey ?? null,
     fileName,
   };
@@ -1665,9 +1695,21 @@ function readChangePayload(value: unknown): ChangePayload {
     reason: typeof record.reason === "string" ? record.reason : "",
     beforeSummary: typeof record.beforeSummary === "string" ? record.beforeSummary : null,
     afterSummary: typeof record.afterSummary === "string" ? record.afterSummary : null,
+    beforeSummaryFileIds: readIdArray(record.beforeSummaryFileIds),
+    afterSummaryFileIds: readIdArray(record.afterSummaryFileIds),
     stageKey: typeof record.stageKey === "string" ? record.stageKey : null,
     fileName: typeof record.fileName === "string" && record.fileName !== "" ? record.fileName : null,
   };
+}
+
+/** Push 314：摘要附图 id 去重（保序；缺省 = 空数组）。 */
+function dedupeIds(value: readonly string[] | undefined): string[] {
+  return value === undefined ? [] : [...new Set(value)];
+}
+
+/** Push 314：会话 JSONB 里的短 id 数组（非数组 / 脏值一律按空数组兜底）。 */
+function readIdArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 /** 摘要截断（审计 / 日志里的长文本）。 */
