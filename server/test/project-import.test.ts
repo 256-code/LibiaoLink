@@ -178,6 +178,7 @@ function createHarness() {
     reports: [] as Array<Record<string, unknown>>,
     issues: [] as Array<Record<string, unknown>>,
     changes: [] as Array<Record<string, unknown>>,
+    stakeholders: [] as Array<Record<string, unknown>>,
     changeRefCalls: [] as Array<Array<{ taskId: string; changeIds: string[] }>>,
     files: [] as Array<Record<string, unknown>>,
     committedCalls: [] as string[],
@@ -238,6 +239,10 @@ function createHarness() {
     async insertChangeRequests(tx: unknown, projectId: string, rows: Array<Record<string, unknown>>): Promise<string[]> {
       this.changes = rows;
       return rows.map((_, index) => "change-" + String(index));
+    },
+    async insertStakeholders(tx: unknown, projectId: string, rows: Array<Record<string, unknown>>): Promise<string[]> {
+      this.stakeholders = rows;
+      return rows.map((_, index) => "stakeholder-" + String(index));
     },
     async attachChangeRefs(tx: unknown, updates: Array<{ taskId: string; changeIds: string[] }>): Promise<void> {
       this.changeRefCalls.push(updates);
@@ -391,12 +396,12 @@ const CHANGE_HEADER = ["变更时间", "变更阶段", "变更内容描述", "�
 
 const ACTOR_ID = "99999999-9999-4999-8999-999999999999";
 
-/** 与 UK 老表同形的最小样例：完成无日期 / 进度收敛 / 日期笔误 / 阶段外任务 / 图片锚点。 */
-function sampleWorkbook(
+/** 与 UK 老表同形的三张表（项目 / 日报 / 变更）；干系人表由调用方追加（Push 324）。 */
+function sampleSheets(
   extraAnchors: Array<{ row: number; col: number; media: string }> = [],
   reportIssueState = "处理中",
-): Buffer {
-  return buildWorkbook([
+): SheetInput[] {
+  return [
     {
       name: "UK-VANILLA- 任务",
       rows: [
@@ -427,7 +432,45 @@ function sampleWorkbook(
         ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "Layout更新版.dwg", "V2", "", "朱成荣(Eli)"],
       ],
     },
-  ]);
+  ];
+}
+
+/** 与 UK 老表同形的最小样例：完成无日期 / 进度收敛 / 日期笔误 / 阶段外任务 / 图片锚点。 */
+function sampleWorkbook(
+  extraAnchors: Array<{ row: number; col: number; media: string }> = [],
+  reportIssueState = "处理中",
+): Buffer {
+  return buildWorkbook(sampleSheets(extraAnchors, reportIssueState));
+}
+
+const STAKEHOLDER_HEADER = [
+  "干系人姓名/name",
+  "电话或whats app或微信号",
+  "邮箱Email",
+  "职务Position/责任板块",
+  "所属公司company",
+  "填写者",
+  "提交时间",
+];
+
+/** 「干系人」表样例（Push 324）：分类四值映射 / 联系方式拆分 / 分类识别不出 / 提交时间与填写者。 */
+function stakeholderSheet(): SheetInput {
+  return {
+    name: "干系人",
+    rows: [
+      STAKEHOLDER_HEADER,
+      ["Christian Winkler", "", "christian@example.com", "项目经理", "客户customer", "倪里特(Ni Lite)", "2026年9月15日 17:40"],
+      ["吕宗远", "+86 137 0000 0000", "", "施工现场负责人", "供应商supplier", "倪里特(Ni Lite)", "2026年9月15日 17:40"],
+      ["tobi", "tobi_wechat", "", "IT", "总包单位", "倪里特(Ni Lite)", "2026年9月15日 17:40"],
+      ["Jan Mueller", "", "", "", "德马科技", "倪里特(Ni Lite)", "2026年9月15日 17:40"],
+      ["", "", "", "", "", "", ""],
+    ],
+  };
+}
+
+/** 主文件带「干系人」表（正常「一张表格」导出的形态）。 */
+function sampleWorkbookWithStakeholders(): Buffer {
+  return buildWorkbook([...sampleSheets(), stakeholderSheet()]);
 }
 
 /** 变更关联（Push 319）样例：变更管理「关联」列写任务描述；任务表 R 列「变更关联」写日期（第一行故意对不上）。 */
@@ -512,7 +555,7 @@ describe("ProjectImportService.preview（老表解析预览）", () => {
     const h = createHarness();
     const preview = await runPreview(h);
 
-    expect(preview.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, images: 2, imagesManual: 2, accountsNew: 5, nodesNew: 1 });
+    expect(preview.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, imagesManual: 2, accountsNew: 5, nodesNew: 1 });
     expect(preview.project).toEqual({
       code: "LBGW-20260331-1459",
       name: "UK-VANILLA-AIRROB",
@@ -618,6 +661,105 @@ describe("ProjectImportService.preview（老表解析预览）", () => {
     expect(summary?.message).toContain("写入任务变更关联 2 条");
   });
 
+  it("干系人（Push 324）：主文件含「干系人」表 → 条数 / 分类四值映射 / 联系方式拆分 / 提交时间", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: sampleWorkbookWithStakeholders(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    expect(preview.counts.stakeholders).toBe(4);
+    expect(preview.stakeholderFile).toBeNull();
+    const parse = previewPayload(h).parse as {
+      stakeholderSheetName: string | null;
+      stakeholders: Array<{
+        name: string;
+        companyType: string;
+        company: string | null;
+        phone: string | null;
+        wechat: string | null;
+        title: string | null;
+        filler: string | null;
+        submittedAt: string | null;
+      }>;
+    };
+    expect(parse.stakeholderSheetName).toBe("干系人");
+    const byName = new Map(parse.stakeholders.map((row) => [row.name, row]));
+    expect(byName.get("Christian Winkler")?.companyType).toBe("customer");
+    expect(byName.get("Christian Winkler")?.company).toBeNull();
+    expect(byName.get("Christian Winkler")?.title).toBe("项目经理");
+    expect(byName.get("Christian Winkler")?.submittedAt).toBe("2026-09-15");
+    expect(byName.get("Christian Winkler")?.filler).toBe("倪里特(Ni Lite)");
+    expect(byName.get("吕宗远")?.companyType).toBe("supplier");
+    expect(byName.get("吕宗远")?.phone).toBe("+86 137 0000 0000");
+    expect(byName.get("tobi")?.companyType).toBe("general_contractor");
+    expect(byName.get("tobi")?.wechat).toBe("tobi_wechat");
+    expect(byName.get("Jan Mueller")?.companyType).toBe("customer");
+    expect(byName.get("Jan Mueller")?.company).toBe("德马科技");
+    const codes = preview.issues.map((issue) => issue.code);
+    expect(codes).toContain("STAKEHOLDER_COMPANY_UNMATCHED");
+    expect(codes).toContain("STAKEHOLDER_FILLER_MISSING");
+    expect(codes).not.toContain("STAKEHOLDER_SHEET_MISSING");
+  });
+
+  it("干系人（Push 324）：主文件没有该表 → info 提醒；另附单独导出的干系人表 → 合并解析", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const main = await h.service.preview({
+      bytes: sampleWorkbook(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    expect(main.counts.stakeholders).toBe(0);
+    expect(main.stakeholderFile).toBeNull();
+    expect(main.issues.map((issue) => issue.code)).toContain("STAKEHOLDER_SHEET_MISSING");
+
+    const h2 = createHarness();
+    h2.nodes.library = [];
+    const merged = await h2.service.preview({
+      bytes: sampleWorkbook(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      stakeholder: { bytes: buildWorkbook([stakeholderSheet()]), fileName: "副本-[XXXX-XXXX] XXX项目名称.xlsx" },
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    expect(merged.counts.stakeholders).toBe(4);
+    expect(merged.stakeholderFile?.name).toBe("副本-[XXXX-XXXX] XXX项目名称.xlsx");
+    const codes = merged.issues.map((issue) => issue.code);
+    expect(codes).not.toContain("STAKEHOLDER_SHEET_MISSING");
+    expect(codes).not.toContain("STAKEHOLDER_FILE_IGNORED");
+  });
+
+  it("干系人（Push 324）：另附文件没有「干系人」表 → 422；主文件已含该表时另附文件被忽略（info）", async () => {
+    const h = createHarness();
+    await expectCode(
+      () =>
+        h.service.preview({
+          bytes: sampleWorkbook(),
+          fileName: "老表.xlsx",
+          stakeholder: { bytes: buildWorkbook([{ name: "其他", rows: [["甲", "乙"]] }]), fileName: "别的.xlsx" },
+          actorId: ACTOR_ID,
+          locale: "zh",
+        }),
+      "IMPORT_PARSE_FAILED",
+    );
+
+    const h2 = createHarness();
+    h2.nodes.library = [];
+    const preview = await h2.service.preview({
+      bytes: sampleWorkbookWithStakeholders(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      stakeholder: { bytes: buildWorkbook([stakeholderSheet()]), fileName: "副本-干系人.xlsx" },
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    expect(preview.counts.stakeholders).toBe(4);
+    expect(preview.issues.map((issue) => issue.code)).toContain("STAKEHOLDER_FILE_IGNORED");
+  });
+
   it("问题已处理（done）：默认处理人留空，不出 ISSUE_OWNER_FALLBACK 提醒", async () => {
     const h = createHarness();
     h.nodes.library = [];
@@ -696,7 +838,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
 
     expect(result.code).toBe("LBGW-20260331-1459");
     expect(result.name).toBe("UK-VANILLA-AIRROB");
-    expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, images: 2, accountsCreated: 5, nodesAdded: 1 });
+    expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, accountsCreated: 5, nodesAdded: 1 });
 
     // 项目落位：编号 / 地区 / 类型 / 项目经理（贾海洋 不在库 → 回落导入人）
     const inserted = h.projects.inserted[0]!;
@@ -747,6 +889,32 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.translate.warmed).toContain("UK-VANILLA-AIRROB");
     expect(h.audit.records.filter((record) => record.objectType === "project").length).toBe(1);
     expect(h.audit.records.filter((record) => record.objectType === "task_node").length).toBe(1);
+  });
+
+  it("干系人（Push 324）：提交写入台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号）", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    h.previews.users = [{ id: "user-ni", username: "nilite", displayName: "倪里特-test" }];
+    const preview = await h.service.preview({
+      bytes: sampleWorkbookWithStakeholders(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+
+    expect(result.counts.stakeholders).toBe(4);
+    expect(h.previews.stakeholders.length).toBe(4);
+    const first = h.previews.stakeholders[0]!;
+    expect(first.name).toBe("Christian Winkler");
+    expect(first.companyType).toBe("customer");
+    expect(first.createdBy).toBe("user-ni");
+    expect((first.createdAt as Date).toISOString()).toBe("2026-09-15T00:00:00.000Z");
+    const jan = h.previews.stakeholders.find((row) => row.name === "Jan Mueller")!;
+    expect(jan.company).toBe("德马科技");
+    expect(result.issues.map((issue) => issue.code)).not.toContain("STAKEHOLDER_FILLER_MISSING");
   });
 
   it("变更关联（Push 319）：提交事务回写任务 change_refs（追加序 = 变更表行序）", async () => {

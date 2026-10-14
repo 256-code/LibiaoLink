@@ -10,6 +10,7 @@ import { dailyReports, issues } from "../../db/schema/reports.js";
 import { changeRequests } from "../../db/schema/change.js";
 import { fileLinks, fileVersions, files } from "../../db/schema/files.js";
 import { projects } from "../../db/schema/projects.js";
+import { projectStakeholders, stakeholders } from "../../db/schema/stakeholders.js";
 
 export type { ProjectImportPreviewRow };
 
@@ -87,6 +88,22 @@ export interface ImportFileInsert {
   /** 问题图且该日报生成了问题时 = 问题下标（与 insertReportIssues 的返回同序）：转挂问题侧（kind = 空串）。 */
   issueIndex: number | null;
   kind: "onsite" | "issue";
+}
+
+/** 干系人行（Push 324）：台账 stakeholders + 项目关联 project_stakeholders 同批写。 */
+export interface ImportStakeholderInsert {
+  name: string;
+  companyType: string;
+  company: string | null;
+  title: string | null;
+  phone: string | null;
+  wechat: string | null;
+  email: string | null;
+  role: string | null;
+  /** 录入人（源表「填写者」匹配库内账号；匹配不到 = null）。 */
+  createdBy: string | null;
+  /** 提交时间（源表「提交时间」；null = 用导入时间）。 */
+  createdAt: Date | null;
 }
 
 /**
@@ -264,6 +281,40 @@ export class ProjectImportRepository {
     )
       .returning({ id: changeRequests.id });
     return inserted.map((row) => row.id);
+  }
+
+  /** 干系人入库（Push 324）：台账 + 项目关联同批写（导入单事务内）；返回干系人 id（与入参同序）。 */
+  async insertStakeholders(
+    tx: DbClient,
+    projectId: string,
+    rows: ImportStakeholderInsert[],
+    actorId: string,
+    at: Date,
+  ): Promise<string[]> {
+    if (rows.length === 0) return [];
+    const inserted = await tx
+      .insert(stakeholders)
+      .values(
+        rows.map((row) => ({
+          name: row.name,
+          companyType: row.companyType,
+          company: row.company,
+          title: row.title,
+          phone: row.phone,
+          wechat: row.wechat,
+          email: row.email,
+          role: row.role,
+          createdBy: row.createdBy,
+          createdAt: row.createdAt ?? at,
+          updatedAt: row.createdAt ?? at,
+        })),
+      )
+      .returning({ id: stakeholders.id });
+    const ids = inserted.map((row) => row.id);
+    await tx.insert(projectStakeholders).values(
+      ids.map((stakeholderId) => ({ projectId, stakeholderId, linkedBy: actorId, linkedAt: at })),
+    );
+    return ids;
   }
 
   /** 变更关联回写（Push 319）：把「关联」列命中的变更挂到任务 change_refs（导入的新任务，直接置为本次列表）。 */
