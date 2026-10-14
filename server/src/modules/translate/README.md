@@ -6,7 +6,7 @@
 | 契约 | `shared/src/modules/translate.ts`（POST /api/v1/translate · POST /api/v1/translate/batch） |
 | 数据 | `content_translations`（迁移 0047；键 = source_lang + target_lang + sha256(source_text)，source_text = 原文） |
 | 通道 | `TRANSLATE_PROVIDER=openai` = OpenAI 兼容 API（`TRANSLATE_API_BASE_URL` / `TRANSLATE_API_MODEL` / `TRANSLATE_API_KEY`，公司 New API 网关；Push 309 起默认接入）；`local` = 本地 / 内网引擎（`TRANSLATE_ORIGIN`，默认 `http://127.0.0.1:5008`）；`TRANSLATE_FALLBACK_ORIGIN`（可选）= 主通道失败时的本地兜底 |
-| 文本加工 | `translate.text.ts`：术语保护 / 回换（11 条词表）+ 整句全大写规整 —— 原前端 translateApi.ts 逻辑内聚到服务端 |
+| 文本加工 | `translate.text.ts`：术语保护 / 回换（11 条词表）+ 整句全大写规整 + 句首大写规整（Push 311：小写开头 → 首字母大写；iPhone / eBay / pH 类品牌词形态不误伤）—— 原前端 translateApi.ts 逻辑内聚到服务端 |
 | 前端 | `frontend/src/translateApi.ts`（会话缓存 L1；服务端译文库 L2；单条 L3）+ 保存链路预热挂点（task / project 控制器） |
 
 ## 行为
@@ -37,5 +37,5 @@
 
 ## 验证
 
-- `server/test/translate.test.ts`（单测 18 例：库优先短路 / 未命中落库 / 术语保护与回换 / 引擎失败 INTERNAL / 批量只读 / 预热去重与静默 / Push 309：openai 通道落库 + 兜底回落 + 未配置 INTERNAL / Push 310：主模型失败接力备用（落库 engine 按实际产出模型）+ 主成功不接力 + 两跳皆败 INTERNAL + 备用留空或同名不接力 + 两跳皆败回落本地引擎）；
-- 真机：`node node_modules/vitest/vitest.mjs run` 全绿（73 文件 / 1054 例）+ `npm run typecheck` / `npm run build` + `check:boundaries` 全绿（247 文件 / 1087 依赖 / 0 违规）。
+- `server/test/translate.test.ts`（单测 22 例：库优先短路 / 未命中落库 / 术语保护与回换 / 引擎失败 INTERNAL / 批量只读 / 预热去重与静默 / Push 309：openai 通道落库 + 兜底回落 + 未配置 INTERNAL / Push 310：主模型失败接力备用（落库 engine 按实际产出模型）+ 主成功不接力 + 两跳皆败 INTERNAL + 备用留空或同名不接力 + 两跳皆败回落本地引擎 / Push 311：小写开头 → 句首大写（品牌词不误伤 / 幂等 / 占位符小写化仍回换））；
+- 真机：`node node_modules/vitest/vitest.mjs run` 全绿（73 文件 / 1058 例）+ `npm run typecheck` / `npm run build` + `check:boundaries` 全绿（247 文件 / 1087 依赖 / 0 违规）。

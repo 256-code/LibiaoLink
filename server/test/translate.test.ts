@@ -368,3 +368,44 @@ describe("TranslateService（Push 309/310 · provider 可插拔：API 主通道�
     expect(router.calls).toHaveLength(0);
   });
 });
+
+describe("TranslateService（Push 311 · 句首大写规整）", () => {
+  it("小写开头回包（API / 小模型偶发）：句首转大写后落库", async () => {
+    const { service, repository } = makeService();
+    stubEngineReply(() => ({ payload: { translatedText: "in dire straits" } }));
+    const final = await service.translate("陷入困境", "zh", "en");
+    expect(final).toBe("In dire straits");
+    expect(repository.upsertCalls[0]?.translatedText).toBe("In dire straits");
+  });
+
+  it("品牌词形态开头（iPhone / eBay 类）：不误伤小写首字母", async () => {
+    const first = makeService();
+    stubEngineReply(() => ({ payload: { translatedText: "iPhone 15 protective case inventory" } }));
+    await expect(first.service.translate("iPhone 15 保护壳库存", "zh", "en")).resolves.toBe("iPhone 15 protective case inventory");
+
+    vi.unstubAllGlobals();
+    const second = makeService();
+    stubEngineReply(() => ({ payload: { translatedText: "eBay storefront listing" } }));
+    await expect(second.service.translate("eBay 店铺上架", "zh", "en")).resolves.toBe("eBay storefront listing");
+  });
+
+  it("已句首大写 / 数字开头：保持原样（幂等）", async () => {
+    const first = makeService();
+    stubEngineReply(() => ({ payload: { translatedText: "Commissioning completed" } }));
+    await expect(first.service.translate("调试完成", "zh", "en")).resolves.toBe("Commissioning completed");
+
+    vi.unstubAllGlobals();
+    const second = makeService();
+    stubEngineReply(() => ({ payload: { translatedText: "12 units shipped" } }));
+    await expect(second.service.translate("发运 12 台", "zh", "en")).resolves.toBe("12 units shipped");
+  });
+
+  it("引擎把占位符一并小写且置于句首：仍回换术语 + 句首大写", async () => {
+    const { service } = makeService();
+    stubEngineReply((q) => ({ payload: { translatedText: q.toLowerCase() } }));
+    const final = await service.translate("基督城仓配中心扩建", "zh", "en");
+    expect(final.startsWith("Christchurch")).toBe(true);
+    expect(final).toContain("Warehouse and Distribution Center");
+    expect(final.toLowerCase()).not.toContain("xq");
+  });
+});

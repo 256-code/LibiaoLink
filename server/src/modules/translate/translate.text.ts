@@ -1,5 +1,5 @@
 /**
- * 翻译文本加工（服务端 · Push 301 · §6.16 ㉕）：术语保护 / 回换 + 译文规整 —— 原 frontend/src/translateApi.ts 同款逻辑搬移内聚。
+ * 翻译文本加工（服务端 · Push 301 · §6.16 ㉕）：术语保护 / 回换 + 译文规整（Push 311 补「句首大写」）—— 原 frontend/src/translateApi.ts 同款逻辑搬移内聚；规整口径见 §6.16 ㉘。
  *
  * 为什么挪到服务端（2026-10-13 业务口径「当用户写项目进展描述时直接后台翻译 并且写入数据库」）：
  *  - 译文库键 = sha256(原文)：前端读路径（批量查库 / 单条）与保存链路预热（task / project 控制器挂点）必须同键。
@@ -18,12 +18,12 @@ const KEEP_UPPER = new Set([
   "QC", "QA", "WMS", "GPS", "AI", "UI", "IP", "PLC", "ERP", "MES", "SKU",
 ]);
 
-/** 译文规整：去多余空白；整句全大写（小模型偶发）时转句首大写，保留常见缩写与带数字词元。 */
+/** 译文规整（Push 301 / 311）：去多余空白；整句全大写（小模型偶发）时转句首大写，保留常见缩写与带数字词元；句首小写字母时首字母大写（品牌词形态不误伤）。 */
 export function normalizeEnglish(text: string): string {
   const trimmed = text.replace(/\s+/g, " ").trim();
   const letters = trimmed.replace(/[^A-Za-z]/g, "");
   if (letters.length < 4 || letters !== letters.toUpperCase()) {
-    return trimmed;
+    return capitalizeSentenceStart(trimmed);
   }
   let atStart = true;
   const out: string[] = [];
@@ -55,6 +55,23 @@ export function normalizeEnglish(text: string): string {
     atStart = /[.!?]$/.test(word);
   }
   return out.join("");
+}
+
+/**
+ * 句首大写（Push 311 · §6.16 ㉘）：翻译 API / 小模型偶发小写开头（实测「in dire straits」），
+ * 仅当文本以单个小写 ASCII 字母开头、且首个词元不是 iPhone / eBay / pH 类品牌词形态（[a-z]+[A-Z]）时转大写；
+ * 占位符（Xq…Y）大写开头不受影响；数字 / 标点开头与已大写开头保持原样（幂等）。
+ */
+function capitalizeSentenceStart(text: string): string {
+  const first = text.charAt(0);
+  if (first < "a" || first > "z") {
+    return text;
+  }
+  const firstWord = text.split(" ", 1)[0] ?? "";
+  if (/^[a-z]{1,4}[A-Z]/.test(firstWord)) {
+    return text;
+  }
+  return first.toUpperCase() + text.slice(1);
 }
 
 /** 领域术语表（原 frontend/src/translateApi.ts 原样搬移；术语不参与机翻、固定译法回换）。 */
