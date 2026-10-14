@@ -77,7 +77,7 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "simple", cardWatermark: true, locale: "zh", updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "medium", cardWatermark: false, locale: "zh", updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
@@ -154,7 +154,7 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: 1 }).success).toBe(false);
   });
 
-  it("背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：只传 backgroundTier 落库、未传键保持原值；读侧白名单外回 simple", async () => {
+  it("背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」；Push 313 起默认 medium）：只传 backgroundTier 落库、未传键保持原值；读侧白名单外 / 缺省回 medium", async () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { taskTableHiddenColumns: ["owner"], backgroundTier: "medium" }, AT);
     expect((await service.get(USER_ID)).backgroundTier).toBe("medium");
@@ -164,7 +164,9 @@ describe("用户偏好（A4 / A24）", () => {
     expect(after.taskTableHiddenColumns).toEqual(["owner"]);
     expect((await service.update(USER_ID, { backgroundTier: "simple" }, AT)).backgroundTier).toBe("simple");
     repo.rows.set(USER_ID, { userId: USER_ID, prefs: { backgroundTier: "neon" }, updatedAt: AT } as unknown as UserPreferenceRow);
-    expect((await service.get(USER_ID)).backgroundTier).toBe("simple");
+    expect((await service.get(USER_ID)).backgroundTier).toBe("medium");
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { focusMode: true }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).backgroundTier).toBe("medium");
   });
 
   it("背景档位契约：枚举 simple / medium / vivid 通过，未知档位 / 非字符串 400", () => {
@@ -175,7 +177,7 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ backgroundTier: true }).success).toBe(false);
   });
 
-  it("卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：只传 cardWatermark 落库、未传键保持原值；读侧非布尔回默认 true", async () => {
+  it("卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：只传 cardWatermark 落库、未传键保持原值；读侧非布尔 / 缺省回默认 false", async () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { cardWatermark: false }, AT);
     expect((await service.get(USER_ID)).cardWatermark).toBe(false);
@@ -183,7 +185,9 @@ describe("用户偏好（A4 / A24）", () => {
     expect((await service.update(USER_ID, { focusMode: true }, AT)).cardWatermark).toBe(false);
     expect((await service.update(USER_ID, { cardWatermark: true }, AT)).cardWatermark).toBe(true);
     repo.rows.set(USER_ID, { userId: USER_ID, prefs: { cardWatermark: "off" }, updatedAt: AT } as unknown as UserPreferenceRow);
-    expect((await service.get(USER_ID)).cardWatermark).toBe(true);
+    expect((await service.get(USER_ID)).cardWatermark).toBe(false);
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: {}, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).cardWatermark).toBe(false);
   });
 
   it("卡片水印契约：布尔通过，字符串 / 数字 400", () => {

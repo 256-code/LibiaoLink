@@ -37,9 +37,9 @@ export type UserPreferences = {
   /** 「我的计划」便签墙（Push 268）：整面便签墙按账号存；从未保存 = updatedAt null（前端据此预置示例 / 迁移旧键）。 */
   myPlanBoard: MyPlanBoardPrefs;
   revisions: Record<string, number>;
-  /** 背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：顶栏「背景 · 档位」按账号存 —— 刷新 / 换设备同账号保持；默认 simple。 */
+  /** 背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：顶栏「背景 · 档位」按账号存 —— 刷新 / 换设备同账号保持；Push 313 起默认 medium（适中）。 */
   backgroundTier: BackgroundTier;
-  /** 卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：项目卡片右下角国家名水印按账号存；默认 true（显示）。 */
+  /** 卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：项目卡片右下角国家名水印按账号存；Push 313 起默认 false（无水印）。 */
   cardWatermark: boolean;
   /** 界面语言（Push 296 · 业务口径「按账号记住 刷新不会回中文」）：顶栏「语言 · 中文 / English」按账号存 —— 刷新 / 换设备同账号保持；默认 zh。 */
   locale: Locale;
