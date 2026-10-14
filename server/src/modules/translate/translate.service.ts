@@ -161,14 +161,14 @@ export class TranslateService {
   }
 
   /**
-   * 调翻译通道（Push 309 · provider 可插拔）：`openai` = API 主通道（失败且配置了 TRANSLATE_FALLBACK_ORIGIN 时改调本地引擎）；
+   * 调翻译通道（Push 309/310 · provider 可插拔）：`openai` = API 主通道（主模型 → 备用模型两跳；仍失败且配置了 TRANSLATE_FALLBACK_ORIGIN 时改调本地引擎）；
    * `local` = 本地引擎直连（TRANSLATE_ORIGIN）。术语保护对两种通道一致：出引擎前占位符化（translate.text.ts），回包规整 + 回换。
    */
   private async callEngine(q: string, source: TranslateLang, target: TranslateLang): Promise<EngineOutput> {
     if (this.config.env.TRANSLATE_PROVIDER === "openai") {
       try {
-        const translatedText = await this.callOpenAiApi(q, source, target);
-        return { translatedText, engine: "api:" + this.config.env.TRANSLATE_API_MODEL };
+        const result = await this.callOpenAiApi(q, source, target);
+        return { translatedText: result.translatedText, engine: "api:" + result.model };
       } catch (error) {
         const fallback = this.config.env.TRANSLATE_FALLBACK_ORIGIN ?? "";
         if (fallback === "") {
@@ -212,12 +212,31 @@ export class TranslateService {
     return finalText;
   }
 
-  /** OpenAI 兼容 API（POST {base}/chat/completions；模型 = TRANSLATE_API_MODEL，密钥 = TRANSLATE_API_KEY 可空）。失败一律 AppError INTERNAL。 */
-  private async callOpenAiApi(q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
+  /**
+   * OpenAI 兼容 API（Push 310：主模型 → 备用模型两跳）。主模型失败（网络 / HTTP / 解析）时，
+   * 若配置了 TRANSLATE_API_MODEL_FALLBACK 且不同于主模型 → 改调备用模型（如 deepseek 断流 → gemini-3.8-flash）。
+   */
+  private async callOpenAiApi(q: string, source: TranslateLang, target: TranslateLang): Promise<{ translatedText: string; model: string }> {
     const env = this.config.env;
     if ((env.TRANSLATE_API_BASE_URL ?? "") === "" || (env.TRANSLATE_API_MODEL ?? "") === "") {
       throw new AppError("INTERNAL", "翻译 API 未配置（TRANSLATE_API_BASE_URL / TRANSLATE_API_MODEL）");
     }
+    const primary = env.TRANSLATE_API_MODEL;
+    try {
+      return { translatedText: await this.callOpenAiModel(primary, q, source, target), model: primary };
+    } catch (error) {
+      const fallbackModel = env.TRANSLATE_API_MODEL_FALLBACK ?? "";
+      if (fallbackModel === "" || fallbackModel === primary) {
+        throw error;
+      }
+      this.logger.warn("翻译 API 主模型失败，改走备用模型 " + fallbackModel + "：" + (error instanceof Error ? error.message : String(error)));
+      return { translatedText: await this.callOpenAiModel(fallbackModel, q, source, target), model: fallbackModel };
+    }
+  }
+
+  /** 单次 OpenAI 兼容请求（POST {base}/chat/completions；密钥 = TRANSLATE_API_KEY 可空）。失败一律 AppError INTERNAL。 */
+  private async callOpenAiModel(model: string, q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
+    const env = this.config.env;
     const { protectedText, tokens } = protectGlossary(q);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if ((env.TRANSLATE_API_KEY ?? "") !== "") {
@@ -229,7 +248,7 @@ export class TranslateService {
         method: "POST",
         headers,
         body: JSON.stringify({
-          model: env.TRANSLATE_API_MODEL,
+          model,
           messages: [
             { role: "system", content: buildSystemPrompt(source, target) },
             { role: "user", content: protectedText },
@@ -239,21 +258,21 @@ export class TranslateService {
         signal: AbortSignal.timeout(env.TRANSLATE_TIMEOUT_MS),
       });
     } catch (error) {
-      throw new AppError("INTERNAL", "翻译 API 不可用（" + (error instanceof Error ? error.message : String(error)) + "）");
+      throw new AppError("INTERNAL", "翻译 API 不可用（模型 " + model + "：" + (error instanceof Error ? error.message : String(error)) + "）");
     }
     if (!response.ok) {
-      throw new AppError("INTERNAL", "翻译 API 返回 HTTP " + String(response.status));
+      throw new AppError("INTERNAL", "翻译 API 返回 HTTP " + String(response.status) + "（模型 " + model + "）");
     }
     const data = (await response.json().catch(() => null)) as ApiChatReply | null;
     const picked = data !== null && data.choices !== undefined && data.choices.length > 0 ? data.choices[0] : undefined;
     const content = picked !== undefined && picked.message !== undefined ? picked.message.content : undefined;
     const raw = typeof content === "string" ? content : "";
     if (raw === "") {
-      throw new AppError("INTERNAL", "翻译 API 响应缺少内容");
+      throw new AppError("INTERNAL", "翻译 API 响应缺少内容（模型 " + model + "）");
     }
     const finalText = finalizeTranslation(stripWrappingQuotes(raw), tokens);
     if (finalText === "") {
-      throw new AppError("INTERNAL", "翻译 API 响应规整后为空");
+      throw new AppError("INTERNAL", "翻译 API 响应规整后为空（模型 " + model + "）");
     }
     return finalText;
   }

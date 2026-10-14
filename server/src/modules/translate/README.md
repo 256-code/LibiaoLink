@@ -16,11 +16,12 @@
 - **预热（保存即后台翻译）**：任务（中文标题 / 进展描述 note）与项目（名称 / 描述 / 客户）写入成功后被丢进 `warmup`；
   后台去重（同文本 5 分钟窗口）+ 并发 2 静默翻好落库，从不抛错、不阻塞保存响应。
 
-## 通道（Push 309 · provider 可插拔）
+## 通道（Push 309/310 · provider 可插拔）
 
 - **openai（API 主通道）**：`POST {TRANSLATE_API_BASE_URL}/chat/completions`，`temperature=0`，system prompt 约束「只出译文、占位符 / 数字 / 专名原样」；回包取 `choices[0].message.content`（去首尾成对引号）。
+- **主模型 → 备用模型接力（Push 310）**：`TRANSLATE_API_MODEL`（主，如 `deepseek-v4-flash-vision-exp`）失败（网络 / HTTP / 解析）时，`TRANSLATE_API_MODEL_FALLBACK` 非空且与主不同名 → warn 日志 + 自动改调备用模型（如 `gemini-3.8-flash`）；落库 engine 按**实际产出模型**标记（`api:<模型>`，换模型可批量重翻）。
 - **local（本地引擎）**：LibreTranslate 兼容 `POST {TRANSLATE_ORIGIN}/translate`；本机验证形态 = HY-MT1.5-1.8B（llama.cpp + 薄壳 5008）。**方案保留、暂不部署**。
-- **兜底**：`TRANSLATE_FALLBACK_ORIGIN` 非空时，openai 通道失败自动改调该本地引擎（落库 engine 标记按实际产出通道：`api:<模型>` / `hy-mt-1.5-1.8b`）。
+- **兜底**：`TRANSLATE_FALLBACK_ORIGIN` 非空时，openai 通道（主 + 备用两跳皆败）失败自动改调该本地引擎（落库 engine 标记按实际产出通道：`api:<模型>` / `hy-mt-1.5-1.8b`）。
 - 密钥纪律：`TRANSLATE_API_KEY` 由 `deploy/prod/secrets/translate_api_key` 经入口注入（不进仓库 / 不进 .env；CONTRIBUTING §12）。
 
 ## 键口径（重要）
@@ -36,5 +37,5 @@
 
 ## 验证
 
-- `server/test/translate.test.ts`（单测 13 例：库优先短路 / 未命中落库 / 术语保护与回换 / 引擎失败 INTERNAL / 批量只读 / 预热去重与静默 / Push 309：openai 通道落库 + 兜底回落 + 未配置 INTERNAL）；
-- 真机：`node node_modules/vitest/vitest.mjs run` 全绿（73 文件 / 1049 例）+ `npm run typecheck` / `npm run build` + `check:boundaries` 全绿（247 文件 / 1087 依赖 / 0 违规）。
+- `server/test/translate.test.ts`（单测 18 例：库优先短路 / 未命中落库 / 术语保护与回换 / 引擎失败 INTERNAL / 批量只读 / 预热去重与静默 / Push 309：openai 通道落库 + 兜底回落 + 未配置 INTERNAL / Push 310：主模型失败接力备用（落库 engine 按实际产出模型）+ 主成功不接力 + 两跳皆败 INTERNAL + 备用留空或同名不接力 + 两跳皆败回落本地引擎）；
+- 真机：`node node_modules/vitest/vitest.mjs run` 全绿（73 文件 / 1054 例）+ `npm run typecheck` / `npm run build` + `check:boundaries` 全绿（247 文件 / 1087 依赖 / 0 违规）。

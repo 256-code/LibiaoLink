@@ -76,6 +76,8 @@ export const EnvSchema = z
     TRANSLATE_API_BASE_URL: z.string().default(""),
     /** 翻译 API 模型名（如 deepseek-v4-flash-vision-exp）；provider=openai 时必填。 */
     TRANSLATE_API_MODEL: z.string().default(""),
+    /** 备用 API 模型（Push 310）：主模型失败时改调（如 deepseek 断流 → gemini-3.8-flash）；留空 = 不接力。 */
+    TRANSLATE_API_MODEL_FALLBACK: z.string().default(""),
     /** 翻译 API Key（由 secrets/translate_api_key 经入口注入，不进仓库 / 不进 .env）；网关无鉴权时可留空。 */
     TRANSLATE_API_KEY: z.string().default(""),
     /** 兜底引擎基址（可选）：主通道失败时改调该 LibreTranslate 兼容端点（「本地引擎方案保留」接线位；留空 = 不兜底）。 */
