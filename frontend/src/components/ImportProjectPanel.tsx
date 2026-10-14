@@ -292,7 +292,6 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
         <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 px-6 py-4">
           <div className="min-w-0">
             <h2 className="text-lg font-bold text-zinc-900">{t("import.title")}</h2>
-            <p className="mt-0.5 text-xs text-zinc-500">{t("import.subtitle")}</p>
           </div>
           <div className="ml-auto flex min-w-0 items-center gap-3">
             <span
@@ -539,7 +538,6 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
                 {phase.preview.accounts.length === 0 ? null : (
                   <section className="rounded-2xl border border-zinc-200 bg-white p-5" data-import-accounts="">
                     <h3 className="text-sm font-semibold text-zinc-900">{t("import.accounts.title", { n: phase.preview.accounts.length })}</h3>
-                    <p className="mt-1 text-xs text-zinc-400">{t("import.accounts.hint")}</p>
                     <ul className="mt-3 space-y-1.5">
                       {phase.preview.accounts.map((account, index) => (
                         <li key={index} className="flex items-center gap-2 rounded-lg border border-zinc-100 px-2.5 py-1.5 text-xs">
