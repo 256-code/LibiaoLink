@@ -12,10 +12,12 @@ import { useFocusTrapFor } from "./useFocusTrap";
 import { PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
 import { fieldText, projectStatusTextOf, projectTypeText, useLocale, useT } from "../i18n";
 import { regionNameEn } from "../data/regionPicker";
+import { fetchUsedRegions } from "../projectApi";
 
 /**
  * 项目地区（Push 195）：点开 = 贴字段弹出的小窗（RegionSelect）——最上方「已有项目地区」（有项目在用的，
- * 带项目数），下面按洲分组列全部标准国家 / 地区（字典没收录的国家也能搜到、选到）。
+ * 带项目数；Push 304 起按项目落库值聚合，含字典外国名），下面按洲分组列全部标准国家 / 地区（字典没收录的
+ * 国家也能搜到、选到）。
  * 业务口径（2026-09-28）：「还是要之前的小窗 然后最上方是已有项目地区」＋「那我搜索现在没有的国家不就还是不行吗」。
  * 纯选择：不支持手填 / 添加 / 删除（Push 194 口径延续）——值 = 字典码 / 标准中文国名，地图立柱 / 侧栏筛选
  * 按同一套认名规则识别（见 src/data/regionPicker.ts）。
@@ -101,6 +103,26 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   /** 项目状态（Push 262）：新建 = active；编辑 = 库里现值（未知值回落 active 兜底）。 */
   const [status, setStatus] = useState<ProjectStatusValue>(projectStatusOf(initial?.status ?? "active") ?? "active");
   const [regionPopoverOpen, setRegionPopoverOpen] = useState(false);
+  /**
+   * 「已有项目地区」计数（Push 304）：挂载即取全量 region 计数（值 = 项目落库原文 → 未删除项目数）——
+   * 之前只认字典条目 usageCount，地区存标准国名（如「美国」）时「已有」页恒空；取数失败维持 undefined（回落字典口径，不阻塞弹窗）。
+   */
+  const [usedRegions, setUsedRegions] = useState<Record<string, number> | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    fetchUsedRegions()
+      .then((counts) => {
+        if (!cancelled) {
+          setUsedRegions(counts);
+        }
+      })
+      .catch(() => {
+        // 计数取不到 = 小窗回落字典 usageCount（不提示、不影响建项目）。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ latest: ProjectDraft; version: number } | null>(null);
@@ -298,6 +320,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               value={region}
               valueLabel={regionLabel}
               items={dicts.region}
+              usedRegions={usedRegions}
               onChange={setRegion}
               onOpenChange={setRegionPopoverOpen}
             />

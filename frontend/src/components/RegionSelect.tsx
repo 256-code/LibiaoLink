@@ -10,8 +10,9 @@ import { usePopover } from "./usePopover";
 /**
  * 项目地区选择器（Push 195 返工 · 还是「贴字段弹出的小窗」）：业务口径（2026-09-28）
  * 「还是要之前的小窗 然后最上方是已有项目地区」＋「小窗做分页 已有项目地区 / 全部地区 然后选中标蓝即可 不要这个勾」。
- * - 顶部搜索框 + 两页签：「已有项目地区」（有项目在用的字典条目，usageCount > 0，按用量降序、带项目数）
- *   与「全部地区」（标准国家清单 201 条 + 字典独有条目，按洲分组 —— 字典没收录的国家也能搜到、选到）；
+ * - 顶部搜索框 + 两页签：「已有项目地区」（有项目在用的地区 —— Push 304 起按**项目落库值**聚合（facets 计数，
+ *   含字典外的国名 / 存量值），按用量降序、带项目数）与「全部地区」（标准国家清单 201 条 + 字典独有条目，
+ *   按洲分组 —— 字典没收录的国家也能搜到、选到）；
  * - 选中态 = 标蓝（底色 + 文字），不带对勾；纯选择：不支持手填 / 添加 / 删除（Push 194 口径延续，不写字典）；
  * - 打开默认停在「已有项目地区」页；当前值不在已有页（如刚选的冰岛）时默认停在「全部地区」页；
  * - 输入关键词自动切到「全部地区」全量搜（避免在已有页搜出「没有匹配」）；
@@ -25,6 +26,8 @@ type RegionSelectProps = {
   valueLabel: string;
   /** 地区字典启用条目（GET /api/v1/dicts）：命中国家的条目优先占位，同一国家不出现两条。 */
   items: readonly DictItem[];
+  /** 「已有项目地区」计数（Push 304）：GET /api/v1/projects/facets 的 region 计数（值 → 未删除项目数，含字典外落库值）；缺省 = 回退字典条目 usageCount。 */
+  usedRegions?: Readonly<Record<string, number>>;
   onChange: (value: string) => void;
   /** 开 / 合通知：ProjectModal 用它分派 Esc（小窗开着按 Esc 只关小窗，不关整个项目弹窗）。 */
   onOpenChange?: (open: boolean) => void;
@@ -41,8 +44,10 @@ const TAB_ALL: RegionSelectTab = "all";
  */
 const POPOVER_WIDTH = 280;
 const POPOVER_HEIGHT = 400;
+/** usedRegions 缺省时的空计数（稳定引用：useMemo 依赖不抖动）。 */
+const NO_USED_REGIONS: Readonly<Record<string, number>> = {};
 
-export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange }: RegionSelectProps) {
+export function RegionSelect({ value, valueLabel, items, usedRegions, onChange, onOpenChange }: RegionSelectProps) {
   const locale = useLocale();
   const t = useT();
   const [query, setQuery] = useState("");
@@ -53,8 +58,9 @@ export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange 
   const wasOpen = useRef(false);
   const options = useMemo(() => buildRegionPickerOptions(items), [items]);
   const matched = useMemo(() => searchRegionPickerOptions(options, query), [options, query]);
-  const used = useMemo(() => usedRegionPickerOptions(matched), [matched]);
-  const usedAll = useMemo(() => usedRegionPickerOptions(options), [options]);
+  /** 已有页 = 按项目落库值对账的用量行（Push 304；字典 usageCount 仅作兜底并入），搜索照旧过滤。 */
+  const usedAll = useMemo(() => usedRegionPickerOptions(options, usedRegions ?? NO_USED_REGIONS), [options, usedRegions]);
+  const used = useMemo(() => searchRegionPickerOptions(usedAll, query), [usedAll, query]);
   const groups = useMemo(() => groupRegionPickerOptions(matched), [matched]);
   /** 存量值兜底（不在候选里，如旧项目用的「华东」）：钉在「全部地区」页最上面一条，当前选中不悬空。 */
   const fallback = useMemo<RegionPickerOption | null>(() => {
