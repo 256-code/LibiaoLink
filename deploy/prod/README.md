@@ -12,8 +12,8 @@
 | db-init（角色 + 密码） | ✅ 已交付 | `scripts/db-init.sh`（幂等；密码自 `secrets/` 注入） |
 | tools（迁移 / 种子 / 依赖安装） | ✅ 已交付 | node 工具容器（`profiles: tools`，一次性）：`scripts/db-migrate.sh` / `scripts/db-seed.sh` |
 | api / worker | ✅ 部署件已交付（本切片） | `profiles: app`；node 24 双锁；entrypoint 降权（容器进程非 root）；依赖装进命名卷；外部依赖（SSO / 对象存储）以占位值先行，见 §2 / §7 |
-| web（Nginx） | ✅ TLS 已接入（v1.8） | 80 → 301 / 443 应用 / 9443 MinIO https 门面（ALLinSSL 自动下发证书）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
-| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 门面（+ 9443）；见 §9 |
+| web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 备用门面（ALLinSSL 自动下发证书）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
+| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`；9443 为内网备用）；见 §9 |
 | 备份（PG 每 12h 加密） | 待办 | 落 `/srv/data/backups/pg` + 异地 |
 
 ## 1. 服务器目录约定
@@ -26,6 +26,16 @@
 └── deploy/prod/         # 本目录（docker-compose.yml / scripts / server.env / secrets/）
     └── secrets/         # 只存在于服务器（本机生成、chmod 600、不进仓库）
 ```
+
+### 1.1 服务器登录（开发机 → 测试机）
+
+- 测试机：`10.1.104.44`（主机名 `libiao-vm`，Ubuntu 26.04 LTS；对外域名 `test-pm.libiaorobot.com`）；`10.1.103.44` = ALLinSSL 证书下发接收端（同口令），仅证书用途、不作为部署目标。
+- 登录方式：开发机 PowerShell 直接 `ssh root@10.1.104.44`（首次连接接受指纹即可）。
+- **登录口令不落仓库**（CONTRIBUTING §12）：由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（`.gitignore` 已忽略，AI / 新会话可直接读该文件续接）。
+- 登录后入口：`cd /opt/libiaolink/deploy/prod`（`docker compose --profile app ps` 应见 postgres / api / worker / web / minio 五容器）。
+- 铁律：**不得修改 root 密码**；普通用户 `libiao` 未经许可不动；服务器只跑不改 —— 代码 / 配置变更一律走本仓 → 常驻分支 → PR → 部署件同步（§3 ~ §9），禁止在服务器上手改业务代码，临时热修必须回灌仓库。
+- MinIO 控制台（运维排查）：`ssh -L 9001:127.0.0.1:9001 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`（同 §9）。
+- 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（SSH 通道自动覆盖 + reload）；未使用 1Panel。
 
 ## 2. 密钥清单（`secrets/`）
 
@@ -200,8 +210,10 @@ curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/      
 
 - 服务器实测（2026-10-13 HTTP 先行）：`/nginx-health` ok、`/healthz` 200、`/readyz` 503（存储占位）、`/` 404（SPA 未传输）、web (healthy)；
 - 服务器实测（2026-10-14 TLS 接入）：证书链校验通过（无 `-k` 请求 200；SAN 匹配）、80 → 301（IP 访问一并收口）、443 `/nginx-health` ok / `/healthz` 200 / `/readyz` 200、9443 门面 `storage:it` 24/24；
+- 服务器实测（2026-10-14 对象存储改同源 443 门面 · v1.13）：开发机（真实客户端网络）实测 9443 / 9000 被安全策略拦截（仅 22/80/443 放行）→ 443 增 `location /libiaolink/`（= 桶名；`proxy_pass` 无 URI 不重写、`Host $http_host` 保 SigV4）同源门面、`S3_ENDPOINT` 去端口；`storage:it` 24/24（host 断言 test-pm.libiaorobot.com）；开发机预签名 PUT 200 / GET 200 字节一致 / DELETE 204 / 删后 GET 404；`/libiaolink/` 匿名 403（AccessDenied，符合 ADR-006 短时签名口径）；
 - 服务器实测（2026-10-14 SPA 上线）：站点根 200（index.html）、JS / CSS / SVG 200、wasm 200（`application/wasm`）、SPA 路由兜底 200；
-- Nginx 是唯一对外入口（80 / 443 / 9443；80 仅探活 + 301；9443 = MinIO https 门面）；
+- 服务器实测（2026-10-14 SPA 更新 · Push 304「已有项目地区」修复）：tar 增量上传（解包）→ `chmod -R u=rwX,go=rX` —— 站点根 200（新构建 `assets/index-Qkd_qv0F.js`）、新 JS 200（1,106,488 B）、`/healthz` 200、`/readyz` 200；旧哈希资源已清理；目录挂载即传即生效（无容器重启）；
+- Nginx 是唯一对外入口（80 / 443 / 9443；80 仅探活 + 301；443 含对象存储同源门面 `/libiaolink/`；9443 = MinIO 备用门面）；
 - 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（只读挂载进 web 容器 `/etc/nginx/ssl/`）；续签经 SSH 自动覆盖 + `sudo /usr/local/bin/allinssl-reload`（容器内 nginx 重载）；若续签后证书未生效 → `docker compose --profile app restart web`（单文件 bind mount 兜底）；
 - 反代口径（与前端开发代理一致）：`/api/v1`、`/auth`、`/healthz`、`/readyz`；`/internal/**` 不对外；
 - api / minio 容器**重建**（换镜像等）后 nginx 自动跟随新 IP（2026-10-14 起：`resolver 127.0.0.11 valid=10s` + `upstream … resolve` 动态解析；重建回归通过，不再需要 `restart web`）；若遇极端仍 502 → `docker compose --profile app restart web` 兜底；
@@ -255,13 +267,14 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 ```
 
 - 完成后 `readyz` 全绿（`object-storage:head-bucket` ✓）—— 2026-10-14 服务器实测：minio healthy / api→minio 200 / init 两项能力面告警属预期 / `--check` 退出码 0 / `it` 24/24 / readyz 200 全绿；镜像锚点 `sha256:165271c0…`；
-- 换域名 / TLS 时：同步改 `server.env` 的 `S3_*` 与 compose 的 `MINIO_CORS_ALLOW_ORIGIN`，再 `up -d --force-recreate api worker`——**已执行（2026-10-14）**：`S3_ENDPOINT=https://test-pm.libiaorobot.com:9443`（Nginx 门面 → minio:9000，Host 原样透传保 SigV4）、`MINIO_CORS_ALLOW_ORIGIN=https://test-pm.libiaorobot.com,http://10.1.104.44`；https 门面上 `storage:it` 24/24 复跑通过；
+- 换域名 / TLS 时：同步改 `server.env` 的 `S3_*` 与 compose 的 `MINIO_CORS_ALLOW_ORIGIN`，再 `up -d --force-recreate api worker`——**已执行（2026-10-14）**：`S3_ENDPOINT=https://test-pm.libiaorobot.com`（443 同源门面 `/libiaolink/` → minio:9000；客户端网络仅放行 22/80/443，9443 / 9000 实测被拦 —— **浏览器预签名地址一律走 443 默认端口，不带非标端口**；`/libiaolink/` 与 `S3_BUCKET` 强耦合，换桶名须同步 nginx）、`MINIO_CORS_ALLOW_ORIGIN=https://test-pm.libiaorobot.com,http://10.1.104.44`（改同源后 CORS 非必需，保留兼容 9443 直连与旧源）；同源门面上 `storage:it` 24/24 复跑通过；
+- 部署件同步提醒：`nginx/libiaolink.conf` 为**文件级 bind mount（绑定 inode）**——scp 覆盖后容器内仍读旧文件，务必 `docker compose --profile app up -d --force-recreate web` 生效（2026-10-14 实测踩坑，同证书更新口径）；
 - 镜像部署锚点：`docker image inspect libiaolink/minio:RELEASE.2025-09-07T16-13-09Z --format '{{.Id}}'` 记录 Image ID（换机 / 归档核对）；
 - 控制台（运维）：`ssh -L 9001:127.0.0.1:9001 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`。
 
 ## 10. 后续切片（登记）
 
-- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 9443 MinIO 门面 + ALLinSSL 自动下发）；剩余：`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限、9000 明文端口收敛（127.0.0.1，TLS 门面稳定后）；
+- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；剩余：9443 备用门面择机收敛（浏览器流量已全部走 443 同源门面，9443 仅内网直连用，待无使用后从 compose 删端口）；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限、9000 明文端口收敛（127.0.0.1，TLS 门面稳定后）；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
 - 完成项在 `docs/M8-部署Runbook与上线检查单(单机).md` 勾选；推送时随 `开发日志.md` 记录。
 
@@ -280,3 +293,6 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 | v1.8 | 2026-10-14 | TLS 切片收口：nginx 80 → 301 / 443 应用 / 9443 MinIO https 门面（Host 原样透传保 SigV4；证书单文件只读挂载）；compose 加 443/9443 端口与证书挂载；server.env S3 段切 https://test-pm.libiaorobot.com:9443、.env 回填 MINIO_CORS_ALLOW_ORIGIN；ALLinSSL SSH 自动下发（固定 /etc/ssl/ 路径 + allinssl 重载通道；第二台 103.44 接收端就绪）；服务器实测：证书链 200（无 -k）· 80/443/9443 全验 · storage:it 24/24（host 断言 9443）· 5 容器 healthy；§0 / §8 / §9 / §10 同步 | px |
 | v1.9 | 2026-10-14 | SPA 产物上线：`frontend/dist`（10 文件 / 9.3MB）传服务器 + 权限修正（scp 707 畸形 → `chmod -R u=rwX,go=rX`）；实测站点根 200 / SPA 兜底 200 / wasm `application/wasm`；§8 SPA 说明与验证命令同步 | px |
 | v1.10 | 2026-10-14 | SSO 切片（测试环境接通）+ Nginx 容器 DNS 动态解析：authtest 应用 `LibiaoLink` 按接入标准调整（redirect 追加 test-pm 回调 / 仅 `authorization_code` / `JWT-Custom` 五字段）→ 服务器回填 `casdoor_client_id` / `casdoor_client_secret`（chmod 600）+ `CASDOOR_ISSUER=https://authtest.libiaorobot.com` / `CASDOOR_REDIRECT_URI=https://test-pm.libiaorobot.com/auth/callback`；实测 `/auth/login` 302 → authtest 授权页（PKCE S256）· `/readyz` 200 · 5 容器 healthy；nginx 增 `resolver` + `upstream … resolve`（api / minio 重建换 IP 自动跟随，根治 502；重建回归通过）；§2 / §8 / §10 同步 | px |
+| v1.11 | 2026-10-14 | SPA 更新部署（Push 304：「已有项目地区」按项目落库值聚合修复）：`frontend/dist` 重新构建 → tar 上传解包 + 权限 `u=rwX,go=rX`；旧哈希资源清理；实测站点根 200 / 新 JS 200 / `/healthz` 200 / `/readyz` 200；§8 补实测行（流程沿用 v1.9，无口径变化） | px |
+| v1.12 | 2026-10-14 | 新增 §1.1 服务器登录（测试机 IP / 域名 / 登录方式 / 口令不落仓库 + 本机未跟踪备忘路径 / 登录后入口 / 铁律 / MinIO 控制台隧道 / 证书通道）；AGENTS.md 增「服务器与运维（测试机）」节（新会话自动注入可发现） | px |
+| v1.13 | 2026-10-14 | 对象存储改「443 同源门面」修上传 / 预览断链：根因 = 客户端网络仅放行 22/80/443，预签名 URL 的 `:9443` 被拦（API 侧 201/200 正常、浏览器 PUT/GET 超时）→ 443 增 `location /libiaolink/`（= 桶名；`proxy_pass` 不重写、`Host $http_host` 保 SigV4）、`S3_ENDPOINT` 去端口为 `https://test-pm.libiaorobot.com`；`storage:it` 24/24 + 开发机真实网络预签名 PUT 200 / GET 200 字节一致 / DELETE 204 / 删后 404；9443 保留为内网备用门面；§0 / §8 / §9 / §10 同步 | px |
