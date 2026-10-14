@@ -132,6 +132,12 @@ jobs:
       - name: WeCom app delivery replay (net-free)
         working-directory: server
         run: node scripts/m5-03-3-app-replay.mjs
+      # 单聊 aibot 实现段回放（M5-03-5-3 · 无网络 / 无 PG：假 socket + 假仓储驱动单聊发送/消费链，
+      # 覆盖帧形锁帧 P4 / 846607 分流 / single 限速 / 三分类降级 · lan 线，Push 237）：
+      # 请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: WeCom dm aibot replay (net-free)
+        working-directory: server
+        run: node scripts/m5-03-5-dm-replay.mjs
       - name: Boundary rules
         working-directory: server
         run: npm run check:boundaries

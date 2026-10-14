@@ -7,7 +7,9 @@
  *     846601 = 后台未开启长连接模式）；
  *   - 心跳 `ping`：默认 30s（WECOM_BOT_PING_INTERVAL_MS）；连续 2 个周期无回执 → 判失联、断开重连
  *     （订阅请求有频率保护 —— 本客户端只在连接建立后订阅一次；重连走指数退避，天然控频）；
- *   - 主动推送 `aibot_send_msg`（body = chatid + chat_type 2 + msgtype markdown）→ 回执按 req_id 关联；
+ *   - 主动推送 `aibot_send_msg`（群 = chatid + chat_type 2；单聊 = chatid 填 userid + chat_type 1；msgtype
+ *     markdown）→ 回执按 req_id 关联；单聊帧形 = 官方 SDK 语义核对（sendMessage：单聊填 userid）+ 探针
+ *     T5-1b 真机 errcode=0 实测锁定（P4 复核 · 2026-10-14），stub 锁帧见测试 / 回放；
  *   - 回调 `aibot_msg_callback` / `aibot_event_callback`（body.chatid 仅群聊；chattype / from.userid /
  *     msgid）经 `onMessage` 交给调用方（群绑定 ingest 用；本刀不落库）；
  *   - 回执帧形状 = `{ headers: { req_id }, errcode, errmsg }` —— **errcode 在帧顶层**（非 body）。
@@ -15,7 +17,8 @@
  * 语义：
  *   - 会话激活硬前提：群内有人在会话中给机器人发过消息后，才能主动推送该会话；未激活推送命中
  *     846607 未激活分支 → permanent（不重试 + 降级 B4 + 留痕）—— 激活态由调用方按绑定行
- *     `wecom_groups.activated_at` 经 `groupActivated` 传入（846607 双语义切分；P5 定案）；
+ *     `wecom_groups.activated_at` 经 `groupActivated` 传入（846607 双语义切分；P5 定案）；单聊同硬前提
+ *     （M5-03-5-3：激活表 `wecom_aibot_dm_activations` 命中与否经 `dmActivated` 传入）；
  *   - 限速：按会话 30 条/分钟 + 1000 条/小时（回复 + 主动推送合计；Spike 实测）—— 本地双窗口桶，
  *     拒绝不发帧、`retryAt` = 被拒窗口的下一窗口起点（延期重排、不消耗重试次数）；
  *   - 断连 / 未订阅窗口：发送本地失败 retryable（不消耗服务端配额；重连就绪后由消费侧重排）；
@@ -31,6 +34,7 @@ import { classifyWecomErrcode, describeNetworkError, type WecomFailureKind } fro
 import {
   chatBucketId,
   InMemoryRateWindowStore,
+  userBucketId,
   WECOM_BOT_WINDOW_PER_HOUR_MS,
   WECOM_BOT_WINDOW_PER_MINUTE_MS,
   WecomRateLimiter,
@@ -192,12 +196,58 @@ export class WecomAibotClient {
     };
   }
 
-  /** 群 markdown 推送（本刀唯一发送面）：限速（双窗口）→ aibot_send_msg → 等回执 → 分类。 */
+  /** 群 markdown 推送：限速（group 双窗口）→ aibot_send_msg（chat_type 2）→ 等回执 → 分类。 */
   async sendGroupMarkdown(params: {
     chatid: string;
     content: string;
     /** 会话激活态（读绑定行 `wecom_groups.activated_at`；846607 双语义切分用 —— false = 未激活）。 */
     groupActivated?: boolean | null;
+  }): Promise<AibotSendResult> {
+    return this.sendMarkdown({
+      target: params.chatid,
+      content: params.content,
+      chatType: 2,
+      rateKind: "group",
+      channel: "wecom_group",
+      bucketId: chatBucketId(params.chatid),
+      activated: params.groupActivated ?? null,
+    });
+  }
+
+  /**
+   * 单聊 markdown 推送（M5-03-5-3）：限速（single 双窗口，按 userid 桶）→ aibot_send_msg
+   * （chatid 填 userid + chat_type 1）→ 等回执 → 分类（846607 按 `dmActivated` 分流）。
+   */
+  async sendUserMarkdown(params: {
+    userid: string;
+    content: string;
+    /** 会话激活态（读激活表 `wecom_aibot_dm_activations` 命中与否；846607 双语义切分用 —— false = 未激活）。 */
+    dmActivated?: boolean | null;
+  }): Promise<AibotSendResult> {
+    return this.sendMarkdown({
+      target: params.userid,
+      content: params.content,
+      chatType: 1,
+      rateKind: "single",
+      channel: "wecom_aibot",
+      bucketId: userBucketId(params.userid),
+      activated: params.dmActivated ?? null,
+    });
+  }
+
+  /** 发送主体（群 / 单聊共用）：限速（双窗口按目标桶）→ aibot_send_msg → 等回执 → 分类。 */
+  private async sendMarkdown(input: {
+    /** 发送目标（帧 `chatid` 字段值）：群 = chatid；单聊 = userid。 */
+    target: string;
+    content: string;
+    /** 帧 chat_type：群 = 2 / 单聊 = 1。 */
+    chatType: 1 | 2;
+    rateKind: "group" | "single";
+    channel: "wecom_group" | "wecom_aibot";
+    /** 限速桶 id（chatid / userid 摘要 —— 计数键不回显目标明文）。 */
+    bucketId: string;
+    /** 会话激活态（false = 未激活 → 846607 按 permanent 收口）。 */
+    activated: boolean | null;
   }): Promise<AibotSendResult> {
     if (this.state !== "subscribed" || this.socket === null) {
       return {
@@ -210,7 +260,7 @@ export class WecomAibotClient {
         state: this.state,
       };
     }
-    const rate = await this.options.limiter.tryConsume("group", chatBucketId(params.chatid), this.now());
+    const rate = await this.options.limiter.tryConsume(input.rateKind, input.bucketId, this.now());
     if (!rate.ok) {
       const refused = rate.windows.find((state) => state.count > state.limit);
       return {
@@ -231,7 +281,7 @@ export class WecomAibotClient {
     const sent = this.sendFrame({
       cmd: "aibot_send_msg",
       headers: { req_id: reqId },
-      body: { chatid: params.chatid, chat_type: 2, msgtype: "markdown", markdown: { content: params.content } },
+      body: { chatid: input.target, chat_type: input.chatType, msgtype: "markdown", markdown: { content: input.content } },
     });
     if (!sent) {
       this.cancelAck(reqId, "closed");
@@ -256,7 +306,10 @@ export class WecomAibotClient {
     if (errcode === null) {
       return { ok: false, kind: "retryable", errcode: null, errmsg: "回执缺 errcode", retryAt: null, attempts: 1, state: this.state };
     }
-    const kind = classifyWecomErrcode("wecom_group", errcode, { groupActivated: params.groupActivated ?? null });
+    const kind =
+      input.channel === "wecom_group"
+        ? classifyWecomErrcode("wecom_group", errcode, { groupActivated: input.activated })
+        : classifyWecomErrcode("wecom_aibot", errcode, { dmActivated: input.activated });
     return { ok: false, kind, errcode, errmsg, retryAt: null, attempts: 1, state: this.state };
   }
 
@@ -528,8 +581,11 @@ export function createWecomAibotClientFromEnv(
     new WecomRateLimiter({
       store: overrides.store ?? new InMemoryRateWindowStore(),
       windows: [
+        // 群通道（M5-03-2）与单聊通道（M5-03-5-3）各双窗口；单聊先复用同组 env 数值（P5 真机后再定是否拆 WECOM_BOT_DM_*）。
         { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: env.WECOM_BOT_RATE_LIMIT_PER_MINUTE },
         { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: env.WECOM_BOT_RATE_LIMIT_PER_HOUR },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: env.WECOM_BOT_RATE_LIMIT_PER_MINUTE },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: env.WECOM_BOT_RATE_LIMIT_PER_HOUR },
       ],
       now: overrides.now,
     });
