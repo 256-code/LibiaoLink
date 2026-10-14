@@ -17,3 +17,8 @@ npm-debug.log*
 # 系统
 .DS_Store
 Thumbs.db
+
+# 生产部署密钥（文件挂载；只存在于本机 / 服务器）
+deploy/prod/secrets/
+# 生产环境变量（服务器本地生成，不进仓库；模板 server.env.example 进仓库）
+deploy/prod/server.env
