@@ -99,7 +99,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
     const replay = replayRules({ businessDate: BUSINESS_DAY, tasks: [completed], calendar: CALENDAR, shiftEnabled: false });
     expect(runtime.messages).toEqual(replay.messages);
     expect(runtime.messages).toHaveLength(2);
-    expect(runtime.messages.map((message) => message.channel)).toEqual(["inbox", "wecom_app"]);
+    expect(runtime.messages.map((message) => message.channel)).toEqual(["inbox", "wecom_aibot"]);
     for (const message of runtime.messages) {
       expect(message.ruleCode).toBe("R02");
       expect(message.dedupeKey).toBe("R02:t-1:v5");
@@ -229,7 +229,7 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
     expect(plan.messages).toHaveLength(1);
     const merged = plan.messages[0];
     expect(merged?.ruleCode).toBe("R07");
-    expect(merged?.channel).toBe("wecom_app");
+    expect(merged?.channel).toBe("wecom_aibot");
     expect(merged?.dedupeKey).toBe("R07:u-1:2026-W39");
     expect(merged?.mergedFrom).toEqual(["t-1", "t-2"]);
     expect(merged?.body).toBe("以下重点任务正在进行中：安装摄像头、调试网络请关注并及时推进任务~");

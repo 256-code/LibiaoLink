@@ -89,10 +89,10 @@ export const RuleActionKindSchema = z.enum(RULE_ACTION_KINDS).openapi("RuleActio
 });
 export type RuleActionKind = z.infer<typeof RuleActionKindSchema>;
 
-/** 投递渠道（C2-11）：企业微信应用消息 / 群机器人 / 站内信 / 邮件基础可用；短信 / 钉钉 / 飞书 / Webhook 预留（接入时扩值）。 */
-export const NOTIFY_CHANNELS = ["wecom_app", "wecom_group", "inbox", "email"] as const;
+/** 投递渠道（C2-11）：企微智能机器人（单聊 · M5-03-5）/ 企微应用消息（备用）/ 企微群机器人 / 站内信 / 邮件基础可用；短信 / 钉钉 / 飞书 / Webhook 预留（接入时扩值）。 */
+export const NOTIFY_CHANNELS = ["wecom_app", "wecom_aibot", "wecom_group", "inbox", "email"] as const;
 export const NotifyChannelSchema = z.enum(NOTIFY_CHANNELS).openapi("NotifyChannel", {
-  description: "投递渠道：wecom_app 企微应用消息 / wecom_group 企微群机器人（限速 20 条每分钟）/ inbox 站内信 / email 邮件（基础可用）",
+  description: "投递渠道：wecom_app 企微应用消息（备用通道）/ wecom_aibot 企微智能机器人（单聊单发）/ wecom_group 企微群机器人（群播报 · 会话双窗口限速）/ inbox 站内信 / email 邮件（基础可用）",
 });
 export type NotifyChannel = z.infer<typeof NotifyChannelSchema>;
 
