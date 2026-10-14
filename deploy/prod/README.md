@@ -14,6 +14,7 @@
 | api / worker | ✅ 部署件已交付（本切片） | `profiles: app`；node 24 双锁；entrypoint 降权（容器进程非 root）；依赖装进命名卷；外部依赖（SSO / 对象存储）以占位值先行，见 §2 / §7 |
 | web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 备用门面（ALLinSSL 自动下发证书）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
 | minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`；9443 为内网备用）；见 §9 |
+| onlyoffice（文档服务器） | ✅ 生产上线（本切片 · v1.14） | 独立 compose 项目 `libiaolink-onlyoffice`（不发布公网端口；8001 回环排障）；443 子路径 `/onlyoffice/` 门面（DS 9.4 原生子路径支持）；镜像离线下发并归档 `/srv/data/images/oo_docs_9.4.0.1.tar`；JWT 与 api 同值；真实 64MB xlsx 端到端渲染 ready；见 `deploy/onlyoffice/README.md` §6 |
 | 备份（PG 每 12h 加密） | 待办 | 落 `/srv/data/backups/pg` + 异地 |
 
 ## 1. 服务器目录约定
@@ -275,6 +276,7 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 ## 10. 后续切片（登记）
 
 - web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；剩余：9443 备用门面择机收敛（浏览器流量已全部走 443 同源门面，9443 仅内网直连用，待无使用后从 compose 删端口）；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限、9000 明文端口收敛（127.0.0.1，TLS 门面稳定后）；
+- onlyoffice（文档服务器）：生产上线 ✅（2026-10-14，离线镜像 + 443 子路径门面 + 真实 64MB xlsx 端到端；见 `deploy/onlyoffice/README.md` §6）；剩余：升级 / 重建后按回归五项 + §6.3 表复验、缓存盘 7 天清理 cron、正式环境容量评估与 CVE 跟踪；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
 - 完成项在 `docs/M8-部署Runbook与上线检查单(单机).md` 勾选；推送时随 `开发日志.md` 记录。
 
@@ -296,3 +298,4 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 | v1.11 | 2026-10-14 | SPA 更新部署（Push 304：「已有项目地区」按项目落库值聚合修复）：`frontend/dist` 重新构建 → tar 上传解包 + 权限 `u=rwX,go=rX`；旧哈希资源清理；实测站点根 200 / 新 JS 200 / `/healthz` 200 / `/readyz` 200；§8 补实测行（流程沿用 v1.9，无口径变化） | px |
 | v1.12 | 2026-10-14 | 新增 §1.1 服务器登录（测试机 IP / 域名 / 登录方式 / 口令不落仓库 + 本机未跟踪备忘路径 / 登录后入口 / 铁律 / MinIO 控制台隧道 / 证书通道）；AGENTS.md 增「服务器与运维（测试机）」节（新会话自动注入可发现） | px |
 | v1.13 | 2026-10-14 | 对象存储改「443 同源门面」修上传 / 预览断链：根因 = 客户端网络仅放行 22/80/443，预签名 URL 的 `:9443` 被拦（API 侧 201/200 正常、浏览器 PUT/GET 超时）→ 443 增 `location /libiaolink/`（= 桶名；`proxy_pass` 不重写、`Host $http_host` 保 SigV4）、`S3_ENDPOINT` 去端口为 `https://test-pm.libiaorobot.com`；`storage:it` 24/24 + 开发机真实网络预签名 PUT 200 / GET 200 字节一致 / DELETE 204 / 删后 404；9443 保留为内网备用门面；§0 / §8 / §9 / §10 同步 | px |
+| v1.14 | 2026-10-14 | ONLYOFFICE 文档服务器生产上线（修「No online preview / DocServer unreachable」）：新增 `deploy/onlyoffice/docker-compose.prod.yml`（独立 compose 项目 `libiaolink-onlyoffice` / 不发布公网端口 / 8001 回环 / external 网络 `libiaolink-prod`）；nginx 增 `location /onlyoffice/`（去前缀 + `X-Forwarded-Prefix` / `X-Forwarded-Host` + Upgrade 透传 + `upstream … resolve`；DS 9.4 子路径原生支持）与 `location = /onlyoffice/example/` 恒 404（R6）；server.env `ONLYOFFICE_DOCSERVER_URL=https://test-pm.libiaorobot.com/onlyoffice`；镜像离线 save/scp/load 下发（1.7GB，归档 `/srv/data/images/oo_docs_9.4.0.1.tar`）；实测：门面 `api.js` 200 / `/onlyoffice/` 302 带前缀 / example 404 / healthz·readyz 200 · 密钥三处同值（宿主 secret / DS JWT_SECRET / api 进程）· DS→api:3000 200 · 匿名 preview-content 401 · WSS Upgrade 101 · 真实 64MB xlsx 经 443 全链渲染 ready（0 失败请求）；回滚备份 `nginx/libiaolink.conf.bak-oo-20261014` / `server.env.bak-oo-20261014`；`deploy/onlyoffice/README.md` 增 §6 + v1.1 | px |
