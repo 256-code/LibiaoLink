@@ -4,7 +4,8 @@ import type { Response } from "express";
 import type { IncomingMessage } from "node:http";
 import { IMPORT_MAX_FILE_BYTES, ProjectImportCommitBodySchema, z } from "@libiaolink/contracts";
 import type { ProjectImportPreview, ProjectImportResult } from "@libiaolink/contracts";
-import { readMultipartFile } from "../../common/http/multipart.js";
+import { readMultipartParts } from "../../common/http/multipart.js";
+import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
@@ -16,7 +17,7 @@ type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
 /**
  * 老表导入接口（直连 API 导入 · 业务口径 2026-10-14）：项目空间「导入项目」按钮 → 大屏面板四步（选择 / 解析 / 确认 / 完成）
  * 走这两条接口；契约 shared/src/modules/imports.ts（前端 frontend/src/importApi.ts 已接线）。
- * - preview：multipart/form-data（字段 file；.xlsx / .xlsm，≤ 64 MB）—— **不用 Nest FileInterceptor / multer**
+ * - preview：multipart/form-data（字段 file + 可选 stakeholderFile = 另附干系人表；.xlsx / .xlsm，各 ≤ 64 MB）—— **不用 Nest FileInterceptor / multer**
  *   （服务端无该依赖，且这是一进一出的整包解析）：由 common/http/multipart.ts 直接收流，超限 / 非 multipart 400；
  * - commit：JSON（previewId + 落位确认）—— 单事务建项目并写入全量数据（预检失败 409 / 410 / 422 见契约错误码）。
  * 门禁：登录 + CSRF + project.create（与「新建项目」同权限位）；预览票据只认创建人本人（他人提交 403）。
@@ -37,10 +38,17 @@ export class ProjectImportController {
     @Headers("accept-language") acceptLanguage: string | undefined,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectImportPreview> {
-    const part = await readMultipartFile(request, contentType ?? null, "file", IMPORT_MAX_FILE_BYTES);
+    const parts = await readMultipartParts(request, contentType ?? null, ["file", "stakeholderFile"], IMPORT_MAX_FILE_BYTES);
+    const main = parts.get("file") ?? null;
+    if (main === null) {
+      throw new AppError("IMPORT_FILE_INVALID", "缺少上传文件（multipart 字段 file）");
+    }
+    const extra = parts.get("stakeholderFile") ?? null;
     return this.imports.preview({
-      bytes: part.bytes,
-      fileName: part.fileName,
+      bytes: main.bytes,
+      fileName: main.fileName,
+      stakeholder:
+        extra === null || extra.fileName === "" ? null : { bytes: extra.bytes, fileName: extra.fileName },
       actorId,
       locale: localeOf(acceptLanguage),
     });

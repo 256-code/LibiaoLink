@@ -10,7 +10,8 @@ import type { ParsedWorkbook, SheetGrid } from "./xlsx.js";
  * - 任务节点：按标题逐字比对节点库（服务层做），这里只出标题与英文名（源表英文列）；
  * - 变更阶段映射：实施 → install、发货 → assembly；x x x 占位 → 标记待补；
  * - 变更关联：变更管理「关联」列按任务描述匹配（提交时回写任务 change_refs，追加序 = 变更表行序）；任务表「变更关联」（日期）与变更时间核对，对不上出提醒；
- * - 图片：按锚点挂行（日报现场图 col E / 问题图 col I 内嵌图随导入；变更后文件等文件名 → 需手动导入清单）。
+ * - 图片：按锚点挂行（日报现场图 col E / 问题图 col I 内嵌图随导入；变更后文件等文件名 → 需手动导入清单）；
+ * - 干系人（Push 324）：「干系人」表 → 台账模型（公司分类自由写法映射四值 / 填写者 / 提交时间；另附文件在服务层合并）。
  */
 
 export interface LegacyIssueSeed {
@@ -102,6 +103,28 @@ export interface LegacyManualFile {
   en: string;
 }
 
+/** 干系人公司分类（A5-02 四值：立镖机器人 / 供应商 / 总包单位 / 客户）。 */
+export type LegacyStakeholderCompanyType = "libiao" | "supplier" | "general_contractor" | "customer";
+
+/** 干系人行（「干系人」表 7 列口径 · Push 324）：提交时落 stakeholders + project_stakeholders。 */
+export interface LegacyStakeholder {
+  /** 1 based 行（第 2 行起为数据行）。 */
+  row: number;
+  name: string;
+  /** 公司分类（源表自由写法映射四值；识别不出 = 按 customer 兜底 + 逐行提醒）。 */
+  companyType: LegacyStakeholderCompanyType;
+  company: string | null;
+  title: string | null;
+  phone: string | null;
+  wechat: string | null;
+  email: string | null;
+  role: string | null;
+  /** 源表「填写者」原文（提交时匹配库内账号 → created_by；匹配不到留空 + 提醒）。 */
+  filler: string | null;
+  /** 源表「提交时间」→ created_at（YYYY-MM-DD；解析不出 = null → 用导入时间）。 */
+  submittedAt: string | null;
+}
+
 export interface LegacyProjectPlacement {
   code: string;
   name: string;
@@ -123,6 +146,9 @@ export interface LegacyParse {
   changes: LegacyChange[];
   /** 变更 ↔ 任务关联（变更表「关联」列命中任务描述；提交时回写任务 change_refs）。 */
   changeLinks: LegacyChangeLink[];
+  /** 干系人（Push 324）：「干系人」表直接解析（主文件）；另附文件在服务层合并。 */
+  stakeholders: LegacyStakeholder[];
+  stakeholderSheetName: string | null;
   images: LegacyImage[];
   manualFiles: LegacyManualFile[];
   issues: LegacyIssueSeed[];
@@ -266,6 +292,163 @@ function cellAt(sheet: SheetGrid, row: number, index: Map<string, number>, key: 
   const rowCells = sheet.rows[row];
   if (rowCells === undefined) return "";
   return clean(rowCells[column]);
+}
+
+/** 干系人表列定位（表头中英混排，如「干系人姓名/name」）：逐字候选 + 包含兜底；缺列 = null。 */
+const STAKEHOLDER_COLUMN_CANDIDATES = {
+  name: ["干系人姓名/name", "干系人姓名"],
+  contact: ["电话或whatsapp或微信号", "电话或whats app或微信号", "联系方式"],
+  email: ["邮箱Email", "邮箱"],
+  title: ["职务Position/责任板块", "职务", "责任板块"],
+  company: ["所属公司company", "所属公司"],
+  filler: ["填写者"],
+  submitted: ["提交时间"],
+  role: ["干系人角色/role", "干系人角色"],
+} as const;
+
+type StakeholderColumnKey = keyof typeof STAKEHOLDER_COLUMN_CANDIDATES;
+
+function findHeaderColumn(index: Map<string, number>, candidates: readonly string[]): number | null {
+  for (const candidate of candidates) {
+    const hit = index.get(candidate);
+    if (hit !== undefined) return hit;
+  }
+  for (const [header, column] of index) {
+    const lower = header.toLowerCase();
+    for (const candidate of candidates) {
+      if (candidate.length >= 2 && lower.includes(candidate.toLowerCase())) return column;
+    }
+  }
+  return null;
+}
+
+function pickStakeholderSheet(
+  sheets: SheetGrid[],
+): { sheet: SheetGrid; columns: Record<StakeholderColumnKey, number | null> } | null {
+  for (const sheet of sheets) {
+    if (sheet.rows.length === 0) continue;
+    const index = headerIndex(sheet);
+    const name = findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.name);
+    if (name === null) continue;
+    return {
+      sheet,
+      columns: {
+        name,
+        contact: findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.contact),
+        email: findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.email),
+        title: findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.title),
+        company: findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.company),
+        filler: findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.filler),
+        submitted: findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.submitted),
+        role: findHeaderColumn(index, STAKEHOLDER_COLUMN_CANDIDATES.role),
+      },
+    };
+  }
+  return null;
+}
+
+/** 公司分类关键词 → 四值（A5-02 口径；中文标签 / 英文别名都认；命中词全部剔除后的剩余文本 = 具体公司名）。 */
+const COMPANY_TYPE_LABELS: [string, LegacyStakeholderCompanyType][] = [
+  ["立镖机器人", "libiao"],
+  ["libiao", "libiao"],
+  ["总包单位", "general_contractor"],
+  ["general_contractor", "general_contractor"],
+  ["contractor", "general_contractor"],
+  ["供应商", "supplier"],
+  ["supplier", "supplier"],
+  ["客户", "customer"],
+  ["customer", "customer"],
+];
+
+/** 公司列自由写法解析（如「客户customer」→ customer + 空；「供应商 Acme」→ supplier +「Acme」）。 */
+function parseCompanyType(raw: string): { companyType: LegacyStakeholderCompanyType | null; company: string | null } {
+  let rest = clean(raw);
+  if (rest === "") return { companyType: null, company: null };
+  let companyType: LegacyStakeholderCompanyType | null = null;
+  for (const [label, mapped] of COMPANY_TYPE_LABELS) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(escaped, "i").test(rest)) continue;
+    if (companyType === null) companyType = mapped;
+    rest = rest.replace(new RegExp(escaped, "gi"), " ");
+  }
+  const company = rest.replace(/[\s/\\·,，、;；:：\-|]+/g, " ").trim();
+  return { companyType, company: company === "" ? null : company };
+}
+
+/** 联系方式单列拆分（源表一列混写电话 / WhatsApp / 微信）：含「微信 / WeChat」字样 → wechat，其余整段落 phone。 */
+function splitContact(raw: string): { phone: string | null; wechat: string | null } {
+  const text = clean(raw);
+  if (text === "") return { phone: null, wechat: null };
+  if (/微信|wechat|weixin/i.test(text)) return { phone: null, wechat: text };
+  return { phone: text, wechat: null };
+}
+
+/**
+ * 「干系人」表 → 标准干系人模型（Push 324 口径，与字段对照清单.md §1 对齐）：姓名必填（空行跳过）；
+ * 公司分类按自由写法映射四值，识别不出 = 按「客户」兜底 + 逐行提醒；联系方式整段落 phone（含微信字样落 wechat）；
+ * 填写者 / 提交时间原样带出（提交时「填写者」匹配库内账号 → created_by；「提交时间」→ created_at）。
+ */
+export function convertStakeholders(
+  sheets: SheetGrid[],
+  year: number,
+): { sheetName: string | null; stakeholders: LegacyStakeholder[]; issues: LegacyIssueSeed[] } {
+  const picked = pickStakeholderSheet(sheets);
+  if (picked === null) return { sheetName: null, stakeholders: [], issues: [] };
+  const { sheet, columns } = picked;
+  const stakeholders: LegacyStakeholder[] = [];
+  const issues: LegacyIssueSeed[] = [];
+  const cellOf = (row: number, column: number | null): string => {
+    if (column === null) return "";
+    const cells = sheet.rows[row];
+    if (cells === undefined) return "";
+    return clean(cells[column]);
+  };
+  for (let row = 1; row < sheet.rows.length; row += 1) {
+    const name = cellOf(row, columns.name);
+    if (name === "") continue;
+    const rawCompany = cellOf(row, columns.company);
+    const parsed = parseCompanyType(rawCompany);
+    if (parsed.companyType === null && rawCompany !== "") {
+      issues.push(
+        createIssue(
+          "warning",
+          "STAKEHOLDER_COMPANY_UNMATCHED",
+          row + 1,
+          name,
+          "公司分类识别不出（" + rawCompany + "）：已按「客户」导入，请在项目「干系人」里核对",
+          "Company category not recognized (" + rawCompany + "): imported as customer; please verify in the project stakeholders tab.",
+        ),
+      );
+    }
+    const contact = splitContact(cellOf(row, columns.contact));
+    stakeholders.push({
+      row: row + 1,
+      name,
+      companyType: parsed.companyType ?? "customer",
+      company: parsed.company,
+      title: cellOf(row, columns.title) === "" ? null : cellOf(row, columns.title),
+      phone: contact.phone,
+      wechat: contact.wechat,
+      email: cellOf(row, columns.email) === "" ? null : cellOf(row, columns.email),
+      role: cellOf(row, columns.role) === "" ? null : cellOf(row, columns.role),
+      filler: cellOf(row, columns.filler) === "" ? null : cellOf(row, columns.filler),
+      submittedAt: parseDateStr(cellOf(row, columns.submitted), year),
+    });
+  }
+  return { sheetName: sheet.name, stakeholders, issues };
+}
+
+/** 年份识别（另附干系人表单表用）：任意单元格里第一个「YYYY 年」。 */
+export function sniffYear(sheets: SheetGrid[]): number | null {
+  for (const sheet of sheets) {
+    for (const row of sheet.rows) {
+      for (const cell of row) {
+        const match = clean(cell).match(/([0-9]{4})年/);
+        if (match !== null && match[1] !== undefined) return Number(match[1]);
+      }
+    }
+  }
+  return null;
 }
 
 function createIssue(
@@ -739,6 +922,10 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
       );
     }
   }
+  // 干系人（Push 324）：「干系人」表直接解析（没有该表 = 空数组；另附文件在服务层合并）。
+  const stakeholderConvert = convertStakeholders(sheets, baseYear);
+  issues.push(...stakeholderConvert.issues);
+
   const images: LegacyImage[] = [];
   if (reportSheet !== null) {
     for (const anchor of workbook.anchors) {
@@ -811,6 +998,8 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
     reports,
     changes,
     changeLinks,
+    stakeholders: stakeholderConvert.stakeholders,
+    stakeholderSheetName: stakeholderConvert.sheetName,
     images,
     manualFiles,
     issues,

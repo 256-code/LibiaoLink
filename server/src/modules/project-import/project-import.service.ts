@@ -22,8 +22,16 @@ import { FlowService, ProjectMemberRepository, ProjectRepository } from "../proj
 import { TaskNodeRepository } from "../template/index.js";
 import type { TaskNodeRow } from "../template/index.js";
 import { TranslateService } from "../translate/index.js";
-import { convertLegacyWorkbook } from "./legacy.js";
-import type { LegacyChange, LegacyChangeLink, LegacyIssueSeed, LegacyManualFile, LegacyParse, LegacyTask } from "./legacy.js";
+import { convertLegacyWorkbook, convertStakeholders, sniffYear } from "./legacy.js";
+import type {
+  LegacyChange,
+  LegacyChangeLink,
+  LegacyIssueSeed,
+  LegacyManualFile,
+  LegacyParse,
+  LegacyStakeholder,
+  LegacyTask,
+} from "./legacy.js";
 import { proposeAccount, stripParen } from "./people.js";
 import { ProjectImportRepository } from "./project-import.repository.js";
 import type {
@@ -31,6 +39,7 @@ import type {
   ImportFileInsert,
   ImportReportInsert,
   ImportReportIssueInsert,
+  ImportStakeholderInsert,
   ImportTaskInsert,
 } from "./project-import.repository.js";
 import { ZipArchive, parseWorkbook } from "./xlsx.js";
@@ -57,7 +66,9 @@ import type { ParsedWorkbook } from "./xlsx.js";
  *      单事务回滚（零残留）+ 清掉本次已传图片对象；票据与源文件保留，可重新确认导入；
  * 5. x x x 占位（变更内容 / 原因）→ 追加「（待补）」标记；需人工补的文件出「需手动导入」清单（不建文件行）；
  * 6. 变更关联：变更表「关联」列命中任务描述 → 提交回写任务 change_refs（追加序 = 变更表行序；任务表「变更关联」
- *    日期仅核对）；导入的变更没有「变更后文件」（源文件在微盘）—— 变更读面容忍 fileId / versionId 为空（前端标待补）。
+ *    日期仅核对）；导入的变更没有「变更后文件」（源文件在微盘）—— 变更读面容忍 fileId / versionId 为空（前端标待补）；
+ * 7. 干系人（Push 324）：「干系人」表 → stakeholders + project_stakeholders（公司分类自由写法映射四值 / 「填写者」匹配库内账号 → created_by /
+ *    「提交时间」→ created_at）；主文件没有该表时，面板可「另附干系人表」（单独导出的单表工作簿）合并导入。
  */
 
 /** 提醒文案语言（Accept-Language 取 zh / en；缺省 zh）。 */
@@ -67,6 +78,8 @@ export type ImportLocale = "zh" | "en";
 export interface ImportPreviewInput {
   bytes: Buffer;
   fileName: string;
+  /** 另附的干系人表（Push 324）：主文件不含「干系人」表时由面板单独提供；缺省 / null = 未另附。 */
+  stakeholder?: { bytes: Buffer; fileName: string } | null;
   actorId: string;
   locale: ImportLocale;
 }
@@ -107,6 +120,8 @@ interface ImagePlan {
 /** 票据 payload（jsonb）：解析产物 + 账号清单；提交只认这份快照（避免两次解析漂移）。 */
 interface ImportPreviewPayload {
   file: { name: string; size: number };
+  /** 另附干系人表文件元信息（Push 324）；未另附 = null。 */
+  stakeholderFile: { name: string; size: number } | null;
   parse: LegacyParse;
   accounts: ImportAccount[];
 }
@@ -141,6 +156,8 @@ export class ProjectImportService {
     const fileName = sanitizeFileName(input.fileName);
     assertImportFile(fileName, input.bytes.length);
     const { parse, workbook } = parseLegacy(input.bytes, fileName);
+    const extraSeeds: LegacyIssueSeed[] = [];
+    const stakeholderFile = this.mergeStakeholderFile(input.stakeholder ?? null, parse, extraSeeds);
     const skippedImages = countSkippedImages(parse, (media) => workbook.readMedia(media));
     const resolution = await this.resolveAccounts(collectPeople(parse));
     const { groups } = await this.buildNodeGroups(parse.tasks);
@@ -156,6 +173,7 @@ export class ProjectImportService {
     const expiresAt = new Date(at.getTime() + IMPORT_PREVIEW_TTL_MINUTES * 60_000);
     const payload: ImportPreviewPayload = {
       file: { name: fileName, size: input.bytes.length },
+      stakeholderFile,
       parse,
       accounts: resolution.accounts,
     };
@@ -178,10 +196,16 @@ export class ProjectImportService {
       changesLinked: parse.changeLinks.length,
       images: parse.images.length,
       imagesManual: parse.manualFiles.length,
+      stakeholders: parse.stakeholders.length,
       accountsNew: resolution.accounts.filter((account) => account.isNew).length,
       nodesNew: groups.filter((group) => !group.matched && group.inStageScope).length,
     };
-    const extraSeeds: LegacyIssueSeed[] = [];
+    if (parse.stakeholderSheetName === null && stakeholderFile === null) {
+      extraSeeds.push(stakeholderSheetMissingSeed());
+    }
+    const fillers = await this.resolveStakeholderFillers(parse);
+    const unresolvedFillers = unresolvedFillerNames(fillers);
+    if (unresolvedFillers.length > 0) extraSeeds.push(stakeholderFillerMissingSeed(unresolvedFillers));
     if (resolution.unknownNames.length > 0) extraSeeds.push(unknownPeopleSeed(resolution.unknownNames));
     if (skippedImages > 0) extraSeeds.push(imageRowMissingSeed(skippedImages));
     const unresolvedIssues = parse.reports.filter((report) => report.issue !== null && report.issue.state !== "done").length;
@@ -196,6 +220,7 @@ export class ProjectImportService {
       previewId: row.id,
       expiresAt: expiresAt.toISOString(),
       file: payload.file,
+      stakeholderFile,
       project: { ...parse.project, managerNames: parse.project.managerNames.map((name) => stripParen(name)) },
       counts,
       accounts: resolution.accounts,
@@ -251,6 +276,9 @@ export class ProjectImportService {
       if (id !== null && !managerIds.includes(id)) managerIds.push(id);
     }
     const extraSeeds: LegacyIssueSeed[] = [];
+    const fillerIds = await this.resolveStakeholderFillers(parse);
+    const unresolvedFillers = unresolvedFillerNames(fillerIds);
+    if (unresolvedFillers.length > 0) extraSeeds.push(stakeholderFillerMissingSeed(unresolvedFillers));
     if (managerIds.length === 0) {
       managerIds.push(actorId);
       extraSeeds.push(
@@ -475,6 +503,22 @@ export class ProjectImportService {
         );
       }
 
+      // 干系人（Push 324）：台账 + 项目关联同批写（「填写者」匹配到库内账号 = created_by；提交时间 → created_at）。
+      throwIfCancelled(signal);
+      const stakeholderRows: ImportStakeholderInsert[] = parse.stakeholders.map((stakeholder) => ({
+        name: clipText(stakeholder.name, 80),
+        companyType: stakeholder.companyType,
+        company: clipNullable(stakeholder.company, 120),
+        title: clipNullable(stakeholder.title, 80),
+        phone: clipNullable(stakeholder.phone, 40),
+        wechat: clipNullable(stakeholder.wechat, 64),
+        email: clipEmail(stakeholder.email),
+        role: clipNullable(stakeholder.role, 80),
+        createdBy: stakeholder.filler === null ? null : (fillerIds.get(stakeholder.filler) ?? null),
+        createdAt: stakeholder.submittedAt === null ? null : new Date(stakeholder.submittedAt + "T00:00:00.000Z"),
+      }));
+      await this.previews.insertStakeholders(tx, projectRow.id, stakeholderRows, actorId, at);
+
       // 图片：对象已上传；事务内登记 files + file_versions + file_links（现场图挂日报；问题图随问题转挂 issue 侧）。
       const fileRows: ImportFileInsert[] = imageBuild.plans.map((plan) => ({
         id: plan.fileId,
@@ -495,6 +539,7 @@ export class ProjectImportService {
         reports: reportRows.length,
         changes: changeRows.length,
         changesLinked: changeLinks.length,
+        stakeholders: stakeholderRows.length,
         images: fileRows.length,
         accountsCreated: resolution.accounts.length,
         nodesAdded,
@@ -517,6 +562,8 @@ export class ProjectImportService {
           String(counts.reports) +
           " / 变更 " +
           String(counts.changes) +
+          " / 干系人 " +
+          String(counts.stakeholders) +
           " / 图片 " +
           String(counts.images),
         changes: [
@@ -566,6 +613,57 @@ export class ProjectImportService {
       counts: written.counts,
       issues,
     };
+  }
+
+  /**
+   * 另附干系人表（Push 324）：主文件不含「干系人」表时合并另附文件的解析结果；主文件已含 = 以主文件为准（info 提醒）。
+   * 另附文件不合格（不是 xlsx / 超过上限 / 没有干系人表）→ 400 / 422。
+   */
+  private mergeStakeholderFile(
+    file: { bytes: Buffer; fileName: string } | null,
+    parse: LegacyParse,
+    extraSeeds: LegacyIssueSeed[],
+  ): { name: string; size: number } | null {
+    if (file === null) return null;
+    const fileName = sanitizeFileName(file.fileName);
+    assertImportFile(fileName, file.bytes.length);
+    const converted = parseStakeholderWorkbook(file.bytes, fileName, parse.year);
+    if (parse.stakeholderSheetName !== null) {
+      extraSeeds.push(stakeholderFileIgnoredSeed(fileName));
+    } else {
+      parse.stakeholders = converted.stakeholders;
+      parse.stakeholderSheetName = converted.sheetName;
+      parse.issues.push(...converted.issues);
+    }
+    return { name: fileName, size: file.bytes.length };
+  }
+
+  /** 「填写者」→ 库内账号（显示名直查：原文 / 去括注 / 去括注 + -test）；未命中 = null（created_by 留空 + 提醒）。 */
+  private async resolveStakeholderFillers(parse: LegacyParse): Promise<Map<string, string | null>> {
+    const rawNames: string[] = [];
+    for (const stakeholder of parse.stakeholders) {
+      const raw = stakeholder.filler;
+      if (raw !== null && raw !== "" && !rawNames.includes(raw)) rawNames.push(raw);
+    }
+    const result = new Map<string, string | null>();
+    if (rawNames.length === 0) return result;
+    const candidates: string[] = [];
+    for (const raw of rawNames) {
+      const base = stripParen(raw);
+      for (const candidate of [raw, base, base + "-test"]) {
+        if (candidate !== "" && !candidates.includes(candidate)) candidates.push(candidate);
+      }
+    }
+    const idByDisplay = new Map<string, string>();
+    for (const user of await this.previews.findUsersByDisplayNames(candidates)) {
+      if (!idByDisplay.has(user.displayName)) idByDisplay.set(user.displayName, user.id);
+    }
+    for (const raw of rawNames) {
+      const base = stripParen(raw);
+      const hit = idByDisplay.get(raw) ?? idByDisplay.get(base) ?? idByDisplay.get(base + "-test") ?? null;
+      result.set(raw, hit);
+    }
+    return result;
   }
 
   /** 姓名 → 账号（人员注册表 + 库内用户名 / 显示名两路）：accounts 供面板展示，byName 供挂人。 */
@@ -714,6 +812,29 @@ function parseLegacy(bytes: Buffer, fileName: string): { parse: LegacyParse; wor
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError("IMPORT_PARSE_FAILED", "老表解析失败：" + messageOf(error));
+  }
+}
+
+/** 另附干系人表解析（Push 324）：权限受限时单独导出的单表工作簿；没有「干系人」表 → 422。 */
+function parseStakeholderWorkbook(
+  bytes: Buffer,
+  fileName: string,
+  fallbackYear: number,
+): { sheetName: string; stakeholders: LegacyStakeholder[]; issues: LegacyIssueSeed[] } {
+  try {
+    const workbook = parseWorkbook(bytes);
+    const year = sniffYear(workbook.sheets) ?? fallbackYear;
+    const converted = convertStakeholders(workbook.sheets, year);
+    if (converted.sheetName === null) {
+      throw new AppError(
+        "IMPORT_PARSE_FAILED",
+        "另附文件没有「干系人」表（需含「干系人姓名」表头）：请选择单独导出的干系人 Excel（" + fileName + "）",
+      );
+    }
+    return { sheetName: converted.sheetName, stakeholders: converted.stakeholders, issues: converted.issues };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError("IMPORT_PARSE_FAILED", "另附干系人表解析失败：" + messageOf(error));
   }
 }
 
@@ -872,6 +993,58 @@ function throwIfCancelled(signal: AbortSignal | undefined): void {
   if (signal !== undefined && signal.aborted) {
     throw new AppError("IMPORT_CANCELLED", "导入已取消：本次未写入任何数据（可重新确认导入）");
   }
+}
+
+function stakeholderSheetMissingSeed(): LegacyIssueSeed {
+  return {
+    level: "info",
+    code: "STAKEHOLDER_SHEET_MISSING",
+    row: null,
+    subject: null,
+    zh: "未发现「干系人」表：如该表是单独导出的，请点面板右上角「另附干系人表」选择后重新解析；否则本次不导入干系人（可导入后在项目「干系人」标签手工补录）",
+    en: "No stakeholder sheet found: if it was exported separately, attach it via the 另附干系人表 button (top-right) and re-run the preview; otherwise stakeholders are skipped (you can add them later in the project stakeholders tab).",
+  };
+}
+
+function stakeholderFileIgnoredSeed(fileName: string): LegacyIssueSeed {
+  return {
+    level: "info",
+    code: "STAKEHOLDER_FILE_IGNORED",
+    row: null,
+    subject: fileName,
+    zh: "主文件已含「干系人」表：另附文件未使用（以主文件为准）—— " + fileName,
+    en: "The main workbook already contains a stakeholder sheet; the attached file was ignored (main file wins): " + fileName,
+  };
+}
+
+function stakeholderFillerMissingSeed(names: readonly string[]): LegacyIssueSeed {
+  const list = names.join("、");
+  return {
+    level: "info",
+    code: "STAKEHOLDER_FILLER_MISSING",
+    row: null,
+    subject: list,
+    zh: "干系人「填写者」账号未找到（" + list + "）：导入后「填写者」列留空（可到干系人台账补录）",
+    en: "Stakeholder 填写者 accounts not found (" + list + "): the 填写者 column stays empty after import (editable in the stakeholder ledger).",
+  };
+}
+
+/** 「填写者」映射里没命中账号的名字（去括注、去重、保序）。 */
+function unresolvedFillerNames(map: Map<string, string | null>): string[] {
+  const names: string[] = [];
+  for (const [raw, id] of map) {
+    if (id !== null) continue;
+    const base = stripParen(raw);
+    if (base !== "" && !names.includes(base)) names.push(base);
+  }
+  return names;
+}
+
+/** 邮箱入库（库内 check 3..120）：太短 = null，过长裁断。 */
+function clipEmail(value: string | null): string | null {
+  const text = clipNullable(value, 120);
+  if (text === null || text.length < 3) return null;
+  return text;
 }
 
 function unknownPeopleSeed(names: readonly string[]): LegacyIssueSeed {
