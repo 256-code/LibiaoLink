@@ -28,6 +28,7 @@ const SECRET_MAP = [
   ["s3_secret_key", "S3_SECRET_KEY"],
   ["internal_sync_token", "INTERNAL_SYNC_TOKEN"],
   ["onlyoffice_jwt_secret", "ONLYOFFICE_JWT_SECRET"],
+  ["translate_api_key", "TRANSLATE_API_KEY"],
   ["wecom_app_secret", "WECOM_APP_SECRET"],
   ["wecom_bot_secret", "WECOM_BOT_SECRET"],
 ];

@@ -1,11 +1,12 @@
 /**
- * 翻译服务（§6.16 ㉕ · Push 301）：手打内容英译的落库通路 —— 单条（库优先 + 引擎兜底）/ 批量查库 / 保存链路后台预热。
+ * 翻译服务（§6.16 ㉕ ㉖ · Push 301 / 309）：手打内容英译的落库通路 —— 单条（库优先 + 引擎兜底）/ 批量查库 / 保存链路后台预热。
  *
  * 业务口径 2026-10-13：「现在点击切换由于项目数量多 翻译不过来会有很大延迟 所以我希望当因为手打内容为中文
  * 并且保存的时候 后台自动翻译 并且写入数据库 下次切换翻译的时候直接调用即可」。
  *
- *  - translate：先查译文库（content_translations），命中直出；未命中调内网引擎（HY-MT1.5-1.8B，
- *    env TRANSLATE_ORIGIN，默认 127.0.0.1:5008）后 upsert 落库 —— 之后任何端命中即读库直出。
+ *  - translate：先查译文库（content_translations），命中直出；未命中调翻译通道（Push 309 起 provider 可插拔：
+ *    `openai` = OpenAI 兼容 API（TRANSLATE_API_*，公司 New API 网关；可选 TRANSLATE_FALLBACK_ORIGIN 本地兜底）/
+ *    `local` = 内网引擎（TRANSLATE_ORIGIN，HY-MT1.5-1.8B 薄壳））后 upsert 落库 —— 之后任何端命中即读库直出。
  *  - lookup：批量只读查库（不调引擎）—— 英文界面切页一次请求拿整页已存译文。
  *  - warmup：保存链路（任务 / 项目控制器挂点）把新写入的手打中文文本丢进来，后台异步翻好落库；
  *    去重（同文本 5 分钟窗口）+ 限并发 2 + 从不抛错（失败静默，下次保存 / 页面到达再试）。
@@ -29,12 +30,20 @@ export const TRANSLATE_ENGINE = "hy-mt-1.5-1.8b";
 const WARMUP_RECENT_TTL_MS = 300000;
 /** 预热队列每次调用的条数硬顶（防大列表保存时内存失控）。 */
 const WARMUP_MAX_PER_CALL = 300;
-/** 预热并发（本地引擎单实例；2 并发足够且不打满）。 */
+/** 预热并发（2 并发足够且不打满；本地小模型 / API 网关均适用）。 */
 const WARMUP_CONCURRENCY = 2;
 /** 中文痕迹（含 CJK 基本区即排队；纯英文 / 数字文本不翻）。 */
 const CJK_PATTERN = /[\u4e00-\u9fff]/;
 
 interface EngineHit { translatedText: string }
+
+/** OpenAI 兼容 chat/completions 回包（只取首条 message.content）。 */
+interface ApiChatReply {
+  choices?: Array<{ message?: { content?: unknown } }>;
+}
+
+/** 引擎产出：译文 + 落库 engine 标记（按实际产出通道标记，换引擎可按列批量重翻）。 */
+interface EngineOutput { translatedText: string; engine: string }
 
 @Injectable()
 export class TranslateService {
@@ -54,9 +63,9 @@ export class TranslateService {
     if (hit !== null && hit.translatedText !== "") {
       return hit.translatedText;
     }
-    const translated = await this.callEngine(q, source, target);
-    await this.repository.upsert({ sourceLang: source, targetLang: target, sourceHash: hash, sourceText: q, translatedText: translated, engine: TRANSLATE_ENGINE }, new Date());
-    return translated;
+    const output = await this.callEngine(q, source, target);
+    await this.repository.upsert({ sourceLang: source, targetLang: target, sourceHash: hash, sourceText: q, translatedText: output.translatedText, engine: output.engine }, new Date());
+    return output.translatedText;
   }
 
   /** 批量查库（只读，不调引擎）：按请求顺序返回命中条目。 */
@@ -132,8 +141,8 @@ export class TranslateService {
       if (hit !== null && hit.translatedText !== "") {
         return;
       }
-      const translated = await this.callEngine(text, "zh", "en");
-      await this.repository.upsert({ sourceLang: "zh", targetLang: "en", sourceHash: hash, sourceText: text, translatedText: translated, engine: TRANSLATE_ENGINE }, new Date());
+      const output = await this.callEngine(text, "zh", "en");
+      await this.repository.upsert({ sourceLang: "zh", targetLang: "en", sourceHash: hash, sourceText: text, translatedText: output.translatedText, engine: output.engine }, new Date());
     } catch (error) {
       this.logger.debug("warmup skipped: " + String(error instanceof Error ? error.message : error));
     }
@@ -152,14 +161,34 @@ export class TranslateService {
   }
 
   /**
-   * 调内网引擎（契约同 /translate：{q, source, target, format} → {translatedText}）。失败一律 AppError INTERNAL。
-   * 术语保护在服务端做：出引擎前占位符化（translate.text.ts），回包规整 + 回换后返回**最终英文**。
+   * 调翻译通道（Push 309 · provider 可插拔）：`openai` = API 主通道（失败且配置了 TRANSLATE_FALLBACK_ORIGIN 时改调本地引擎）；
+   * `local` = 本地引擎直连（TRANSLATE_ORIGIN）。术语保护对两种通道一致：出引擎前占位符化（translate.text.ts），回包规整 + 回换。
    */
-  private async callEngine(q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
+  private async callEngine(q: string, source: TranslateLang, target: TranslateLang): Promise<EngineOutput> {
+    if (this.config.env.TRANSLATE_PROVIDER === "openai") {
+      try {
+        const translatedText = await this.callOpenAiApi(q, source, target);
+        return { translatedText, engine: "api:" + this.config.env.TRANSLATE_API_MODEL };
+      } catch (error) {
+        const fallback = this.config.env.TRANSLATE_FALLBACK_ORIGIN ?? "";
+        if (fallback === "") {
+          throw error;
+        }
+        this.logger.warn("翻译 API 失败，改走本地兜底引擎：" + (error instanceof Error ? error.message : String(error)));
+        const translatedText = await this.callLocalEngine(fallback, q, source, target);
+        return { translatedText, engine: TRANSLATE_ENGINE };
+      }
+    }
+    const translatedText = await this.callLocalEngine(this.config.env.TRANSLATE_ORIGIN, q, source, target);
+    return { translatedText, engine: TRANSLATE_ENGINE };
+  }
+
+  /** 本地引擎（LibreTranslate 兼容 POST /translate：{q, source, target, format} → {translatedText}）。失败一律 AppError INTERNAL。 */
+  private async callLocalEngine(origin: string, q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
     const { protectedText, tokens } = protectGlossary(q);
     let response: Response;
     try {
-      response = await fetch(new URL("/translate", this.config.env.TRANSLATE_ORIGIN), {
+      response = await fetch(new URL("/translate", origin), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ q: protectedText, source, target, format: "text" }),
@@ -182,9 +211,91 @@ export class TranslateService {
     }
     return finalText;
   }
+
+  /** OpenAI 兼容 API（POST {base}/chat/completions；模型 = TRANSLATE_API_MODEL，密钥 = TRANSLATE_API_KEY 可空）。失败一律 AppError INTERNAL。 */
+  private async callOpenAiApi(q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
+    const env = this.config.env;
+    if ((env.TRANSLATE_API_BASE_URL ?? "") === "" || (env.TRANSLATE_API_MODEL ?? "") === "") {
+      throw new AppError("INTERNAL", "翻译 API 未配置（TRANSLATE_API_BASE_URL / TRANSLATE_API_MODEL）");
+    }
+    const { protectedText, tokens } = protectGlossary(q);
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if ((env.TRANSLATE_API_KEY ?? "") !== "") {
+      headers["Authorization"] = "Bearer " + env.TRANSLATE_API_KEY;
+    }
+    let response: Response;
+    try {
+      response = await fetch(joinApiUrl(env.TRANSLATE_API_BASE_URL, "/chat/completions"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: env.TRANSLATE_API_MODEL,
+          messages: [
+            { role: "system", content: buildSystemPrompt(source, target) },
+            { role: "user", content: protectedText },
+          ],
+          temperature: 0,
+        }),
+        signal: AbortSignal.timeout(env.TRANSLATE_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw new AppError("INTERNAL", "翻译 API 不可用（" + (error instanceof Error ? error.message : String(error)) + "）");
+    }
+    if (!response.ok) {
+      throw new AppError("INTERNAL", "翻译 API 返回 HTTP " + String(response.status));
+    }
+    const data = (await response.json().catch(() => null)) as ApiChatReply | null;
+    const picked = data !== null && data.choices !== undefined && data.choices.length > 0 ? data.choices[0] : undefined;
+    const content = picked !== undefined && picked.message !== undefined ? picked.message.content : undefined;
+    const raw = typeof content === "string" ? content : "";
+    if (raw === "") {
+      throw new AppError("INTERNAL", "翻译 API 响应缺少内容");
+    }
+    const finalText = finalizeTranslation(stripWrappingQuotes(raw), tokens);
+    if (finalText === "") {
+      throw new AppError("INTERNAL", "翻译 API 响应规整后为空");
+    }
+    return finalText;
+  }
 }
 
 /** sha256 十六进制（译文库键）。 */
 function hashOf(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/** 语言名（system prompt 用）。 */
+const LANG_NAMES: Record<TranslateLang, string> = { zh: "Simplified Chinese", en: "English" };
+
+/** 拼 API 基址与路径（吞掉基址尾部斜杠；基址通常已含 /v1）。 */
+function joinApiUrl(base: string, path: string): string {
+  return base.replace(/\/+$/, "") + path;
+}
+
+/** API 通道 system prompt：只出译文；占位符（Xq…Y）、数字与专名原样保留。 */
+function buildSystemPrompt(source: TranslateLang, target: TranslateLang): string {
+  return (
+    "You are a translator for an internal robotics project-management system. " +
+    "Translate the text from " + LANG_NAMES[source] + " to " + LANG_NAMES[target] + ". " +
+    "Keep placeholder tokens that look like Xq followed by digits and ending with Y unchanged. " +
+    "Keep numbers, codes, and proper nouns unchanged. " +
+    "Output only the translation, without quotes, notes, or explanations."
+  );
+}
+
+/** 去回包首尾成对引号（模型偶发把译文包进引号 / 书名号）。 */
+function stripWrappingQuotes(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+  const first = trimmed.charAt(0);
+  const last = trimmed.charAt(trimmed.length - 1);
+  const pairs: ReadonlyArray<readonly [string, string]> = [["\u0022", "\u0022"], ["\u201c", "\u201d"], ["\u300c", "\u300d"], ["\u0027", "\u0027"]];
+  for (const pair of pairs) {
+    if (first === pair[0] && last === pair[1]) {
+      return trimmed.slice(1, -1).trim();
+    }
+  }
+  return trimmed;
 }
