@@ -145,9 +145,8 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     const outcome = await createRuleEventConsumers(h.deps).get("task.completed")?.handle(row("task.completed", { taskId: "t-1" }));
 
     expect(outcome).toEqual({ outcome: "done" });
-    // M5-03-5 契约段起：R02 双动作（inbox + wecom_aibot）—— aibot 产出接线随 M5-03-5-4，
-    // 过渡期按未落地渠道跳过（channelSkipped + warn），仅 inbox 行落库。
-    expect(h.appended).toHaveLength(1);
+    // M5-03-5-4 接线段起：R02 双动作（inbox + wecom_aibot）均产行 —— aibot 行幂等键加 ":aibot" 后缀。
+    expect(h.appended).toHaveLength(2);
     const event = h.appended[0];
     expect(event?.client).toBe(DB);
     expect(event?.event.topic).toBe("notify.message");
@@ -161,8 +160,18 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     expect(payload.templateCode).toBe("R02_INBOX");
     expect(payload.mergeKey).toBe("R02:t-1:v5");
     expect(String(payload.body)).toContain("安装摄像头");
-    // 第二条动作（wecom_aibot）：白名单外不产行 + warn 留痕（同 email 先例；模板码保名 R02_WECOM）。
-    expect(h.logs.warn.some((line) => line.includes("渠道未落地") && line.includes("wecom_aibot"))).toBe(true);
+    // 第二条动作（wecom_aibot）：channel=wecom_aibot + 幂等键 ":aibot" 后缀 + 模板码保名（R02_WECOM）。
+    const aibotEvent = h.appended[1];
+    expect(aibotEvent?.client).toBe(DB);
+    expect(aibotEvent?.event.topic).toBe("notify.message");
+    expect(aibotEvent?.event.dedupeKey).toBe("R02:t-1:v5:aibot");
+    const aibotPayload = aibotEvent?.event.payload as Record<string, unknown>;
+    expect(aibotPayload.recipientId).toBe("u-1");
+    expect(aibotPayload.channel).toBe("wecom_aibot");
+    expect(aibotPayload.templateCode).toBe("R02_WECOM");
+    expect(aibotPayload.mergeKey).toBe("R02:t-1:v5");
+    expect(String(aibotPayload.body)).toContain("安装摄像头");
+    expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
   });
 
   it("冷启动保护：事件行创建时刻过旧 → 零产出且按 event_too_old 留痕", async () => {
@@ -226,13 +235,15 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     await handler.run(window);
     await handler.run(window);
 
-    // M5-03-5 契约段起：A01 双动作（inbox + wecom_aibot）—— aibot 过渡跳过；两轮仅 inbox 行、幂等键逐行稳定。
+    // M5-03-5-4 接线段起：A01 双动作（inbox + wecom_aibot）逐行产行、幂等键逐行稳定（重放不逃逸）。
     expect(h.appended.map((item) => item.event.dedupeKey)).toEqual([
       "A01:u-1:2026-09-24",
+      "A01:u-1:2026-09-24:aibot",
       "A01:u-1:2026-09-24",
+      "A01:u-1:2026-09-24:aibot",
     ]);
   });
-  it("A01 双动作合并：同一人多项目 inbox 合并一条、wecom_aibot 过渡跳过（收件人粒度幂等键 + 项目清单）", async () => {
+  it("A01 双动作合并：同一人多项目 inbox / wecom_aibot 各合并一条（收件人粒度幂等键 + 项目清单）", async () => {
     const rules = BUILTIN_RULES.filter((rule) => rule.code === "A01");
     const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
     const h = makeHarness({ rules: async () => [...rules], now: () => late });
@@ -245,17 +256,24 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
       jobContext(new Date(atShanghaiTime("2026-09-24", "19:00")), new Date(atShanghaiTime("2026-09-24", "19:40"))),
     );
 
-    // M5-03-5 契约段起：A01 双动作各合并一条（inbox + wecom_aibot）—— aibot 过渡跳过，produced = 1（inbox）。
-    expect(result?.produced).toBe(1);
-    expect(h.appended).toHaveLength(1);
+    // M5-03-5-4 接线段起：A01 双动作各合并一条（inbox + wecom_aibot），produced = 2。
+    expect(result?.produced).toBe(2);
+    expect(h.appended).toHaveLength(2);
     expect(h.appended[0]?.event.dedupeKey).toBe("A01:u-1:2026-09-24");
     const payload = h.appended[0]?.event.payload as Record<string, unknown>;
     expect(payload.templateCode).toBe("A01_INBOX_MERGED");
     expect(payload.refType).toBeNull();
     expect(payload.refId).toBeNull();
     expect(String(payload.body)).toContain("临港数据中心、张江机房");
-    // aibot 过渡跳过计数入 job_runs note（未落地渠道跳过 1 条）。
-    expect(String(result?.note)).toContain("未落地渠道跳过 1 条");
+    // aibot 合并行：渠道 + ":aibot" 后缀 + 合并模板保名（A01_WECOM_MERGED）+ 同一合并项目清单。
+    expect(h.appended[1]?.event.dedupeKey).toBe("A01:u-1:2026-09-24:aibot");
+    const aibotPayload = h.appended[1]?.event.payload as Record<string, unknown>;
+    expect(aibotPayload.channel).toBe("wecom_aibot");
+    expect(aibotPayload.templateCode).toBe("A01_WECOM_MERGED");
+    expect(String(aibotPayload.body)).toContain("临港数据中心、张江机房");
+    // 未落地渠道跳过归零（email 无产出场景）—— note 口径如实留痕。
+    expect(String(result?.note)).toContain("notify.message 2 条");
+    expect(String(result?.note)).toContain("未落地渠道跳过 0 条");
   });
 
   it("群收件人缺失（project.group 无绑定列）：零产出 + recipient_missing 留痕", async () => {
