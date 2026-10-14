@@ -164,11 +164,14 @@ export function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
 }
 
 /** 写请求（JSON body；CSRF 头由 apiFetch 补齐）。 */
-export function apiSend<T>(path: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown): Promise<T> {
+export function apiSend<T>(path: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown, signal?: AbortSignal): Promise<T> {
   const init: RequestInit = { method };
   if (body !== undefined) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(body);
+  }
+  if (signal !== undefined) {
+    init.signal = signal;
   }
   return apiRequest<T>(path, init);
 }

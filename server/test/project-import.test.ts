@@ -640,6 +640,52 @@ describe("ProjectImportService.preview（老表解析预览）", () => {
 // ---------- commit ----------
 
 describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
+  it("写入取消（Push 321）：上传途中 abort → 回滚零残留（票据仍可提交 + 源文件保留 + 已传图片清理）", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const sourceKey = h.previews.row === null ? "" : h.previews.row.objectKey;
+    h.storage.objects.set(sourceKey, mediaZip("image1.png", "image2.png"));
+    const controller = new AbortController();
+    const put = h.storage.putObject.bind(h.storage);
+    h.storage.putObject = async (input: { objectKey: string; body: Uint8Array }): Promise<{ etag: string | null }> => {
+      const result = await put(input);
+      controller.abort();
+      return result;
+    };
+    await expectCode(
+      () => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh", controller.signal),
+      "IMPORT_CANCELLED",
+    );
+    expect(h.projects.inserted.length).toBe(0);
+    expect(h.previews.row === null ? "" : h.previews.row.status).toBe("pending");
+    expect(h.storage.purged.filter((key) => key.startsWith("projects/")).length).toBe(1);
+    expect(h.storage.purged).not.toContain(sourceKey);
+    const done = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(done.code).toBe(preview.project.code);
+    expect(h.storage.purged).toContain(sourceKey);
+  });
+
+  it("写入取消（Push 321）：事务内 abort → 回滚（已传图片全部清理、源文件保留）", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const sourceKey = h.previews.row === null ? "" : h.previews.row.objectKey;
+    h.storage.objects.set(sourceKey, mediaZip("image1.png", "image2.png"));
+    const controller = new AbortController();
+    const insert = h.projects.insert.bind(h.projects);
+    h.projects.insert = async (input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const row = await insert(input);
+      controller.abort();
+      return row;
+    };
+    await expectCode(
+      () => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh", controller.signal),
+      "IMPORT_CANCELLED",
+    );
+    expect(h.previews.row === null ? "" : h.previews.row.status).toBe("pending");
+    expect(h.storage.purged.filter((key) => key.startsWith("projects/")).length).toBe(2);
+    expect(h.storage.purged).not.toContain(sourceKey);
+  });
+
   it("主链路：建项目 + 补节点 + 任务 / 日报 / 问题 / 变更 / 图片，落位按面板确认值", async () => {
     const h = createHarness();
     const preview = await runPreview(h);

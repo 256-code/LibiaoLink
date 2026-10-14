@@ -306,11 +306,11 @@ server/
 - 权限：**读 = 项目可见即可**（`ProjectAccessGuard` 在入口判定；非成员 / 项目不存在统一 404，防 IDOR）；写路径（关联写入）随 complete 走 `file.upload`。
 - 本卡新增迁移 `0016_file_links.sql`（database 线，lan）：`file_links` + 唯一约束 + 反查索引（只追加；应用角色权限由 `roles/0001` default privileges 自动授予）。
 
-## 老表导入接口（S6·project-import · 老表 Excel 直连导入 · Push 316 / 319）
+## 老表导入接口（S6·project-import · 老表 Excel 直连导入 · Push 316 / 319 / 321）
 
 - 契约 `shared/src/modules/imports.ts`；实现 `src/modules/project-import/`（controller / service / repository + 解析层 `xlsx.ts` / `legacy.ts` / `people.ts`）；模块口径见 `src/modules/project-import/README.md`。
 - `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）：解析 + 口径校验**不写库**；回预览票据（`previewId` + `expiresAt`，30 分钟 `IMPORT_PREVIEW_TTL_MINUTES`）+ 落位建议 + 将写入条数 + 需手动导入图片 / 节点匹配 / 账号三份清单 + 提醒清单（level 三档，`message` 按 `Accept-Language` 中 / 英）。错误面：400 `IMPORT_FILE_INVALID`（非 `.xlsx`·`.xlsm` / 空 / 超 64 MB `IMPORT_MAX_FILE_BYTES`）、422 `IMPORT_PARSE_FAILED`。
-- `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）：票据状态机（不存在 404 / 非本人 403 / 已提交 400 / 过期 410 `IMPORT_PREVIEW_EXPIRED`）→ 编号占用 409 `PROJECT_CODE_EXISTS` → **单事务**建项目 + 蓝图快照 + 成员 + 补节点（阶段范围内）+ 任务 / 日报 / 问题 / 变更 / 文件（表内嵌图先传对象存储，挂日报 / 问题）+ 审计 + 提醒复述；完工清理源文件 + 项目名翻译预热。
+- `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）：票据状态机（不存在 404 / 非本人 403 / 已提交 400 / 过期 410 `IMPORT_PREVIEW_EXPIRED`）→ 编号占用 409 `PROJECT_CODE_EXISTS` → **单事务**建项目 + 蓝图快照 + 成员 + 补节点（阶段范围内）+ 任务 / 日报 / 问题 / 变更 / 文件（表内嵌图先传对象存储，挂日报 / 问题）+ 审计 + 提醒复述；完工清理源文件 + 项目名翻译预热。**写入取消（Push 321）**：连接在写完前断开（「取消写入」/ 刷新 / 关页 / 断网）→ AbortSignal 检查点（读源文件前 / 图片上传每轮 / 事务首行 / 补节点循环 / 各批量写入 / 审计 / 票据落定前）中止 + **单事务回滚** + 已传图片对象清理（错误面增 400 `IMPORT_CANCELLED`）；票据保持 pending、源文件保留（可再次提交）。
 - **Push 319（老表导入收口 · 业务口径 2026-10-14「变更记录没有导入 还有表格中变更关联的字样没有写」+ 工作台可见性）**：① 提交段 —— 变更管理「关联」列按任务描述匹配（去空白 / 小写；标题+英文名 / 标题 / 英文名）→ 事务内回写 `tasks.change_refs`（追加序 = 变更表行序；提醒 `CHANGE_RELATED_UNMATCHED` / `CHANGE_RELATED_AMBIGUOUS` / `CHANGE_DATE_MISMATCH` / `TASK_CHANGE_REF_UNMATCHED` + 汇总 `CHANGE_LINK_SUMMARY`）；未解决问题（源表无处理人字段）默认 `owner_id` = 项目经理首位（命中不了 = 导入人；done = null）+ info 提醒 `ISSUE_OWNER_FALLBACK` → 出现在项目经理工作台「待我处理」；counts 增 `changesLinked`；② 读面（file 模块）—— 导入遗留变更没有 `file_versions` 行：变更列表 / 详情由内连接改左连接（不再过滤），`fileId` / `versionId` / `versionSeq` 可空、详情 `file` / `version` 给 null（前端「变更后文件待补」）。
 - 门禁：登录 + CSRF + `project.create`（与「新建项目」同权限位）。迁移 `0053_project_imports.sql`（预览票据表 + 两索引）。
 - 本刀服务端 / 契约 / 迁移属 wmj 线，由 px 跨线代记，**请 wmj 复核**。
@@ -432,7 +432,7 @@ server/
 - S7-3 调度测试（`test/schedule-rules.test.ts` + `test/scheduler.test.ts` · Push 177 · 新增 **22 例**）：调度规则（cron 五段解析 `*` / 列表 / 区间 / 步进（含单值 `N/n`）与非法即抛；`nextFireAfter` 上海业务日推进 / 周 7→0 / 日与周 OR 语义 / 扫描上限 null；`enumerateFireTimes` 封顶 2000 截断；`planCatchup` 超跨度收窄 + skipped 区间）；调度器（空注册表不触库；单活锁拿不到跳过；窗口 = `last_run_at` / `run_at - 1ms` 补发执行；产出与 `last_run_at` / `run_at` 推进同事务 + `job_runs.executed` 留痕；超跨度 `skipped` 留痕；失败累计到顶 `failed`；无生产者 `releaseClaim` 只存不跑）—— **本片后全量 702 例 / 50 文件**。
 - 通知投递测试（`test/notify-delivery.test.ts` **10 例** + `test/notify-service.test.ts` **15 例** · S7·outbox · S7-4 · Push 178 · 新增 **25 例**）：投递纯函数（HH:MM 解析与格式化 / 免打扰跨零点判定与次日结束点 / 上海日界 / 每日窗口起点 / 合并键回退 / 载荷解析与拒绝 / 投递计划四分支 = 即时 / 合并 / 静默排期 / 上限排期）；服务层（消费 → done / 非法载荷 dead / 落行幂等 / 合并命中与计数 / 免打扰排期 / 上限排期与次日重置 / flush 到期补投 / 收件箱清单与未读角标 / 标记与 404 / 全部已读 / 偏好缺省与三态回显 / 局部更新）；另 `test/schema-literals-parity.test.ts` +2 例（通知类型 / 状态 ↔ 库侧 CHECK 同值）、`test/outbox-policy.test.ts` 白名单清单更新（preview.job + notify.message）。—— **本片（S7-4）后全量 729 例 / 52 文件**；**S7-3 护栏收口（Push 179）后全量 745 例 / 53 文件**。
 
-- 老表导入测试（`test/project-import.test.ts` · Push 316 · 服务端属 wmj 线，px 跨线代记）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点链路）—— **9 例**：解析口径（进度五档 / 完成日期未填封顶 75% / 日期笔误 / 状态归一 / 节点匹配与 `nameEn`）/ zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` 与 `sortIndex` / 图片挂问题 / 缺号回落 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）。
+- 老表导入测试（`test/project-import.test.ts` · Push 316 / 319 / 321 · 服务端属 wmj 线，px 跨线代记）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点链路）—— **14 例**：解析口径（进度五档 / 完成日期未填封顶 75% / 日期笔误 / 状态归一 / 节点匹配与 `nameEn`）/ zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` 与 `sortIndex` / 图片挂问题 / 缺号回落 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ 写入取消两例（Push 321：上传途中 abort / 事务内 abort —— 回滚 + 已传图片清理 + 票据 pending + 重提成功 + 源文件保留）。
 
 ## PoC-9 回放（h5 · S6·PoC-9）
 
