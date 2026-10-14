@@ -106,13 +106,13 @@ docker compose exec -T postgres psql -U postgres -d libiaolink -c "\du"
 docker compose --profile tools pull tools
 ```
 
-迁移（以 `libiaolink_migrator` 身份；当前 0001~0047）：
+迁移（以 `libiaolink_migrator` 身份；当前 0001~0049）：
 
 ```bash
 bash scripts/db-migrate.sh
 ```
 
-- 复跑幂等：再跑一次应输出「已执行 47 个迁移，无漂移」；
+- 复跑幂等：再跑一次应输出「已执行 49 个迁移，无漂移」；
 - `bash scripts/db-migrate.sh --dry-run` 只列出待执行，不改库；
 - 首次运行会在命名卷 `libiaolink-prod-tools-node-modules` 里 `npm ci`（不污染宿主机 `database/`）；慢网可换源：`NPM_REGISTRY=https://registry.npmmirror.com bash scripts/db-migrate.sh`。
 
@@ -216,6 +216,7 @@ curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/      
 - 服务器实测（2026-10-14 SPA 上线）：站点根 200（index.html）、JS / CSS / SVG 200、wasm 200（`application/wasm`）、SPA 路由兜底 200；
 - 服务器实测（2026-10-14 SPA 更新 · Push 304「已有项目地区」修复）：tar 增量上传（解包）→ `chmod -R u=rwX,go=rX` —— 站点根 200（新构建 `assets/index-Qkd_qv0F.js`）、新 JS 200（1,106,488 B）、`/healthz` 200、`/readyz` 200；旧哈希资源已清理；目录挂载即传即生效（无容器重启）；
 - 服务器实测（2026-10-14 SPA 更新 · Push 312「Blocked aria-hidden」告警修复）：tar 增量上传（解包）→ `chmod -R u=rwX,go=rX` → 旧哈希资源清理 4 个 —— 站点根 200（index.html 引用 `assets/index-9-LTzT0u.js`）、新 JS 200（1,107,122 B · sha256 与本地构建一致 `83e4f5b6…`）、CSS 200、`/healthz` 200、`/readyz` 200；旧资源路径回落 SPA 兜底（text/html）；目录挂载即传即生效（无容器重启）；
+- 服务器实测（2026-10-14 SPA 更新 · Push 313「默认外观改档 + 甘特『全部』不出任务列表」）：tar 增量上传（解包）→ `chmod -R u=rwX,go=rX` → 旧哈希资源清理 2 个（`index-9-LTzT0u.js` / `CadViewer-roDP69Tk.js`）—— 站点根 200（index.html 引用 `assets/index-DckvL4un.js`）、新 JS 200（1,107,126 B · sha256 与本地构建一致 `3add9c49…`）、CSS 200、`/healthz` 200、`/readyz` 200；旧资源路径回落 SPA 兜底（text/html）；目录挂载即传即生效（无容器重启）；
 - Nginx 是唯一对外入口（80 / 443 / 9443；80 仅探活 + 301；443 含对象存储同源门面 `/libiaolink/`；9443 = MinIO 备用门面）；
 - 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（只读挂载进 web 容器 `/etc/nginx/ssl/`）；续签经 SSH 自动覆盖 + `sudo /usr/local/bin/allinssl-reload`（容器内 nginx 重载）；若续签后证书未生效 → `docker compose --profile app restart web`（单文件 bind mount 兜底）；
 - 反代口径（与前端开发代理一致）：`/api/v1`、`/auth`、`/healthz`、`/readyz`；`/internal/**` 不对外；
@@ -305,3 +306,4 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 | v1.16 | 2026-10-14 | 翻译 API 备用模型接力（Push 310 · 业务口径「gemini-3.8-flash还有这个模型也可以调用 首选deepseek若deepseek断了就用这个」）：新增 `TRANSLATE_API_MODEL_FALLBACK`（备用 API 模型；留空 = 不接力）；`openai` 通道改「主模型 → 备用模型」两跳 —— 主模型（deepseek-v4-flash-vision-exp）失败（网络 / HTTP / 解析）且备用非空且不同名 → warn 日志 + 自动改调 `gemini-3.8-flash`（同一 New API 网关）；两跳皆败才回落 `TRANSLATE_FALLBACK_ORIGIN` 本地引擎（若配置）；落库 engine 按**实际产出模型**标记（`api:<模型>`）；`server.env.example` TRANSLATE 段补备用模型行；单测 18 例全绿 + 全量 1054 例全绿；**服务器接线（同一日）**：server.env 追加 `TRANSLATE_API_MODEL_FALLBACK=gemini-3.8-flash`（备份 `server.env.bak-tr2-20261014`）+ dist 重传 + api / worker 重建；真机实测主通道正常 + 主模型断流自动接力 2/2 | px |
 | v1.17 | 2026-10-14 | 翻译规整补「句首大写」（Push 311 · 业务口径「句首大写规整 做」）：`translate.text.ts` 新增 `capitalizeSentenceStart`（小写开头 → 首字母大写；iPhone / eBay / pH 类品牌词形态不误伤；数字 / 标点 / 已大写幂等；占位符 Xq…Y 不受影响）；dist 重传解包 + `chmod -R a+rX` + api / worker `--force-recreate` 均 healthy；容器内探针：部署产物直测 6/6（「in dire straits」→「In dire straits」/ iPhone / eBay / 数字开头 / 已大写 / 全大写各 1 例）+ 真实网关实翻 3/3 正常（均句首大写）；无 env / 契约变化 | px |
 | v1.18 | 2026-10-14 | SPA 更新部署（Push 312：日报贴图区「粘贴」的 Chrome「Blocked aria-hidden」控制台告警修复）：`frontend/dist` 重新构建 → tar 增量上传解包 + `chmod -R u=rwX,go=rX`；旧哈希资源清理 4 个；实测站点根 200 / 新 JS 200（sha256 `83e4f5b6…` 与本地构建一致）/ CSS 200 / `/healthz` 200 / `/readyz` 200；§8 补实测行（流程沿用 v1.11，无口径变化） | px |
+| v1.19 | 2026-10-14 | 默认外观改档部署（Push 313：「所有人 背景=适中 + 无水印」默认值 + 迁移 `0049` 存量回填 + 甘特「全部」不出任务列表）：同步迁移 `0048`（lan 线 · 已在 main；服务器此前至 `0047`）+ `0049` → `db-migrate.sh` 实执行（23 ms / 6 ms）+ 复跑无漂移；服务器 DB 核对 `prefs` 分布 5/5 行 medium/false；server / shared dist 干净替换重传 + `chmod -R a+rX` + api / worker `--force-recreate`（5 容器 healthy）；`frontend/dist` tar 增量上传解包 + 旧哈希清理 2 个；实测站点根 200 / 新 JS 200（sha256 `3add9c49…` 与本地一致）/ `/healthz` 200 / `/readyz` 200；§6 迁移口径同步（49 个） | px |
