@@ -6,7 +6,7 @@
  * 契约 shared/src/modules/projects.ts；UI 模型见 types.ts（前端「项目描述」= 契约 name）。
  */
 import { apiRequest, apiSend, readAllPages } from "./api";
-import type { ListQueryState } from "./useHashRoute";
+import { EMPTY_LIST_QUERY, type ListQueryState } from "./useHashRoute";
 import type { Project } from "./types";
 
 export type ApiProject = {
@@ -91,6 +91,14 @@ export function fetchProjectList(filters: ListQueryState): Promise<ProjectListRe
 export function fetchProjectFacets(filters: ListQueryState, skip: FacetSkip | null = null): Promise<ProjectFacets> {
   const query = buildListQuery(filters, skip);
   return apiRequest<ProjectFacets>("/api/v1/projects/facets" + (query === "" ? "" : "?" + query));
+}
+
+/**
+ * 「已有项目地区」计数（Push 304）：全量 region 计数（不带筛选；值 = 项目 region 落库原文 → 未删除项目数）——
+ * 与列表筛选同源 facet，字典外的国名 / 存量值也照数（只认字典码的旧口径会漏「美国 / 英国」这类落库值）。
+ */
+export function fetchUsedRegions(): Promise<Record<string, number>> {
+  return fetchProjectFacets(EMPTY_LIST_QUERY).then((facets) => facets.region);
 }
 
 export function fetchProject(id: string): Promise<ApiProject> {
