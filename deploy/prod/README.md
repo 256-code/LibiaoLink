@@ -27,6 +27,16 @@
     └── secrets/         # 只存在于服务器（本机生成、chmod 600、不进仓库）
 ```
 
+### 1.1 服务器登录（开发机 → 测试机）
+
+- 测试机：`10.1.104.44`（主机名 `libiao-vm`，Ubuntu 26.04 LTS；对外域名 `test-pm.libiaorobot.com`）；`10.1.103.44` = ALLinSSL 证书下发接收端（同口令），仅证书用途、不作为部署目标。
+- 登录方式：开发机 PowerShell 直接 `ssh root@10.1.104.44`（首次连接接受指纹即可）。
+- **登录口令不落仓库**（CONTRIBUTING §12）：由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（`.gitignore` 已忽略，AI / 新会话可直接读该文件续接）。
+- 登录后入口：`cd /opt/libiaolink/deploy/prod`（`docker compose --profile app ps` 应见 postgres / api / worker / web / minio 五容器）。
+- 铁律：**不得修改 root 密码**；普通用户 `libiao` 未经许可不动；服务器只跑不改 —— 代码 / 配置变更一律走本仓 → 常驻分支 → PR → 部署件同步（§3 ~ §9），禁止在服务器上手改业务代码，临时热修必须回灌仓库。
+- MinIO 控制台（运维排查）：`ssh -L 9001:127.0.0.1:9001 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`（同 §9）。
+- 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（SSH 通道自动覆盖 + reload）；未使用 1Panel。
+
 ## 2. 密钥清单（`secrets/`）
 
 | 文件 | 用途 | 消费方 | 现状 |
@@ -282,3 +292,4 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 | v1.9 | 2026-10-14 | SPA 产物上线：`frontend/dist`（10 文件 / 9.3MB）传服务器 + 权限修正（scp 707 畸形 → `chmod -R u=rwX,go=rX`）；实测站点根 200 / SPA 兜底 200 / wasm `application/wasm`；§8 SPA 说明与验证命令同步 | px |
 | v1.10 | 2026-10-14 | SSO 切片（测试环境接通）+ Nginx 容器 DNS 动态解析：authtest 应用 `LibiaoLink` 按接入标准调整（redirect 追加 test-pm 回调 / 仅 `authorization_code` / `JWT-Custom` 五字段）→ 服务器回填 `casdoor_client_id` / `casdoor_client_secret`（chmod 600）+ `CASDOOR_ISSUER=https://authtest.libiaorobot.com` / `CASDOOR_REDIRECT_URI=https://test-pm.libiaorobot.com/auth/callback`；实测 `/auth/login` 302 → authtest 授权页（PKCE S256）· `/readyz` 200 · 5 容器 healthy；nginx 增 `resolver` + `upstream … resolve`（api / minio 重建换 IP 自动跟随，根治 502；重建回归通过）；§2 / §8 / §10 同步 | px |
 | v1.11 | 2026-10-14 | SPA 更新部署（Push 304：「已有项目地区」按项目落库值聚合修复）：`frontend/dist` 重新构建 → tar 上传解包 + 权限 `u=rwX,go=rX`；旧哈希资源清理；实测站点根 200 / 新 JS 200 / `/healthz` 200 / `/readyz` 200；§8 补实测行（流程沿用 v1.9，无口径变化） | px |
+| v1.12 | 2026-10-14 | 新增 §1.1 服务器登录（测试机 IP / 域名 / 登录方式 / 口令不落仓库 + 本机未跟踪备忘路径 / 登录后入口 / 铁律 / MinIO 控制台隧道 / 证书通道）；AGENTS.md 增「服务器与运维（测试机）」节（新会话自动注入可发现） | px |
