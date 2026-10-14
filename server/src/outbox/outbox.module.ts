@@ -14,6 +14,7 @@ import {
   NOTIFY_GROUP_TOPIC,
   NOTIFY_MESSAGE_TOPIC,
   NotifyAppService,
+  NotifyDmService,
   NotifyGroupService,
   NotifyModule,
   NotifyService,
@@ -40,7 +41,7 @@ const registryLogger = new Logger("OutboxRegistry");
  * Outbox worker 运行时（S7-1）：dispatcher（领取 / 消费 / 重试 / dead）+ 告警探针 + done 行保留期清理；
  * S7-3 增补调度器（jobs 表：cron 领取 / last_run_at 补发 / 单活 advisory lock · JobScheduler）；
  * S7-4 增补规则接线（AUTOMATION_WIRING_ENABLED）：RULE_EVENT_TOPICS 事件消费 + automation-schedule.job 生产者
- * （automation 引擎 → notify.message 产出；非 inbox 渠道不产行，见 automation-wiring.ts）。
+ * （automation 引擎 → notify.message 产出；未落地渠道不产行，见 automation-wiring.ts）。
  * 只装配在 worker 进程（api 不消费）。消费 / 生产注册表都在此组装（**加项即可**，dispatcher / scheduler 不感知业务）：
  * 事件消费当前有 preview.job（受 PREVIEW_JOB_ENABLED 开关）、notify.message（S7-4 站内信投递，受
  * NOTIFY_DELIVERY_ENABLED 开关）与规则事件主题（受 AUTOMATION_WIRING_ENABLED 开关）；
@@ -77,12 +78,13 @@ export class OutboxModule {
             notify: NotifyService,
             groupNotify: NotifyGroupService,
             appNotify: NotifyAppService,
+            dmNotify: NotifyDmService,
             subjects: AutomationSubjectReader,
             clock: ClockService,
             calendar: CalendarService,
             database: DatabaseService,
           ) => {
-            const registry = buildRegistry(env, previews, notify, groupNotify, appNotify);
+            const registry = buildRegistry(env, previews, notify, groupNotify, appNotify, dmNotify);
             if (env.AUTOMATION_WIRING_ENABLED === "true") {
               const deps = automationWiringDeps(env, subjects, clock, calendar, database);
               for (const [topic, handler] of createRuleEventConsumers(deps)) {
@@ -96,6 +98,7 @@ export class OutboxModule {
             NotifyService,
             NotifyGroupService,
             NotifyAppService,
+            NotifyDmService,
             AutomationSubjectReader,
             ClockService,
             CalendarService,
@@ -126,13 +129,16 @@ export class OutboxModule {
  * 注册表组装（消费侧唯一清单）：PREVIEW_JOB_ENABLED=false 时预览不入表、NOTIFY_DELIVERY_ENABLED=false 时
  * 站内信不入表（只投递不消费的排障态）。notify.message 的消费只做「落行 + 合并 / 投递 / 排期」分类；
  * 延迟投递（免打扰 / 每日上限）由 NotifyService.flushDue 的独立循环排空，不占 outbox 重试。
+ * 导出（M5-03-5-4）：接线回放 / 门禁直接驱动「按载荷 channel 分流」这一生产装配点（先例 =
+ * automation-wiring 的 createRuleEventConsumers / createAutomationScheduleHandler）。
  */
-function buildRegistry(
+export function buildRegistry(
   env: Env,
   previews: PreviewService,
   notify: NotifyService,
   groupNotify: NotifyGroupService,
   appNotify: NotifyAppService,
+  dmNotify: NotifyDmService,
 ): Map<OutboxTopic, OutboxTopicHandler> {
   const registry = new Map<OutboxTopic, OutboxTopicHandler>();
   if (env.PREVIEW_JOB_ENABLED === "true") {
@@ -143,10 +149,16 @@ function buildRegistry(
   }
   if (env.NOTIFY_DELIVERY_ENABLED === "true") {
     registry.set(NOTIFY_MESSAGE_TOPIC, {
-      // 渠道分流（M5-03-3）：wecom_app → 应用消息消费（NotifyAppService）；其余（inbox / 未落地 email）→
-      // 站内信消费器（后者对非 inbox 渠道按确定性失败收口 —— 投递层护栏）。
-      handle: (row) =>
-        channelOfNotifyPayload(row.payload) === "wecom_app" ? appNotify.consume(row) : notify.consume(row),
+      // 渠道分流（M5-03-3 / M5-03-5-4）：wecom_app → 应用消息消费（NotifyAppService）；wecom_aibot → 单聊 aibot
+      // 消费（NotifyDmService；长连接未就绪按 retry 收敛 —— 未配置 ≠ 不领取，bounded by outbox 重试上限 →
+      // dead + 告警，与群通道「未配置 = 只存不投」的差异为单聊面定案，见 M5-03-5 执行计划 §3.4）；其余
+      // （inbox / 未落地 email）→ 站内信消费器（后者对非 inbox 渠道按确定性失败收口 —— 投递层护栏）。
+      handle: (row) => {
+        const channel = channelOfNotifyPayload(row.payload);
+        if (channel === "wecom_app") return appNotify.consume(row);
+        if (channel === "wecom_aibot") return dmNotify.consume(row);
+        return notify.consume(row);
+      },
     });
     // 群通道（M5-03-2 接线段）：凭据齐备才注册消费 —— 未配置时「只存不投」（notify.group 行不领取，
     // 不因客户端未就绪空转重试）；配置后由 worker 启动流程 start() 长连接（entry/worker.ts）。

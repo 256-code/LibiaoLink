@@ -8,11 +8,12 @@
  * ② 调度（OutboxJobHandler；kind = automation-schedule.job）：读窗口主体池 → planWindowMessages → 同上产出，
  *    与 last_run_at 推进同一事务（JobRunContext.tx）—— 崩溃回滚后窗口重放，幂等键兜底不重发。
  *
- * 渠道口径（M5-03-3 起；M5-03-5 契约段注记）：inbox → `notify.message`（S7-4 j1）；wecom_app → `notify.message`
+ * 渠道口径（M5-03-3 起；M5-03-5-4 接线段收口）：inbox → `notify.message`（S7-4 j1）；wecom_app → `notify.message`
  *   （channel=wecom_app，幂等键加 ":app" 后缀避免与同规则 inbox 行撞 outbox 唯一约束；投递层按 users.username
- *   解析 userid）；wecom_group → `notify.group`（群播报：载荷只带 projectId（寻址键）+ 文案，投递层按绑定解析
- *   chatid + 按会话限速）；未落地渠道（email 随 M5-04；wecom_aibot 自 M5-03-5 契约段起由规则产出、产出接线随
- *   M5-03-5-4）—— 逐条 warn 留痕 + 计数入日志/note（与投递层护栏 wmj PR #197 配对）。
+ *   解析 userid）；wecom_aibot → `notify.message`（channel=wecom_aibot · 单聊智能机器人，M5-03-5 接线段；幂等键加
+ *   ":aibot" 后缀 —— 与同规则 inbox / app 行并存不撞 outbox 唯一约束；投递层同按 users.username 解析 userid）；
+ *   wecom_group → `notify.group`（群播报：载荷只带 projectId（寻址键）+ 文案，投递层按绑定解析 chatid + 按会话
+ *   限速）；未落地渠道（email 随 M5-04）—— 逐条 warn 留痕 + 计数入日志/note（与投递层护栏 wmj PR #197 配对）。
  * 冷启动保护（事件形态）：AUTOMATION_EVENT_MAX_AGE_MS 透传引擎 —— 接线前积压的历史事件按 `event_too_old`
  *   消费掉、不补发业务通知（投递层免打扰的「次日补发」不受影响）。
  * 边界：本层只做「主体读库 + 引擎求值 + 产出落库」；投递 / 合并 / 免打扰 / 重试 / 死信归 notify + outbox 运行时。
@@ -85,9 +86,11 @@ export interface ProduceStats {
   produced: number;
   /** notify.message（channel=wecom_app · 应用消息）产出行数（M5-03-3 起）。 */
   appProduced: number;
+  /** notify.message（channel=wecom_aibot · 单聊智能机器人）产出行数（M5-03-5-4 起）。 */
+  aibotProduced: number;
   /** notify.group（群播报）产出行数（M5-03-2 接线段起）。 */
   groupProduced: number;
-  /** 未落地渠道跳过（email 随 M5-04；wecom_aibot 随 M5-03-5-4 接线）条数。 */
+  /** 未落地渠道跳过（email 随 M5-04）条数。 */
   channelSkipped: number;
 }
 /** 单条产出上下文（事件形态 / 调度形态共用；append 由调用方绑定事务或主连接）。 */
@@ -128,10 +131,12 @@ function logSkips(logger: WiringLogger, scope: string, skipped: readonly { reaso
 }
 
 /**
- * 逐条产出（inbox / wecom_app → notify.message；wecom_group → notify.group）：
- *   - 未落地渠道（email · wecom_aibot 过渡期）：不产行 + warn（与投递层「非白名单 → dead」护栏配对；计入 channelSkipped）；
+ * 逐条产出（inbox / wecom_app / wecom_aibot → notify.message；wecom_group → notify.group）：
+ *   - 未落地渠道（email）：不产行 + warn（与投递层「非白名单 → dead」护栏配对；计入 channelSkipped）；
  *   - 应用消息寻址：recipientId = 用户 id（投递层按 users.username 解析 userid）；幂等键 = 引擎键 + ":app"
  *     后缀（同规则同实体的 inbox 行占原始键 —— outbox_events.dedupe_key 全局唯一，不加后缀两行会互相吞）；
+ *   - 单聊 aibot 寻址：同应用消息（recipientId = 用户 id · 投递层按 users.username 解析 userid）；幂等键 = 引擎键
+ *     + ":aibot" 后缀（与 inbox / app 行并存不撞键）；
  *   - 载荷不合规（无收件人 / 正文为空；站内信另要求标题非空）：不产行，收 invalid 由调用方按确定性失败收口（模板配置问题）；
  *   - 群播报寻址：payload.projectId 取 message.recipientId —— 不变式「wecom_group 的 recipientId = 群寻址键（一期 = projectId）」，
  *     由主体读取层保证（project.group 收件人 id = 项目 id；未绑定 → 引擎已按 recipient_missing 不产出）；
@@ -142,7 +147,7 @@ async function produceMessages(
   messages: readonly ReplayMessage[],
   context: ProduceContext,
 ): Promise<{ stats: ProduceStats; invalid: string[] }> {
-  const stats: ProduceStats = { produced: 0, appProduced: 0, groupProduced: 0, channelSkipped: 0 };
+  const stats: ProduceStats = { produced: 0, appProduced: 0, aibotProduced: 0, groupProduced: 0, channelSkipped: 0 };
   const invalid: string[] = [];
   for (const message of messages) {
     if (message.channel === "wecom_group") {
@@ -196,9 +201,36 @@ async function produceMessages(
       stats.appProduced += 1;
       continue;
     }
+    if (message.channel === "wecom_aibot") {
+      const title = message.title === null ? null : message.title.trim();
+      const body = message.body.trim();
+      if (message.recipientId === null) {
+        invalid.push(message.dedupeKey + "（无收件人）");
+        continue;
+      }
+      if (title === null || title === "" || body === "") {
+        invalid.push(message.dedupeKey + "（标题 / 正文为空）");
+        continue;
+      }
+      const reference = referenceOf(message.ruleCode, message.entityId);
+      const payload: NotifyMessagePayload = {
+        recipientId: message.recipientId,
+        type: NOTIFICATION_TYPE_BY_RULE[message.ruleCode] ?? "reminder",
+        channel: "wecom_aibot",
+        title,
+        body,
+        refType: reference.refType,
+        refId: reference.refId,
+        templateCode: templateCodeOf(context.rules, message),
+        mergeKey: message.dedupeKey,
+      };
+      await context.append({ topic: NOTIFY_MESSAGE_TOPIC, dedupeKey: message.dedupeKey + ":aibot", payload });
+      stats.aibotProduced += 1;
+      continue;
+    }
     if (!isDeliverableChannel(message.channel)) {
       stats.channelSkipped += 1;
-      context.logger.warn("规则接线：渠道未落地（email 随 M5-04；wecom_aibot 随 M5-03-5-4 · 期间不产出）：" + message.channel + " · " + message.dedupeKey);
+      context.logger.warn("规则接线：渠道未落地（email 随 M5-04）：" + message.channel + " · " + message.dedupeKey);
       continue;
     }
     const title = message.title === null ? null : message.title.trim();
@@ -274,10 +306,10 @@ export function createRuleEventConsumers(deps: AutomationWiringDeps): Map<RuleEv
           deps.logger.warn("规则接线：消息载荷不合规（确定性失败转 dead）：" + scope + " · " + invalid.join("；"));
           return { outcome: "dead", error: "消息载荷不合规（模板缺标题 / 收件人）：" + invalid.join("；") };
         }
-        if (stats.produced > 0 || stats.groupProduced > 0 || stats.channelSkipped > 0) {
+        if (stats.produced + stats.appProduced + stats.aibotProduced + stats.groupProduced + stats.channelSkipped > 0) {
           deps.logger.log(
-            "规则接线：产出 " + (stats.produced + stats.appProduced) + " 条 notify.message / " + stats.groupProduced +
-              " 条 notify.group / 未落地渠道跳过 " + stats.channelSkipped + " 条：" + scope,
+            "规则接线：产出 " + (stats.produced + stats.appProduced + stats.aibotProduced) + " 条 notify.message / " +
+              stats.groupProduced + " 条 notify.group / 未落地渠道跳过 " + stats.channelSkipped + " 条：" + scope,
           );
         }
         return { outcome: "done" };
@@ -326,13 +358,15 @@ export function createAutomationScheduleHandler(deps: AutomationWiringDeps): Out
         throw new Error("规则接线：调度产出载荷不合规（事务回滚）：" + invalid.join("；"));
       }
       deps.logger.log(
-        "规则接线：窗口产出 " + (stats.produced + stats.appProduced) + " 条 notify.message / " + stats.groupProduced +
-          " 条 notify.group / 未落地渠道跳过 " + stats.channelSkipped + " 条 / 主体 " + bundle.subjects.length + " 个：" + scope,
+        "规则接线：窗口产出 " + (stats.produced + stats.appProduced + stats.aibotProduced) + " 条 notify.message / " +
+          stats.groupProduced + " 条 notify.group / 未落地渠道跳过 " + stats.channelSkipped + " 条 / 主体 " +
+          bundle.subjects.length + " 个：" + scope,
       );
       return {
-        produced: stats.produced + stats.appProduced + stats.groupProduced,
-        note: "主体 " + bundle.subjects.length + " 个 / notify.message " + (stats.produced + stats.appProduced) +
-          " 条 / notify.group " + stats.groupProduced + " 条 / 未落地渠道跳过 " + stats.channelSkipped + " 条",
+        produced: stats.produced + stats.appProduced + stats.aibotProduced + stats.groupProduced,
+        note: "主体 " + bundle.subjects.length + " 个 / notify.message " +
+          (stats.produced + stats.appProduced + stats.aibotProduced) + " 条 / notify.group " + stats.groupProduced +
+          " 条 / 未落地渠道跳过 " + stats.channelSkipped + " 条",
       };
     },
   };

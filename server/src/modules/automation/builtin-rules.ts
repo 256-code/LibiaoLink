@@ -6,7 +6,7 @@
  * 说明：R01 无通知动作（落点 = 变更生效事务内同事务回写 tasks.change_refs，见 M4-04），故不在引擎规则集内；
  *   其余规则为引擎可执行规则：R02 / R06 事件型（主体 = 任务），R03 / R04 / R05 / R07 任务调度型，
  *   A01 / A02 / A14 主体调度型（主体类型见 BUILTIN_RULE_SUBJECT_KINDS）；A03 随处理时限（due_at）删除下线（Push 215 / A3-14）。
- * 变更（M5-03-5 契约段 · 2026-10-14 · ADR-033）：R02 / R07 / A01 / A14 单聊动作渠道 `wecom_app` → `wecom_aibot`（自建应用保留备用 · 回退 = 渠道值回切）；产出接线随 M5-03-5-4。
+ * 变更（M5-03-5 契约段 · 2026-10-14 · ADR-033）：R02 / R07 / A01 / A14 单聊动作渠道 `wecom_app` → `wecom_aibot`（自建应用保留备用 · 回退 = 渠道值回切）；产出接线已随 M5-03-5-4 落地（:aibot 幂等键后缀 + notify.message 消费分流）。
  */
 import type { AutomationMessageTemplate, AutomationRule } from "@libiaolink/contracts";
 import type { ReplaySubjectKind } from "./automation.rules.js";
