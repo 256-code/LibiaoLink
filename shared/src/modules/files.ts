@@ -94,15 +94,15 @@ export const ChangeRequestSchema = z
     appliedBy: UuidSchema,
     appliedAt: DateTimeSchema,
     createdAt: DateTimeSchema,
-    fileId: UuidSchema.openapi({ description: "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）" }),
-    versionId: UuidSchema.openapi({ description: "变更后版本（file_versions.change_request_id 反查）" }),
-    versionSeq: z.number().int().positive(),
+    fileId: UuidSchema.nullable().openapi({ description: "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）；Push 319：老表导入变更暂无变更后文件（源文件在微盘，人工后补）= null" }),
+    versionId: UuidSchema.nullable().openapi({ description: "变更后版本（file_versions.change_request_id 反查）；导入遗留变更 = null" }),
+    versionSeq: z.number().int().positive().nullable().openapi({ description: "变更后版本号；导入遗留变更 = null" }),
   })
   .openapi("ChangeRequest", { description: "变更记录（v0.2 §5.3；一期申请即通过、全程留痕）" });
 
 export const ChangeRequestDetailSchema = ChangeRequestSchema.extend({
-  file: FileSchema,
-  version: FileVersionSchema,
+  file: FileSchema.nullable(),
+  version: FileVersionSchema.nullable(),
   filePreviousName: z
     .string()
     .nullable()

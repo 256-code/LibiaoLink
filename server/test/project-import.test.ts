@@ -178,6 +178,7 @@ function createHarness() {
     reports: [] as Array<Record<string, unknown>>,
     issues: [] as Array<Record<string, unknown>>,
     changes: [] as Array<Record<string, unknown>>,
+    changeRefCalls: [] as Array<Array<{ taskId: string; changeIds: string[] }>>,
     files: [] as Array<Record<string, unknown>>,
     committedCalls: [] as string[],
     expiredCalls: [] as string[],
@@ -234,8 +235,12 @@ function createHarness() {
       this.issues = rows;
       return rows.map((_, index) => "issue-" + String(index));
     },
-    async insertChangeRequests(tx: unknown, projectId: string, rows: Array<Record<string, unknown>>): Promise<void> {
+    async insertChangeRequests(tx: unknown, projectId: string, rows: Array<Record<string, unknown>>): Promise<string[]> {
       this.changes = rows;
+      return rows.map((_, index) => "change-" + String(index));
+    },
+    async attachChangeRefs(tx: unknown, updates: Array<{ taskId: string; changeIds: string[] }>): Promise<void> {
+      this.changeRefCalls.push(updates);
     },
     async insertFiles(
       tx: unknown,
@@ -387,7 +392,10 @@ const CHANGE_HEADER = ["变更时间", "变更阶段", "变更内容描述", "�
 const ACTOR_ID = "99999999-9999-4999-8999-999999999999";
 
 /** 与 UK 老表同形的最小样例：完成无日期 / 进度收敛 / 日期笔误 / 阶段外任务 / 图片锚点。 */
-function sampleWorkbook(extraAnchors: Array<{ row: number; col: number; media: string }> = []): Buffer {
+function sampleWorkbook(
+  extraAnchors: Array<{ row: number; col: number; media: string }> = [],
+  reportIssueState = "处理中",
+): Buffer {
   return buildWorkbook([
     {
       name: "UK-VANILLA- 任务",
@@ -403,7 +411,7 @@ function sampleWorkbook(extraAnchors: Array<{ row: number; col: number; media: s
       name: "日报及问题汇总",
       rows: [
         REPORT_HEADER,
-        ["2026年9月1日", "贾海洋(haiyang)", "货架组装完成", "电控接线", "5", "货架立柱尺寸不符", "设计变更", "处理中", "返工处理"],
+        ["2026年9月1日", "贾海洋(haiyang)", "货架组装完成", "电控接线", "5", "货架立柱尺寸不符", "设计变更", reportIssueState, "返工处理"],
         ["2026年9月2日", "贾海洋(haiyang)", "物流线调试", "联动测试", "4", "", "", "", ""],
       ],
       anchors: [
@@ -417,6 +425,49 @@ function sampleWorkbook(extraAnchors: Array<{ row: number; col: number; media: s
       rows: [
         CHANGE_HEADER,
         ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "Layout更新版.dwg", "V2", "", "朱成荣(Eli)"],
+      ],
+    },
+  ]);
+}
+
+/** 变更关联（Push 319）样例：变更管理「关联」列写任务描述；任务表 R 列「变更关联」写日期（第一行故意对不上）。 */
+function linkWorkbook(): Buffer {
+  const taskHeader = [...TASK_HEADER, "变更关联"];
+  const taskRow = (title: string, titleEn: string, stage: string, changeRef: string): string[] => [
+    title + String.fromCharCode(10) + titleEn,
+    stage,
+    "进行中",
+    "0.5",
+    "贾海洋(haiyang)",
+    "贾海洋(haiyang)",
+    "2026-09-01",
+    "2026-09-20",
+    "",
+    "1",
+    "1",
+    "",
+    "",
+    "",
+    "",
+    changeRef,
+  ];
+  return buildWorkbook([
+    {
+      name: "UK-VANILLA- 任务",
+      rows: [
+        taskHeader,
+        taskRow("通电测试", "Power-on Test", "硬件实施", "2026-08-30"),
+        taskRow("运输", "Transportation", "组装发货", ""),
+        taskRow("包装打包", "Packing", "硬件实施", "2026-07-01"),
+      ],
+    },
+    {
+      name: "变更管理",
+      rows: [
+        CHANGE_HEADER,
+        ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "", "", "通电测试Power-on Test", "朱成荣(Eli)"],
+        ["2026-09-01", "发货阶段", "物流包装升级", "客户原因", "", "", "", "", "运输", "朱成荣(Eli)"],
+        ["2026-09-01", "实施阶段", "关联不上的变更", "其他", "", "", "", "", "不存在的任务", "朱成荣(Eli)"],
       ],
     },
   ]);
@@ -461,7 +512,7 @@ describe("ProjectImportService.preview（老表解析预览）", () => {
     const h = createHarness();
     const preview = await runPreview(h);
 
-    expect(preview.counts).toEqual({ tasks: 4, reports: 2, changes: 1, images: 2, imagesManual: 2, accountsNew: 5, nodesNew: 1 });
+    expect(preview.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, images: 2, imagesManual: 2, accountsNew: 5, nodesNew: 1 });
     expect(preview.project).toEqual({
       code: "LBGW-20260331-1459",
       name: "UK-VANILLA-AIRROB",
@@ -540,6 +591,50 @@ describe("ProjectImportService.preview（老表解析预览）", () => {
     expect(preview.counts.nodesNew).toBe(3);
     expect(preview.issues.map((issue) => issue.code)).toContain("IMAGE_ROW_MISSING");
   });
+
+  it("变更关联（Push 319）：「关联」列命中任务 → changeLinks；未命中 / 日期不一致 / 汇总进提醒", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: linkWorkbook(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+
+    expect(preview.counts.changes).toBe(3);
+    expect(preview.counts.changesLinked).toBe(2);
+    const links = (previewPayload(h).parse as { changeLinks: Array<{ changeIndex: number; taskIndex: number }> }).changeLinks;
+    expect(links).toEqual([
+      { changeIndex: 0, taskIndex: 0 },
+      { changeIndex: 1, taskIndex: 1 },
+    ]);
+    const codes = preview.issues.map((issue) => issue.code);
+    expect(codes).toContain("CHANGE_LINK_SUMMARY");
+    expect(codes).toContain("CHANGE_RELATED_UNMATCHED");
+    expect(codes).toContain("CHANGE_DATE_MISMATCH");
+    expect(codes).toContain("TASK_CHANGE_REF_UNMATCHED");
+    const summary = preview.issues.find((issue) => issue.code === "CHANGE_LINK_SUMMARY");
+    expect(summary?.message).toContain("写入任务变更关联 2 条");
+  });
+
+  it("问题已处理（done）：默认处理人留空，不出 ISSUE_OWNER_FALLBACK 提醒", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: sampleWorkbook([], "已完成"),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+    expect(preview.issues.map((issue) => issue.code)).not.toContain("ISSUE_OWNER_FALLBACK");
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.previews.issues[0]?.state).toBe("done");
+    expect(h.previews.issues[0]?.ownerId).toBeNull();
+    expect(result.issues.map((issue) => issue.code)).not.toContain("ISSUE_OWNER_FALLBACK");
+  });
 });
 
 // ---------- commit ----------
@@ -555,7 +650,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
 
     expect(result.code).toBe("LBGW-20260331-1459");
     expect(result.name).toBe("UK-VANILLA-AIRROB");
-    expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, images: 2, accountsCreated: 5, nodesAdded: 1 });
+    expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, images: 2, accountsCreated: 5, nodesAdded: 1 });
 
     // 项目落位：编号 / 地区 / 类型 / 项目经理（贾海洋 不在库 → 回落导入人）
     const inserted = h.projects.inserted[0]!;
@@ -576,6 +671,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.previews.issues.length).toBe(1);
     expect(h.previews.issues[0]?.reporterId).toBe(ACTOR_ID);
     expect(h.previews.issues[0]?.state).toBe("in_progress");
+    expect(h.previews.issues[0]?.ownerId).toBe(ACTOR_ID);
     expect(h.previews.lastLinkTargets.issueIds).toEqual(["issue-0"]);
 
     // 变更：内容 + 原因合并；变更后文件只进「需手动导入」清单（不建文件行）
@@ -596,11 +692,38 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(codes).toContain("MANAGER_FALLBACK");
     expect(codes).toContain("OWNER_MISSING");
     expect(codes).toContain("AUTHOR_MISSING");
+    expect(codes).toContain("ISSUE_OWNER_FALLBACK");
+    const ownerFallback = result.issues.find((issue) => issue.code === "ISSUE_OWNER_FALLBACK");
+    expect(ownerFallback?.level).toBe("info");
+    expect(ownerFallback?.message).toContain("导入人");
     expect(h.previews.committedCalls).toEqual([preview.previewId + ":" + result.projectId]);
     expect(h.storage.purged).toContain(sourceKey);
     expect(h.translate.warmed).toContain("UK-VANILLA-AIRROB");
     expect(h.audit.records.filter((record) => record.objectType === "project").length).toBe(1);
     expect(h.audit.records.filter((record) => record.objectType === "task_node").length).toBe(1);
+  });
+
+  it("变更关联（Push 319）：提交事务回写任务 change_refs（追加序 = 变更表行序）", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: linkWorkbook(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, zipStore([{ name: "xl/media/none.png", data: Buffer.from("x", "utf8") }]));
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+
+    expect(result.counts.changesLinked).toBe(2);
+    expect(h.previews.changeRefCalls).toEqual([
+      [
+        { taskId: "task-0", changeIds: ["change-0"] },
+        { taskId: "task-1", changeIds: ["change-1"] },
+      ],
+    ]);
+    expect(result.issues.map((issue) => issue.code)).toContain("CHANGE_LINK_SUMMARY");
   });
 
   it("账号已在库：项目经理 / 负责人 / 日报作者都直接挂人，不再回落", async () => {
@@ -617,9 +740,13 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.previews.tasks[0]?.ownerIds).toEqual(["user-jia"]);
     expect(h.previews.reports[0]?.authorId).toBe("user-jia");
     expect(h.previews.issues[0]?.reporterId).toBe("user-jia");
+    expect(h.previews.issues[0]?.ownerId).toBe("user-jia");
     const codes = result.issues.map((issue) => issue.code);
     expect(codes).not.toContain("MANAGER_FALLBACK");
     expect(codes).not.toContain("AUTHOR_MISSING");
+    expect(codes).toContain("ISSUE_OWNER_FALLBACK");
+    const ownerFallback = result.issues.find((issue) => issue.code === "ISSUE_OWNER_FALLBACK");
+    expect(ownerFallback?.message).toContain("贾海洋");
     // 其余负责人（高云 / 赵纯德 / 张亚庆）仍不在库 → 照常提醒，不阻断
     const ownerIssue = result.issues.find((issue) => issue.code === "OWNER_MISSING");
     expect(ownerIssue?.subject).toContain("高云");

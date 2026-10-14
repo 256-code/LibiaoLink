@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { accentOfItem, dictLabel, type Dicts } from "../dicts";
-import { projectTypeText, useLocale, useT } from "../i18n";
+import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type Dicts } from "../dicts";
+import type { DictTools } from "../dictTools";
+import { fieldText, projectTypeText, useLocale, useT } from "../i18n";
 import {
   commitProjectImport,
   IMPORT_MAX_FILE_BYTES,
@@ -37,6 +38,10 @@ export type ImportProjectPanelProps = {
   file: File;
   /** 字典（项目地区选择小窗用）。 */
   dicts: Dicts;
+  /** 字典工具（项目类型「＋ 添加项目类型」用；口径同新建项目弹窗）。 */
+  dictTools: DictTools;
+  /** 是否可管理字典（dict.manage；控制项目类型「新建」入口显隐）。 */
+  canManageDicts: boolean;
   /** 重新选择文件（父层点同一个隐藏 input；选中后本面板自动重新解析）。 */
   onReselect: () => void;
   /** 关闭面板（父层清空已选文件）。 */
@@ -138,7 +143,7 @@ function ManualImageList({ images }: { images: ImportManualImage[] }) {
   );
 }
 
-export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImported }: ImportProjectPanelProps) {
+export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onReselect, onClose, onImported }: ImportProjectPanelProps) {
   const t = useT();
   const [phase, setPhase] = useState<Phase>({ kind: "parsing" });
   const locale = useLocale();
@@ -292,7 +297,6 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
         <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 px-6 py-4">
           <div className="min-w-0">
             <h2 className="text-lg font-bold text-zinc-900">{t("import.title")}</h2>
-            <p className="mt-0.5 text-xs text-zinc-500">{t("import.subtitle")}</p>
           </div>
           <div className="ml-auto flex min-w-0 items-center gap-3">
             <span
@@ -446,9 +450,17 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
                               <span className="truncate">{projectTypeText(locale, name)}</span>
                             </span>
                           )}
+                          onAdd={canManageDicts ? (input) => dictTools.onAdd("projectType", input) : undefined}
+                          addText={{
+                            label: t("import.type.add"),
+                            placeholder: t("import.type.namePlaceholder"),
+                          }}
+                          palette={{
+                            label: fieldText(locale, "颜色模板"),
+                            options: DICT_ACCENT_PALETTE,
+                          }}
                           onChange={setProjectType}
                         />
-                        <span className="mt-1 block text-[11px] text-zinc-400">{t("import.type.hint")}</span>
                       </dd>
                     </div>
                     <div>
@@ -465,7 +477,11 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
                   <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <StatTile label={t("import.stats.tasks")} value={phase.preview.counts.tasks} />
                     <StatTile label={t("import.stats.reports")} value={phase.preview.counts.reports} />
-                    <StatTile label={t("import.stats.changes")} value={phase.preview.counts.changes} />
+                    <StatTile
+                      label={t("import.stats.changes")}
+                      value={phase.preview.counts.changes}
+                      caption={phase.preview.counts.changesLinked === 0 ? undefined : t("import.stats.changes.linked", { n: phase.preview.counts.changesLinked })}
+                    />
                     <StatTile
                       label={t("import.stats.images")}
                       value={phase.preview.counts.images}
@@ -539,7 +555,6 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
                 {phase.preview.accounts.length === 0 ? null : (
                   <section className="rounded-2xl border border-zinc-200 bg-white p-5" data-import-accounts="">
                     <h3 className="text-sm font-semibold text-zinc-900">{t("import.accounts.title", { n: phase.preview.accounts.length })}</h3>
-                    <p className="mt-1 text-xs text-zinc-400">{t("import.accounts.hint")}</p>
                     <ul className="mt-3 space-y-1.5">
                       {phase.preview.accounts.map((account, index) => (
                         <li key={index} className="flex items-center gap-2 rounded-lg border border-zinc-100 px-2.5 py-1.5 text-xs">

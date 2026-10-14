@@ -291,7 +291,8 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
   invalidatePreview(target.id);
 }
 
-/** 变更记录详情（契约 ChangeRequestDetail · M4-04 读面 A4-15）：变更本体 + 变更后文件 + 变更后版本（本文件只需用到的字段）。 */
+/** 变更记录详情（契约 ChangeRequestDetail · M4-04 读面 A4-15）：变更本体 + 变更后文件 + 变更后版本（本文件只需用到的字段）；
+ *  Push 319：老表导入变更暂无变更后文件（源文件在微盘）→ fileId / versionId / versionSeq / file / version 可为 null。 */
 export type ChangeRequestDetail = {
   id: string;
   projectId: string;
@@ -306,11 +307,12 @@ export type ChangeRequestDetail = {
   status: string;
   appliedBy: string;
   appliedAt: string;
-  fileId: string;
-  versionId: string;
-  versionSeq: number;
-  file: { id: string; name: string; docType: string | null; status: string };
-  version: { id: string; seq: number; sizeBytes: number; uploadedAt: string };
+  /** Push 319：导入遗留变更（无变更后文件）= null（前端标「变更后文件待补」）。 */
+  fileId: string | null;
+  versionId: string | null;
+  versionSeq: number | null;
+  file: { id: string; name: string; docType: string | null; status: string } | null;
+  version: { id: string; seq: number; sizeBytes: number; uploadedAt: string } | null;
   /** Push 256：本次变更同时更名时 = 更名前文件名称（变更记录「变更前」行显示）；未更名 = null。 */
   filePreviousName: string | null;
 };

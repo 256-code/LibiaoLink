@@ -10,6 +10,9 @@ import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
  * 日期笔误（完成早于开始）照原值导入 + 提醒；任务节点无对应按文件原名导入（阶段外 = 临时任务）；
  * 变更阶段映射：实施 → install、发货 → assembly；账号 = 拼音登录名 + 中文名（测试账号加 -test）显示名；
  * 微盘 / 本地路径文件出「需手动导入」清单（表内嵌图随导入挂日报）。
+ * Push 319 追订：变更表「关联」列命中任务描述 → 任务「变更关联」（change_refs）回写；导入的变更没有变更后文件
+ *（源文件在微盘）→ 变更读面 fileId / versionId 为空（前端标「变更后文件待补」）；未解决问题（源表没有处理人字段）
+ * 默认处理人 = 项目经理（工作台「待我处理」可见）；自动建号仅测试环境需要（正式环境用户目录完整、无需建号）。
  */
 
 /** 老表导入单文件上限（前端先挡一道，服务端复检同值）。 */
@@ -41,7 +44,7 @@ export const ImportIssueSchema = z
   .openapi("ImportIssue", { description: "导入提醒（level 三档 + 代码 + 文案 + 行号 / 对象名）" });
 export type ImportIssue = z.infer<typeof ImportIssueSchema>;
 
-/** 账号落位：isNew = 系统里还没有（需先在测试环境建号并登录一次）；false = 已存在，导入时直接挂项目经理 / 负责人。 */
+/** 账号落位：isNew = 系统里还没有（测试环境需先在账号体系建号并登录一次；正式环境用户目录完整、不会出现）；false = 已存在，导入时直接挂项目经理 / 负责人。 */
 export const ImportAccountSchema = z
   .object({
     name: z.string().min(1).max(80).openapi({ description: "源表姓名（去括注）" }),
@@ -49,7 +52,7 @@ export const ImportAccountSchema = z
     displayName: z.string().min(1).max(80).openapi({ description: "显示名（测试账号 = 中文名 + -test；既有账号保持原名）" }),
     isNew: z.boolean().openapi({ description: "true = 本次需新建（面板展示「新建」徽标）" }),
   })
-  .openapi("ImportAccount", { description: "导入涉及的人员账号（只报告，不在导入里创建账号）" });
+  .openapi("ImportAccount", { description: "导入涉及的人员账号（只报告，不在导入里创建账号 —— 缺号仅测试环境需预建；正式环境用户目录完整）" });
 export type ImportAccount = z.infer<typeof ImportAccountSchema>;
 
 /** 需手动导入的文件（老表只写了文件名 / 微盘路径，源文件抓不到）：导入后按清单人工上传。 */
@@ -91,6 +94,7 @@ export const ImportPreviewCountsSchema = z
     tasks: z.number().int().min(0),
     reports: z.number().int().min(0),
     changes: z.number().int().min(0),
+    changesLinked: z.number().int().min(0).openapi({ description: "变更已关联任务数（「关联」列命中任务描述；其余只存变更记录）" }),
     images: z.number().int().min(0).openapi({ description: "表内嵌图总数（提交时一并入文件库并挂日报）" }),
     imagesManual: z.number().int().min(0),
     accountsNew: z.number().int().min(0),
@@ -104,6 +108,7 @@ export const ImportResultCountsSchema = z
     tasks: z.number().int().min(0),
     reports: z.number().int().min(0),
     changes: z.number().int().min(0),
+    changesLinked: z.number().int().min(0).openapi({ description: "变更已关联任务数（「关联」列命中任务描述；其余只存变更记录）" }),
     images: z.number().int().min(0),
     accountsCreated: z.number().int().min(0).openapi({ description: "本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数）" }),
     nodesAdded: z.number().int().min(0),

@@ -9,6 +9,7 @@ import type { ParsedWorkbook, SheetGrid } from "./xlsx.js";
  * - 日期笔误（完成早于开始 / 开始晚于预计完成）照原值导入 + 提醒；日期解析失败留空 + 提醒；
  * - 任务节点：按标题逐字比对节点库（服务层做），这里只出标题与英文名（源表英文列）；
  * - 变更阶段映射：实施 → install、发货 → assembly；x x x 占位 → 标记待补；
+ * - 变更关联：变更管理「关联」列按任务描述匹配（提交时回写任务 change_refs，追加序 = 变更表行序）；任务表「变更关联」（日期）与变更时间核对，对不上出提醒；
  * - 图片：按锚点挂行（日报现场图 col E / 问题图 col I 内嵌图随导入；变更后文件等文件名 → 需手动导入清单）。
  */
 
@@ -42,6 +43,8 @@ export interface LegacyTask {
   ownerRaw: string;
   ownerNames: string[];
   managerName: string | null;
+  /** 任务表「变更关联」（老表写变更日期；提交按变更表「关联」列回写 change_refs，这里保留原值供核对 / 提醒）。 */
+  changeRefRaw: string | null;
 }
 
 export interface LegacyReportIssue {
@@ -107,11 +110,19 @@ export interface LegacyProjectPlacement {
   managerNames: string[];
 }
 
+/** 变更 ↔ 任务关联（变更管理「关联」列命中任务描述）：下标分别对应 parse.changes / parse.tasks。 */
+export interface LegacyChangeLink {
+  changeIndex: number;
+  taskIndex: number;
+}
+
 export interface LegacyParse {
   project: LegacyProjectPlacement;
   tasks: LegacyTask[];
   reports: LegacyReport[];
   changes: LegacyChange[];
+  /** 变更 ↔ 任务关联（变更表「关联」列命中任务描述；提交时回写任务 change_refs）。 */
+  changeLinks: LegacyChangeLink[];
   images: LegacyImage[];
   manualFiles: LegacyManualFile[];
   issues: LegacyIssueSeed[];
@@ -146,6 +157,11 @@ export function clean(value: unknown): string {
 
 function squashSpaces(value: string): string {
   return clean(value).split(" ").map((part) => part.trim()).filter(Boolean).join(" ");
+}
+
+/** 变更关联匹配键（去全部空白 + 小写；中英混排标题的行内空格不参与比对）。 */
+function linkKey(value: string): string {
+  return clean(value).replace(/\s+/g, "").toLowerCase();
 }
 
 function bin(value: unknown): number | null {
@@ -368,6 +384,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
     const progressRaw = cellAt(sheet, row, index, "项目进度");
     const ownerRaw = cellAt(sheet, row, index, "任务负责人");
     const managerRaw = cellAt(sheet, row, index, "项目经理");
+    const changeRefRaw = cellAt(sheet, row, index, "变更关联");
     const plannedStart = parseDateStr(cellAt(sheet, row, index, "开始日期"), baseYear);
     const plannedEnd = parseDateStr(cellAt(sheet, row, index, "预计完成日期"), baseYear);
     const actualEnd = parseDateStr(cellAt(sheet, row, index, "实际完成日期"), baseYear);
@@ -483,6 +500,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
       ownerRaw,
       ownerNames: splitNames(ownerRaw),
       managerName: managerRaw === "" ? null : managerRaw,
+      changeRefRaw: changeRefRaw === "" ? null : changeRefRaw,
     });
   }
 
@@ -624,6 +642,103 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
     }
   }
 
+  // 变更关联（业务口径 2026-10-14「表格中变更关联的字样没有写」）：变更管理「关联」列（多值按逗号 / 顿号拆）
+  // 按任务描述匹配（键 = 去全部空白 + 小写，对「标题+英文名」「标题」「英文名」三串）；命中 → changeLinks
+  //（提交时回写任务 change_refs，追加序 = 变更表行序）。两侧对不上 / 日期不一致出提醒（照常导入，不阻断）。
+  const changeLinks: LegacyChangeLink[] = [];
+  {
+    const taskKeys = tasks.map((task) => {
+      const keys = new Set<string>();
+      for (const text of [task.title + (task.titleEn === null ? "" : task.titleEn), task.title, task.titleEn ?? ""]) {
+        const key = linkKey(text);
+        if (key !== "") keys.add(key);
+      }
+      return keys;
+    });
+    const linkedTasks = new Set<number>();
+    changes.forEach((change, changeIndex) => {
+      if (change.related === null) return;
+      const wanted = change.related
+        .replace(/，|、|；|;/g, ",")
+        .split(",")
+        .map(linkKey)
+        .filter((key) => key !== "");
+      let hit: number | null = null;
+      let ambiguous = false;
+      for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
+        if (!wanted.some((key) => taskKeys[taskIndex]!.has(key))) continue;
+        if (hit === null) hit = taskIndex;
+        else ambiguous = true;
+      }
+      if (hit === null) {
+        issues.push(
+          createIssue(
+            "warning",
+            "CHANGE_RELATED_UNMATCHED",
+            change.row,
+            change.content === "" ? null : change.content,
+            "变更「关联」在任务表找不到对应任务：未写入任务变更关联 —— " + change.related,
+            "The change 关联 value did not match any task title; it was not linked to a task: " + change.related,
+          ),
+        );
+        return;
+      }
+      changeLinks.push({ changeIndex, taskIndex: hit });
+      linkedTasks.add(hit);
+      const task = tasks[hit]!;
+      if (ambiguous) {
+        issues.push(
+          createIssue(
+            "warning",
+            "CHANGE_RELATED_AMBIGUOUS",
+            change.row,
+            task.title,
+            "变更「关联」命中多个任务，已挂到第一个：请核对 —— " + change.related,
+            "The change 关联 value matched multiple tasks; linked to the first one: " + change.related,
+          ),
+        );
+      }
+      const refDate = task.changeRefRaw === null ? null : parseDateStr(task.changeRefRaw, baseYear);
+      if (refDate !== null && change.appliedAt !== null && refDate !== change.appliedAt) {
+        issues.push(
+          createIssue(
+            "warning",
+            "CHANGE_DATE_MISMATCH",
+            task.row,
+            task.title,
+            "「变更关联」日期（" + refDate + "）与变更时间（" + change.appliedAt + "）不一致：已按「关联」列挂接，请核对",
+            "The 变更关联 date (" + refDate + ") differs from the change date (" + change.appliedAt + "); linked by the 关联 column, please verify.",
+          ),
+        );
+      }
+    });
+    tasks.forEach((task, taskIndex) => {
+      if (task.changeRefRaw === null || linkedTasks.has(taskIndex)) return;
+      issues.push(
+        createIssue(
+          "warning",
+          "TASK_CHANGE_REF_UNMATCHED",
+          task.row,
+          task.title,
+          "任务表「变更关联」写了「" + task.changeRefRaw + "」但没匹配到变更记录：未写入变更关联（请核对）",
+          "The task sheet 变更关联 value (" + task.changeRefRaw + ") did not match any change record; nothing was linked (please verify).",
+        ),
+      );
+    });
+    if (changes.length > 0) {
+      const linked = changeLinks.length;
+      issues.push(
+        createIssue(
+          "info",
+          "CHANGE_LINK_SUMMARY",
+          null,
+          null,
+          "变更记录 " + String(changes.length) + " 条：按「关联」列写入任务变更关联 " + String(linked) + " 条；未关联 " + String(changes.length - linked) + " 条（只存记录，不挂任务）",
+          "Change records: " + String(changes.length) + " imported; " + String(linked) + " linked to tasks via the 关联 column; " + String(changes.length - linked) + " unlinked (kept as records only).",
+        ),
+      );
+    }
+  }
   const images: LegacyImage[] = [];
   if (reportSheet !== null) {
     for (const anchor of workbook.anchors) {
@@ -695,6 +810,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
     tasks,
     reports,
     changes,
+    changeLinks,
     images,
     manualFiles,
     issues,

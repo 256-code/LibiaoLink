@@ -61,6 +61,8 @@ export interface ImportReportIssueInsert {
   state: "open" | "in_progress" | "done";
   solution: string | null;
   reporterId: string;
+  /** 处理人（Push 319）：源表没有处理人字段 —— 未解决（open / in_progress）默认 = 项目经理（服务层判定），已完成 = null。 */
+  ownerId: string | null;
   raisedAt: string;
   ownerDepartment: string | null;
 }
@@ -231,7 +233,7 @@ export class ProjectImportRepository {
         state: row.state,
         reporterId: row.reporterId,
         ownerDepartment: row.ownerDepartment,
-        ownerId: null,
+        ownerId: row.ownerId,
         raisedAt: row.raisedAt,
         solution: row.solution === null ? null : row.solution.length > 2000 ? row.solution.slice(0, 2000) : row.solution,
         closedAt: closed ? at : null,
@@ -244,9 +246,9 @@ export class ProjectImportRepository {
     return inserted.map((row) => row.id);
   }
 
-  async insertChangeRequests(tx: DbClient, projectId: string, rows: ImportChangeInsert[], actorId: string, at: Date): Promise<void> {
-    if (rows.length === 0) return;
-    await tx.insert(changeRequests).values(
+  async insertChangeRequests(tx: DbClient, projectId: string, rows: ImportChangeInsert[], actorId: string, at: Date): Promise<string[]> {
+    if (rows.length === 0) return [];
+    const inserted = await tx.insert(changeRequests).values(
       rows.map((row) => ({
         projectId,
         nodeId: null,
@@ -259,7 +261,17 @@ export class ProjectImportRepository {
         appliedAt: row.appliedAt ?? at,
         createdAt: at,
       })),
-    );
+    )
+      .returning({ id: changeRequests.id });
+    return inserted.map((row) => row.id);
+  }
+
+  /** 变更关联回写（Push 319）：把「关联」列命中的变更挂到任务 change_refs（导入的新任务，直接置为本次列表）。 */
+  async attachChangeRefs(tx: DbClient, updates: readonly { taskId: string; changeIds: readonly string[] }[]): Promise<void> {
+    for (const update of updates) {
+      if (update.changeIds.length === 0) continue;
+      await tx.update(tasks).set({ changeRefs: [...update.changeIds] }).where(eq(tasks.id, update.taskId));
+    }
   }
 
   /**

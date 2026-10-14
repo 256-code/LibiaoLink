@@ -65,6 +65,7 @@ export type ProjectImportPreview = {
     tasks: number;
     reports: number;
     changes: number;
+    changesLinked: number;
     images: number;
     imagesManual: number;
     accountsNew: number;
@@ -96,6 +97,7 @@ export type ProjectImportResult = {
     tasks: number;
     reports: number;
     changes: number;
+    changesLinked: number;
     images: number;
     accountsCreated: number;
     nodesAdded: number;

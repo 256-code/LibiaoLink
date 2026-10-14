@@ -306,11 +306,12 @@ server/
 - 权限：**读 = 项目可见即可**（`ProjectAccessGuard` 在入口判定；非成员 / 项目不存在统一 404，防 IDOR）；写路径（关联写入）随 complete 走 `file.upload`。
 - 本卡新增迁移 `0016_file_links.sql`（database 线，lan）：`file_links` + 唯一约束 + 反查索引（只追加；应用角色权限由 `roles/0001` default privileges 自动授予）。
 
-## 老表导入接口（S6·project-import · 老表 Excel 直连导入 · Push 316）
+## 老表导入接口（S6·project-import · 老表 Excel 直连导入 · Push 316 / 319）
 
 - 契约 `shared/src/modules/imports.ts`；实现 `src/modules/project-import/`（controller / service / repository + 解析层 `xlsx.ts` / `legacy.ts` / `people.ts`）；模块口径见 `src/modules/project-import/README.md`。
 - `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）：解析 + 口径校验**不写库**；回预览票据（`previewId` + `expiresAt`，30 分钟 `IMPORT_PREVIEW_TTL_MINUTES`）+ 落位建议 + 将写入条数 + 需手动导入图片 / 节点匹配 / 账号三份清单 + 提醒清单（level 三档，`message` 按 `Accept-Language` 中 / 英）。错误面：400 `IMPORT_FILE_INVALID`（非 `.xlsx`·`.xlsm` / 空 / 超 64 MB `IMPORT_MAX_FILE_BYTES`）、422 `IMPORT_PARSE_FAILED`。
 - `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）：票据状态机（不存在 404 / 非本人 403 / 已提交 400 / 过期 410 `IMPORT_PREVIEW_EXPIRED`）→ 编号占用 409 `PROJECT_CODE_EXISTS` → **单事务**建项目 + 蓝图快照 + 成员 + 补节点（阶段范围内）+ 任务 / 日报 / 问题 / 变更 / 文件（表内嵌图先传对象存储，挂日报 / 问题）+ 审计 + 提醒复述；完工清理源文件 + 项目名翻译预热。
+- **Push 319（老表导入收口 · 业务口径 2026-10-14「变更记录没有导入 还有表格中变更关联的字样没有写」+ 工作台可见性）**：① 提交段 —— 变更管理「关联」列按任务描述匹配（去空白 / 小写；标题+英文名 / 标题 / 英文名）→ 事务内回写 `tasks.change_refs`（追加序 = 变更表行序；提醒 `CHANGE_RELATED_UNMATCHED` / `CHANGE_RELATED_AMBIGUOUS` / `CHANGE_DATE_MISMATCH` / `TASK_CHANGE_REF_UNMATCHED` + 汇总 `CHANGE_LINK_SUMMARY`）；未解决问题（源表无处理人字段）默认 `owner_id` = 项目经理首位（命中不了 = 导入人；done = null）+ info 提醒 `ISSUE_OWNER_FALLBACK` → 出现在项目经理工作台「待我处理」；counts 增 `changesLinked`；② 读面（file 模块）—— 导入遗留变更没有 `file_versions` 行：变更列表 / 详情由内连接改左连接（不再过滤），`fileId` / `versionId` / `versionSeq` 可空、详情 `file` / `version` 给 null（前端「变更后文件待补」）。
 - 门禁：登录 + CSRF + `project.create`（与「新建项目」同权限位）。迁移 `0053_project_imports.sql`（预览票据表 + 两索引）。
 - 本刀服务端 / 契约 / 迁移属 wmj 线，由 px 跨线代记，**请 wmj 复核**。
 

@@ -119,11 +119,11 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
   const applicant = members.find((member) => member.id === applicantId);
   const applicantLabel = applicantHandleText(applicantName, applicant === undefined ? null : applicant.handle);
   /** 「变更文件」展示类型（业务口径「变更文件就是输出文件成果这个类型」）：文件自身 docType 空 → 回退任务输出成果文件。 */
-  const fileTypeText = detail === null ? null : detail.file.docType === null ? deliverableTypes[0] ?? null : detail.file.docType;
+  const fileTypeText = detail === null ? null : detail.file === null ? deliverableTypes[0] ?? null : detail.file.docType === null ? deliverableTypes[0] ?? null : detail.file.docType;
 
   /** 打开「变更后文件」预览（版本态 A4-06；失败灰字 + 可重试）。 */
   const openFilePreview = async () => {
-    if (detail === null || previewBusy) {
+    if (detail === null || detail.file === null || detail.versionId === null || previewBusy) {
       return;
     }
     setPreviewBusy(true);
@@ -134,17 +134,18 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
       setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
+    const fileName = detail.file.name;
     setPreview((previous) => ({
       pane: outcome.kind === "viewer" ? { mode: "viewer", viewer: outcome.viewer } : { mode: "url", url: outcome.url },
-      name: detail.file.name,
-      kind: previewKindOf(detail.file.name) ?? "image",
+      name: fileName,
+      kind: previewKindOf(fileName) ?? "image",
       nonce: previous === null ? 0 : previous.nonce + 1,
     }));
   };
 
   /** 弹内预览「下载原文件」（版本态签名；落盘名随版本对象键扩展名 —— 与抽屉 / 变更记录同口径）。 */
   const downloadPreviewFile = async () => {
-    if (detail === null) {
+    if (detail === null || detail.file === null || detail.versionId === null) {
       return;
     }
     try {
@@ -234,22 +235,34 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                     </span>
                   </DetailRow>
                   <DetailRow kind="check" label={fieldText(locale, "进度")} testKey="progress"><span className="text-zinc-400">—</span></DetailRow>
-                  <DetailRow kind="doc" label={fieldText(locale, "变更后文件版本")} testKey="version">{detail.file.name + "（v" + String(detail.versionSeq) + "）"}</DetailRow>
+                  <DetailRow kind="doc" label={fieldText(locale, "变更后文件版本")} testKey="version">
+                    {detail.file === null || detail.versionSeq === null ? (
+                      <span data-change-modal-file-pending="true" className="text-zinc-400">{t("drawer.history.filePending")}</span>
+                    ) : (
+                      detail.file.name + "（v" + String(detail.versionSeq) + "）"
+                    )}
+                  </DetailRow>
                   <DetailRow kind="file" label={fieldText(locale, "变更后文件")} testKey="after-file">
-                    <button
-                      type="button"
-                      data-change-modal-file-card="true"
-                      data-change-modal-file-open="true"
-                      title={t("drawer.file.previewTitle")}
-                      disabled={previewBusy}
-                      onClick={() => { void openFilePreview(); }}
-                      className="inline-flex w-[120px] flex-col items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 transition hover:border-amber-300 hover:bg-amber-50 disabled:cursor-progress"
-                    >
-                      <FileTypeIcon name={detail.file.name} className="h-6 w-6" />
-                      <span className="line-clamp-2 w-full break-all text-center text-[11px] leading-4 text-zinc-500" title={detail.file.name}>{detail.file.name}</span>
-                    </button>
-                    {previewBusy ? <span className="ml-1 align-middle text-[11px] text-zinc-400">{t("cd.openingPreview")}</span> : null}
-                    {previewNote === null ? null : <span data-change-modal-file-note="true" className="mt-1 block text-[11px] leading-4 text-rose-500">{previewNote}</span>}
+                    {detail.file === null || detail.versionId === null ? (
+                      <span data-change-modal-file-pending="true" className="text-[12px] leading-5 text-zinc-400">{t("drawer.history.filePending")}</span>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          data-change-modal-file-card="true"
+                          data-change-modal-file-open="true"
+                          title={t("drawer.file.previewTitle")}
+                          disabled={previewBusy}
+                          onClick={() => { void openFilePreview(); }}
+                          className="inline-flex w-[120px] flex-col items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 transition hover:border-amber-300 hover:bg-amber-50 disabled:cursor-progress"
+                        >
+                          <FileTypeIcon name={detail.file.name} className="h-6 w-6" />
+                          <span className="line-clamp-2 w-full break-all text-center text-[11px] leading-4 text-zinc-500" title={detail.file.name}>{detail.file.name}</span>
+                        </button>
+                        {previewBusy ? <span className="ml-1 align-middle text-[11px] text-zinc-400">{t("cd.openingPreview")}</span> : null}
+                        {previewNote === null ? null : <span data-change-modal-file-note="true" className="mt-1 block text-[11px] leading-4 text-rose-500">{previewNote}</span>}
+                      </>
+                    )}
                   </DetailRow>
                   <DetailRow kind="link" label={fieldText(locale, "关联")} testKey="links">
                     {linkedTaskTitle === null ? <span className="text-zinc-400">—</span> : onOpenLinkedTask === undefined || onOpenLinkedTask === null ? (

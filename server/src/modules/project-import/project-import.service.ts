@@ -23,7 +23,7 @@ import { TaskNodeRepository } from "../template/index.js";
 import type { TaskNodeRow } from "../template/index.js";
 import { TranslateService } from "../translate/index.js";
 import { convertLegacyWorkbook } from "./legacy.js";
-import type { LegacyChange, LegacyIssueSeed, LegacyManualFile, LegacyParse, LegacyTask } from "./legacy.js";
+import type { LegacyChange, LegacyChangeLink, LegacyIssueSeed, LegacyManualFile, LegacyParse, LegacyTask } from "./legacy.js";
 import { proposeAccount, stripParen } from "./people.js";
 import { ProjectImportRepository } from "./project-import.repository.js";
 import type {
@@ -49,9 +49,13 @@ import type { ParsedWorkbook } from "./xlsx.js";
  * 2. 五档进度 = 0 / 0.25 / 0.5 / 0.75 / 1（进行中封顶 75%；完成日期未填 = 不算完成）；
  * 3. 任务节点：节点库已有一致标题 → 直接挂；未匹配按文件原名导入，addMissingNodes 勾选时补进节点库（仅阶段范围内；
  *    阶段外 = 临时任务 stage_key 为空，不补）；
- * 4. 账号：先登录建号再导入（面板列出 isNew 账号）；提交时账号仍不存在不阻断 —— 项目经理回落导入人（提醒）、
- *    任务负责人留空（提醒）、日报作者回落导入人（提醒）；
- * 5. x x x 占位（变更内容 / 原因）→ 追加「（待补）」标记；需人工补的文件出「需手动导入」清单（不建文件行）。
+ * 4. 账号：只对账不建号 —— 测试环境缺号需先在账号体系建号并登录一次（面板列出 isNew 账号）；正式环境用户目录完整、
+ *    全部直接命中，无需任何建号动作（业务口径 2026-10-14：自动创号仅测试环境需要）。提交时账号仍不存在不阻断 ——
+ *    项目经理回落导入人（提醒）、任务负责人留空（提醒）、日报作者回落导入人（提醒）；
+ *    未解决问题（源表没有处理人字段）默认处理人 = 项目经理（ISSUE_OWNER_FALLBACK），出现在其工作台「待我处理」；
+ * 5. x x x 占位（变更内容 / 原因）→ 追加「（待补）」标记；需人工补的文件出「需手动导入」清单（不建文件行）；
+ * 6. 变更关联：变更表「关联」列命中任务描述 → 提交回写任务 change_refs（追加序 = 变更表行序；任务表「变更关联」
+ *    日期仅核对）；导入的变更没有「变更后文件」（源文件在微盘）—— 变更读面容忍 fileId / versionId 为空（前端标待补）。
  */
 
 /** 提醒文案语言（Accept-Language 取 zh / en；缺省 zh）。 */
@@ -169,6 +173,7 @@ export class ProjectImportService {
       tasks: parse.tasks.length,
       reports: parse.reports.length,
       changes: parse.changes.length,
+      changesLinked: parse.changeLinks.length,
       images: parse.images.length,
       imagesManual: parse.manualFiles.length,
       accountsNew: resolution.accounts.filter((account) => account.isNew).length,
@@ -177,6 +182,10 @@ export class ProjectImportService {
     const extraSeeds: LegacyIssueSeed[] = [];
     if (resolution.unknownNames.length > 0) extraSeeds.push(unknownPeopleSeed(resolution.unknownNames));
     if (skippedImages > 0) extraSeeds.push(imageRowMissingSeed(skippedImages));
+    const unresolvedIssues = parse.reports.filter((report) => report.issue !== null && report.issue.state !== "done").length;
+    if (unresolvedIssues > 0) {
+      extraSeeds.push(issueOwnerFallbackSeed(resolvedManagerName(parse, resolution), unresolvedIssues));
+    }
     const issues: ImportIssue[] = [
       ...parse.issues.map((seed) => renderIssue(seed, input.locale)),
       ...extraSeeds.map((seed) => renderIssue(seed, input.locale)),
@@ -244,6 +253,10 @@ export class ProjectImportService {
       extraSeeds.push(
         managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))),
       );
+    }
+    const unresolvedIssues = parse.reports.filter((report) => report.issue !== null && report.issue.state !== "done").length;
+    if (unresolvedIssues > 0) {
+      extraSeeds.push(issueOwnerFallbackSeed(resolvedManagerName(parse, resolution), unresolvedIssues));
     }
     const unresolvedOwners = new Set<string>();
     const unresolvedAuthors = new Set<string>();
@@ -375,9 +388,10 @@ export class ProjectImportService {
           sortIndex,
         };
       });
-      await this.previews.insertTasks(tx, projectRow.id, taskRows, at);
+      const taskIds = await this.previews.insertTasks(tx, projectRow.id, taskRows, at);
 
-      // 日报 + 问题：作者账号缺失 → 回落导入人（进提醒）；一条日报最多一个问题（老表口径）。
+      // 日报 + 问题：作者账号缺失 → 回落导入人（进提醒）；一条日报最多一个问题（老表口径）；未解决问题（源表没有
+      // 处理人字段）默认处理人 = 项目经理（managerIds 首位）—— 出现在其工作台「待我处理」（业务口径 2026-10-14）。
       const reportRows: ImportReportInsert[] = parse.reports.map((report) => {
         const base = stripParen(report.authorName);
         const authorId = resolution.byName.get(base) ?? null;
@@ -395,6 +409,7 @@ export class ProjectImportService {
       });
       const reportIds = await this.previews.insertReports(tx, projectRow.id, reportRows, at);
       const issueRows: ImportReportIssueInsert[] = [];
+      const unresolvedIssueOwnerId = managerIds[0] ?? actorId;
       parse.reports.forEach((report, index) => {
         if (report.issue === null) return;
         const base = stripParen(report.authorName);
@@ -406,6 +421,7 @@ export class ProjectImportService {
           state: report.issue.state,
           solution: clipNullable(report.issue.solution, TEXT_LIMIT),
           reporterId: reporterId ?? actorId,
+          ownerId: report.issue.state === "done" ? null : unresolvedIssueOwnerId,
           raisedAt: report.reportDate,
           ownerDepartment: null,
         });
@@ -413,7 +429,8 @@ export class ProjectImportService {
       const issueIds = await this.previews.insertReportIssues(tx, projectRow.id, reportIds, issueRows, at);
 
       // 变更：实施 → install / 发货 → assembly（legacy 已映射）；内容 + 原因合并进 reason（库内无内容列），
-      // 占位 x x x 追加「（待补）」标记；变更后文件出「需手动导入」清单（这里不建文件行）。
+      // 占位 x x x 追加「（待补）」标记；变更后文件出「需手动导入」清单（这里不建文件行）；
+      // 变更关联（Push 319）：按 legacy 的「关联」列命中关系回写任务 change_refs（追加序 = 变更表行序）。
       const changeRows: ImportChangeInsert[] = parse.changes.map((change) => ({
         stageKey: change.stageKey,
         appliedAt: change.appliedAt === null ? null : new Date(change.appliedAt + "T00:00:00.000Z"),
@@ -421,7 +438,23 @@ export class ProjectImportService {
         beforeSummary: clipNullable(change.before, TEXT_LIMIT),
         afterSummary: clipNullable(change.after, TEXT_LIMIT),
       }));
-      await this.previews.insertChangeRequests(tx, projectRow.id, changeRows, actorId, at);
+      const changeIds = await this.previews.insertChangeRequests(tx, projectRow.id, changeRows, actorId, at);
+      const changeLinks: LegacyChangeLink[] = parse.changeLinks ?? [];
+      if (changeLinks.length > 0) {
+        const refsByTask = new Map<string, string[]>();
+        for (const link of changeLinks) {
+          const taskId = taskIds[link.taskIndex];
+          const changeId = changeIds[link.changeIndex];
+          if (taskId === undefined || changeId === undefined) continue;
+          const refs = refsByTask.get(taskId) ?? [];
+          if (!refs.includes(changeId)) refs.push(changeId);
+          refsByTask.set(taskId, refs);
+        }
+        await this.previews.attachChangeRefs(
+          tx,
+          [...refsByTask].map(([taskId, refs]) => ({ taskId, changeIds: refs })),
+        );
+      }
 
       // 图片：对象已上传；事务内登记 files + file_versions + file_links（现场图挂日报；问题图随问题转挂 issue 侧）。
       const fileRows: ImportFileInsert[] = imageBuild.plans.map((plan) => ({
@@ -441,6 +474,7 @@ export class ProjectImportService {
         tasks: taskRows.length,
         reports: reportRows.length,
         changes: changeRows.length,
+        changesLinked: changeLinks.length,
         images: fileRows.length,
         accountsCreated: resolution.accounts.length,
         nodesAdded,
@@ -821,6 +855,32 @@ function managerFallbackSeed(names: readonly string[]): LegacyIssueSeed {
       list +
       "): the importer is recorded as project manager. Please correct the member list after import.",
   };
+}
+
+function issueOwnerFallbackSeed(managerName: string, count: number): LegacyIssueSeed {
+  const who = managerName === "" ? "导入人（项目经理未建号，提交会回落）" : "项目经理「" + managerName + "」";
+  return {
+    level: "info",
+    code: "ISSUE_OWNER_FALLBACK",
+    row: null,
+    subject: managerName === "" ? null : managerName,
+    zh: "未解决问题（" + String(count) + " 条）源表没有处理人：默认处理人 = " + who + "（导入后出现在其「待我处理」；可在项目里调整）",
+    en:
+      "Unresolved issues (" +
+      String(count) +
+      ") have no handler in the source sheet: default handler = " +
+      (managerName === "" ? "the importer (manager account not found)" : "project manager " + managerName) +
+      " (they appear in the handler 待我处理 list; adjustable afterwards).",
+  };
+}
+
+/** 未解决问题默认处理人的名字（与提交口径同源）：首个能命中的项目经理姓名；一个都命中不了 = 空串。 */
+function resolvedManagerName(parse: LegacyParse, resolution: AccountResolution): string {
+  for (const name of parse.project.managerNames) {
+    const base = stripParen(name);
+    if (base !== "" && resolution.byName.get(base) !== null) return base;
+  }
+  return "";
 }
 
 function unresolvedOwnersSeed(names: readonly string[]): LegacyIssueSeed {
