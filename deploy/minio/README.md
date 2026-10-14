@@ -14,7 +14,7 @@ ADR-006 要求「阶段 0 必须核实 MinIO 许可与版本并锁定」。核�
 | 官方下载 | `https://dl.min.io/server/minio/release/**`（含 windows / linux 二进制与目录页）**全部 410 Gone** |
 | 上游仓库 | `github.com/minio/minio` 已 **archived**（最后推送 2026-04-24） |
 
-**含义**：ADR-006 写的切换触发条件「MinIO 许可或功能不满足」**已触发且更强** —— **上游归档、官方分发渠道下线**，社区版不再有安全更新。wmj 已据此定案（[PR #96](https://github.com/256-code/LibiaoLink/pull/96) / Push 126，评审 lan / px）：接口层不变，一期实现改为**可替换绑定** —— 沙箱继续用本目录 pinned 的版本，生产按候选顺序在 **M8 生产部署形态验证前**关闭（责任 px 运维 + lan 平台；关闭验收 = `storage:init -- --check` + `storage:it` 在目标实现上全绿）。**关闭验收已达成（2026-10-14）**：生产形态（本机 MinIO 单节点、本地构建镜像）上 `storage:init --check` 通过、`storage:it` 24/24 全绿、`readyz` 全绿（px 记录；待 lan 复核）。生产接入形态（2026-10-14）：S3 走 TLS https 门面 `https://test-pm.libiaorobot.com:9443`（Nginx 9443 → `minio:9000`，Host 原样透传保 SigV4）；`storage:it` 24/24 于 https 门面复跑通过。
+**含义**：ADR-006 写的切换触发条件「MinIO 许可或功能不满足」**已触发且更强** —— **上游归档、官方分发渠道下线**，社区版不再有安全更新。wmj 已据此定案（[PR #96](https://github.com/256-code/LibiaoLink/pull/96) / Push 126，评审 lan / px）：接口层不变，一期实现改为**可替换绑定** —— 沙箱继续用本目录 pinned 的版本，生产按候选顺序在 **M8 生产部署形态验证前**关闭（责任 px 运维 + lan 平台；关闭验收 = `storage:init -- --check` + `storage:it` 在目标实现上全绿）。**关闭验收已达成（2026-10-14）**：生产形态（本机 MinIO 单节点、本地构建镜像）上 `storage:init --check` 通过、`storage:it` 24/24 全绿、`readyz` 全绿（px 记录；待 lan 复核）。生产接入形态（2026-10-14）：S3 走 TLS https **同源**门面 `https://test-pm.libiaorobot.com`（443 `location /libiaolink/` = 桶名 → `minio:9000`；`proxy_pass` 不重写 / Host 原样透传保 SigV4；客户端网络仅放行 22/80/443，9443 / 9000 实测被拦）；`storage:it` 24/24 于同源门面复跑通过，开发机真实网络预签名 PUT / GET / DELETE 全绿；9443 保留为内网备用门面。
 
 候选顺序（接口层只依赖 S3 协议，**换实现不动调用代码**，见 `server/src/storage/README.md`）：
 
@@ -60,6 +60,6 @@ npm run storage:it      # 真机回放（24 项断言）：暂存键建会话 �
 ## 与生产部署的差距（不在本沙箱内）
 
 - 独立数据盘、每日增量异地同步、定期抽检恢复 —— ADR-006 要求，属运维线（px）与生产环境落地；
-- **预签名 URL 的 host 必须对客户端可达**：沙箱用 `127.0.0.1`，生产要按内网 / 外网两种形态用真实网络验证后回写——**生产已回写（2026-10-14）**：`test-pm.libiaorobot.com:9443`（真实网络 + 浏览器形态，`storage:it` host 断言 24/24 通过）；
+- **预签名 URL 的 host 必须对客户端可达**：沙箱用 `127.0.0.1`，生产要按内网 / 外网两种形态用真实网络验证后回写——**生产已回写（2026-10-14）**：`test-pm.libiaorobot.com`（443 同源门面 `/libiaolink/`；真实网络 + 浏览器形态，`storage:it` host 断言 24/24 通过；9443 备用形式 `test-pm.libiaorobot.com:9443` 仅内网直连可用）；
 - 桶策略只允许签名访问（`storage:init` 会做一次匿名 GET 断言）；
 - 本次**未**配置整桶对象过期：草稿 30 天清理按 `files.purge_after` 由 worker 驱动（M4-02），存储侧只兜底未完成分片，避免误删定档文件。
