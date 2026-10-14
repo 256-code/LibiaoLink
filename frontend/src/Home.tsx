@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import { keepLiveOrder } from "./liveSync";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { ApiError } from "./api";
@@ -10,6 +11,7 @@ import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
 import type { FacetOption } from "./components/CategoryFilterSidebar";
 import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
+import { ImportProjectPanel } from "./components/ImportProjectPanel";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
 import { Toast } from "./components/Toast";
@@ -127,6 +129,18 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const deleteFilterConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteFilter !== null);
   // 无建项目权限时点「新建项目」的提示（Push 173；与 savedFilterError 同款琥珀提示条）
   const [createHint, setCreateHint] = useState<string | null>(null);
+  // 「导入项目」（Push 316 待推 · 直连 API 导入）：文件选择 + 面板开合由本页持有 —— 面板是页内大屏（不动路由不刷新页面），
+  // 选中文件即打开；关闭 / 导入完成清空。同一文件重复选也要能重开（onChange 里把 value 复位）。
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const onImportFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
+    const picked = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (picked === null) {
+      return;
+    }
+    setImportFile(picked);
+  };
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
   const [filterOpen, setFilterOpen] = useState(() => {
     if (initialRouteRestored()) {
@@ -547,6 +561,40 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             {keyword === "" && !hasFilters ? t("home.count.total", { n: total }) : t("home.count.found", { n: total })}
           </span>
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
+            {/* 导入项目（Push 316 待推）：新建项目左侧 —— 点开原生文件选择（.xlsx / .xlsm），选完在页内大屏面板里解析 / 校验 / 导入 */}
+            <button
+              type="button"
+              data-import-project=""
+              aria-disabled={canCreateProject ? undefined : true}
+              title={canCreateProject ? t("home.import.title") : noCreatePermission}
+              onClick={() => {
+                if (!canCreateProject) {
+                  setCreateHint(noCreatePermission);
+                  return;
+                }
+                importInputRef.current?.click();
+              }}
+              className={
+                "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 " +
+                (canCreateProject
+                  ? "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 active:bg-zinc-200"
+                  : "cursor-not-allowed border border-transparent bg-zinc-200 text-zinc-400")
+              }
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M12 15V4M12 4L8 8M12 4l4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              {t("home.import")}
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              data-import-file-input=""
+              onChange={onImportFileChange}
+            />
             <button
               type="button"
               aria-disabled={canCreateProject ? undefined : true}
@@ -716,6 +764,22 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           <p className="mt-3 text-xs text-zinc-400">{t("home.token.expires", { time: expiresText })}</p>
         </details>
       </main>
+
+      {importFile === null ? null : (
+        <ImportProjectPanel
+          file={importFile}
+          dicts={dicts}
+          onReselect={() => {
+            importInputRef.current?.click();
+          }}
+          onClose={() => {
+            setImportFile(null);
+          }}
+          onImported={() => {
+            setReloadToken((value) => value + 1);
+          }}
+        />
+      )}
 
       {isCreateOpen && (
         <ProjectModal

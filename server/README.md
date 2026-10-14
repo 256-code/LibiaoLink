@@ -32,6 +32,7 @@ server/
     modules/view/      # 视图（个人 / 公共 · A1-03 · M2-06 首刀 · Push 168）：视图 CRUD（筛选 / 列配置 / 排序 / 分组，仅保存配置）+ 默认视图互斥 + 归属（个人视图他人 404 / 公共视图非创建者 403）（见 src/modules/view/README.md）
     modules/notify/    # 站内信投递内核（S7·outbox · S7-4 · j1 / M5-04：首刀 Push 178 → SSE Push 211 → 稍后提醒 Push 212 → 收口 Push 213；M5-03-1 企微适配器内核 Push 215）：outbox `notify.message` 消费（幂等落行 / 同期合并 / 免打扰次日补发 / 每人每日上限）+ 收件箱读面（C5-01/02/03）+ 通知偏好 + 渠道护栏（非 inbox 确定性 dead —— M5-03 前不静默当站内信 · Push 180，企微适配器内核（错误码分类 / token 单飞 / 限速桶 / HTTP 客户端 + 智能机器人长连接客户端（M5-03-2 · Push 223：订阅 / 心跳 / 重连 / 推送 / 回调分发 —— webhook 面退役）；群绑定读写 + notify.group 消费 + 回调 ingest 随 M5-03-2 接线段落地（Push 224）；`wecom_app` 应用消息 + C5-04 降级 + 告警出口随 M5-03-3 落地（Push 226）；见 src/modules/notify/README.md）
     modules/follow/    # 关注订阅（A1-15 · M2-06 首刀 · Push 168）：关注 / 取关 / 批量 / 我的关注清单（幂等 · 逐条计数 · 归档不可新关注）（见 src/modules/follow/README.md）
+    modules/project-import/  # 老表 Excel 直连导入（Push 316 · 业务口径 2026-10-14「直连 API 导入」）：preview（解析预览票据 30 分钟，不写库）+ commit（单事务建项目写全量数据：任务 / 日报 / 问题 / 变更 / 图片）+ 审计 + 资源变更登记（见 src/modules/project-import/README.md）
     outbox/               # Outbox worker 运行时（S7·outbox · S7-1 / S7-3 · Push 174 / 177）：dispatcher（按主题独立成批领取 + 消费 + 重试退避 + dead）/ 主题策略 / 死信与积压告警探针 / done 行保留期清理 / scheduler（cron 领取 + last_run_at 补发 + 单活锁 · schedule 纯函数求值）/ 规则接线（automation-subjects 主体读库 + automation-wiring：RULE_EVENT_TOPICS 事件消费 + automation-schedule.job → notify.message 生产 · 冷启动保护 / 渠道护栏 · Push 180）（见 src/outbox/index.ts）
   scripts/check-boundaries.mjs   # 依赖方向规则检查
   scripts/check-db-schema.mjs    # Drizzle schema 与实际库漂移检查
@@ -88,12 +89,12 @@ server/
 ## 模块结构约定
 
 - 四层：controller（HTTP）/ service（用例）/ repository（数据访问）/ events（同事务写 Outbox），对外只经 `index.ts`。
-- 19 个模块目录（每个 README 标注类型 / 职责 / 主责 / 预留接口）；identity / project / blueprint / node / task / permission / admin / calendar / automation / template / workspace / file / report-issue / stakeholder / view / follow / notify 已落地，dashboard / search 仍为占位 README。
+- 20 个模块目录（每个 README 标注类型 / 职责 / 主责 / 预留接口）；identity / project / blueprint / node / task / permission / admin / calendar / automation / template / workspace / file / report-issue / stakeholder / view / follow / notify / project-import 已落地，dashboard / search 仍为占位 README。
 - DTO 一律用 `@libiaolink/contracts` 的 Zod schema（配 `ZodValidationPipe`），禁止另起一套类型。
 
 | 类型 | 模块 | 主责 |
 |---|---|---|
-| 领域（domain） | identity、project、blueprint、node、task、report-issue、stakeholder、view、follow | wmj |
+| 领域（domain） | identity、project、blueprint、node、task、report-issue、stakeholder、view、follow、project-import（老表导入 · Push 316） | wmj |
 | 领域（domain · 横切） | permission（权限策略层 · h6）、calendar（工作日历 · h8） | wmj |
 | 平台（platform） | file、notify、search、dashboard | lan |
 | 平台（platform） | automation、admin（字典 / 审计 · h7 落地） | wmj |
@@ -305,6 +306,14 @@ server/
 - 权限：**读 = 项目可见即可**（`ProjectAccessGuard` 在入口判定；非成员 / 项目不存在统一 404，防 IDOR）；写路径（关联写入）随 complete 走 `file.upload`。
 - 本卡新增迁移 `0016_file_links.sql`（database 线，lan）：`file_links` + 唯一约束 + 反查索引（只追加；应用角色权限由 `roles/0001` default privileges 自动授予）。
 
+## 老表导入接口（S6·project-import · 老表 Excel 直连导入 · Push 316）
+
+- 契约 `shared/src/modules/imports.ts`；实现 `src/modules/project-import/`（controller / service / repository + 解析层 `xlsx.ts` / `legacy.ts` / `people.ts`）；模块口径见 `src/modules/project-import/README.md`。
+- `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）：解析 + 口径校验**不写库**；回预览票据（`previewId` + `expiresAt`，30 分钟 `IMPORT_PREVIEW_TTL_MINUTES`）+ 落位建议 + 将写入条数 + 需手动导入图片 / 节点匹配 / 账号三份清单 + 提醒清单（level 三档，`message` 按 `Accept-Language` 中 / 英）。错误面：400 `IMPORT_FILE_INVALID`（非 `.xlsx`·`.xlsm` / 空 / 超 64 MB `IMPORT_MAX_FILE_BYTES`）、422 `IMPORT_PARSE_FAILED`。
+- `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）：票据状态机（不存在 404 / 非本人 403 / 已提交 400 / 过期 410 `IMPORT_PREVIEW_EXPIRED`）→ 编号占用 409 `PROJECT_CODE_EXISTS` → **单事务**建项目 + 蓝图快照 + 成员 + 补节点（阶段范围内）+ 任务 / 日报 / 问题 / 变更 / 文件（表内嵌图先传对象存储，挂日报 / 问题）+ 审计 + 提醒复述；完工清理源文件 + 项目名翻译预热。
+- 门禁：登录 + CSRF + `project.create`（与「新建项目」同权限位）。迁移 `0053_project_imports.sql`（预览票据表 + 两索引）。
+- 本刀服务端 / 契约 / 迁移属 wmj 线，由 px 跨线代记，**请 wmj 复核**。
+
 ## 日报与问题接口（S6·report-issue · M6-01 ~ M6-03：日报填报与回写 / 问题闭环 + M6-01 收口 A7-01 / A7-05）
 
 - 契约 `shared/src/modules/reports.ts` / `issues.ts`（OpenAPI tags = reports / issues）；实现 `src/modules/report-issue/`（双控制器 + service / repository / rules 三层 + `index.ts` 出口 + README）。
@@ -421,6 +430,8 @@ server/
 
 - S7-3 调度测试（`test/schedule-rules.test.ts` + `test/scheduler.test.ts` · Push 177 · 新增 **22 例**）：调度规则（cron 五段解析 `*` / 列表 / 区间 / 步进（含单值 `N/n`）与非法即抛；`nextFireAfter` 上海业务日推进 / 周 7→0 / 日与周 OR 语义 / 扫描上限 null；`enumerateFireTimes` 封顶 2000 截断；`planCatchup` 超跨度收窄 + skipped 区间）；调度器（空注册表不触库；单活锁拿不到跳过；窗口 = `last_run_at` / `run_at - 1ms` 补发执行；产出与 `last_run_at` / `run_at` 推进同事务 + `job_runs.executed` 留痕；超跨度 `skipped` 留痕；失败累计到顶 `failed`；无生产者 `releaseClaim` 只存不跑）—— **本片后全量 702 例 / 50 文件**。
 - 通知投递测试（`test/notify-delivery.test.ts` **10 例** + `test/notify-service.test.ts` **15 例** · S7·outbox · S7-4 · Push 178 · 新增 **25 例**）：投递纯函数（HH:MM 解析与格式化 / 免打扰跨零点判定与次日结束点 / 上海日界 / 每日窗口起点 / 合并键回退 / 载荷解析与拒绝 / 投递计划四分支 = 即时 / 合并 / 静默排期 / 上限排期）；服务层（消费 → done / 非法载荷 dead / 落行幂等 / 合并命中与计数 / 免打扰排期 / 上限排期与次日重置 / flush 到期补投 / 收件箱清单与未读角标 / 标记与 404 / 全部已读 / 偏好缺省与三态回显 / 局部更新）；另 `test/schema-literals-parity.test.ts` +2 例（通知类型 / 状态 ↔ 库侧 CHECK 同值）、`test/outbox-policy.test.ts` 白名单清单更新（preview.job + notify.message）。—— **本片（S7-4）后全量 729 例 / 52 文件**；**S7-3 护栏收口（Push 179）后全量 745 例 / 53 文件**。
+
+- 老表导入测试（`test/project-import.test.ts` · Push 316 · 服务端属 wmj 线，px 跨线代记）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点链路）—— **9 例**：解析口径（进度五档 / 完成日期未填封顶 75% / 日期笔误 / 状态归一 / 节点匹配与 `nameEn`）/ zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` 与 `sortIndex` / 图片挂问题 / 缺号回落 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）。
 
 ## PoC-9 回放（h5 · S6·PoC-9）
 

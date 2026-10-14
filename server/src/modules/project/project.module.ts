@@ -43,6 +43,7 @@ import { ProjectService } from "./project.service.js";
     ArchiveRepository,
     ArchiveService,
   ],
-  exports: [ProjectService, ProjectMemberService],
+  // Push 316：project-import（老表导入）复用项目插入 / 成员名册写口 —— 两个仓库随本模块导出（同事务建项目 + upsert 项目经理）。
+  exports: [ProjectService, ProjectMemberService, ProjectRepository, ProjectMemberRepository, FlowService],
 })
 export class ProjectModule {}

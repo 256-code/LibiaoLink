@@ -1,0 +1,65 @@
+
+import { Body, Controller, Headers, HttpCode, Post, Req, UseGuards } from "@nestjs/common";
+import type { IncomingMessage } from "node:http";
+import { IMPORT_MAX_FILE_BYTES, ProjectImportCommitBodySchema, z } from "@libiaolink/contracts";
+import type { ProjectImportPreview, ProjectImportResult } from "@libiaolink/contracts";
+import { readMultipartFile } from "../../common/http/multipart.js";
+import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
+import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
+import { ProjectImportService } from "./project-import.service.js";
+import type { ImportLocale } from "./project-import.service.js";
+
+type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
+
+/**
+ * 老表导入接口（直连 API 导入 · 业务口径 2026-10-14）：项目空间「导入项目」按钮 → 大屏面板四步（选择 / 解析 / 确认 / 完成）
+ * 走这两条接口；契约 shared/src/modules/imports.ts（前端 frontend/src/importApi.ts 已接线）。
+ * - preview：multipart/form-data（字段 file；.xlsx / .xlsm，≤ 64 MB）—— **不用 Nest FileInterceptor / multer**
+ *   （服务端无该依赖，且这是一进一出的整包解析）：由 common/http/multipart.ts 直接收流，超限 / 非 multipart 400；
+ * - commit：JSON（previewId + 落位确认）—— 单事务建项目并写入全量数据（预检失败 409 / 410 / 422 见契约错误码）。
+ * 门禁：登录 + CSRF + project.create（与「新建项目」同权限位）；预览票据只认创建人本人（他人提交 403）。
+ * 语言：按 Accept-Language 出提醒文案（zh 缺省 / en）—— 前端 apiFetch 已带该头。
+ */
+@Controller("api/v1/project-imports")
+@UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
+export class ProjectImportController {
+  constructor(private readonly imports: ProjectImportService) {}
+
+  /** 解析预览（不写业务库）：返回票据（30 分钟）+ 落位建议 + 须手动导入清单 + 节点 / 账号清单 + 提醒。 */
+  @Post("preview")
+  @HttpCode(200)
+  @RequirePermission("project.create")
+  async preview(
+    @Req() request: IncomingMessage,
+    @Headers("content-type") contentType: string | undefined,
+    @Headers("accept-language") acceptLanguage: string | undefined,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectImportPreview> {
+    const part = await readMultipartFile(request, contentType ?? null, "file", IMPORT_MAX_FILE_BYTES);
+    return this.imports.preview({
+      bytes: part.bytes,
+      fileName: part.fileName,
+      actorId,
+      locale: localeOf(acceptLanguage),
+    });
+  }
+
+  /** 确认导入（单事务）：建项目 + 蓝图快照 + 成员名册 + 任务 / 日报 / 问题 / 变更 / 图片；返回完成页数据。 */
+  @Post("commit")
+  @HttpCode(200)
+  @RequirePermission("project.create")
+  commit(
+    @Body(new ZodValidationPipe(ProjectImportCommitBodySchema)) body: ProjectImportCommitBody,
+    @Headers("accept-language") acceptLanguage: string | undefined,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectImportResult> {
+    return this.imports.commit(body, actorId, localeOf(acceptLanguage));
+  }
+}
+
+/** Accept-Language → 提醒文案语言（zh 缺省；en / en-US 等一律 en）。 */
+function localeOf(header: string | undefined): ImportLocale {
+  if (header === undefined) return "zh";
+  return header.toLowerCase().trim().startsWith("en") ? "en" : "zh";
+}
