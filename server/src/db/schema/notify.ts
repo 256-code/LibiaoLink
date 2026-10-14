@@ -10,6 +10,9 @@
  * 0046 · M5-03-2 追加：wecom_groups（项目群绑定 · P5 智能机器人 + chatid）/ notify_deliveries
  * （外部渠道投递留痕 · C2-07 + C5-03）/ notify_rate_counters（固定窗口限速计数 · C2-10）；
  * 表口径见 database/migrations/0046_wecom_group_notify_delivery.sql。
+ *
+ * 0048 · M5-03-5-2 追加：wecom_aibot_dm_activations（单聊激活表 —— 单聊 aibot 主动推送前置）/ notify_deliveries.channel CHECK 扩值（增 wecom_aibot · 保留旧值）；
+ * 表口径见 database/migrations/0048_wecom_aibot_dm_activation.sql。
  */
 import { sql } from "drizzle-orm";
 import {
@@ -184,9 +187,36 @@ export const wecomGroups = pgTable(
 );
 
 /**
+ * 单聊激活表（0048 · M5-03-5-2 · 单聊 aibot 主动推送前置）：用户向机器人发过消息 = 激活（enter_chat
+ * 等事件不激活）；wecom_userid = 回调 from.userid 原文唯一；user_id 按 users.username 反查回填（可空）；
+ * first_activated_at 首次激活后不再覆盖，last_message_at 随 upsert 刷新；updated_at 由应用写入（无触发器）。
+ */
+export const wecomAibotDmActivations = pgTable(
+  "wecom_aibot_dm_activations",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    /** 企微 userid（回调 from.userid 原文；与 users.username 同源反查）。 */
+    wecomUserid: text("wecom_userid").notNull(),
+    /** 反查回填的本地用户（可空 —— 未匹配 / 尚未回填；用户不物理删，故无级联口径）。 */
+    userId: uuid("user_id").references(() => users.id),
+    /** 首次激活时刻（upsert 不覆盖）。 */
+    firstActivatedAt: timestamp("first_activated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 最近一条消息时刻（upsert 刷新）。 */
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_wecom_aibot_dm_activations_userid").on(table.wecomUserid),
+    check("ck_wecom_aibot_dm_activations_userid", sql`${table.wecomUserid} ~ '^[A-Za-z0-9_.@-]{1,64}$'`),
+  ],
+);
+
+/**
  * 外部渠道投递留痕（C2-07 / C5-03 共用底座 · 0046）：每次尝试一行；state = 处置三分类映射 ——
  * sent（API 受理成功）/ failed（retryable，将退避重试）/ deferred（rate_limited，延期重排、不消耗重试次数）/
  * dead（permanent 或重试到顶）；outbox_id 指向来源事件（outbox 行清理后置 null，留档不回删）。
+ * 0048 扩 channel 值：增 wecom_aibot（单聊 aibot 投递留痕；保留旧值，见迁移 0048）。
  */
 export const notifyDeliveries = pgTable(
   "notify_deliveries",
@@ -195,7 +225,7 @@ export const notifyDeliveries = pgTable(
     outboxId: bigint("outbox_id", { mode: "number" }).references(() => outboxEvents.id, { onDelete: "set null" }),
     /** 投递渠道（NOTIFY_CHANNELS 的企微 / 邮件交集；inbox 不落本表 —— 收件箱行即留档）。 */
     channel: text("channel").notNull(),
-    /** 投递目标全文（wecom_app = userid / wecom_group = chatid；读面掩码，库内全文供排障）。 */
+    /** 投递目标全文（wecom_app = userid / wecom_aibot = userid / wecom_group = chatid；读面掩码，库内全文供排障）。 */
     target: text("target").notNull(),
     /** 本次尝试状态（sent / failed / deferred / dead —— 见 0046 迁移头注）。 */
     state: text("state").notNull(),
@@ -210,7 +240,7 @@ export const notifyDeliveries = pgTable(
   (table) => [
     index("ix_notify_deliveries_outbox").on(table.outboxId, table.id.desc()),
     index("ix_notify_deliveries_recent").on(table.channel, table.createdAt.desc()),
-    check("ck_notify_deliveries_channel", sql`${table.channel} in ('wecom_app', 'wecom_group', 'email')`),
+    check("ck_notify_deliveries_channel", sql`${table.channel} in ('wecom_app', 'wecom_aibot', 'wecom_group', 'email')`),
     check("ck_notify_deliveries_state", sql`${table.state} in ('sent', 'failed', 'deferred', 'dead')`),
     check("ck_notify_deliveries_attempts", sql`${table.attempts} >= 0`),
     check("ck_notify_deliveries_sent", sql`(${table.state} = 'sent') = (${table.sentAt} is not null)`),
