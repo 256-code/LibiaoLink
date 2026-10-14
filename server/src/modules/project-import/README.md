@@ -1,0 +1,59 @@
+# project-import 模块（老表 Excel 直连导入：preview 解析预览票据 + commit 单事务建项目写全量 · Push 316）
+
+| 字段 | 内容 |
+|---|---|
+| 类型 | 领域模块（domain · 老表导入） |
+| 职责 | 项目空间「导入项目」按钮的服务端落点：xlsx 解析 → 老表口径转换 → 预览报告（不写库）→ 30 分钟票据 → 确认导入（单事务建项目 + 任务 / 日报 / 问题 / 变更 / 图片 + 审计） |
+| 主责 | wmj（后端 A：领域）；本刀由 px 跨线代记落实现（Push 316），**请 wmj 复核** |
+| 预留对外接口 | `ProjectImportService`（preview / commit）+ `ProjectImportRepository`（票据 / 批量写入） |
+| 依据 | 业务口径 2026-10-14（「导入项目」按钮 + 大屏面板 +「直连 API 导入」）；契约 `shared/src/modules/imports.ts`；《前端功能需求》§一.10 / §3.9；迁移 `0053_project_imports.sql` |
+
+## 文件
+
+```text
+project-import.controller.ts  # HTTP 面：POST /api/v1/project-imports/preview（multipart 收流，不引 multer）+ /commit（JSON）；SessionGuard + CsrfGuard + ProjectAccessGuard + RequirePermission("project.create")；Accept-Language → zh / en 文案
+project-import.service.ts     # 口径编排：preview = 文件闸 → 解析 + 转换 → 账号对账 + 节点归并 → 源文件留档（imports/<previewId>/source.<ext>）→ 票据；commit = 票据状态机 → 编号占用 → 图片先传对象存储 → 单事务写入（项目 / 蓝图快照 / 成员 / 补节点 / 任务 / 日报 / 问题 / 变更 / 文件）→ 审计 → 完工清理源文件 + 翻译预热
+project-import.repository.ts  # 数据访问：project_import_previews 票据（插入 / 取回 / 状态机 / 过期）与批量写入（task_nodes / project_members / tasks / reports / report_issues / change_requests / files；写路径由服务层开事务传 tx）
+project-import.module.ts      # DI 装配：identity / permission / admin / project / template / translate；对象存储走全局 ObjectStorage 端口
+xlsx.ts                       # 解析层（零依赖）：zip 解包（store / deflate）+ sheet XML → 二维格 + 内嵌图锚点（cell → media）；支持 .xlsx / .xlsm
+legacy.ts                     # 转换层（纯函数）：老表 → 标准导入模型 + 提醒清单（进度五档 / 完成日期口径 / 日期笔误 / 节点拼装 / 变更阶段映射 / 图片清单；message 中英双语）
+people.ts                     # 人员注册表：姓名 → 拼音登录名 / 显示名（-test）建议；PEOPLE_REGISTRY + proposeAccount + stripParen
+index.ts                      # 唯一公开出口（跨模块只允许 import 本文件；ADR-010 / g6）
+```
+
+## 已落接口
+
+- `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）—— 解析 + 口径校验，**不写库**；返回预览票据（30 分钟）+ 落位建议 + 将写入条数 + 三份清单（需手动导入图片 / 节点匹配 / 账号）+ 提醒清单。
+  错误面：400 `IMPORT_FILE_INVALID`（缺文件名 / 非 .xlsx·.xlsm / 空文件 / 超 64 MB）· 401 未登录 · 403 缺 `project.create` · 422 `IMPORT_PARSE_FAILED`（老表结构不对 / 不是 xlsx）。
+- `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）—— 单事务建项目并写入全量数据（失败整批回滚，不许半量落库）。
+  错误面：400 `VALIDATION_FAILED`（参数非法 / 地区空 / 票据已提交）· 403 票据非本人 · 404 票据不存在 · 409 `PROJECT_CODE_EXISTS`（编号占用）· 410 `IMPORT_PREVIEW_EXPIRED`（过期 / 源文件已清理）。
+
+## 口径铁律（与前端 / 老表转换工具一致）
+
+- 进度：完成日期未填 = 不算完成（进行中封顶 75%）；五档 0 / 0.25 / 0.5 / 0.75 / 1 就近取档；待开始归零。
+- 日期笔误（完成早于开始 / 开始晚于预计完成）照原值导入 + 提醒（`DATE_ORDER` / `DATE_ORDER_END`）。
+- `tasks.on_time` = 源表「是否按时交付」原值（按时交付 true / 延期交付 false / 空 null；与日期推导不一致 → `ONTIME_MISMATCH` 提醒，不改值）。
+- 任务节点：无对应按文件原名导入；`nameEn` = 节点库 `task_nodes.title_en` ?? 源表英文列；勾选补库且阶段范围内才写 `task_nodes`（阶段外按临时任务、不补库）。
+- 变更：阶段映射 实施 → `install`、发货 → `assembly`；内容 / 原因合并落库（占位 = 内容待补 / 原因待补）。
+- 图片：表内嵌图 → 文件库（挂日报 / 问题）；微盘 / 本地路径 → 「需手动导入」清单（导入时不再抓取）。
+- 账号：只对账不建号（登录名 = 拼音、显示名 = 中文名 + `-test`、初始口令 123456 属账号体系口径）；缺号 → `ACCOUNT_MISSING`，项目经理 / 负责人 / 日报作者缺号回落导入人并提醒（`MANAGER_FALLBACK` / `OWNER_MISSING` / `AUTHOR_MISSING`）。
+- 地区：`commit.region` 必填（面板选，201 国口径）；项目类型按源表关键字识别（AIRROB → 飞箱）可留空。
+- 提醒文案按 `Accept-Language` 出中 / 英（zh 缺省）。
+
+## 上游（直接复用，不重复造）
+
+- `project`：项目插入（预留主键 uuid）/ 蓝图快照 `FlowService.importSnapshot` + `setStageKey` / 成员名册 `ProjectMemberRepository`。
+- `template`：任务节点库读（匹配 / `title_en`）与补库写。
+- `admin`：审计留痕（项目一条 + 每个新节点各一条）。
+- `translate`：项目名后台翻译预热（`translate.warmup`）。
+- 对象存储：全局 ObjectStorage 端口（源文件 `imports/<previewId>/source.<ext>`；图片按 `buildObjectKey` 规范键）。
+
+## 测试
+
+- `server/test/project-import.test.ts`（9 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）。
+- `server/test/resource-change.test.ts`：commit 的资源变更登记（projects / tasks / reports / issues / files / templates）。
+
+## 待落地
+
+- 真机端到端（本地库 + MINIO）与生产上线演练（迁移 0053 实执行）；
+- 「账号新建」由账号体系落地（SSO 登录创建）——预览面板的「新建」徽标只是提示，本模块不建号。
