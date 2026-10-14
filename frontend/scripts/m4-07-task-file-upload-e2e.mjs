@@ -52,6 +52,9 @@
  *      （版本态 A4-06：变更前点预览 = 历史版本预览浮层，④u7b / ④u8b / ④u8c）；「详情」仍出全文（阶段 / 原因 / 前后摘要 / 申请人 / 审批状态，④u8）；
  *      ③ 变更回写任务「变更关联」= 「变更文件所属任务」∪ R01 成果类型命中（去重）—— 无成果类型文件（doc_type 空、
  *      前端上传口默认口径）的变更也必回写所属任务（④v4 端到端：任务 change_refs 含该变更）；
+ *   ⑯a 变更「变更前 / 变更后」可填图（Push 314 · 业务口径「这个变更要可以填图片」）：两栏文本摘要下挂与日报同款贴图区
+ *      （选图 / 粘贴 → 站内文件库直传；各 ≤ 30 张）——选图各传一张真 PNG → 提交随会话落 change_requests
+ *      before_summary_file_ids / after_summary_file_ids → 变更记录详情与「变更管理」弹窗按 id 出缩略图（④u3c / ④u4 / ④u6b / ④u8d）；
  *   ⑰ 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行不可选但不再死路 ——
  *      行尾「定档」→ 就地二次确认（锁版 + 任务一并锁定）→ POST /files/{id}/finalize → 该行转「已定档」随即可选、
  *      自动选中 + 绿字指引（④v 段：阻断说明 / 二次确认 / 定档转可选 + 写面 files.status=final、tasks.finalized_at 非空）；
@@ -209,6 +212,10 @@ writeFileSync(fileAPath, "LibiaoLink 回放 A " + fixtureCode + "\n", "utf8");
 writeFileSync(fileBPath, "LibiaoLink 回放 B " + fixtureCode + "\n", "utf8");
 // 真图片（1×1 红点 PNG）：验「图片行缩略图 → 大图预览」；预览产物由 worker + converter 生成。
 writeFileSync(filePngPath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
+// 第二张真图（1×1 透明点 PNG，内容与 A 不同；Push 314 变更摘要附图用）——两张图各自沉淀一条附件域文件记录。
+const filePng2Name = "回放-现场图-B.png";
+const filePng2Path = join(fileDir, filePng2Name);
+writeFileSync(filePng2Path, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64"));
 // 真 PDF（结构合法的最小单页文档）：验「PDF 点预览 → 内置查看器浮层」（PDF 源直通产物）。
 writeFileSync(filePdfPath, minimalPdf("LibiaoLink replay pdf " + fixtureCode));
 
@@ -1112,6 +1119,18 @@ const afterText = "调整后：新尺寸";
 await fillField("[data-change-cause]", causeText);
 await fillField("[data-change-before]", beforeText);
 await fillField("[data-change-after]", afterText);
+// ④u3c（Push 314 · 业务口径「这个变更要可以填图片」）：变更前 / 变更后各挂一张摘要附图（选图入口 → 贴图区直传文件库）；
+// 等两张图都上传落定（贴图区各 1 张缩略图 + 无「上传中」标记 + 库面文件行在）再提交。
+const changePhotoPickers = await ev("(function(){var b=document.querySelector(" + j("[data-field=change-before]") + ");var a=document.querySelector(" + j("[data-field=change-after]") + ");return {before:b!==null,after:a!==null};})()");
+await setFileInput("[data-field=change-before]", filePngPath);
+await setFileInput("[data-field=change-after]", filePng2Path);
+const changePhotosSettled = await waitFor("(function(){var b=document.querySelector(" + j("[data-attachment-strip=change-before]") + ");var a=document.querySelector(" + j("[data-attachment-strip=change-after]") + ");if(b===null||a===null){return false;}if(b.querySelectorAll(" + j("[data-attachment-thumb]") + ").length!==1||a.querySelectorAll(" + j("[data-attachment-thumb]") + ").length!==1){return false;}return b.innerText.indexOf(" + j("上传中") + ")<0&&a.innerText.indexOf(" + j("上传中") + ")<0;})()", 30000);
+const changeBeforeFileId = (await db.query("select id from files where project_id = $1 and task_id is null and name = $2 order by created_at desc limit 1", [projectId, filePngName])).rows[0]?.id ?? null;
+const changeAfterFileId = (await db.query("select id from files where project_id = $1 and task_id is null and name = $2 order by created_at desc limit 1", [projectId, filePng2Name])).rows[0]?.id ?? null;
+check("④u3c 变更「变更前 / 变更后」可填图（Push 314）：与日报同款贴图区（选图入口）各传一张真 PNG → 站内文件库落两条附件域记录 + 贴图区缩略图（上传中标记已清）",
+  changePhotoPickers !== null && changePhotoPickers.before === true && changePhotoPickers.after === true && changePhotosSettled === true && changeBeforeFileId !== null && changeAfterFileId !== null && changeBeforeFileId !== changeAfterFileId,
+  JSON.stringify({ pickers: changePhotoPickers, settled: changePhotosSettled, before: changeBeforeFileId, after: changeAfterFileId }));
+await shotDrawerClip("m4-07-drawer-change-photos.png");
 await setFileInput("[data-change-upload-input=true]", changeAfterPath);
 const pickedName = await waitFor("(function(){var n=document.querySelector(" + j("[data-change-file]") + ");return n!==null&&n.textContent.indexOf(" + j(changeAfterName) + ")>=0;})()", 6000);
 const expectedReason = contentText + "；变更原因：" + causeText;
@@ -1120,20 +1139,24 @@ const changeLanded = await waitForAsync(async () => {
   const rows = (await db.query("select status from files where id = $1", [dUpload.fileId])).rows;
   return rows.length === 1 && rows[0].status === "changed";
 }, 30000);
-const changeRow = (await db.query("select id, reason, before_summary, after_summary, stage_key, status, applied_by from change_requests where project_id = $1", [projectId])).rows[0];
+const changeRow = (await db.query("select id, reason, before_summary, after_summary, before_summary_file_ids, after_summary_file_ids, stage_key, status, applied_by from change_requests where project_id = $1", [projectId])).rows[0];
 const dVersions = (await db.query("select seq, change_request_id, object_key from file_versions where file_id = $1 order by seq", [dUpload.fileId])).rows;
 const dFileRow = (await db.query("select name from files where id = $1", [dUpload.fileId])).rows[0];
 const task3Refs = (await db.query("select change_refs from tasks where id = $1", [task3Id])).rows[0].change_refs;
 // Push 256「替换的效果」：完成变更 = 文件更名为变更选择的文件（base 名 + 扩展名全替换）；读面回捞更名前名称。
 const dDetailApi = changeRow === undefined ? null : await api("/api/v1/change-requests/" + changeRow.id);
-check("④u4 提交变更（申请即通过）：files.status=changed + 变更记录（内容+原因合并 / 前后摘要 / 阶段 design / status=applied / 申请人）+ 版本 v2 挂 change_request_id + R01 回写任务变更关联 + 替换效果（name/扩展名 = 变更选择：files.name 更名 + 新版本对象键 .pdf + 读面 filePreviousName = 更名前）",
+check("④u4 提交变更（申请即通过）：files.status=changed + 变更记录（内容+原因合并 / 前后摘要 / 阶段 design / status=applied / 申请人）+ 版本 v2 挂 change_request_id + R01 回写任务变更关联 + 替换效果（name/扩展名 = 变更选择：files.name 更名 + 新版本对象键 .pdf + 读面 filePreviousName = 更名前 + 摘要附图 before/after file id 落库）",
   pickedName === true && submitPoint === true && changeLanded === true
   && changeRow !== undefined && changeRow.reason === expectedReason && changeRow.before_summary === beforeText && changeRow.after_summary === afterText
+  && Array.isArray(changeRow.before_summary_file_ids) && changeRow.before_summary_file_ids.length === 1 && changeRow.before_summary_file_ids[0] === changeBeforeFileId
+  && Array.isArray(changeRow.after_summary_file_ids) && changeRow.after_summary_file_ids.length === 1 && changeRow.after_summary_file_ids[0] === changeAfterFileId
   && changeRow.stage_key === "design" && changeRow.status === "applied" && changeRow.applied_by === userRow.id
   && dVersions.length === 2 && Number(dVersions[1].seq) === 2 && dVersions[1].change_request_id === changeRow.id
   && String(dVersions[1].object_key).slice(-4) === ".pdf" && String(dVersions[0].object_key).slice(-4) === ".txt"
   && dFileRow !== undefined && dFileRow.name === changeAfterName
   && dDetailApi !== null && dDetailApi.status === 200 && dDetailApi.json.file.name === changeAfterName && dDetailApi.json.filePreviousName === changedTargetName
+  && Array.isArray(dDetailApi.json.beforeSummaryFileIds) && dDetailApi.json.beforeSummaryFileIds[0] === changeBeforeFileId
+  && Array.isArray(dDetailApi.json.afterSummaryFileIds) && dDetailApi.json.afterSummaryFileIds[0] === changeAfterFileId
   && Array.isArray(task3Refs) && task3Refs.indexOf(changeRow.id) >= 0,
   JSON.stringify({ change: { reason: changeRow === undefined ? null : changeRow.reason, stage: changeRow === undefined ? null : changeRow.stage_key }, file: dFileRow, keys: dVersions.map((v) => v.object_key), detail: dDetailApi === null ? null : { name: dDetailApi.json === null ? null : dDetailApi.json.file.name, prev: dDetailApi.json === null ? null : dDetailApi.json.filePreviousName }, refs: task3Refs }));
 const doneShown = await waitFor("document.querySelector(" + j("[data-change-done]") + ")!==null", 15000);
@@ -1155,6 +1178,10 @@ const linkPoint = await clickScrolled(DRAWER + " [data-change-link-open]");
 // 等详情取回（大日期行 = 详情就绪标记；加载中只有「加载中…」）再读行。
 const modalShown = await waitFor("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");return m!==null&&m.querySelector(" + j("[data-change-modal-date]") + ")!==null;})()", 15000);
 const modalInfo = modalShown === true ? await ev("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");if(m===null){return null;}var row=function(k){var n=m.querySelector(\"[data-change-modal-row=\\\"\"+k+\"\\\"]\");return n===null?null:n.innerText;};var h=m.querySelector(\"header\");var d=m.querySelector(" + j("[data-change-modal-date]") + ");var dt=m.querySelector(" + j("[data-change-modal-doc-type]") + ");return {head:h===null?null:h.innerText,date:d===null?null:d.textContent.trim(),docType:dt===null?null:dt.textContent.trim(),stage:row(\"stage\"),content:row(\"content\"),cause:row(\"cause\"),applicant:row(\"applicant\"),writer:row(\"writer\"),version:row(\"version\"),file:row(\"after-file\"),link:row(\"links\"),card:m.querySelector(" + j("[data-change-modal-file-card]") + ")!==null};})()") : null;
+// ④u6b2（Push 314）：弹窗「变更前 / 变更后」行 = 摘要文本 + 摘要附图缩略图（各 1 张；懒取签名后出图）。
+const modalSummaryThumbs = await waitFor("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");if(m===null){return false;}return m.querySelectorAll(" + j("[data-change-modal-row=before] [data-attachment-thumb]") + ").length===1&&m.querySelectorAll(" + j("[data-change-modal-row=after] [data-attachment-thumb]") + ").length===1;})()", 20000);
+check("④u6b2 变更管理弹窗「变更前 / 变更后」出摘要附图缩略图（各 1 张 · Push 314）", modalSummaryThumbs === true, String(modalSummaryThumbs));
+
 check("④u6b 点「变更关联」= 居中「变更管理」详情弹窗（来自 ▦变更管理 / 大日期 / 变更文件=输出成果文件类型 CAD图纸 / 阶段=设计开发 / 内容+原因 / 申请人=潘兴 / 变更后文件版本=变更名（v2） / 文件卡 / 关联=本任务）",
   linkPoint === true && modalShown === true && modalInfo !== null && modalInfo !== undefined
   && String(modalInfo.head).indexOf("来自") >= 0 && String(modalInfo.head).indexOf("变更管理") >= 0 && String(modalInfo.date).indexOf("/") >= 0
@@ -1250,6 +1277,10 @@ check("④u8 点「详情」按需取全文（13 列读面）：变更后文件 
   && String(itemDetailText).indexOf("潘兴") >= 0 && String(itemDetailText).indexOf("已通过") >= 0,
   JSON.stringify({ clicked: detailOpenPoint, shown: itemDetailShown, detail: String(itemDetailText).slice(0, 220), page: String(historyText).slice(0, 120) }));
 await shotDrawerClip("m4-07-drawer-history.png");
+
+// ④u8d（Push 314）：展开的变更详情里「变更前 / 变更后」摘要附图 = 各 1 张缩略图（懒取预览签名后出图）。
+const historySummaryThumbs = await waitFor("(function(){var p=document.querySelector(" + j("[data-drawer-page=history]") + ");if(p===null){return false;}return p.querySelectorAll(" + j("[data-change-item-detail] [data-attachment-strip=change-before] [data-attachment-thumb]") + ").length===1&&p.querySelectorAll(" + j("[data-change-item-detail] [data-attachment-strip=change-after] [data-attachment-thumb]") + ").length===1;})()", 20000);
+check("④u8d 变更记录详情「变更前 / 变更后」出摘要附图缩略图（各 1 张 · Push 314）", historySummaryThumbs === true, String(historySummaryThumbs));
 
 // ④u8b（Push 255 · 业务口径「文件可以预览在变更里面」）：变更记录里的「变更前」文件可预览 —— 版本态预览（A4-06 历史版本）；
 // 点「预览」→ 查看器浮层打开且抽屉仍在；Esc 先关浮层、抽屉（变更记录页）仍在。
@@ -1445,7 +1476,7 @@ if (cellBox !== null && cellBox !== undefined) {
 
 // ---------- ⑥ 收尾：purge 三份文件 → 物理删临时项目 → 撤销会话 → 零残留 ----------
 const purgeResult = await purgeProjectFiles(projectId);
-check("⑤a 八份回放文件（含已回收的 B / PDF、定档的 C、已变更的 D、先定档用例的草图与任务定档后变更的目标）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 8 && purgeResult.purged === 8, JSON.stringify(purgeResult));
+check("⑤a 十份回放文件（含已回收的 B / PDF、定档的 C、已变更的 D、先定档用例的草图与任务定档后变更的目标、变更摘要附图两张）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 10 && purgeResult.purged === 10, JSON.stringify(purgeResult));
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
 check("⑤b 临时项目物理删（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));

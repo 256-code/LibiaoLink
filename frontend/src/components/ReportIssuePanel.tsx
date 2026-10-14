@@ -1002,7 +1002,7 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
  *  约 128×96 大图瓦片、多张自动折行、只出图不带文件名 —— 业务样 = 图 2；名字放 title 提示）。
  *  Push 207 再加 md（40×40 紧凑缩略图、只出图不带文件名 —— 业务样 = 图五；Push 217 起「问题追踪」表改用 lg，
  *  现用于「问题看板」卡片与问题详情抽屉的贴图区）。 */
-function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemove = false }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg"; /** Push 224 续：移除图片二次确认（只开在抽屉口径 —— 抽屉里 × 是即时落库的，业务口径「移除图片要加二次确认」；表单 / 编辑弹窗里的删除仍是一下即摘，保存时才落库）。 */ confirmRemove?: boolean }) {
+export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemove = false }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg"; /** Push 224 续：移除图片二次确认（只开在抽屉口径 —— 抽屉里 × 是即时落库的，业务口径「移除图片要加二次确认」；表单 / 编辑弹窗里的删除仍是一下即摘，保存时才落库）。 */ confirmRemove?: boolean }) {
   const t = useT();
   const isLarge = size === "lg";
   /** 列表里的紧凑缩略图档（40×40、名字进 title）。 */
@@ -1126,7 +1126,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
  *  两个贴图区同在一张表单时，Ctrl+V 只投给**最近点过**的那一个（armed 态在左半上可见）。
  *  Push 205：「当前问题附图」加**前置开关**（业务口径「先填发现的问题 才能填另外三个」）—— disabled 时整卡灰底 / 灰字、
  *  两半都点不开（左半按钮 disabled、粘贴落点不可聚焦、文件框 disabled、文档级粘贴监听不挂）。 */
-function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card", confirmRemove = false }: { projectId: string; field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact"; /** Push 224 续：移除图片二次确认 —— 仅抽屉两处开启（× 即时落库，先出确认条）。 */ confirmRemove?: boolean }) {
+export function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card", confirmRemove = false }: { projectId: string; field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact"; /** Push 224 续：移除图片二次确认 —— 仅抽屉两处开启（× 即时落库，先出确认条）。 */ confirmRemove?: boolean }) {
   const t = useT();
   /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
   const [armed, setArmed] = useState(false);

@@ -88,6 +88,8 @@ export const ChangeRequestSchema = z
     reason: z.string().openapi({ description: "变更原因（必填）" }),
     beforeSummary: z.string().nullable().openapi({ description: "变更前摘要" }),
     afterSummary: z.string().nullable().openapi({ description: "变更后摘要" }),
+    beforeSummaryFileIds: z.array(UuidSchema).openapi({ description: "变更前摘要附图（文件 id 有序；Push 314 变更前后可填图）" }),
+    afterSummaryFileIds: z.array(UuidSchema).openapi({ description: "变更后摘要附图（文件 id 有序；Push 314 变更前后可填图）" }),
     status: ChangeStatusSchema,
     appliedBy: UuidSchema,
     appliedAt: DateTimeSchema,
@@ -128,6 +130,8 @@ export const ChangeIntentBodySchema = z
     reason: z.string().min(1).max(1000).openapi({ description: "变更原因（必填；无变更后文件不允许提交）" }),
     beforeSummary: z.string().max(2000).optional(),
     afterSummary: z.string().max(2000).optional(),
+    beforeSummaryFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "变更前摘要附图（文件 id 有序，≤ 30；须为本项目未回收文件，否则 400 VALIDATION_FAILED）" }),
+    afterSummaryFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "变更后摘要附图（文件 id 有序，≤ 30；同左口径）" }),
     stageKey: StageKeySchema.optional(),
   })
   .openapi("ChangeIntentBody", { description: "变更申请字段（随上传会话提交，完成上传时同事务生效）" });

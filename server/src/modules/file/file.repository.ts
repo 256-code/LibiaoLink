@@ -58,6 +58,9 @@ export interface ChangeRequestJoinedRow {
   beforeSummary: string | null;
   afterSummary: string | null;
   status: string;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；迁移 0050 —— 随变更申请提交，读面按 id 取预览签名）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   appliedBy: string;
   appliedAt: Date;
   createdAt: Date;
@@ -101,6 +104,9 @@ export interface ChangeRequestInsertInput {
   beforeSummary: string | null;
   afterSummary: string | null;
   appliedBy: string;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；迁移 0050）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   appliedAt: Date;
   createdAt: Date;
 }
@@ -268,6 +274,17 @@ export class FileRepository {
     const rows = await client.select().from(files).where(eq(files.id, fileId)).limit(1);
     return rows[0] ?? null;
   }
+  /** Push 314：变更前 / 变更后摘要附图校验用（按 id 批量取 id / 项目 / 状态；归属与回收判定在服务层）。 */
+  async listSummaryFileBriefs(ids: readonly string[], client: DbClient = this.database.db): Promise<Array<{ id: string; projectId: string; status: string }>> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) {
+      return [];
+    }
+    return client
+      .select({ id: files.id, projectId: files.projectId, status: files.status })
+      .from(files)
+      .where(inArray(files.id, unique));
+  }
 
   /** 行锁：complete / 后续定档路径用（同一文件的版本号分配串行化）。 */
   async lockFile(tx: DbTransaction, fileId: string): Promise<FileRow | null> {
@@ -333,6 +350,8 @@ export class FileRepository {
         reason: input.reason,
         beforeSummary: input.beforeSummary,
         afterSummary: input.afterSummary,
+        beforeSummaryFileIds: input.beforeSummaryFileIds,
+        afterSummaryFileIds: input.afterSummaryFileIds,
         status: "applied",
         appliedBy: input.appliedBy,
         appliedAt: input.appliedAt,
@@ -703,6 +722,8 @@ const CHANGE_REQUEST_SELECT = {
   reason: changeRequests.reason,
   beforeSummary: changeRequests.beforeSummary,
   afterSummary: changeRequests.afterSummary,
+  beforeSummaryFileIds: changeRequests.beforeSummaryFileIds,
+  afterSummaryFileIds: changeRequests.afterSummaryFileIds,
   status: changeRequests.status,
   appliedBy: changeRequests.appliedBy,
   appliedAt: changeRequests.appliedAt,

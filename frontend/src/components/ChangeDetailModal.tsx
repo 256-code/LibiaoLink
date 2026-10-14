@@ -17,6 +17,7 @@ import { lockBodyScroll } from "../scrollLock";
 import { stageNameOf } from "../taskApi";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { PhotoStrip } from "./ReportIssuePanel";
 import { useFocusTrap } from "./useFocusTrap";
 import { fieldText, stageText, useLocale, useT, type Locale } from "../i18n";
 
@@ -207,8 +208,18 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                     )}
                   </DetailRow>
                   <DetailRow kind="doc" label={fieldText(locale, "变更内容描述")} testKey="content">{textOrDash(split.content)}</DetailRow>
-                  <DetailRow kind="image" label={fieldText(locale, "变更前")} testKey="before">{textOrDash(detail.beforeSummary)}</DetailRow>
-                  <DetailRow kind="image" label={fieldText(locale, "变更后")} testKey="after">{textOrDash(detail.afterSummary)}</DetailRow>
+                  <DetailRow kind="image" label={fieldText(locale, "变更前")} testKey="before">
+                    <span className="block">{textOrDash(detail.beforeSummary)}</span>
+                    {detail.beforeSummaryFileIds.length === 0 ? null : (
+                      <PhotoStrip strip="change-modal-before" size="md" items={detail.beforeSummaryFileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }))} />
+                    )}
+                  </DetailRow>
+                  <DetailRow kind="image" label={fieldText(locale, "变更后")} testKey="after">
+                    <span className="block">{textOrDash(detail.afterSummary)}</span>
+                    {detail.afterSummaryFileIds.length === 0 ? null : (
+                      <PhotoStrip strip="change-modal-after" size="md" items={detail.afterSummaryFileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }))} />
+                    )}
+                  </DetailRow>
                   <DetailRow kind="doc" label={fieldText(locale, "变更原因")} testKey="cause">{textOrDash(split.cause)}</DetailRow>
                   <DetailRow kind="person" label={fieldText(locale, "变更申请人")} testKey="applicant">
                     <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-700" title={applicantId}>
