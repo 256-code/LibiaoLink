@@ -106,13 +106,13 @@ docker compose exec -T postgres psql -U postgres -d libiaolink -c "\du"
 docker compose --profile tools pull tools
 ```
 
-迁移（以 `libiaolink_migrator` 身份；当前 0001~0049）：
+迁移（以 `libiaolink_migrator` 身份；当前 0001~0051）：
 
 ```bash
 bash scripts/db-migrate.sh
 ```
 
-- 复跑幂等：再跑一次应输出「已执行 49 个迁移，无漂移」；
+- 复跑幂等：再跑一次应输出「已执行 50 个迁移，无漂移」；
 - `bash scripts/db-migrate.sh --dry-run` 只列出待执行，不改库；
 - 首次运行会在命名卷 `libiaolink-prod-tools-node-modules` 里 `npm ci`（不污染宿主机 `database/`）；慢网可换源：`NPM_REGISTRY=https://registry.npmmirror.com bash scripts/db-migrate.sh`。
 
@@ -307,3 +307,4 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 | v1.17 | 2026-10-14 | 翻译规整补「句首大写」（Push 311 · 业务口径「句首大写规整 做」）：`translate.text.ts` 新增 `capitalizeSentenceStart`（小写开头 → 首字母大写；iPhone / eBay / pH 类品牌词形态不误伤；数字 / 标点 / 已大写幂等；占位符 Xq…Y 不受影响）；dist 重传解包 + `chmod -R a+rX` + api / worker `--force-recreate` 均 healthy；容器内探针：部署产物直测 6/6（「in dire straits」→「In dire straits」/ iPhone / eBay / 数字开头 / 已大写 / 全大写各 1 例）+ 真实网关实翻 3/3 正常（均句首大写）；无 env / 契约变化 | px |
 | v1.18 | 2026-10-14 | SPA 更新部署（Push 312：日报贴图区「粘贴」的 Chrome「Blocked aria-hidden」控制台告警修复）：`frontend/dist` 重新构建 → tar 增量上传解包 + `chmod -R u=rwX,go=rX`；旧哈希资源清理 4 个；实测站点根 200 / 新 JS 200（sha256 `83e4f5b6…` 与本地构建一致）/ CSS 200 / `/healthz` 200 / `/readyz` 200；§8 补实测行（流程沿用 v1.11，无口径变化） | px |
 | v1.19 | 2026-10-14 | 默认外观改档部署（Push 313：「所有人 背景=适中 + 无水印」默认值 + 迁移 `0049` 存量回填 + 甘特「全部」不出任务列表）：同步迁移 `0048`（lan 线 · 已在 main；服务器此前至 `0047`）+ `0049` → `db-migrate.sh` 实执行（23 ms / 6 ms）+ 复跑无漂移；服务器 DB 核对 `prefs` 分布 5/5 行 medium/false；server / shared dist 干净替换重传 + `chmod -R a+rX` + api / worker `--force-recreate`（5 容器 healthy）；`frontend/dist` tar 增量上传解包 + 旧哈希清理 2 个；实测站点根 200 / 新 JS 200（sha256 `3add9c49…` 与本地一致）/ `/healthz` 200 / `/readyz` 200；§6 迁移口径同步（49 个） | px |
+| v1.20 | 2026-10-14 | 地区字典对齐部署（Push 314：region 种子改 201 国标准清单 + 迁移 `0051` 清理旧 8 条区域占位）：`database/` 同步（`0051` + `dicts.mjs`）→ `db-migrate.sh` 实执行 `0051`（4 ms）→ 复跑「已执行 50 个迁移，无漂移」（本包未含平行刀 0050）→ `db-seed.sh` 六种子全 0 变更（测试环境已先行重写、region 已 201 —— `0051` 为 0 行 no-op、种子全 in sync）；DB 核对 region = 201 / 占位 0 / 英国 920 · 美国 1640 · 中国 470 · 新西兰 2010；站点根 / `/healthz` / `/readyz` 200（公网 `test-pm.libiaorobot.com/healthz` 200）；§6 迁移口径同步（50 个） | px |
