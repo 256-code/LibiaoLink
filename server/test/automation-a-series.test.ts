@@ -109,7 +109,7 @@ describe("A01 日报应填未填提醒（工作日 19:30 · 个人提醒双渠�
     ]);
     expect(report.messages).toHaveLength(2);
     const a01 = report.messages.filter((message) => message.ruleCode === "A01");
-    expect(a01.map((message) => message.channel)).toEqual(["inbox", "wecom_app"]);
+    expect(a01.map((message) => message.channel)).toEqual(["inbox", "wecom_aibot"]);
     for (const message of a01) {
       expect(message.title).toBe("请及时填写今日日报");
       expect(message.body).toBe("你今天还有日报未提交：临港数据中心请尽快填写，辛苦啦！");

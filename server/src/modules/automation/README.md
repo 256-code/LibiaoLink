@@ -35,6 +35,7 @@
 - **规则来源** `listEnabledRules()`：一期 = `BUILTIN_RULES` 过滤 `enabled`（异步签名，M5-06 换读表实现不变）；「缺省禁用」= 接线层未注册 job / 未调用入口，引擎不读 env。
 - **主体映射器**（纯函数，输入 = 领域快照，读库在接线层；字段口径唯一来源 = `docs/rules/A01-A03-A14-扩展规则文案.md` 字段表）：`toReportMemberSubject`（A01，收件人 `report.member`）/ `toProjectDaySubject`（A02，`project.group`）/ `toTodoSubject`（A14，`rule.members`；`entityId` 可覆盖 —— 多提醒对象按成员展开时编入成员 id，保证幂等键不串人）；`toIssueSubject`（A03）随处理时限删除下线（Push 215）。
 - **契约配套**（wmj 承接 · 本切片复核）：`shared/src/modules/notifications.ts` 的 `NotifyMessagePayload` 增 `channel`（复用 `NOTIFY_CHANNELS`，**可选、缺省 inbox**）——非 inbox 值在 M5-03 落地前由投递层按确定性失败收口（dead + 告警），不得静默当站内信投递。
+- **契约追加（M5-03-5-1 契约段 · Push 235 · lan 代记请 wmj 复核）**：`NOTIFY_CHANNELS` 增 **`wecom_aibot`**（企微智能机器人 · 单聊单发；`wecom_app` 保留备用通道）；R02 / R07 / A01 / A14 单聊动作渠道值 `wecom_app` → `wecom_aibot`（模板码保名 —— `R02_WECOM` / `R07_APP` / `A14_APP` / `A01_WECOM_MERGED`）；`MERGED_TEMPLATE_SPECS` 增 `A01|wecom_aibot` 键；产出层接线前按未落地渠道跳过（warn + `channelSkipped`），随 M5-03-5-4；生成物零漂移（`wecom_aibot` 不入 OpenAPI 产出面 —— 载荷 schema 先例）。
 
 ## 边界与后续
 

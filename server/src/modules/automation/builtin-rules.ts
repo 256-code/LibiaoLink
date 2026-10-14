@@ -6,6 +6,7 @@
  * 说明：R01 无通知动作（落点 = 变更生效事务内同事务回写 tasks.change_refs，见 M4-04），故不在引擎规则集内；
  *   其余规则为引擎可执行规则：R02 / R06 事件型（主体 = 任务），R03 / R04 / R05 / R07 任务调度型，
  *   A01 / A02 / A14 主体调度型（主体类型见 BUILTIN_RULE_SUBJECT_KINDS）；A03 随处理时限（due_at）删除下线（Push 215 / A3-14）。
+ * 变更（M5-03-5 契约段 · 2026-10-14 · ADR-033）：R02 / R07 / A01 / A14 单聊动作渠道 `wecom_app` → `wecom_aibot`（自建应用保留备用 · 回退 = 渠道值回切）；产出接线随 M5-03-5-4。
  */
 import type { AutomationMessageTemplate, AutomationRule } from "@libiaolink/contracts";
 import type { ReplaySubjectKind } from "./automation.rules.js";
@@ -95,7 +96,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     ],
     actions: [
       { kind: "notification", channel: "inbox", recipient: "task.owner_or_project_manager", template: "R02_INBOX" },
-      { kind: "notify", channel: "wecom_app", recipient: "task.owner_or_project_manager", template: "R02_WECOM" },
+      { kind: "notify", channel: "wecom_aibot", recipient: "task.owner_or_project_manager", template: "R02_WECOM" },
     ],
     version: 1,
   },
@@ -152,7 +153,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
       { field: "task.urgency", op: "in", value: ["高", "中"] },
     ],
     actions: [
-      { kind: "notify", channel: "wecom_app", recipient: "task.owner", template: "R07_APP", groupBy: ["task.owner_id"] },
+      { kind: "notify", channel: "wecom_aibot", recipient: "task.owner", template: "R07_APP", groupBy: ["task.owner_id"] },
     ],
     version: 1,
   },
@@ -167,7 +168,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     ],
     actions: [
       { kind: "notification", channel: "inbox", recipient: "report.member", template: "A01_INBOX_MERGED", groupBy: ["report.user_id"] },
-      { kind: "notify", channel: "wecom_app", recipient: "report.member", template: "A01_WECOM_MERGED", groupBy: ["report.user_id"] },
+      { kind: "notify", channel: "wecom_aibot", recipient: "report.member", template: "A01_WECOM_MERGED", groupBy: ["report.user_id"] },
     ],
     version: 1,
   },
@@ -188,7 +189,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     conditions: [{ field: "todo.status", op: "ne", value: "done" }],
     actions: [
       { kind: "notification", channel: "inbox", recipient: "rule.members", template: "A14_INBOX" },
-      { kind: "notify", channel: "wecom_app", recipient: "rule.members", template: "A14_APP" },
+      { kind: "notify", channel: "wecom_aibot", recipient: "rule.members", template: "A14_APP" },
     ],
     version: 1,
   },
@@ -254,6 +255,7 @@ export const MERGED_TEMPLATE_SPECS: Readonly<Record<string, MergedTemplateSpec>>
   R07: { template: "R07_APP_MERGED", listVariable: "任务清单", listField: "task.title" },
   "A01|inbox": { template: "A01_INBOX_MERGED", listVariable: "项目清单", listField: "project.name" },
   "A01|wecom_app": { template: "A01_WECOM_MERGED", listVariable: "项目清单", listField: "project.name" },
+  "A01|wecom_aibot": { template: "A01_WECOM_MERGED", listVariable: "项目清单", listField: "project.name" },
 };
 
 /** 合并文案查表：rule|channel 优先、回退 rule 级；无登记 = 不换文案（仅收件人粒度幂等）。 */
