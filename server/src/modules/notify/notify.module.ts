@@ -6,6 +6,8 @@ import { PermissionModule } from "../permission/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { NotifyAppRepository } from "./notify.app.repository.js";
 import { NotifyAppService } from "./notify.app.service.js";
+import { NotifyDmRepository } from "./notify.dm.repository.js";
+import { NotifyDmService } from "./notify.dm.service.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyGroupService } from "./notify.group.service.js";
 import { NotifyController } from "./notify.controller.js";
@@ -30,6 +32,9 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
  * `WecomAibotClient` 由工厂装配（api 侧构造不建连；worker 侧入口显式 `start()`）。
  * 应用消息（M5-03-3）：`NotifyAppService` 消费 `notify.message` 的 channel=wecom_app 分支（OutboxModule 路由）；
  * `WecomClient`（自建应用）由工厂装配，限速计数同走 `PgRateWindowStore`。
+ * 单聊 aibot（M5-03-5-3 实现段）：`NotifyDmService` 消费 `notify.message` 的 channel=wecom_aibot 分支
+ * （发送面 = 长连接 `sendUserMarkdown` · 限速 kind `single` · 激活表读 / 回填 · 846607 分流 + C5-04 降级；
+ * 生产路由 / 产出接线 / worker 回调分流随 M5-03-5-4 —— 见执行计划 §4）。
  */
 @Module({
   imports: [IdentityModule, PermissionModule],
@@ -45,6 +50,8 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     NotifyGroupService,
     NotifyAppRepository,
     NotifyAppService,
+    NotifyDmRepository,
+    NotifyDmService,
     PgRateWindowStore,
     {
       // 群通道长连接客户端（M5-03-2 接线段）：构造不建连（start() 由 worker 启动流程显式调用）；
@@ -63,6 +70,6 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     },
     ClockService,
   ],
-  exports: [NotifyService, NotifyGroupService, NotifyAppService, WecomAibotClient, WecomClient, RESOURCE_CHANGE_SINK],
+  exports: [NotifyService, NotifyGroupService, NotifyAppService, NotifyDmService, WecomAibotClient, WecomClient, RESOURCE_CHANGE_SINK],
 })
 export class NotifyModule {}
