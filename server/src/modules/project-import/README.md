@@ -1,4 +1,4 @@
-# project-import 模块（老表 Excel 直连导入：preview 解析预览票据 + commit 单事务建项目写全量 · Push 316 / 319）
+# project-import 模块（老表 Excel 直连导入：preview 解析预览票据 + commit 单事务建项目写全量 · Push 316 / 319 / 321）
 
 | 字段 | 内容 |
 |---|---|
@@ -26,7 +26,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）—— 解析 + 口径校验，**不写库**；返回预览票据（30 分钟）+ 落位建议 + 将写入条数 + 三份清单（需手动导入图片 / 节点匹配 / 账号）+ 提醒清单。
   错误面：400 `IMPORT_FILE_INVALID`（缺文件名 / 非 .xlsx·.xlsm / 空文件 / 超 64 MB）· 401 未登录 · 403 缺 `project.create` · 422 `IMPORT_PARSE_FAILED`（老表结构不对 / 不是 xlsx）。
 - `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）—— 单事务建项目并写入全量数据（失败整批回滚，不许半量落库）。
-  错误面：400 `VALIDATION_FAILED`（参数非法 / 地区空 / 票据已提交）· 403 票据非本人 · 404 票据不存在 · 409 `PROJECT_CODE_EXISTS`（编号占用）· 410 `IMPORT_PREVIEW_EXPIRED`（过期 / 源文件已清理）。
+  错误面：400 `VALIDATION_FAILED`（参数非法 / 地区空 / 票据已提交）· 403 票据非本人 · 404 票据不存在 · 409 `PROJECT_CODE_EXISTS`（编号占用）· 410 `IMPORT_PREVIEW_EXPIRED`（过期 / 源文件已清理）· 400 `IMPORT_CANCELLED`（写入中取消：连接在写完前断开 —— 单事务回滚 + 已传图片清理；票据保留 pending、源文件保留，可再次提交）。
 
 ## 口径铁律（与前端 / 老表转换工具一致）
 
@@ -39,6 +39,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - 问题处理人（Push 319）：源表没有处理人字段 —— 未解决（open / in_progress）默认 `owner_id` = 项目经理首位（`managerIds[0] ?? actorId`；done = null）+ info 提醒 `ISSUE_OWNER_FALLBACK` —— 未解决问题随项目经理进入工作台「待我处理」，「我提出的问题」按 reporter（日报作者）照旧。
 - 变更读面（Push 319 · file 模块）：导入遗留变更没有 `file_versions` 行 —— 列表 / 详情 `fileId` / `versionId` / `versionSeq` 可为 null（`file` / `version` 给 null，前端标「变更后文件待补」）；本模块提交只写 `change_requests` 行、不建文件行。
 - 图片：表内嵌图 → 文件库（挂日报 / 问题）；微盘 / 本地路径 → 「需手动导入」清单（导入时不再抓取）。
+- 写入取消（Push 321）：`commit` 收 AbortSignal（controller 把「响应连接在写完前断开」—— 取消写入 / 刷新 / 关页 / 断网 —— 转 abort）；检查点（读源文件前 / 图片上传每轮 / 事务首行 / 补节点循环每轮 / 各批量写入（任务 / 日报 / 问题 / 变更 / 文件）/ 审计记录前 / 票据落定前）命中即抛 400 `IMPORT_CANCELLED`：**单事务回滚 + 丢弃本次已上传图片对象**；票据保持 pending、源文件保留（可再次提交）；响应已正常写回时不触发。
 - 账号：只对账不建号（登录名 = 拼音、显示名 = 中文名 + `-test`、初始口令 123456 属账号体系口径；**自动建号仅测试环境需要** —— 正式环境用户目录完整、不需要自动创建）；缺号 → `ACCOUNT_MISSING`，项目经理 / 负责人 / 日报作者缺号回落导入人并提醒（`MANAGER_FALLBACK` / `OWNER_MISSING` / `AUTHOR_MISSING`）。
 - 地区：`commit.region` 必填（面板选，201 国口径）；项目类型按源表关键字识别（AIRROB → 飞箱）可留空。
 - 提醒文案按 `Accept-Language` 出中 / 英（zh 缺省）。
@@ -53,10 +54,10 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 
 ## 测试
 
-- `server/test/project-import.test.ts`（12 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`）** / **未解决问题默认处理人（含 done 不挂人）**。
+- `server/test/project-import.test.ts`（14 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`）** / **未解决问题默认处理人（含 done 不挂人）** / **写入取消两例（Push 321：上传途中 abort → 已传图片清理 + 票据 pending + 重提成功 + 源文件保留；事务内 abort → 回滚 + 已传图片全清）**。
 - `server/test/resource-change.test.ts`：commit 的资源变更登记（projects / tasks / reports / issues / files / templates）。
 
 ## 待落地
 
 - 「账号新建」由账号体系落地（SSO 登录创建）—— 预览面板的「新建」徽标只是提示，本模块不建号；自动建号仅测试环境需要（正式环境用户目录完整、不需要）。
-- Push 319 三件（变更关联回写 / 问题默认处理人 / 变更读面宽容）随下次部署件上线后真机复验（工作台「待我处理」/ 变更记录可见性 / 任务行变更关联徽章）；更早的真机端到端见 Push 316（37 断言 0 失败 + 迁移 `0053` 实执行）。
+- Push 319 三件（变更关联回写 / 问题默认处理人 / 变更读面宽容）随下次部署件上线后真机复验（工作台「待我处理」/ 变更记录可见性 / 任务行变更关联徽章）；Push 321 写入取消已在本地沙箱真机端到端（中断落在图片上传中途 → 库 / 桶零残留 + 票据 pending + 源文件保留 + 同票据重提 200 + 收尾恢复基线）；更早的真机端到端见 Push 316（37 断言 0 失败 + 迁移 `0053` 实执行）。

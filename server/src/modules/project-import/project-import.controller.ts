@@ -1,5 +1,6 @@
 
-import { Body, Controller, Headers, HttpCode, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Headers, HttpCode, Post, Req, Res, UseGuards } from "@nestjs/common";
+import type { Response } from "express";
 import type { IncomingMessage } from "node:http";
 import { IMPORT_MAX_FILE_BYTES, ProjectImportCommitBodySchema, z } from "@libiaolink/contracts";
 import type { ProjectImportPreview, ProjectImportResult } from "@libiaolink/contracts";
@@ -50,12 +51,27 @@ export class ProjectImportController {
   @HttpCode(200)
   @RequirePermission("project.create")
   commit(
+    @Res({ passthrough: true }) response: Response,
     @Body(new ZodValidationPipe(ProjectImportCommitBodySchema)) body: ProjectImportCommitBody,
     @Headers("accept-language") acceptLanguage: string | undefined,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectImportResult> {
-    return this.imports.commit(body, actorId, localeOf(acceptLanguage));
+    return this.imports.commit(body, actorId, localeOf(acceptLanguage), clientGoneSignal(response));
   }
+}
+
+/**
+ * 写入取消信号（Push 321）：响应连接在写完之前断开（点「取消写入」/ 刷新 / 关页 / 断网）= 取消本次导入。
+ * 服务端据此中止提交并单事务回滚；响应已正常写回时不触发。
+ */
+function clientGoneSignal(response: Response): AbortSignal {
+  const controller = new AbortController();
+  response.on("close", () => {
+    if (!response.writableEnded) {
+      controller.abort();
+    }
+  });
+  return controller.signal;
 }
 
 /** Accept-Language → 提醒文案语言（zh 缺省；en / en-US 等一律 en）。 */

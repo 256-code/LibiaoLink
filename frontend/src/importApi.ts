@@ -114,6 +114,7 @@ export function previewProjectImport(file: File): Promise<ProjectImportPreview> 
   return apiRequest<ProjectImportPreview>("/api/v1/project-imports/preview", { method: "POST", body: form });
 }
 
-export function commitProjectImport(input: ProjectImportCommitInput): Promise<ProjectImportResult> {
-  return apiSend<ProjectImportResult>("/api/v1/project-imports/commit", "POST", input);
+/** 确认导入（可取消）：传入 signal，abort → 服务端连接断开 → 单事务回滚（零残留），票据保留可再次确认。 */
+export function commitProjectImport(input: ProjectImportCommitInput, signal?: AbortSignal): Promise<ProjectImportResult> {
+  return apiSend<ProjectImportResult>("/api/v1/project-imports/commit", "POST", input, signal);
 }

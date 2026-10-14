@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../api";
 import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
@@ -24,6 +24,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * → ③ 确认导入 → ④ 完成（提醒复述）。面板挂在项目空间内（fixed 全屏遮罩），不动路由、不刷新页面。
  * 口径（业务已回执）：解析不写库；完成日期未填不算完成；进度五档（进行中封顶 75%）；日期笔误照原值 + 提醒；
  * 任务节点按文件原名（可勾选补进节点库）；微盘图片出清单人工上传；账号初始密码 123456。
+ * 写入中可取消（Push 321）：「取消写入」/ 刷新 / 关页 = 断开请求 → 服务端单事务回滚（零残留），票据保留可再次确认。
  */
 
 type Phase =
@@ -159,6 +160,10 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const dialogRef = useFocusTrap<HTMLDivElement>();
   const committing = phase.kind === "committing";
+  /** 写入中取消（Push 321）：abort 请求 → 服务端回滚；回到预览态可再次确认导入。 */
+  const commitAbortRef = useRef<AbortController | null>(null);
+  /** 刚取消过写入（预览态给一行说明；换文件 / 再次提交时清掉）。 */
+  const [commitCancelled, setCommitCancelled] = useState(false);
 
   // 选文件（或换文件）即解析：解析不写库；换文件 = 整体重来（地区 / 勾选复位）。
   useEffect(() => {
@@ -168,6 +173,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     setProjectType("");
     setAddMissingNodes(true);
     setRegionPopoverOpen(false);
+    setCommitCancelled(false);
     if (file.size === 0 || file.size > IMPORT_MAX_FILE_BYTES) {
       setPhase({ kind: "failed", stage: "parse", error: null, reason: file.size === 0 ? "empty" : "size" });
       return;
@@ -240,15 +246,34 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   }, []);
 
   const startCommit = (preview: ProjectImportPreview): void => {
+    const controller = new AbortController();
+    commitAbortRef.current = controller;
+    setCommitCancelled(false);
     setPhase({ kind: "committing", preview });
-    commitProjectImport({ previewId: preview.previewId, region: region, projectType: projectType, addMissingNodes: addMissingNodes })
+    commitProjectImport(
+      { previewId: preview.previewId, region: region, projectType: projectType, addMissingNodes: addMissingNodes },
+      controller.signal,
+    )
       .then((result) => {
+        commitAbortRef.current = null;
         setPhase({ kind: "done", preview: preview, result: result });
         onImported();
       })
       .catch((error: unknown) => {
+        commitAbortRef.current = null;
+        const aborted = controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError");
+        if (aborted || (error instanceof ApiError && error.code === "IMPORT_CANCELLED")) {
+          setCommitCancelled(true);
+          setPhase({ kind: "preview", preview: preview });
+          return;
+        }
         setPhase({ kind: "failed", stage: "commit", error: error instanceof ApiError ? error : null, reason: null });
       });
+  };
+
+  /** 「取消写入」：断开请求 → 服务端单事务回滚（不会写入任何数据）。 */
+  const cancelCommit = (): void => {
+    commitAbortRef.current?.abort();
   };
 
   // 预览态派生：可导入 = 无阻断项 + 地区已选（用户补选地区后，服务端的「地区未识别」阻断项随之消解）。
@@ -400,6 +425,14 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
           {phase.kind === "preview" ? (
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0 space-y-5">
+                {commitCancelled ? (
+                  <p
+                    className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800"
+                    data-import-cancelled-note=""
+                  >
+                    {t("import.cancel.note")}
+                  </p>
+                ) : null}
                 <section className="rounded-2xl border border-zinc-200 bg-white p-5">
                   <div className="flex flex-wrap items-baseline gap-2">
                     <h3 className="text-sm font-semibold text-zinc-900">{t("import.section.project")}</h3>
@@ -622,6 +655,14 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
         </ScrollArea>
 
         <footer className="flex flex-wrap items-center gap-3 border-t border-zinc-200 bg-zinc-50/70 px-6 py-4">
+          {phase.kind === "committing" ? (
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <button type="button" className={secondaryButtonClass} onClick={cancelCommit} data-import-cancel-commit="">
+                {t("import.cancel.commit")}
+              </button>
+            </div>
+          ) : null}
+
           {phase.kind === "preview" ? (
             <>
               <p className="text-xs text-zinc-500">

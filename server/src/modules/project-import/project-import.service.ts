@@ -53,6 +53,8 @@ import type { ParsedWorkbook } from "./xlsx.js";
  *    全部直接命中，无需任何建号动作（业务口径 2026-10-14：自动创号仅测试环境需要）。提交时账号仍不存在不阻断 ——
  *    项目经理回落导入人（提醒）、任务负责人留空（提醒）、日报作者回落导入人（提醒）；
  *    未解决问题（源表没有处理人字段）默认处理人 = 项目经理（ISSUE_OWNER_FALLBACK），出现在其工作台「待我处理」；
+ * 4.1 写入取消（Push 321）：commit 可取消 —— 前端「取消写入」/ 刷新 / 关页 = 连接断开即中止：检查点抛 IMPORT_CANCELLED →
+ *      单事务回滚（零残留）+ 清掉本次已传图片对象；票据与源文件保留，可重新确认导入；
  * 5. x x x 占位（变更内容 / 原因）→ 追加「（待补）」标记；需人工补的文件出「需手动导入」清单（不建文件行）；
  * 6. 变更关联：变更表「关联」列命中任务描述 → 提交回写任务 change_refs（追加序 = 变更表行序；任务表「变更关联」
  *    日期仅核对）；导入的变更没有「变更后文件」（源文件在微盘）—— 变更读面容忍 fileId / versionId 为空（前端标待补）。
@@ -208,7 +210,8 @@ export class ProjectImportService {
    * 单事务（建项目 + 蓝图快照 + 成员 + 任务 + 日报 + 问题 + 变更 + 图片元数据 + 审计 + 票据置 committed）。
    * 提醒复述：解析期 seeds + 提交期兜底（项目经理回落 / 负责人留空 / 日报作者回落 / 图片行未匹配）。
    */
-  async commit(body: ProjectImportCommitBody, actorId: string, locale: ImportLocale): Promise<ProjectImportResult> {
+  async commit(body: ProjectImportCommitBody, actorId: string, locale: ImportLocale, signal?: AbortSignal): Promise<ProjectImportResult> {
+    throwIfCancelled(signal);
     const preview = await this.previews.findPreview(body.previewId);
     if (preview === null) {
       throw new AppError("NOT_FOUND", "预览票据不存在（请重新选择文件解析）");
@@ -263,6 +266,7 @@ export class ProjectImportService {
 
     // 图片落位：源工作簿取回 → 解 media 字节 → 先上传（键含预生成 projectId）→ 事务内登记元数据。
     const projectId = randomUUID();
+    throwIfCancelled(signal);
     const zip = await this.readSourceZip(preview.objectKey);
     const issueIndexByReport = new Map<number, number>();
     {
@@ -274,20 +278,30 @@ export class ProjectImportService {
       });
     }
     const imageBuild = buildImagePlans(parse, (media) => zip.read("xl/media/" + media), projectId, issueIndexByReport);
-    for (const plan of imageBuild.plans) {
-      await this.storage.putObject({
-        objectKey: plan.objectKey,
-        body: plan.bytes,
-        contentType: plan.mime,
-        metadata: { origin: "legacy-import", previewId: preview.id },
-      });
+    const uploadedImageKeys: string[] = [];
+    try {
+      for (const plan of imageBuild.plans) {
+        throwIfCancelled(signal);
+        await this.storage.putObject({
+          objectKey: plan.objectKey,
+          body: plan.bytes,
+          contentType: plan.mime,
+          metadata: { origin: "legacy-import", previewId: preview.id },
+        });
+        uploadedImageKeys.push(plan.objectKey);
+      }
+    } catch (error) {
+      await this.discardImages(uploadedImageKeys);
+      throw error;
     }
     if (imageBuild.skipped > 0) {
       extraSeeds.push(imageRowMissingSeed(imageBuild.skipped));
     }
 
     const at = new Date();
-    const written = await this.database.db.transaction(async (tx) => {
+    throwIfCancelled(signal);
+    const commitTx = this.database.db.transaction(async (tx) => {
+      throwIfCancelled(signal);
       const projectRow = await this.projects.insert(
         {
           id: projectId,
@@ -321,6 +335,7 @@ export class ProjectImportService {
       if (body.addMissingNodes) {
         const seqCursor = new Map<string, number>();
         for (let index = 0; index < groups.length; index += 1) {
+          throwIfCancelled(signal);
           const group = groups[index]!;
           if (group.matched || !group.inStageScope || group.stageKey === null) continue;
           let seq = seqCursor.get(group.stageKey);
@@ -388,6 +403,7 @@ export class ProjectImportService {
           sortIndex,
         };
       });
+      throwIfCancelled(signal);
       const taskIds = await this.previews.insertTasks(tx, projectRow.id, taskRows, at);
 
       // 日报 + 问题：作者账号缺失 → 回落导入人（进提醒）；一条日报最多一个问题（老表口径）；未解决问题（源表没有
@@ -407,6 +423,7 @@ export class ProjectImportService {
           suggestion: clipNullable(report.issue === null ? null : report.issue.solution, TEXT_LIMIT),
         };
       });
+      throwIfCancelled(signal);
       const reportIds = await this.previews.insertReports(tx, projectRow.id, reportRows, at);
       const issueRows: ImportReportIssueInsert[] = [];
       const unresolvedIssueOwnerId = managerIds[0] ?? actorId;
@@ -426,6 +443,7 @@ export class ProjectImportService {
           ownerDepartment: null,
         });
       });
+      throwIfCancelled(signal);
       const issueIds = await this.previews.insertReportIssues(tx, projectRow.id, reportIds, issueRows, at);
 
       // 变更：实施 → install / 发货 → assembly（legacy 已映射）；内容 + 原因合并进 reason（库内无内容列），
@@ -438,6 +456,7 @@ export class ProjectImportService {
         beforeSummary: clipNullable(change.before, TEXT_LIMIT),
         afterSummary: clipNullable(change.after, TEXT_LIMIT),
       }));
+      throwIfCancelled(signal);
       const changeIds = await this.previews.insertChangeRequests(tx, projectRow.id, changeRows, actorId, at);
       const changeLinks: LegacyChangeLink[] = parse.changeLinks ?? [];
       if (changeLinks.length > 0) {
@@ -468,6 +487,7 @@ export class ProjectImportService {
         issueIndex: plan.issueIndex,
         kind: plan.kind,
       }));
+      throwIfCancelled(signal);
       await this.previews.insertFiles(tx, projectRow.id, reportIds, issueIds, fileRows, actorId, at);
 
       const counts: ImportResultCounts = {
@@ -479,6 +499,7 @@ export class ProjectImportService {
         accountsCreated: resolution.accounts.length,
         nodesAdded,
       };
+      throwIfCancelled(signal);
       await this.audit.record(tx, {
         actorId,
         action: "create",
@@ -514,9 +535,17 @@ export class ProjectImportService {
           addMissingNodes: body.addMissingNodes,
         },
       });
+      throwIfCancelled(signal);
       await this.previews.markCommitted(preview.id, projectRow.id, at, tx);
       return { projectId: projectRow.id, code: projectRow.code, name: projectRow.name, counts };
     });
+    let written: { projectId: string; code: string; name: string; counts: ImportResultCounts };
+    try {
+      written = await commitTx;
+    } catch (error) {
+      await this.discardImages(uploadedImageKeys);
+      throw error;
+    }
 
     if (unresolvedOwners.size > 0) {
       extraSeeds.push(unresolvedOwnersSeed([...unresolvedOwners]));
@@ -628,7 +657,18 @@ export class ProjectImportService {
     return ZipArchive.open(Buffer.from(object.bytes));
   }
 
-  /** 源文件清理（提交后 / 过期时）：best-effort，失败只记日志（票据状态已定，不影响业务结果）。 */
+  /** 取消 / 失败收尾（Push 321）：丢弃本次已上传的图片对象（尽力而为；重试会重新生成对象键）。 */
+  private async discardImages(keys: readonly string[]): Promise<void> {
+    for (const key of keys) {
+      try {
+        await this.storage.purgeObject(key);
+      } catch (error) {
+        this.logger.warn("老表导入图片对象清理失败：" + key + "：" + messageOf(error));
+      }
+    }
+  }
+
+/** 源文件清理（提交后 / 过期时）：best-effort，失败只记日志（票据状态已定，不影响业务结果）。 */
   private async purgeSource(objectKey: string): Promise<void> {
     try {
       await this.storage.purgeObject(objectKey);
@@ -825,6 +865,13 @@ function buildImagePlans(
     });
   }
   return { plans, skipped };
+}
+
+/** 写入取消（Push 321）：客户端断开 / 主动取消 → 每个检查点抛错 → 单事务回滚；票据保持可再次提交。 */
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal !== undefined && signal.aborted) {
+    throw new AppError("IMPORT_CANCELLED", "导入已取消：本次未写入任何数据（可重新确认导入）");
+  }
 }
 
 function unknownPeopleSeed(names: readonly string[]): LegacyIssueSeed {

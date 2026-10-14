@@ -2249,6 +2249,7 @@
           "IMPORT_FILE_INVALID",
           "IMPORT_PARSE_FAILED",
           "IMPORT_PREVIEW_EXPIRED",
+          "IMPORT_CANCELLED",
           "INTERNAL"
         ],
         "description": "统一错误码（技术设计v0.2 §7.2）"
