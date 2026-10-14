@@ -47,7 +47,8 @@ export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 
 /**
  * 变更记录读面行（M4-04 读面）：变更本体 + 由 `file_versions.change_request_id` 反查的变更后文件 / 版本。
- * 一期「一变更一版本」（写入切片在同一事务落库），读面因此用内连接 —— 数据面不允许存在「无版本的变更记录」。
+ * Push 319：老表导入的变更没有「变更后文件」（源文件在微盘，人工后补）→ 读面改左连接，fileId / versionId /
+ * versionSeq 可为空；写入切片（一变更一版本）语义不变，行内为空 = 导入遗留数据。
  */
 export interface ChangeRequestJoinedRow {
   id: string;
@@ -64,9 +65,10 @@ export interface ChangeRequestJoinedRow {
   appliedBy: string;
   appliedAt: Date;
   createdAt: Date;
-  fileId: string;
-  versionId: string;
-  versionSeq: number;
+  /** 导入遗留变更（源文件在微盘，未挂版本）= null。 */
+  fileId: string | null;
+  versionId: string | null;
+  versionSeq: number | null;
 }
 
 export interface FileInsertInput {
@@ -635,7 +637,7 @@ export class FileRepository {
   /**
    * 变更记录列表（M4-04 读面 · A4-15）：项目 + 多值阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页；
    * `total` 与 items 走同一 where（分页元数据一致）。fileId / versionId / versionSeq 由 file_versions 反查
-   * （migration 0021 的部分索引 ix_file_versions_change_request）。
+   * （migration 0021 的部分索引 ix_file_versions_change_request）；Push 319 起左连接（导入变更无版本 → 字段空）。
    */
   async listChangeRequests(
     projectId: string,
@@ -649,7 +651,7 @@ export class FileRepository {
     const items = await client
       .select(CHANGE_REQUEST_SELECT)
       .from(changeRequests)
-      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(where)
       .orderBy(...changeRequestOrderBy(sorts))
       .limit(limit)
@@ -657,7 +659,7 @@ export class FileRepository {
     const totals = await client
       .select({ value: count() })
       .from(changeRequests)
-      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(where);
     return { items, total: Number(totals[0]?.value ?? 0) };
   }
@@ -670,7 +672,7 @@ export class FileRepository {
     const rows = await client
       .select(CHANGE_REQUEST_SELECT)
       .from(changeRequests)
-      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(eq(changeRequests.id, changeRequestId))
       .limit(1);
     return rows[0] ?? null;

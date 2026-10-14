@@ -1215,7 +1215,11 @@
                 "$ref": "#/components/schemas/Uuid"
               },
               {
-                "description": "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）；Push 319：老表导入变更暂无变更后文件（源文件在微盘，人工后补）= null"
               }
             ]
           },
@@ -1225,13 +1229,21 @@
                 "$ref": "#/components/schemas/Uuid"
               },
               {
-                "description": "变更后版本（file_versions.change_request_id 反查）"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "变更后版本（file_versions.change_request_id 反查）；导入遗留变更 = null"
               }
             ]
           },
           "versionSeq": {
-            "type": "integer",
-            "exclusiveMinimum": 0
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "变更后版本号；导入遗留变更 = null"
           }
         },
         "required": [
@@ -1263,7 +1275,17 @@
             "type": "object",
             "properties": {
               "file": {
-                "$ref": "#/components/schemas/File"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/File"
+                  },
+                  {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                ]
               },
               "version": {
                 "$ref": "#/components/schemas/FileVersion"

@@ -464,7 +464,11 @@ export function ImportProjectPanel({ file, dicts, onReselect, onClose, onImporte
                   <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <StatTile label={t("import.stats.tasks")} value={phase.preview.counts.tasks} />
                     <StatTile label={t("import.stats.reports")} value={phase.preview.counts.reports} />
-                    <StatTile label={t("import.stats.changes")} value={phase.preview.counts.changes} />
+                    <StatTile
+                      label={t("import.stats.changes")}
+                      value={phase.preview.counts.changes}
+                      caption={phase.preview.counts.changesLinked === 0 ? undefined : t("import.stats.changes.linked", { n: phase.preview.counts.changesLinked })}
+                    />
                     <StatTile
                       label={t("import.stats.images")}
                       value={phase.preview.counts.images}

@@ -1649,11 +1649,12 @@ export function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSc
   };
 }
 
-/** 变更记录视图（`fileId` / `versionId` / `versionSeq` 来自同事务的版本行，非 `change_requests` 列）。 */
+/** 变更记录视图（`fileId` / `versionId` / `versionSeq` 来自同事务的版本行，非 `change_requests` 列；
+ *  Push 319：导入遗留变更没有版本行 → 三项为 null）。 */
 export function toChangeRequestView(
   row: ChangeRequestRow,
-  fileId: string,
-  version: Pick<FileVersionRow, "id" | "seq">,
+  fileId: string | null,
+  version: Pick<FileVersionRow, "id" | "seq"> | null,
 ): ChangeRequestView {
   return {
     id: row.id,
@@ -1670,8 +1671,8 @@ export function toChangeRequestView(
     appliedAt: row.appliedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     fileId,
-    versionId: version.id,
-    versionSeq: version.seq,
+    versionId: version === null ? null : version.id,
+    versionSeq: version === null ? null : version.seq,
   };
 }
 

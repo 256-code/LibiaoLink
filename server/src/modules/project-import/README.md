@@ -1,4 +1,4 @@
-# project-import 模块（老表 Excel 直连导入：preview 解析预览票据 + commit 单事务建项目写全量 · Push 316）
+# project-import 模块（老表 Excel 直连导入：preview 解析预览票据 + commit 单事务建项目写全量 · Push 316 / 319）
 
 | 字段 | 内容 |
 |---|---|
@@ -35,8 +35,11 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - `tasks.on_time` = 源表「是否按时交付」原值（按时交付 true / 延期交付 false / 空 null；与日期推导不一致 → `ONTIME_MISMATCH` 提醒，不改值）。
 - 任务节点：无对应按文件原名导入；`nameEn` = 节点库 `task_nodes.title_en` ?? 源表英文列；勾选补库且阶段范围内才写 `task_nodes`（阶段外按临时任务、不补库）。
 - 变更：阶段映射 实施 → `install`、发货 → `assembly`；内容 / 原因合并落库（占位 = 内容待补 / 原因待补）。
+- 变更关联（Push 319）：变更管理「关联」列（多值按逗号 / 顿号拆）按任务描述匹配（键 = 去全部空白 + 小写；对「标题+英文名」/「标题」/「英文名」三串）→ 提交事务回写 `tasks.change_refs`（追加序 = 变更表行序、去重）；未命中 / 多命中 / 日期不一致 / 任务侧落空出提醒（`CHANGE_RELATED_UNMATCHED` / `CHANGE_RELATED_AMBIGUOUS` / `CHANGE_DATE_MISMATCH` / `TASK_CHANGE_REF_UNMATCHED` + 汇总 `CHANGE_LINK_SUMMARY`），照常导入不阻断；预览 / 结果 counts 增 `changesLinked`。
+- 问题处理人（Push 319）：源表没有处理人字段 —— 未解决（open / in_progress）默认 `owner_id` = 项目经理首位（`managerIds[0] ?? actorId`；done = null）+ info 提醒 `ISSUE_OWNER_FALLBACK` —— 未解决问题随项目经理进入工作台「待我处理」，「我提出的问题」按 reporter（日报作者）照旧。
+- 变更读面（Push 319 · file 模块）：导入遗留变更没有 `file_versions` 行 —— 列表 / 详情 `fileId` / `versionId` / `versionSeq` 可为 null（`file` / `version` 给 null，前端标「变更后文件待补」）；本模块提交只写 `change_requests` 行、不建文件行。
 - 图片：表内嵌图 → 文件库（挂日报 / 问题）；微盘 / 本地路径 → 「需手动导入」清单（导入时不再抓取）。
-- 账号：只对账不建号（登录名 = 拼音、显示名 = 中文名 + `-test`、初始口令 123456 属账号体系口径）；缺号 → `ACCOUNT_MISSING`，项目经理 / 负责人 / 日报作者缺号回落导入人并提醒（`MANAGER_FALLBACK` / `OWNER_MISSING` / `AUTHOR_MISSING`）。
+- 账号：只对账不建号（登录名 = 拼音、显示名 = 中文名 + `-test`、初始口令 123456 属账号体系口径；**自动建号仅测试环境需要** —— 正式环境用户目录完整、不需要自动创建）；缺号 → `ACCOUNT_MISSING`，项目经理 / 负责人 / 日报作者缺号回落导入人并提醒（`MANAGER_FALLBACK` / `OWNER_MISSING` / `AUTHOR_MISSING`）。
 - 地区：`commit.region` 必填（面板选，201 国口径）；项目类型按源表关键字识别（AIRROB → 飞箱）可留空。
 - 提醒文案按 `Accept-Language` 出中 / 英（zh 缺省）。
 
@@ -50,10 +53,10 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 
 ## 测试
 
-- `server/test/project-import.test.ts`（9 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）。
+- `server/test/project-import.test.ts`（12 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`）** / **未解决问题默认处理人（含 done 不挂人）**。
 - `server/test/resource-change.test.ts`：commit 的资源变更登记（projects / tasks / reports / issues / files / templates）。
 
 ## 待落地
 
-- 真机端到端（本地库 + MINIO）与生产上线演练（迁移 0053 实执行）；
-- 「账号新建」由账号体系落地（SSO 登录创建）——预览面板的「新建」徽标只是提示，本模块不建号。
+- 「账号新建」由账号体系落地（SSO 登录创建）—— 预览面板的「新建」徽标只是提示，本模块不建号；自动建号仅测试环境需要（正式环境用户目录完整、不需要）。
+- Push 319 三件（变更关联回写 / 问题默认处理人 / 变更读面宽容）随下次部署件上线后真机复验（工作台「待我处理」/ 变更记录可见性 / 任务行变更关联徽章）；更早的真机端到端见 Push 316（37 断言 0 失败 + 迁移 `0053` 实执行）。

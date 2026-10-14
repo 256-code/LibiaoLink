@@ -465,7 +465,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       if (tab === "history") {
         for (const change of detail.changeLinks ?? []) {
           const row = await fetchChangeRequest(change.id);
-          const versions = await fetchFileVersions(row.fileId);
+          const versions = row.fileId === null ? null : await fetchFileVersions(row.fileId);
           entries[change.id] = { state: "ready", detail: row, versions };
         }
       }
@@ -533,7 +533,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         setChangeEntries((previous) => (previous[id] === undefined ? { ...previous, [id]: { state: "loading" } } : previous));
         try {
           const detail = await fetchChangeRequest(id);
-          const versions = await fetchFileVersions(detail.fileId).catch(() => null);
+          const versions = detail.fileId === null ? null : await fetchFileVersions(detail.fileId).catch(() => null);
           if (!alive) {
             return;
           }
@@ -2025,15 +2025,19 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                             versions={entry.versions}
                             previewBusy={previewBusy}
                             downloadBusy={downloadBusy}
-                            onPreview={(versionId, rowName) => { void openPreview(entry.detail.file.id, rowName, versionId); }}
-                            onDownload={(versionId) => { void downloadFile(entry.detail.file.id, versionId); }}
+                            onPreview={(versionId, rowName) => { if (entry.detail.file !== null) void openPreview(entry.detail.file.id, rowName, versionId); }}
+                            onDownload={(versionId) => { if (entry.detail.file !== null) void downloadFile(entry.detail.file.id, versionId); }}
                           />
                         )}
                         {open ? (
                           <div data-change-item-detail="true" className="mt-2 flex flex-col gap-1 border-t border-zinc-100 pt-2 text-xs leading-5 text-zinc-600">
                             {entry !== undefined && entry.state === "ready" ? (
                               <>
-                                <span>{t("drawer.history.afterFile", { name: entry.detail.file.name, n: String(entry.detail.versionSeq) })}</span>
+                                {entry.detail.file === null || entry.detail.versionSeq === null ? (
+                                  <span data-change-file-pending="true">{t("drawer.history.filePending")}</span>
+                                ) : (
+                                  <span>{t("drawer.history.afterFile", { name: entry.detail.file.name, n: String(entry.detail.versionSeq) })}</span>
+                                )}
                                 <span>{t("drawer.history.stage", { name: stageText(locale, stageLabelOf(entry.detail.stageKey)) })}</span>
                                 <span>{t("drawer.history.reason", { text: entry.detail.reason })}</span>
                                 <span>{t("drawer.history.status", { text: entry.detail.status === "applied" ? t("drawer.history.applied") : entry.detail.status })}</span>
@@ -2133,12 +2137,21 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
   onPreview: (versionId: string, name: string) => void;
   onDownload: (versionId: string) => void;
 }) {
-  const name = detail.file.name;
   const locale = useLocale();
   const t = useT();
+  if (detail.file === null || detail.version === null || detail.versionId === null || detail.versionSeq === null) {
+    // Push 319：老表导入变更没有变更后文件（源文件在微盘）→ 只出「待补」提示行（无预览 / 下载入口）。
+    return (
+      <div data-change-item-files="true" className="mt-1.5 flex flex-col gap-1 rounded-lg border border-zinc-100 bg-white px-2.5 py-2">
+        <span data-change-file-pending="true" className="text-[11px] leading-4 text-zinc-400">{t("drawer.history.filePending")}</span>
+      </div>
+    );
+  }
+  const name = detail.file.name;
   // Push 256：变更同时更名时「变更前」行显示更名前名称（读面 filePreviousName，来自审计）；未更名回退当前名。
   const beforeName = detail.filePreviousName === null ? name : detail.filePreviousName;
-  const before = versions === null ? null : versions.find((item) => item.seq === detail.versionSeq - 1) ?? null;
+  const versionSeq = detail.versionSeq;
+  const before = versions === null ? null : versions.find((item) => item.seq === versionSeq - 1) ?? null;
   const rows: Array<{ kind: "before" | "after"; label: string; versionId: string | null; seq: number; sizeBytes: number; uploadedAt: string }> = [
     before === null
       ? { kind: "before", label: "变更前", versionId: null, seq: detail.versionSeq - 1, sizeBytes: 0, uploadedAt: "" }

@@ -7752,13 +7752,14 @@ export interface components {
             appliedBy: components["schemas"]["Uuid"];
             appliedAt: components["schemas"]["DateTime"];
             createdAt: components["schemas"]["DateTime"];
-            fileId: components["schemas"]["Uuid"] & unknown;
-            versionId: components["schemas"]["Uuid"] & unknown;
-            versionSeq: number;
+            fileId: components["schemas"]["Uuid"] & (string | null);
+            versionId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 变更后版本号；导入遗留变更 = null */
+            versionSeq: number | null;
         } | null;
         /** @description 变更记录（v0.2 §5.3；一期申请即通过、全程留痕） */
         ChangeRequestDetail: components["schemas"]["ChangeRequest"] & {
-            file: components["schemas"]["File"];
+            file: components["schemas"]["File"] & (Record<string, never> | null);
             version: components["schemas"]["FileVersion"];
             /** @description 变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null） */
             filePreviousName: string | null;
