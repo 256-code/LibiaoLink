@@ -71,7 +71,7 @@
  *      观感 = 顶栏「背景 · 档位」（简约 / 适中 / 炫彩），工作台任务表 / 「我提出的问题」表都随档位；真点菜单切档逐档对账
  *      （data-workspace-task-tint / data-workspace-issue-tint + 行色 computed + 状态列 oklch 深色字）；Push 291 起切档 = 单键 PATCH
  *      「user_preferences.prefs.backgroundTier」（按账号记住）—— 切档落库 / 刷新保持 / 收尾恢复账号原值（不留痕）；同日 Push 292 起同菜单
- *      第四行 =「水印」开关（账号偏好 cardWatermark：点击落库 / 刷新保持 / 收尾恢复，⑨j 组对账）；点档 / 点开关都不收弹层
+ *      第四行 =「水印」开关（账号偏好 cardWatermark：点击落库 / 刷新保持 / 收尾恢复，⑨j 组对账；Push 313 起账号默认 false = 无水印）；点档 / 点开关都不收弹层
  *      （Push 292 追订「选择后不要退出 用户点别的地方再退出」：点外 / Esc / 再点触发钮才收，⑨a2 对账）；同日 Push 293 起「炫彩」档实装（同色相高饱和兑白 —— 底色 ×0.62 / 悬停 ×0.82）：⑨d2 / ⑨f2 对账（行色 computed 换高饱和值、状态列 oklch 深色字照旧）；同日追订「炫彩模式文字不明显 看不出来」：行 / 卡挂 .tint-vivid 把次要灰字提深一档（⑨d2 / ⑨f2 顺带对账类名）；同日再追订「炫彩下点这个进度条看不清」→「背景留白」→「带弧度的」→「胶囊的绿回到之前的版本」：炫彩档四格进度点底挖出胶囊白槽（rounded-full + bg-white），点回标配绿（emerald-500 / zinc-200），适中 / 简约不动：⑨c2 / ⑨f3 对账类名；
  *   ⑩ 折叠面板展开态记忆（Push 233 ·「这个下拉要有记忆」）：偏好归零 = 全收起 → 展开 A → 刷新仍展开 / B 仍收起 →
  *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
@@ -830,17 +830,17 @@ async function setBgTier(tier, label) {
   if (landed !== true) throw new Error("背景档位没切到：" + tier);
 }
 const bgTriggerExpr = "(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");var nav=document.querySelector(" + j("[data-workspace-tabs]") + ");return t===null?null:{text:String(t.textContent.trim()),expanded:String(t.getAttribute(" + j("aria-expanded") + ")),inNav:nav!==null&&nav.contains(t)};})()";
-// Push 291：档位改按账号落库 —— 起点先把账号值归一为「简约」（上次中断遗留也能自愈；bgPrefStart 收尾恢复，不留痕）
+// Push 291：档位改按账号落库 —— 起点先把账号值归一为「简约」作对照基线（Push 313 起账号默认 =「适中」；起点归一 + bgPrefStart 收尾恢复都不留痕、上次中断遗留也能自愈）
 const bgLabelOf = { simple: "简约", medium: "适中", vivid: "炫彩" };
 const bgPrefSnap = await api("/api/v1/users/me/preferences");
-const bgPrefStart = bgPrefSnap.status === 200 && bgPrefSnap.json !== null && (bgPrefSnap.json.backgroundTier === "medium" || bgPrefSnap.json.backgroundTier === "vivid") ? bgPrefSnap.json.backgroundTier : "simple";
+const bgPrefStart = bgPrefSnap.status === 200 && bgPrefSnap.json !== null && (bgPrefSnap.json.backgroundTier === "simple" || bgPrefSnap.json.backgroundTier === "vivid") ? bgPrefSnap.json.backgroundTier : "medium";
 if (bgPrefStart !== "simple") {
   await api("/api/v1/users/me/preferences", "PATCH", { backgroundTier: "simple" });
   await open("#/my-tasks", "[data-workspace-page]");
   await waitFor("document.querySelector(" + j("[data-bg-tier-trigger]") + ") !== null", 25000);
 }
 const bg0 = await ev(bgTriggerExpr);
-check("⑨a 观感开关 = 顶栏「背景 · 档位」（Push 290 原「醒目模式」开关下架：标签导航栏里不再有它）；默认档「简约」（Push 291 起按账号落库：起点先归一为「简约」）", bg0 !== null && bg0.text.indexOf("背景") >= 0 && bg0.text.indexOf("简约") >= 0 && bg0.expanded === "false" && bg0.inNav === false, bg0 === null ? "null" : JSON.stringify(bg0));
+check("⑨a 观感开关 = 顶栏「背景 · 档位」（Push 290 原「醒目模式」开关下架：标签导航栏里不再有它）；回放基线「简约」（Push 291 起按账号落库；Push 313 起账号默认「适中」，本组起点先归一为「简约」作对照）", bg0 !== null && bg0.text.indexOf("背景") >= 0 && bg0.text.indexOf("简约") >= 0 && bg0.expanded === "false" && bg0.inNav === false, bg0 === null ? "null" : JSON.stringify(bg0));
 /** 任务行 computed 底色（前 3 行 · 内层 role=button —— 适中档的行色铺在这层）。 */
 const taskRowBgExpr = (projectId) => "(function(){var panel=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "]") + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<3&&i<rows.length;i+=1){var node=rows[i].querySelector(" + j("[role=button]") + ");out.push(node===null?null:getComputedStyle(node).backgroundColor);}return {table:true,bgs:out};})()";
 /** 问题行 computed 底色（逐行 tr）。 */
@@ -926,16 +926,16 @@ await open("#/my-tasks", "[data-workspace-page]");
 const bgBackLanded = await waitFor("(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");return t!==null&&String(t.textContent).indexOf(" + j(bgLabelOf[bgPrefStart]) + ") >= 0;})()", 15000);
 const bgTierBack = await ev(bgTriggerExpr);
 check("⑨i 回放收尾：账号偏好 backgroundTier 恢复原值（不留痕）且重开页档位与账号一致", bgPrefBack !== null && bgPrefBack.status === 200 && bgPrefBack.json !== null && bgPrefBack.json.backgroundTier === bgPrefStart && bgBackLanded === true && bgTierBack !== null && bgTierBack.text.indexOf(bgLabelOf[bgPrefStart]) >= 0, JSON.stringify([bgPrefBack === null ? null : bgPrefBack.json === null ? bgPrefBack.status : bgPrefBack.json.backgroundTier, bgTierBack]));
-// ⑨j 卡片水印开关（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：背景菜单第四行 =「水印」开关；点击 = 单键 PATCH cardWatermark、刷新保持、收尾恢复原值
+// ⑨j 卡片水印开关（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」；Push 313 起默认关）：背景菜单第四行 =「水印」开关；点击 = 单键 PATCH cardWatermark、刷新保持、收尾恢复原值
 const wmRowExpr = "(function(){var n=document.querySelector(" + j("[data-bg-watermark]") + ");return n===null?null:{state:String(n.getAttribute(" + j("data-bg-watermark") + ")),checked:String(n.getAttribute(" + j("aria-checked") + ")),label:String(n.textContent.trim())};})()";
 const wmStateExpr = "(function(){var n=document.querySelector(" + j("[data-bg-watermark]") + ");return n===null?null:String(n.getAttribute(" + j("data-bg-watermark") + "));})()";
 const wmPrefSnap = await api("/api/v1/users/me/preferences");
-const wmPrefStart = wmPrefSnap.status === 200 && wmPrefSnap.json !== null && wmPrefSnap.json.cardWatermark === false ? false : true;
+const wmPrefStart = wmPrefSnap.status === 200 && wmPrefSnap.json !== null && wmPrefSnap.json.cardWatermark === true;
 const wmFlip = wmPrefStart === false;
 await openBgMenu();
 await waitFor("document.querySelector(" + j("[data-bg-watermark]") + ") !== null", 15000);
 const wm0 = await ev(wmRowExpr);
-check("⑨j 水印开关在场：背景菜单第四行 =「水印」（开关态 = 账号偏好 cardWatermark，默认开）", wm0 !== null && wm0.label.indexOf("水印") >= 0 && wm0.state === (wmPrefStart ? "on" : "off") && wm0.checked === String(wmPrefStart), wm0 === null ? "null" : JSON.stringify([wm0, wmPrefStart]));
+check("⑨j 水印开关在场：背景菜单第四行 =「水印」（开关态 = 账号偏好 cardWatermark；Push 313 起账号默认 = 关）", wm0 !== null && wm0.label.indexOf("水印") >= 0 && wm0.state === (wmPrefStart ? "on" : "off") && wm0.checked === String(wmPrefStart), wm0 === null ? "null" : JSON.stringify([wm0, wmPrefStart]));
 await clickSelector("[data-bg-watermark]");
 const wmMenuStillOpen = await ev("document.querySelector(" + j("[data-bg-tier-menu]") + ") !== null");
 let wmPrefOn = null;

@@ -77,16 +77,16 @@ function booleanOf(value: unknown): boolean {
   return value === true;
 }
 
-/** 背景档位（Push 291 · 业务口径 2026-10-13「当前背景选择后刷新就没了 要按账号记住」）：jsonb 里白名单外（simple / medium / vivid 之外）/ 缺省一律回默认 simple（不抛错）。 */
+/** 背景档位（Push 291 · 业务口径 2026-10-13「当前背景选择后刷新就没了 要按账号记住」；Push 313 起默认 medium · 业务口径 2026-10-14「把系统当前所有人的背景改成适中 无水印 这个设成默认的」）：jsonb 里白名单外（simple / medium / vivid 之外）/ 缺省一律回默认 medium（不抛错）。 */
 const BACKGROUND_TIER_SET: ReadonlySet<string> = new Set(BACKGROUND_TIER_IDS);
 
 function backgroundTierOf(value: unknown): BackgroundTier {
-  return typeof value === "string" && BACKGROUND_TIER_SET.has(value) ? (value as BackgroundTier) : "simple";
+  return typeof value === "string" && BACKGROUND_TIER_SET.has(value) ? (value as BackgroundTier) : "medium";
 }
 
-/** 卡片水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：默认 true（没存过 = 显示）；只有严格 false 关闭，其余（缺省 / 非布尔）一律回 true。 */
+/** 卡片水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false · 业务口径 2026-10-14「把系统当前所有人的背景改成适中 无水印 这个设成默认的」）：默认 false（没存过 = 无水印）；只有严格 true 开启，其余（缺省 / 非布尔）一律回 false。 */
 function cardWatermarkOf(value: unknown): boolean {
-  return value !== false;
+  return value === true;
 }
 
 /** 界面语言（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」）：jsonb 里白名单外（zh / en 之外）/ 缺省一律回默认 zh（不抛错）。 */

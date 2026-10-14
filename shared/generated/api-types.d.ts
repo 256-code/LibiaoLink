@@ -7536,7 +7536,7 @@ export interface components {
          */
         AuditResult: "succeeded" | "denied" | "failed";
         /**
-         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple
+         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」；Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium
          * @enum {string}
          */
         BackgroundTier: "simple" | "medium" | "vivid";
@@ -9660,7 +9660,7 @@ export interface components {
             };
             backgroundTier: components["schemas"]["BackgroundTier"];
             locale: components["schemas"]["Locale"];
-            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true */
+            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false */
             cardWatermark: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };

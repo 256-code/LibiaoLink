@@ -168,13 +168,14 @@ export const MyPlanBoardSchema = MyPlanBoardUpdateSchema
   .openapi("MyPlanBoard", { description: "「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛" });
 
 /** 背景档位 id（Push 289 前端内存态 → Push 291 按账号落库 · 业务口径 2026-10-13「当前背景选择后刷新就没了 要按账号记住」；
- *  与前端 backgroundTier.ts 的 BG_TIERS 同源）：simple = 简约（默认，当前系统观感不含铺色）/
- *  medium = 适中（行 / 卡铺状态色 + 状态列收口深色字）/ vivid = 炫彩（观感后续定档，先占位）。 */
+ *  Push 313 起默认 medium · 业务口径 2026-10-14「把系统当前所有人的背景改成适中 无水印 这个设成默认的」；
+ *  与前端 backgroundTier.ts 的 BG_TIERS 同源）：simple = 简约（当前系统观感不含铺色）/
+ *  medium = 适中（默认；行 / 卡铺状态色 + 状态列收口深色字）/ vivid = 炫彩（同色相高饱和浓彩）。 */
 export const BACKGROUND_TIER_IDS = ["simple", "medium", "vivid"] as const;
 
 export const BackgroundTierSchema = z
   .enum(BACKGROUND_TIER_IDS)
-  .openapi("BackgroundTier", { description: "背景档位 id（Push 291）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple" });
+  .openapi("BackgroundTier", { description: "背景档位 id（Push 291 · Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium" });
 
 /** 界面语言 id（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」；与前端 i18n.ts 的 LOCALES 同源）：
  *  zh = 中文（默认）/ en = English。 */
@@ -209,12 +210,12 @@ export const UserPreferencesSchema = z
     workspaceOpenProjects: WorkspaceOpenProjectsSchema,
     myPlanBoard: MyPlanBoardSchema,
     revisions: z.record(z.string(), z.number().int().nonnegative()).openapi({ description: "偏好各键的基线版本；未写过的键为0" }),
-    backgroundTier: BackgroundTierSchema.openapi({ description: "背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple" }),
+    backgroundTier: BackgroundTierSchema.openapi({ description: "背景档位（Push 291 · 顶栏「背景 · 档位」；Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium" }),
     locale: LocaleSchema.openapi({ description: "界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" }),
     cardWatermark: z
       .boolean()
       .openapi({
-        description: "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true",
+        description: "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false",
       }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
