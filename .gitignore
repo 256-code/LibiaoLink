@@ -22,3 +22,6 @@ Thumbs.db
 deploy/prod/secrets/
 # 生产环境变量（服务器本地生成，不进仓库；模板 server.env.example 进仓库）
 deploy/prod/server.env
+
+# 服务器登录备忘（本机未跟踪 · 供 AI / 值班取用）
+deploy/prod/*.local.md
