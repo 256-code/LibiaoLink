@@ -1261,13 +1261,13 @@ function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabl
                   Push 212 续（业务口径「ctrl v 的地方改成这个图标吧」→「小一点 太大了」）：文字换**剪贴板图标**（PasteIcon —— 与右半「文件 + 云」同款 currentColor / 16px 口径）。 */}
               <PasteIcon className={compact ? "h-4 w-4" : "h-5 w-5"} />
             </button>
-            {/* 粘贴落点：不可见、不可点，只借它的可编辑焦点接浏览器的 Ctrl+V（粘贴被 preventDefault，不会落文字） */}
+            {/* 粘贴落点：不可见、不可点，只借它的可编辑焦点接浏览器的 Ctrl+V（粘贴被 preventDefault，不会落文字）。Push 311：撤 aria-hidden 改挂 aria-label —— Chrome 119+ 会对「被聚焦的 aria-hidden 元素」拦下并打「Blocked aria-hidden」控制台告警（聚焦元素不能对辅助技术隐藏）；落点不进 Tab 序、仅程序聚焦，聚焦时按真输入框读出来即正确语义 */}
             <input
               ref={sinkRef}
               data-paste-sink=""
               data-paste-hint={armedNow ? "armed" : "idle"}
               disabled={disabled}
-              aria-hidden="true"
+              aria-label={t("rp.pasteAria")}
               tabIndex={-1}
               onFocus={() => setArmed(true)}
               onBlur={() => setArmed(false)}
