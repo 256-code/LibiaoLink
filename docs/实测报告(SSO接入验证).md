@@ -138,6 +138,18 @@ cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 3. **组织级默认值是空的**：`libiaorobot.com` 的 `defaultTokenFormat` / `defaultTokenFields` 为空，新建应用**不会**自动继承公司标准，每个应用都要手工勾。
 4. 测试环境没有提供商、没有正式员工数据，必须自建与正式环境同名同邮箱的用户才能联调。
 
+### 2026-10-14 LibiaoLink 应用按接入标准调整（104.44 测试环境联调）
+
+> 面向 `test-pm.libiaorobot.com` → 10.1.104.44 测试环境联调：完成 09-16 核对的「待按接入标准调整」三项（Logo 暂留默认），并为测试环境追加回调（应用仍为 `LibiaoLink`，clientId `41e162…` 不变）。
+
+| 项 | 调整后实况 |
+|---|---|
+| Redirect URIs | 追加 `https://test-pm.libiaorobot.com/auth/callback`（localhost 两条保留） |
+| Grant Types | 只留 `authorization_code`（原 6 种） |
+| Token Format / Fields | `JWT-Custom` / 5 字段（`Name` `Owner` `Id` `DisplayName` `Email`） |
+| 服务器侧（104.44） | `CASDOOR_ISSUER=https://authtest.libiaorobot.com`、`CASDOOR_REDIRECT_URI=https://test-pm.libiaorobot.com/auth/callback`；clientId / secret 已回填 `secrets/`（文件渠道，不回显） |
+| 实测 | `/auth/login` 302 → `https://authtest.libiaorobot.com/login/oauth/authorize`（`client_id` 精确、`code_challenge_method=S256`）；授权页可达；浏览器全流程人工实测进行中 |
+
 ## 五、公司正式环境（auth.libiaorobot.com）：只读核对
 
 只调用公开接口（`/api/get-provider`、`/api/get-application`、`/api/get-default-application`），未登录、未改动任何配置。
