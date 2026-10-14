@@ -5,7 +5,7 @@
 # 迁移必须由 libiaolink_migrator 执行（建表者决定默认权限归属；见 database/README.md）。
 # 依赖：postgres 容器健康（compose 自动等待）；首次运行会在命名卷里装 pg 依赖。
 # 用法：
-#   bash scripts/db-migrate.sh              # 执行全部待执行迁移（当前 0001~0051）
+#   bash scripts/db-migrate.sh              # 执行全部待执行迁移（当前 0001~0052）
 #   bash scripts/db-migrate.sh --dry-run    # 只列出待执行，不改库
 # 可选慢网换源：
 #   NPM_REGISTRY=https://registry.npmmirror.com bash scripts/db-migrate.sh
