@@ -25,6 +25,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
+import { TranslateService } from "../translate/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
 import { ProjectGroupService } from "./project-group.service.js";
 import type { ProjectGroupBindingView } from "./project-group.service.js";
@@ -55,7 +56,24 @@ export class ProjectsController {
     private readonly projects: ProjectService,
     private readonly members: ProjectMemberService,
     private readonly groups: ProjectGroupService,
+    private readonly translate: TranslateService,
   ) {}
+
+  /**
+   * 保存即后台翻译（§6.16 ㉕ · 2026-10-13 业务口径「保存的时候后台自动翻译 并且写入数据库」）：
+   * 把项目的手打中文（项目名 / 描述 / 客户）丢给译文库预热 —— 不同步、不阻塞保存响应、失败静默重试；
+   * 地区 / 类型等字典值不预热（英文界面走字典显示，不机翻）。
+   */
+  private warmupProjectText(project: { name: string; customer: string | null; description: string | null }): void {
+    const texts: string[] = [project.name];
+    if (project.customer !== null && project.customer !== "") {
+      texts.push(project.customer);
+    }
+    if (project.description !== null && project.description !== "") {
+      texts.push(project.description);
+    }
+    this.translate.warmup(texts);
+  }
 
   /** 列表（M2-04）：多维筛选 + 时间闭区间 + 分页 + 排序；软删项目不可见（A5）。 */
   @Get()
@@ -84,22 +102,26 @@ export class ProjectsController {
   /** 创建（M2-01）：201；编号重复 409 PROJECT_CODE_EXISTS；seq_no 由服务端分配（不接受传入）。需 project.create。 */
   @Post()
   @RequirePermission("project.create")
-  create(
+  async create(
     @Body(new ZodValidationPipe(ProjectCreateBodySchema)) body: ProjectCreateBody,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
-    return this.projects.createProject(body, actorId);
+    const project = await this.projects.createProject(body, actorId);
+    this.warmupProjectText(project);
+    return project;
   }
 
   /** 更新（M2-01）：乐观锁（正文 version）；归档写保护（ADR-027）→ 409 PROJECT_ARCHIVED。需 project.update。 */
   @Patch(":id")
   @RequirePermission("project.update")
-  update(
+  async update(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(ProjectUpdateBodySchema)) body: ProjectUpdateBody,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
-    return this.projects.updateProject(id, body, actorId);
+    const project = await this.projects.updateProject(id, body, actorId);
+    this.warmupProjectText(project);
+    return project;
   }
 
   /** 软删（M2-01 · A5）：If-Match 回传当前 version 防误删；返回被删项目（此后列表 / 详情 / facets 均不可见）。需 project.delete。 */

@@ -92,11 +92,6 @@ export function ownersText(task: ProjectTask): string {
   return task.owners.length === 0 ? "待分配" : task.owners.join("、");
 }
 
-/** 输出成果文件（契约 deliverableTypes，可多值）：空数组 = 「—」；全量文本（PDF 侧自行按列宽截断）。 */
-export function deliverablesText(task: ProjectTask): string {
-  return task.deliverableTypes.length === 0 ? "—" : task.deliverableTypes.join("、");
-}
-
 /** 进度（0~1 小数）→ 四格档位百分比（0 / 25 / 50 / 75 / 100；换算口径同 data/tasks.ts 的 progressStep）。 */
 export function progressPct(progress: number): number {
   return Math.round((progressStep(progress) / PROGRESS_STEPS) * 100);

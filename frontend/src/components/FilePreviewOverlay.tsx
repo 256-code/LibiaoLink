@@ -7,6 +7,7 @@ const CadViewer = lazy(() => import("./CadViewer").then((m) => ({ default: m.Cad
 import { ImageZoomViewer } from "./ImageZoomViewer";
 import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
 import { useFocusTrap } from "./useFocusTrap";
+import { useT } from "../i18n";
 
 /** 预览浮层（Push 226 续 / 续三 · S4 · Push 246 起任务列表「文件」列下拉与详情抽屉共用）：
  *  图片 = 大图（img）、PDF = 浏览器内置查看器（iframe）、Office / 文本族 = ONLYOFFICE 查看器外壳
@@ -34,6 +35,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
   onDownload: () => void;
   onClose: () => void;
 }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -54,7 +56,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
       data-file-preview="true"
       data-file-preview-kind={kind}
       role="dialog" data-live-sync-readonly="true"
-      aria-label={"预览 " + name}
+      aria-label={t("fpv.aria", { name })}
       onClick={(event) => {
         event.stopPropagation();
         onClose();
@@ -66,8 +68,8 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
           <button
             type="button"
             data-file-preview-native-download="true"
-            title="下载原文件"
-            aria-label="下载原文件"
+            title={t("fpv.download")}
+            aria-label={t("fpv.download")}
             onClick={(event) => {
               event.stopPropagation();
               onDownload();
@@ -79,7 +81,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
         {pane.mode === "viewer" ? (
           <OnlyOfficeViewer key={nonce} viewer={pane.viewer} onRetry={onRetry} />
         ) : kind === "cad3d" ? (
-          <Suspense fallback={<div className="flex h-[80vh] w-[min(90vw,calc(100vw-3rem))] items-center justify-center rounded-xl bg-[#14181f] text-sm text-zinc-400">CAD 查看器加载中…</div>}>
+          <Suspense fallback={<div className="flex h-[80vh] w-[min(90vw,calc(100vw-3rem))] items-center justify-center rounded-xl bg-[#14181f] text-sm text-zinc-400">{t("fpv.cadLoading")}</div>}>
             <CadViewer src={pane.url} name={name} />
           </Suspense>
         ) : kind === "pdf" ? (
@@ -103,7 +105,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
             }}
             className="rounded-md border border-white/30 px-2 py-0.5 text-[11px] text-white/90 transition hover:bg-white/10"
           >
-            下载原文件
+            {t("fpv.download")}
           </button>
         </figcaption>
       </figure>

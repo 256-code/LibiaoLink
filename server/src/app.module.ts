@@ -21,6 +21,7 @@ import { TaskModule } from "./modules/task/index.js";
 import { TemplateModule } from "./modules/template/index.js";
 import { WorkspaceModule } from "./modules/workspace/index.js";
 import { ViewModule } from "./modules/view/index.js";
+import { TranslateModule } from "./modules/translate/index.js";
 import { FollowModule } from "./modules/follow/index.js";
 import { StorageModule } from "./storage/index.js";
 
@@ -45,6 +46,7 @@ export class AppModule {
         WorkspaceModule,
         ViewModule,
         FollowModule,
+        TranslateModule,
         ReportIssueModule,
         AdminModule,
         CalendarModule,

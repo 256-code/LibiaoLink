@@ -22,4 +22,5 @@ export * from "./modules/workspace.ts";
 export * from "./modules/views.ts";
 export * from "./modules/follows.ts";
 export * from "./modules/notifications.ts";
+export * from "./modules/translate.ts";
 export { buildOpenApiDocument } from "./openapi.ts";

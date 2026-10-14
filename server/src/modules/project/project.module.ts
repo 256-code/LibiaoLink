@@ -4,6 +4,7 @@ import { BlueprintModule } from "../blueprint/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { NodeModule } from "../node/index.js";
 import { PermissionModule } from "../permission/index.js";
+import { TranslateModule } from "../translate/index.js";
 import { ArchiveController } from "./archive.controller.js";
 import { ArchiveRepository } from "./archive.repository.js";
 import { ArchiveService } from "./archive.service.js";
@@ -24,10 +25,11 @@ import { ProjectService } from "./project.service.js";
  * 流程实例与导入快照（M2-02）、节点增删与完成门禁（v0.2 §3.6）、阶段推进 / 回退（M2-03）、
  * 项目群绑定读写（M5-03-2 接线段 · C2-05）。
  * 归档：门禁 + 引用式清单 + 冻结状态位（M7-04 · ADR-027）。
- * 依赖方向：project → { blueprint, node(GateService), identity, permission(策略守卫) }（node 不反依赖 project，避免循环）。
+ * 依赖方向：project → { blueprint, node(GateService), identity, permission(策略守卫), translate(横切) }（node 不反依赖 project，避免循环）。
+ * Push 301 起依赖 translate：项目写入成功后的手打中文（项目名 / 描述 / 客户）丢给译文库后台预热（保存即翻译落库）。
  */
 @Module({
-  imports: [IdentityModule, BlueprintModule, NodeModule, PermissionModule, AdminModule],
+  imports: [IdentityModule, BlueprintModule, NodeModule, PermissionModule, AdminModule, TranslateModule],
   controllers: [ProjectsController, FlowController, NodesController, ArchiveController],
   providers: [
     ProjectRepository,

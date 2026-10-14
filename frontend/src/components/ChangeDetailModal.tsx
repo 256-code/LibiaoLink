@@ -18,6 +18,7 @@ import { stageNameOf } from "../taskApi";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { useFocusTrap } from "./useFocusTrap";
+import { fieldText, stageText, useLocale, useT, type Locale } from "../i18n";
 
 /**
  * 「变更管理」详情弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：
@@ -55,6 +56,8 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
   previewRef.current = preview;
   /** 键盘焦点陷阱（Push 264 追订）：打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发处。 */
   const trapRef = useFocusTrap<HTMLDivElement>();
+  const t = useT();
+  const locale = useLocale();
 
   useEffect(() => {
     let alive = true;
@@ -68,7 +71,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
       })
       .catch((error: unknown) => {
         if (alive) {
-          setNote(error instanceof Error && error.message !== "" ? error.message : "变更详情取不到");
+          setNote(error instanceof Error && error.message !== "" ? error.message : t("cd.loadFailed"));
         }
       });
     return () => {
@@ -81,7 +84,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
       const row = await fetchChangeRequest(changeId);
       return () => { setDetail(row); setNote(null); };
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 403)) return () => { setDetail(null); setNote("该变更已不存在或不可见"); };
+      if (error instanceof ApiError && (error.status === 404 || error.status === 403)) return () => { setDetail(null); setNote(t("cd.gone")); };
       throw error;
     }
   }, changeId, detail !== null, { readOnly: true });
@@ -111,7 +114,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
 
   const split = detail === null ? { content: "", cause: "" } : splitChangeReason(detail.reason);
   const applicantId = detail === null ? "" : detail.appliedBy;
-  const applicantName = memberNameOf(members, applicantId) ?? (applicantId === "" ? "成员" : applicantId);
+  const applicantName = memberNameOf(members, applicantId) ?? (applicantId === "" ? fieldText(locale, "成员") : applicantId);
   const applicant = members.find((member) => member.id === applicantId);
   const applicantLabel = applicantHandleText(applicantName, applicant === undefined ? null : applicant.handle);
   /** 「变更文件」展示类型（业务口径「变更文件就是输出文件成果这个类型」）：文件自身 docType 空 → 回退任务输出成果文件。 */
@@ -127,7 +130,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
     const outcome = await ensurePreviewOutcome(detail.file.id, detail.versionId);
     setPreviewBusy(false);
     if (outcome.kind === "unavailable") {
-      setPreviewNote(outcome.reason ?? "暂不支持在线预览，请下载查看");
+      setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
     setPreview((previous) => ({
@@ -147,7 +150,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
       const signed = await fetchDownloadUrl(detail.file.id, detail.versionId);
       await triggerDownload(signed.url, signed.fileName);
     } catch (error) {
-      setPreviewNote(error instanceof Error && error.message !== "" ? error.message : "下载失败，请稍后再试");
+      setPreviewNote(error instanceof Error && error.message !== "" ? error.message : t("drawer.download.failed"));
     }
   };
 
@@ -156,7 +159,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
       ref={trapRef}
       data-change-modal="true"
       role="dialog" data-live-sync-readonly="true"
-      aria-label="变更管理详情"
+      aria-label={t("cd.aria")}
       onClick={onClose}
       className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 p-6"
     >
@@ -165,18 +168,18 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
         className="flex max-h-[86vh] w-[430px] max-w-[94vw] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_rgba(15,23,42,0.28)]"
       >
         <header className="flex items-center gap-1.5 border-b border-zinc-100 px-4 py-2.5">
-          <span className="text-[13px] text-zinc-500">来自</span>
+          <span className="text-[13px] text-zinc-500">{t("cd.from")}</span>
           <RowIcon kind="grid" />
-          <span className="flex-1 text-[13px] font-medium text-zinc-700">变更管理</span>
-          <IconButton label="收起" dataAttr="data-change-modal-collapse" onClick={() => { setCollapsed(true); }}><RowIcon kind="up" /></IconButton>
-          <IconButton label="展开" dataAttr="data-change-modal-expand" onClick={() => { setCollapsed(false); }}><RowIcon kind="down" /></IconButton>
-          <IconButton label="关闭" dataAttr="data-change-modal-close" onClick={onClose}><RowIcon kind="close" /></IconButton>
+          <span className="flex-1 text-[13px] font-medium text-zinc-700">{t("cd.source")}</span>
+          <IconButton label={t("cd.collapse")} dataAttr="data-change-modal-collapse" onClick={() => { setCollapsed(true); }}><RowIcon kind="up" /></IconButton>
+          <IconButton label={t("cd.expand")} dataAttr="data-change-modal-expand" onClick={() => { setCollapsed(false); }}><RowIcon kind="down" /></IconButton>
+          <IconButton label={t("cd.close")} dataAttr="data-change-modal-close" onClick={onClose}><RowIcon kind="close" /></IconButton>
         </header>
         {collapsed ? null : (
           <div data-change-modal-body="true" className="min-h-0 flex-1 overflow-y-auto">
             {detail === null ? (
               note === null ? (
-                <p data-change-modal-busy="true" className="px-6 py-10 text-center text-xs text-zinc-400">加载中…</p>
+                <p data-change-modal-busy="true" className="px-6 py-10 text-center text-xs text-zinc-400">{t("common.loading")}</p>
               ) : (
                 <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
                   <p data-change-modal-note="true" className="text-xs leading-5 text-zinc-400">{note}</p>
@@ -186,7 +189,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                     onClick={() => { setRetryTick((tick) => tick + 1); }}
                     className="rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] text-zinc-600 transition hover:bg-zinc-50"
                   >
-                    重试
+                    {t("common.retry")}
                   </button>
                 </div>
               )
@@ -194,39 +197,39 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
               <>
                 <p data-change-modal-date="true" className="px-6 pt-5 text-[26px] font-semibold tracking-tight text-zinc-900">{slashDate(detail.appliedAt)}</p>
                 <dl className="flex flex-col gap-4 px-6 pb-6 pt-4">
-                  <DetailRow kind="calendar" label="变更时间" testKey="time">{slashDate(detail.appliedAt)}</DetailRow>
-                  <DetailRow kind="check" label="变更阶段" testKey="stage">
-                    <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-600">{stageLabelOf(detail.stageKey)}</span>
+                  <DetailRow kind="calendar" label={fieldText(locale, "变更时间")} testKey="time">{slashDate(detail.appliedAt)}</DetailRow>
+                  <DetailRow kind="check" label={fieldText(locale, "变更阶段")} testKey="stage">
+                    <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-600">{stageLabelOf(locale, detail.stageKey)}</span>
                   </DetailRow>
-                  <DetailRow kind="doc" label="变更文件" testKey="file">
+                  <DetailRow kind="doc" label={fieldText(locale, "变更文件")} testKey="file">
                     {fileTypeText === null ? <span className="text-zinc-400">—</span> : (
                       <span data-change-modal-doc-type="true" className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[12px] font-medium text-amber-700">{fileTypeText}</span>
                     )}
                   </DetailRow>
-                  <DetailRow kind="doc" label="变更内容描述" testKey="content">{textOrDash(split.content)}</DetailRow>
-                  <DetailRow kind="image" label="变更前" testKey="before">{textOrDash(detail.beforeSummary)}</DetailRow>
-                  <DetailRow kind="image" label="变更后" testKey="after">{textOrDash(detail.afterSummary)}</DetailRow>
-                  <DetailRow kind="doc" label="变更原因" testKey="cause">{textOrDash(split.cause)}</DetailRow>
-                  <DetailRow kind="person" label="变更申请人" testKey="applicant">
+                  <DetailRow kind="doc" label={fieldText(locale, "变更内容描述")} testKey="content">{textOrDash(split.content)}</DetailRow>
+                  <DetailRow kind="image" label={fieldText(locale, "变更前")} testKey="before">{textOrDash(detail.beforeSummary)}</DetailRow>
+                  <DetailRow kind="image" label={fieldText(locale, "变更后")} testKey="after">{textOrDash(detail.afterSummary)}</DetailRow>
+                  <DetailRow kind="doc" label={fieldText(locale, "变更原因")} testKey="cause">{textOrDash(split.cause)}</DetailRow>
+                  <DetailRow kind="person" label={fieldText(locale, "变更申请人")} testKey="applicant">
                     <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-700" title={applicantId}>
                       <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-400 text-[9px] font-medium text-white">{applicantName.slice(0, 1)}</span>
                       {applicantLabel}
                     </span>
                   </DetailRow>
-                  <DetailRow kind="person" label="填写者" testKey="writer">
+                  <DetailRow kind="person" label={fieldText(locale, "填写者")} testKey="writer">
                     <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-700">
                       <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-400 text-[9px] font-medium text-white">{applicantName.slice(0, 1)}</span>
                       {applicantLabel}
                     </span>
                   </DetailRow>
-                  <DetailRow kind="check" label="进度" testKey="progress"><span className="text-zinc-400">—</span></DetailRow>
-                  <DetailRow kind="doc" label="变更后文件版本" testKey="version">{detail.file.name + "（v" + String(detail.versionSeq) + "）"}</DetailRow>
-                  <DetailRow kind="file" label="变更后文件" testKey="after-file">
+                  <DetailRow kind="check" label={fieldText(locale, "进度")} testKey="progress"><span className="text-zinc-400">—</span></DetailRow>
+                  <DetailRow kind="doc" label={fieldText(locale, "变更后文件版本")} testKey="version">{detail.file.name + "（v" + String(detail.versionSeq) + "）"}</DetailRow>
+                  <DetailRow kind="file" label={fieldText(locale, "变更后文件")} testKey="after-file">
                     <button
                       type="button"
                       data-change-modal-file-card="true"
                       data-change-modal-file-open="true"
-                      title="点击预览"
+                      title={t("drawer.file.previewTitle")}
                       disabled={previewBusy}
                       onClick={() => { void openFilePreview(); }}
                       className="inline-flex w-[120px] flex-col items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 transition hover:border-amber-300 hover:bg-amber-50 disabled:cursor-progress"
@@ -234,10 +237,10 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                       <FileTypeIcon name={detail.file.name} className="h-6 w-6" />
                       <span className="line-clamp-2 w-full break-all text-center text-[11px] leading-4 text-zinc-500" title={detail.file.name}>{detail.file.name}</span>
                     </button>
-                    {previewBusy ? <span className="ml-1 align-middle text-[11px] text-zinc-400">打开预览…</span> : null}
+                    {previewBusy ? <span className="ml-1 align-middle text-[11px] text-zinc-400">{t("cd.openingPreview")}</span> : null}
                     {previewNote === null ? null : <span data-change-modal-file-note="true" className="mt-1 block text-[11px] leading-4 text-rose-500">{previewNote}</span>}
                   </DetailRow>
-                  <DetailRow kind="link" label="关联" testKey="links">
+                  <DetailRow kind="link" label={fieldText(locale, "关联")} testKey="links">
                     {linkedTaskTitle === null ? <span className="text-zinc-400">—</span> : onOpenLinkedTask === undefined || onOpenLinkedTask === null ? (
                       <span data-change-modal-link="true" className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[12px] text-zinc-600">
                         <RowIcon kind="link" />
@@ -248,7 +251,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                         type="button"
                         data-change-modal-link="true"
                         data-change-modal-link-open="true"
-                        title="打开任务抽屉"
+                        title={t("cd.openTaskDrawer")}
                         onClick={onOpenLinkedTask}
                         className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[12px] text-zinc-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"
                       >
@@ -329,19 +332,21 @@ function RowIcon({ kind }: { kind: IconKind }) {
 }
 
 /** 变更阶段展示（空 / 未知 → 「—」）。 */
-function stageLabelOf(stageKey: string | null): string {
+function stageLabelOf(locale: Locale, stageKey: string | null): string {
   const label = stageNameOf(stageKey);
-  return label === "" ? "—" : label;
+  return label === "" ? "—" : stageText(locale, label);
 }
 
-/** 变更原因拆分（前端提交口径：内容描述 + 「；变更原因：」+ 原因；无标记 = 全文即内容描述，原因「—」）。 */
+/** 变更原因拆分（前端提交口径：内容描述 + 「；变更原因：」+ 原因；英文界面提交为 "; Change reason: " ——
+ *  两种标记都认；无标记 = 全文即内容描述，原因「—」）。 */
 function splitChangeReason(reason: string): { content: string; cause: string } {
-  const marker = "；变更原因：";
-  const at = reason.indexOf(marker);
-  if (at < 0) {
-    return { content: reason, cause: "" };
+  for (const marker of ["；变更原因：", "; Change reason: "]) {
+    const at = reason.indexOf(marker);
+    if (at >= 0) {
+      return { content: reason.slice(0, at), cause: reason.slice(at + marker.length) };
+    }
   }
-  return { content: reason.slice(0, at), cause: reason.slice(at + marker.length) };
+  return { content: reason, cause: "" };
 }
 
 /** 空文本 → 「—」。 */

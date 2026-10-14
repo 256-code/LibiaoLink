@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { saveBackgroundTier, saveCardWatermark } from "./preferencesApi";
+import { getLocale, textOf } from "./i18n";
 
 /**
  * 背景档位（业务口径 2026-10-13「在这旁边增加一个背景下拉选择 先做弹出框 分为三个档位
@@ -90,7 +91,7 @@ export async function selectBackgroundTier(next: BackgroundTier): Promise<string
     if (currentTier === next) {
       setTierInternal(previous);
     }
-    return "背景档位保存失败";
+    return textOf(getLocale(), "header.bg.saveFailed");
   }
 }
 
@@ -144,7 +145,7 @@ export async function selectCardWatermark(next: boolean): Promise<string | null>
     if (currentWatermark === next) {
       setWatermarkInternal(previous);
     }
-    return "水印设置保存失败";
+    return textOf(getLocale(), "header.bg.watermarkSaveFailed");
   }
 }
 

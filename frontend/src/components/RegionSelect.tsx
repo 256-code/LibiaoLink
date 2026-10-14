@@ -3,7 +3,8 @@ import type { KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { DictItem } from "../dicts";
 import type { RegionPickerOption } from "../data/regionPicker";
-import { buildRegionPickerOptions, groupRegionPickerOptions, searchRegionPickerOptions, usedRegionPickerOptions } from "../data/regionPicker";
+import { buildRegionPickerOptions, groupRegionPickerOptions, regionNameEn, searchRegionPickerOptions, usedRegionPickerOptions } from "../data/regionPicker";
+import { continentText, useLocale, useT } from "../i18n";
 import { usePopover } from "./usePopover";
 
 /**
@@ -42,6 +43,8 @@ const POPOVER_WIDTH = 280;
 const POPOVER_HEIGHT = 400;
 
 export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange }: RegionSelectProps) {
+  const locale = useLocale();
+  const t = useT();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<RegionSelectTab>(TAB_USED);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -160,6 +163,8 @@ export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange 
     close();
   };
 
+  /** 地区显示名（Push 301 英译）：英文界面先取候选自带英文名、再按中文名认标准国名，都认不出回退原文。 */
+  const nameOf = (option: RegionPickerOption): string => (locale === "en" ? (option.en !== "" ? option.en : regionNameEn(option.name) || option.name) : option.name);
   const renderRow = (option: RegionPickerOption, count: number | null) => {
     const selected = option.value === value;
     return (
@@ -175,8 +180,8 @@ export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange 
         }}
         className={"flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition " + (selected ? "bg-blue-50 font-medium text-blue-700" : "text-zinc-700 hover:bg-zinc-100")}
       >
-        <span data-region-name={option.name} className="truncate">{option.name}</span>
-        {count === null ? null : <span className="ml-auto shrink-0 text-[11px] font-normal text-zinc-400">{String(count) + " 个项目"}</span>}
+        <span data-region-name={option.name} className="truncate">{nameOf(option)}</span>
+        {count === null ? null : <span className="ml-auto shrink-0 text-[11px] font-normal text-zinc-400">{t("region.projects", { n: count })}</span>}
       </button>
     );
   };
@@ -191,7 +196,7 @@ export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange 
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="选择项目地区"
+        aria-label={t("region.selectAria")}
         onClick={() => {
           if (open) {
             close();
@@ -202,9 +207,9 @@ export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange 
         className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm transition hover:border-zinc-300 hover:bg-zinc-50"
       >
         {valueLabel === "" ? (
-          <span className="truncate text-zinc-400">请选择地区</span>
+          <span className="truncate text-zinc-400">{t("region.placeholder")}</span>
         ) : (
-          <span className="truncate font-medium text-zinc-800">{valueLabel}</span>
+          <span className="truncate font-medium text-zinc-800">{locale === "en" ? regionNameEn(valueLabel) || valueLabel : valueLabel}</span>
         )}
         {/* 箭头朝右：与「贴右侧弹出」的落点同向。 */}
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 -rotate-90 text-zinc-400">
@@ -226,29 +231,29 @@ export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange 
                   ref={searchRef}
                   type="text"
                   value={query}
-                  aria-label="搜索国家 / 地区"
-                  placeholder="搜索国家 / 地区（中英文都行）"
+                  aria-label={t("region.searchAria")}
+                  placeholder={t("region.searchPlaceholder")}
                   onChange={(event) => {
                     handleQueryChange(event.target.value);
                   }}
                   onKeyDown={handleSearchKeyDown}
                   className="w-full rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:bg-white focus:ring-1 focus:ring-zinc-300"
                 />
-                <div role="tablist" aria-label="地区分页" className="mt-1.5 flex gap-1 rounded-lg bg-zinc-100 p-1">
+                <div role="tablist" aria-label={t("region.tabsAria")} className="mt-1.5 flex gap-1 rounded-lg bg-zinc-100 p-1">
                   <button type="button" role="tab" aria-selected={tab === TAB_USED} data-region-tab="used" onClick={() => { setTab(TAB_USED); }} className={tabClass(tab === TAB_USED)}>
-                    已有项目地区
+                    {t("region.tab.used")}
                   </button>
                   <button type="button" role="tab" aria-selected={tab === TAB_ALL} data-region-tab="all" onClick={() => { setTab(TAB_ALL); }} className={tabClass(tab === TAB_ALL)}>
-                    全部地区
+                    {t("region.tab.all")}
                   </button>
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto">
-                <div role="listbox" aria-label="国家 / 地区候选" data-region-tab={tab} className="p-1">
+                <div role="listbox" aria-label={t("region.listAria")} data-region-tab={tab} className="p-1">
                   {fallbackShown && fallback !== null ? (
                     <div key="@@fallback">
                       <p role="presentation" data-option-group="当前值" className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-zinc-400">
-                        当前值（不在标准清单里）
+                        {t("region.current")}
                       </p>
                       {renderRow(fallback, null)}
                     </div>
@@ -258,14 +263,14 @@ export function RegionSelect({ value, valueLabel, items, onChange, onOpenChange 
                     ? groups.map((group) => (
                         <div key={group.continent}>
                           <p role="presentation" data-option-group={group.continent} className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-zinc-400">
-                            {group.continent} · {String(group.items.length)}
+                            {continentText(locale, group.continent)} · {String(group.items.length)}
                           </p>
                           {group.items.map((option) => renderRow(option, null))}
                         </div>
                       ))
                     : null}
                   {rowCount === 0 ? (
-                    <p className="px-3 py-2 text-[11px] text-zinc-400">没有匹配的国家 / 地区。</p>
+                    <p className="px-3 py-2 text-[11px] text-zinc-400">{t("region.empty")}</p>
                   ) : null}
                 </div>
               </div>

@@ -65,6 +65,11 @@ export const EnvSchema = z
     PREVIEW_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(300),
     /** 预览转换队列开关（worker）：`false` = 只投递不消费（排障 / 压测用）。 */
     PREVIEW_JOB_ENABLED: z.enum(["true", "false"]).default("true"),
+    // ---- 翻译通道（§6.16 ㉕ · Push 301：手打内容英译落库；服务端调内网引擎） ----
+    /** 内网翻译引擎基址（LibreTranslate 兼容 POST /translate；本机验证形态 = HY-MT1.5-1.8B 薄壳 5008）。 */
+    TRANSLATE_ORIGIN: z.string().min(1).default("http://127.0.0.1:5008"),
+    /** 引擎调用超时（毫秒）：超时 / 失败按 500 INTERNAL 返回（前端既有通道静默降级跳过）。 */
+    TRANSLATE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(20000),
     // ---- ONLYOFFICE 查看器（S3 · ADR-030：Office / 文本族预览改由 ONLYOFFICE 查看器承接；受控端点鉴权 = 与 DocServer 共享密钥） ----
     /** DocServer 浏览器侧基址：查看器配置 `docServerUrl` 下发（前端据此加载 api.js）；dev 沙箱 = deploy/onlyoffice 的 127.0.0.1:8001。 */
     ONLYOFFICE_DOCSERVER_URL: z.string().min(1).default("http://127.0.0.1:8001"),

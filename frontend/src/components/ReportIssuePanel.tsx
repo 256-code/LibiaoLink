@@ -39,7 +39,7 @@ import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
 import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintOf, type TintedTier } from "../backgroundTier";
-import { fieldText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
+import { fieldText, fullDateText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
 import { prefetchZhToEn } from "../translateApi";
 
 /**
@@ -408,10 +408,10 @@ function tagChip(name: string, tagClass: string) {
 }
 
 /** 问题归类的小色签（浮层用；与表内 CategoryTags 同一张色表）。 */
-const categoryChip = (name: string) => tagChip(name, ISSUE_CATEGORY_CLASS[name] ?? "bg-zinc-100");
+const categoryChip = (name: string, locale: Locale) => tagChip(fieldText(locale, name), ISSUE_CATEGORY_CLASS[name] ?? "bg-zinc-100");
 
 /** 关联阶段的小色签（浮层用）。 */
-const stageChip = (name: string) => tagChip(name, STAGE_TAG_CLASS[name] ?? "bg-zinc-100");
+const stageChip = (name: string, locale: Locale) => tagChip(stageText(locale, name), STAGE_TAG_CLASS[name] ?? "bg-zinc-100");
 /** 三态色签壳体（「问题追踪」与工作台问题表共用一处）：与「项目总览」任务状态胶囊同款 —— rounded-lg +
  *  px-3 py-1.5 + text-[11px] font-medium。Push 260 抽出：工作台问题表原先自带一档更小的壳（rounded + px-1.5 +
  *  py-0.5），业务口径「问题是否解决的颜色要统一和项目里面的一致」收口到本常量，两处不再各写各的。 */
@@ -614,9 +614,9 @@ function cnDateOf(iso: string): string {
   return String(Number(match[1])) + "年" + String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
 }
 
-/** 日期显示（英文界面用 ISO YYYY-MM-DD；中文界面沿用「YYYY年M月D日」）。 */
+/** 日期显示（英文界面「Sep 16, 2026」/ 中文界面「YYYY年M月D日」—— Push 301 追订：与「我的任务」问题表同一套日期样式，不再用 ISO）。 */
 function isoDateText(locale: Locale, iso: string): string {
-  return locale === "en" ? iso : cnDateOf(iso);
+  return locale === "en" ? fullDateText(locale, iso) : cnDateOf(iso);
 }
 
 /** 当天 ISO 日期（YYYY-MM-DD）。 */
@@ -831,6 +831,7 @@ function PasteIcon({ className = "h-5 w-5" }: { className?: string }) {
  *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图改挂共享组件 ImageZoomViewer —— 滚轮 / ＋− / 双击 /
  *  拖动平移（25% ~ 800%）；点图不再关（留给缩放 / 拖动），关浮层 = 点遮罩 / Esc。 */
 function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -848,7 +849,7 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
       ref={trapRef}
       data-photo-preview=""
       role="dialog" data-live-sync-readonly="true"
-      aria-label={"预览 " + name}
+      aria-label={t("rp.preview", { name })}
       onClick={(event) => {
         event.stopPropagation();
         onClose();
@@ -884,6 +885,7 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
   onRemove?: (at: number) => void;
   onPreview: (url: string, name: string) => void;
 }) {
+  const t = useT();
   const url = usePhotoUrl(item.fileId, item.url);
   const editing = editingAt === index;
   return (
@@ -900,7 +902,7 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
         <button
           type="button"
           data-attachment-thumb=""
-          aria-label={"预览 " + item.name}
+          aria-label={t("rp.preview", { name: item.name })}
           onClick={(event) => {
             // Push 217 续④：看板卡片整卡可点（开抽屉），缩略图的预览点击若冒泡 = 「预览层 + 抽屉」同时打开、
             // 两层预览叠着（业务截图）；这里止住冒泡，点图只出预览层。
@@ -944,11 +946,11 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
             (item.pending === "failed" ? "bg-rose-600/85" : "bg-zinc-900/70")
           }
         >
-          {item.pending === "uploading" ? "上传中…" : "上传失败"}
+          {item.pending === "uploading" ? t("photo.uploading") : t("photo.failed")}
         </span>
       ) : (
         <span className={"text-[10px] " + (item.pending === "failed" ? "text-rose-500" : "text-zinc-400")}>
-          {item.pending === "uploading" ? "上传中…" : "上传失败"}
+          {item.pending === "uploading" ? t("photo.uploading") : t("photo.failed")}
         </span>
       )}
       {isLarge || isThumb ? null : editing && editingExt !== "" ? (
@@ -959,8 +961,8 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
         <button
           type="button"
           data-rename-attachment=""
-          aria-label={"重命名 " + item.name}
-          title="点名字可自定义"
+          aria-label={t("rp.renameAria", { name: item.name })}
+          title={t("photo.renameTitle")}
           onClick={() => startRename(index)}
           className="max-w-[9rem] truncate text-left transition hover:text-zinc-900 hover:underline"
         >
@@ -973,9 +975,9 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
         <button
           type="button"
           data-action="remove-attachment"
-          aria-label={"移除 " + item.name}
+          aria-label={t("rp.removeAria", { name: item.name })}
           onClick={() => onRemove(index)}
-          title="移除这张图"
+          title={t("photo.removeTitle")}
           className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white text-[11px] leading-none text-zinc-500 opacity-0 shadow-sm transition group-hover:opacity-100 hover:bg-zinc-100 hover:text-zinc-800 focus-visible:opacity-100"
         >
           ×
@@ -984,7 +986,7 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
         <button
           type="button"
           data-action="remove-attachment"
-          aria-label={"移除 " + item.name}
+          aria-label={t("rp.removeAria", { name: item.name })}
           onClick={() => onRemove(index)}
           className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
         >
@@ -1087,7 +1089,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
           <div
             ref={removeConfirmTrapRef}
             role="dialog"
-            aria-label="确认移除图片"
+            aria-label={t("rp.removeConfirmAria")}
             data-remove-attachment-confirm-strip=""
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
@@ -1125,6 +1127,7 @@ function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemo
  *  Push 205：「当前问题附图」加**前置开关**（业务口径「先填发现的问题 才能填另外三个」）—— disabled 时整卡灰底 / 灰字、
  *  两半都点不开（左半按钮 disabled、粘贴落点不可聚焦、文件框 disabled、文档级粘贴监听不挂）。 */
 function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabled = false, size = "sm", variant = "card", confirmRemove = false }: { projectId: string; field: string; items: readonly ReportPhoto[]; onChange: (items: ReportPhoto[]) => void; ariaLabel: string; disabled?: boolean; /** Push 212 续：主题图清单档位（sm = 表单胶囊档；抽屉沿用各自图幅 —— 问题附图 md / 现场工作附图 lg）。 */ size?: "sm" | "md" | "lg"; /** Push 212 续：形态 —— card = 表单那张虚线贴图卡（业务样）；compact = 紧凑小图标入口（问题详情抽屉用 —— 业务口径「框太大了 不需要」）。 */ variant?: "card" | "compact"; /** Push 224 续：移除图片二次确认 —— 仅抽屉两处开启（× 即时落库，先出确认条）。 */ confirmRemove?: boolean }) {
+  const t = useT();
   /** 本区是否是「最近点过的贴图区」——点一下左半（粘贴落点拿到焦点）置位，粘贴事件按它路由。 */
   const [armed, setArmed] = useState(false);
   /** 粘贴落点（左半里的不可见输入框：浏览器只对有可编辑焦点的元素执行 Ctrl+V 粘贴命令）。 */
@@ -1172,7 +1175,7 @@ function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabl
         pasteSeq.current += 1;
         const slash = file.type.indexOf("/");
         const ext = slash >= 0 ? file.type.slice(slash + 1) : "png";
-        name = "剪贴板图片-" + String(pasteSeq.current) + "." + ext;
+        name = t("rp.clipboardName") + String(pasteSeq.current) + "." + ext;
       }
       const entry: ReportPhoto = { fileId: "", name, url: isImage ? URL.createObjectURL(file) : null, pending: "uploading" };
       void startUpload(file, entry);
@@ -1229,7 +1232,7 @@ function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabl
             <button
               type="button"
               data-paste-half=""
-              aria-label="复制粘贴（点一下再按 Ctrl+V 粘图）"
+              aria-label={t("rp.pasteAria")}
               disabled={disabled}
               onClick={() => {
                 if (disabled) {
@@ -1274,7 +1277,7 @@ function AttachmentPicker({ projectId, field, items, onChange, ariaLabel, disabl
           </div>
           <label
             data-file-half=""
-            aria-label={disabled ? "先填「现场发现问题」后可选择文件" : "点击选择文件（可多选）"}
+            aria-label={disabled ? t("rp.pickDisabledAria") : t("rp.pickAria")}
             onClick={() => {
               if (disabled) {
                 return;
@@ -1365,7 +1368,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                 Push 223 再补一枚「编辑」（干系人同款 RowEditButton）—— 两枚共用一枚预留槽位（78px = 悬停展开 48 + 间距 6 + 静止 24），
                 哪一枚展开都只吃槽内空间 ⇒ 列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」的修法照旧）。 */}
             <th className="w-[110px] border-b border-zinc-200 px-4 py-3.5 font-medium">
-              <span className="sr-only">操作</span>
+              <span className="sr-only">{t("rp.actions")}</span>
             </th>
           </tr>
         </thead>
@@ -1403,8 +1406,8 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                       Push 223 续（业务口径 2026-09-29「阴影太大了」）：触发器 hover 底色改**贴色签**（CELL_EDIT_CHIP ——
                       不再 w-full 铺满整列），只有色签四周那圈 2px 亮起。 */}
                   <InlineCell
-                    ariaLabel={"修改关联阶段（" + report.date + "）"}
-                    title="点击选择（可多选）"
+                    ariaLabel={t("rp.stagesAria", { date: report.date })}
+                    title={t("rp.pickMultiTitle")}
                     width={220}
                     height={REPORT_STAGES.length * 30 + 12}
                     bare
@@ -1414,11 +1417,11 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                       <MultiOptionList
                         values={report.stageNames}
                         options={REPORT_STAGES}
-                        ariaLabel={"修改关联阶段（" + report.date + "）"}
+                        ariaLabel={t("rp.stagesAria", { date: report.date })}
                         onChange={(next) => {
                           onPatch(report.id, { stageNames: next });
                         }}
-                        renderLabel={stageChip}
+                        renderLabel={(name) => stageChip(name, locale)}
                       />
                     )}
                   />
@@ -1498,8 +1501,8 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
       role={ghost ? undefined : "button"}
       tabIndex={ghost ? undefined : 0}
       aria-hidden={ghost ? true : undefined}
-      aria-label={ghost ? undefined : "问题：" + issue.title}
-      title={onPointerDownDrag === undefined ? undefined : "点一下看问题详情（含来源日报内容）；按住卡片拖到别的列 = 改问题状态"}
+      aria-label={ghost ? undefined : textOf(locale, "rp.cardAria", { title: issue.title })}
+      title={onPointerDownDrag === undefined ? undefined : textOf(locale, "rp.cardDragTitle")}
       data-issue-card={issue.id}
       onClick={onOpen}
       onPointerDown={onPointerDownDrag === undefined ? undefined : (event) => { onPointerDownDrag(issue.id, event.currentTarget, event); }}
@@ -1760,7 +1763,7 @@ function IssueBoard({ issues, onPatch, onOpen }: {
 
   return (
     <div data-issue-board="" ref={boardRef}>
-      <ScrollArea axis="horizontal" ariaLabel="问题看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
+      <ScrollArea axis="horizontal" ariaLabel={t("rp.boardScrollAria")} viewportClassName="pb-3" className="flex items-start gap-4">
         {ISSUE_STATES.map((state) => {
           const items = issues.filter((issue) => issue.state === state);
           const isTarget = dropState === state;
@@ -1775,7 +1778,7 @@ function IssueBoard({ issues, onPatch, onOpen }: {
                 <IssueStateTag state={state} />
                 <span className="shrink-0 text-xs text-zinc-400">{t("report.board.count", { n: items.length })}</span>
               </header>
-              <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"问题卡片：" + state}>
+              <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={t("rp.boardCardsAria", { state: statusText(locale, ISSUE_STATE_NAMES[state]) })}>
                 {isTarget ? (
                   <div
                     data-issue-drop-slot="true"
@@ -1868,7 +1871,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                 Push 223 再补一枚「编辑」（干系人同款 RowEditButton）—— 两枚共用同一枚预留槽位
                 （78px = 悬停展开 48 + 间距 6 + 静止 24）；删问题 = 连它来源的那篇日报一起删（同一篇日报整组）。 */}
             <th className="w-[110px] border-b border-zinc-200 px-4 py-3.5 font-medium">
-              <span className="sr-only">操作</span>
+              <span className="sr-only">{t("rp.actions")}</span>
             </th>
           </tr>
         </thead>
@@ -1893,8 +1896,8 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                   wrapContent
                   values={issue.categories}
                   options={ISSUE_CATEGORIES}
-                  ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
-                  renderLabel={categoryChip}
+                  ariaLabel={t("rp.catAria", { date: issue.raisedAt })}
+                  renderLabel={(name) => categoryChip(name, locale)}
                   triggerClassName={CELL_EDIT_CHIP}
                   display={<CategoryTags values={issue.categories} />}
                   onChange={(values) => {
@@ -1925,7 +1928,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                 <IssueStateCell
                   state={issue.state}
                   tierTint={tierTint}
-                  ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
+                  ariaLabel={t("rp.stateAria", { date: issue.raisedAt })}
                   onPick={(next) => {
                     onPatch(issue.id, { state: next });
                   }}
@@ -2135,7 +2138,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
           size="lg"
           items={photos}
           onChange={setPhotos}
-          ariaLabel="现场工作附图：点击左半后 Ctrl+V 粘贴图片，或点右半选择文件"
+          ariaLabel={t("rp.photosHalfAria")}
         />
       </div>
       {uploadBlocked === "" ? null : <p className="text-xs text-amber-700">{uploadBlocked}</p>}
@@ -2206,7 +2209,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
     <RecordEditModal
       label={t("report.modal.issue.title")}
       hint={t("report.modal.issue.hint", { date: isoDateText(locale, row.raisedAt), reporter: row.reporter })}
-      submitLabel="保存修改"
+      submitLabel={t("report.modal.submit")}
       pending={pending}
       canSubmit={canSubmit}
       error={error}
@@ -2233,7 +2236,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
             value={ownerId}
             items={ownerItems}
             onChange={setOwnerId}
-            ariaLabel="选择问题处理人 / 责任人"
+            ariaLabel={t("rp.ownerPickAria")}
             footer={t("report.members.footer", { n: members.length })}
             placeholder={fieldText(locale, "待分派")}
           />
@@ -2263,7 +2266,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
           size="md"
           items={photos}
           onChange={setPhotos}
-          ariaLabel="问题附图：点击左半后 Ctrl+V 粘贴图片，或点右半选择文件"
+          ariaLabel={t("rp.issuePhotosHalfAria")}
         />
       </div>
       {uploadBlocked === "" ? null : <p className="text-xs text-amber-700">{uploadBlocked}</p>}
@@ -2301,6 +2304,7 @@ function StageChecklist({
   dataField?: string;
   boxClass: string;
 }) {
+  const locale = useLocale();
   return (
     <div data-field={dataField} className={boxClass}>
       {REPORT_STAGES.map((stage) => {
@@ -2313,7 +2317,7 @@ function StageChecklist({
               onChange={() => onChange(checked ? values.filter((name) => name !== stage) : [...values, stage])}
               className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
             />
-            <span className="min-w-0 flex-1 truncate">{stage}</span>
+            <span className="min-w-0 flex-1 truncate">{stageText(locale, stage)}</span>
           </label>
         );
       })}
@@ -2482,7 +2486,7 @@ function ReportFillForm({
               onChange={(next) => onChange({ dateIso: next === null ? "" : next.from })}
               hintDate={draft.dateIso}
               placeholder={t("report.placeholder.date")}
-              ariaLabel="选择填报日期"
+              ariaLabel={t("rp.datePickAria")}
               triggerClassName="border-zinc-200 bg-white px-2.5! py-2 text-sm!"
             />
           </div>
@@ -2583,7 +2587,7 @@ function ReportFillForm({
       <div>
         <span className={FORM_LABEL}>{fieldText(locale, "现场工作附图")}</span>
         <div className="mt-1">
-          <AttachmentPicker projectId={project.id} field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片" />
+          <AttachmentPicker projectId={project.id} field="photos" items={draft.photos} onChange={(items) => onChange({ photos: items })} ariaLabel={t("rp.photosPasteAria")} />
         </div>
       </div>
 
@@ -2630,9 +2634,10 @@ function ReportFillForm({
                   <MultiSelectMenu
                     values={item.categories}
                     options={ISSUE_CATEGORIES}
+                    labelOf={(name) => fieldText(locale, name)}
                     onChange={(next) => { onPatchIssue(index, { categories: next }); }}
                     placeholder={t("report.placeholder.issueCategory")}
-                    ariaLabel={"问题 " + String(index + 1) + "：选择问题归类（可多选）"}
+                    ariaLabel={t("rp.issueCatAria", { n: index + 1 })}
                   />
                 </div>
               </label>
@@ -2643,9 +2648,9 @@ function ReportFillForm({
                     value={item.ownerId}
                     items={ownerItems}
                     onChange={(value) => { onPatchIssue(index, { ownerId: value }); }}
-                    ariaLabel={"问题 " + String(index + 1) + "：选择问题处理人 / 责任人"}
-                    footer={"共 " + String(members.length) + " 人 · 按姓名 / 拼音搜索"}
-                    placeholder="待分派"
+                    ariaLabel={t("rp.issueOwnerAria", { n: index + 1 })}
+                    footer={t("report.members.footer", { n: members.length })}
+                    placeholder={fieldText(locale, "待分派")}
                   />
                 </div>
               </div>
@@ -2657,7 +2662,7 @@ function ReportFillForm({
                     field="issuePhotos"
                     items={item.photos}
                     onChange={(items) => { onPatchIssue(index, { photos: items }); }}
-                    ariaLabel={"问题 " + String(index + 1) + "：当前问题附图（点击后 Ctrl+V 粘贴图片）"}
+                    ariaLabel={t("rp.issuePhotosPasteAria", { n: index + 1 })}
                   />
                 </div>
               </div>
@@ -2751,8 +2756,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
       value: (
         <InlineTextCell
           value={issue.title}
-          ariaLabel={"修改问题描述（" + issue.raisedAt + "）"}
-          placeholder="修改问题描述，点「保存」生效"
+          ariaLabel={t("rp.editTitleAria", { date: issue.raisedAt })}
+          placeholder={t("report.placeholder.issueTitleSave")}
           display={<span data-issue-title="" title={locale === "en" ? issue.title : undefined} className="block whitespace-pre-line break-words">{localize(issue.title)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { title: renumberLines(text) });
@@ -2768,8 +2773,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           wrapContent
           values={issue.categories}
           options={ISSUE_CATEGORIES}
-          ariaLabel={"修改问题归类（" + issue.raisedAt + "）"}
-          renderLabel={categoryChip}
+          ariaLabel={t("rp.catAria", { date: issue.raisedAt })}
+          renderLabel={(name) => categoryChip(name, locale)}
           display={<CategoryTags values={issue.categories} />}
           onChange={(values) => {
             onPatchIssue(issue.id, { categories: values });
@@ -2789,7 +2794,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
         <InlineMemberCell
           value={issue.ownerId}
           options={members}
-          ariaLabel={"修改问题处理人 / 责任人（" + issue.raisedAt + "）"}
+          ariaLabel={t("rp.editOwnerAria", { date: issue.raisedAt })}
           display={
             issue.owner === "" ? (
               <span className="text-zinc-300">—</span>
@@ -2812,8 +2817,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
       value: (
         <InlineTextCell
           value={issue.solution}
-          ariaLabel={"修改解决方案或建议（" + issue.raisedAt + "）"}
-          placeholder="补充解决方案或建议，点「保存」生效"
+          ariaLabel={t("rp.editSolutionAria", { date: issue.raisedAt })}
+          placeholder={t("report.placeholder.issueSuggestionSave")}
           display={<span data-issue-solution="" title={locale === "en" ? issue.solution : undefined} className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : localize(issue.solution)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { solution: renumberLines(text) });
@@ -2837,7 +2842,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           onChange={(items) => {
             onPatchIssue(issue.id, { photos: items });
           }}
-          ariaLabel="问题附图：点击后 Ctrl+V 粘贴图片，或点右半选择文件"
+          ariaLabel={t("rp.issuePhotosPickAria")}
         />
       ),
     },
@@ -2855,8 +2860,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
             value: (
               <InlineTextCell
                 value={report.doneWork}
-                ariaLabel={"修改当日完成工作（" + report.date + "）"}
-                placeholder="填写当日完成的工作，点「保存」生效"
+                ariaLabel={t("rp.editDoneAria", { date: report.date })}
+                placeholder={t("report.placeholder.doneWorkSave")}
                 display={<span data-report-done="" title={locale === "en" ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : localize(report.doneWork)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { doneWork: renumberLines(text) });
@@ -2881,8 +2886,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
             value: (
               <InlineTextCell
                 value={report.plan}
-                ariaLabel={"修改明日计划（" + report.date + "）"}
-                placeholder="填写明日计划，点「保存」生效"
+                ariaLabel={t("rp.editPlanAria", { date: report.date })}
+                placeholder={t("report.placeholder.planSave")}
                 display={<span data-report-plan="" title={locale === "en" ? report.plan : undefined} className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : localize(report.plan)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { plan: renumberLines(text) });
@@ -2905,7 +2910,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
                 onChange={(items) => {
                   onPatchReport(report.id, { photos: items });
                 }}
-                ariaLabel="现场工作附图：点击后 Ctrl+V 粘贴图片，或点右半选择文件"
+                ariaLabel={t("rp.photosPickAria")}
               />
             ),
           },
@@ -2916,7 +2921,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
               <InlineOptionCell
                 value={issue.state}
                 options={issueStateOptions(locale)}
-                ariaLabel={"修改问题状态（" + issue.raisedAt + "）"}
+                ariaLabel={t("rp.stateAria", { date: issue.raisedAt })}
                 display={<IssueStateTag state={issue.state} />}
                 onPick={(value) => {
                   onPatchIssue(issue.id, { state: value as IssueState });
@@ -2936,7 +2941,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
             value: (
               <InlineNumberCell
                 value={report.headcount ?? 0}
-                ariaLabel={"修改施工人数（" + report.date + "）"}
+                ariaLabel={t("rp.editHeadcountAria", { date: report.date })}
                 display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + (locale === "en" ? "" : " 人")}
                 onSave={(value) => {
                   onPatchReport(report.id, { headcount: value === 0 ? null : value });
@@ -2955,8 +2960,8 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
         <span className="text-zinc-400">—</span>
       ) : (
         <InlineCell
-          ariaLabel={"修改关联阶段（" + report.date + "）"}
-          title="点击选择（可多选）"
+          ariaLabel={t("rp.stagesAria", { date: report.date })}
+          title={t("rp.pickMultiTitle")}
           width={220}
           height={REPORT_STAGES.length * 30 + 12}
           display={<StageTags names={report.stageNames} />}
@@ -2964,11 +2969,11 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
             <MultiOptionList
               values={report.stageNames}
               options={REPORT_STAGES}
-              ariaLabel={"修改关联阶段（" + report.date + "）"}
+              ariaLabel={t("rp.stagesAria", { date: report.date })}
               onChange={(next) => {
                 onPatchReport(report.id, { stageNames: next });
               }}
-              renderLabel={stageChip}
+              renderLabel={(name) => stageChip(name, locale)}
             />
           )}
         />
@@ -3007,7 +3012,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
             <button
               type="button"
               onClick={requestClose}
-              aria-label="关闭问题详情"
+              aria-label={t("rp.drawerCloseAria")}
               className="-mr-1.5 shrink-0 rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
             >
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
@@ -3020,7 +3025,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           </h2>
           <p className="mt-1 text-xs leading-5 text-zinc-400">{t("report.drawer.raised", { date: isoDateText(locale, issue.raisedAt), reporter: issue.reporter })}</p>
         </header>
-        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel="问题详情字段">
+        <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel={t("rp.drawerFieldsAria")}>
           <dl>{rows.map(rowView)}</dl>
           <dl>{rowView(stagesRow)}</dl>
           <dl>{reportRows.map(rowView)}</dl>
@@ -3365,7 +3370,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     }
     const body = draftWriteBody("submitted");
     if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
-      setNotice("这篇草稿已被删除，输入仍保留；请核对后另建日报。");
+      setNotice(t("rp.draftGone"));
       return;
     }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
@@ -3414,7 +3419,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     }
     const body = draftWriteBody("draft");
     if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
-      setNotice("这篇草稿已被删除，输入仍保留；请核对后另建日报。");
+      setNotice(t("rp.draftGone"));
       return;
     }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
@@ -3491,9 +3496,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           />
           {draftChanged ? (
             <div data-report-draft-conflict="" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
-              <p>{remoteDraft === null ? "账号里的这篇草稿已被删除，填写内容仍保留。" : "账号里的草稿已变化，当前填写仍基于原版本，保存不会覆盖他人的修改。"}</p>
-              {remoteDraft === null ? <button type="button" className="mt-2 underline" onClick={() => { setDraftId(null); draftVersion.current = null; }}>保留当前内容，另建日报</button> : (
-                <details className="mt-2"><summary>核对最新草稿</summary><p className="whitespace-pre-wrap py-2">{remoteDraft.doneWork + "\n明日计划：" + remoteDraft.plan}</p><button type="button" className="underline" onClick={() => { draftVersion.current = remoteDraft.version; setNotice("已确认采用当前填写内容；再次保存仍会检查版本。"); }}>确认用当前填写内容重新保存</button></details>
+              <p>{remoteDraft === null ? t("rp.draftRemoteGone") : t("rp.draftRemoteChanged")}</p>
+              {remoteDraft === null ? <button type="button" className="mt-2 underline" onClick={() => { setDraftId(null); draftVersion.current = null; }}>{t("rp.draftKeep")}</button> : (
+                <details className="mt-2"><summary>{t("rp.draftReview")}</summary><p className="whitespace-pre-wrap py-2">{remoteDraft.doneWork + "\n" + t("rp.planInline") + remoteDraft.plan}</p><button type="button" className="underline" onClick={() => { draftVersion.current = remoteDraft.version; setNotice(t("rp.draftConfirm")); }}>{t("rp.draftConfirmBtn")}</button></details>
               )}
             </div>
           ) : null}
