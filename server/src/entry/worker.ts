@@ -5,7 +5,7 @@ import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
 import { FileService, PreviewService } from "../modules/file/index.js";
-import { NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
+import { NotifyDmService, NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
 import { JobScheduler, OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
@@ -29,6 +29,7 @@ async function bootstrap(): Promise<void> {
   const previews = app.get(PreviewService);
   const notify = app.get(NotifyService);
   const groupNotify = app.get(NotifyGroupService);
+  const dmNotify = app.get(NotifyDmService);
   const dispatcher = app.get(OutboxDispatcher);
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
@@ -93,19 +94,26 @@ async function bootstrap(): Promise<void> {
     logger.warn("预览转换队列已关闭（PREVIEW_JOB_ENABLED=false）：preview.job 只投递不消费");
   }
 
-  // 企微群通道长连接（M5-03-2 接线段 · P5 定案）：凭据齐备才启动 —— 订阅 + 30s 心跳 + 自动重连；
-  // 回调 ingest = 群会话激活置位（主动推送前置，846607 双语义切分依据）。未配置 = 「只存不投」
-  // （与 OutboxModule 注册表门控同口径）；api 进程同模块但从不 start()（构造无副作用）。
+  // 企微机器人通道长连接（M5-03-2 接线段 · P5 定案；M5-03-5-4 接线段扩单聊）：凭据齐备才启动 —— 订阅 +
+  // 30s 心跳 + 自动重连；回调 ingest 分流 = 单聊（chattype=single → 单聊激活）与群（群会话激活置位）——
+  // 主动推送前置（846607 双语义切分依据）。群未配置 = 「只存不投」（与 OutboxModule 注册表门控同口径）；
+  // 单聊未配置 = 投递行按未就绪 retry 收敛（bounded）；api 进程同模块但从不 start()（构造无副作用）。
   if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
     aibot.onMessage((message) => {
-      void groupNotify.activateFromCallback(message).catch((error) => {
-        logger.warn("群回调 ingest 失败（忽略本次；待下次回调或人工核查）：" + messageOf(error));
+      // 分流（M5-03-5-4）：单聊回调 → 单聊激活 ingest；其余（群聊 / 事件回调）→ 群 ingest。
+      // 两侧 ingest 各自带过滤防御（cmd / chattype / 合法性），入参同形 —— 互不牵连。
+      const ingest =
+        message.chattype === "single"
+          ? dmNotify.activateFromCallback(message)
+          : groupNotify.activateFromCallback(message);
+      void ingest.catch((error) => {
+        logger.warn("回调 ingest 失败（忽略本次；待下次回调或人工核查）：" + messageOf(error));
       });
     });
     aibot.start();
-    logger.log("企微智能机器人长连接已启动（群通道：订阅 + 心跳 + 会话激活 ingest）");
+    logger.log("企微智能机器人长连接已启动（群 + 单聊通道：订阅 + 心跳 + 会话激活 ingest）");
   } else {
-    logger.warn("企微群通道未启动（WECOM_BOT_ID / WECOM_BOT_SECRET 未配置或通知投递关闭）：notify.group 只存不投");
+    logger.warn("企微机器人通道未启动（WECOM_BOT_ID / WECOM_BOT_SECRET 未配置或通知投递关闭）：notify.group 只存不投；wecom_aibot 投递行按未就绪重试收敛（有界重试，不静默成功）");
   }
 
   // Outbox 分派（S7-1）：一轮 = 按注册主题各领一批（每主题 OUTBOX_BATCH_LIMIT 条，SKIP LOCKED）后串行收敛；
