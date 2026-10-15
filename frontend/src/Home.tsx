@@ -112,7 +112,6 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const locale = useLocale();
   /** 无建项目权限提示（Push 173 口径；文案随语言切换）。 */
   const noCreatePermission = t("home.noCreatePermission");
-  const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString(locale === "en" ? "en-US" : "zh-CN");
 
   const route = useHashRoute();
   /** 背景档位（Push 289 · 同日「先来适中版」→「不同项目类型的颜色不同应该」→「用 c 试试」）：适中 = 项目卡片按项目类型铺「便签同款实色」。 */
@@ -801,12 +800,6 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             {t("home.shown", { shown: items.length, total: total })}
           </p>
         ) : null}
-
-        <details className="mt-12 rounded-xl border border-zinc-200 bg-white p-5 text-sm text-zinc-700">
-          <summary className="cursor-pointer text-zinc-500">{t("home.token.title")}</summary>
-          <pre className="mt-3 max-h-64 overflow-auto text-xs">{JSON.stringify(me.claims, null, 2)}</pre>
-          <p className="mt-3 text-xs text-zinc-400">{t("home.token.expires", { time: expiresText })}</p>
-        </details>
       </main>
 
       {importFile === null ? null : (
