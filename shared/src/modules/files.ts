@@ -88,19 +88,21 @@ export const ChangeRequestSchema = z
     reason: z.string().openapi({ description: "变更原因（必填）" }),
     beforeSummary: z.string().nullable().openapi({ description: "变更前摘要" }),
     afterSummary: z.string().nullable().openapi({ description: "变更后摘要" }),
+    beforeSummaryFileIds: z.array(UuidSchema).openapi({ description: "变更前摘要附图（文件 id 有序；Push 314 变更前后可填图）" }),
+    afterSummaryFileIds: z.array(UuidSchema).openapi({ description: "变更后摘要附图（文件 id 有序；Push 314 变更前后可填图）" }),
     status: ChangeStatusSchema,
     appliedBy: UuidSchema,
     appliedAt: DateTimeSchema,
     createdAt: DateTimeSchema,
-    fileId: UuidSchema.openapi({ description: "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）" }),
-    versionId: UuidSchema.openapi({ description: "变更后版本（file_versions.change_request_id 反查）" }),
-    versionSeq: z.number().int().positive(),
+    fileId: UuidSchema.nullable().openapi({ description: "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）；Push 319：导入表导入变更暂无变更后文件（源文件在微盘，人工后补）= null" }),
+    versionId: UuidSchema.nullable().openapi({ description: "变更后版本（file_versions.change_request_id 反查）；导入遗留变更 = null" }),
+    versionSeq: z.number().int().positive().nullable().openapi({ description: "变更后版本号；导入遗留变更 = null" }),
   })
   .openapi("ChangeRequest", { description: "变更记录（v0.2 §5.3；一期申请即通过、全程留痕）" });
 
 export const ChangeRequestDetailSchema = ChangeRequestSchema.extend({
-  file: FileSchema,
-  version: FileVersionSchema,
+  file: FileSchema.nullable(),
+  version: FileVersionSchema.nullable(),
   filePreviousName: z
     .string()
     .nullable()
@@ -128,6 +130,8 @@ export const ChangeIntentBodySchema = z
     reason: z.string().min(1).max(1000).openapi({ description: "变更原因（必填；无变更后文件不允许提交）" }),
     beforeSummary: z.string().max(2000).optional(),
     afterSummary: z.string().max(2000).optional(),
+    beforeSummaryFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "变更前摘要附图（文件 id 有序，≤ 30；须为本项目未回收文件，否则 400 VALIDATION_FAILED）" }),
+    afterSummaryFileIds: z.array(UuidSchema).max(30).optional().openapi({ description: "变更后摘要附图（文件 id 有序，≤ 30；同左口径）" }),
     stageKey: StageKeySchema.optional(),
   })
   .openapi("ChangeIntentBody", { description: "变更申请字段（随上传会话提交，完成上传时同事务生效）" });

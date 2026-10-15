@@ -385,7 +385,7 @@
           "medium",
           "vivid"
         ],
-        "description": "背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple"
+        "description": "背景档位（Push 291 · 顶栏「背景 · 档位」；Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium"
       },
       "Blueprint": {
         "type": "object",
@@ -1101,6 +1101,22 @@
             "type": "string",
             "maxLength": 2000
           },
+          "beforeSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "变更前摘要附图（文件 id 有序，≤ 30；须为本项目未回收文件，否则 400 VALIDATION_FAILED）"
+          },
+          "afterSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 30,
+            "description": "变更后摘要附图（文件 id 有序，≤ 30；同左口径）"
+          },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           }
@@ -1167,6 +1183,20 @@
             ],
             "description": "变更后摘要"
           },
+          "beforeSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "变更前摘要附图（文件 id 有序；Push 314 变更前后可填图）"
+          },
+          "afterSummaryFileIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "变更后摘要附图（文件 id 有序；Push 314 变更前后可填图）"
+          },
           "status": {
             "$ref": "#/components/schemas/ChangeStatus"
           },
@@ -1185,7 +1215,11 @@
                 "$ref": "#/components/schemas/Uuid"
               },
               {
-                "description": "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）；Push 319：导入表导入变更暂无变更后文件（源文件在微盘，人工后补）= null"
               }
             ]
           },
@@ -1195,13 +1229,21 @@
                 "$ref": "#/components/schemas/Uuid"
               },
               {
-                "description": "变更后版本（file_versions.change_request_id 反查）"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "变更后版本（file_versions.change_request_id 反查）；导入遗留变更 = null"
               }
             ]
           },
           "versionSeq": {
-            "type": "integer",
-            "exclusiveMinimum": 0
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "变更后版本号；导入遗留变更 = null"
           }
         },
         "required": [
@@ -1212,6 +1254,8 @@
           "reason",
           "beforeSummary",
           "afterSummary",
+          "beforeSummaryFileIds",
+          "afterSummaryFileIds",
           "status",
           "appliedBy",
           "appliedAt",
@@ -1231,7 +1275,17 @@
             "type": "object",
             "properties": {
               "file": {
-                "$ref": "#/components/schemas/File"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/File"
+                  },
+                  {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                ]
               },
               "version": {
                 "$ref": "#/components/schemas/FileVersion"
@@ -2192,6 +2246,10 @@
           "IDEMPOTENT_REPLAY",
           "PREVIEW_NOT_READY",
           "PREVIEW_FAILED",
+          "IMPORT_FILE_INVALID",
+          "IMPORT_PARSE_FAILED",
+          "IMPORT_PREVIEW_EXPIRED",
+          "IMPORT_CANCELLED",
           "INTERNAL"
         ],
         "description": "统一错误码（技术设计v0.2 §7.2）"
@@ -8635,7 +8693,7 @@
           },
           "cardWatermark": {
             "type": "boolean",
-            "description": "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true"
+            "description": "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false"
           },
           "updatedAt": {
             "allOf": [
@@ -8713,7 +8771,7 @@
                 "$ref": "#/components/schemas/BackgroundTier"
               },
               {
-                "description": "背景档位 id（Push 291）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple"
+                "description": "背景档位 id（Push 291 · Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium"
               }
             ]
           },

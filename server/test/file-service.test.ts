@@ -59,6 +59,8 @@ const VERSION_A = "66666666-6666-4666-8666-66666666666a";
 const VERSION_B = "66666666-6666-4666-8666-66666666666b";
 const VERSION_C = "66666666-6666-4666-8666-66666666666c";
 const ARTIFACT = "77777777-7777-4777-8777-777777777777";
+const IMG_A = "88888888-8888-4888-8888-88888888888a";
+const IMG_B = "88888888-8888-4888-8888-88888888888b";
 const ACTOR = "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69";
 const OTHER_ACTOR = "caa8d763-4b6a-4967-9b26-7d1086272c9c";
 const HASH = "a".repeat(64);
@@ -187,6 +189,9 @@ class FakeFileRepository {
   sessionPatches: { id: string; patch: UploadSessionPatch }[] = [];
   duplicateQueries: { projectId: string; contentHash: string; excludeFileId: string }[] = [];
   attachmentDuplicateQueries: { projectId: string; contentHash: string }[] = [];
+  /** Push 314：摘要附图校验预置行（listSummaryFileBriefs 只回其中 id 命中项）。 */
+  summaryFileBriefs: { id: string; projectId: string; status: string }[] = [];
+  summaryFileQueries: string[][] = [];
   lockSessionCalls = 0;
 
   async findProjectBrief(): Promise<FileProjectBriefRow | null> {
@@ -199,6 +204,11 @@ class FakeFileRepository {
 
   async findTaskBrief(): Promise<FileTaskBriefRow | null> {
     return this.task;
+  }
+
+  async listSummaryFileBriefs(ids: readonly string[]): Promise<{ id: string; projectId: string; status: string }[]> {
+    this.summaryFileQueries.push([...ids]);
+    return this.summaryFileBriefs.filter((row) => ids.includes(row.id));
   }
 
   async insertFile(input: FileInsertInput): Promise<FileRow> {
@@ -347,6 +357,8 @@ class FakeFileRepository {
       reason: input.reason,
       beforeSummary: input.beforeSummary,
       afterSummary: input.afterSummary,
+      beforeSummaryFileIds: input.beforeSummaryFileIds,
+      afterSummaryFileIds: input.afterSummaryFileIds,
       status: "applied",
       appliedBy: input.appliedBy,
       appliedAt: input.appliedAt,
@@ -794,6 +806,8 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
       reason: "设计变更（变更单 CR-2026-0918）",
       beforeSummary: null,
       afterSummary: "按变更单调整孔位",
+      beforeSummaryFileIds: [],
+      afterSummaryFileIds: [],
       stageKey: null,
       fileName: "机械设计图纸.pdf",
     });
@@ -828,12 +842,76 @@ describe("FileService.createUpload（M4-01 发起上传）", () => {
       reason: "换扩展名（xls → pptx）",
       beforeSummary: null,
       afterSummary: null,
+      beforeSummaryFileIds: [],
+      afterSummaryFileIds: [],
       stageKey: null,
       fileName: "回放-变更后.pptx",
     });
     expect(h.audit.entries.at(-1)).toMatchObject({
       summary: "发起变更上传（定档后变更）：机械设计图纸.pdf → 回放-变更后.pptx",
     });
+  });
+
+  it("Push 314：intent=change 摘要附图随会话落 change_payload（去重保序）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", version: 3, currentVersionId: VERSION, docType: "CAD图纸" });
+    h.repo.summaryFileBriefs = [
+      { id: IMG_A, projectId: PROJECT, status: "changed" },
+      { id: IMG_B, projectId: PROJECT, status: "final" },
+    ];
+
+    const result = await h.service.createUpload(
+      {
+        projectId: PROJECT,
+        name: "机械设计图纸.pdf",
+        sizeBytes: MI_B,
+        intent: "change",
+        fileId: FILE,
+        change: {
+          reason: "附图的变更（带前后照片）",
+          afterSummary: "按变更单调整孔位",
+          beforeSummaryFileIds: [IMG_A, IMG_A, IMG_B],
+          afterSummaryFileIds: [IMG_B],
+        },
+      },
+      ACTOR,
+    );
+
+    expect(result.upload!.intent).toBe("change");
+    expect(h.repo.summaryFileQueries).toEqual([[IMG_A, IMG_B]]);
+    expect(h.repo.insertedSessions[0]!.changePayload).toEqual({
+      reason: "附图的变更（带前后照片）",
+      beforeSummary: null,
+      afterSummary: "按变更单调整孔位",
+      beforeSummaryFileIds: [IMG_A, IMG_B],
+      afterSummaryFileIds: [IMG_B],
+      stageKey: null,
+      fileName: "机械设计图纸.pdf",
+    });
+  });
+
+  it("Push 314 反例：摘要附图缺失 / 跨项目 / 已回收 → 400（不落会话）", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ status: "final", version: 3, currentVersionId: VERSION, docType: "CAD图纸" });
+    h.repo.summaryFileBriefs = [
+      { id: IMG_A, projectId: PROJECT, status: "recycled" },
+      { id: IMG_B, projectId: OTHER_PROJECT, status: "final" },
+    ];
+
+    await expect(
+      h.service.createUpload(
+        {
+          projectId: PROJECT,
+          name: "机械设计图纸.pdf",
+          sizeBytes: MI_B,
+          intent: "change",
+          fileId: FILE,
+          change: { reason: "附图非法", beforeSummaryFileIds: [IMG_A, IMG_B] },
+        },
+        ACTOR,
+      ),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(h.repo.insertedSessions).toHaveLength(0);
   });
 
   it("intent=change 反例：目标非定档（draft / recycled）409；跨项目 400；不存在 404（均不落会话）", async () => {
@@ -2136,6 +2214,39 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
     };
     return h;
   }
+
+  it("Push 314：摘要附图随 complete 落 change_requests 并随读面回显", async () => {
+    const h = changeHarness();
+    h.repo.file = makeFileRow({ status: "final", nodeId: NODE, taskId: TASK, docType: "CAD图纸", version: 3, currentVersionId: VERSION_A });
+    h.repo.session = makeSessionRow({
+      intent: "change",
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "application/pdf",
+      changePayload: {
+        reason: "带图变更",
+        beforeSummary: "变更前照片随摘要",
+        afterSummary: null,
+        beforeSummaryFileIds: [IMG_A],
+        afterSummaryFileIds: [IMG_B],
+        stageKey: null,
+      },
+    });
+    h.repo.nodeStageKey = "construction";
+
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+
+    expect(h.repo.insertedChanges[0]).toMatchObject({
+      beforeSummary: "变更前照片随摘要",
+      beforeSummaryFileIds: [IMG_A],
+      afterSummaryFileIds: [IMG_B],
+    });
+    expect(result.changeRequest).toMatchObject({
+      beforeSummary: "变更前照片随摘要",
+      beforeSummaryFileIds: [IMG_A],
+      afterSummaryFileIds: [IMG_B],
+    });
+  });
 
   it("生效链路：change_requests(applied) + 版本挂 change_request_id + 状态 changed + change 关联 + R01 回写 + 变更审计 + outbox", async () => {
     const h = changeHarness();

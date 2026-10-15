@@ -7536,7 +7536,7 @@ export interface components {
          */
         AuditResult: "succeeded" | "denied" | "failed";
         /**
-         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple
+         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」；Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium
          * @enum {string}
          */
         BackgroundTier: "simple" | "medium" | "vivid";
@@ -7726,6 +7726,10 @@ export interface components {
             reason: string;
             beforeSummary?: string;
             afterSummary?: string;
+            /** @description 变更前摘要附图（文件 id 有序，≤ 30；须为本项目未回收文件，否则 400 VALIDATION_FAILED） */
+            beforeSummaryFileIds?: components["schemas"]["Uuid"][];
+            /** @description 变更后摘要附图（文件 id 有序，≤ 30；同左口径） */
+            afterSummaryFileIds?: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
         };
         /** @description intent=change 时的变更记录；version 意图为空 */
@@ -7740,17 +7744,22 @@ export interface components {
             beforeSummary: string | null;
             /** @description 变更后摘要 */
             afterSummary: string | null;
+            /** @description 变更前摘要附图（文件 id 有序；Push 314 变更前后可填图） */
+            beforeSummaryFileIds: components["schemas"]["Uuid"][];
+            /** @description 变更后摘要附图（文件 id 有序；Push 314 变更前后可填图） */
+            afterSummaryFileIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["ChangeStatus"];
             appliedBy: components["schemas"]["Uuid"];
             appliedAt: components["schemas"]["DateTime"];
             createdAt: components["schemas"]["DateTime"];
-            fileId: components["schemas"]["Uuid"] & unknown;
-            versionId: components["schemas"]["Uuid"] & unknown;
-            versionSeq: number;
+            fileId: components["schemas"]["Uuid"] & (string | null);
+            versionId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 变更后版本号；导入遗留变更 = null */
+            versionSeq: number | null;
         } | null;
         /** @description 变更记录（v0.2 §5.3；一期申请即通过、全程留痕） */
         ChangeRequestDetail: components["schemas"]["ChangeRequest"] & {
-            file: components["schemas"]["File"];
+            file: components["schemas"]["File"] & (Record<string, never> | null);
             version: components["schemas"]["FileVersion"];
             /** @description 变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null） */
             filePreviousName: string | null;
@@ -8021,7 +8030,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -9660,7 +9669,7 @@ export interface components {
             };
             backgroundTier: components["schemas"]["BackgroundTier"];
             locale: components["schemas"]["Locale"];
-            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true */
+            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false */
             cardWatermark: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };

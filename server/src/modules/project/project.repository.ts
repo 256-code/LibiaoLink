@@ -24,6 +24,8 @@ export interface ProjectViewRow {
 }
 
 export interface ProjectInsertInput {
+  /** 显式主键（导入表导入：图片对象键要含 projectId，须在事务前定下项目 id）；缺省 = 库内 defaultRandom()。 */
+  id?: string;
   code: string;
   name: string;
   customer: string | null;
@@ -170,6 +172,7 @@ export class ProjectRepository {
       const rows = await client
         .insert(projects)
         .values({
+          ...(input.id === undefined ? {} : { id: input.id }),
           code: input.code,
           name: input.name,
           customer: input.customer,
