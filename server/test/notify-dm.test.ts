@@ -336,7 +336,7 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     expect(inbox.copies[0]!.message.body).toContain("节点：到货验收 负责人：张工");
   });
 
-  it("permanent（846607 未命中激活表 = 未激活）：dead + 降级前缀附「如何激活机器人」指引（P3）", async () => {
+  it("permanent（846607 未命中激活表 = 未激活）：dead + 降级前缀附激活指引话术终稿（P3 · 2026-10-15）", async () => {
     const { service, repo, aibot, inbox } = makeService();
     repo.contacts.set(USER_ID, contact());
     aibot.result = permanent(846607, "aibot send msg frequency limit exceeded");
@@ -349,8 +349,7 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     expect(inbox.copies).toHaveLength(1);
     const body = String(inbox.copies[0]!.message.body);
     expect(body.startsWith(DM_ACTIVATION_DEGRADE_PREFIX)).toBe(true);
-    expect(body).toContain("如何激活");
-    expect(body).toContain("向它发送任意一条消息");
+    expect(body).toContain("当前机器人未激活，请私发任意消息给机器人即可激活。");
     expect(body).toContain("节点：到货验收 负责人：张工");
   });
 
