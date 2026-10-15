@@ -1417,63 +1417,45 @@ body {
   }
 }
 
-/* 转场提示圆钮（不写字，只有一枚箭头：下滑看仪表盘 / 上滑回蓝图） */
-.hub-deck-hint {
-  position: absolute;
-  left: 50%;
+/* 右侧边缘页面指示器（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」+「取消液体选择 直接用点和选择是黑点就好了」）——
+   两枚圆点固定在视口右缘、垂直居中；当前屏那一枚是黑点，另一枚是浅灰点。无 3D / 无阴影 / 无动画 / 无装饰。 */
+.hub-deck-dots {
+  --hub-dot-size: 0.62rem;
+  --hub-dot-gap: 0.8rem;
+  position: fixed;
+  top: 50%;
+  right: 0.75rem;
+  z-index: 6;
   display: flex;
-  width: 2.4rem;
-  height: 2.4rem;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
+  gap: var(--hub-dot-gap);
+  transform: translateY(-50%);
+}
+
+.hub-deck-dots__dot {
+  width: var(--hub-dot-size);
+  height: var(--hub-dot-size);
+  padding: 0;
+  border: 0;
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.92);
-  color: #71717a;
-  box-shadow: 0 10px 26px -16px rgb(15 23 42 / 0.45);
+  background: rgb(31 35 41 / 0.22);
   cursor: pointer;
-  transform: translateX(-50%);
-  animation: ll-hub-hint-bob-down 2.8s ease-in-out infinite;
-  transition: color 160ms ease, border-color 160ms ease;
+  transition: background 180ms ease;
 }
 
-.hub-deck-hint[data-side="bottom"] {
-  bottom: 1rem;
+.hub-deck-dots__dot:hover {
+  background: rgb(31 35 41 / 0.45);
 }
 
-.hub-deck-hint[data-side="top"] {
-  top: 1rem;
-  animation-name: ll-hub-hint-bob-up;
+.hub-deck-dots__dot[data-active="true"],
+.hub-deck-dots__dot[data-active="true"]:hover {
+  background: #1f2329;
 }
 
-.hub-deck-hint:hover {
-  color: #1f2329;
-  border-color: #d4d4d8;
-}
-
-.hub-deck-hint[data-hidden="true"] {
-  opacity: 0;
-  pointer-events: none;
-}
-
-@keyframes ll-hub-hint-bob-down {
-  0%,
-  100% {
-    transform: translate(-50%, 0);
-  }
-  50% {
-    transform: translate(-50%, 5px);
-  }
-}
-
-@keyframes ll-hub-hint-bob-up {
-  0%,
-  100% {
-    transform: translate(-50%, 0);
-  }
-  50% {
-    transform: translate(-50%, -5px);
-  }
+.hub-deck-dots__dot:focus-visible {
+  outline: 2px solid rgb(31 35 41 / 0.45);
+  outline-offset: 3px;
 }
 
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */

@@ -37,6 +37,9 @@ import type { MeResponse } from "./types";
 type HubNote = "loading" | "none" | { kind: "capped"; n: number; total: number } | "failed";
 type HubAnim = "toDashboard" | "toMap" | null;
 
+/** 右侧边缘页面指示器的两屏顺序（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」）。 */
+const DECK_VIEWS: readonly HubView[] = ["map", "dashboard"];
+
 /** 转场时长（与 app.css 的 .hub-deck__view--* 动画一致）：动画跑完才落定视图。 */
 const DECK_ANIM_MS = 620;
 
@@ -253,6 +256,8 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
   const dashSideClass = anim === "toDashboard" ? "hub-deck__view--in-bottom" : anim === "toMap" ? "hub-deck__view--out-bottom" : "";
   const mapParked = view === "dashboard" && anim === null;
   const dashParked = view === "map" && anim === null;
+  /** 指示器跟随转场目标：点球即先变色（转场途中也即时反馈），落定后与地址 / 账号记忆一致。 */
+  const indicatorView: HubView = anim === "toDashboard" ? "dashboard" : anim === "toMap" ? "map" : view;
   const deckViewClass = "hub-deck__view absolute inset-0 overflow-hidden rounded-[28px] border border-zinc-200/80 bg-white/80 p-3 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur";
 
   return (
@@ -266,30 +271,20 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
           <div data-parked={dashParked ? "true" : "false"} className={deckViewClass + " " + dashSideClass}>
             <HubDashboard progress={dash} state={dashState} />
           </div>
-          <button
-            type="button"
-            className="hub-deck-hint"
-            data-side="bottom"
-            data-hidden={view === "map" && anim === null ? "false" : "true"}
-            onClick={() => startTransition("dashboard")}
-            aria-label={t("hub.hint.toDash")}
-          >
-            <svg className="hub-deck-hint__icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="hub-deck-hint"
-            data-side="top"
-            data-hidden={view === "dashboard" && anim === null ? "false" : "true"}
-            onClick={() => startTransition("map")}
-            aria-label={t("hub.hint.toMap")}
-          >
-            <svg className="hub-deck-hint__icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>
+            {DECK_VIEWS.map((item) => (
+              <button
+                key={item}
+                type="button"
+                className="hub-deck-dots__dot"
+                data-view={item}
+                data-active={indicatorView === item ? "true" : "false"}
+                aria-current={indicatorView === item ? "true" : undefined}
+                aria-label={t(item === "map" ? "hub.dots.map" : "hub.dots.dashboard")}
+                onClick={() => startTransition(item)}
+              />
+            ))}
+          </nav>
         </section>
       </main>
     </div>
