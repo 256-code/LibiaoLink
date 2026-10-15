@@ -18,8 +18,9 @@ import type { MeResponse } from "./types";
  * 转入「阶段 × 进度五档」统计视图（形态 = 业务确认过的效果图；取数口径见 data/dashboardProgress.ts）。
  *
  * 转场（2026-10-15「转场效果看这个参考这个页面的顶部渐变、底部渐变」= tympanus《A Collection of Page Transitions》
- * 的「Fade top / Fade bottom」第 11 / 12 号动画）：下滑 = 地图上移淡出、仪表盘自下淡入；上滑 = 反向；
- * 两屏都整卡位移、0.6s ease both，样式在 app.css 的 .hub-deck__view--*。
+ * 的「Fade top / Fade bottom」第 11 / 12 号动画）：下滑 = 地图上移淡出、仪表盘自下淡入；上滑 = 反向。
+ * 转场体（Push 343）改「刚体滑轨」（app.css 的 .hub-deck__strip）：两屏在滑轨里静态首尾相接、只动滑轨一格（0.6s ease），
+ * 两屏只各自动透明度（出 1→.3、入 .3→1）—— 两屏相对几何恒定，「首帧闪影 / 两屏脱节叠影」在结构上不可能出现。
  *
  * 尺寸（2026-10-15「蓝图页面我不希望有鼠标滚动条 所以尺寸还要优化」）：外框收口成视口高度
  * （h-[100dvh] + overflow-hidden），面板 flex-1，地图 / 统计都按 viewBox 缩放 —— 本页不出滚动条，
@@ -40,7 +41,7 @@ type HubAnim = "toDashboard" | "toMap" | null;
 /** 右侧边缘页面指示器的两屏顺序（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」）。 */
 const DECK_VIEWS: readonly HubView[] = ["map", "dashboard"];
 
-/** 转场时长（与 app.css 的 .hub-deck__view--* 动画一致）：动画跑完才落定视图。 */
+/** 转场时长（与 app.css 的 .hub-deck__strip 滑轨过渡一致）：滑完才落定视图。 */
 const DECK_ANIM_MS = 620;
 
 /** 数据详情弹窗（Push 336 · 业务口径「点击具体的模块进入详细内容后是弹窗一样的效果 并且不支持鼠标滑动切换页面」）：
@@ -262,24 +263,27 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
     };
   }, "hub", distribution !== null);
 
-  const mapSideClass = anim === "toDashboard" ? "hub-deck__view--out-top" : anim === "toMap" ? "hub-deck__view--in-top" : "";
-  const dashSideClass = anim === "toDashboard" ? "hub-deck__view--in-bottom" : anim === "toMap" ? "hub-deck__view--out-bottom" : "";
-  const mapParked = view === "dashboard" && anim === null;
-  const dashParked = view === "map" && anim === null;
+  /** 刚体滑轨的落位（Push 343）：转场途中指向目标屏、滑完就是当前视图；两屏在滑轨里永远静态（app.css 的 .hub-deck__strip）。 */
+  const stripView: HubView = anim === "toMap" ? "map" : anim === "toDashboard" ? "dashboard" : view;
+  const mapSideClass = anim === "toMap" ? "hub-deck__cell--in" : anim === "toDashboard" ? "hub-deck__cell--out" : "";
+  const dashSideClass = anim === "toDashboard" ? "hub-deck__cell--in" : anim === "toMap" ? "hub-deck__cell--out" : "";
   /** 指示器跟随转场目标：点球即先变色（转场途中也即时反馈），落定后与地址 / 账号记忆一致。 */
   const indicatorView: HubView = anim === "toDashboard" ? "dashboard" : anim === "toMap" ? "map" : view;
-  const deckViewClass = "hub-deck__view absolute inset-0 overflow-hidden rounded-[28px] border border-zinc-200/80 bg-white/80 p-3 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur";
+  /** 两屏共用的卡面样式（Push 343 起去掉 backdrop-blur：滑轨背后只有页面底色，模糊是重采样脏影与合成层抖动的源头）；位置 / 尺寸由 .hub-deck__cell 给。 */
+  const deckCellClass = "hub-deck__cell overflow-hidden rounded-[28px] border border-zinc-200/80 bg-white/80 p-3 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45)]";
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden overscroll-none">
       <AppHeader me={me} />
       <main className="relative min-h-0 flex-1 px-6 py-5 lg:px-10 lg:py-6">
         <section ref={deckRef} data-hub-deck="" className="relative h-full overflow-hidden">
-          <div data-parked={mapParked ? "true" : "false"} className={deckViewClass + " " + mapSideClass}>
-            <HubMap distribution={distribution} note={noteText} />
-          </div>
-          <div data-parked={dashParked ? "true" : "false"} className={deckViewClass + " " + dashSideClass}>
-            <HubDashboard data={dash} state={dashState} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} />
+          <div className="hub-deck__strip" data-view={stripView}>
+            <div data-view="map" data-hub-deck-cell="map" className={deckCellClass + " " + mapSideClass}>
+              <HubMap distribution={distribution} note={noteText} />
+            </div>
+            <div data-view="dashboard" data-hub-deck-cell="dashboard" className={deckCellClass + " " + dashSideClass}>
+              <HubDashboard data={dash} state={dashState} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} />
+            </div>
           </div>
           <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>
             {DECK_VIEWS.map((item) => (
