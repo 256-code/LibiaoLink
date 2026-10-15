@@ -1460,6 +1460,8 @@ body {
 
 /* 仪表盘标题条（Push 334）：标题 + 分隔点 + 项目选择器 —— 选择器里当前项就是标题后半段。 */
 .hub-dash-wrap {
+  /* relative：悬停卡 / 数据详情两个浮层都按白卡定位（Push 335）。 */
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1580,5 +1582,298 @@ body {
   justify-content: center;
   color: #71717a;
   font-size: 0.875rem;
+}
+
+/* 悬停柱段的浮层卡 + 行高亮（Push 335 · 业务口径「鼠标放上去是这样的效果」）：行名 + 档位色块 + 档位 + 条数。 */
+.hub-dash__rowband {
+  fill: #f4f5f7;
+}
+
+.hub-dash-tip {
+  position: absolute;
+  z-index: 3;
+  min-width: 9rem;
+  padding: 0.5rem 0.7rem 0.55rem;
+  border-radius: 0.6rem;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 12px 28px -14px rgb(15 23 42 / 0.35);
+  pointer-events: none;
+}
+
+.hub-dash-tip__row {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.hub-dash-tip__line {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.hub-dash-tip__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  background: #c9ced6;
+}
+
+.hub-dash-tip__dot[data-bin="0.25"] {
+  background: #5aa9f7;
+}
+
+.hub-dash-tip__dot[data-bin="0.5"] {
+  background: #f5c443;
+}
+
+.hub-dash-tip__dot[data-bin="0.75"] {
+  background: #f08a3c;
+}
+
+.hub-dash-tip__dot[data-bin="1"] {
+  background: #6cc46a;
+}
+
+.hub-dash-tip__label {
+  flex: 1 1 auto;
+}
+
+.hub-dash-tip__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #111827;
+}
+
+/* 柱段点击（Push 335）：选中具体项目才可点（开「数据详情」）；「全部项目」下光标保持箭头、不给来源。 */
+.hub-dash__seg[data-drill="true"] {
+  cursor: pointer;
+}
+
+.hub-dash__seg[data-drill="true"]:hover {
+  filter: brightness(0.93);
+}
+
+/* 数据详情（Push 335 · 业务口径「点击某一段是这个只读效果」）：铺满白卡的只读表 —— 标题 + 来源 + 搜索 + 明细。 */
+.hub-dash-detail {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 0.75rem;
+  background: #ffffff;
+}
+
+.hub-dash-detail__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0.15rem 0;
+}
+
+.hub-dash-detail__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1f2329;
+}
+
+.hub-dash-detail__from {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  color: #8a9099;
+}
+
+.hub-dash-detail__project {
+  color: #5f6b7a;
+}
+
+.hub-dash-detail__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.4rem;
+  color: #4b5563;
+  background: transparent;
+  cursor: pointer;
+}
+
+.hub-dash-detail__close:hover {
+  background: #f2f3f5;
+}
+
+.hub-dash-detail__close:focus-visible {
+  outline: 2px solid rgb(31 35 41 / 0.35);
+  outline-offset: 2px;
+}
+
+.hub-dash-detail__box {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 0.75rem;
+  border: 1px solid #e6e8eb;
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.hub-dash-detail__search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: #f4f5f7;
+  border-bottom: 1px solid #e6e8eb;
+  color: #9aa0a6;
+  cursor: text;
+}
+
+.hub-dash-detail__search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.85rem;
+  color: #1f2329;
+  outline: none;
+}
+
+.hub-dash-detail__search input::placeholder {
+  color: #9aa0a6;
+}
+
+.hub-dash-detail__scroll {
+  /* 0 1 auto：滚动区高度贴着表体（行少时不满高），横向滚动条紧贴最后一行下方（照业务参考图）；
+     行多到装不下时再收缩 + 纵向滚。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.hub-dash-detail__table {
+  width: 100%;
+  min-width: 78rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8rem;
+}
+
+.hub-dash-detail__table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.5rem 0.7rem;
+  background: #ffffff;
+  border-bottom: 1px solid #e6e8eb;
+  color: #7c848d;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.hub-dash-detail__table td {
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid #f1f2f4;
+  color: #1f2329;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.hub-dash-detail__no {
+  width: 3rem;
+  color: #9aa0a6;
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-detail__task {
+  display: inline-block;
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.hub-dash-detail__chip {
+  display: inline-block;
+  max-width: 10rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+  background: #f2f3f5;
+  color: #4b5563;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.hub-dash-detail__tag {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.hub-dash-detail__chips {
+  display: inline-flex;
+  gap: 0.25rem;
+  vertical-align: bottom;
+}
+
+.hub-dash-detail__bar {
+  display: inline-block;
+  width: 6.5rem;
+  height: 0.8rem;
+  border-radius: 0.2rem;
+  background: #eceff2;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.hub-dash-detail__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 0.2rem;
+  background: #6cc46a;
+}
+
+.hub-dash-detail__pct {
+  margin-left: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-detail__note {
+  display: inline-block;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  color: #4b5563;
+}
+
+.hub-dash-detail__date {
+  font-variant-numeric: tabular-nums;
+  color: #4b5563;
+}
+
+.hub-dash-detail__blank {
+  color: #c4c9cf;
+}
+
+.hub-dash-detail__empty {
+  padding: 2.5rem 0.7rem;
+  color: #9aa0a6;
+  text-align: center;
 }
 
