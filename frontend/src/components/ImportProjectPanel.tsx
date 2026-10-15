@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../api";
 import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
@@ -25,7 +25,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * 口径（业务已回执）：解析不写库；完成日期未填不算完成；进度五档（进行中封顶 75%）；日期笔误照原值 + 提醒；
  * 任务节点按文件原名（可勾选补进节点库）；微盘图片出清单人工上传；账号初始密码 123456。
  * 写入中可取消（Push 321）：「取消写入」/ 刷新 / 关页 = 断开请求 → 服务端单事务回滚（零残留），票据保留可再次确认。
- * 干系人（Push 324）：「干系人」表随导入落台账；主文件没有该表时可「另附干系人表」（单独导出的文件）合并解析。
+ * 干系人（Push 324）：「干系人」表随导入落台账。
  * 加载文案（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：加载态从「已用 N 秒」改「预计需要 N 秒」。
  */
 
@@ -66,7 +66,7 @@ function formatBytes(size: number): string {
 
 /**
  * 预计时长（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：解析按文件大小估；
- * 写入按文件大小 + 图片数估（真机口径参考：61.4 MB / 151 张内嵌图老表约 35 秒）。
+ * 写入按文件大小 + 图片数估（真机口径参考：61.4 MB / 151 张内嵌图导入表约 35 秒）。
  */
 function estimateParseSeconds(size: number): number {
   return Math.max(2, Math.round((size / (1024 * 1024)) * 0.12 + 3));
@@ -169,12 +169,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const [addMissingNodes, setAddMissingNodes] = useState(true);
   /** 地区小窗开着时按 Esc 只关小窗（再按一次才关面板，与项目弹窗同口径）。 */
   const [regionPopoverOpen, setRegionPopoverOpen] = useState(false);
-  /** 另附的干系人表（Push 324）：主文件不含「干系人」表时单独选择；变化即带两份文件重新解析。 */
-  const [stakeholderFile, setStakeholderFile] = useState<File | null>(null);
-  /** 另附干系人表的选择提示（空文件 / 超 64 MB；贴在右上角附件按钮旁）。 */
-  const [attachError, setAttachError] = useState<string | null>(null);
-  const stakeholderInputRef = useRef<HTMLInputElement | null>(null);
-  /** 记住上一份主文件：换主文件才复位地区 / 类型 / 节点勾选（只换干系人表 = 保住已选）。 */
+  /** 记住上一份导入表：换文件才复位地区 / 类型 / 节点勾选。 */
   const mainFileRef = useRef<File | null>(null);
   /** 解析段预计秒数（只随主文件大小变）。 */
   const parseEtaSeconds = estimateParseSeconds(file.size);
@@ -185,25 +180,18 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   /** 刚取消过写入（预览态给一行说明；换文件 / 再次提交时清掉）。 */
   const [commitCancelled, setCommitCancelled] = useState(false);
 
-  // 选文件（或换主文件 / 另附干系人表）即解析：解析不写库；换主文件 = 整体重来（地区 / 勾选复位），只换干系人表 = 保住已选。
+  // 选文件（或换主导入表）即解析：解析不写库；换导入表 = 整体重来（地区 / 勾选复位）。
   useEffect(() => {
     let cancelled = false;
     const mainChanged = mainFileRef.current !== file;
     mainFileRef.current = file;
     setPhase({ kind: "parsing" });
     setRegionPopoverOpen(false);
-    setAttachError(null);
     if (mainChanged) {
       setRegion("");
       setProjectType("");
       setAddMissingNodes(true);
       setCommitCancelled(false);
-    }
-    if (mainChanged && stakeholderFile !== null) {
-      setStakeholderFile(null);
-      return () => {
-        cancelled = true;
-      };
     }
     if (file.size === 0 || file.size > IMPORT_MAX_FILE_BYTES) {
       setPhase({ kind: "failed", stage: "parse", error: null, reason: file.size === 0 ? "empty" : "size" });
@@ -211,7 +199,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
         cancelled = true;
       };
     }
-    previewProjectImport(file, stakeholderFile)
+    previewProjectImport(file)
       .then((preview) => {
         if (cancelled) {
           return;
@@ -229,7 +217,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     return () => {
       cancelled = true;
     };
-  }, [file, stakeholderFile]);
+  }, [file]);
 
   // Esc 关闭（写入中 / 地区小窗打开时不关）。
   useEffect(() => {
@@ -294,25 +282,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     commitAbortRef.current?.abort();
   };
 
-  /** 「另附干系人表」（Push 324）：选中即带两份文件重新解析；空文件 / 超 64 MB 就地提示。 */
-  const onStakeholderFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
-    const picked = event.target.files?.[0] ?? null;
-    event.target.value = "";
-    if (picked === null) {
-      return;
-    }
-    if (picked.size === 0) {
-      setAttachError(t("import.err.empty"));
-      return;
-    }
-    if (picked.size > IMPORT_MAX_FILE_BYTES) {
-      setAttachError(t("import.err.tooLarge", { size: formatBytes(picked.size) }));
-      return;
-    }
-    setAttachError(null);
-    setStakeholderFile(picked);
-  };
-
   // 预览态派生：可导入 = 无阻断项 + 地区已选（用户补选地区后，服务端的「地区未识别」阻断项随之消解）。
   const preview = phase.kind === "preview" || phase.kind === "committing" || phase.kind === "done" ? phase.preview : null;
   const visibleIssues = preview === null ? [] : preview.issues.filter((issue) => !(issue.code === "REGION_UNRESOLVED" && region !== ""));
@@ -368,49 +337,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
             >
               {file.name} · {formatBytes(file.size)}
             </span>
-            {stakeholderFile === null ? (
-              <button
-                type="button"
-                disabled={committing}
-                onClick={() => stakeholderInputRef.current?.click()}
-                className="shrink-0 rounded-lg border border-dashed border-zinc-300 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
-                data-import-stakeholder-attach=""
-              >
-                {t("import.attachStakeholder")}
-              </button>
-            ) : (
-              <span
-                className="flex min-w-0 max-w-[260px] items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs text-zinc-600"
-                title={stakeholderFile.name}
-                data-import-stakeholder-file=""
-              >
-                <span className="truncate">
-                  {stakeholderFile.name} · {formatBytes(stakeholderFile.size)}
-                </span>
-                <button
-                  type="button"
-                  aria-label={t("import.attachStakeholder.remove")}
-                  disabled={committing}
-                  onClick={() => {
-                    setStakeholderFile(null);
-                  }}
-                  className="shrink-0 text-zinc-400 transition hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3" aria-hidden="true">
-                    <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                </button>
-              </span>
-            )}
-            {attachError === null ? null : <span className="shrink-0 text-xs text-rose-600">{attachError}</span>}
-            <input
-              ref={stakeholderInputRef}
-              type="file"
-              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              data-import-stakeholder-input=""
-              onChange={onStakeholderFileChange}
-            />
             <button
               type="button"
               aria-label={t("import.closeAria")}

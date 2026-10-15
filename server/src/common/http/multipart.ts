@@ -2,9 +2,9 @@ import type { IncomingMessage } from "node:http";
 import { AppError } from "../errors/app-error.js";
 
 /**
- * 最小 multipart/form-data 解析（老表导入预览用 —— 项目此前没有服务端收文件路径：
+ * 最小 multipart/form-data 解析（导入表导入预览用 —— 项目此前没有服务端收文件路径：
  * 文件模块走 S3 预签名直传，API 不代理大文件；导入是一进一出的整包解析，故在本模块内直接收流）。
- * 支持单个 `file` 字段（浏览器 FormData 默认格式）与可选附加文件字段（Push 324：stakeholderFile = 另附干系人表），二进制安全（xlsx 为 zip 二进制）。
+ * 支持 `file` 字段（浏览器 FormData 默认格式），二进制安全（xlsx 为 zip 二进制）。
  */
 
 export interface MultipartFilePart {
@@ -133,7 +133,7 @@ export function parseMultipart(body: Buffer, boundary: string): MultipartFilePar
   return parts;
 }
 
-/** 单个 part 校验（空文件 / 超限 400；提示带字段名，便于区分主文件与另附干系人表）。 */
+/** 单个 part 校验（空文件 / 超限 400；提示带字段名）。 */
 function assertPartSize(part: MultipartFilePart, maxBytes: number): void {
   if (part.bytes.length === 0) {
     throw new AppError("IMPORT_FILE_INVALID", "上传文件为空（multipart 字段 " + part.field + "）");
@@ -144,8 +144,8 @@ function assertPartSize(part: MultipartFilePart, maxBytes: number): void {
 }
 
 /**
- * 读流 + 解析（多文件版 · Push 324）：按字段取文件 part（缺失 = null；空文件 / 超限 400 IMPORT_FILE_INVALID）。
- * 整包上限 = 字段数 ×（单文件上限 + 1 MB）—— 主文件 + 另附干系人表两个流一次读完。
+ * 读流 + 解析：按字段取文件 part（缺失 = null；空文件 / 超限 400 IMPORT_FILE_INVALID）。
+ * 整包上限 = 字段数 ×（单文件上限 + 1 MB）。
  */
 export async function readMultipartParts(
   req: IncomingMessage,

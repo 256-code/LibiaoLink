@@ -12,7 +12,7 @@ import type { ProjectImportRepository } from "../src/modules/project-import/inde
 import { ProjectImportService } from "../src/modules/project-import/index.js";
 
 /**
- * 老表导入用例测试（服务端落地 · 业务口径 2026-10-14）：内存替身（不连库 / 不连对象存储）——
+ * 导入表导入用例测试（服务端落地 · 业务口径 2026-10-14）：内存替身（不连库 / 不连对象存储）——
  * 用最小可解析 xlsx（zip store + inlineStr）驱动 preview 全链路（解析 → 转换 → 账号 / 节点对账 → 票据入库），
  * 再驱动 commit（管理员 / 兜底 / 补节点 / 图片挂接 / 票据状态机）。口径断言与 D:/LibiaoLink_help/_conv 干跑报告对齐。
  */
@@ -200,6 +200,9 @@ function createHarness() {
       this.row = row;
       return row;
     },
+    async listExpiredPreviews(now: Date): Promise<FakePreviewRow[]> {
+      return this.row !== null && this.row.status === "pending" && this.row.expiresAt.getTime() <= now.getTime() ? [this.row] : [];
+    },
     async findPreview(id: string): Promise<FakePreviewRow | null> {
       return this.row !== null && this.row.id === id ? this.row : null;
     },
@@ -209,6 +212,7 @@ function createHarness() {
     },
     async markExpired(id: string): Promise<void> {
       this.expiredCalls.push(id);
+      if (this.row !== null && this.row.id === id) this.row.status = "expired";
     },
     async projectCodeExists(): Promise<boolean> {
       return this.codeExists;
@@ -323,8 +327,10 @@ function createHarness() {
       if (bytes === undefined) return null;
       return { objectKey, bytes, contentType: null, sizeBytes: bytes.length };
     },
+    purgeFailures: new Set<string>() as Set<string>,
     async purgeObject(objectKey: string): Promise<{ deletedVersions: number; deleteMarkers: number }> {
       this.purged.push(objectKey);
+      if (this.purgeFailures.has(objectKey)) throw new Error("purge failed");
       return { deletedVersions: 1, deleteMarkers: 0 };
     },
   };
@@ -363,7 +369,7 @@ function createHarness() {
   return { service, previews, projects, members, nodes, audit, storage, translate, flow };
 }
 
-/** 老表三种 sheet 的表头（与真实老表同列名；列顺序可乱，按表头定位）。 */
+/** 导入表三种 sheet 的表头（与真实导入表同列名；列顺序可乱，按表头定位）。 */
 const TASK_HEADER = [
   "任务描述",
   "阶段性里程",
@@ -396,7 +402,7 @@ const CHANGE_HEADER = ["变更时间", "变更阶段", "变更内容描述", "�
 
 const ACTOR_ID = "99999999-9999-4999-8999-999999999999";
 
-/** 与 UK 老表同形的三张表（项目 / 日报 / 变更）；干系人表由调用方追加（Push 324）。 */
+/** 与 UK 导入表同形的三张表（项目 / 日报 / 变更）；干系人表由调用方追加（Push 324）。 */
 function sampleSheets(
   extraAnchors: Array<{ row: number; col: number; media: string }> = [],
   reportIssueState = "处理中",
@@ -435,7 +441,7 @@ function sampleSheets(
   ];
 }
 
-/** 与 UK 老表同形的最小样例：完成无日期 / 进度收敛 / 日期笔误 / 阶段外任务 / 图片锚点。 */
+/** 与 UK 导入表同形的最小样例：完成无日期 / 进度收敛 / 日期笔误 / 阶段外任务 / 图片锚点。 */
 function sampleWorkbook(
   extraAnchors: Array<{ row: number; col: number; media: string }> = [],
   reportIssueState = "处理中",
@@ -550,7 +556,7 @@ const COMMIT_BODY = { region: "英国", projectType: "飞箱", addMissingNodes: 
 
 // ---------- preview ----------
 
-describe("ProjectImportService.preview（老表解析预览）", () => {
+describe("ProjectImportService.preview（导入表解析预览）", () => {
   it("解析口径：条数 / 落位 / 节点匹配 / 账号 / 手动清单 / 提醒", async () => {
     const h = createHarness();
     const preview = await runPreview(h);
@@ -671,7 +677,6 @@ describe("ProjectImportService.preview（老表解析预览）", () => {
       locale: "zh",
     });
     expect(preview.counts.stakeholders).toBe(4);
-    expect(preview.stakeholderFile).toBeNull();
     const parse = previewPayload(h).parse as {
       stakeholderSheetName: string | null;
       stakeholders: Array<{
@@ -704,60 +709,17 @@ describe("ProjectImportService.preview（老表解析预览）", () => {
     expect(codes).not.toContain("STAKEHOLDER_SHEET_MISSING");
   });
 
-  it("干系人（Push 324）：主文件没有该表 → info 提醒；另附单独导出的干系人表 → 合并解析", async () => {
+  it("干系人（Push 324）：导入表没有该表 → info 提醒，不导入干系人", async () => {
     const h = createHarness();
     h.nodes.library = [];
-    const main = await h.service.preview({
+    const preview = await h.service.preview({
       bytes: sampleWorkbook(),
       fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
       actorId: ACTOR_ID,
       locale: "zh",
     });
-    expect(main.counts.stakeholders).toBe(0);
-    expect(main.stakeholderFile).toBeNull();
-    expect(main.issues.map((issue) => issue.code)).toContain("STAKEHOLDER_SHEET_MISSING");
-
-    const h2 = createHarness();
-    h2.nodes.library = [];
-    const merged = await h2.service.preview({
-      bytes: sampleWorkbook(),
-      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
-      stakeholder: { bytes: buildWorkbook([stakeholderSheet()]), fileName: "副本-[XXXX-XXXX] XXX项目名称.xlsx" },
-      actorId: ACTOR_ID,
-      locale: "zh",
-    });
-    expect(merged.counts.stakeholders).toBe(4);
-    expect(merged.stakeholderFile?.name).toBe("副本-[XXXX-XXXX] XXX项目名称.xlsx");
-    const codes = merged.issues.map((issue) => issue.code);
-    expect(codes).not.toContain("STAKEHOLDER_SHEET_MISSING");
-    expect(codes).not.toContain("STAKEHOLDER_FILE_IGNORED");
-  });
-
-  it("干系人（Push 324）：另附文件没有「干系人」表 → 422；主文件已含该表时另附文件被忽略（info）", async () => {
-    const h = createHarness();
-    await expectCode(
-      () =>
-        h.service.preview({
-          bytes: sampleWorkbook(),
-          fileName: "老表.xlsx",
-          stakeholder: { bytes: buildWorkbook([{ name: "其他", rows: [["甲", "乙"]] }]), fileName: "别的.xlsx" },
-          actorId: ACTOR_ID,
-          locale: "zh",
-        }),
-      "IMPORT_PARSE_FAILED",
-    );
-
-    const h2 = createHarness();
-    h2.nodes.library = [];
-    const preview = await h2.service.preview({
-      bytes: sampleWorkbookWithStakeholders(),
-      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
-      stakeholder: { bytes: buildWorkbook([stakeholderSheet()]), fileName: "副本-干系人.xlsx" },
-      actorId: ACTOR_ID,
-      locale: "zh",
-    });
-    expect(preview.counts.stakeholders).toBe(4);
-    expect(preview.issues.map((issue) => issue.code)).toContain("STAKEHOLDER_FILE_IGNORED");
+    expect(preview.counts.stakeholders).toBe(0);
+    expect(preview.issues.map((issue) => issue.code)).toContain("STAKEHOLDER_SHEET_MISSING");
   });
 
   it("问题已处理（done）：默认处理人留空，不出 ISSUE_OWNER_FALLBACK 提醒", async () => {
@@ -1002,6 +964,31 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     h2.storage.objects.set(h2.previews.row === null ? "" : h2.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
     await h2.service.commit({ previewId: preview2.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
     await expectCode(() => h2.service.commit({ previewId: preview2.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+  });
+
+  it("过期票据清扫：删除源对象后置 expired；删除失败保留 pending 等下轮重试", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const sourceKey = h.previews.row === null ? "" : h.previews.row.objectKey;
+    h.storage.objects.set(sourceKey, mediaZip("image1.png"));
+    h.previews.row!.expiresAt = new Date(Date.now() - 1000);
+
+    const result = await h.service.sweepExpiredPreviews(new Date());
+    expect(result).toEqual({ scanned: 1, expired: 1 });
+    expect(h.storage.purged).toEqual([sourceKey]);
+    expect(h.previews.row?.status).toBe("expired");
+
+    const h2 = createHarness();
+    const preview2 = await runPreview(h2);
+    const sourceKey2 = h2.previews.row === null ? "" : h2.previews.row.objectKey;
+    h2.storage.objects.set(sourceKey2, mediaZip("image1.png"));
+    h2.previews.row!.expiresAt = new Date(Date.now() - 1000);
+    h2.storage.purgeFailures = new Set([sourceKey2]);
+
+    const result2 = await h2.service.sweepExpiredPreviews(new Date());
+    expect(result2).toEqual({ scanned: 1, expired: 0 });
+    expect(h2.storage.purged).toEqual([sourceKey2]);
+    expect(h2.previews.row?.status).toBe("pending");
   });
 
   it("源文件被清理（对象缺失）：410 IMPORT_PREVIEW_EXPIRED，提示重新解析", async () => {

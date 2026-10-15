@@ -1219,7 +1219,7 @@
                   "string",
                   "null"
                 ],
-                "description": "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）；Push 319：老表导入变更暂无变更后文件（源文件在微盘，人工后补）= null"
+                "description": "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）；Push 319：导入表导入变更暂无变更后文件（源文件在微盘，人工后补）= null"
               }
             ]
           },

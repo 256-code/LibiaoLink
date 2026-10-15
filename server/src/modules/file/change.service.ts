@@ -21,7 +21,7 @@ type ChangeDetail = z.infer<typeof ChangeRequestDetailSchema>;
  *
  * 写入面（申请即通过）在 FileService（上传管道 complete / 定档后回溯）；本服务只读：
  * `change_requests` 一行 → 按 `file_versions.change_request_id` 反查变更后文件 / 版本（一期一变更一版本）。
- * Push 319：老表导入的变更没有变更后文件（源文件在微盘）→ 读面宽容 fileId / versionId 为空，详情 file / version 给 null。
+ * Push 319：导入表导入的变更没有变更后文件（源文件在微盘）→ 读面宽容 fileId / versionId 为空，详情 file / version 给 null。
  * 可见性：列表由 ProjectAccessGuard 按路径项目判定；详情路径不含项目，服务层按变更所属项目判定
  * （非成员 404，防 IDOR —— 与 file 模块读面同一口径）。视图映射复用写入面的 toChangeRequestView，
  * 避免「写面 / 读面」两处字段口径漂移。

@@ -3,7 +3,7 @@ import type { ImportIssueLevel, StageKey } from "@libiaolink/contracts";
 import type { ParsedWorkbook, SheetGrid } from "./xlsx.js";
 
 /**
- * 老表 → 标准导入模型（口径与 D:/LibiaoLink_help/_conv/legacy-convert.mjs 逐条对齐；业务已回执）：
+ * 导入表 → 标准导入模型（口径与 D:/LibiaoLink_help/_conv/legacy-convert.mjs 逐条对齐；业务已回执）：
  * - 完成判定：实际完成日期未填 = 不算完成（进度按进行中封顶 75%）；提前完成 → done + statusOverride early_done；
  * - 进度五档：已完成 / 提前完成 100%、待开始 0%、进行中就近取档并封顶 75%；待开始有进度 → 归零；
  * - 日期笔误（完成早于开始 / 开始晚于预计完成）照原值导入 + 提醒；日期解析失败留空 + 提醒；
@@ -44,7 +44,7 @@ export interface LegacyTask {
   ownerRaw: string;
   ownerNames: string[];
   managerName: string | null;
-  /** 任务表「变更关联」（老表写变更日期；提交按变更表「关联」列回写 change_refs，这里保留原值供核对 / 提醒）。 */
+  /** 任务表「变更关联」（导入表写变更日期；提交按变更表「关联」列回写 change_refs，这里保留原值供核对 / 提醒）。 */
   changeRefRaw: string | null;
 }
 
@@ -438,7 +438,7 @@ export function convertStakeholders(
   return { sheetName: sheet.name, stakeholders, issues };
 }
 
-/** 年份识别（另附干系人表单表用）：任意单元格里第一个「YYYY 年」。 */
+/** 年份识别：任意单元格里第一个「YYYY 年」。 */
 export function sniffYear(sheets: SheetGrid[]): number | null {
   for (const sheet of sheets) {
     for (const row of sheet.rows) {
@@ -942,7 +942,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
         name: change.afterFileName,
         subject: change.content === "" ? null : change.content,
         reason: "变更后文件（微盘 / 本地路径）：需手动上传",
-        zh: "老表只写了文件名（源文件在微盘 / 本地路径）：导入后请按清单手动上传",
+        zh: "导入表只写了文件名（源文件在微盘 / 本地路径）：导入后请按清单手动上传",
         en: "The workbook only lists the file name (file lives in WeDrive or a local path); please upload it manually after import.",
       });
     }
@@ -959,7 +959,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
           name: part,
           subject: title,
           reason: "任务附件（微盘 / 本地路径）：需手动上传",
-          zh: "老表只写了文件名（源文件在微盘 / 本地路径）：导入后请按清单手动上传",
+          zh: "导入表只写了文件名（源文件在微盘 / 本地路径）：导入后请按清单手动上传",
           en: "The workbook only lists the file name (file lives in WeDrive or a local path); please upload it manually after import.",
         });
       }
