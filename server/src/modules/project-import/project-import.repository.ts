@@ -162,10 +162,10 @@ export class ProjectImportRepository {
   }
 
   /** 过期票据终态写入：仍限定 pending，防止清扫与提交并发时覆盖 committed。 */
-  async markExpired(id: string, at: Date): Promise<void> {
+  async markExpired(id: string): Promise<void> {
     await this.database.db
       .update(projectImportPreviews)
-      .set({ status: "expired", committedAt: at })
+      .set({ status: "expired" })
       .where(and(eq(projectImportPreviews.id, id), eq(projectImportPreviews.status, "pending")));
   }
 
