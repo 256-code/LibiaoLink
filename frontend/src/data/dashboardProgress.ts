@@ -13,8 +13,13 @@
  * - 段上数字 = 该档任务数；行右侧合计 = 该阶段任务总数。
  * - 汇总范围 = 全部项目（项目列表读面 + 逐项目任务读面前端聚合，取数在 src/dashboardApi.ts；
  *   服务端 dashboard 读面未落地 —— server/src/modules/dashboard/README.md 仍是占位，上量后再收口）。
+ *
+ * Push 339（2026-10-15 业务口径「现在准备做这个任务状态的」+「已延期也要的 只是没有相关的任务状态才没显示在图中」）：
+ * 同一份任务读面再聚一份「任务状态」分布（buildDashboardStatus）—— 供仪表盘第二个视图（任务状态饼图）用；
+ * 状态取服务端展示态（displayStatusLabel，与任务表 / 数据详情同源），0 条的状态不进 slices（图上整条不出现）。
  */
-import { stageNameOf } from "../taskApi";
+import { displayStatusLabel, stageNameOf } from "../taskApi";
+import type { TaskStatus } from "./tasks";
 
 /** 进度五档（契约 TaskProgressSchema）：堆叠顺序 = 从左到右 0 → 1。 */
 export const DASHBOARD_BINS = [0, 0.25, 0.5, 0.75, 1] as const;
@@ -110,6 +115,47 @@ export function buildDashboardProgress(tasks: readonly DashboardTaskLike[]): Das
   const rows = ungroupedRow.counts.some((count) => count > 0) ? [...stageRows, ungroupedRow] : stageRows;
   return {
     rows: rows.map((row) => ({ ...row, total: row.counts.reduce((sum, count) => sum + count, 0) })),
+    totalTasks,
+  };
+}
+
+/**
+ * 任务状态展示序（Push 339 · 与业务参考图同序：图例顺序 = 扇区顺时针顺序；「已延期」垫底 ——
+ * 没有该态任务时整条不出现，见业务口径「已延期也要的 只是没有相关的任务状态才没显示在图中」）。
+ */
+export const DASHBOARD_STATUS_ORDER: readonly TaskStatus[] = ["进行中", "已完成", "待开始", "提前完成", "已延期"];
+
+/** 一枚状态切片（只含 count > 0 的状态；顺序 = DASHBOARD_STATUS_ORDER）。 */
+export type DashboardStatusSlice = {
+  readonly status: TaskStatus;
+  readonly count: number;
+};
+
+/** 任务状态分布（「任务状态」饼图口径 · Push 339）。 */
+export type DashboardStatus = {
+  readonly slices: readonly DashboardStatusSlice[];
+  readonly totalTasks: number;
+};
+
+/** 聚合输入的最小任务形状（ApiTaskListItem 满足）：只吃服务端展示态。 */
+export type DashboardStatusTaskLike = {
+  readonly displayStatus: string;
+};
+
+/** 全量任务 → 任务五态分布（纯函数；0 条的状态不出现在 slices 里 = 图上不出现）。 */
+export function buildDashboardStatus(tasks: readonly DashboardStatusTaskLike[]): DashboardStatus {
+  const counts = new Map<TaskStatus, number>();
+  let totalTasks = 0;
+  for (const task of tasks) {
+    const status = displayStatusLabel(task.displayStatus);
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+    totalTasks += 1;
+  }
+  return {
+    slices: DASHBOARD_STATUS_ORDER.filter((status) => (counts.get(status) ?? 0) > 0).map((status) => ({
+      status,
+      count: counts.get(status) ?? 0,
+    })),
     totalTasks,
   };
 }
