@@ -1365,7 +1365,9 @@ body {
 /* 蓝图页「蓝图 ⇄ 仪表盘」转场（业务口径 2026-10-15「鼠标滑动蓝图转场展示仪表盘」「导航栏名称蓝图改成仪表盘」）：
    转场效果参照 tympanus《A Collection of Page Transitions》的「Fade top / Fade bottom」（第 11 / 12 号动画）——
    旧页上移淡出（translateY(-100%)、opacity → 0.3）、新页自下淡入（translateY(100%) → 0、opacity 0.3 → 1），
-   0.6s ease both；返回方向镜像。两屏都是整卡位移，画布外的裁切由外层 section 的 overflow-hidden 负责。 */
+   0.6s ease both；返回方向镜像。两屏都是整卡位移，画布外的裁切由外层 section 的 overflow-hidden 负责。
+   修复（2026-10-15 业务口径「向上滚动有bug」）：动画接管前的首帧曾在静止位露一帧（入场卡垫在对面卡下透出叠影，
+   见截图「项目数 + 切换按钮同排」）—— 入场卡把 from 态落成基础位（先停画外）、四条关键帧两端都显式，接管前也看不见。 */
 .hub-deck__view[data-parked="true"] {
   visibility: hidden;
   pointer-events: none;
@@ -1377,6 +1379,8 @@ body {
 
 .hub-deck__view--in-bottom {
   z-index: 2;
+  opacity: 0.3;
+  transform: translateY(100%);
   animation: ll-hub-in-bottom 600ms ease both;
 }
 
@@ -1386,10 +1390,17 @@ body {
 
 .hub-deck__view--in-top {
   z-index: 2;
+  opacity: 0.3;
+  transform: translateY(-100%);
   animation: ll-hub-in-top 600ms ease both;
 }
 
 @keyframes ll-hub-out-top {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
   to {
     opacity: 0.3;
     transform: translateY(-100%);
@@ -1401,9 +1412,19 @@ body {
     opacity: 0.3;
     transform: translateY(100%);
   }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes ll-hub-out-bottom {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
   to {
     opacity: 0.3;
     transform: translateY(100%);
@@ -1414,6 +1435,11 @@ body {
   from {
     opacity: 0.3;
     transform: translateY(-100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -2004,7 +2030,8 @@ body {
 }
 
 /* 底部视图切换（Push 339 · 业务口径「在仪表盘页面在底部增加切换的按钮」+ 追订「这个按钮再做一个进度一览 靠左不居中」；
-   按钮照业务给的参考代码：32px 圆角方框、未选灰底灰边、选中蓝底白勾、悬停微放大、渐变脉冲高光 —— Tailwind 类在组件里
+   按钮照业务给的参考代码、尺寸按 2026-10-15「按钮大小小一点」收小（24px 圆角方框、白勾 16px）、
+   未选灰底灰边、选中蓝底白勾、悬停微放大、渐变脉冲高光 —— Tailwind 类在组件里
    （白勾 / 脉冲层用 group-has-[:checked]:，参考代码的 peer-checked: 挂在内层元素上 —— 兄弟选择器够不到、不生效）
    这里只做底栏排布：**靠左、与标题条同一条竖线起排**（3.33% = 图内 x=40 / viewBox 1200，与 .hub-dash-head 同缩进）。 */
 .hub-dash-switch {
