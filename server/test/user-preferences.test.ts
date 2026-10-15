@@ -1,5 +1,5 @@
 /**
- * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271；背景档位 backgroundTier · Push 291；卡片水印 cardWatermark · Push 292；界面语言 locale · Push 296）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
+ * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271；背景档位 backgroundTier · Push 291；卡片水印 cardWatermark · Push 292；界面语言 locale · Push 296；仪表盘页常驻视图 hubView · Push 332）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
  * 未声明键保留）、读侧规范化（jsonb 是自由对象，脏数据一律收敛不抛错）、契约上限（≤ 20 组 / 名称 ≤ 20 字）、
  * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛、便签墙形状 / 收敛 / 服务端盖章、背景档位枚举与读侧收敛、卡片水印布尔与读侧收敛、界面语言枚举与读侧收敛。
  * 不连库：仓储用内存替身（与 admin-audit.test.ts 同口径）；契约 schema 直接解析校验。
@@ -77,7 +77,7 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "medium", cardWatermark: false, locale: "zh", updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "medium", cardWatermark: false, locale: "zh", hubView: "map", updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
@@ -213,6 +213,24 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "en" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "fr" }).success).toBe(false);
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: true }).success).toBe(false);
+  });
+
+  it("仪表盘页常驻视图（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：只传 hubView 落库、未传键保持原值；读侧白名单外回 map", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { hubView: "dashboard" }, AT);
+    expect((await service.get(USER_ID)).hubView).toBe("dashboard");
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ hubView: "dashboard" });
+    expect((await service.update(USER_ID, { focusMode: true }, AT)).hubView).toBe("dashboard");
+    expect((await service.update(USER_ID, { hubView: "map" }, AT)).hubView).toBe("map");
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubView: "board" }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).hubView).toBe("map");
+  });
+
+  it("仪表盘页常驻视图契约：map / dashboard 通过，其它字符串 / 布尔 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: "map" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: "dashboard" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: "board" }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: true }).success).toBe(false);
   });
 
   it("工作台展开态（A31 · Push 233）：只传 workspaceOpenProjects 落库、整体替换；两标签各自独立", async () => {

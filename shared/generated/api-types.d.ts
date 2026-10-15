@@ -8242,6 +8242,11 @@ export interface components {
          * @enum {string}
          */
         FollowObjectType: "project" | "task";
+        /**
+         * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
+         * @enum {string}
+         */
+        HubView: "map" | "dashboard";
         /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
         IdempotencyKey: string;
         /** @description 一条问题记录（由日报自动生成或手工创建） */
@@ -9671,9 +9676,10 @@ export interface components {
             locale: components["schemas"]["Locale"];
             /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false */
             cardWatermark: boolean;
+            hubView: components["schemas"]["HubView"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400 */
+        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView需在枚举内，否则400 */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
@@ -9688,6 +9694,7 @@ export interface components {
             backgroundTier?: components["schemas"]["BackgroundTier"] & unknown;
             locale?: components["schemas"]["Locale"] & unknown;
             cardWatermark?: boolean;
+            hubView?: components["schemas"]["HubView"] & unknown;
         } & {
             [key: string]: unknown;
         };

@@ -4,12 +4,12 @@ import { useT } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
-import type { DashboardProgress } from "./data/dashboardProgress";
+import type { DashboardDataset } from "./dashboardApi";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
 import { fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
 import { fetchProjectList, type ApiProject } from "./projectApi";
-import { EMPTY_LIST_QUERY } from "./useHashRoute";
+import { EMPTY_LIST_QUERY, replaceHubView, type HubView } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 /**
@@ -35,8 +35,10 @@ import type { MeResponse } from "./types";
  * 项目空间 / 任务模板 / 我的任务三个落点地址不变，改由顶部导航栏承接。
  */
 type HubNote = "loading" | "none" | { kind: "capped"; n: number; total: number } | "failed";
-type HubView = "map" | "dashboard";
 type HubAnim = "toDashboard" | "toMap" | null;
+
+/** 右侧边缘页面指示器的两屏顺序（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」）。 */
+const DECK_VIEWS: readonly HubView[] = ["map", "dashboard"];
 
 /** 转场时长（与 app.css 的 .hub-deck__view--* 动画一致）：动画跑完才落定视图。 */
 const DECK_ANIM_MS = 620;
@@ -53,17 +55,24 @@ function scrollableAncestorWithin(target: EventTarget | null, boundary: HTMLElem
   return false;
 }
 
-export default function Hub({ me }: { me: MeResponse }) {
+export default function Hub({ me, routeView, rememberedView, onViewChange }: {
+  me: MeResponse;
+  /** 地址里的视图（`#/?view=dashboard`；null = 地址没写，落账号记忆的常驻视图）—— Push 332。 */
+  routeView: HubView | null;
+  /** 账号记的常驻视图（user_preferences.prefs.hubView；地址没写时用它）—— Push 332。 */
+  rememberedView: HubView;
+  onViewChange: (view: HubView) => void;
+}) {
   const t = useT();
   /** 提示条内容（Push 301）：存结构化状态、渲染时按当前语言取词（切换语言不用等下一次取数）。 */
   const [note, setNote] = useState<HubNote>("loading");
   const [distribution, setDistribution] = useState<HubMapDistribution | null>(null);
-  const [view, setView] = useState<HubView>("map");
+  const [view, setView] = useState<HubView>(routeView ?? rememberedView);
   const [anim, setAnim] = useState<HubAnim>(null);
-  const [dash, setDash] = useState<DashboardProgress | null>(null);
+  const [dash, setDash] = useState<DashboardDataset | null>(null);
   const [dashState, setDashState] = useState<HubDashboardState>("loading");
   const deckRef = useRef<HTMLDivElement | null>(null);
-  const viewRef = useRef<HubView>("map");
+  const viewRef = useRef<HubView>(routeView ?? rememberedView);
   const animRef = useRef<HubAnim>(null);
   const dashStateRef = useRef<HubDashboardState>("loading");
   const dashLoadingRef = useRef(false);
@@ -77,7 +86,7 @@ export default function Hub({ me }: { me: MeResponse }) {
   }, []);
 
   /** 拉统计（纯取数、不落状态）：首转 / 失败重试 / 变更静默刷新共用。 */
-  const pullDashboard = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardProgress | null> => {
+  const pullDashboard = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardDataset | null> => {
     try {
       return await fetchDashboardProgress(projects ?? projectsRef.current ?? undefined);
     } catch {
@@ -123,14 +132,34 @@ export default function Hub({ me }: { me: MeResponse }) {
       viewRef.current = next;
       setAnim(null);
       setView(next);
+      // Push 332：视图落定即写回地址（replace · 刷新 / 收藏 / 分享都停这一屏）并按账号记住（地址带参数时以地址为准）。
+      replaceHubView(next);
+      onViewChange(next);
     }, DECK_ANIM_MS);
-  }, [ensureDashboard]);
+  }, [ensureDashboard, onViewChange]);
 
   useEffect(() => () => {
     if (settleTimerRef.current !== null) {
       window.clearTimeout(settleTimerRef.current);
     }
   }, []);
+
+  /**
+   * 地址 / 账号记忆与当前视图对齐（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：
+   * ① 地址显式带视图（`?view=dashboard`）时以地址为准；② 地址不带参数时落账号记忆的常驻视图。
+   * 两者都只在「当前不在这一屏」时瞬时对齐 —— 它是落地定位，不是滚轮 / 按钮触发的翻页（不走转场）。
+   */
+  useEffect(() => {
+    const target = routeView ?? rememberedView;
+    if (target === "dashboard") {
+      ensureDashboard();
+    }
+    if (target === viewRef.current || animRef.current !== null) {
+      return;
+    }
+    viewRef.current = target;
+    setView(target);
+  }, [routeView, rememberedView, ensureDashboard]);
 
   useEffect(() => {
     const deck = deckRef.current;
@@ -227,6 +256,8 @@ export default function Hub({ me }: { me: MeResponse }) {
   const dashSideClass = anim === "toDashboard" ? "hub-deck__view--in-bottom" : anim === "toMap" ? "hub-deck__view--out-bottom" : "";
   const mapParked = view === "dashboard" && anim === null;
   const dashParked = view === "map" && anim === null;
+  /** 指示器跟随转场目标：点球即先变色（转场途中也即时反馈），落定后与地址 / 账号记忆一致。 */
+  const indicatorView: HubView = anim === "toDashboard" ? "dashboard" : anim === "toMap" ? "map" : view;
   const deckViewClass = "hub-deck__view absolute inset-0 overflow-hidden rounded-[28px] border border-zinc-200/80 bg-white/80 p-3 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur";
 
   return (
@@ -238,32 +269,22 @@ export default function Hub({ me }: { me: MeResponse }) {
             <HubMap distribution={distribution} note={noteText} />
           </div>
           <div data-parked={dashParked ? "true" : "false"} className={deckViewClass + " " + dashSideClass}>
-            <HubDashboard progress={dash} state={dashState} />
+            <HubDashboard data={dash} state={dashState} />
           </div>
-          <button
-            type="button"
-            className="hub-deck-hint"
-            data-side="bottom"
-            data-hidden={view === "map" && anim === null ? "false" : "true"}
-            onClick={() => startTransition("dashboard")}
-            aria-label={t("hub.hint.toDash")}
-          >
-            <svg className="hub-deck-hint__icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="hub-deck-hint"
-            data-side="top"
-            data-hidden={view === "dashboard" && anim === null ? "false" : "true"}
-            onClick={() => startTransition("map")}
-            aria-label={t("hub.hint.toMap")}
-          >
-            <svg className="hub-deck-hint__icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>
+            {DECK_VIEWS.map((item) => (
+              <button
+                key={item}
+                type="button"
+                className="hub-deck-dots__dot"
+                data-view={item}
+                data-active={indicatorView === item ? "true" : "false"}
+                aria-current={indicatorView === item ? "true" : undefined}
+                aria-label={t(item === "map" ? "hub.dots.map" : "hub.dots.dashboard")}
+                onClick={() => startTransition(item)}
+              />
+            ))}
+          </nav>
         </section>
       </main>
     </div>

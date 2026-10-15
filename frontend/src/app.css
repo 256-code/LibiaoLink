@@ -1417,70 +1417,129 @@ body {
   }
 }
 
-/* 转场提示圆钮（不写字，只有一枚箭头：下滑看仪表盘 / 上滑回蓝图） */
-.hub-deck-hint {
-  position: absolute;
-  left: 50%;
+/* 右侧边缘页面指示器（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」+「取消液体选择 直接用点和选择是黑点就好了」）——
+   两枚圆点固定在视口右缘、垂直居中；当前屏那一枚是黑点，另一枚是浅灰点。无 3D / 无阴影 / 无动画 / 无装饰。 */
+.hub-deck-dots {
+  --hub-dot-size: 0.62rem;
+  --hub-dot-gap: 0.8rem;
+  position: fixed;
+  top: 50%;
+  right: 0.75rem;
+  z-index: 6;
   display: flex;
-  width: 2.4rem;
-  height: 2.4rem;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
+  gap: var(--hub-dot-gap);
+  transform: translateY(-50%);
+}
+
+.hub-deck-dots__dot {
+  width: var(--hub-dot-size);
+  height: var(--hub-dot-size);
+  padding: 0;
+  border: 0;
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.92);
-  color: #71717a;
-  box-shadow: 0 10px 26px -16px rgb(15 23 42 / 0.45);
+  background: rgb(31 35 41 / 0.22);
   cursor: pointer;
-  transform: translateX(-50%);
-  animation: ll-hub-hint-bob-down 2.8s ease-in-out infinite;
-  transition: color 160ms ease, border-color 160ms ease;
+  transition: background 180ms ease;
 }
 
-.hub-deck-hint[data-side="bottom"] {
-  bottom: 1rem;
+.hub-deck-dots__dot:hover {
+  background: rgb(31 35 41 / 0.45);
 }
 
-.hub-deck-hint[data-side="top"] {
-  top: 1rem;
-  animation-name: ll-hub-hint-bob-up;
+.hub-deck-dots__dot[data-active="true"],
+.hub-deck-dots__dot[data-active="true"]:hover {
+  background: #1f2329;
 }
 
-.hub-deck-hint:hover {
+.hub-deck-dots__dot:focus-visible {
+  outline: 2px solid rgb(31 35 41 / 0.45);
+  outline-offset: 3px;
+}
+
+/* 仪表盘标题条（Push 334）：标题 + 分隔点 + 项目选择器 —— 选择器里当前项就是标题后半段。 */
+.hub-dash-wrap {
+  /* relative：悬停卡 / 数据详情两个浮层都按白卡定位（Push 335）。 */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.hub-dash-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  /* 左缩进 = 图内 x=40 / viewBox 1200（按宽度缩放，宽屏下与图例 / 阶段名同一竖线起排）。 */
+  padding: 0.1rem 3.33% 0.35rem;
+}
+
+.hub-dash-title {
+  font-size: 1.25rem;
+  font-weight: 700;
   color: #1f2329;
-  border-color: #d4d4d8;
 }
 
-.hub-deck-hint[data-hidden="true"] {
-  opacity: 0;
+.hub-dash-sep {
+  color: #1f2329;
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hub-dash-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.hub-dash-pick__ghost {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  white-space: nowrap;
+  font-size: 1.25rem;
+  font-weight: 700;
   pointer-events: none;
 }
 
-@keyframes ll-hub-hint-bob-down {
-  0%,
-  100% {
-    transform: translate(-50%, 0);
-  }
-  50% {
-    transform: translate(-50%, 5px);
-  }
+.hub-dash-pick select {
+  padding: 0 1.15rem 0 0;
+  border: 0;
+  background: transparent;
+  color: #1f2329;
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  appearance: none;
 }
 
-@keyframes ll-hub-hint-bob-up {
-  0%,
-  100% {
-    transform: translate(-50%, 0);
-  }
-  50% {
-    transform: translate(-50%, -5px);
-  }
+.hub-dash-pick select:hover {
+  color: #0f172a;
+}
+
+.hub-dash-pick select:focus-visible {
+  outline: 2px solid rgb(31 35 41 / 0.35);
+  outline-offset: 3px;
+}
+
+.hub-dash-pick__caret {
+  position: absolute;
+  right: 0.15rem;
+  color: #6b7280;
+  pointer-events: none;
 }
 
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
 .hub-dash {
   display: block;
+  flex: 1 1 auto;
   width: 100%;
-  height: 100%;
+  min-height: 0;
 }
 
 .hub-dash__swatch,
@@ -1523,5 +1582,298 @@ body {
   justify-content: center;
   color: #71717a;
   font-size: 0.875rem;
+}
+
+/* 悬停柱段的浮层卡 + 行高亮（Push 335 · 业务口径「鼠标放上去是这样的效果」）：行名 + 档位色块 + 档位 + 条数。 */
+.hub-dash__rowband {
+  fill: #f4f5f7;
+}
+
+.hub-dash-tip {
+  position: absolute;
+  z-index: 3;
+  min-width: 9rem;
+  padding: 0.5rem 0.7rem 0.55rem;
+  border-radius: 0.6rem;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 12px 28px -14px rgb(15 23 42 / 0.35);
+  pointer-events: none;
+}
+
+.hub-dash-tip__row {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.hub-dash-tip__line {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.hub-dash-tip__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  background: #c9ced6;
+}
+
+.hub-dash-tip__dot[data-bin="0.25"] {
+  background: #5aa9f7;
+}
+
+.hub-dash-tip__dot[data-bin="0.5"] {
+  background: #f5c443;
+}
+
+.hub-dash-tip__dot[data-bin="0.75"] {
+  background: #f08a3c;
+}
+
+.hub-dash-tip__dot[data-bin="1"] {
+  background: #6cc46a;
+}
+
+.hub-dash-tip__label {
+  flex: 1 1 auto;
+}
+
+.hub-dash-tip__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #111827;
+}
+
+/* 柱段点击（Push 335）：选中具体项目才可点（开「数据详情」）；「全部项目」下光标保持箭头、不给来源。 */
+.hub-dash__seg[data-drill="true"] {
+  cursor: pointer;
+}
+
+.hub-dash__seg[data-drill="true"]:hover {
+  filter: brightness(0.93);
+}
+
+/* 数据详情（Push 335 · 业务口径「点击某一段是这个只读效果」）：铺满白卡的只读表 —— 标题 + 来源 + 搜索 + 明细。 */
+.hub-dash-detail {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 0.75rem;
+  background: #ffffff;
+}
+
+.hub-dash-detail__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0.15rem 0;
+}
+
+.hub-dash-detail__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1f2329;
+}
+
+.hub-dash-detail__from {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  color: #8a9099;
+}
+
+.hub-dash-detail__project {
+  color: #5f6b7a;
+}
+
+.hub-dash-detail__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.4rem;
+  color: #4b5563;
+  background: transparent;
+  cursor: pointer;
+}
+
+.hub-dash-detail__close:hover {
+  background: #f2f3f5;
+}
+
+.hub-dash-detail__close:focus-visible {
+  outline: 2px solid rgb(31 35 41 / 0.35);
+  outline-offset: 2px;
+}
+
+.hub-dash-detail__box {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 0.75rem;
+  border: 1px solid #e6e8eb;
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.hub-dash-detail__search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: #f4f5f7;
+  border-bottom: 1px solid #e6e8eb;
+  color: #9aa0a6;
+  cursor: text;
+}
+
+.hub-dash-detail__search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.85rem;
+  color: #1f2329;
+  outline: none;
+}
+
+.hub-dash-detail__search input::placeholder {
+  color: #9aa0a6;
+}
+
+.hub-dash-detail__scroll {
+  /* 0 1 auto：滚动区高度贴着表体（行少时不满高），横向滚动条紧贴最后一行下方（照业务参考图）；
+     行多到装不下时再收缩 + 纵向滚。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.hub-dash-detail__table {
+  width: 100%;
+  min-width: 78rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8rem;
+}
+
+.hub-dash-detail__table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.5rem 0.7rem;
+  background: #ffffff;
+  border-bottom: 1px solid #e6e8eb;
+  color: #7c848d;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.hub-dash-detail__table td {
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid #f1f2f4;
+  color: #1f2329;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.hub-dash-detail__no {
+  width: 3rem;
+  color: #9aa0a6;
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-detail__task {
+  display: inline-block;
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.hub-dash-detail__chip {
+  display: inline-block;
+  max-width: 10rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+  background: #f2f3f5;
+  color: #4b5563;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.hub-dash-detail__tag {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.hub-dash-detail__chips {
+  display: inline-flex;
+  gap: 0.25rem;
+  vertical-align: bottom;
+}
+
+.hub-dash-detail__bar {
+  display: inline-block;
+  width: 6.5rem;
+  height: 0.8rem;
+  border-radius: 0.2rem;
+  background: #eceff2;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.hub-dash-detail__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 0.2rem;
+  background: #6cc46a;
+}
+
+.hub-dash-detail__pct {
+  margin-left: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-detail__note {
+  display: inline-block;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  color: #4b5563;
+}
+
+.hub-dash-detail__date {
+  font-variant-numeric: tabular-nums;
+  color: #4b5563;
+}
+
+.hub-dash-detail__blank {
+  color: #c4c9cf;
+}
+
+.hub-dash-detail__empty {
+  padding: 2.5rem 0.7rem;
+  color: #9aa0a6;
+  text-align: center;
 }
 
