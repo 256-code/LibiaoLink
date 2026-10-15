@@ -185,10 +185,18 @@ export const LocaleSchema = z
   .enum(LOCALE_IDS)
   .openapi("Locale", { description: "界面语言 id（Push 296）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" });
 
+/** 仪表盘页落地视图 id（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」；
+ *  与前端 useHashRoute.ts 的 HubView 同源）：map = 世界地图（默认）/ dashboard = 「项目进度一览」大屏。 */
+export const HUB_VIEW_IDS = ["map", "dashboard"] as const;
+
+export const HubViewSchema = z
+  .enum(HUB_VIEW_IDS)
+  .openapi("HubView", { description: "仪表盘页落地视图（Push 332）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；读侧白名单外 / 缺省一律收敛为 map" });
+
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）；
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）；
  * 未声明键按 `.catchall` 原样保存（前向兼容），但不回读 —— 新增偏好键必须同时补这里与 service 的 toContract。
  */
 export const UserPreferencesSchema = z
@@ -217,6 +225,7 @@ export const UserPreferencesSchema = z
       .openapi({
         description: "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false",
       }),
+    hubView: HubViewSchema.openapi({ description: "仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
   .openapi("UserPreferences", { description: "用户偏好（全量；GET 返回当前值）" });
@@ -233,11 +242,12 @@ export const UserPreferencesUpdateBodySchema = z
     backgroundTier: BackgroundTierSchema.optional(),
     locale: LocaleSchema.optional(),
     cardWatermark: z.boolean().optional(),
+    hubView: HubViewSchema.optional(),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400"
+      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView需在枚举内，否则400"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */
@@ -246,6 +256,7 @@ export type SavedHomeFilter = z.infer<typeof SavedHomeFilterSchema>;
 export type WorkspaceOpenProjects = z.infer<typeof WorkspaceOpenProjectsSchema>;
 export type BackgroundTier = z.infer<typeof BackgroundTierSchema>;
 export type Locale = z.infer<typeof LocaleSchema>;
+export type HubView = z.infer<typeof HubViewSchema>;
 export type PlanBoardBg = z.infer<typeof PlanBoardBgSchema>;
 export type MyPlanNote = z.infer<typeof MyPlanNoteSchema>;
 export type MyPlanBoard = z.infer<typeof MyPlanBoardSchema>;

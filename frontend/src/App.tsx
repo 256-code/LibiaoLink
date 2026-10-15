@@ -29,9 +29,9 @@ import {
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { archiveProject, createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
+import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
-import { replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
+import { asHubView, replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute, type HubView } from "./useHashRoute";
 import { projectStatusOf, type MeResponse, type Project } from "./types";
 
 type ViewState =
@@ -124,6 +124,8 @@ export default function App() {
   // 写操作后 +1：列表与详情按它重新取数（前端不做本地拼接，以服务端返回为准）
   const [dataVersion, setDataVersion] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  /** 仪表盘页常驻视图（Push 332 · 业务口径「这个页面要记住 因为不同的人想常驻的页面可能不一样」）：按账号记住 —— 地址不带 `?view=` 时本页落在这一屏。 */
+  const [hubView, setHubView] = useState<HubView>("map");
   /** 权限画像（Push 172 重新接线）：管理入口的呈现层收敛 —— 字典治理（dict.manage）与删除项目（project.delete）。 */
   const permissions = useMyPermissions();
   /** 待确认删除的项目（卡片删除先出确认条，第二下才真删）：null = 没有待确认的删除。 */
@@ -154,6 +156,7 @@ export default function App() {
       filterRevision.current = prefs.revisions?.homeSavedFilters ?? 0;
       setSavedFilters(prefs.homeSavedFilters);
       setTaskTableHiddenColumns(prefs.taskTableHiddenColumns);
+      setHubView(asHubView(prefs.hubView));
       applyBackgroundTier(asBackgroundTier(prefs.backgroundTier));
       applyCardWatermark(asCardWatermark(prefs.cardWatermark));
       applyLocale(asLocale(prefs.locale));
@@ -202,6 +205,7 @@ export default function App() {
           filterRevision.current = prefsResult.value.revisions?.homeSavedFilters ?? 0;
           setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
           setWorkspaceOpenProjects(prefsResult.value.workspaceOpenProjects);
+          setHubView(asHubView(prefsResult.value.hubView));
           // 外观偏好（Push 291 背景档位 / Push 292 卡片水印）：登录后从账号偏好静默落位（坏值 / 缺键回落默认）
           applyBackgroundTier(asBackgroundTier(prefsResult.value.backgroundTier));
           applyCardWatermark(asCardWatermark(prefsResult.value.cardWatermark));
@@ -399,6 +403,22 @@ export default function App() {
     } catch (error: unknown) {
       setWorkspaceOpenProjects((current) => (current === value ? previous : current));
       return errorMessageOf(error, t("app.fail.savePanels"));
+    }
+  };
+
+  /**
+   * 仪表盘页常驻视图（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：
+   * 与背景档位同一套乐观更新 + 失败回滚（单键 PATCH user_preferences.prefs.hubView；地址由页面自身写回）。
+   */
+  const handleHubViewChange = async (next: HubView): Promise<void> => {
+    const previous = hubView;
+    setHubView(next);
+    try {
+      const prefs = await saveHubView(next);
+      setHubView(asHubView(prefs.hubView));
+    } catch (error: unknown) {
+      setHubView((current) => (current === next ? previous : current));
+      setNotice(errorMessageOf(error, t("app.fail.saveHubView")));
     }
   };
 
@@ -643,10 +663,10 @@ export default function App() {
     );
 
   if (route.kind === "hub") {
-    // 蓝图页（顶层 · Push 285 前叫「入口页 / 首页」）：地图占满内容区；登录后的默认落地已改项目空间 `#/projects`
+    // 仪表盘页（顶层 · Push 285 前叫「入口页 / 首页」· Push 331 起叫「仪表盘」）：地图 / 「项目进度一览」双视图（Push 332 起视图走地址 `?view=`）；登录后的默认落地已改项目空间 `#/projects`
     return (
       <>
-        <Hub me={state.me} />
+        <Hub me={state.me} routeView={route.view} rememberedView={hubView} onViewChange={handleHubViewChange} />
         {bottomBars}
       </>
     );
