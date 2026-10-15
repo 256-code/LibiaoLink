@@ -9,7 +9,7 @@
  *   ③ 限速 kind `single`：本地双窗口拒绝（不发帧 / attempts=0 / retryAt = 被拒窗口下一窗口起点）；群 / 单聊桶隔离。
  *   ④ 消费链（假仓储 / 假站内信驱动 dist `notify.dm.service.js`）：ok → done + sent 行 + 旁证回填（D4）/
  *      rate_limited → deferred（不消耗重试）/ retryable → retry / permanent 853000 → dead + 通用前缀降级 /
- *      permanent 846607（未命中）→ dead + 激活指引前缀降级（P3）/ 收件人不存在 → dead 不降级 /
+ *      permanent 846607（未命中）→ dead + 激活指引前缀降级（P3 · 终稿）/ 收件人不存在 → dead 不降级 /
  *      停用 → dead + 降级 / 降级写库失败 → retry。
  *   ⑤ 激活 ingest：single 消息回调 upsert（原文 userid + 反查回填 + 幂等刷新 last_message_at）/
  *      enter_chat 不激活 / 未匹配用户留空登记 / 非法 userid 忽略。
@@ -421,11 +421,11 @@ async function main() {
         inbox.copies[0].message.title === "任务节点完成" &&
         inbox.copies[0].message.refId === "33333333-3333-4333-8333-333333333333" &&
         String(inbox.copies[0].message.body).startsWith(dm.DM_DEGRADE_PREFIX) &&
-        !String(inbox.copies[0].message.body).includes("如何激活"),
+        !String(inbox.copies[0].message.body).includes("私发任意消息"),
     );
   }
 
-  // S11 permanent 846607 未命中 → dead + 激活指引前缀（P3）
+  // S11 permanent 846607 未命中 → dead + 激活指引前缀（P3 · 终稿）
   {
     const { service, inbox, aibot } = makeService({ ok: false, kind: "permanent", errcode: 846607, errmsg: "aibot send msg frequency limit exceeded", retryAt: null, attempts: 1, state: "subscribed" });
     const outcome = await service.consume(claimedRow(payload()));
@@ -434,11 +434,10 @@ async function main() {
       aibot.sends[0].dmActivated === false && outcome.outcome === "dead",
     );
     assertTrue(
-      "S11 降级前缀附「如何激活机器人」指引（P3 · 含激活步骤与原文保留）",
+      "S11 降级前缀附激活指引话术终稿（P3 · 2026-10-15 · 含终稿句与原文保留）",
       inbox.copies.length === 1 &&
         String(inbox.copies[0].message.body).startsWith(dm.DM_ACTIVATION_DEGRADE_PREFIX) &&
-        String(inbox.copies[0].message.body).includes("如何激活") &&
-        String(inbox.copies[0].message.body).includes("向它发送任意一条消息") &&
+        String(inbox.copies[0].message.body).includes("当前机器人未激活，请私发任意消息给机器人即可激活。") &&
         String(inbox.copies[0].message.body).includes("节点：到货验收 负责人：张工"),
     );
   }
