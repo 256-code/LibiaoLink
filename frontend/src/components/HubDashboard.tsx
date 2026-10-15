@@ -1,9 +1,10 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { DASHBOARD_BINS, isTaskInCell } from "../data/dashboardProgress";
 import type { DashboardDataset } from "../dashboardApi";
 import { stageText, useLocale, useT, type TextKey } from "../i18n";
 import { HubDashDetail } from "./HubDashDetail";
 import { Loader } from "./Loader";
+import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
 
 /**
  * 仪表盘视图（蓝图页「蓝图 ⇄ 仪表盘」转场后半屏 · 2026-10-15 业务口径「鼠标滑动蓝图转场展示仪表盘」）：
@@ -16,6 +17,10 @@ import { Loader } from "./Loader";
  * Push 335（2026-10-15 业务口径「鼠标放上去是这样的效果」+「点击某一段是这个只读效果」）：
  * 悬停柱段出浮层卡（行名 + 档位色块 + 档位 + 条数，替代原生 title 灰框）；点柱段打开只读「数据详情」
  * （HubDashDetail）。「如果是全部项目的话不支持点击查看数据来源」—— 选中具体项目时柱段才可点。
+ *
+ * Push 336（2026-10-15 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」+「这个选择项目的ui太丑了 和现在的ui完全不符 要重写 要带搜索的选择器」）：
+ * 选择器由原生 select 换成全站同款可搜索下拉 SearchSelect（SearchSelect.tsx）；选中项目写回账号偏好
+ * user_preferences.prefs.hubDashProject（单键 PATCH，乐观更新 + 失败回滚在 App 层），刷新 / 换设备同账号仍停在同一个项目。
  */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
@@ -75,27 +80,42 @@ function tickMaxOf(maxTotal: number): { max: number; step: number } {
   return { max: Math.max(step, target), step };
 }
 
-export function HubDashboard({ data, state }: { data: DashboardDataset | null; state: HubDashboardState }) {
+export function HubDashboard({ data, state, rememberedDashProject, onDashProjectChange }: {
+  data: DashboardDataset | null;
+  state: HubDashboardState;
+  /** 账号记的常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」；null = 全部项目）。 */
+  rememberedDashProject: string | null;
+  /** 把选中项目写回账号偏好（Push 336；App 层乐观更新 + 失败回滚 + Toast）。 */
+  onDashProjectChange: (projectId: string | null) => Promise<void>;
+}) {
   const t = useT();
   const locale = useLocale();
   /** 每行一条圆角裁剪（柱条两端圆角、段与段之间直角）：id 需要实例级唯一。 */
   const uid = useId().replace(/:/g, "");
-  /** Push 334：项目选择器（第一行固定「全部项目」；选中项目即只统计该项目）。 */
-  const [pickedId, setPickedId] = useState<string | null>(null);
+  /** Push 334：项目选择器（第一行固定「全部项目」；选中项目即只统计该项目）；Push 336：初值取账号常驻项目。 */
+  const [pickedId, setPickedId] = useState<string | null>(rememberedDashProject);
   /** 悬停卡 + 行高亮（同一行的柱段共用：卡里写行名，图上该行铺一条浅灰底）。 */
   const [tip, setTip] = useState<DashTip | null>(null);
   const [hoverRow, setHoverRow] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   /** 数据详情（Push 335：点柱段打开；记「行键 × 档」，打开时按它筛任务）。 */
   const [detail, setDetail] = useState<{ readonly rowKey: string; readonly bin: number } | null>(null);
-  /** 选择器宽度跟随当前文字（业务口径「选择按钮和文字之间距离不要这么远 要动态近距离」）：量一份同字号的隐藏文本。 */
-  const pickGhostRef = useRef<HTMLSpanElement | null>(null);
-  const [pickTextWidth, setPickTextWidth] = useState<number | null>(null);
+  /** 已失效的常驻项目只清一次（Push 336）：PATCH 失败回滚时不再重复请求，避免打转。 */
+  const staleClearedRef = useRef<string | null>(null);
+  /** 常驻项目（Push 336）：偏好晚到（首屏 prefs 未回）/ 换账号 / 保存失败回滚时跟随 —— 与本地选中同值即空转。 */
+  useEffect(() => {
+    setPickedId(rememberedDashProject);
+  }, [rememberedDashProject]);
+  /** 常驻的项目已不存在（被删）：界面回落「全部项目」，并把账号偏好一并清掉（只清一次）。 */
   useEffect(() => {
     if (pickedId !== null && data !== null && !data.byProject.has(pickedId)) {
       setPickedId(null);
+      if (rememberedDashProject === pickedId && staleClearedRef.current !== pickedId) {
+        staleClearedRef.current = pickedId;
+        void onDashProjectChange(null);
+      }
     }
-  }, [data, pickedId]);
+  }, [data, pickedId, rememberedDashProject, onDashProjectChange]);
   /** 「全部项目」不支持点击查看数据来源（业务口径）：退到全部项目 / 切项目时关掉已开的数据详情。 */
   useEffect(() => {
     if (pickedId === null) {
@@ -118,15 +138,6 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
     });
   };
 
-  useLayoutEffect(() => {
-    const ghost = pickGhostRef.current;
-    if (ghost === null) {
-      return;
-    }
-    const width = ghost.getBoundingClientRect().width;
-    setPickTextWidth((prev) => (prev !== null && Math.abs(prev - width) < 0.5 ? prev : width));
-  });
-
   if (state === "failed") {
     return <div className="hub-dash-state">{t("hub.dash.failed")}</div>;
   }
@@ -142,38 +153,31 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
   const pickedName = pickedId !== null ? data.options.find((option) => option.id === pickedId)?.name ?? t("hub.dash.allProjects") : t("hub.dash.allProjects");
   /** 只有选中具体项目才能点开数据详情（「全部项目」= 混合来源，不给来源明细 —— 业务口径）。 */
   const canDrill = pickedId !== null;
-  /** 选择器宽度 = 当前文字宽 + 箭头位（最长 20rem，超长走省略号）—— 箭头永远贴着文字。 */
-  const pickWidth = pickTextWidth === null ? undefined : Math.min(Math.ceil(pickTextWidth) + 20, 320);
+  /** 选择器选项（Push 336）：第一行固定「全部项目」（value ""），其余按项目名。 */
+  const pickOptions: readonly SearchSelectOption[] = [{ value: "", label: t("hub.dash.allProjects") }, ...data.options.map((option) => ({ value: option.id, label: option.name }))];
+  /** 选中项目（Push 336）：立即上屏并按账号记住（乐观）；切项目即关掉已开的数据详情。 */
+  const pickProject = (next: string | null): void => {
+    setPickedId(next);
+    setDetail(null);
+    void onDashProjectChange(next);
+  };
   const head = (
     <div className="hub-dash-head">
       <span className="hub-dash-title">{t("hub.dash.title")}</span>
       <span className="hub-dash-sep" aria-hidden="true">
         •
       </span>
-      <span className="hub-dash-pick">
-        <span ref={pickGhostRef} className="hub-dash-pick__ghost" aria-hidden="true">
-          {pickedName}
-        </span>
-        <select
+      <div className="hub-dash-pick">
+        <SearchSelect
+          options={pickOptions}
           value={pickedId ?? ""}
-          style={pickWidth === undefined ? undefined : { width: pickWidth + "px" }}
-          aria-label={t("hub.dash.pickProject")}
-          onChange={(event) => {
-            setPickedId(event.target.value === "" ? null : event.target.value);
-            setDetail(null);
-          }}
-        >
-          <option value="">{t("hub.dash.allProjects")}</option>
-          {data.options.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.name}
-            </option>
-          ))}
-        </select>
-        <svg className="hub-dash-pick__caret" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </span>
+          onChange={(value) => pickProject(value === "" ? null : value)}
+          placeholder={t("hub.dash.allProjects")}
+          ariaLabel={t("hub.dash.pickProject")}
+          searchPlaceholder={t("hub.dash.pickSearch")}
+          emptyText={t("hub.dash.pickEmpty")}
+        />
+      </div>
     </div>
   );
   if (progress.totalTasks === 0) {

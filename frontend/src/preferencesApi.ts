@@ -46,6 +46,8 @@ export type UserPreferences = {
   locale: Locale;
   /** 仪表盘页常驻视图（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：地址不带 `?view=` 时本页落在哪个视图 —— 刷新 / 换设备同账号保持；默认 map。 */
   hubView: HubView;
+  /** 仪表盘「项目进度一览」常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目 id；null = 全部项目（默认）。 */
+  hubDashProject: string | null;
   updatedAt: string | null;
 };
 
@@ -87,6 +89,11 @@ export function saveCardWatermark(value: boolean): Promise<UserPreferences> {
 /** 仪表盘页常驻视图单键 PATCH（Push 332 · 业务口径「这个页面要记住 因为不同的人想常驻的页面可能不一样」）：只传这一个键，返回服务端收敛后的全量偏好。 */
 export function saveHubView(view: HubView): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { hubView: view });
+}
+
+/** 仪表盘常驻项目单键 PATCH（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：只传这一个键，null = 回全部项目；返回服务端收敛后的全量偏好。 */
+export function saveHubDashProject(projectId: string | null): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { hubDashProject: projectId });
 }
 
 /** 界面语言单键 PATCH（Push 296 · 业务口径「按账号记住 刷新不会回中文」）：只传这一个键，返回服务端收敛后的全量偏好。 */

@@ -3114,6 +3114,15 @@
         ],
         "description": "关注对象类型：project 项目 / task 任务"
       },
+      "HubDashProject": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1,
+        "maxLength": 64,
+        "description": "仪表盘页「项目进度一览」的常驻项目 id（Push 336 · 按账号记住）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null"
+      },
       "HubView": {
         "type": "string",
         "enum": [
@@ -8706,6 +8715,9 @@
           "hubView": {
             "$ref": "#/components/schemas/HubView"
           },
+          "hubDashProject": {
+            "$ref": "#/components/schemas/HubDashProject"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -8732,6 +8744,7 @@
           "locale",
           "cardWatermark",
           "hubView",
+          "hubDashProject",
           "updatedAt"
         ],
         "description": "用户偏好（全量；GET 返回当前值）"
@@ -8809,10 +8822,20 @@
                 "description": "仪表盘页落地视图（Push 332）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；读侧白名单外 / 缺省一律收敛为 map"
               }
             ]
+          },
+          "hubDashProject": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/HubDashProject"
+              },
+              {
+                "description": "仪表盘页常驻项目 id（Push 336）：null = 全部项目（默认）；读侧非法 / 缺省一律收敛为 null"
+              }
+            ]
           }
         },
         "additionalProperties": {},
-        "description": "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView需在枚举内，否则400"
+        "description": "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView需在枚举内，hubDashProject为1..64字符或null，否则400"
       },
       "UserStatus": {
         "type": "string",
