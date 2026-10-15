@@ -26,7 +26,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * 任务节点按文件原名（可勾选补进节点库）；微盘图片出清单人工上传；账号初始密码 123456。
  * 写入中可取消（Push 321）：「取消写入」/ 刷新 / 关页 = 断开请求 → 服务端单事务回滚（零残留），票据保留可再次确认。
  * 干系人（Push 324）：「干系人」表随导入落台账。
- * 加载文案（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：加载态从「已用 N 秒」改「还需要多长时间：N 秒」。
+ * 加载文案（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：加载态从「已用 N 秒」改「还需要多长时间：N 秒」，并按墙钟已用时间每秒递减；文案口径「还需要  N 秒」（未完成前保底 1 秒）。
  */
 
 type Phase =
@@ -73,6 +73,27 @@ function estimateParseSeconds(size: number): number {
 }
 function estimateCommitSeconds(size: number, imageCount: number): number {
   return Math.max(5, Math.round((size / (1024 * 1024)) * 0.1 + imageCount * 0.15 + 5));
+}
+
+/**
+ * 动态剩余秒数（业务口径 2026-10-15「这个时间要变化的不能不动」）：按预估总耗时减墙钟已用秒数，
+ * 每秒刷新；未完成前保底 1 秒，避免贴着完成点显示 0 秒。
+ */
+function useImportRemainingSeconds(estimatedSeconds: number, active: boolean): number {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [active, estimatedSeconds]);
+  return Math.max(1, estimatedSeconds - elapsedSeconds);
 }
 
 /** 提醒等级配色（预览与完成页复述共用）。 */
@@ -174,6 +195,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   /** 解析段预计秒数（只随主文件大小变）。 */
   const parseEtaSeconds = estimateParseSeconds(file.size);
   const dialogRef = useFocusTrap<HTMLDivElement>();
+  /** 倒计时随解析 / 写入两段独立计时。 */
+  const parseRemainingSeconds = useImportRemainingSeconds(parseEtaSeconds, phase.kind === "parsing");
   const committing = phase.kind === "committing";
   /** 写入中取消（Push 321）：abort 请求 → 服务端回滚；回到预览态可再次确认导入。 */
   const commitAbortRef = useRef<AbortController | null>(null);
@@ -289,6 +312,9 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const unmatchedNodes = preview === null ? [] : preview.nodes.filter((node) => !node.matched);
   const canCommit = phase.kind === "preview" && blockingCount === 0 && region !== "";
 
+  const commitEtaSeconds = phase.kind === "committing" ? estimateCommitSeconds(file.size, phase.preview.counts.images) : 0;
+  const commitRemainingSeconds = useImportRemainingSeconds(commitEtaSeconds, phase.kind === "committing");
+
   const failedText =
     phase.kind !== "failed"
       ? ""
@@ -365,7 +391,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                 <p className="export-progress__hint">{t("import.parsing.hint")}</p>
                 <p className="export-progress__hint">
                   {t("import.etaLead")}
-                  <span className="export-progress__num">{parseEtaSeconds}</span>
+                  <span className="export-progress__num">{parseRemainingSeconds}</span>
                   {t("import.etaTail")}
                 </p>
                 <div className="export-progress__bar is-waiting">
@@ -383,7 +409,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                 <p className="export-progress__hint">{t("import.committing.hint")}</p>
                 <p className="export-progress__hint">
                   {t("import.etaLead")}
-                  <span className="export-progress__num">{estimateCommitSeconds(file.size, phase.preview.counts.images)}</span>
+                  <span className="export-progress__num">{commitRemainingSeconds}</span>
                   {t("import.etaTail")}
                 </p>
                 <div className="export-progress__bar is-waiting">
