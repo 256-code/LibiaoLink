@@ -117,7 +117,7 @@ export type FilesQueryState = {
 export const EMPTY_FILES_QUERY: FilesQueryState = { tab: "current", keyword: null, projectIds: [], statuses: [], uploaderIds: [], page: 1 };
 
 export type Route =
-  | { kind: "hub" }
+  | { kind: "hub"; view: HubView | null }
   | { kind: "workspace"; tab: WorkspaceTab; sub: WorkspaceIssueView }
   | { kind: "list"; filters: ListQueryState }
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
@@ -251,6 +251,32 @@ function parseSectionValue(search: string): string | null {
     section = value === "" ? null : value;
   }
   return section;
+}
+
+/** 仪表盘页落地视图（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住」）：map = 世界地图（缺省、不落参数）/
+ *  dashboard = 「项目进度一览」大屏；地址不带参数时落回账号偏好记的常驻视图（见 App 层 hubView）。与契约 HubViewSchema 同源。 */
+export type HubView = "map" | "dashboard";
+
+/** 契约读侧收敛的镜像：偏好 / 地址里的未知值一律回 map（坏值不崩）。 */
+export function asHubView(value: unknown): HubView {
+  return value === "dashboard" ? "dashboard" : "map";
+}
+
+/** 仪表盘页视图参数（`?view=`）：map / dashboard 认，其余取值 / 缺省 = null（= 跟账号记忆，不写死）。 */
+function parseHubView(search: string): HubView | null {
+  for (const chunk of search.split("&")) {
+    if (chunk === "") {
+      continue;
+    }
+    const separator = chunk.indexOf("=");
+    const key = safeDecode(separator === -1 ? chunk : chunk.slice(0, separator));
+    if (key !== "view") {
+      continue;
+    }
+    const value = safeDecode(separator === -1 ? "" : chunk.slice(separator + 1));
+    return value === "dashboard" ? "dashboard" : value === "map" ? "map" : null;
+  }
+  return null;
 }
 
 /** 项目详情标签的合法取值（顺序与标签栏一致）。 */
@@ -479,6 +505,26 @@ export function replaceWorkspaceSub(sub: WorkspaceIssueView): void {
   }
 }
 
+/** 仪表盘页地址：视图走 query（`#/?view=dashboard`；地图 = 缺省、不落参数）—— 与项目详情标签同一口径，地址即状态。
+ *  Push 332（业务口径 2026-10-15「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：地址显式带视图时以地址为准。 */
+export function hubViewHref(view: HubView): string {
+  return view === "dashboard" ? HUB_HASH + "?view=dashboard" : HUB_HASH;
+}
+
+/** 切换仪表盘页视图（Push 332）：同步渲染并写回地址（replace，不新增历史条目）—— 刷新 / 收藏 / 分享都停在同一视图。 */
+export function replaceHubView(view: HubView): void {
+  if (currentRoute.kind !== "hub" || currentRoute.view === view) {
+    return;
+  }
+  currentRoute = { ...currentRoute, view };
+  emit();
+  try {
+    window.history.replaceState(null, "", hubViewHref(view));
+  } catch {
+    // URL 只是当前视图的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
+  }
+}
+
 /** 序列化筛选态：默认值不落 URL（排序固定按创建时间、默认降序 → 省略 sort；时间区间两端齐全才写入）。 */
 export function buildListHash(filters: ListQueryState): string {
   const parts: string[] = [];
@@ -536,8 +582,9 @@ export function parseHash(hash: string): Route {
     return { kind: "list", filters: parseListQuery(search) };
   }
   if (path === "/") {
-    // 蓝图页（顶层 · Push 285 起导航项与页面名由「首页」改「蓝图」）：显式 `#/` 仍落本页 —— 刷新 / 分享 / 撤回不丢。
-    return { kind: "hub" };
+    // 仪表盘页（顶层 · Push 285 起导航项与页面名由「首页」改「蓝图」· Push 331 起叫「仪表盘」）：显式 `#/` 仍落本页 ——
+    // 刷新 / 分享 / 撤回不丢；视图走 `?view=dashboard`（Push 332 · 缺省 = 地图，不带参数时落账号记忆的常驻视图）。
+    return { kind: "hub", view: parseHubView(search) };
   }
   if (path === "/templates") {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };

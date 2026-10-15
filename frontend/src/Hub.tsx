@@ -9,7 +9,7 @@ import { buildMapDistribution, type HubMapDistribution } from "./data/mapProject
 import { fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
 import { fetchProjectList, type ApiProject } from "./projectApi";
-import { EMPTY_LIST_QUERY } from "./useHashRoute";
+import { EMPTY_LIST_QUERY, replaceHubView, type HubView } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 /**
@@ -35,7 +35,6 @@ import type { MeResponse } from "./types";
  * 项目空间 / 任务模板 / 我的任务三个落点地址不变，改由顶部导航栏承接。
  */
 type HubNote = "loading" | "none" | { kind: "capped"; n: number; total: number } | "failed";
-type HubView = "map" | "dashboard";
 type HubAnim = "toDashboard" | "toMap" | null;
 
 /** 转场时长（与 app.css 的 .hub-deck__view--* 动画一致）：动画跑完才落定视图。 */
@@ -53,17 +52,24 @@ function scrollableAncestorWithin(target: EventTarget | null, boundary: HTMLElem
   return false;
 }
 
-export default function Hub({ me }: { me: MeResponse }) {
+export default function Hub({ me, routeView, rememberedView, onViewChange }: {
+  me: MeResponse;
+  /** 地址里的视图（`#/?view=dashboard`；null = 地址没写，落账号记忆的常驻视图）—— Push 332。 */
+  routeView: HubView | null;
+  /** 账号记的常驻视图（user_preferences.prefs.hubView；地址没写时用它）—— Push 332。 */
+  rememberedView: HubView;
+  onViewChange: (view: HubView) => void;
+}) {
   const t = useT();
   /** 提示条内容（Push 301）：存结构化状态、渲染时按当前语言取词（切换语言不用等下一次取数）。 */
   const [note, setNote] = useState<HubNote>("loading");
   const [distribution, setDistribution] = useState<HubMapDistribution | null>(null);
-  const [view, setView] = useState<HubView>("map");
+  const [view, setView] = useState<HubView>(routeView ?? rememberedView);
   const [anim, setAnim] = useState<HubAnim>(null);
   const [dash, setDash] = useState<DashboardProgress | null>(null);
   const [dashState, setDashState] = useState<HubDashboardState>("loading");
   const deckRef = useRef<HTMLDivElement | null>(null);
-  const viewRef = useRef<HubView>("map");
+  const viewRef = useRef<HubView>(routeView ?? rememberedView);
   const animRef = useRef<HubAnim>(null);
   const dashStateRef = useRef<HubDashboardState>("loading");
   const dashLoadingRef = useRef(false);
@@ -123,14 +129,34 @@ export default function Hub({ me }: { me: MeResponse }) {
       viewRef.current = next;
       setAnim(null);
       setView(next);
+      // Push 332：视图落定即写回地址（replace · 刷新 / 收藏 / 分享都停这一屏）并按账号记住（地址带参数时以地址为准）。
+      replaceHubView(next);
+      onViewChange(next);
     }, DECK_ANIM_MS);
-  }, [ensureDashboard]);
+  }, [ensureDashboard, onViewChange]);
 
   useEffect(() => () => {
     if (settleTimerRef.current !== null) {
       window.clearTimeout(settleTimerRef.current);
     }
   }, []);
+
+  /**
+   * 地址 / 账号记忆与当前视图对齐（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：
+   * ① 地址显式带视图（`?view=dashboard`）时以地址为准；② 地址不带参数时落账号记忆的常驻视图。
+   * 两者都只在「当前不在这一屏」时瞬时对齐 —— 它是落地定位，不是滚轮 / 按钮触发的翻页（不走转场）。
+   */
+  useEffect(() => {
+    const target = routeView ?? rememberedView;
+    if (target === "dashboard") {
+      ensureDashboard();
+    }
+    if (target === viewRef.current || animRef.current !== null) {
+      return;
+    }
+    viewRef.current = target;
+    setView(target);
+  }, [routeView, rememberedView, ensureDashboard]);
 
   useEffect(() => {
     const deck = deckRef.current;
