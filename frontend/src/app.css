@@ -1881,3 +1881,137 @@ body {
   text-align: center;
 }
 
+
+/* 任务状态饼图（Push 339 · 业务口径 2026-10-15「现在准备做这个任务的」+「这些都要参考项目进度一览」）：
+   五态配色照业务参考图，由数据节点的 data-status 就地定义 --hub-status —— 图例色块 / 扇区 / 引线 / 标签字 /
+   悬停卡色条共用同一份。 */
+.hub-dash-status [data-status="进行中"],
+.hub-dash-tip--status[data-status="进行中"] {
+  --hub-status: #267ef0;
+}
+
+.hub-dash-status [data-status="已完成"],
+.hub-dash-tip--status[data-status="已完成"] {
+  --hub-status: #f9bcb9;
+}
+
+.hub-dash-status [data-status="待开始"],
+.hub-dash-tip--status[data-status="待开始"] {
+  --hub-status: #f69abc;
+}
+
+.hub-dash-status [data-status="提前完成"],
+.hub-dash-tip--status[data-status="提前完成"] {
+  --hub-status: #e07fd6;
+}
+
+/* 「已延期」不在当前参考图里（没有该态任务才不出现在图上）—— 取全站逾期色（rose，与导出报告 / 状态签同源）。 */
+.hub-dash-status [data-status="已延期"],
+.hub-dash-tip--status[data-status="已延期"] {
+  --hub-status: #f43f5e;
+}
+
+.hub-dash-status {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+/* 扇区：白描边 2（扇区间留白色缝隙）+ 圆角由路径本身收（见 HubDashStatus 的 sectorPathOf）。 */
+.hub-dash-status__arc {
+  fill: var(--hub-status);
+  /* 分隔线 = 白描边（业务口径「中间的缝不要」：扇区全直角、从圆心出发，线宽 1.5 ≈ 参考图那道细缝），不圆角、不在圆心留缺口。 */
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.hub-dash-status__swatch {
+  fill: var(--hub-status);
+}
+
+.hub-dash-status__legendText {
+  fill: #6b7280;
+}
+
+.hub-dash-status__label {
+  fill: var(--hub-status);
+}
+
+.hub-dash-status__line {
+  stroke: var(--hub-status);
+  stroke-opacity: 0.45;
+}
+
+/* 选中具体项目才能点扇区（与柱段同一口径：可选时给手型 + 悬停压深一档）。 */
+.hub-dash-status__arc[data-drill="true"] {
+  cursor: pointer;
+}
+
+.hub-dash-status__arc[data-drill="true"]:hover {
+  filter: brightness(0.96);
+}
+
+/* 扇区悬停卡（Push 339 · 业务口径「鼠标触碰效果」）：状态名 + 左侧色条 + 记录数 / 占比两行（形态照参考图）。 */
+.hub-dash-tip--status {
+  min-width: 10.5rem;
+  padding: 0.6rem 0.85rem 0.7rem;
+}
+
+.hub-dash-tip__statusTitle {
+  font-size: 0.8rem;
+  color: #4b5563;
+}
+
+.hub-dash-tip__statusBody {
+  display: flex;
+  align-items: stretch;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+
+.hub-dash-tip__statusBar {
+  width: 0.4rem;
+  border-radius: 999px;
+  background: var(--hub-status);
+}
+
+.hub-dash-tip__statusRows {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.hub-dash-tip__statusRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.2rem;
+}
+
+.hub-dash-tip__statusLabel {
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+.hub-dash-tip__statusValue {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+/* 底部视图切换（Push 339 · 业务口径「在仪表盘页面在底部增加切换的按钮」+ 追订「这个按钮再做一个进度一览 靠左不居中」；
+   按钮照业务给的参考代码：32px 圆角方框、未选灰底灰边、选中蓝底白勾、悬停微放大、渐变脉冲高光 —— Tailwind 类在组件里
+   （白勾 / 脉冲层用 group-has-[:checked]:，参考代码的 peer-checked: 挂在内层元素上 —— 兄弟选择器够不到、不生效）
+   这里只做底栏排布：**靠左、与标题条同一条竖线起排**（3.33% = 图内 x=40 / viewBox 1200，与 .hub-dash-head 同缩进）。 */
+.hub-dash-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem 2.25rem;
+  padding: 0.35rem 3.33% 0.6rem;
+}
