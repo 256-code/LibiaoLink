@@ -406,7 +406,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
               <div className="w-[364px] max-w-full" data-import-loading-anim="commit">
                 <ImportCarStage />
                 <p className="export-progress__title">{t("import.committing")}</p>
-                <p className="export-progress__hint">{t("import.committing.hint")}</p>
                 <p className="export-progress__hint">
                   {t("import.etaLead")}
                   <span className="export-progress__num">{commitRemainingSeconds}</span>
