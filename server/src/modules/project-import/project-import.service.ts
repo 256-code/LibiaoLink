@@ -232,7 +232,7 @@ export class ProjectImportService {
     for (const row of rows) {
       try {
         await this.storage.purgeObject(row.objectKey);
-        await this.previews.markExpired(row.id, now);
+        await this.previews.markExpired(row.id);
         expired += 1;
       } catch (error) {
         this.logger.warn("导入表导入过期票据清理失败：" + row.id + " / " + messageOf(error));
@@ -259,7 +259,7 @@ export class ProjectImportService {
       throw new AppError("VALIDATION_FAILED", "该预览已导入（项目已创建），请重新选择文件解析");
     }
     if (preview.expiresAt.getTime() <= Date.now()) {
-      await this.previews.markExpired(preview.id, new Date());
+      await this.previews.markExpired(preview.id);
       await this.purgeSource(preview.objectKey);
       throw new AppError(
         "IMPORT_PREVIEW_EXPIRED",
