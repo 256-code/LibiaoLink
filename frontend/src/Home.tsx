@@ -562,6 +562,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           </span>
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             {/* 导入项目（Push 316 待推）：新建项目左侧 —— 点开原生文件选择（.xlsx / .xlsm），选完在页内大屏面板里解析 / 校验 / 导入 */}
+            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；新标签页打开《导入表导入使用说明》PDF（public/docs/import-guide.pdf，随构建发布） */}
+            <div className="group relative">
             <button
               type="button"
               data-import-project=""
@@ -587,6 +589,24 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               </svg>
               {t("home.import")}
             </button>
+              <div className="invisible absolute left-0 top-full z-30 pt-2 opacity-0 pointer-events-none transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:visible group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+                <a
+                  href={import.meta.env.BASE_URL + "docs/import-guide.pdf"}
+                  target="_blank"
+                  rel="noreferrer"
+                  data-import-guide=""
+                  className="relative flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600 shadow-lg transition hover:bg-zinc-50 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50"
+                >
+                  <span className="absolute -top-[5px] left-5 h-2.5 w-2.5 rotate-45 border-l border-t border-zinc-200 bg-white" aria-hidden="true" />
+                  <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  {t("home.importGuide")}
+                </a>
+              </div>
+            </div>
             <input
               ref={importInputRef}
               type="file"
@@ -595,21 +615,6 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               data-import-file-input=""
               onChange={onImportFileChange}
             />
-            {/* 导入说明（Push 328 待推 · 2026-10-15）：紧贴「导入项目」——选文件前先看规则；新标签页打开《导入表导入使用说明》PDF（public/docs/import-guide.pdf，随构建发布） */}
-            <a
-              href={import.meta.env.BASE_URL + "docs/import-guide.pdf"}
-              target="_blank"
-              rel="noreferrer"
-              data-import-guide=""
-              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50"
-            >
-              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              {t("home.importGuide")}
-            </a>
             <button
               type="button"
               aria-disabled={canCreateProject ? undefined : true}
