@@ -1470,8 +1470,8 @@ body {
 
 .hub-dash-head {
   display: flex;
-  align-items: baseline;
-  gap: 0.15rem;
+  align-items: center;
+  gap: 0.4rem;
   /* 左缩进 = 图内 x=40 / viewBox 1200（按宽度缩放，宽屏下与图例 / 阶段名同一竖线起排）。 */
   padding: 0.1rem 3.33% 0.35rem;
 }
@@ -1489,49 +1489,11 @@ body {
   line-height: 1;
 }
 
+/* 项目选择器（Push 336 · 业务口径「这个选择项目的ui太丑了 和现在的ui完全不符 要重写 要带搜索的选择器」）：
+   原生 select 下架，换全站同款可搜索下拉 SearchSelect（白底描边触发器 + 搜索浮层，见 SearchSelect.tsx）——
+   这里只给标题行里的一段定宽（项目名超长由触发器自己省略号截断）。 */
 .hub-dash-pick {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.hub-dash-pick__ghost {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  white-space: nowrap;
-  font-size: 1.25rem;
-  font-weight: 700;
-  pointer-events: none;
-}
-
-.hub-dash-pick select {
-  padding: 0 1.15rem 0 0;
-  border: 0;
-  background: transparent;
-  color: #1f2329;
-  font: inherit;
-  font-size: 1.25rem;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  appearance: none;
-}
-
-.hub-dash-pick select:hover {
-  color: #0f172a;
-}
-
-.hub-dash-pick select:focus-visible {
-  outline: 2px solid rgb(31 35 41 / 0.35);
-  outline-offset: 3px;
-}
-
-.hub-dash-pick__caret {
-  position: absolute;
-  right: 0.15rem;
-  color: #6b7280;
-  pointer-events: none;
+  width: min(20rem, 32vw);
 }
 
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
@@ -1657,16 +1619,20 @@ body {
   filter: brightness(0.93);
 }
 
-/* 数据详情（Push 335 · 业务口径「点击某一段是这个只读效果」）：铺满白卡的只读表 —— 标题 + 来源 + 搜索 + 明细。 */
+/* 数据详情（Push 335 · 业务口径「点击某一段是这个只读效果」；Push 336 改弹窗形态 · 业务口径「点击具体的模块进入
+   详细内容后是弹窗一样的效果 并且不支持鼠标滑动切换页面 弹窗不用全屏 就像文件预览一样」）：中央浮层里的
+   白卡（半透明遮罩与居中定位在外层 fixed 容器，见 HubDashDetail.tsx）—— 标题 + 来源 + 搜索 + 明细 + 底部横向滑块。 */
 .hub-dash-detail {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
+  position: relative;
   display: flex;
   flex-direction: column;
+  width: min(76rem, 100%);
+  max-height: 100%;
   min-height: 0;
-  border-radius: 0.75rem;
+  padding: 1rem 1.15rem 0.75rem;
+  border-radius: 0.85rem;
   background: #ffffff;
+  box-shadow: 0 30px 70px -34px rgb(15 23 42 / 0.55);
 }
 
 .hub-dash-detail__head {

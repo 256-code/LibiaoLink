@@ -43,6 +43,12 @@ const DECK_VIEWS: readonly HubView[] = ["map", "dashboard"];
 /** 转场时长（与 app.css 的 .hub-deck__view--* 动画一致）：动画跑完才落定视图。 */
 const DECK_ANIM_MS = 620;
 
+/** 数据详情弹窗（Push 336 · 业务口径「点击具体的模块进入详细内容后是弹窗一样的效果 并且不支持鼠标滑动切换页面」）：
+ *  弹窗打开时滚轮 / 方向键 / Esc 只属于弹窗，不参与地图 ⇄ 仪表盘转场（弹窗挂在浮层里，本判定是硬闸）。 */
+function detailDialogOpen(): boolean {
+  return document.querySelector("[data-hub-detail-dialog]") !== null;
+}
+
 /** 转场只吃「页面级」滚轮：落点上游有可滚动祖先（例如钉住的「项目梳理」清单）时放行给内部滚动。 */
 function scrollableAncestorWithin(target: EventTarget | null, boundary: HTMLElement): boolean {
   let node = target instanceof HTMLElement ? target : null;
@@ -55,13 +61,17 @@ function scrollableAncestorWithin(target: EventTarget | null, boundary: HTMLElem
   return false;
 }
 
-export default function Hub({ me, routeView, rememberedView, onViewChange }: {
+export default function Hub({ me, routeView, rememberedView, onViewChange, rememberedDashProject, onDashProjectChange }: {
   me: MeResponse;
   /** 地址里的视图（`#/?view=dashboard`；null = 地址没写，落账号记忆的常驻视图）—— Push 332。 */
   routeView: HubView | null;
   /** 账号记的常驻视图（user_preferences.prefs.hubView；地址没写时用它）—— Push 332。 */
   rememberedView: HubView;
   onViewChange: (view: HubView) => void;
+  /** 账号记的仪表盘常驻项目（user_preferences.prefs.hubDashProject；null = 全部项目）—— Push 336。 */
+  rememberedDashProject: string | null;
+  /** 记下 / 清除仪表盘常驻项目（Push 336；乐观更新由 App 层负责）。 */
+  onDashProjectChange: (projectId: string | null) => Promise<void>;
 }) {
   const t = useT();
   /** 提示条内容（Push 301）：存结构化状态、渲染时按当前语言取词（切换语言不用等下一次取数）。 */
@@ -167,7 +177,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
       return undefined;
     }
     const onWheel = (event: WheelEvent) => {
-      if (scrollableAncestorWithin(event.target, deck)) {
+      if (detailDialogOpen() || scrollableAncestorWithin(event.target, deck)) {
         return;
       }
       event.preventDefault();
@@ -190,7 +200,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
+      if (detailDialogOpen() || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
         return;
       }
       const target = event.target;
@@ -269,7 +279,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
             <HubMap distribution={distribution} note={noteText} />
           </div>
           <div data-parked={dashParked ? "true" : "false"} className={deckViewClass + " " + dashSideClass}>
-            <HubDashboard data={dash} state={dashState} />
+            <HubDashboard data={dash} state={dashState} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} />
           </div>
           <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>
             {DECK_VIEWS.map((item) => (
