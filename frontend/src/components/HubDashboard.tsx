@@ -348,10 +348,10 @@ export function HubDashboard({ data, state, rememberedDashProject, onDashProject
             const rowText = row.isUngrouped ? t("hub.dash.ungrouped") : stageText(locale, row.label);
             return (
               <g key={row.key} onMouseEnter={() => setHoverRow(row.key)} onMouseLeave={() => { setHoverRow(null); setTip(null); }}>
-                {/* Push 340：行阴影常驻透明打底（悬停出「行名 + 五档整排」卡；着色仍跟 hoverRow）。 */}
+                {/* Push 340 行阴影常驻命中区（悬停出「行名 + 五档整排」卡）；Push 341：默认态内联 style 真透明（呈现属性压不过 CSS 类），悬停才着色。 */}
                 <rect
                   className="hub-dash__rowband"
-                  fill={hoverRow === row.key ? undefined : "transparent"}
+                  style={hoverRow === row.key ? undefined : { fill: "transparent" }}
                   x={16}
                   y={barY - 7}
                   width={VIEW_W - 32}
