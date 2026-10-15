@@ -256,6 +256,8 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
   const dashSideClass = anim === "toDashboard" ? "hub-deck__view--in-bottom" : anim === "toMap" ? "hub-deck__view--out-bottom" : "";
   const mapParked = view === "dashboard" && anim === null;
   const dashParked = view === "map" && anim === null;
+  /** 指示器跟随转场目标：点球即滑（转场途中也先到位），落定后与地址 / 账号记忆一致。 */
+  const indicatorView: HubView = anim === "toDashboard" ? "dashboard" : anim === "toMap" ? "map" : view;
   const deckViewClass = "hub-deck__view absolute inset-0 overflow-hidden rounded-[28px] border border-zinc-200/80 bg-white/80 p-3 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur";
 
   return (
@@ -269,15 +271,16 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
           <div data-parked={dashParked ? "true" : "false"} className={deckViewClass + " " + dashSideClass}>
             <HubDashboard progress={dash} state={dashState} />
           </div>
-          <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>
+          <nav className="hub-deck-dots" data-active-index={indicatorView === "dashboard" ? "1" : "0"} aria-label={t("hub.dots.label")}>
+            <span className="hub-deck-dots__blob" aria-hidden="true" />
             {DECK_VIEWS.map((item) => (
               <button
                 key={item}
                 type="button"
                 className="hub-deck-dots__dot"
                 data-view={item}
-                data-active={view === item ? "true" : "false"}
-                aria-current={view === item ? "true" : undefined}
+                data-active={indicatorView === item ? "true" : "false"}
+                aria-current={indicatorView === item ? "true" : undefined}
                 aria-label={t(item === "map" ? "hub.dots.map" : "hub.dots.dashboard")}
                 onClick={() => startTransition(item)}
               />

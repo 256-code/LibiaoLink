@@ -1417,46 +1417,75 @@ body {
   }
 }
 
-/* 右侧边缘页面指示器（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」+「不要 3D / 不要悬浮」）——
-   扁平圆点：半透明玻璃底 + 细边框，无 3D 阴影 / 无动效；当前屏的圆点加深、略放大。 */
+/* 右侧边缘页面指示器（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」+「两个点在原点 选择的页面有液体玻璃移动到上面」）——
+   两枚圆点固定在原位不动；一枚半透明「液体玻璃」块在两点之间滑动，停在当前屏那一枚上（滑动 520ms，点球即滑、与转场同步落位）。 */
 .hub-deck-dots {
+  --hub-dot-size: 0.62rem;
+  --hub-dot-gap: 0.8rem;
+  --hub-blob-size: 1.5rem;
   position: fixed;
   top: 50%;
-  right: 1rem;
+  right: 0.55rem;
   z-index: 6;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  align-items: center;
+  gap: var(--hub-dot-gap);
   transform: translateY(-50%);
 }
 
-.hub-deck-dots__dot {
-  width: 0.7rem;
-  height: 0.7rem;
-  padding: 0;
-  border: 1px solid rgb(148 163 184 / 0.45);
+/* 液体玻璃块：半透明 + 背景模糊 + 细边框，滑到当前屏的圆点上。 */
+.hub-deck-dots__blob {
+  position: absolute;
+  top: calc((var(--hub-dot-size) - var(--hub-blob-size)) / 2);
+  left: 50%;
+  width: var(--hub-blob-size);
+  height: var(--hub-blob-size);
+  margin-left: calc(var(--hub-blob-size) / -2);
+  border: 1px solid rgb(255 255 255 / 0.72);
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.55);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  background: rgb(255 255 255 / 0.52);
+  box-shadow: 0 6px 16px -12px rgb(15 23 42 / 0.5);
+  -webkit-backdrop-filter: blur(8px) saturate(1.25);
+  backdrop-filter: blur(8px) saturate(1.25);
+  pointer-events: none;
+  transition: transform 520ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hub-deck-dots[data-active-index="1"] .hub-deck-dots__blob {
+  transform: translateY(calc(var(--hub-dot-size) + var(--hub-dot-gap)));
+}
+
+.hub-deck-dots__dot {
+  position: relative;
+  z-index: 1;
+  width: var(--hub-dot-size);
+  height: var(--hub-dot-size);
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(31 35 41 / 0.18);
   cursor: pointer;
-  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
+  transition: background 200ms ease;
 }
 
 .hub-deck-dots__dot:hover {
-  background: rgb(255 255 255 / 0.82);
-  border-color: rgb(100 116 139 / 0.7);
+  background: rgb(31 35 41 / 0.38);
 }
 
 .hub-deck-dots__dot[data-active="true"] {
-  background: rgb(100 116 139 / 0.85);
-  border-color: rgb(100 116 139 / 0.9);
-  transform: scale(1.18);
+  background: rgb(31 35 41 / 0.62);
 }
 
 .hub-deck-dots__dot:focus-visible {
   outline: 2px solid rgb(31 35 41 / 0.45);
   outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-deck-dots__blob {
+    transition: none;
+  }
 }
 
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
