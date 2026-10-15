@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { DASHBOARD_BINS } from "../data/dashboardProgress";
 import type { DashboardDataset } from "../dashboardApi";
 import { stageText, useLocale, useT, type TextKey } from "../i18n";
@@ -63,11 +63,23 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
   const uid = useId().replace(/:/g, "");
   /** Push 334：项目选择器（第一行固定「全部项目」；选中项目即只统计该项目）。 */
   const [pickedId, setPickedId] = useState<string | null>(null);
+  /** 选择器宽度跟随当前文字（业务口径「选择按钮和文字之间距离不要这么远 要动态近距离」）：量一份同字号的隐藏文本。 */
+  const pickGhostRef = useRef<HTMLSpanElement | null>(null);
+  const [pickTextWidth, setPickTextWidth] = useState<number | null>(null);
   useEffect(() => {
     if (pickedId !== null && data !== null && !data.byProject.has(pickedId)) {
       setPickedId(null);
     }
   }, [data, pickedId]);
+  useLayoutEffect(() => {
+    const ghost = pickGhostRef.current;
+    if (ghost === null) {
+      return;
+    }
+    const width = ghost.getBoundingClientRect().width;
+    setPickTextWidth((prev) => (prev !== null && Math.abs(prev - width) < 0.5 ? prev : width));
+  });
+
   if (state === "failed") {
     return <div className="hub-dash-state">{t("hub.dash.failed")}</div>;
   }
@@ -80,6 +92,9 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
   }
   const progress = pickedId === null ? data.all : data.byProject.get(pickedId) ?? data.all;
   /** 标题条：项目进度一览·<选择器>（选择器里的当前项就是标题的后半段）。 */
+  const pickedName = pickedId !== null ? data.options.find((option) => option.id === pickedId)?.name ?? t("hub.dash.allProjects") : t("hub.dash.allProjects");
+  /** 选择器宽度 = 当前文字宽 + 箭头位（最长 20rem，超长走省略号）—— 箭头永远贴着文字。 */
+  const pickWidth = pickTextWidth === null ? undefined : Math.min(Math.ceil(pickTextWidth) + 20, 320);
   const head = (
     <div className="hub-dash-head">
       <span className="hub-dash-title">{t("hub.dash.title")}</span>
@@ -87,8 +102,12 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
         ·
       </span>
       <span className="hub-dash-pick">
+        <span ref={pickGhostRef} className="hub-dash-pick__ghost" aria-hidden="true">
+          {pickedName}
+        </span>
         <select
           value={pickedId ?? ""}
+          style={pickWidth === undefined ? undefined : { width: pickWidth + "px" }}
           aria-label={t("hub.dash.pickProject")}
           onChange={(event) => setPickedId(event.target.value === "" ? null : event.target.value)}
         >

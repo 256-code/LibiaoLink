@@ -1488,11 +1488,19 @@ body {
   position: relative;
   display: inline-flex;
   align-items: center;
-  max-width: 24rem;
+}
+
+.hub-dash-pick__ghost {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  white-space: nowrap;
+  font-size: 1.25rem;
+  font-weight: 700;
+  pointer-events: none;
 }
 
 .hub-dash-pick select {
-  max-width: 24rem;
   padding: 0 1.15rem 0 0;
   border: 0;
   background: transparent;
