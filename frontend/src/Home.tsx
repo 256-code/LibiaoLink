@@ -595,6 +595,21 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               data-import-file-input=""
               onChange={onImportFileChange}
             />
+            {/* 导入说明（Push 328 待推 · 2026-10-15）：紧贴「导入项目」——选文件前先看规则；新标签页打开《导入表导入使用说明》PDF（public/docs/import-guide.pdf，随构建发布） */}
+            <a
+              href={import.meta.env.BASE_URL + "docs/import-guide.pdf"}
+              target="_blank"
+              rel="noreferrer"
+              data-import-guide=""
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              {t("home.importGuide")}
+            </a>
             <button
               type="button"
               aria-disabled={canCreateProject ? undefined : true}
