@@ -47,7 +47,7 @@ import type { ParsedWorkbook } from "./xlsx.js";
 
 /**
  * 导入表导入用例（直连 API 导入 · 业务口径 2026-10-14）：
- * - preview：multipart 收 .xlsx / .xlsm（≤ 64 MB）→ 零依赖解析（xlsx.ts）+ 口径转换（legacy.ts：完成判定 / 进度五档 /
+ * - preview：multipart 收 .xlsx / .xlsm（≤ 256 MB）→ 零依赖解析（xlsx.ts）+ 口径转换（legacy.ts：完成判定 / 进度五档 /
  *   日期笔误照原值 / 节点匹配 / 账号落位）→ 源文件写对象存储（imports/{previewId}/source.{ext}）+ 解析产物落票据表
  *   （project_import_previews.payload，30 分钟有效）；**不写业务库**。返回预览报告（落位建议 + 条数 + 三份清单 + 提醒）。
  * - commit：票据取回（过期 410 IMPORT_PREVIEW_EXPIRED / 已提交 400 / 越权 403）→ 编号占用 409 → 单事务建项目

@@ -110,7 +110,7 @@ export type ProjectImportResult = {
 };
 
 /** 前端先挡一道的文件闸（服务端仍会复检）：空文件 / 过大直接给提示，不浪费一次上传。 */
-export const IMPORT_MAX_FILE_BYTES = 64 * 1024 * 1024;
+export const IMPORT_MAX_FILE_BYTES = 256 * 1024 * 1024;
 
 export function previewProjectImport(file: File): Promise<ProjectImportPreview> {
   const form = new FormData();

@@ -3,7 +3,7 @@ import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
 
 /**
  * 导入表导入（直连 API 导入 · 业务口径 2026-10-14；前端 Push 316 已接线，服务端本次落地）：
- * - POST /api/v1/project-imports/preview：multipart/form-data（字段 file，.xlsx / .xlsm，≤ 64 MB）
+ * - POST /api/v1/project-imports/preview：multipart/form-data（字段 file，.xlsx / .xlsm，≤ 256 MB）
  *   解析导入表 + 口径校验，不写库；返回预览票据（previewId + 有效期）。
  * - POST /api/v1/project-imports/commit：JSON（previewId + 落位确认）→ 单事务建项目并写入全量数据。
  * 已固化口径：完成日期未填 = 不算完成（进度按进行中封顶 75%）；进度五档（0 / 0.25 / 0.5 / 0.75 / 1）；
@@ -19,7 +19,7 @@ import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
  */
 
 /** 导入表导入单文件上限（前端先挡一道，服务端复检同值）。 */
-export const IMPORT_MAX_FILE_BYTES = 64 * 1024 * 1024;
+export const IMPORT_MAX_FILE_BYTES = 256 * 1024 * 1024;
 /** 预览票据有效期（分钟）：超时提交返回 410 IMPORT_PREVIEW_EXPIRED。 */
 export const IMPORT_PREVIEW_TTL_MINUTES = 30;
 /** 允许的扩展名（.xls 旧格式不支持，需另存为 .xlsx）。 */
