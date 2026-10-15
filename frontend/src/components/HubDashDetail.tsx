@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isCompleteStatus } from "../data/tasks";
-import { fieldText, mdText, statusText, useLocale, useT, type Locale } from "../i18n";
+import { dateOnlyText, isCompleteStatus, type TaskPriority } from "../data/tasks";
+import { fieldText, mdText, priorityText, statusText, useLocale, useT, type Locale } from "../i18n";
 import { displayStatusLabel, type ApiTaskListItem } from "../taskApi";
 import { docTypeCapsule } from "./DeliverablePicker";
 import { TableScrollbar } from "./TableScrollbar";
-import { STATUS_CAPSULE_CLASS } from "./TaskBoard";
+import { PRIORITY_CAPSULE_CLASS, STATUS_CAPSULE_CLASS } from "./TaskBoard";
 import { useFocusTrap } from "./useFocusTrap";
 
 /**
@@ -22,8 +22,9 @@ import { useFocusTrap } from "./useFocusTrap";
  * 弹窗打开时地图 ⇄ 仪表盘转场停用：Hub.tsx 认本弹窗的 [data-hub-detail-dialog] 标记。
  */
 
-/** 列（顺序 = 参考图；显示名经 fieldText 换英文）。 */
-const COLUMNS: readonly string[] = ["行号", "任务描述", "项目经理", "任务负责人", "任务状态", "项目进度", "是否按时交付", "输出成果文件", "项目进展描述", "开始日期"];
+/** 列（Push 337 起 = 项目空间任务表的口径「直接把项目空间的那一列展示即可」：项目空间 15 列全上，
+ *  前面补一列行号、任务状态后插「项目进度」保留参考图那段条；显示名经 fieldText 换英文）。 */
+const COLUMNS: readonly string[] = ["行号", "任务描述", "项目经理", "任务负责人", "任务状态", "紧急重要度", "项目进度", "是否按时交付", "输出成果文件", "文件", "项目进展描述", "开始日期", "预计所需天数", "预计完成日期", "预计所需施工人数", "实际完成日期", "变更关联"];
 
 /** 「是否按时交付」徽标底色（与任务表 / 成果文件色签同套口径：浅彩底 + 同色系深字）。 */
 const ONTIME_CHIP_CLASS: Record<string, string> = {
@@ -80,18 +81,30 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
   const query = keyword.trim().toLowerCase();
-  /** 表行 = 任务 + 各列显示值 + 搜索索引串（搜索跨全部字段，与参考图一致）。 */
+  /** 表行 = 任务 + 各列显示值 + 搜索索引串（搜索跨全部字段；列口径见 COLUMNS）。 */
   const rows = useMemo(() => tasks.map((task) => {
     const owners = task.ownerNames.filter((name): name is string => name !== null && name !== "").join("、");
     const status = displayStatusLabel(task.displayStatus);
     const onTime = onTimeLabelOf(task);
     const title = titleTextOf(task, locale);
     const start = mdText(locale, task.plannedStart ?? "");
+    const due = mdText(locale, task.plannedEnd ?? "");
+    const done = mdText(locale, task.actualEnd ?? "");
     const note = task.note ?? "";
     const percent = Math.round(task.progress * 100);
-    const hay = [title, task.title, task.titleEn ?? "", owners, manager, statusText(locale, status), onTime ?? "", task.deliverableTypes.join("、"), note, start].join(" ").toLowerCase();
-    return { task, title, owners, status, onTime, start, note, percent, hay };
-  }), [tasks, locale, manager]);
+    const priority = task.priority;
+    /** 各列文案走全站同一套（天数 / 人数 / 文件份数 / 变更）——与项目空间逐字一致。 */
+    const days = task.estimatedDays === null ? "" : String(task.estimatedDays);
+    const headcount = task.headcount !== null && task.headcount > 0 ? t("drawer.headcount.value", { n: task.headcount }) : "";
+    const files = task.fileSummary?.total ?? 0;
+    /** 只读读面：列表接口理论上带全（契约 TaskListItem），缺字段时退空而不是整表崩。 */
+    const changeLinks = task.changeLinks ?? [];
+    const changeCount = changeLinks.length;
+    const changeTip = changeLinks.map((change) => t("board.change.tip", { date: dateOnlyText(change.appliedAt) }) + (change.reason === null || change.reason === "" ? "" : (locale === "en" ? " (" + change.reason + ")" : "（" + change.reason + "）"))).join(locale === "en" ? "; " : "；");
+    const priorityName = priority === null ? "" : priorityText(locale, priority);
+    const hay = [title, task.title, task.titleEn ?? "", owners, manager, statusText(locale, status), onTime ?? "", priorityName, task.deliverableTypes.join("、"), note, start, due, done, days, headcount].join(" ").toLowerCase();
+    return { task, title, owners, status, onTime, priority, files, note, start, days, due, headcount, done, changeCount, changeTip, percent, hay };
+  }), [tasks, locale, manager, t]);
   const filtered = query === "" ? rows : rows.filter((row) => row.hay.includes(query));
   return createPortal(
     <div
@@ -142,14 +155,21 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
                     <td>{manager === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip">{manager}</span>}</td>
                     <td>{row.owners === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip">{row.owners}</span>}</td>
                     <td><span className={"hub-dash-detail__tag " + STATUS_CAPSULE_CLASS[row.status]}>{statusText(locale, row.status)}</span></td>
+                    <td>{row.priority === null ? <span className="hub-dash-detail__blank">—</span> : <span className={"hub-dash-detail__tag " + (PRIORITY_CAPSULE_CLASS[row.priority as TaskPriority] ?? "")}>{priorityText(locale, row.priority)}</span>}</td>
                     <td>
                       <span className="hub-dash-detail__bar"><span style={{ width: row.percent + "%" }} /></span>
                       <span className="hub-dash-detail__pct">{row.percent}%</span>
                     </td>
                     <td>{row.onTime === null ? <span className="hub-dash-detail__blank">—</span> : <span className={"hub-dash-detail__tag " + ONTIME_CHIP_CLASS[row.onTime]}>{statusText(locale, row.onTime)}</span>}</td>
                     <td>{row.task.deliverableTypes.length === 0 ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chips">{row.task.deliverableTypes.map((name) => (<span key={name}>{docTypeCapsule(name, locale)}</span>))}</span>}</td>
+                    <td>{row.files === 0 ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip" title={t("board.files.title", { n: row.files })}>{t("board.files.count", { n: row.files })}</span>}</td>
                     <td>{row.note === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__note" title={row.note}>{row.note}</span>}</td>
                     <td>{row.start === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__date">{row.start}</span>}</td>
+                    <td>{row.days === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__date">{row.days}</span>}</td>
+                    <td>{row.due === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__date">{row.due}</span>}</td>
+                    <td>{row.headcount === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__date">{row.headcount}</span>}</td>
+                    <td>{row.done === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__date">{row.done}</span>}</td>
+                    <td>{row.changeCount === 0 ? <span className="hub-dash-detail__blank">—</span> : (<span className="hub-dash-detail__chips" title={row.changeTip}><span className="hub-dash-detail__tag bg-amber-100 text-amber-700">{t("board.change.chip")}</span>{row.changeCount > 1 ? <span className="text-[10px] text-zinc-400">+{row.changeCount - 1}</span> : null}</span>)}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 ? (
