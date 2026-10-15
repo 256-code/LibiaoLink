@@ -21,22 +21,36 @@ import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
  * Push 336（2026-10-15 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」+「这个选择项目的ui太丑了 和现在的ui完全不符 要重写 要带搜索的选择器」）：
  * 选择器由原生 select 换成全站同款可搜索下拉 SearchSelect（SearchSelect.tsx）；选中项目写回账号偏好
  * user_preferences.prefs.hubDashProject（单键 PATCH，乐观更新 + 失败回滚在 App 层），刷新 / 换设备同账号仍停在同一个项目。
+ *
+ * Push 340（2026-10-15 业务口径「鼠标放在阴影部分是展示全部阶段的标签的」+「那我们的要展示该阶段的五个状态不就好了」）：
+ * 行阴影（行高亮条）常驻化 + 可悬停 —— 悬停整行任意空白处出「行名 + 五档整排」浮层卡（该阶段的五个状态）；
+ * 彩色柱段的单档卡不变（悬停柱段仍是「行名 + 单档一行」，点柱段的只读「数据详情」也不变）。
  */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
-/** 悬停卡（Push 335 · 业务口径「鼠标放上去是这样的效果」）：行名 + 档位色块 + 档位文案 + 该档任务数。
+/** 悬停卡（Push 335 柱段 / Push 340 行阴影）：柱段 = 行名 + 单档一行；行阴影 = 行名 + 五档整排（该阶段的五个状态）。
  *  自绘浮层替代浏览器原生 title 灰框（原生框样式不可控、与本页设计不一致）。 */
-type DashTip = {
-  readonly left: number;
-  readonly top: number;
-  readonly row: string;
-  readonly bin: number;
-  readonly count: number;
-};
+type DashTip =
+  | {
+      readonly kind: "bin";
+      readonly left: number;
+      readonly top: number;
+      readonly row: string;
+      readonly bin: number;
+      readonly count: number;
+    }
+  | {
+      readonly kind: "row";
+      readonly left: number;
+      readonly top: number;
+      readonly row: string;
+      readonly counts: readonly number[];
+    };
 
-/** 悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）。 */
+/** 悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）；行阴影卡（行名 + 五档）比单档卡高四行。 */
 const TIP_W = 190;
 const TIP_H = 84;
+const ROW_TIP_H = 170;
 
 const VIEW_W = 1200;
 const VIEW_H = 596;
@@ -130,11 +144,27 @@ export function HubDashboard({ data, state, rememberedDashProject, onDashProject
     }
     const box = wrap.getBoundingClientRect();
     setTip({
+      kind: "bin",
       left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - TIP_W - 6)),
       top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - TIP_H - 6)),
       row: rowText,
       bin,
       count,
+    });
+  };
+  /** 悬停行阴影（Push 340）：同一坐标口径，卡里写行名 + 五档整排（该阶段的五个状态，0 也列出）。 */
+  const showRowTip = (event: ReactMouseEvent<SVGRectElement>, rowText: string, counts: readonly number[]): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "row",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - ROW_TIP_H - 6)),
+      row: rowText,
+      counts,
     });
   };
 
@@ -226,9 +256,18 @@ export function HubDashboard({ data, state, rememberedDashProject, onDashProject
           const rowText = row.isUngrouped ? t("hub.dash.ungrouped") : stageText(locale, row.label);
           return (
             <g key={row.key} onMouseEnter={() => setHoverRow(row.key)} onMouseLeave={() => { setHoverRow(null); setTip(null); }}>
-              {hoverRow === row.key ? (
-                <rect className="hub-dash__rowband" x={16} y={barY - 7} width={VIEW_W - 32} height={barH + 14} rx={8} />
-              ) : null}
+              {/* Push 340：常驻透明打底（悬停出整行五档卡；着色仍跟 hoverRow）。 */}
+              <rect
+                className="hub-dash__rowband"
+                fill={hoverRow === row.key ? undefined : "transparent"}
+                x={16}
+                y={barY - 7}
+                width={VIEW_W - 32}
+                height={barH + 14}
+                rx={8}
+                onMouseEnter={(event) => showRowTip(event, rowText, row.counts)}
+                onMouseMove={(event) => showRowTip(event, rowText, row.counts)}
+              />
               <text x={LABEL_X} y={baseline} textAnchor="end" fontSize={14.5} fill="#374151">{rowText}</text>
               <g clipPath={"url(#" + uid + "-clip-" + index + ")"}>
                 {row.counts.map((count, bin) => {
@@ -269,11 +308,21 @@ export function HubDashboard({ data, state, rememberedDashProject, onDashProject
       {tip !== null ? (
         <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
           <div className="hub-dash-tip__row">{tip.row}</div>
-          <div className="hub-dash-tip__line">
-            <span className="hub-dash-tip__dot" data-bin={DASHBOARD_BINS[tip.bin]} />
-            <span className="hub-dash-tip__label">{t(LEGEND_KEYS[tip.bin])}</span>
-            <span className="hub-dash-tip__count">{tip.count}</span>
-          </div>
+          {tip.kind === "bin" ? (
+            <div className="hub-dash-tip__line">
+              <span className="hub-dash-tip__dot" data-bin={DASHBOARD_BINS[tip.bin]} />
+              <span className="hub-dash-tip__label">{t(LEGEND_KEYS[tip.bin])}</span>
+              <span className="hub-dash-tip__count">{tip.count}</span>
+            </div>
+          ) : (
+            tip.counts.map((count, bin) => (
+              <div key={bin} className="hub-dash-tip__line">
+                <span className="hub-dash-tip__dot" data-bin={DASHBOARD_BINS[bin]} />
+                <span className="hub-dash-tip__label">{t(LEGEND_KEYS[bin])}</span>
+                <span className="hub-dash-tip__count">{count}</span>
+              </div>
+            ))
+          )}
         </div>
       ) : null}
       {detail !== null && pickedId !== null ? (
