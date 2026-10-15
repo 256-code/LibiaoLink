@@ -39,6 +39,9 @@ import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
  * Push 340（2026-10-15 业务口径「鼠标放在阴影部分是展示全部阶段的标签的」+「那我们的要展示该阶段的五个状态不就好了」）：
  * 行阴影（行高亮条）常驻化 + 可悬停 —— 悬停整行任意空白处出「行名 + 五档整排」浮层卡（该阶段的五个状态）；
  * 彩色柱段的单档卡不变（悬停柱段仍是「行名 + 单档一行」，点柱段的只读「数据详情」也不变）。
+ *
+ * Push 342（2026-10-15 业务口径「按钮大小小一点」）：底栏两枚视图勾选框整体收小（32 → 24px 方框、
+ * 白勾 20 → 16px、标签间距 ml-3 → ml-2）；靠左起排、选中 / 悬停动效口径不变。
  */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
@@ -148,13 +151,13 @@ function DashViewSwitch({ view, checked, label, onSelect }: {
           }
         }}
       />
-      <span className="relative flex h-8 w-8 items-center justify-center rounded-md border-2 border-gray-400 bg-gray-100 shadow-md transition-all duration-500 group-hover:scale-105 peer-checked:border-blue-500 peer-checked:bg-blue-500 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400/60">
+      <span className="relative flex h-6 w-6 items-center justify-center rounded-md border-2 border-gray-400 bg-gray-100 shadow-md transition-all duration-500 group-hover:scale-105 peer-checked:border-blue-500 peer-checked:bg-blue-500 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400/60">
         <span className="absolute inset-0 rounded-md bg-gradient-to-br from-white/30 to-white/10 opacity-0 transition-all duration-500 group-has-[:checked]:animate-pulse group-has-[:checked]:opacity-100" />
-        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" className="hidden h-5 w-5 scale-50 text-white transition-transform duration-500 group-has-[:checked]:block group-has-[:checked]:scale-100">
+        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" className="hidden h-4 w-4 scale-50 text-white transition-transform duration-500 group-has-[:checked]:block group-has-[:checked]:scale-100">
           <path clipRule="evenodd" fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 10-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z" />
         </svg>
       </span>
-      <span className="ml-3 font-medium text-gray-700 transition-colors duration-300 group-hover:text-blue-500">{label}</span>
+      <span className="ml-2 font-medium text-gray-700 transition-colors duration-300 group-hover:text-blue-500">{label}</span>
     </label>
   );
 }
