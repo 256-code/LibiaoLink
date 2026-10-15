@@ -20,6 +20,8 @@ import { useFocusTrap } from "./useFocusTrap";
  * （形态照 FilePreviewOverlay.tsx：portal 到 body + 半透明遮罩 + 点遮罩 / Esc 关闭 + 键盘焦点陷阱，不全屏、
  * 卡片最大 76rem 高宽都不撑满）；表体底部挂全站同款横向滑块 TableScrollbar（原生细条在 Windows 上看不出来的问题）。
  * 弹窗打开时地图 ⇄ 仪表盘转场停用：Hub.tsx 认本弹窗的 [data-hub-detail-dialog] 标记。
+ * Push 338（2026-10-15 业务口径「英文[部分]鼠标触碰也要展现 现在只显示了中文」·「这个是数据详细页面」）：**截断格 hover 兜底** ——
+ * 任务描述 title 挂显示全文（中文名+英文名连排），项目经理 / 任务负责人截断胶囊也补 title。
  */
 
 /** 列（Push 337 起 = 项目空间任务表的口径「直接把项目空间的那一列展示即可」：项目空间 15 列全上，
@@ -151,9 +153,9 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
                 {filtered.map((row, index) => (
                   <tr key={row.task.id}>
                     <td className="hub-dash-detail__no">{index + 1}</td>
-                    <td><span className="hub-dash-detail__task" title={row.task.title}>{row.title}</span></td>
-                    <td>{manager === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip">{manager}</span>}</td>
-                    <td>{row.owners === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip">{row.owners}</span>}</td>
+                    <td><span className="hub-dash-detail__task" title={row.title}>{row.title}</span></td>
+                    <td>{manager === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip" title={manager}>{manager}</span>}</td>
+                    <td>{row.owners === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip" title={row.owners}>{row.owners}</span>}</td>
                     <td><span className={"hub-dash-detail__tag " + STATUS_CAPSULE_CLASS[row.status]}>{statusText(locale, row.status)}</span></td>
                     <td>{row.priority === null ? <span className="hub-dash-detail__blank">—</span> : <span className={"hub-dash-detail__tag " + (PRIORITY_CAPSULE_CLASS[row.priority as TaskPriority] ?? "")}>{priorityText(locale, row.priority)}</span>}</td>
                     <td>
