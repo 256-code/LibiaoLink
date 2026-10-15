@@ -66,6 +66,24 @@ export function progressBinIndex(progress: number): number {
   return Math.min(4, Math.max(0, Math.round(progress * 4)));
 }
 
+/** 九阶段 key 集合（判断 stageKey 是否落在既有行上：不在 = 归「未分组」行）。 */
+const KNOWN_STAGE_KEYS: readonly string[] = DASHBOARD_STAGE_KEYS;
+
+/**
+ * 任务是否落在该（行 × 档）格子里 —— 点击柱段打开的「数据详情」列表按它筛（Push 335）。
+ * 与 buildDashboardProgress 同一套口径：档 = progressBinIndex；行 = stageKey 命中该阶段，未命中（含未知 key
+ * 与 stageKey 为空）都归「未分组」行。保证「段上数字 = 详情表行数」。
+ */
+export function isTaskInCell(task: DashboardTaskLike, rowKey: string, bin: number): boolean {
+  if (progressBinIndex(task.progress) !== bin) {
+    return false;
+  }
+  if (rowKey === "ungrouped") {
+    return task.stageKey === null || !KNOWN_STAGE_KEYS.includes(task.stageKey);
+  }
+  return task.stageKey === rowKey;
+}
+
 /** 聚合中的可变行（key 放宽成 string，兼容 stageKey 的任何落库值）。 */
 type MutableRow = { key: string; label: string; isUngrouped: boolean; counts: number[] };
 

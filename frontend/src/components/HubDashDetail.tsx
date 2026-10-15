@@ -1,0 +1,142 @@
+import { useEffect, useMemo, useState } from "react";
+import { isCompleteStatus } from "../data/tasks";
+import { fieldText, mdText, statusText, useLocale, useT, type Locale } from "../i18n";
+import { displayStatusLabel, type ApiTaskListItem } from "../taskApi";
+import { docTypeCapsule } from "./DeliverablePicker";
+import { STATUS_CAPSULE_CLASS } from "./TaskBoard";
+
+/**
+ * 仪表盘「数据详情」（Push 335 · 2026-10-15 业务口径「点击某一段是这个只读效果」）：
+ * 点柱段后铺满白卡的只读表 —— 标题 + 「来自 <项目名>」+ 搜索 + 任务明细，列序照业务给的参考图。只读：
+ * 除搜索 / 关闭外没有任何编辑入口；「如果是全部项目的话不支持点击查看数据来源」由父组件把段上的点击关掉。
+ * 传入的 tasks 已由父组件按「点中的行 × 档」筛好（口径见 data/dashboardProgress.ts 的 isTaskInCell，
+ * 保证「段上数字 = 表行数」）。
+ */
+
+/** 列（顺序 = 参考图；显示名经 fieldText 换英文）。 */
+const COLUMNS: readonly string[] = ["行号", "任务描述", "项目经理", "任务负责人", "任务状态", "项目进度", "是否按时交付", "输出成果文件", "项目进展描述", "开始日期"];
+
+/** 「是否按时交付」徽标底色（与任务表 / 成果文件色签同套口径：浅彩底 + 同色系深字）。 */
+const ONTIME_CHIP_CLASS: Record<string, string> = {
+  "逾期未交付": "bg-red-50 text-red-600",
+  "逾期已交付": "bg-amber-100 text-amber-700",
+  "按时交付": "bg-emerald-50 text-emerald-700",
+};
+
+/** 任务名展示（参考图口径：中文名后紧跟英文名，无分隔符；英文界面下有英文名就只用英文名）。 */
+function titleTextOf(task: ApiTaskListItem, locale: Locale): string {
+  const titleEn = task.titleEn ?? "";
+  if (locale === "en") {
+    return titleEn === "" ? task.title : titleEn;
+  }
+  return task.title + titleEn;
+}
+
+/** 是否按时交付（口径与任务表同源：服务端展示态 + onTime 派生，前端不本地算日期）。 */
+function onTimeLabelOf(task: ApiTaskListItem): "逾期未交付" | "逾期已交付" | "按时交付" | null {
+  const status = displayStatusLabel(task.displayStatus);
+  if (status === "已延期") {
+    return "逾期未交付";
+  }
+  if (isCompleteStatus(status) && task.onTime === false) {
+    return "逾期已交付";
+  }
+  return task.onTime === null ? null : "按时交付";
+}
+
+export function HubDashDetail({ projectName, manager, tasks, onClose }: {
+  readonly projectName: string;
+  readonly manager: string;
+  readonly tasks: readonly ApiTaskListItem[];
+  readonly onClose: () => void;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const [keyword, setKeyword] = useState("");
+  /** Esc 关面板（只读浮层，唯一键盘出口）。 */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const query = keyword.trim().toLowerCase();
+  /** 表行 = 任务 + 各列显示值 + 搜索索引串（搜索跨全部字段，与参考图一致）。 */
+  const rows = useMemo(() => tasks.map((task) => {
+    const owners = task.ownerNames.filter((name): name is string => name !== null && name !== "").join("、");
+    const status = displayStatusLabel(task.displayStatus);
+    const onTime = onTimeLabelOf(task);
+    const title = titleTextOf(task, locale);
+    const start = mdText(locale, task.plannedStart ?? "");
+    const note = task.note ?? "";
+    const percent = Math.round(task.progress * 100);
+    const hay = [title, task.title, task.titleEn ?? "", owners, manager, statusText(locale, status), onTime ?? "", task.deliverableTypes.join("、"), note, start].join(" ").toLowerCase();
+    return { task, title, owners, status, onTime, start, note, percent, hay };
+  }), [tasks, locale, manager]);
+  const filtered = query === "" ? rows : rows.filter((row) => row.hay.includes(query));
+  return (
+    <div className="hub-dash-detail" role="dialog" aria-modal="true" aria-label={t("hub.dash.detail.title")}>
+      <div className="hub-dash-detail__head">
+        <div>
+          <div className="hub-dash-detail__title">{t("hub.dash.detail.title")}</div>
+          <div className="hub-dash-detail__from">
+            <span>{t("hub.dash.detail.from")}</span>
+            <span className="hub-dash-detail__project">{projectName}</span>
+          </div>
+        </div>
+        <button type="button" className="hub-dash-detail__close" aria-label={t("hub.dash.detail.close")} onClick={onClose}>
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false">
+            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+      <div className="hub-dash-detail__box">
+        <label className="hub-dash-detail__search">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+            <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M16.2 16.2L20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder={t("hub.dash.detail.search")} aria-label={t("hub.dash.detail.search")} />
+        </label>
+        <div className="hub-dash-detail__scroll">
+          <table className="hub-dash-detail__table">
+            <thead>
+              <tr>
+                {COLUMNS.map((column) => (
+                  <th key={column} scope="col">{fieldText(locale, column)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row, index) => (
+                <tr key={row.task.id}>
+                  <td className="hub-dash-detail__no">{index + 1}</td>
+                  <td><span className="hub-dash-detail__task" title={row.task.title}>{row.title}</span></td>
+                  <td>{manager === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip">{manager}</span>}</td>
+                  <td>{row.owners === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip">{row.owners}</span>}</td>
+                  <td><span className={"hub-dash-detail__tag " + STATUS_CAPSULE_CLASS[row.status]}>{statusText(locale, row.status)}</span></td>
+                  <td>
+                    <span className="hub-dash-detail__bar"><span style={{ width: row.percent + "%" }} /></span>
+                    <span className="hub-dash-detail__pct">{row.percent}%</span>
+                  </td>
+                  <td>{row.onTime === null ? <span className="hub-dash-detail__blank">—</span> : <span className={"hub-dash-detail__tag " + ONTIME_CHIP_CLASS[row.onTime]}>{statusText(locale, row.onTime)}</span>}</td>
+                  <td>{row.task.deliverableTypes.length === 0 ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chips">{row.task.deliverableTypes.map((name) => (<span key={name}>{docTypeCapsule(name, locale)}</span>))}</span>}</td>
+                  <td>{row.note === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__note" title={row.note}>{row.note}</span>}</td>
+                  <td>{row.start === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__date">{row.start}</span>}</td>
+                </tr>
+              ))}
+              {filtered.length === 0 ? (
+                <tr>
+                  <td className="hub-dash-detail__empty" colSpan={COLUMNS.length}>{t("hub.dash.detail.empty")}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
