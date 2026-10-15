@@ -1458,11 +1458,86 @@ body {
   outline-offset: 3px;
 }
 
+/* 仪表盘标题条（Push 334）：标题 + 分隔点 + 项目选择器 —— 选择器里当前项就是标题后半段。 */
+.hub-dash-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.hub-dash-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  /* 左缩进 = 图内 x=40 / viewBox 1200（按宽度缩放，宽屏下与图例 / 阶段名同一竖线起排）。 */
+  padding: 0.1rem 3.33% 0.35rem;
+}
+
+.hub-dash-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1f2329;
+}
+
+.hub-dash-sep {
+  color: #1f2329;
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hub-dash-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.hub-dash-pick__ghost {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  white-space: nowrap;
+  font-size: 1.25rem;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.hub-dash-pick select {
+  padding: 0 1.15rem 0 0;
+  border: 0;
+  background: transparent;
+  color: #1f2329;
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  appearance: none;
+}
+
+.hub-dash-pick select:hover {
+  color: #0f172a;
+}
+
+.hub-dash-pick select:focus-visible {
+  outline: 2px solid rgb(31 35 41 / 0.35);
+  outline-offset: 3px;
+}
+
+.hub-dash-pick__caret {
+  position: absolute;
+  right: 0.15rem;
+  color: #6b7280;
+  pointer-events: none;
+}
+
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
 .hub-dash {
   display: block;
+  flex: 1 1 auto;
   width: 100%;
-  height: 100%;
+  min-height: 0;
 }
 
 .hub-dash__swatch,

@@ -4,7 +4,7 @@ import { useT } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
-import type { DashboardProgress } from "./data/dashboardProgress";
+import type { DashboardDataset } from "./dashboardApi";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
 import { fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
@@ -69,7 +69,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
   const [distribution, setDistribution] = useState<HubMapDistribution | null>(null);
   const [view, setView] = useState<HubView>(routeView ?? rememberedView);
   const [anim, setAnim] = useState<HubAnim>(null);
-  const [dash, setDash] = useState<DashboardProgress | null>(null);
+  const [dash, setDash] = useState<DashboardDataset | null>(null);
   const [dashState, setDashState] = useState<HubDashboardState>("loading");
   const deckRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<HubView>(routeView ?? rememberedView);
@@ -86,7 +86,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
   }, []);
 
   /** 拉统计（纯取数、不落状态）：首转 / 失败重试 / 变更静默刷新共用。 */
-  const pullDashboard = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardProgress | null> => {
+  const pullDashboard = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardDataset | null> => {
     try {
       return await fetchDashboardProgress(projects ?? projectsRef.current ?? undefined);
     } catch {
@@ -269,7 +269,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange }: {
             <HubMap distribution={distribution} note={noteText} />
           </div>
           <div data-parked={dashParked ? "true" : "false"} className={deckViewClass + " " + dashSideClass}>
-            <HubDashboard progress={dash} state={dashState} />
+            <HubDashboard data={dash} state={dashState} />
           </div>
           <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>
             {DECK_VIEWS.map((item) => (
