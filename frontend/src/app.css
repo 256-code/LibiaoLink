@@ -1481,7 +1481,10 @@ body {
 }
 
 .hub-dash-sep {
-  color: #4b5563;
+  color: #1f2329;
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .hub-dash-pick {

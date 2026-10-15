@@ -99,7 +99,7 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
     <div className="hub-dash-head">
       <span className="hub-dash-title">{t("hub.dash.title")}</span>
       <span className="hub-dash-sep" aria-hidden="true">
-        ·
+        •
       </span>
       <span className="hub-dash-pick">
         <span ref={pickGhostRef} className="hub-dash-pick__ghost" aria-hidden="true">
