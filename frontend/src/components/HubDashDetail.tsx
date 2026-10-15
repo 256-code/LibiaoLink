@@ -22,6 +22,9 @@ import { useFocusTrap } from "./useFocusTrap";
  * 弹窗打开时地图 ⇄ 仪表盘转场停用：Hub.tsx 认本弹窗的 [data-hub-detail-dialog] 标记。
  * Push 338（2026-10-15 业务口径「英文[部分]鼠标触碰也要展现 现在只显示了中文」·「这个是数据详细页面」）：**截断格 hover 兜底** ——
  * 任务描述 title 挂显示全文（中文名+英文名连排），项目经理 / 任务负责人截断胶囊也补 title。
+ * Push 340（2026-10-15 业务口径「一点进来这个叉号就被选中了」）：容器挂 data-focus-container + tabIndex={-1} ——
+ * 焦点陷阱打开时把焦点收到容器本身，不再自动聚焦 ✕（✕ 不再一打开就被描上 :focus-visible 焦点环）；
+ * Esc 关闭 / Tab 循环 / 关闭还原口径不变。
  */
 
 /** 列（Push 337 起 = 项目空间任务表的口径「直接把项目空间的那一列展示即可」：项目空间 15 列全上，
@@ -69,7 +72,7 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** 表体横向溢出时才给滑块留位（不溢出收成 0 高，不留空当 —— 同项目总览口径）。 */
   const [overflow, setOverflow] = useState(false);
-  /** 键盘焦点陷阱（Push 264 口径）：焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发处。 */
+  /** 键盘焦点陷阱（Push 264 口径）：焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发处；Push 340：焦点收在容器本身（data-focus-container），不抢 ✕。 */
   const trapRef = useFocusTrap<HTMLDivElement>();
   /** Esc 关弹窗：capture 阶段拦下（先于页面级快捷键），避免同一按 Esc 连带触发地图转场 / 外层弹层。 */
   useEffect(() => {
@@ -117,7 +120,13 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
       onClick={onClose}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/45 p-6"
     >
-      <div ref={trapRef} onClick={(event) => { event.stopPropagation(); }} className="hub-dash-detail">
+      <div
+        ref={trapRef}
+        data-focus-container="true"
+        tabIndex={-1}
+        onClick={(event) => { event.stopPropagation(); }}
+        className="hub-dash-detail"
+      >
         <div className="hub-dash-detail__head">
           <div>
             <div className="hub-dash-detail__title">{t("hub.dash.detail.title")}</div>
