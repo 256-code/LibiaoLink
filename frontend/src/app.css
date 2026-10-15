@@ -1363,83 +1363,78 @@ body {
 }
 
 /* 蓝图页「蓝图 ⇄ 仪表盘」转场（业务口径 2026-10-15「鼠标滑动蓝图转场展示仪表盘」「导航栏名称蓝图改成仪表盘」）：
-   转场效果参照 tympanus《A Collection of Page Transitions》的「Fade top / Fade bottom」（第 11 / 12 号动画）——
-   旧页上移淡出（translateY(-100%)、opacity → 0.3）、新页自下淡入（translateY(100%) → 0、opacity 0.3 → 1），
-   0.6s ease both；返回方向镜像。两屏都是整卡位移，画布外的裁切由外层 section 的 overflow-hidden 负责。
-   修复（2026-10-15 业务口径「向上滚动有bug」）：动画接管前的首帧曾在静止位露一帧（入场卡垫在对面卡下透出叠影，
-   见截图「项目数 + 切换按钮同排」）—— 入场卡把 from 态落成基础位（先停画外）、四条关键帧两端都显式，接管前也看不见。 */
-.hub-deck__view[data-parked="true"] {
-  visibility: hidden;
-  pointer-events: none;
+   转场照 tympanus《A Collection of Page Transitions》第 11 / 12 项「Fade top / Fade bottom」——
+   上下两屏在一条「刚体滑轨」（.hub-deck__strip）里静态首尾相接，滑轨整体位移一格（translateY 0 ↔ -100%、600ms ease）：
+   去仪表盘 = 滑轨上移（地图上移淡出、仪表盘自下淡入）、回地图 = 反向；透明度交叉 = 两屏各自的淡入 / 淡出
+   （出屏 1 → 0.3、入屏 0.3 → 1），与滑轨位移同一条 600ms ease 时间轴。画布外的裁切由外层 section 的 overflow-hidden 负责。
+   修复史（业务口径：「按钮大小小一点 然后向上滚动有bug」→「这个bug还是有 从下往上滑动就出现」）：
+   ① Push 342 给「入场卡」把 from 态落成基础位，堵掉「动画接管前首帧在静止位露出」的闪影；
+   ② Push 343 起不再让两屏各自位移 —— 真机上仍能抓到两屏在合成层上脱节的残影（一屏已就位、另一屏还停在原地透出），
+      改刚体滑轨后两屏相对几何恒定，任何一帧都只是「滑轨停在某个位置」：叠影 / 闪影在结构上不可能出现；
+   ③ 同步摘掉两屏的 backdrop-blur（滑轨背后只有页面底色，模糊体感≈0，却是毛玻璃重采样脏影与合成层抖动的源头）。 */
+.hub-deck__strip {
+  position: absolute;
+  inset: 0;
+  transform: translateY(0);
+  transition: transform 600ms ease;
 }
 
-.hub-deck__view--out-top {
-  animation: ll-hub-out-top 600ms ease both;
-}
-
-.hub-deck__view--in-bottom {
-  z-index: 2;
-  opacity: 0.3;
-  transform: translateY(100%);
-  animation: ll-hub-in-bottom 600ms ease both;
-}
-
-.hub-deck__view--out-bottom {
-  animation: ll-hub-out-bottom 600ms ease both;
-}
-
-.hub-deck__view--in-top {
-  z-index: 2;
-  opacity: 0.3;
+.hub-deck__strip[data-view="dashboard"] {
   transform: translateY(-100%);
-  animation: ll-hub-in-top 600ms ease both;
 }
 
-@keyframes ll-hub-out-top {
-  from {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  to {
-    opacity: 0.3;
-    transform: translateY(-100%);
-  }
+/* 滑轨里的两屏（静态排布，永不动 transform）：地图在上一格、仪表盘在下一格。 */
+.hub-deck__cell {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
 }
 
-@keyframes ll-hub-in-bottom {
-  from {
-    opacity: 0.3;
-    transform: translateY(100%);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.hub-deck__cell[data-view="dashboard"] {
+  top: 100%;
 }
 
-@keyframes ll-hub-out-bottom {
-  from {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  to {
-    opacity: 0.3;
-    transform: translateY(100%);
-  }
+/* 透明度交叉（只动 opacity，不碰几何）：入场 0.3 → 1、出场 1 → 0.3。 */
+.hub-deck__cell--in {
+  opacity: 0.3;
+  animation: ll-hub-cell-in 600ms ease both;
 }
 
-@keyframes ll-hub-in-top {
+.hub-deck__cell--out {
+  animation: ll-hub-cell-out 600ms ease both;
+}
+
+@keyframes ll-hub-cell-in {
   from {
     opacity: 0.3;
-    transform: translateY(-100%);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+  }
+}
+
+@keyframes ll-hub-cell-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-deck__strip {
+    transition: none;
+  }
+
+  .hub-deck__cell--in,
+  .hub-deck__cell--out {
+    animation: none;
+    opacity: 1;
   }
 }
 
