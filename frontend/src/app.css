@@ -1489,11 +1489,42 @@ body {
   line-height: 1;
 }
 
-/* 项目选择器（Push 336 · 业务口径「这个选择项目的ui太丑了 和现在的ui完全不符 要重写 要带搜索的选择器」）：
-   原生 select 下架，换全站同款可搜索下拉 SearchSelect（白底描边触发器 + 搜索浮层，见 SearchSelect.tsx）——
-   这里只给标题行里的一段定宽（项目名超长由触发器自己省略号截断）。 */
+/* 项目选择器（Push 336 换全站 SearchSelect；Push 337 追订业务口径「还是要刚刚的字体效果 只是 点击筛选按钮后
+   可以变成现在的效果」）：**收起态 = 标题同款观感**（透明无框 · 1.25rem 加粗 · 宽度贴文字 · 箭头紧随其后），
+   **点开（aria-expanded=true）与浮层 = SearchSelect 缺省的描边输入框 + 搜索下拉**。 */
 .hub-dash-pick {
-  width: min(20rem, 32vw);
+  width: auto;
+  max-width: min(20rem, 32vw);
+}
+
+.hub-dash-pick button[aria-expanded="false"] {
+  position: relative;
+  width: auto;
+  border-color: transparent;
+  background: transparent;
+  padding: 0 1.15rem 0 0;
+  color: #1f2329;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.hub-dash-pick button[aria-expanded="false"]:hover {
+  border-color: transparent;
+  background: transparent;
+  color: #0f172a;
+}
+
+.hub-dash-pick button[aria-expanded="false"] span {
+  color: inherit;
+  font-weight: 700;
+}
+
+.hub-dash-pick button[aria-expanded="false"] svg {
+  position: absolute;
+  top: 50%;
+  right: 0.15rem;
+  margin-left: 0;
+  transform: translateY(-50%);
 }
 
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
@@ -1727,9 +1758,16 @@ body {
   overflow: auto;
 }
 
+/* 原生横向滚动条收口（Push 337 业务口径「现在怎么说两个滚动条」）：表体横向只保留底部自绘滑块
+   （TableScrollbar，见 HubDashDetail.tsx），原生那条（带左右箭头）藏掉；纵向原生条照旧。 */
+.hub-dash-detail__scroll::-webkit-scrollbar {
+  height: 0;
+}
+
+/* 列口径 = 项目空间任务表（Push 337「直接把项目空间的那一列展示即可」）：17 列，最小宽抬到 132rem。 */
 .hub-dash-detail__table {
   width: 100%;
-  min-width: 78rem;
+  min-width: 132rem;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.8rem;
