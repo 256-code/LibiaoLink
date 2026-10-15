@@ -1361,3 +1361,167 @@ body {
     animation: none;
   }
 }
+
+/* 蓝图页「蓝图 ⇄ 仪表盘」转场（业务口径 2026-10-15「鼠标滑动蓝图转场展示仪表盘」「导航栏名称蓝图改成仪表盘」）：
+   转场效果参照 tympanus《A Collection of Page Transitions》的「Fade top / Fade bottom」（第 11 / 12 号动画）——
+   旧页上移淡出（translateY(-100%)、opacity → 0.3）、新页自下淡入（translateY(100%) → 0、opacity 0.3 → 1），
+   0.6s ease both；返回方向镜像。两屏都是整卡位移，画布外的裁切由外层 section 的 overflow-hidden 负责。 */
+.hub-deck__view[data-parked="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.hub-deck__view--out-top {
+  animation: ll-hub-out-top 600ms ease both;
+}
+
+.hub-deck__view--in-bottom {
+  z-index: 2;
+  animation: ll-hub-in-bottom 600ms ease both;
+}
+
+.hub-deck__view--out-bottom {
+  animation: ll-hub-out-bottom 600ms ease both;
+}
+
+.hub-deck__view--in-top {
+  z-index: 2;
+  animation: ll-hub-in-top 600ms ease both;
+}
+
+@keyframes ll-hub-out-top {
+  to {
+    opacity: 0.3;
+    transform: translateY(-100%);
+  }
+}
+
+@keyframes ll-hub-in-bottom {
+  from {
+    opacity: 0.3;
+    transform: translateY(100%);
+  }
+}
+
+@keyframes ll-hub-out-bottom {
+  to {
+    opacity: 0.3;
+    transform: translateY(100%);
+  }
+}
+
+@keyframes ll-hub-in-top {
+  from {
+    opacity: 0.3;
+    transform: translateY(-100%);
+  }
+}
+
+/* 转场提示圆钮（不写字，只有一枚箭头：下滑看仪表盘 / 上滑回蓝图） */
+.hub-deck-hint {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  width: 2.4rem;
+  height: 2.4rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.92);
+  color: #71717a;
+  box-shadow: 0 10px 26px -16px rgb(15 23 42 / 0.45);
+  cursor: pointer;
+  transform: translateX(-50%);
+  animation: ll-hub-hint-bob-down 2.8s ease-in-out infinite;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.hub-deck-hint[data-side="bottom"] {
+  bottom: 1rem;
+}
+
+.hub-deck-hint[data-side="top"] {
+  top: 1rem;
+  animation-name: ll-hub-hint-bob-up;
+}
+
+.hub-deck-hint:hover {
+  color: #1f2329;
+  border-color: #d4d4d8;
+}
+
+.hub-deck-hint[data-hidden="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes ll-hub-hint-bob-down {
+  0%,
+  100% {
+    transform: translate(-50%, 0);
+  }
+  50% {
+    transform: translate(-50%, 5px);
+  }
+}
+
+@keyframes ll-hub-hint-bob-up {
+  0%,
+  100% {
+    transform: translate(-50%, 0);
+  }
+  50% {
+    transform: translate(-50%, -5px);
+  }
+}
+
+/* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
+.hub-dash {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hub-dash__swatch,
+.hub-dash__seg {
+  fill: #c9ced6;
+}
+
+.hub-dash__swatch[data-bin="0.25"],
+.hub-dash__seg[data-bin="0.25"] {
+  fill: #5aa9f7;
+}
+
+.hub-dash__swatch[data-bin="0.5"],
+.hub-dash__seg[data-bin="0.5"] {
+  fill: #f5c443;
+}
+
+.hub-dash__swatch[data-bin="0.75"],
+.hub-dash__seg[data-bin="0.75"] {
+  fill: #f08a3c;
+}
+
+.hub-dash__swatch[data-bin="1"],
+.hub-dash__seg[data-bin="1"] {
+  fill: #6cc46a;
+}
+
+.hub-dash__num[data-tone="dark"] {
+  fill: #4a4a4a;
+}
+
+.hub-dash__num[data-tone="light"] {
+  fill: #ffffff;
+}
+
+.hub-dash-state {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: #71717a;
+  font-size: 0.875rem;
+}
+
