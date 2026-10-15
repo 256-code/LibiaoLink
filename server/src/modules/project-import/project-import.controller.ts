@@ -17,7 +17,7 @@ type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
 /**
  * 导入表导入接口（直连 API 导入 · 业务口径 2026-10-14）：项目空间「导入项目」按钮 → 大屏面板四步（选择 / 解析 / 确认 / 完成）
  * 走这两条接口；契约 shared/src/modules/imports.ts（前端 frontend/src/importApi.ts 已接线）。
- * - preview：multipart/form-data（字段 file；.xlsx / .xlsm，≤ 64 MB）—— **不用 Nest FileInterceptor / multer**
+ * - preview：multipart/form-data（字段 file；.xlsx / .xlsm，≤ 256 MB）—— **不用 Nest FileInterceptor / multer**
  *   （服务端无该依赖，且这是一进一出的整包解析）：由 common/http/multipart.ts 直接收流，超限 / 非 multipart 400；
  * - commit：JSON（previewId + 落位确认）—— 单事务建项目并写入全量数据（预检失败 409 / 410 / 422 见契约错误码）。
  * 门禁：登录 + CSRF + project.create（与「新建项目」同权限位）；预览票据只认创建人本人（他人提交 403）。

@@ -24,7 +24,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 ## 已落接口
 
 - `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）—— 解析 + 口径校验，**不写库**；返回预览票据（30 分钟）+ 落位建议 + 将写入条数 + 三份清单（需手动导入图片 / 节点匹配 / 账号）+ 提醒清单。
-  错误面：400 `IMPORT_FILE_INVALID`（缺文件名 / 非 .xlsx·.xlsm / 空文件 / 超 64 MB）· 401 未登录 · 403 缺 `project.create` · 422 `IMPORT_PARSE_FAILED`（导入表结构不对 / 不是 xlsx）。
+  错误面：400 `IMPORT_FILE_INVALID`（缺文件名 / 非 .xlsx·.xlsm / 空文件 / 超 256 MB）· 401 未登录 · 403 缺 `project.create` · 422 `IMPORT_PARSE_FAILED`（导入表结构不对 / 不是 xlsx）。
 - `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）—— 单事务建项目并写入全量数据（失败整批回滚，不许半量落库）。
   错误面：400 `VALIDATION_FAILED`（参数非法 / 地区空 / 票据已提交）· 403 票据非本人 · 404 票据不存在 · 409 `PROJECT_CODE_EXISTS`（编号占用）· 410 `IMPORT_PREVIEW_EXPIRED`（过期 / 源文件已清理）· 400 `IMPORT_CANCELLED`（写入中取消：连接在写完前断开 —— 单事务回滚 + 已传图片清理；票据保留 pending、源文件保留，可再次提交）。
 
