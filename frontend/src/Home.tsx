@@ -11,6 +11,7 @@ import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
 import type { FacetOption } from "./components/CategoryFilterSidebar";
 import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
+import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
 import { ImportProjectPanel } from "./components/ImportProjectPanel";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
@@ -133,6 +134,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   // 选中文件即打开；关闭 / 导入完成清空。同一文件重复选也要能重开（onChange 里把 value 复位）。
   const [importFile, setImportFile] = useState<File | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  // 导入说明浮层（Push 329 · 2026-10-15）：点击「导入说明」= 系统内浮层预览（复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭），不开新标签页。
+  const [guideOpen, setGuideOpen] = useState(false);
   const onImportFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
     const picked = event.target.files?.[0] ?? null;
     event.target.value = "";
@@ -562,7 +565,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           </span>
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             {/* 导入项目（Push 316 待推）：新建项目左侧 —— 点开原生文件选择（.xlsx / .xlsm），选完在页内大屏面板里解析 / 校验 / 导入 */}
-            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；新标签页打开《导入表导入使用说明》PDF（public/docs/import-guide.pdf，随构建发布） */}
+            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；点击「导入说明」= 系统内浮层预览（Push 329 起：复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭 · 浮层内可下载原文件），静态件随构建发布（public/docs/import-guide.pdf） */}
             <div className="group relative">
             <button
               type="button"
@@ -590,11 +593,12 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               {t("home.import")}
             </button>
               <div className="invisible absolute left-0 top-full z-30 pt-2 opacity-0 pointer-events-none transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:visible group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
-                <a
-                  href={import.meta.env.BASE_URL + "docs/import-guide.pdf"}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
                   data-import-guide=""
+                  onClick={() => {
+                    setGuideOpen(true);
+                  }}
                   className="relative flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600 shadow-lg transition hover:bg-zinc-50 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50"
                 >
                   <span className="absolute -top-[5px] left-5 h-2.5 w-2.5 rotate-45 border-l border-t border-zinc-200 bg-white" aria-hidden="true" />
@@ -604,7 +608,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                     <path d="M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   </svg>
                   {t("home.importGuide")}
-                </a>
+                </button>
               </div>
             </div>
             <input
@@ -615,6 +619,26 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               data-import-file-input=""
               onChange={onImportFileChange}
             />
+            {guideOpen ? (
+              <FilePreviewOverlay
+                pane={{ mode: "url", url: import.meta.env.BASE_URL + "docs/import-guide.pdf" }}
+                name={t("home.importGuide")}
+                kind="pdf"
+                nonce={0}
+                onRetry={() => {}}
+                onDownload={() => {
+                  const link = document.createElement("a");
+                  link.href = import.meta.env.BASE_URL + "docs/import-guide.pdf";
+                  link.download = "LibiaoLink导入表导入规则说明.pdf";
+                  document.body.appendChild(link);
+                  link.click();
+                  link.remove();
+                }}
+                onClose={() => {
+                  setGuideOpen(false);
+                }}
+              />
+            ) : null}
             <button
               type="button"
               aria-disabled={canCreateProject ? undefined : true}
