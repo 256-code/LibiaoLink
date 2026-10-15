@@ -1754,7 +1754,9 @@ body {
 }
 
 .hub-dash-detail__scroll {
-  flex: 1 1 auto;
+  /* 0 1 auto：滚动区高度贴着表体（行少时不满高），横向滚动条紧贴最后一行下方（照业务参考图）；
+     行多到装不下时再收缩 + 纵向滚。 */
+  flex: 0 1 auto;
   min-height: 0;
   overflow: auto;
 }
