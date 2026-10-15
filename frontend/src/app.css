@@ -1417,63 +1417,46 @@ body {
   }
 }
 
-/* 转场提示圆钮（不写字，只有一枚箭头：下滑看仪表盘 / 上滑回蓝图） */
-.hub-deck-hint {
-  position: absolute;
-  left: 50%;
+/* 右侧边缘页面指示器（Push 333 · 业务口径「页面指示器呢 我没看到」「这个悬浮球不需要」+「不要 3D / 不要悬浮」）——
+   扁平圆点：半透明玻璃底 + 细边框，无 3D 阴影 / 无动效；当前屏的圆点加深、略放大。 */
+.hub-deck-dots {
+  position: fixed;
+  top: 50%;
+  right: 1rem;
+  z-index: 6;
   display: flex;
-  width: 2.4rem;
-  height: 2.4rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
+  flex-direction: column;
+  gap: 0.6rem;
+  transform: translateY(-50%);
+}
+
+.hub-deck-dots__dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  padding: 0;
+  border: 1px solid rgb(148 163 184 / 0.45);
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.92);
-  color: #71717a;
-  box-shadow: 0 10px 26px -16px rgb(15 23 42 / 0.45);
+  background: rgb(255 255 255 / 0.55);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   cursor: pointer;
-  transform: translateX(-50%);
-  animation: ll-hub-hint-bob-down 2.8s ease-in-out infinite;
-  transition: color 160ms ease, border-color 160ms ease;
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
-.hub-deck-hint[data-side="bottom"] {
-  bottom: 1rem;
+.hub-deck-dots__dot:hover {
+  background: rgb(255 255 255 / 0.82);
+  border-color: rgb(100 116 139 / 0.7);
 }
 
-.hub-deck-hint[data-side="top"] {
-  top: 1rem;
-  animation-name: ll-hub-hint-bob-up;
+.hub-deck-dots__dot[data-active="true"] {
+  background: rgb(100 116 139 / 0.85);
+  border-color: rgb(100 116 139 / 0.9);
+  transform: scale(1.18);
 }
 
-.hub-deck-hint:hover {
-  color: #1f2329;
-  border-color: #d4d4d8;
-}
-
-.hub-deck-hint[data-hidden="true"] {
-  opacity: 0;
-  pointer-events: none;
-}
-
-@keyframes ll-hub-hint-bob-down {
-  0%,
-  100% {
-    transform: translate(-50%, 0);
-  }
-  50% {
-    transform: translate(-50%, 5px);
-  }
-}
-
-@keyframes ll-hub-hint-bob-up {
-  0%,
-  100% {
-    transform: translate(-50%, 0);
-  }
-  50% {
-    transform: translate(-50%, -5px);
-  }
+.hub-deck-dots__dot:focus-visible {
+  outline: 2px solid rgb(31 35 41 / 0.45);
+  outline-offset: 3px;
 }
 
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
