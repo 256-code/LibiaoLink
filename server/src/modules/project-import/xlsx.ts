@@ -2,8 +2,8 @@ import { inflateRawSync } from "node:zlib";
 import { AppError } from "../../common/errors/app-error.js";
 
 /**
- * xlsx 读取（老表导入）：xlsx = ZIP 容器（workbook.xml / sheetN.xml / sharedStrings.xml / media/*）。
- * 本文件只做「读」：中央目录定位 + 惰性 inflate（60 MB 级老表、150+ 内嵌图也能应付），
+ * xlsx 读取（导入表导入）：xlsx = ZIP 容器（workbook.xml / sheetN.xml / sharedStrings.xml / media/*）。
+ * 本文件只做「读」：中央目录定位 + 惰性 inflate（60 MB 级导入表、150+ 内嵌图也能应付），
  * 不引第三方库（服务端此前没有任何 Excel 依赖；解析口径与 D:/LibiaoLink_help/_conv/legacy-convert.mjs 一致）。
  */
 
@@ -303,7 +303,7 @@ function readAnchors(zip: ZipArchive, sheets: SheetGrid[]): SheetImageAnchor[] {
   return anchors;
 }
 
-/** 解析老表工作簿：全部工作表（文本网格）+ 图片锚点 + media 读取器。 */
+/** 解析导入表工作簿：全部工作表（文本网格）+ 图片锚点 + media 读取器。 */
 export function parseWorkbook(bytes: Buffer): ParsedWorkbook {
   const zip = ZipArchive.open(bytes);
   const workbookXml = zip.readText("xl/workbook.xml");

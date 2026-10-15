@@ -1,5 +1,5 @@
 /**
- * 人员注册表（老表导入）：姓名 → 登录名 / 显示名（口径 = 转换器 people-registry.json；
+ * 人员注册表（导入表导入）：姓名 → 登录名 / 显示名（口径 = 转换器 people-registry.json；
  * username = 拼音全拼无后缀；displayName = 中文名 + -test，既有账号保持原名）。
  * 新人员请在 PEOPLE_REGISTRY 补一行（服务端唯一来源；表里出现未收录姓名时预览会给出提醒）。
  */

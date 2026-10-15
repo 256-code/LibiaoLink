@@ -2,7 +2,7 @@
 export { ProjectImportModule } from "./project-import.module.js";
 export { ProjectImportService } from "./project-import.service.js";
 export type { ImportLocale, ImportPreviewInput } from "./project-import.service.js";
-export { ProjectImportRepository } from "./project-import.repository.js";
+export { IMPORT_PREVIEW_SWEEP_BATCH, IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportRepository } from "./project-import.repository.js";
 export type {
   ImportChangeInsert,
   ImportFileInsert,

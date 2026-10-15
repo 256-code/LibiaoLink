@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { projectImportPreviews, type ProjectImportPreviewRow } from "../../db/schema/imports.js";
@@ -13,6 +13,11 @@ import { projects } from "../../db/schema/projects.js";
 import { projectStakeholders, stakeholders } from "../../db/schema/stakeholders.js";
 
 export type { ProjectImportPreviewRow };
+
+/** 过期 pending 票据清扫：每轮最多处理条数（worker 周期任务，防止长事务 / 大结果集）。 */
+export const IMPORT_PREVIEW_SWEEP_BATCH = 100;
+/** 过期 pending 票据清扫周期（10 分钟）：启动即跑一次，随后周期重试。 */
+export const IMPORT_PREVIEW_SWEEP_INTERVAL_MS = 10 * 60_000;
 
 export interface PreviewInsertInput {
   id: string;
@@ -107,7 +112,7 @@ export interface ImportStakeholderInsert {
 }
 
 /**
- * 老表导入数据访问：预览票据（project_import_previews）+ 读面辅助（用户 / 节点库）+ 提交批量写入。
+ * 导入表导入数据访问：预览票据（project_import_previews：插入 / 取回 / 状态机 / 过期清扫输入）+ 读面辅助（用户 / 节点库）+ 提交批量写入。
  * 写入方法全部接收调用方事务（tx），由服务层保证「建项目 + 全量数据」单事务。
  */
 @Injectable()
@@ -146,6 +151,17 @@ export class ProjectImportRepository {
       .where(eq(projectImportPreviews.id, id));
   }
 
+  /** 过期未提交票据（worker 清理输入）：按到期时间升序限量，避免大结果集长占 worker。 */
+  async listExpiredPreviews(now: Date, limit: number = IMPORT_PREVIEW_SWEEP_BATCH): Promise<ProjectImportPreviewRow[]> {
+    return this.database.db
+      .select()
+      .from(projectImportPreviews)
+      .where(and(eq(projectImportPreviews.status, "pending"), lte(projectImportPreviews.expiresAt, now)))
+      .orderBy(asc(projectImportPreviews.expiresAt))
+      .limit(limit);
+  }
+
+  /** 过期票据终态写入：仍限定 pending，防止清扫与提交并发时覆盖 committed。 */
   async markExpired(id: string, at: Date): Promise<void> {
     await this.database.db
       .update(projectImportPreviews)

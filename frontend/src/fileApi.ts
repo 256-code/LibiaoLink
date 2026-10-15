@@ -292,7 +292,7 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
 }
 
 /** 变更记录详情（契约 ChangeRequestDetail · M4-04 读面 A4-15）：变更本体 + 变更后文件 + 变更后版本（本文件只需用到的字段）；
- *  Push 319：老表导入变更暂无变更后文件（源文件在微盘）→ fileId / versionId / versionSeq / file / version 可为 null。 */
+ *  Push 319：导入表导入变更暂无变更后文件（源文件在微盘）→ fileId / versionId / versionSeq / file / version 可为 null。 */
 export type ChangeRequestDetail = {
   id: string;
   projectId: string;

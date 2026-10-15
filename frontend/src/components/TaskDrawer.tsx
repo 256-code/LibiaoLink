@@ -2140,7 +2140,7 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
   const locale = useLocale();
   const t = useT();
   if (detail.file === null || detail.version === null || detail.versionId === null || detail.versionSeq === null) {
-    // Push 319：老表导入变更没有变更后文件（源文件在微盘）→ 只出「待补」提示行（无预览 / 下载入口）。
+    // Push 319：导入表导入变更没有变更后文件（源文件在微盘）→ 只出「待补」提示行（无预览 / 下载入口）。
     return (
       <div data-change-item-files="true" className="mt-1.5 flex flex-col gap-1 rounded-lg border border-zinc-100 bg-white px-2.5 py-2">
         <span data-change-file-pending="true" className="text-[11px] leading-4 text-zinc-400">{t("drawer.history.filePending")}</span>

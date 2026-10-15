@@ -17,7 +17,7 @@ export function changedResources(method: string, url: string): LiveResource[] {
     return ["projects", "tasks"];
   }
   if (/^\/api\/v1\/(?:nodes|blueprint|blueprints)(?:\/|$)/.test(path)) return ["projects", "tasks"];
-  // 老表导入（Push 316 服务端落地）：只有 commit 写业务数据（preview 只落票据）；一次写入横跨项目 / 任务 / 日报 / 问题 / 文件，节点补库还动 templates。
+  // 导入表导入（Push 316 服务端落地）：只有 commit 写业务数据（preview 只落票据）；一次写入横跨项目 / 任务 / 日报 / 问题 / 文件，节点补库还动 templates。
   if (/^\/api\/v1\/project-imports(?:\/|$)/.test(path)) {
     return /\/commit(?:\/|$)/.test(path) ? ["projects", "tasks", "reports", "issues", "files", "templates"] : [];
   }

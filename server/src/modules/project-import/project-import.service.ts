@@ -22,7 +22,7 @@ import { FlowService, ProjectMemberRepository, ProjectRepository } from "../proj
 import { TaskNodeRepository } from "../template/index.js";
 import type { TaskNodeRow } from "../template/index.js";
 import { TranslateService } from "../translate/index.js";
-import { convertLegacyWorkbook, convertStakeholders, sniffYear } from "./legacy.js";
+import { convertLegacyWorkbook } from "./legacy.js";
 import type {
   LegacyChange,
   LegacyChangeLink,
@@ -33,7 +33,7 @@ import type {
   LegacyTask,
 } from "./legacy.js";
 import { proposeAccount, stripParen } from "./people.js";
-import { ProjectImportRepository } from "./project-import.repository.js";
+import { IMPORT_PREVIEW_SWEEP_BATCH, ProjectImportRepository } from "./project-import.repository.js";
 import type {
   ImportChangeInsert,
   ImportFileInsert,
@@ -46,7 +46,7 @@ import { ZipArchive, parseWorkbook } from "./xlsx.js";
 import type { ParsedWorkbook } from "./xlsx.js";
 
 /**
- * 老表导入用例（直连 API 导入 · 业务口径 2026-10-14）：
+ * 导入表导入用例（直连 API 导入 · 业务口径 2026-10-14）：
  * - preview：multipart 收 .xlsx / .xlsm（≤ 64 MB）→ 零依赖解析（xlsx.ts）+ 口径转换（legacy.ts：完成判定 / 进度五档 /
  *   日期笔误照原值 / 节点匹配 / 账号落位）→ 源文件写对象存储（imports/{previewId}/source.{ext}）+ 解析产物落票据表
  *   （project_import_previews.payload，30 分钟有效）；**不写业务库**。返回预览报告（落位建议 + 条数 + 三份清单 + 提醒）。
@@ -68,7 +68,7 @@ import type { ParsedWorkbook } from "./xlsx.js";
  * 6. 变更关联：变更表「关联」列命中任务描述 → 提交回写任务 change_refs（追加序 = 变更表行序；任务表「变更关联」
  *    日期仅核对）；导入的变更没有「变更后文件」（源文件在微盘）—— 变更读面容忍 fileId / versionId 为空（前端标待补）；
  * 7. 干系人（Push 324）：「干系人」表 → stakeholders + project_stakeholders（公司分类自由写法映射四值 / 「填写者」匹配库内账号 → created_by /
- *    「提交时间」→ created_at）；主文件没有该表时，面板可「另附干系人表」（单独导出的单表工作簿）合并导入。
+ *    「提交时间」→ created_at）；导入表没有该表 = 本次不导入干系人。
  */
 
 /** 提醒文案语言（Accept-Language 取 zh / en；缺省 zh）。 */
@@ -78,8 +78,6 @@ export type ImportLocale = "zh" | "en";
 export interface ImportPreviewInput {
   bytes: Buffer;
   fileName: string;
-  /** 另附的干系人表（Push 324）：主文件不含「干系人」表时由面板单独提供；缺省 / null = 未另附。 */
-  stakeholder?: { bytes: Buffer; fileName: string } | null;
   actorId: string;
   locale: ImportLocale;
 }
@@ -120,8 +118,6 @@ interface ImagePlan {
 /** 票据 payload（jsonb）：解析产物 + 账号清单；提交只认这份快照（避免两次解析漂移）。 */
 interface ImportPreviewPayload {
   file: { name: string; size: number };
-  /** 另附干系人表文件元信息（Push 324）；未另附 = null。 */
-  stakeholderFile: { name: string; size: number } | null;
   parse: LegacyParse;
   accounts: ImportAccount[];
 }
@@ -131,7 +127,7 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const TEXT_LIMIT = 2000;
 const TITLE_LIMIT = 500;
 
-/** 老表导入用例（h2+ · 导入项目按钮的服务端落点）。 */
+/** 导入表导入用例（h2+ · 导入项目按钮的服务端落点）。 */
 @Injectable()
 export class ProjectImportService {
   private readonly logger = new Logger(ProjectImportService.name);
@@ -150,14 +146,13 @@ export class ProjectImportService {
 
   /**
    * 解析预览（不写业务库）：文件名闸 → 解析 + 转换 → 账号 / 节点对账 → 源文件入对象存储 → 票据落库。
-   * 解析失败统一 422 IMPORT_PARSE_FAILED（老表结构不对 / 不是 xlsx）；文件闸 400 IMPORT_FILE_INVALID。
+   * 解析失败统一 422 IMPORT_PARSE_FAILED（导入表结构不对 / 不是 xlsx）；文件闸 400 IMPORT_FILE_INVALID。
    */
   async preview(input: ImportPreviewInput): Promise<ProjectImportPreview> {
     const fileName = sanitizeFileName(input.fileName);
     assertImportFile(fileName, input.bytes.length);
     const { parse, workbook } = parseLegacy(input.bytes, fileName);
     const extraSeeds: LegacyIssueSeed[] = [];
-    const stakeholderFile = this.mergeStakeholderFile(input.stakeholder ?? null, parse, extraSeeds);
     const skippedImages = countSkippedImages(parse, (media) => workbook.readMedia(media));
     const resolution = await this.resolveAccounts(collectPeople(parse));
     const { groups } = await this.buildNodeGroups(parse.tasks);
@@ -173,7 +168,6 @@ export class ProjectImportService {
     const expiresAt = new Date(at.getTime() + IMPORT_PREVIEW_TTL_MINUTES * 60_000);
     const payload: ImportPreviewPayload = {
       file: { name: fileName, size: input.bytes.length },
-      stakeholderFile,
       parse,
       accounts: resolution.accounts,
     };
@@ -200,7 +194,7 @@ export class ProjectImportService {
       accountsNew: resolution.accounts.filter((account) => account.isNew).length,
       nodesNew: groups.filter((group) => !group.matched && group.inStageScope).length,
     };
-    if (parse.stakeholderSheetName === null && stakeholderFile === null) {
+    if (parse.stakeholderSheetName === null) {
       extraSeeds.push(stakeholderSheetMissingSeed());
     }
     const fillers = await this.resolveStakeholderFillers(parse);
@@ -220,7 +214,6 @@ export class ProjectImportService {
       previewId: row.id,
       expiresAt: expiresAt.toISOString(),
       file: payload.file,
-      stakeholderFile,
       project: { ...parse.project, managerNames: parse.project.managerNames.map((name) => stripParen(name)) },
       counts,
       accounts: resolution.accounts,
@@ -228,6 +221,24 @@ export class ProjectImportService {
       nodes: groups.map(contractNodeOf),
       issues,
     };
+  }
+
+  /**
+   * 过期票据清扫（worker 周期调用）：先彻底删除源对象，再置 expired；对象删除失败保留 pending，下轮重试。
+   */
+  async sweepExpiredPreviews(now: Date = new Date(), limit: number = IMPORT_PREVIEW_SWEEP_BATCH): Promise<{ scanned: number; expired: number }> {
+    const rows = await this.previews.listExpiredPreviews(now, limit);
+    let expired = 0;
+    for (const row of rows) {
+      try {
+        await this.storage.purgeObject(row.objectKey);
+        await this.previews.markExpired(row.id, now);
+        expired += 1;
+      } catch (error) {
+        this.logger.warn("导入表导入过期票据清理失败：" + row.id + " / " + messageOf(error));
+      }
+    }
+    return { scanned: rows.length, expired };
   }
 
   /**
@@ -382,7 +393,7 @@ export class ProjectImportService {
             objectType: "task_node",
             objectId: nodeRow.id,
             projectId: projectRow.id,
-            summary: "老表导入新增任务节点：" + nodeRow.title,
+            summary: "导入表导入新增任务节点：" + nodeRow.title,
             changes: [
               { field: "stageKey", from: null, to: nodeRow.stageKey },
               { field: "title", from: null, to: nodeRow.title },
@@ -434,7 +445,7 @@ export class ProjectImportService {
       throwIfCancelled(signal);
       const taskIds = await this.previews.insertTasks(tx, projectRow.id, taskRows, at);
 
-      // 日报 + 问题：作者账号缺失 → 回落导入人（进提醒）；一条日报最多一个问题（老表口径）；未解决问题（源表没有
+      // 日报 + 问题：作者账号缺失 → 回落导入人（进提醒）；一条日报最多一个问题（导入表口径）；未解决问题（源表没有
       // 处理人字段）默认处理人 = 项目经理（managerIds 首位）—— 出现在其工作台「待我处理」（业务口径 2026-10-14）。
       const reportRows: ImportReportInsert[] = parse.reports.map((report) => {
         const base = stripParen(report.authorName);
@@ -552,7 +563,7 @@ export class ProjectImportService {
         objectId: projectRow.id,
         projectId: projectRow.id,
         summary:
-          "老表导入建项目：" +
+          "导入表导入建项目：" +
           projectRow.code +
           "（" +
           projectRow.name +
@@ -613,29 +624,6 @@ export class ProjectImportService {
       counts: written.counts,
       issues,
     };
-  }
-
-  /**
-   * 另附干系人表（Push 324）：主文件不含「干系人」表时合并另附文件的解析结果；主文件已含 = 以主文件为准（info 提醒）。
-   * 另附文件不合格（不是 xlsx / 超过上限 / 没有干系人表）→ 400 / 422。
-   */
-  private mergeStakeholderFile(
-    file: { bytes: Buffer; fileName: string } | null,
-    parse: LegacyParse,
-    extraSeeds: LegacyIssueSeed[],
-  ): { name: string; size: number } | null {
-    if (file === null) return null;
-    const fileName = sanitizeFileName(file.fileName);
-    assertImportFile(fileName, file.bytes.length);
-    const converted = parseStakeholderWorkbook(file.bytes, fileName, parse.year);
-    if (parse.stakeholderSheetName !== null) {
-      extraSeeds.push(stakeholderFileIgnoredSeed(fileName));
-    } else {
-      parse.stakeholders = converted.stakeholders;
-      parse.stakeholderSheetName = converted.sheetName;
-      parse.issues.push(...converted.issues);
-    }
-    return { name: fileName, size: file.bytes.length };
   }
 
   /** 「填写者」→ 库内账号（显示名直查：原文 / 去括注 / 去括注 + -test）；未命中 = null（created_by 留空 + 提醒）。 */
@@ -761,7 +749,7 @@ export class ProjectImportService {
       try {
         await this.storage.purgeObject(key);
       } catch (error) {
-        this.logger.warn("老表导入图片对象清理失败：" + key + "：" + messageOf(error));
+        this.logger.warn("导入表导入图片对象清理失败：" + key + "：" + messageOf(error));
       }
     }
   }
@@ -771,7 +759,7 @@ export class ProjectImportService {
     try {
       await this.storage.purgeObject(objectKey);
     } catch (error) {
-      this.logger.warn("老表导入源文件清理失败：" + objectKey + "：" + messageOf(error));
+      this.logger.warn("导入表导入源文件清理失败：" + objectKey + "：" + messageOf(error));
     }
   }
 }
@@ -791,7 +779,7 @@ function assertImportFile(fileName: string, size: number): void {
   const dot = fileName.lastIndexOf(".");
   const extension = dot < 0 ? "" : fileName.slice(dot).toLowerCase();
   if (!(IMPORT_ALLOWED_EXTENSIONS as readonly string[]).includes(extension)) {
-    throw new AppError("IMPORT_FILE_INVALID", "只支持 .xlsx / .xlsm 老表（旧版 .xls 请先另存为 .xlsx）");
+    throw new AppError("IMPORT_FILE_INVALID", "只支持 .xlsx / .xlsm 导入表（旧版 .xls 请先另存为 .xlsx）");
   }
   if (size === 0) {
     throw new AppError("IMPORT_FILE_INVALID", "上传文件为空");
@@ -804,37 +792,14 @@ function assertImportFile(fileName: string, size: number): void {
   }
 }
 
-/** 解析 + 转换：解析期异常统一 422 IMPORT_PARSE_FAILED（老表结构不对、不是 xlsx、缺任务 sheet）。 */
+/** 解析 + 转换：解析期异常统一 422 IMPORT_PARSE_FAILED（导入表结构不对、不是 xlsx、缺任务 sheet）。 */
 function parseLegacy(bytes: Buffer, fileName: string): { parse: LegacyParse; workbook: ParsedWorkbook } {
   try {
     const workbook = parseWorkbook(bytes);
     return { parse: convertLegacyWorkbook(workbook, fileName), workbook };
   } catch (error) {
     if (error instanceof AppError) throw error;
-    throw new AppError("IMPORT_PARSE_FAILED", "老表解析失败：" + messageOf(error));
-  }
-}
-
-/** 另附干系人表解析（Push 324）：权限受限时单独导出的单表工作簿；没有「干系人」表 → 422。 */
-function parseStakeholderWorkbook(
-  bytes: Buffer,
-  fileName: string,
-  fallbackYear: number,
-): { sheetName: string; stakeholders: LegacyStakeholder[]; issues: LegacyIssueSeed[] } {
-  try {
-    const workbook = parseWorkbook(bytes);
-    const year = sniffYear(workbook.sheets) ?? fallbackYear;
-    const converted = convertStakeholders(workbook.sheets, year);
-    if (converted.sheetName === null) {
-      throw new AppError(
-        "IMPORT_PARSE_FAILED",
-        "另附文件没有「干系人」表（需含「干系人姓名」表头）：请选择单独导出的干系人 Excel（" + fileName + "）",
-      );
-    }
-    return { sheetName: converted.sheetName, stakeholders: converted.stakeholders, issues: converted.issues };
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw new AppError("IMPORT_PARSE_FAILED", "另附干系人表解析失败：" + messageOf(error));
+    throw new AppError("IMPORT_PARSE_FAILED", "导入表解析失败：" + messageOf(error));
   }
 }
 
@@ -914,7 +879,7 @@ function mimeOf(extension: string): string | null {
 }
 
 /**
- * 变更原因文本（库内只有 reason 一列，老表是 变更内容描述 + 变更原因 两列）：
+ * 变更原因文本（库内只有 reason 一列，导入表是 变更内容描述 + 变更原因 两列）：
  * 两列都有 →「内容；原因：原因」；只有一列 → 原值；占位 x x x → 追加「（待补）」标记（业务口径：标记待补）。
  */
 function composeChangeReason(change: LegacyChange): string {
@@ -1001,19 +966,8 @@ function stakeholderSheetMissingSeed(): LegacyIssueSeed {
     code: "STAKEHOLDER_SHEET_MISSING",
     row: null,
     subject: null,
-    zh: "未发现「干系人」表：如该表是单独导出的，请点面板右上角「另附干系人表」选择后重新解析；否则本次不导入干系人（可导入后在项目「干系人」标签手工补录）",
-    en: "No stakeholder sheet found: if it was exported separately, attach it via the 另附干系人表 button (top-right) and re-run the preview; otherwise stakeholders are skipped (you can add them later in the project stakeholders tab).",
-  };
-}
-
-function stakeholderFileIgnoredSeed(fileName: string): LegacyIssueSeed {
-  return {
-    level: "info",
-    code: "STAKEHOLDER_FILE_IGNORED",
-    row: null,
-    subject: fileName,
-    zh: "主文件已含「干系人」表：另附文件未使用（以主文件为准）—— " + fileName,
-    en: "The main workbook already contains a stakeholder sheet; the attached file was ignored (main file wins): " + fileName,
+    zh: "未发现「干系人」表：本次不导入干系人（可导入后在项目「干系人」标签手工补录）",
+    en: "No stakeholder sheet found: stakeholders are skipped (you can add them later in the project stakeholders tab).",
   };
 }
 

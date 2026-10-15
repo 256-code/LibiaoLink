@@ -2,15 +2,15 @@ import { z } from "../zod.ts";
 import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
 
 /**
- * 老表导入（直连 API 导入 · 业务口径 2026-10-14；前端 Push 316 已接线，服务端本次落地）：
- * - POST /api/v1/project-imports/preview：multipart/form-data（字段 file + 可选 stakeholderFile，.xlsx / .xlsm，各 ≤ 64 MB）
- *   解析老表 + 口径校验，不写库；返回预览票据（previewId + 有效期）。
+ * 导入表导入（直连 API 导入 · 业务口径 2026-10-14；前端 Push 316 已接线，服务端本次落地）：
+ * - POST /api/v1/project-imports/preview：multipart/form-data（字段 file，.xlsx / .xlsm，≤ 64 MB）
+ *   解析导入表 + 口径校验，不写库；返回预览票据（previewId + 有效期）。
  * - POST /api/v1/project-imports/commit：JSON（previewId + 落位确认）→ 单事务建项目并写入全量数据。
  * 已固化口径：完成日期未填 = 不算完成（进度按进行中封顶 75%）；进度五档（0 / 0.25 / 0.5 / 0.75 / 1）；
  * 日期笔误（完成早于开始）照原值导入 + 提醒；任务节点无对应按文件原名导入（阶段外 = 临时任务）；
  * 变更阶段映射：实施 → install、发货 → assembly；账号 = 拼音登录名 + 中文名（测试账号加 -test）显示名；
  * 微盘 / 本地路径文件出「需手动导入」清单（表内嵌图随导入挂日报）；干系人（Push 324）：「干系人」表随导入落台账
- *（stakeholders + project_stakeholders）—— 主文件含该表直接解析；权限受限只能单独导出时在面板「另附干系人表」合并（stakeholderFile）；
+ * *（stakeholders + project_stakeholders）—— 导入表含该表直接解析；
  * 公司分类按源表自由写法映射四类（立镖 / 供应商 / 总包单位 / 客户），「填写者」匹配库内账号 = 录入人（匹配不到留空 + 提醒），
  * 「提交时间」→ created_at；两处都没找到「干系人」表 = 本次不导入干系人（info 提醒）。
  * Push 319 追订：变更表「关联」列命中任务描述 → 任务「变更关联」（change_refs）回写；导入的变更没有变更后文件
@@ -18,7 +18,7 @@ import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
  * 默认处理人 = 项目经理（工作台「待我处理」可见）；自动建号仅测试环境需要（正式环境用户目录完整、无需建号）。
  */
 
-/** 老表导入单文件上限（前端先挡一道，服务端复检同值）。 */
+/** 导入表导入单文件上限（前端先挡一道，服务端复检同值）。 */
 export const IMPORT_MAX_FILE_BYTES = 64 * 1024 * 1024;
 /** 预览票据有效期（分钟）：超时提交返回 410 IMPORT_PREVIEW_EXPIRED。 */
 export const IMPORT_PREVIEW_TTL_MINUTES = 30;
@@ -58,7 +58,7 @@ export const ImportAccountSchema = z
   .openapi("ImportAccount", { description: "导入涉及的人员账号（只报告，不在导入里创建账号 —— 缺号仅测试环境需预建；正式环境用户目录完整）" });
 export type ImportAccount = z.infer<typeof ImportAccountSchema>;
 
-/** 需手动导入的文件（老表只写了文件名 / 微盘路径，源文件抓不到）：导入后按清单人工上传。 */
+/** 需手动导入的文件（导入表只写了文件名 / 微盘路径，源文件抓不到）：导入后按清单人工上传。 */
 export const ImportManualImageSchema = z
   .object({
     task: z.string().max(200).nullable().openapi({ description: "关联任务 / 变更行（可空）" }),
@@ -102,7 +102,7 @@ export const ImportPreviewCountsSchema = z
       .number()
       .int()
       .min(0)
-      .openapi({ description: "干系人条数（主文件「干系人」表 / 另附文件；落 stakeholders + project_stakeholders）" }),
+      .openapi({ description: "干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders）" }),
     images: z.number().int().min(0).openapi({ description: "表内嵌图总数（提交时一并入文件库并挂日报）" }),
     imagesManual: z.number().int().min(0),
     accountsNew: z.number().int().min(0),
@@ -117,7 +117,7 @@ export const ImportResultCountsSchema = z
     reports: z.number().int().min(0),
     changes: z.number().int().min(0),
     changesLinked: z.number().int().min(0).openapi({ description: "变更已关联任务数（「关联」列命中任务描述；其余只存变更记录）" }),
-    stakeholders: z.number().int().min(0).openapi({ description: "干系人条数（干系人表 / 另附文件；落 stakeholders + project_stakeholders）" }),
+    stakeholders: z.number().int().min(0).openapi({ description: "干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders）" }),
     images: z.number().int().min(0),
     accountsCreated: z.number().int().min(0).openapi({ description: "本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数）" }),
     nodesAdded: z.number().int().min(0),
@@ -142,9 +142,6 @@ export const ProjectImportPreviewSchema = z
     previewId: UuidSchema.openapi({ description: "预览票据（commit 时原样回传）" }),
     expiresAt: DateTimeSchema.openapi({ description: "票据过期时间（超时 410 IMPORT_PREVIEW_EXPIRED）" }),
     file: ImportFileMetaSchema,
-    stakeholderFile: ImportFileMetaSchema.nullable().openapi({
-      description: "另附的干系人表文件（主文件不含「干系人」表时在面板另附）；未另附 = null",
-    }),
     project: ImportProjectPlacementSchema,
     counts: ImportPreviewCountsSchema,
     accounts: z.array(ImportAccountSchema).max(300),
@@ -152,7 +149,7 @@ export const ProjectImportPreviewSchema = z
     nodes: z.array(ImportTaskNodeSchema).max(2000),
     issues: z.array(ImportIssueSchema).max(5000),
   })
-  .openapi("ProjectImportPreview", { description: "老表导入预览报告（解析不写库；确认后才写入）" });
+  .openapi("ProjectImportPreview", { description: "导入表导入预览报告（解析不写库；确认后才写入）" });
 export type ProjectImportPreview = z.infer<typeof ProjectImportPreviewSchema>;
 
 /** 确认导入入参：落位确认（地区必填）+ 节点补库开关。 */
@@ -183,5 +180,5 @@ export const ProjectImportResultSchema = z
     counts: ImportResultCountsSchema,
     issues: z.array(ImportIssueSchema).max(5000).openapi({ description: "完成后复述的提醒清单（照原值导入项与人工待办）" }),
   })
-  .openapi("ProjectImportResult", { description: "老表导入结果（项目已创建 + 各域条数 + 提醒复述）" });
+  .openapi("ProjectImportResult", { description: "导入表导入结果（项目已创建 + 各域条数 + 提醒复述）" });
 export type ProjectImportResult = z.infer<typeof ProjectImportResultSchema>;

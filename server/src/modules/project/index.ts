@@ -1,7 +1,7 @@
 /** project 模块唯一公开出口（跨模块只允许 import 本文件；ADR-010 / g6）。 */
 export { ProjectModule } from "./project.module.js";
 export { ProjectService, toProjectView } from "./project.service.js";
-// Push 316 起老表导入（project-import 模块）复用项目插入 / 成员名册写口：同事务建项目 + upsert 项目经理。
+// Push 316 起导入表导入（project-import 模块）复用项目插入 / 成员名册写口：同事务建项目 + upsert 项目经理。
 export { ProjectRepository } from "./project.repository.js";
 export { ProjectMemberRepository } from "./project-member.repository.js";
 export type { ProjectView, ProjectListResult, ProjectFacetsResult } from "./project.service.js";

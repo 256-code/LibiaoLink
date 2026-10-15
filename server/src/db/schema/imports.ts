@@ -5,7 +5,7 @@ import { sqlValueList } from "./literals.js";
 import { projects } from "./projects.js";
 
 /**
- * project_import_previews（0053）：老表导入预览票据 —— 解析结果（payload jsonb）+ 源工作簿对象键；
+ * project_import_previews（0053）：导入表导入预览票据 —— 解析结果（payload jsonb）+ 源工作簿对象键；
  * commit 单事务写入全部业务数据后置 committed；超时未提交 = expired（惰性标记 + 清理对象）。
  * 口径见 database/migrations/0053_project_imports.sql 与 shared/src/modules/imports.ts。
  */

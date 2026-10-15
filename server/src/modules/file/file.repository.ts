@@ -47,7 +47,7 @@ export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 
 /**
  * 变更记录读面行（M4-04 读面）：变更本体 + 由 `file_versions.change_request_id` 反查的变更后文件 / 版本。
- * Push 319：老表导入的变更没有「变更后文件」（源文件在微盘，人工后补）→ 读面改左连接，fileId / versionId /
+ * Push 319：导入表导入的变更没有「变更后文件」（源文件在微盘，人工后补）→ 读面改左连接，fileId / versionId /
  * versionSeq 可为空；写入切片（一变更一版本）语义不变，行内为空 = 导入遗留数据。
  */
 export interface ChangeRequestJoinedRow {

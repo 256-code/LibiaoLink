@@ -5,6 +5,7 @@ import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
 import { FileService, PreviewService } from "../modules/file/index.js";
+import { IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportService } from "../modules/project-import/index.js";
 import { NotifyDmService, NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
 import { JobScheduler, OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
@@ -27,6 +28,7 @@ async function bootstrap(): Promise<void> {
   const database = app.get(DatabaseService);
   const files = app.get(FileService);
   const previews = app.get(PreviewService);
+  const projectImports = app.get(ProjectImportService);
   const notify = app.get(NotifyService);
   const groupNotify = app.get(NotifyGroupService);
   const dmNotify = app.get(NotifyDmService);
@@ -50,7 +52,7 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（上传会话过期清理 / 回收站到期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
+    "worker 已启动（上传会话过期清理 / 回收站到期清理 / 导入表票据过期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
@@ -66,6 +68,20 @@ async function bootstrap(): Promise<void> {
   };
   const sweep = setInterval(() => void sweepUploads(), UPLOAD_SWEEP_INTERVAL_MS);
   void sweepUploads();
+
+  // 导入表票据过期清理（Push 325 · 风险⑤）：10 分钟一轮，启动即跑一次；先删源对象，再置 expired。
+  const sweepImportPreviews = async (): Promise<void> => {
+    try {
+      const result = await projectImports.sweepExpiredPreviews();
+      if (result.scanned > 0) {
+        logger.log("导入表票据过期清理：扫描 " + result.scanned + " 个 / 过期 " + result.expired + " 个");
+      }
+    } catch (error) {
+      logger.error("导入表票据过期清理失败：" + (error instanceof Error ? error.message : String(error)));
+    }
+  };
+  const importPreviewSweep = setInterval(() => void sweepImportPreviews(), IMPORT_PREVIEW_SWEEP_INTERVAL_MS);
+  void sweepImportPreviews();
 
   const sweepRecycled = async (): Promise<void> => {
     try {
@@ -243,6 +259,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(heartbeat);
     clearInterval(sweep);
     clearInterval(recycleSweep);
+    clearInterval(importPreviewSweep);
     clearInterval(outboxPoll);
     clearInterval(schedulerTick);
     clearInterval(notifyFlush);
