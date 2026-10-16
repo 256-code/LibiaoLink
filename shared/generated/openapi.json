@@ -3145,7 +3145,8 @@
           "progress",
           "status",
           "issues",
-          "delivery"
+          "delivery",
+          "wordcloud"
         ],
         "description": "仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress"
       },
@@ -8869,7 +8870,7 @@
                 "$ref": "#/components/schemas/HubDashView"
               },
               {
-                "description": "仪表盘页内图表视图（Push 345 · 按账号记住）：progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间；读侧白名单外 / 缺省一律收敛为 progress"
+                "description": "仪表盘页内图表视图（Push 345 · 按账号记住；Push 353 加词频图）：progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间 / wordcloud = 词频图；读侧白名单外 / 缺省一律收敛为 progress"
               }
             ]
           }

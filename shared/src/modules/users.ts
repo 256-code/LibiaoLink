@@ -204,14 +204,14 @@ export const HubDashProjectSchema = z
   .nullable()
   .openapi("HubDashProject", { description: "仪表盘页常驻项目 id（Push 336）：null = 全部项目（默认）；读侧非法 / 缺省一律收敛为 null" });
 
-/** 仪表盘页内图表视图 id（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：
- *  progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；
- *  读侧白名单外 / 缺省一律收敛为 progress。 */
-export const HUB_DASH_VIEW_IDS = ["progress", "status", "issues", "delivery"] as const;
+/** 仪表盘页内图表视图 id（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」）：
+ *  progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/
+ *  wordcloud = 「词频图」；读侧白名单外 / 缺省一律收敛为 progress。 */
+export const HUB_DASH_VIEW_IDS = ["progress", "status", "issues", "delivery", "wordcloud"] as const;
 
 export const HubDashViewSchema = z
   .enum(HUB_DASH_VIEW_IDS)
-  .openapi("HubDashView", { description: "仪表盘页内图表视图（Push 345 · 按账号记住）：progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间；读侧白名单外 / 缺省一律收敛为 progress" });
+  .openapi("HubDashView", { description: "仪表盘页内图表视图（Push 345 · 按账号记住；Push 353 加词频图）：progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间 / wordcloud = 词频图；读侧白名单外 / 缺省一律收敛为 progress" });
 
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。

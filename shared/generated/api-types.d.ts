@@ -8377,7 +8377,7 @@ export interface components {
          * @description 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress
          * @enum {string}
          */
-        HubDashView: "progress" | "status" | "issues" | "delivery";
+        HubDashView: "progress" | "status" | "issues" | "delivery" | "wordcloud";
         /**
          * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
          * @enum {string}
