@@ -142,6 +142,29 @@ export class NotifyDmRepository {
   }
 
   /**
+   * 解绑（D6 · 口径 §4）：把当前机器人下该用户的绑定行去址 —— `bound_at` / `user_id` 置空
+   * （保留激活登记行，语义与「换绑清旧」同形：注销投递资格，激活痕迹仍在）。
+   * 返回清除行数（0 = 本就无绑定 → 调用方按幂等收口、不写审计）。
+   */
+  async clearBindingByUserId(
+    input: { botId: string; userId: string; at: Date },
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const rows = await client
+      .update(wecomAibotDmActivations)
+      .set({ userId: null, boundAt: null, updatedAt: input.at })
+      .where(
+        and(
+          eq(wecomAibotDmActivations.botId, input.botId),
+          eq(wecomAibotDmActivations.userId, input.userId),
+          isNotNull(wecomAibotDmActivations.boundAt),
+        ),
+      )
+      .returning({ id: wecomAibotDmActivations.id });
+    return rows.length;
+  }
+
+  /**
    * 回调 ingest 登记（D1）：单聊用户消息（cmd=aibot_msg_callback · chattype=single）→ upsert（幂等）——
    * 新建或刷新 last_message_at；first_activated_at 首次后不覆盖；**不碰 user_id / bound_at**（绑定只由
    * 绑定码链路写入 —— 本登记行不可作发送地址）。

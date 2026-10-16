@@ -113,6 +113,8 @@ import {
   NotifyPrefsSchema,
   NotifyPrefsUpdateBodySchema,
   ResourceInvalidationPayloadSchema,
+  WecomDmBindingCodeSchema,
+  WecomDmBindingStateSchema,
 } from "./modules/notifications.ts";
 import {
   TranslateBatchBodySchema,
@@ -1908,6 +1910,44 @@ export function buildOpenApiDocument() {
       200: { description: "稍后提醒记录清单", ...json(NotificationSnoozeListResponseSchema) },
       401: commonErrors[401],
       404: commonErrors[404],
+    },
+  });
+
+  // ---- 企业微信单聊绑定（M5-03-5-6 绑定码链路 · 契约刀 · Push 249 · lan 代记 / wmj 复核）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/wecom-dm-binding",
+    tags: ["notifications"],
+    summary:
+      "企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位",
+    responses: {
+      200: { description: "绑定态（未绑定 = bound:false；wecomUseridMasked / boundAt = null）", ...json(WecomDmBindingStateSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/wecom-dm-binding/codes",
+    tags: ["notifications"],
+    summary:
+      "生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 3 次 / 小时 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担）",
+    responses: {
+      200: { description: "绑定码（code / expiresAt / expiresInSeconds）", ...json(WecomDmBindingCodeSchema) },
+      401: commonErrors[401],
+      429: errorResponse("取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = hour）"),
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/wecom-dm-binding",
+    tags: ["notifications"],
+    summary:
+      "解绑企业微信单聊（D6）：注销投递资格（保留激活登记）→ 未绑定态收口（不发帧 + dead + 绑定指引降级）；幂等（未绑定也 200 bound:false，不写审计）；解绑成功写 audit_logs",
+    responses: {
+      200: { description: "解绑后的绑定态（恒 bound:false）", ...json(WecomDmBindingStateSchema) },
+      401: commonErrors[401],
     },
   });
 

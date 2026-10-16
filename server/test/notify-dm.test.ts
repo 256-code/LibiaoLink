@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import type { NotifyMessagePayload } from "@libiaolink/contracts";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
+import type { AuditRecordInput } from "../src/modules/audit/index.js";
 import type {
   DmActivationRow,
   DmBindingCodeRow,
@@ -64,6 +65,10 @@ class FakeDmRepository {
   /** 绑定占用失败（并发 / 恰过期）。 */
   bindFails = false;
   backfillFails = false;
+  /** 解绑调用留痕（含事务 client —— 断言「与清绑定同事务」）。 */
+  clearCalls: { botId: string; userId: string; at: Date; client?: unknown }[] = [];
+  /** 覆盖清除行数（null = 按实际清掉的行数返回）。 */
+  clearOverride: number | null = null;
   private nextCodeId = 1;
 
   async findContact(userId: string): Promise<WecomDmContact | null> {
@@ -170,6 +175,22 @@ class FakeDmRepository {
   async insertDelivery(input: NotifyDmDeliveryInsert): Promise<void> {
     this.deliveries.push(input);
   }
+
+  /** 解绑（D6）：清当前机器人下该用户的绑定行；`clearOverride` 复现「并发已清 → 清 0 行」竞态。 */
+  async clearBindingByUserId(
+    input: { botId: string; userId: string; at: Date },
+    client?: unknown,
+  ): Promise<number> {
+    this.clearCalls.push({ ...input, client });
+    let cleared = 0;
+    for (const [entryKey, row] of this.bindings) {
+      if (row.botId === input.botId && row.userId === input.userId) {
+        this.bindings.delete(entryKey);
+        cleared += 1;
+      }
+    }
+    return this.clearOverride ?? cleared;
+  }
 }
 
 class FakeAibot {
@@ -191,6 +212,22 @@ class FakeAibot {
     this.replies.push(params);
     return this.replyResult;
   }
+}
+
+/** 审计替身（D6）：留痕 (client, input) —— client 同一性即「与清绑定同事务」的证据。 */
+class FakeAudit {
+  records: { client: unknown; input: AuditRecordInput }[] = [];
+
+  async record(client: unknown, input: AuditRecordInput): Promise<void> {
+    this.records.push({ client, input });
+  }
+}
+
+/** 事务替身（DatabaseService.db）：单层事务直接跑回调，并把同一个 tx 交给仓储与审计。 */
+class FakeDatabase {
+  db = {
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn({ tx: "stub" }),
+  };
 }
 
 /** C5-04 降级站内信替身（NotifyService.deliverInboxCopy 端口）。 */
@@ -216,6 +253,7 @@ function makeService(): {
   repo: FakeDmRepository;
   aibot: FakeAibot;
   inbox: FakeNotifyInbox;
+  audit: FakeAudit;
 } {
   const repo = new FakeDmRepository();
   const aibot = new FakeAibot();
@@ -223,14 +261,18 @@ function makeService(): {
   const clock = new ClockService();
   clock.setSource(() => AT);
   const config = { env: { WECOM_BOT_ID: BOT_ID } };
+  const audit = new FakeAudit();
+  const database = new FakeDatabase();
   const service = new NotifyDmService(
     repo as never,
     aibot as unknown as WecomAibotClient,
     inbox as never,
     clock,
     config as never,
+    audit as never,
+    database as never,
   );
-  return { service, repo, aibot, inbox };
+  return { service, repo, aibot, inbox, audit };
 }
 
 function contact(overrides: Partial<WecomDmContact> = {}): WecomDmContact {
@@ -772,6 +814,7 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
     if (result.ok) {
       expect(result.code).toMatch(/^[0-9]{6}$/);
       expect(result.expiresAt.getTime()).toBe(AT.getTime() + DM_BINDING_CODE_TTL_MS);
+      expect(result.expiresInSeconds).toBe(DM_BINDING_CODE_TTL_MS / 1000);
     }
     expect(repo.codeCreateCalls).toHaveLength(1);
     expect(repo.codeCreateCalls[0]).toMatchObject({ userId: USER_ID, expiresAt: new Date(AT.getTime() + DM_BINDING_CODE_TTL_MS), at: AT });
@@ -810,12 +853,104 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
     await expect(service.requestBindingCode(USER_ID)).rejects.toThrow("绑定码生成失败");
   });
 
-  it("绑定态读面：已绑定 / 未绑定", async () => {
+  it("绑定态读面：已绑定回掩码末 4 位 + 时刻（ISO）；未绑定 / 换机器人回落 null", async () => {
     const bound = makeBoundService();
-    expect(await bound.service.getBindingState(USER_ID)).toEqual({ bound: true, boundAt: BEFORE });
+    expect(await bound.service.getBindingState(USER_ID)).toEqual({
+      bound: true,
+      wecomUseridMasked: "****" + OPEN_USERID.slice(-4),
+      boundAt: BEFORE.toISOString(),
+    });
 
     const unbound = makeService();
     unbound.repo.contacts.set(USER_ID, contact());
-    expect(await unbound.service.getBindingState(USER_ID)).toEqual({ bound: false, boundAt: null });
+    expect(await unbound.service.getBindingState(USER_ID)).toEqual({
+      bound: false,
+      wecomUseridMasked: null,
+      boundAt: null,
+    });
+
+    // 换机器人：旧绑定按 (bot_id, ...) 维度不再命中 → 读面回到未绑定（无需清库即生效）。
+    const otherBot = makeBoundService();
+    otherBot.repo.bindings.clear();
+    otherBot.repo.bindings.set(key("aibOtherBot0001", OPEN_USERID), {
+      botId: "aibOtherBot0001",
+      wecomUserid: OPEN_USERID,
+      userId: USER_ID,
+      boundAt: BEFORE,
+    });
+    expect((await otherBot.service.getBindingState(USER_ID)).bound).toBe(false);
+  });
+});
+
+// ---------- 解绑（D6） ----------
+
+describe("NotifyDmService.unbind（D6：清绑定 + 同事务审计 / 幂等）", () => {
+  it("解绑：清绑定行 + 同事务写审计 1 条（user / delete / 只带掩码）", async () => {
+    const { service, repo, audit } = makeBoundService();
+
+    const state = await service.unbind(USER_ID, USER_ID);
+
+    expect(state).toEqual({ bound: false, wecomUseridMasked: null, boundAt: null });
+    expect(repo.clearCalls).toHaveLength(1);
+    expect(repo.clearCalls[0]).toMatchObject({ botId: BOT_ID, userId: USER_ID, at: AT });
+    expect(repo.bindings.size).toBe(0);
+    expect(audit.records).toHaveLength(1);
+    const record = audit.records[0]!;
+    expect(record.input).toMatchObject({
+      actorId: USER_ID,
+      action: "delete",
+      objectType: "user",
+      objectId: USER_ID,
+      summary: "解绑企业微信单聊（open_userid ****" + OPEN_USERID.slice(-4) + "）",
+      changes: [{ field: "wecomDmBinding", from: "****" + OPEN_USERID.slice(-4), to: null }],
+      metadata: { bound: false, botId: BOT_ID },
+    });
+    // 同一事务证据：审计 client === 清绑定 client；明文 open_userid 不进审计。
+    expect(record.client).toBe(repo.clearCalls[0]!.client);
+    expect(JSON.stringify(record.input)).not.toContain(OPEN_USERID);
+  });
+
+  it("幂等：本就未绑定 → 不触库、不写审计，仍回 bound:false", async () => {
+    const { service, repo, audit } = makeService();
+
+    expect(await service.unbind(USER_ID, USER_ID)).toEqual({
+      bound: false,
+      wecomUseridMasked: null,
+      boundAt: null,
+    });
+    expect(repo.clearCalls).toEqual([]);
+    expect(audit.records).toEqual([]);
+  });
+
+  it("幂等：重复解绑 → 第二次不再触库、不再写审计", async () => {
+    const { service, repo, audit } = makeBoundService();
+
+    await service.unbind(USER_ID, USER_ID);
+    await service.unbind(USER_ID, USER_ID);
+
+    expect(repo.clearCalls).toHaveLength(1);
+    expect(audit.records).toHaveLength(1);
+  });
+
+  it("竞态（清 0 行 = 他处已清）：不写审计、仍回 bound:false", async () => {
+    const { service, repo, audit } = makeBoundService();
+    repo.clearOverride = 0;
+
+    expect((await service.unbind(USER_ID, USER_ID)).bound).toBe(false);
+    expect(repo.clearCalls).toHaveLength(1);
+    expect(audit.records).toEqual([]);
+  });
+
+  it("解绑后失去投递地址：消费不发帧 → dead + 绑定指引降级（D4）", async () => {
+    const { service, repo, aibot, inbox } = makeBoundService();
+
+    await service.unbind(USER_ID, USER_ID);
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome.outcome).toBe("dead");
+    expect(aibot.sends).toEqual([]);
+    expect(repo.deliveries[0]).toMatchObject({ state: "dead", target: "user:" + USER_ID });
+    expect(inbox.copies).toHaveLength(1);
+    expect(inbox.copies[0]!.message.body.startsWith(DM_BINDING_DEGRADE_PREFIX)).toBe(true);
   });
 });

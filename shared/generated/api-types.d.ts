@@ -7320,6 +7320,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/wecom-dm-binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 绑定态（未绑定 = bound:false；wecomUseridMasked / boundAt = null） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingState"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** 解绑企业微信单聊（D6）：注销投递资格（保留激活登记）→ 未绑定态收口（不发帧 + dead + 绑定指引降级）；幂等（未绑定也 200 bound:false，不写审计）；解绑成功写 audit_logs */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 解绑后的绑定态（恒 bound:false） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingState"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wecom-dm-binding/codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 3 次 / 小时 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 绑定码（code / expiresAt / expiresInSeconds） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingCode"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = hour） */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/translate": {
         parameters: {
             query?: never;
@@ -8031,7 +8159,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -9798,6 +9926,25 @@ export interface components {
             sort?: components["schemas"]["ViewSort"];
             grouping?: components["schemas"]["ViewGrouping"];
             isDefault?: boolean;
+        };
+        /** @description 绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码） */
+        WecomDmBindingCode: {
+            /**
+             * @description 6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）
+             * @example 482913
+             */
+            code: string;
+            expiresAt: components["schemas"]["DateTime"] & unknown;
+            /** @description 剩余有效期（秒；供前端倒计时） */
+            expiresInSeconds: number;
+        };
+        /** @description 企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记） */
+        WecomDmBindingState: {
+            /** @description 当前机器人（`WECOM_BOT_ID`）下是否已有可投递地址 */
+            bound: boolean;
+            /** @description 企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null */
+            wecomUseridMasked: string | null;
+            boundAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description 工作台问题项（跨项目；问题追踪七列数据源随行下发） */
         WorkspaceIssueItem: {
