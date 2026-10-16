@@ -6,7 +6,9 @@
  *        → 产出 notify.message（收件人 / 类型 / 渠道 / 模板 / 关联对象 / 幂等键全字段断言；M5-03-5-4 起同规则
  *        双产行 = inbox + wecom_aibot（幂等键 :aibot 后缀））→ 下一轮领取 → 按载荷 channel 分流（镜像
  *        OutboxModule.buildRegistry）：wecom_aibot → 真 NotifyDmService（stub socket 自动应答）→
- *        notify_deliveries sent 行 + 激活表旁证回填（D4）；其余 → 真 NotifyService 落行 → 收件箱读面立即可见。
+ *        notify_deliveries sent 行（**M5-03-5-6：发送地址 = 绑定行 `wecom_userid`** —— 夹具按
+ *        `(bot_id, wecom_userid)` 播种绑定行，等价于「该用户已完成绑定」；旁证回填 D4 仍保留为兜底）；其余 →
+ *        真 NotifyService 落行 → 收件箱读面立即可见。
  *   证据二（冷启动保护）：行创建时刻超 AUTOMATION_EVENT_MAX_AGE_MS 的历史事件 → done、零产出；同载荷新事件
  *        正常产出（对照组：拦截判据是「事件年龄」而非条件不命中）。
  *   证据三（主体不可解析）：taskId 不存在 → outbox 行 dead（确定性失败一次即弃）、零产出。
@@ -48,6 +50,8 @@ const DATABASE_URL =
 /** 本回放合成 outbox 去重键前缀（清理 / 基线计数用）：证据专用，不落生产代码。 */
 const OUTBOX_PREFIX = "s74wireReplay.";
 const USER_PREFIX = "s74w-";
+/** 单聊 aibot 机器人维度（M5-03-5-6：绑定行 / 激活表按 (bot_id, wecom_userid) 成对）—— stub 客户端与 AppConfig 同值。 */
+const DM_STUB_BOT_ID = "bot-stub";
 const JOB_REPLAY_TAG = "s74wire-replay";
 const WORKER_ID = "s74wire-replay";
 const HOUR_MS = 3_600_000;
@@ -268,7 +272,7 @@ function buildEnv(overrides = {}) {
   await db.connect();
 
   const tag = randomBytes(4).toString("hex");
-  const env = buildEnv();
+  const env = buildEnv({ WECOM_BOT_ID: DM_STUB_BOT_ID });
   const clock = new runtime.ClockService();
   clock.setSource(() => CLOCK_NOW);
   const config = new runtime.AppConfig(env);
@@ -290,7 +294,7 @@ function buildEnv(overrides = {}) {
   const dmAibot = runtime.createWecomAibotClientFromEnv(
     {
       WECOM_BOT_WS_URL: "wss://stub.test/aibot",
-      WECOM_BOT_ID: "bot-stub",
+      WECOM_BOT_ID: DM_STUB_BOT_ID,
       WECOM_BOT_SECRET: "secret-stub",
       WECOM_BOT_PING_INTERVAL_MS: 3_600_000,
       WECOM_BOT_ACK_TIMEOUT_MS: 1000,
@@ -309,7 +313,8 @@ function buildEnv(overrides = {}) {
       now: () => CLOCK_NOW.getTime(),
     },
   ).aibot;
-  const dmNotify = new runtime.NotifyDmService(new runtime.NotifyDmRepository(database), dmAibot, notify, clock);
+  // M5-03-5-6：第 5 参 = AppConfig（`bot_id` 维度取值来源：config.env.WECOM_BOT_ID）。
+  const dmNotify = new runtime.NotifyDmService(new runtime.NotifyDmRepository(database), dmAibot, notify, clock, config);
   dmAibot.start();
   dmSockets[0].open();
   /** 确定性等待订阅完成（stub 应答；超时即回放异常，不静默降级断言）。 */
@@ -504,6 +509,12 @@ function buildEnv(overrides = {}) {
     const owner2 = cleanup.userIds[2];
     const ownerUsername = USER_PREFIX + tag + "-owner";
     const owner2Username = USER_PREFIX + tag + "-owner2";
+    // M5-03-5-6 绑定码口径：单聊可投递地址 = 绑定行（bot_id + 密文 open_userid）——
+    // 本回放以 username 充当 stub 侧的 open_userid，直接播种绑定行（等价于「该用户已完成绑定」）。
+    await db.query(
+      "insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, bound_at) values ($1, $2, $3, $4), ($1, $5, $6, $4)",
+      [DM_STUB_BOT_ID, ownerUsername, owner, CLOCK_NOW, owner2Username, owner2],
+    );
 
     const projects = await db.query(
       "insert into projects (code, name, customer, region, project_type, manager_ids, stage_key, status, description, version) values ($1, $2, $3, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $5, 1), ($6, $7, $8, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $9, 1) returning id",
@@ -605,8 +616,8 @@ function buildEnv(overrides = {}) {
     const activation1 = await activationFor(ownerUsername);
     check(
       "S1d",
-      "投递落库：notify.message 双行分流消费（inbox → notifications 一行；wecom_aibot → 单聊发送（stub 应答 errcode=0）→ notify_deliveries sent 行 + 激活表旁证回填 D4）",
-      "claimed=2 / done=2 / notifications=1 行 / deliveries sent=1（channel=wecom_aibot · target=责任人 userid）/ activation.user_id=责任人",
+      "投递落库：notify.message 双行分流消费（inbox → notifications 一行；wecom_aibot → 读绑定行寻址（M5-03-5-6）→ 单聊发送（stub 应答 errcode=0）→ notify_deliveries sent 行）",
+      "claimed=2 / done=2 / notifications=1 行 / deliveries sent=1（channel=wecom_aibot · target=绑定行 wecom_userid = 责任人）/ 绑定行 user_id=责任人",
       short({
         ...drain2,
         rows: notification1.rows.length,
