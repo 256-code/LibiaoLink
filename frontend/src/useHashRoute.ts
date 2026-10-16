@@ -123,6 +123,7 @@ export type Route =
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null }
   | { kind: "audit"; query: AuditQueryState }
+  | { kind: "settings" }
   | { kind: "files"; query: FilesQueryState };
 
 /** 任务模板页地址：当前板块（标签栏选中的阶段）也走 URL —— 与列表页筛选态同一口径，地址即状态。 */
@@ -149,6 +150,12 @@ export const AUDIT_BASE_HASH = "#/audit";
 
 /** 「文件库」页地址（头像菜单「文件库」入口；两栏 + 筛选态走 query，缺省不落参数）—— Push 261。 */
 export const FILES_BASE_HASH = "#/files";
+
+/**
+ * 「设置」页地址（头像菜单首项入口 · Push 250）：账号级设置的家（当前 = 企业微信绑定 D5 / D6）。
+ * 没有页内子态，故不带 query。
+ */
+export const SETTINGS_BASE_HASH = "#/settings";
 
 const PROJECT_PATH = /^\/project\/([^/]+)$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -599,6 +606,11 @@ export function parseHash(hash: string): Route {
     // 地址即状态（?tab=recycled&q=..&project=..&status=..&uploadedBy=..&page=N；缺省不落参数）；
     // 页面 = frontend/src/FileLibraryPage.tsx，数据 = 逐项目聚合 GET /projects/{id}/files（fileApi.fetchProjectFileLibrary）。
     return { kind: "files", query: parseFilesQuery(search) };
+  }
+  if (path === "/settings") {
+    // 设置（Push 250 · 头像菜单首项入口 · 业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）：
+    // 账号级设置的家 —— 当前落点 = 企业微信绑定（D5 / D6 绑定码链路）；页面 = frontend/src/SettingsPage.tsx。
+    return { kind: "settings" };
   }
   if (path === "/my-tasks") {
     // 工作台（系统功能书 A6 我的工作台 · A6-01 / A6-03）：Push 230 起页面正式落地（frontend/src/WorkspacePage.tsx），

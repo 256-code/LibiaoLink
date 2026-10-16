@@ -48,7 +48,10 @@ export function redirectToLogin(): void {
 
 
 /** 业务接口统一错误信封（服务端 ApiErrorFilter 输出：{ code, message, details, traceId }）。 */
-export type ApiErrorDetail = { code: string; message: string; path?: string };
+/** meta = 机器可读的补充字段（契约 shared/src/common/errors.ts 的 ErrorDetail.meta）——
+ *  例：429 `RATE_LIMITED` 给 `meta.retryAt`（可重试时刻 · ISO）+ `meta.window`（限流窗口），
+ *  页面据此置灰按钮 + 倒计时（《前端功能需求》§3.7 / §3.10）。 */
+export type ApiErrorDetail = { code: string; message: string; path?: string; meta?: Record<string, unknown> };
 
 /** 业务接口错误：页面按 code 分支（409 PROJECT_CODE_EXISTS / VERSION_CONFLICT …），details 给字段级提示。 */
 export class ApiError extends Error {
@@ -97,6 +100,7 @@ async function toApiError(response: Response): Promise<ApiError> {
           code: typeof item.code === "string" ? item.code : "VALIDATION_FAILED",
           message: typeof item.message === "string" ? item.message : "",
           path: typeof item.path === "string" ? item.path : undefined,
+          meta: isRecord(item.meta) ? item.meta : undefined,
         }));
       }
       if (typeof payload.traceId === "string") {
