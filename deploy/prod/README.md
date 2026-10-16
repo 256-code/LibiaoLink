@@ -106,13 +106,14 @@ docker compose exec -T postgres psql -U postgres -d libiaolink -c "\du"
 docker compose --profile tools pull tools
 ```
 
-迁移（以 `libiaolink_migrator` 身份；当前 0001~0053）：
+迁移（以 `libiaolink_migrator` 身份；服务器水位 2026-10-16 = `0054`（v1.52 · Push 347），仓库迁移件已到 `0055`）：
 
 ```bash
 bash scripts/db-migrate.sh
 ```
 
-- 复跑幂等：再跑一次应输出「已执行 52 个迁移，无漂移」；
+- 复跑幂等：再跑一次应输出「已执行 N 个迁移，无漂移」（N = 已执行件数）；
+- **待执行件 `0055`（2026-10-16 · M5-03-5 绑定码链路）**：绑定码表 + 单聊激活表机器人维度；其中含一次定向清理（`delete from wecom_aibot_dm_activations where bot_id is null` = 旧机器人遗留激活行），**不可回滚 → 执行前先备份 PG**（M8 §5）；执行后复跑应输出「已执行 54 个迁移，无漂移」。
 - `bash scripts/db-migrate.sh --dry-run` 只列出待执行，不改库；
 - 首次运行会在命名卷 `libiaolink-prod-tools-node-modules` 里 `npm ci`（不污染宿主机 `database/`）；慢网可换源：`NPM_REGISTRY=https://registry.npmmirror.com bash scripts/db-migrate.sh`。
 
@@ -155,6 +156,8 @@ chmod 600 *
 ```
 
 > 占位值仅供「先起服务、后回填」的过度期使用；真值到位后覆盖文件并 `docker compose --profile app restart api worker`。
+
+> **智能机器人（群 + 单聊 · M5-03-5）**：`server.env` 需回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET`（成对；Secret 不进仓库）。换机器人 = 改此二值即视为新机器人 —— 新 `bot_id` 下无绑定行，单聊不发帧 + `dead` + 站内信降级（D4 话术），已绑定用户需重新绑定一次；回填后 `docker compose --profile app restart api worker`（长连接由 worker 建立）。
 
 **启动与验证：**
 
@@ -305,6 +308,7 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 - web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；剩余：9443 备用门面择机收敛（浏览器流量已全部走 443 同源门面，9443 仅内网直连用，待无使用后从 compose 删端口）；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限、9000 明文端口收敛（127.0.0.1，TLS 门面稳定后）；
 - onlyoffice（文档服务器）：生产上线 ✅（2026-10-14，离线镜像 + 443 子路径门面 + 真实 64MB xlsx 端到端；见 `deploy/onlyoffice/README.md` §6）；剩余：升级 / 重建后按回归五项 + §6.3 表复验、缓存盘 7 天清理 cron、正式环境容量评估与 CVE 跟踪；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
+- M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET` → `restart api worker` → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
 - 完成项在 `docs/M8-部署Runbook与上线检查单(单机).md` 勾选；推送时随 `开发日志.md` 记录。
 
 ## 11. 变更记录
