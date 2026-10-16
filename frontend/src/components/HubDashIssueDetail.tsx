@@ -20,6 +20,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * 传入的 rows 已由父组件按「点中的状态 × 归类」筛好（口径见 data/dashboardProgress.ts 的 isIssueInCell，
  * 保证「柱上数字 = 表行数」）。
  * 表行 = 一条问题 + 它的来源日报（issue.reportId → reportsByProject；无来源日报时报告侧整列出杠）。
+ * Push 351（2026-10-16 · Push 350 同源修正）：Esc 优先级 —— 附图大图预览开着时 Esc 先关预览、弹窗仍在（PhotoTiles onPreviewOpenChange + 本弹窗 Esc 让位；原为一下全关）。
  */
 
 /** 表行：问题 + 来源日报（可为空）。 */
@@ -87,17 +88,22 @@ function PhotoTile({ photo, onPreview }: { readonly photo: ReportPhoto; readonly
 }
 
 /** 附图列（小图瓦片 56 x 44、多张折行；空 = 「—」）。 */
-function PhotoTiles({ photos }: { readonly photos: readonly ReportPhoto[] }) {
+function PhotoTiles({ photos, onPreviewOpenChange }: { readonly photos: readonly ReportPhoto[]; /** 大图预览开 / 关通知（Push 351：宿主弹窗据此让出 Esc 优先级 —— 预览开着时 Esc 先关预览、弹窗仍在）。 */ onPreviewOpenChange?: (open: boolean) => void }) {
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  /** 大图预览开 / 关（Push 351：带出开合通知 —— 宿主弹窗 Esc 让位给预览层）。 */
+  const setPreviewOpen = (next: { url: string; name: string } | null) => {
+    setPreview(next);
+    onPreviewOpenChange?.(next !== null);
+  };
   if (photos.length === 0) {
     return <span className="hub-dash-detail__blank">—</span>;
   }
   return (
     <span className="inline-flex flex-wrap items-start gap-1.5">
       {photos.map((photo, index) => (
-        <PhotoTile key={photo.fileId + "#" + String(index)} photo={photo} onPreview={(url, name) => { setPreview({ url, name }); }} />
+        <PhotoTile key={photo.fileId + "#" + String(index)} photo={photo} onPreview={(url, name) => { setPreviewOpen({ url, name }); }} />
       ))}
-      {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => { setPreview(null); }} />}
+      {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => { setPreviewOpen(null); }} />}
     </span>
   );
 }
@@ -130,12 +136,18 @@ export function HubDashIssueDetail({ projectName, rows, onClose }: {
   const [overflow, setOverflow] = useState(false);
   /** 键盘焦点陷阱：焦点进弹窗、Tab 在弹窗内循环、关闭还原；焦点收在容器本身（不抢 ✕）。 */
   const trapRef = useFocusTrap<HTMLDivElement>();
-  /** Esc 关弹窗：capture 阶段拦下（先于页面级快捷键），避免同一按 Esc 连带触发地图转场。 */
+  /** Push 351：附图大图预览的开合（Esc 让位用 —— 预览开着时 Esc 先关预览、弹窗仍在）。 */
+  const thumbPreviewOpenRef = useRef(false);
+  /** Esc 关弹窗：capture 阶段拦下（先于页面级快捷键），避免同一按 Esc 连带触发地图转场；
+   *  Push 351：附图大图预览开着时让位给预览层自己的 Esc（先关预览、弹窗仍在）。 */
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        onClose();
+        // Push 351：附图大图预览开着时让位给预览层自己的 Esc（先关预览、弹窗仍在）。
+        if (!thumbPreviewOpenRef.current) {
+          onClose();
+        }
       }
     };
     document.addEventListener("keydown", onKey, true);
@@ -213,10 +225,10 @@ export function HubDashIssueDetail({ projectName, rows, onClose }: {
                     <td>{card.headcount === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__date">{card.headcount}</span>}</td>
                     <td>{card.author === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__chip" title={card.author}>{card.author}</span>}</td>
                     <td>{card.plan === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__note" title={card.plan}>{card.plan}</span>}</td>
-                    <td><PhotoTiles photos={card.report === null ? [] : card.report.photos} /></td>
+                    <td><PhotoTiles photos={card.report === null ? [] : card.report.photos} onPreviewOpenChange={(open) => { thumbPreviewOpenRef.current = open; }} /></td>
                     <td><CategoryPills values={card.issue.categories} /></td>
                     <td>{card.solution === "" ? <span className="hub-dash-detail__blank">—</span> : <span className="hub-dash-detail__note" title={card.solution}>{card.solution}</span>}</td>
-                    <td><PhotoTiles photos={card.issue.photos} /></td>
+                    <td><PhotoTiles photos={card.issue.photos} onPreviewOpenChange={(open) => { thumbPreviewOpenRef.current = open; }} /></td>
                   </tr>
                 ))}
                 {filtered.length === 0 ? (
