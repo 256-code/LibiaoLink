@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { startLiveSync } from "./liveSync";
+import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./inbox";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { AuditLogPage } from "./AuditLogPage";
 import { FileLibraryPage } from "./FileLibraryPage";
@@ -140,7 +141,19 @@ export default function App() {
   const route = useHashRoute();
 
   const signedIn = state.kind === "signed-in";
-  useEffect(() => signedIn ? startLiveSync() : undefined, [signedIn]);
+  /** 站内信红点（Push 352）：登录后先按读面补拉一次角标（SSE 未连上也有数），随后由 unread 快照驱动；
+   *  open（含自动重连；服务端重连不补发）再补拉一次对齐；notification 只推进弹窗补拉版本号。 */
+  useEffect(() => {
+    if (!signedIn) {
+      return undefined;
+    }
+    void refreshInboxUnread();
+    return startLiveSync({
+      onUnread: applyInboxUnread,
+      onNotification: noteInboxNotification,
+      onOpen: () => { void refreshInboxUnread(); },
+    });
+  }, [signedIn]);
   useLiveRefresh(["dicts", "projects"], async () => {
     const next = await loadDicts();
     return () => setDicts(next);
