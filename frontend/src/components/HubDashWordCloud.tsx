@@ -20,6 +20,10 @@ import { useT } from "../i18n";
  * 5. 悬停任意词出浮层卡（词 + 词频）；只有最中间那枚词可点（词频最高的主实例、落在画布正中，
  *    data-drill 只有它 true）—— 点开该词的只读「数据详情」；「全部项目」下（混合来源）谁都不可点。
  *
+ * Push 355（2026-10-16 业务口径「要这样的效果」参考录屏）追订「悬停聚焦」：悬停某一枚词时它自己保持原样、
+ * 其余每一枚（含同词的其他重复实例 —— 按「枚」不按「词」）统一压暗到自身饱和度的 30%（fill-opacity 220ms 过渡，
+ * 最淡的枚兜底 0.12 仍可辨形）；移开即还原。旧「悬停压深 brightness(0.84)」一并撤掉 —— 录屏里悬停枚的像素与常态完全一致（无压深）。
+ *
  * 布局是确定性的（螺线相位由实例序号哈希出，同一份词频永远得到同一张图，刷新不跳版）。
  * 画布 1200 x 596（与其他视图同款 viewBox，等比缩放填满面板）。
  * 口径（分词 / 计数 / 词表）见 data/changeWords.ts。
@@ -322,13 +326,14 @@ export function HubDashWordCloud({ words, canDrill, onTip, onLeave, onPick }: {
   readonly onPick: (word: string) => void;
 }) {
   const t = useT();
-  const [hoverWord, setHoverWord] = useState<string | null>(null);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const placed = useMemo(() => layoutWords(words.words), [words.words]);
   return (
     <svg className="hub-dash-wordcloud" viewBox={"0 0 " + String(VIEW_W) + " " + String(VIEW_H)} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("hub.dash.wordcloud.aria")}>
       {placed.map((item, index) => {
         const clickable = canDrill && item.center;
-        const hovered = hoverWord === item.word;
+        const hovered = hoverIndex === index;
+        const dimmed = hoverIndex !== null && !hovered;
         return (
           <text
             key={item.word + "#" + String(index)}
@@ -342,14 +347,14 @@ export function HubDashWordCloud({ words, canDrill, onTip, onLeave, onPick }: {
             fontSize={item.size}
             fontWeight={700}
             fill={item.color}
-            fillOpacity={hovered ? 1 : item.opacity}
+            fillOpacity={hovered ? 1 : dimmed ? Math.max(0.12, Math.round(item.opacity * 30) / 100) : item.opacity}
             onMouseEnter={(event) => {
-              setHoverWord(item.word);
+              setHoverIndex(index);
               onTip(event, item.word, item.count);
             }}
             onMouseMove={(event) => onTip(event, item.word, item.count)}
             onMouseLeave={() => {
-              setHoverWord(null);
+              setHoverIndex(null);
               onLeave();
             }}
             onClick={clickable ? () => onPick(item.word) : undefined}
