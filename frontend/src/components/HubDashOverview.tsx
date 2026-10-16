@@ -12,14 +12,16 @@ import { Loader } from "./Loader";
 /**
  * 仪表盘「数据总览」视图（Push 358 · 业务口径 2026-10-16「我要在最左边加一个数据总览 点击后展示的效果如图所示
  * 各图表等比例缩小集中展示 点击效果 鼠标触碰标签效果依旧」+「项目进度一览改成项目进度字样」）：
- * 五张图等比例缩小并排 —— 左列：项目进度（横条）/ 任务状态（饼）/ 问题（柱）；右列：交付时间（柱）+
- * 词频图（云，跨两行，照业务参考图版式）。每格 = 小标题 + 同款图表组件（viewBox 等比缩放，不改任何几何 /
+ * 五张图并排（两行版式：第一行 项目进度 / 任务状态 / 问题，第二行 交付时间 / 词频图 —— 读序照业务参考图；
+ * 追修 2026-10-16「不要滚动」+「你完全可以在原本的空间下实现 尺寸画面放大让人感到舒服」后改两行版式：
+ * 卡片内一屏铺满、不滚动，行 1 / 行 2 各按可用宽三等分 / 两等分把图放到最大）。
+ * 每格 = 小标题 + 同款图表组件（viewBox 等比缩放，不改任何几何 /
  * 颜色 / 组件）；悬停浮层卡 / 点击只读「数据详情」与单视图逐项同口径（回调全部复用父组件 HubDashboard
  * 的既有实现，浮层卡 / 弹窗仍挂在 .hub-dash-wrap 这一层）。
  *
  * 「问题 / 词频图」读面懒加载（HubDashboard 的 view 跟随 effect：切到「数据总览」即拉这两份）；
  * 面板内加载 / 失败 / 空态与单视图同文案（Loader / hub.dash.failed / 各自 empty 键）。
- * 布局（两列三行网格 / 隔板）见 app.css 的 .hub-dash-overview*；「全部项目」下与单视图一样不可点。
+ * 布局（两行版式：行 1 三图 / 行 2 两图、一屏不滚动）见 app.css 的 .hub-dash-overview*；「全部项目」下与单视图一样不可点。
  */
 export function HubDashOverview({ progress, status, delivery, issues, issuesState, words, wordsState, canDrill, onProgressTip, onProgressRowTip, onStatusTip, onIssueTip, onIssueRowTip, onDeliveryTip, onDeliveryRateTip, onWordTip, onLeave, onPickCell, onPickStatus, onPickIssue, onPickDelivery, onPickDeliveryRate, onPickDeliveryNote, onPickWord }: {
   readonly progress: DashboardProgress;
@@ -52,60 +54,62 @@ export function HubDashOverview({ progress, status, delivery, issues, issuesStat
   const t = useT();
   return (
     <div className="hub-dash-overview">
-      <section className="hub-dash-overview__panel" data-panel="progress">
-        <h3 className="hub-dash-overview__title">{t("hub.dash.title")}</h3>
-        <div className="hub-dash-overview__chart">
-          <HubDashProgress progress={progress} canDrill={canDrill} onTip={onProgressTip} onRowTip={onProgressRowTip} onLeave={onLeave} onPick={onPickCell} />
-        </div>
-      </section>
-      <section className="hub-dash-overview__panel" data-panel="status">
-        <h3 className="hub-dash-overview__title">{t("hub.dash.status.title")}</h3>
-        <div className="hub-dash-overview__chart">
-          <HubDashStatus status={status} canDrill={canDrill} onTip={onStatusTip} onLeave={onLeave} onPick={onPickStatus} />
-        </div>
-      </section>
-      <section className="hub-dash-overview__panel" data-panel="issues">
-        <h3 className="hub-dash-overview__title">{t("hub.dash.issues.title")}</h3>
-        <div className="hub-dash-overview__chart">
-          {issuesState === "ready" && issues !== null ? (
-            issues.totalIssues === 0 ? (
-              <div className="hub-dash-state">{t("hub.dash.issues.empty")}</div>
+      <div className="hub-dash-overview__grid">
+        <section className="hub-dash-overview__panel" data-panel="progress">
+          <h3 className="hub-dash-overview__title">{t("hub.dash.title")}</h3>
+          <div className="hub-dash-overview__chart">
+            <HubDashProgress progress={progress} canDrill={canDrill} onTip={onProgressTip} onRowTip={onProgressRowTip} onLeave={onLeave} onPick={onPickCell} />
+          </div>
+        </section>
+        <section className="hub-dash-overview__panel" data-panel="status">
+          <h3 className="hub-dash-overview__title">{t("hub.dash.status.title")}</h3>
+          <div className="hub-dash-overview__chart">
+            <HubDashStatus status={status} canDrill={canDrill} onTip={onStatusTip} onLeave={onLeave} onPick={onPickStatus} />
+          </div>
+        </section>
+        <section className="hub-dash-overview__panel" data-panel="issues">
+          <h3 className="hub-dash-overview__title">{t("hub.dash.issues.title")}</h3>
+          <div className="hub-dash-overview__chart">
+            {issuesState === "ready" && issues !== null ? (
+              issues.totalIssues === 0 ? (
+                <div className="hub-dash-state">{t("hub.dash.issues.empty")}</div>
+              ) : (
+                <HubDashIssues issues={issues} canDrill={canDrill} onTip={onIssueTip} onRowTip={onIssueRowTip} onLeave={onLeave} onPick={onPickIssue} />
+              )
+            ) : issuesState === "failed" ? (
+              <div className="hub-dash-state">{t("hub.dash.failed")}</div>
             ) : (
-              <HubDashIssues issues={issues} canDrill={canDrill} onTip={onIssueTip} onRowTip={onIssueRowTip} onLeave={onLeave} onPick={onPickIssue} />
-            )
-          ) : issuesState === "failed" ? (
-            <div className="hub-dash-state">{t("hub.dash.failed")}</div>
-          ) : (
-            <div className="hub-dash-state">
-              <Loader />
-            </div>
-          )}
-        </div>
-      </section>
-      <section className="hub-dash-overview__panel" data-panel="delivery">
-        <h3 className="hub-dash-overview__title">{t("hub.dash.delivery.title")}</h3>
-        <div className="hub-dash-overview__chart">
-          <HubDashDelivery delivery={delivery} canDrill={canDrill} onTip={onDeliveryTip} onRateTip={onDeliveryRateTip} onLeave={onLeave} onPick={onPickDelivery} onRatePick={onPickDeliveryRate} onNotePick={onPickDeliveryNote} />
-        </div>
-      </section>
-      <section className="hub-dash-overview__panel" data-panel="wordcloud">
-        <h3 className="hub-dash-overview__title">{t("hub.dash.wordcloud.title")}</h3>
-        <div className="hub-dash-overview__chart">
-          {wordsState === "ready" && words !== null ? (
-            words.words.length === 0 ? (
-              <div className="hub-dash-state">{t("hub.dash.wordcloud.empty")}</div>
+              <div className="hub-dash-state">
+                <Loader />
+              </div>
+            )}
+          </div>
+        </section>
+        <section className="hub-dash-overview__panel" data-panel="delivery">
+          <h3 className="hub-dash-overview__title">{t("hub.dash.delivery.title")}</h3>
+          <div className="hub-dash-overview__chart">
+            <HubDashDelivery delivery={delivery} canDrill={canDrill} onTip={onDeliveryTip} onRateTip={onDeliveryRateTip} onLeave={onLeave} onPick={onPickDelivery} onRatePick={onPickDeliveryRate} onNotePick={onPickDeliveryNote} />
+          </div>
+        </section>
+        <section className="hub-dash-overview__panel" data-panel="wordcloud">
+          <h3 className="hub-dash-overview__title">{t("hub.dash.wordcloud.title")}</h3>
+          <div className="hub-dash-overview__chart">
+            {wordsState === "ready" && words !== null ? (
+              words.words.length === 0 ? (
+                <div className="hub-dash-state">{t("hub.dash.wordcloud.empty")}</div>
+              ) : (
+                <HubDashWordCloud words={words} canDrill={canDrill} onTip={onWordTip} onLeave={onLeave} onPick={onPickWord} />
+              )
+            ) : wordsState === "failed" ? (
+              <div className="hub-dash-state">{t("hub.dash.failed")}</div>
             ) : (
-              <HubDashWordCloud words={words} canDrill={canDrill} onTip={onWordTip} onLeave={onLeave} onPick={onPickWord} />
-            )
-          ) : wordsState === "failed" ? (
-            <div className="hub-dash-state">{t("hub.dash.failed")}</div>
-          ) : (
-            <div className="hub-dash-state">
-              <Loader />
-            </div>
-          )}
-        </div>
-      </section>
+              <div className="hub-dash-state">
+                <Loader />
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
