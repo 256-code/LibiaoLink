@@ -92,11 +92,13 @@ export interface ImportFileInsert {
   sizeBytes: number;
   contentHash: string;
   mime: string | null;
-  /** 挂接日报下标（与 insertReports 的返回同序）。 */
-  reportIndex: number;
+  /** 挂接日报下标（与 insertReports 的返回同序）；变更前 / 变更后图 = null。 */
+  reportIndex: number | null;
   /** 问题图且该日报生成了问题时 = 问题下标（与 insertReportIssues 的返回同序）：转挂问题侧（kind = 空串）。 */
   issueIndex: number | null;
-  kind: "onsite" | "issue";
+  /** 变更表下标（变更前 / 变更后图；与 insertChangeRequests 的返回同序）：回填 change_requests 两列，不落 file_links。 */
+  changeIndex: number | null;
+  kind: "onsite" | "issue" | "change_before" | "change_after";
 }
 
 /** 干系人行（Push 324）：台账 stakeholders + 项目关联 project_stakeholders 同批写。 */
@@ -349,7 +351,7 @@ export class ProjectImportRepository {
   /**
    * 文件入库（files + file_versions + file_links 挂接）：对象已在调用前上传，事务内只落元数据。
    * 挂接口径与日报模块一致：现场图挂日报（kind = onsite）；问题图随「日报已生成问题」转挂问题侧（object_type = issue、kind = 空串），
-   * 未生成问题的日报问题图仍挂日报（kind = issue）。
+   * 未生成问题的日报问题图仍挂日报（kind = issue）；变更前 / 变更后附图（Push 349）不落 file_links，登记 files 后由 attachChangeSummaryImages 回填 change_requests 两列。
    */
   async insertFiles(
     tx: DbClient,
@@ -388,37 +390,45 @@ export class ProjectImportRepository {
         uploadedAt: at,
       })),
     );
-    await tx.insert(fileLinks).values(
-      rows.map((row) => {
-        if (row.kind === "issue" && row.issueIndex !== null) {
-          const issueId = issueIds[row.issueIndex];
-          if (issueId === undefined) throw new Error("图片挂接失败：问题下标越界");
-          return {
-            fileId: row.id,
-            objectType: "issue",
-            objectId: issueId,
-            kind: "",
-            createdBy: actorId,
-            createdAt: at,
-          };
-        }
-        const reportId = reportIds[row.reportIndex];
-        if (reportId === undefined) throw new Error("图片挂接失败：日报下标越界");
-        return {
-          fileId: row.id,
-          objectType: "report",
-          objectId: reportId,
-          kind: row.kind,
-          createdBy: actorId,
-          createdAt: at,
-        };
-      }),
-    );
+    const linkRows: { fileId: string; objectType: string; objectId: string; kind: string; createdBy: string; createdAt: Date }[] = [];
+    for (const row of rows) {
+      if (row.kind === "change_before" || row.kind === "change_after") continue;
+      if (row.kind === "issue" && row.issueIndex !== null) {
+        const issueId = issueIds[row.issueIndex];
+        if (issueId === undefined) throw new Error("图片挂接失败：问题下标越界");
+        linkRows.push({ fileId: row.id, objectType: "issue", objectId: issueId, kind: "", createdBy: actorId, createdAt: at });
+        continue;
+      }
+      if (row.reportIndex === null) throw new Error("图片挂接失败：日报下标缺失");
+      const reportId = reportIds[row.reportIndex];
+      if (reportId === undefined) throw new Error("图片挂接失败：日报下标越界");
+      linkRows.push({ fileId: row.id, objectType: "report", objectId: reportId, kind: row.kind, createdBy: actorId, createdAt: at });
+    }
+    if (linkRows.length > 0) {
+      await tx.insert(fileLinks).values(linkRows);
+    }
     for (const row of rows) {
       await tx
         .update(files)
         .set({ currentVersionId: sql`(select id from file_versions where file_id = ${row.id} and seq = 1)`, updatedAt: at })
         .where(eq(files.id, row.id));
+    }
+  }
+
+  /** 变更附图回填（Push 349）：导入的变更前 / 变更后图（files.id 有序、≤ 30）→ change_requests 两列（同 0052 应用内口径：无 file_links、无外键）。 */
+  async attachChangeSummaryImages(
+    tx: DbClient,
+    updates: readonly { changeId: string; beforeFileIds: readonly string[]; afterFileIds: readonly string[] }[],
+  ): Promise<void> {
+    for (const update of updates) {
+      if (update.beforeFileIds.length === 0 && update.afterFileIds.length === 0) continue;
+      await tx
+        .update(changeRequests)
+        .set({
+          beforeSummaryFileIds: [...update.beforeFileIds].slice(0, 30),
+          afterSummaryFileIds: [...update.afterFileIds].slice(0, 30),
+        })
+        .where(eq(changeRequests.id, update.changeId));
     }
   }
 }

@@ -251,6 +251,13 @@ function createHarness() {
     async attachChangeRefs(tx: unknown, updates: Array<{ taskId: string; changeIds: string[] }>): Promise<void> {
       this.changeRefCalls.push(updates);
     },
+    async attachChangeSummaryImages(
+      tx: unknown,
+      updates: Array<{ changeId: string; beforeFileIds: string[]; afterFileIds: string[] }>,
+    ): Promise<void> {
+      this.changeImageCalls.push(updates);
+    },
+    changeImageCalls: [] as Array<Array<{ changeId: string; beforeFileIds: string[]; afterFileIds: string[] }>>,
     async insertFiles(
       tx: unknown,
       projectId: string,
@@ -408,6 +415,7 @@ function sampleSheets(
   reportIssueState = "处理中",
   changeRequester = "朱成荣(Eli)",
   changeFiller = "朱成荣(Eli)",
+  changeAnchors: Array<{ row: number; col: number; media: string }> = [],
 ): SheetInput[] {
   return [
     {
@@ -439,6 +447,7 @@ function sampleSheets(
         CHANGE_HEADER,
         ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "Layout更新版.dwg", "V2", "", changeRequester, changeFiller],
       ],
+      anchors: changeAnchors,
     },
   ];
 }
@@ -641,6 +650,29 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
     expect(preview.counts.images).toBe(3);
     expect(preview.counts.nodesNew).toBe(3);
     expect(preview.issues.map((issue) => issue.code)).toContain("IMAGE_ROW_MISSING");
+  });
+
+  it("变更前 / 变更后附图（Push 349）：锚点按列按行对变更记录；列外锚点出提醒、不导入", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: buildWorkbook(
+        sampleSheets([], "处理中", "朱成荣(Eli)", "朱成荣(Eli)", [
+          { row: 2, col: 5, media: "image3.png" },
+          { row: 2, col: 6, media: "image4.png" },
+          { row: 2, col: 3, media: "image5.png" },
+        ]),
+      ),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    expect(preview.counts.images).toBe(4);
+    const images = (previewPayload(h).parse as { images: Array<{ kind: string }> }).images;
+    expect(images.map((image) => image.kind)).toEqual(["onsite", "issue", "change_before", "change_after"]);
+    const codes = preview.issues.map((issue) => issue.code);
+    expect(codes).toContain("CHANGE_IMAGE_UNPLACED");
+    expect(preview.issues.find((issue) => issue.code === "CHANGE_IMAGE_UNPLACED")?.subject).toBe("1 张");
   });
 
   it("变更关联（Push 319）：「关联」列命中任务 → changeLinks；未命中 / 日期不一致 / 汇总进提醒", async () => {
@@ -935,6 +967,35 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     const codes = result.issues.map((issue) => issue.code);
     expect(codes).not.toContain("CHANGE_APPLICANT_MISSING");
     expect(codes).not.toContain("CHANGE_WRITER_MISSING");
+  });
+
+  it("变更前 / 变更后附图（Push 349）：提交落 files 并回填 change_requests 两列（不落 file_links）", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: buildWorkbook(
+        sampleSheets([], "处理中", "朱成荣(Eli)", "朱成荣(Eli)", [
+          { row: 2, col: 5, media: "image3.png" },
+          { row: 2, col: 6, media: "image4.png" },
+        ]),
+      ),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    const sourceKey = h.previews.row === null ? "" : h.previews.row.objectKey;
+    h.storage.objects.set(sourceKey, mediaZip("image1.png", "image2.png", "image3.png", "image4.png"));
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+
+    expect(result.counts.images).toBe(4);
+    const changeFiles = h.previews.files.filter((row) => row.kind === "change_before" || row.kind === "change_after");
+    expect(changeFiles.map((row) => row.name)).toEqual(["变更前附图 2026-09-01 01.png", "变更后附图 2026-09-01 01.png"]);
+    expect(changeFiles.map((row) => row.reportIndex)).toEqual([null, null]);
+    expect(changeFiles.map((row) => row.changeIndex)).toEqual([0, 0]);
+    expect(h.previews.changeImageCalls).toEqual([
+      [{ changeId: "change-0", beforeFileIds: [changeFiles[0]!.id], afterFileIds: [changeFiles[1]!.id] }],
+    ]);
   });
 
   it("账号已在库：项目经理 / 负责人 / 日报作者都直接挂人，不再回落", async () => {
