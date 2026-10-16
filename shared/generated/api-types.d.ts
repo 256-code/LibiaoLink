@@ -7403,7 +7403,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 3 次 / 小时 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担） */
+        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 5 次 / 10 分钟 / 用户（D3 修订 v1.7 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担） */
         post: {
             parameters: {
                 query?: never;
@@ -7431,7 +7431,7 @@ export interface paths {
                         "application/json": components["schemas"]["ApiError"];
                     };
                 };
-                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = hour） */
+                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 10m） */
                 429: {
                     headers: {
                         [name: string]: unknown;

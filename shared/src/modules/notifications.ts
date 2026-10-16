@@ -382,7 +382,8 @@ export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeLi
  *   产生 —— 本组端点 = 「取码（POST codes）→ 用户把码发进企微单聊（worker ingest 落绑定 + 会话内回执）→
  *   查绑定态（GET）→ 解绑（DELETE）」。
  * 安全口径（§9）：密文 open_userid 只回掩码末 4 位（最小暴露 · 沿用群绑定 `chatidMasked` 先例）；绑定码正文
- *   不入库、不落日志；取码频率 3 次 / 小时 / 用户（D3，超出 = 429 `RATE_LIMITED` + `details[].meta.retryAt`）；
+ *   不入库、不落日志；取码频率 5 次 / 10 分钟 / 用户（D3 修订 v1.7 —— 原「3 次 / 小时」等待过久，超出 = 429
+ *   `RATE_LIMITED` + `details[].meta.retryAt`，最长等待 ≤ 窗口长度）；
  *   解绑 / 换绑写 `audit_logs`（D6）。
  * 权限口径：个人资源（同收件箱 / 通知偏好先例）—— 无功能权限位；读 = 会话，写 = 会话 + CSRF。
  * ---------------------------------------------------------------------------------------------- */
@@ -391,8 +392,10 @@ export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeLi
 export const WECOM_DM_BINDING_CODE_LENGTH = 6;
 /** 绑定码有效期（D3：10 分钟）。 */
 export const WECOM_DM_BINDING_CODE_TTL_MS = 10 * 60_000;
-/** 绑定码生成频率上限（D3：3 次 / 小时 / 用户；超出 → 429 `RATE_LIMITED`）。 */
-export const WECOM_DM_BINDING_CODE_MAX_PER_HOUR = 3;
+/** 绑定码生成频率窗口（D3 修订 v1.7：10 分钟 · 滚动窗口）。 */
+export const WECOM_DM_BINDING_CODE_WINDOW_MS = 10 * 60_000;
+/** 绑定码生成频率上限（D3 修订 v1.7：5 次 / 10 分钟 / 用户；超出 → 429 `RATE_LIMITED`）。 */
+export const WECOM_DM_BINDING_CODE_MAX_PER_WINDOW = 5;
 
 /** 绑定态（读面恒 200；未绑定 = `bound:false`）—— GET / DELETE 同形。 */
 export const WecomDmBindingStateSchema = z

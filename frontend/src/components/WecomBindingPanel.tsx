@@ -7,6 +7,7 @@ import {
   type WecomDmBindingCode,
   type WecomDmBindingState,
 } from "../bindingApi";
+import { copyTextToClipboard } from "../clipboard";
 import { useT } from "../i18n";
 import { formatDateTime } from "../projectApi";
 
@@ -20,8 +21,29 @@ import { formatDateTime } from "../projectApi";
  *  一律以最新响应为准）；频率到顶 = 429 `RATE_LIMITED` → 按 `details[].meta.retryAt` 置灰按钮 + 倒计时。
  * 解绑：`DELETE /wecom-dm-binding`（幂等）—— 二次确认后提交，成功回未绑定态。
  * 安全（口径 §9）：界面只展示掩码（末 4 位）；除 6 位码本身外不缓存 / 不落日志企微标识。
+ *
+ * 绑定态刷新（Push 253 修「企微已回执绑定成功、设置页仍显示未绑定」）：绑定只能由用户在企微里发码完成，
+ *  页面侧无法从写口响应得知 —— 未绑定时每 5 秒静默重读（上限 15 分钟）+ 「刷新绑定状态」按钮 +
+ *  窗口重新可见 / 聚焦立即读一次。
+ * 复制（Push 253 修「复制一直失败」）：走 `../clipboard` 双通道 —— 异步剪贴板 API 不可用
+ *  （http 非安全上下文 / 权限被拒）时回退 `document.execCommand("copy")`，码面同时置为可全选。
  */
 export type BindingNotice = { kind: "ok" | "error"; text: string };
+
+/** 未绑定时的绑定态轮询间隔（5 秒）。 */
+const BINDING_POLL_INTERVAL_MS = 5_000;
+/** 轮询上限（15 分钟）：到点停表，改由「刷新绑定状态」按钮手动读（避免开着的引导弹窗长期空转）。 */
+const BINDING_POLL_MAX_MS = 15 * 60_000;
+
+/** 频率等待时长口径（把「2000 多秒」写成「33 分 20 秒」：Push 253 可读性修订）。 */
+function formatWait(seconds: number): string {
+  if (seconds < 60) {
+    return String(seconds) + " 秒";
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? String(minutes) + " 分钟" : String(minutes) + " 分 " + String(rest) + " 秒";
+}
 
 export function WecomBindingPanel(props: {
   variant: "page" | "guide";
@@ -35,6 +57,7 @@ export function WecomBindingPanel(props: {
   const [retryAt, setRetryAt] = useState<string | null>(null);
   const [busy, setBusy] = useState<"code" | "unbind" | null>(null);
   const [confirmUnbind, setConfirmUnbind] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   const reload = (): void => {
@@ -52,8 +75,61 @@ export function WecomBindingPanel(props: {
 
   useEffect(() => {
     reload();
-    // 只随组件挂载拉一次（面板由宿主按需挂载 / 卸载）；后续状态一律由本面板写口的响应回读
+    // 挂载拉一次 —— 后续：写口（取码 / 解绑）响应回读 + 未绑定时轮询（见下方 effect）
   }, []);
+
+  /** 静默重读绑定态（不闪 loading）：轮询 / 回到前台 / 「刷新绑定状态」共用。 */
+  const refreshState = async (): Promise<void> => {
+    try {
+      const next = await loadWecomDmBinding();
+      setState(next);
+      setLoadFailed(false);
+      props.onBoundChange?.(next.bound);
+    } catch {
+      // 静默失败：保留当前状态（下一轮 / 手动刷新再试），不把已绑定的界面打回错误态
+    }
+  };
+
+  /** 手动「刷新绑定状态」：按钮置忙，读毕复位。 */
+  const manualRefresh = async (): Promise<void> => {
+    setChecking(true);
+    try {
+      await refreshState();
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  /**
+   * 未绑定 → 轮询绑定态：绑定由用户在企微侧发码完成，页面侧只能轮询 / 回前台得知。
+   * 每 5 秒静默重读（上限 15 分钟）；已绑定 / 卸载即停表。
+   */
+  const boundFlag = state === null ? null : state.bound;
+  useEffect(() => {
+    if (boundFlag !== false) {
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      if (Date.now() - startedAt > BINDING_POLL_MAX_MS) {
+        window.clearInterval(timer);
+        return;
+      }
+      void refreshState();
+    }, BINDING_POLL_INTERVAL_MS);
+    const onWake = (): void => {
+      if (document.visibilityState === "visible") {
+        void refreshState();
+      }
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
+  }, [boundFlag]);
 
   const codeLeft = code === null ? 0 : Math.max(0, Math.ceil((Date.parse(code.expiresAt) - now) / 1000));
   const retryLeft = retryAt === null ? 0 : Math.max(0, Math.ceil((Date.parse(retryAt) - now) / 1000));
@@ -96,12 +172,12 @@ export function WecomBindingPanel(props: {
     if (code === null) {
       return;
     }
-    try {
-      await navigator.clipboard.writeText(code.code);
-      props.onNotice({ kind: "ok", text: t("settings.bind.copied") });
-    } catch {
-      props.onNotice({ kind: "error", text: t("settings.bind.copyFailed") });
-    }
+    const copied = await copyTextToClipboard(code.code);
+    props.onNotice(
+      copied
+        ? { kind: "ok", text: t("settings.bind.copied") }
+        : { kind: "error", text: t("settings.bind.copyFailed") },
+    );
   };
 
   const handleUnbind = async (): Promise<void> => {
@@ -149,7 +225,12 @@ export function WecomBindingPanel(props: {
       >
         <p className="text-xs text-amber-800">{t("settings.bind.codeHint")}</p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <span className="font-mono text-2xl font-semibold tracking-[0.3em] text-zinc-900">{code.code}</span>
+          <span
+            data-wecom-binding-code-text="true"
+            className="cursor-text select-all font-mono text-2xl font-semibold tracking-[0.3em] text-zinc-900"
+          >
+            {code.code}
+          </span>
           <button
             type="button"
             data-wecom-binding-copy="true"
@@ -242,12 +323,22 @@ export function WecomBindingPanel(props: {
         >
           {busy === "code" ? t("settings.bind.codeBusy") : code === null ? t("settings.bind.getCode") : t("settings.bind.regetCode")}
         </button>
+        <button
+          type="button"
+          data-wecom-binding-refresh="true"
+          disabled={checking}
+          onClick={() => void manualRefresh()}
+          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-60"
+        >
+          {checking ? t("settings.bind.checking") : t("settings.bind.refresh")}
+        </button>
         {retryLeft > 0 ? (
           <span data-wecom-binding-rate-limit={String(retryLeft)} className="text-xs tabular-nums text-rose-600">
-            {t("settings.bind.rateLimitedLeft", { seconds: retryLeft })}
+            {t("settings.bind.rateLimitedLeft", { wait: formatWait(retryLeft) })}
           </span>
         ) : null}
       </div>
+      <p className="mt-2 text-xs leading-5 text-zinc-400">{t("settings.bind.pollHint")}</p>
       {codeBlock}
     </div>
   );
