@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { loadWecomDmBinding } from "../bindingApi";
 import { relativeTimeText, useLocale, useT, type TextKey } from "../i18n";
 import { applyInboxUnread, getInboxBadge, useInboxBadge } from "../inbox";
 import { loadInboxPage, markAllInboxRead, markInboxRead, type InboxNotification, type InboxNotificationType } from "../inboxApi";
-import { PROJECT_BASE_HASH } from "../useHashRoute";
+import { PROJECT_BASE_HASH, SETTINGS_BASE_HASH } from "../useHashRoute";
 import { Loader } from "./Loader";
 
 /** 弹窗条数：快速一瞥「最近 8 条」；完整消息中心（分类筛选 / 已处理 / 稍后提醒）留给 M5-07 整页。 */
@@ -37,6 +38,8 @@ export function InboxPanel({ onError, onNavigate }: { onError: (text: string) =>
   const [items, setItems] = useState<InboxNotification[] | null>(null);
   const [total, setTotal] = useState(0);
   const [failed, setFailed] = useState(false);
+  /** 未绑定企微（D6 未绑定提示 · Push 250）：未绑定 = 企微单聊推送落站内信降级 —— 弹窗底部提示 + 「前往设置补绑」。 */
+  const [wecomUnbound, setWecomUnbound] = useState(false);
 
   const reload = useCallback(async (): Promise<void> => {
     try {
@@ -55,6 +58,23 @@ export function InboxPanel({ onError, onNavigate }: { onError: (text: string) =>
   useEffect(() => {
     void reload();
   }, [reload, inboxBadge.revision]);
+
+  // 企微绑定态：弹窗每次打开（挂载）读一次 —— 未绑定 = 底部出「前往设置补绑」提示（D6）；失败静默（不挡消息列表）
+  useEffect(() => {
+    let cancelled = false;
+    void loadWecomDmBinding()
+      .then((state) => {
+        if (!cancelled) {
+          setWecomUnbound(!state.bound);
+        }
+      })
+      .catch(() => {
+        // 读态失败：不出提示（消息列表照常）
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const markRead = async (item: InboxNotification): Promise<void> => {
     const previous = items;
@@ -173,6 +193,25 @@ export function InboxPanel({ onError, onNavigate }: { onError: (text: string) =>
       ) : null}
       {items !== null && total > items.length ? (
         <div className="border-t border-zinc-100 px-3 py-1.5 text-center text-[11px] text-zinc-400">{t("header.inbox.more", { shown: items.length, total })}</div>
+      ) : null}
+      {wecomUnbound ? (
+        <div
+          data-inbox-wecom-unbound="true"
+          className="flex flex-wrap items-center gap-2 border-t border-zinc-100 bg-zinc-50/60 px-3 py-2 text-[11px] text-zinc-500"
+        >
+          <span>{t("inbox.unbound.hint")}</span>
+          <button
+            type="button"
+            data-inbox-wecom-settings="true"
+            onClick={() => {
+              onNavigate();
+              window.location.hash = SETTINGS_BASE_HASH.slice(1);
+            }}
+            className="rounded-lg border border-zinc-300 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-100"
+          >
+            {t("inbox.unbound.action")}
+          </button>
+        </div>
       ) : null}
     </div>
   );

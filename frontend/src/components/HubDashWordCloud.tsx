@@ -17,8 +17,16 @@ import { useT } from "../i18n";
  * 3. 重复实例（词频第 2 枚起）：字号 = 主字号 x 0.45 起逐枚 x0.78 递减，填进主实例之间的缝里 ——
  *    词的疏密即词频；放不下就跳（只是纹理，不伤口径）；
  * 4. 边缘渐隐：离画布中心越远 fill-opacity 越低（最外圈 0.38），词团边缘像参考图一样虚化；
- * 5. 悬停任意词出浮层卡（词 + 词频）；只有最中间那枚词可点（词频最高的主实例、落在画布正中，
- *    data-drill 只有它 true）—— 点开该词的只读「数据详情」；「全部项目」下（混合来源）谁都不可点。
+ * 5. 悬停任意词出浮层卡（词 + 词频）；每一枚核心词的「主枚」（每词最中间的那一枚）都可点、重复小枚不可点
+ *    （data-drill 只有各词主枚 true）—— 点开该词的只读「数据详情」；「全部项目」下（混合来源）谁都不可点。
+ *
+ * Push 355（2026-10-16 业务口径「要这样的效果」参考录屏）追订「悬停聚焦」：悬停某一枚词时它自己保持原样、
+ * 其余每一枚（含同词的其他重复实例 —— 按「枚」不按「词」）统一压暗到自身饱和度的 30%（fill-opacity 220ms 过渡，
+ * 最淡的枚兜底 0.12 仍可辨形）；移开即还原。旧「悬停压深 brightness(0.84)」一并撤掉 —— 录屏里悬停枚的像素与常态完全一致（无压深）。
+ *
+ * Push 356（2026-10-16 业务口径「现在为什么只有原因可以点击了 这不符合我的要求啊」）：可点面由「只有正中一枚」
+ * 扩到「每词主枚」—— 落位时给每枚主实例标 primary，交互只认 primary（不再只认词频最高的那枚 center）；
+ * PlacedWord 新增 primary 字段（center 保留作词团正中的元信息）。
  *
  * 布局是确定性的（螺线相位由实例序号哈希出，同一份词频永远得到同一张图，刷新不跳版）。
  * 画布 1200 x 596（与其他视图同款 viewBox，等比缩放填满面板）。
@@ -71,6 +79,7 @@ type PlacedWord = {
   readonly color: string;
   readonly opacity: number;
   readonly center: boolean;
+  readonly primary: boolean;
 };
 
 type WordInstance = {
@@ -292,6 +301,7 @@ function layoutWords(words: readonly ChangeWord[]): readonly PlacedWord[] {
                 color: WORD_COLORS[(colorIndexByWord.get(instance.word) ?? 0) % WORD_COLORS.length],
                 opacity: Math.round((1 - 0.62 * Math.pow(Math.min(1, s), 1.3)) * 100) / 100,
                 center: instance.primary && instance.word === centerWord,
+                primary: instance.primary,
               };
               break;
             }
@@ -322,13 +332,14 @@ export function HubDashWordCloud({ words, canDrill, onTip, onLeave, onPick }: {
   readonly onPick: (word: string) => void;
 }) {
   const t = useT();
-  const [hoverWord, setHoverWord] = useState<string | null>(null);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const placed = useMemo(() => layoutWords(words.words), [words.words]);
   return (
     <svg className="hub-dash-wordcloud" viewBox={"0 0 " + String(VIEW_W) + " " + String(VIEW_H)} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("hub.dash.wordcloud.aria")}>
       {placed.map((item, index) => {
-        const clickable = canDrill && item.center;
-        const hovered = hoverWord === item.word;
+        const clickable = canDrill && item.primary;
+        const hovered = hoverIndex === index;
+        const dimmed = hoverIndex !== null && !hovered;
         return (
           <text
             key={item.word + "#" + String(index)}
@@ -342,14 +353,14 @@ export function HubDashWordCloud({ words, canDrill, onTip, onLeave, onPick }: {
             fontSize={item.size}
             fontWeight={700}
             fill={item.color}
-            fillOpacity={hovered ? 1 : item.opacity}
+            fillOpacity={hovered ? 1 : dimmed ? Math.max(0.12, Math.round(item.opacity * 30) / 100) : item.opacity}
             onMouseEnter={(event) => {
-              setHoverWord(item.word);
+              setHoverIndex(index);
               onTip(event, item.word, item.count);
             }}
             onMouseMove={(event) => onTip(event, item.word, item.count)}
             onMouseLeave={() => {
-              setHoverWord(null);
+              setHoverIndex(null);
               onLeave();
             }}
             onClick={clickable ? () => onPick(item.word) : undefined}

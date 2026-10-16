@@ -2247,6 +2247,115 @@ body {
   margin-top: 0.4rem;
 }
 
+/* 图表入场动画（Push 357 · 业务口径 2026-10-16「这些图表需要有动画效果 柱状图饼状图」（参考 Apache ECharts 的入场风格）+
+   「颜色色调组件都不要改 只要加动画效果」）：柱从基线往上长 / 行式横条从行首往右铺开 / 饼图扇区从圆心展开，
+   柱顶数字与饼图图例 / 引线 / 标签随后淡入 —— 只动 transform 与 opacity，落定后的几何与配色与改动前逐值一致；
+   错峰节奏由组件内联 animation-delay 提供（进度行 55ms / 问题归类 70ms / 交付三柱 90ms）；reduced-motion 全停（与地图立柱层同口径）。 */
+.hub-dash__seg {
+  transform-box: view-box;
+  /* 行首竖线（与组件 PLOT_X0 = 236 同线）：每行堆叠条从左端展开。 */
+  transform-origin: 236px center;
+  animation: ll-hub-seg-in 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hub-dash-issues__bar,
+.hub-dash-delivery__bar {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: ll-hub-bar-in 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hub-dash-status__arc {
+  transform-box: view-box;
+  /* 圆心（与组件 CX / CY = 600, 330 同点）：扇区按 ECharts 式 expansion 从中心展开。 */
+  transform-origin: 600px 330px;
+  animation: ll-hub-pie-in 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hub-dash__num,
+.hub-dash-issues__num,
+.hub-dash-delivery__count {
+  animation: ll-hub-num-in 320ms ease-out both;
+}
+
+.hub-dash-status__swatch,
+.hub-dash-status__legendText {
+  animation: ll-hub-fade-in 320ms ease-out 180ms both;
+}
+
+.hub-dash-status__line,
+.hub-dash-status__label {
+  animation: ll-hub-fade-in 340ms ease-out 300ms both;
+}
+
+@keyframes ll-hub-seg-in {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes ll-hub-bar-in {
+  from {
+    transform: scaleY(0);
+  }
+
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes ll-hub-pie-in {
+  from {
+    transform: scale(0);
+  }
+
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes ll-hub-num-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ll-hub-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-dash__seg,
+  .hub-dash-issues__bar,
+  .hub-dash-delivery__bar,
+  .hub-dash-status__arc,
+  .hub-dash__num,
+  .hub-dash-issues__num,
+  .hub-dash-delivery__count,
+  .hub-dash-status__swatch,
+  .hub-dash-status__legendText,
+  .hub-dash-status__line,
+  .hub-dash-status__label {
+    animation: none;
+  }
+}
+
 /* 底部视图切换（Push 339 · 业务口径「在仪表盘页面在底部增加切换的按钮」+ 追订「这个按钮再做一个进度一览 靠左不居中」；
    按钮照业务给的参考代码、尺寸按 2026-10-15「按钮大小小一点」收小（24px 圆角方框、白勾 16px）、
    未选灰底灰边、选中蓝底白勾、悬停微放大、渐变脉冲高光 —— Tailwind 类在组件里
@@ -2263,8 +2372,8 @@ body {
 
 /* 「词频图」（Push 353 · 业务口径 2026-10-16「现在做这个词频图 根据变更原因的词频拼成这个图」+
    「词频图中修饰词不纳入 只保留核心词纳入词频图」）：变更原因核心词词云 —— 词面 / 字号 / 颜色由组件内联
-   （data/changeWords.ts 分词、HubDashWordCloud 画布像素蒙版落位）；这里只定画布伸缩、悬停压深与可点光标
-   （选中具体项目时只有词频最高的中心词可点 —— 与柱段 / 扇区 / 问题柱 / 交付柱同一套口径）。 */
+   （data/changeWords.ts 分词、HubDashWordCloud 画布像素蒙版落位）；这里只定画布伸缩、悬停聚焦过渡与可点光标
+   （选中具体项目时每个核心词的主枚可点、重复小枚不可点 —— 与柱段 / 扇区 / 问题柱 / 交付柱的只读「数据详情」同一套口径）。 */
 .hub-dash-wordcloud {
   display: block;
   flex: 1 1 auto;
@@ -2273,15 +2382,11 @@ body {
 }
 
 .hub-dash-wordcloud__word {
-  transition: filter 150ms ease;
+  transition: fill-opacity 220ms ease;
 }
 
 .hub-dash-wordcloud__word[data-drill="true"] {
   cursor: pointer;
-}
-
-.hub-dash-wordcloud__word[data-hover="true"] {
-  filter: brightness(0.84);
 }
 
 /* 「词频图」数据详情（Push 353）：与任务版 / 问题版共用弹窗外壳（.hub-dash-detail*），
