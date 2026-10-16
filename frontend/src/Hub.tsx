@@ -4,9 +4,9 @@ import { useT } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
-import type { DashboardDataset } from "./dashboardApi";
+import type { DashboardDataset, DashboardIssueDataset } from "./dashboardApi";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
-import { fetchDashboardProgress } from "./dashboardApi";
+import { fetchDashboardIssues, fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
 import { fetchProjectList, type ApiProject } from "./projectApi";
 import { EMPTY_LIST_QUERY, replaceHubView, type HubView } from "./useHashRoute";
@@ -25,6 +25,10 @@ import type { MeResponse } from "./types";
  * 尺寸（2026-10-15「蓝图页面我不希望有鼠标滚动条 所以尺寸还要优化」）：外框收口成视口高度
  * （h-[100dvh] + overflow-hidden），面板 flex-1，地图 / 统计都按 viewBox 缩放 —— 本页不出滚动条，
  * 滚轮专用于触发转场（面板内部可滚区，例如钉住的「项目梳理」清单，照常滚）。
+ *
+ * Push 344（2026-10-16 业务口径「现在做这个问题 效果和上面做的一样」）：仪表盘第三个视图「问题」（分组柱状图 +
+ * 点柱只读「数据详情」）的问题 / 日报读面**懒加载** —— 首次切到「问题」视图才拉（ensureIssues；不加重仪表盘首屏那轮
+ * 任务取数），拉完存明细、切项目 / 开弹窗零请求；已经拉过（ready）时随变更静默刷新跟着刷（见下 useLiveRefresh）。
  *
  * 历史（口径不动，只动了页面命名）：Push 285「登录后默认进入项目空间 首页名称改成蓝图」—— 本页由
  * 「入口页 / 首页」改名「蓝图」，登录后的默认落地改为项目空间 `#/projects`，本页由导航首项 / `#/` 直连进入；
@@ -82,11 +86,16 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const [anim, setAnim] = useState<HubAnim>(null);
   const [dash, setDash] = useState<DashboardDataset | null>(null);
   const [dashState, setDashState] = useState<HubDashboardState>("loading");
+  /** 「问题」视图数据（Push 344 · 懒加载：首次切到「问题」视图才拉，不加重仪表盘首屏；取数见 dashboardApi.ts）。 */
+  const [issues, setIssues] = useState<DashboardIssueDataset | null>(null);
+  const [issuesState, setIssuesState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
   const deckRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<HubView>(routeView ?? rememberedView);
   const animRef = useRef<HubAnim>(null);
   const dashStateRef = useRef<HubDashboardState>("loading");
   const dashLoadingRef = useRef(false);
+  const issuesStateRef = useRef<"idle" | "loading" | "ready" | "failed">("idle");
+  const issuesLoadingRef = useRef(false);
   const projectsRef = useRef<readonly ApiProject[] | null>(null);
   const settleTimerRef = useRef<number | null>(null);
   const noteText = note === "loading" ? t("hub.loading") : note === "failed" ? t("hub.loadFailed") : note === "none" ? "" : t("hub.capped", { n: note.n, total: note.total });
@@ -94,6 +103,11 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const updateDashState = useCallback((next: HubDashboardState) => {
     dashStateRef.current = next;
     setDashState(next);
+  }, []);
+
+  const updateIssuesState = useCallback((next: "idle" | "loading" | "ready" | "failed") => {
+    issuesStateRef.current = next;
+    setIssuesState(next);
   }, []);
 
   /** 拉统计（纯取数、不落状态）：首转 / 失败重试 / 变更静默刷新共用。 */
@@ -104,6 +118,34 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
       return null;
     }
   }, []);
+
+  /** 拉问题读面（纯取数、不落状态）：首次 / 失败重试 / 变更静默刷新共用。 */
+  const pullIssues = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardIssueDataset | null> => {
+    try {
+      return await fetchDashboardIssues(projects ?? projectsRef.current ?? undefined);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /** 首次切到「问题」视图时拉问题 / 日报读面（Push 344 · 懒加载：不进仪表盘首屏那一轮取数）。 */
+  const ensureIssues = useCallback(() => {
+    if (issuesStateRef.current === "ready" || issuesLoadingRef.current) {
+      return;
+    }
+    issuesLoadingRef.current = true;
+    updateIssuesState("loading");
+    void (async () => {
+      const data = await pullIssues();
+      issuesLoadingRef.current = false;
+      if (data === null) {
+        updateIssuesState("failed");
+        return;
+      }
+      setIssues(data);
+      updateIssuesState("ready");
+    })();
+  }, [pullIssues, updateIssuesState]);
 
   /** 转入仪表盘前确保有数据：未就绪拉一次（转场先走，拉完再渲染数据，中途显示加载球）。 */
   const ensureDashboard = useCallback(() => {
@@ -253,12 +295,17 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
     const [list, dicts] = await Promise.all([fetchProjectList(EMPTY_LIST_QUERY), loadDicts()]);
     /** 统计只在已就绪后才跟着刷新（没转过场就不预拉）。 */
     const nextDash = dashStateRef.current === "ready" ? ((await pullDashboard(list.items)) ?? dash) : dash;
+    /** 问题读面只在已经拉过（ready）后跟着静默刷新（没切过「问题」视图就不预拉）。 */
+    const nextIssues = issuesStateRef.current === "ready" ? ((await pullIssues(list.items)) ?? issues) : issues;
     return () => {
       projectsRef.current = list.items;
       setDistribution(buildMapDistribution(list.items, dicts));
       setNote(list.items.length < list.total ? { kind: "capped", n: list.items.length, total: list.total } : "none");
       if (nextDash !== dash) {
         setDash(nextDash);
+      }
+      if (nextIssues !== issues) {
+        setIssues(nextIssues);
       }
     };
   }, "hub", distribution !== null);
@@ -282,7 +329,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
               <HubMap distribution={distribution} note={noteText} />
             </div>
             <div data-view="dashboard" data-hub-deck-cell="dashboard" className={deckCellClass + " " + dashSideClass}>
-              <HubDashboard data={dash} state={dashState} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} />
+              <HubDashboard data={dash} state={dashState} issues={issues} issuesState={issuesState} onNeedIssues={ensureIssues} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} />
             </div>
           </div>
           <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>

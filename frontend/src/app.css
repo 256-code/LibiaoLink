@@ -2024,6 +2024,65 @@ body {
   color: #111827;
 }
 
+/* 「问题」分组柱状图（Push 344 · 业务口径 2026-10-16「现在做这个问题 效果和上面做的一样」）：
+   x = 问题状态、图例 = 问题归类；柱色 / 柱顶数字走组件里的 DASHBOARD_ISSUE_COLORS（内联 fill），
+   这里只做网格线 / 0 轴 / 刻度字 / 悬停高亮条 / 点击光标。 */
+.hub-dash-issues {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+/* 悬停整组铺浅灰底（形态照业务参考图二）；默认真透明（口径同 Push 341 的行阴影：不常驻）。 */
+.hub-dash-issues__band {
+  fill: transparent;
+}
+
+.hub-dash-issues__band[data-hover="true"] {
+  fill: #f3f4f6;
+}
+
+.hub-dash-issues__grid {
+  stroke: #e8eaee;
+  stroke-dasharray: 3 4;
+}
+
+.hub-dash-issues__axis {
+  stroke: #b8bec6;
+}
+
+.hub-dash-issues__tick {
+  fill: #8a9099;
+}
+
+.hub-dash-issues__legendText {
+  fill: #6b7280;
+}
+
+.hub-dash-issues__state {
+  fill: #4b5563;
+}
+
+/* 选中具体项目才能点柱（与柱段 / 扇区同一口径：可选时给手型 + 悬停压深一档）。 */
+.hub-dash-issues__bar[data-drill="true"] {
+  cursor: pointer;
+}
+
+.hub-dash-issues__bar[data-drill="true"]:hover {
+  filter: brightness(0.94);
+}
+
+/* 「问题」数据详情（Push 344）：与任务版共用弹窗外壳（.hub-dash-detail*），只补问题表两处宽度收口。 */
+.hub-dash-issue-detail .hub-dash-detail__scroll {
+  max-height: min(64vh, 34rem);
+}
+
+.hub-dash-issue-detail__table th:nth-child(4),
+.hub-dash-issue-detail__table td:nth-child(4) {
+  min-width: 14rem;
+}
+
 /* 底部视图切换（Push 339 · 业务口径「在仪表盘页面在底部增加切换的按钮」+ 追订「这个按钮再做一个进度一览 靠左不居中」；
    按钮照业务给的参考代码、尺寸按 2026-10-15「按钮大小小一点」收小（24px 圆角方框、白勾 16px）、
    未选灰底灰边、选中蓝底白勾、悬停微放大、渐变脉冲高光 —— Tailwind 类在组件里

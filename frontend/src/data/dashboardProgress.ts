@@ -19,6 +19,7 @@
  * 状态取服务端展示态（displayStatusLabel，与任务表 / 数据详情同源），0 条的状态不进 slices（图上整条不出现）。
  */
 import { displayStatusLabel, stageNameOf } from "../taskApi";
+import { ISSUE_STATE_NAMES } from "../reportApi";
 import type { TaskStatus } from "./tasks";
 
 /** 进度五档（契约 TaskProgressSchema）：堆叠顺序 = 从左到右 0 → 1。 */
@@ -158,4 +159,108 @@ export function buildDashboardStatus(tasks: readonly DashboardStatusTaskLike[]):
     })),
     totalTasks,
   };
+}
+
+/**
+ * 问题分布口径（Push 344 · 业务口径 2026-10-16「现在做这个问题 效果和上面做的一样」）：
+ * 仪表盘第三个视图 ——「问题」分组柱状图（x = 问题状态、图例 = 问题归类）用；取数与明细在 src/dashboardApi.ts
+ * 的 fetchDashboardIssues（懒加载：首次切到「问题」视图才拉问题 / 日报读面，任务读面不受影响）。
+ *
+ * 口径（改规则只改这里）：
+ * - x 轴 = 问题三态展示名（已完成 / 处理中 / 未解决，DASHBOARD_ISSUE_STATE_ORDER），**0 条的状态整组不出现**
+ *   （与「任务状态」饼图同一口径：业务口径「没有相关的任务状态才没显示在图中」）。
+ * - 图例 / 分组内柱序 = 问题归类十项契约原序（DASHBOARD_ISSUE_CATEGORY_ORDER），**0 条的归类整条不出现**。
+ * - 一条问题多归类时**每个归类各计一条**（柱高 = 命中该（状态 × 归类）的问题数；各柱之和可大于问题总数）。
+ * - 配色 DASHBOARD_ISSUE_COLORS 只服务柱状图 / 图例 / 悬停卡色点；明细表的归类色签仍走「问题追踪」那套浅底色表。
+ */
+/** 问题状态展示序（Push 344 · 与业务参考图同序：已完成在左，未解决垫底）。 */
+export const DASHBOARD_ISSUE_STATE_ORDER: readonly string[] = ["已完成", "处理中", "未解决"];
+
+/** 问题归类展示序（Push 344 · 契约 C9 十项原序：机械部 / 采购部 / 规划部 / 项目部 / 物流原因 / 供应商原因 / 客户原因 / 客观原因 / 生产原因 / 其它原因）。 */
+export const DASHBOARD_ISSUE_CATEGORY_ORDER: readonly string[] = ["机械部", "采购部", "规划部", "项目部", "物流原因", "供应商原因", "客户原因", "客观原因", "生产原因", "其它原因"];
+
+/** 分组柱状图配色（Push 344 · 前五项与业务参考图同族：机械部蓝 / 规划部绿 / 供应商原因黄 / 客户原因橙 / 其它原因紫，其余按同族补足）。 */
+export const DASHBOARD_ISSUE_COLORS: Readonly<Record<string, string>> = {
+  机械部: "#2f7ef2",
+  采购部: "#0ea5e9",
+  规划部: "#22c55e",
+  项目部: "#06b6d4",
+  物流原因: "#64748b",
+  供应商原因: "#f5c518",
+  客户原因: "#f97316",
+  客观原因: "#7c3aed",
+  生产原因: "#ec4899",
+  其它原因: "#a855f7",
+};
+
+/** 聚合输入的最小问题形状（data/reports.ts 的 Issue 满足）。 */
+export type DashboardIssueLike = {
+  readonly state: string;
+  readonly categories: readonly string[];
+};
+
+/** 问题分布（「问题」柱状图口径 · Push 344）。 */
+export type DashboardIssues = {
+  /** 有数据的状态（展示序：已完成 / 处理中 / 未解决；0 条的不出现）。 */
+  readonly states: readonly string[];
+  /** 有数据的归类（契约 C9 原序；0 条的不出现）。 */
+  readonly categories: readonly string[];
+  /** 计数键 dashboardIssueKey(state, category) → 条数。 */
+  readonly counts: ReadonlyMap<string, number>;
+  /** 问题总数（明细行数口径，与柱高口径分开：多归类问题在每个归类各计一条）。 */
+  readonly totalIssues: number;
+};
+
+/** （状态 × 归类）计数键。 */
+export function dashboardIssueKey(state: string, category: string): string {
+  return state + "#" + category;
+}
+
+/** 契约三态 → 展示名（未收录的态返回 null = 不计入）。 */
+function issueStateNameOf(state: string): string | null {
+  if (state === "open") {
+    return ISSUE_STATE_NAMES.open;
+  }
+  if (state === "in_progress") {
+    return ISSUE_STATE_NAMES.in_progress;
+  }
+  if (state === "done") {
+    return ISSUE_STATE_NAMES.done;
+  }
+  return null;
+}
+
+/** 全量问题 → 状态 × 归类分布（纯函数，取数见 dashboardApi.ts；0 条的状态 / 归类都不出现在结果里 = 图上不出现）。 */
+export function buildDashboardIssues(issues: readonly DashboardIssueLike[]): DashboardIssues {
+  const counts = new Map<string, number>();
+  const states = new Set<string>();
+  const categories = new Set<string>();
+  let totalIssues = 0;
+  for (const issue of issues) {
+    const state = issueStateNameOf(issue.state);
+    if (state === null) {
+      continue;
+    }
+    totalIssues += 1;
+    for (const category of issue.categories) {
+      if (!DASHBOARD_ISSUE_CATEGORY_ORDER.includes(category)) {
+        continue;
+      }
+      const key = dashboardIssueKey(state, category);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      states.add(state);
+      categories.add(category);
+    }
+  }
+  return {
+    states: DASHBOARD_ISSUE_STATE_ORDER.filter((state) => states.has(state)),
+    categories: DASHBOARD_ISSUE_CATEGORY_ORDER.filter((category) => categories.has(category)),
+    counts,
+    totalIssues,
+  };
+}
+
+/** 问题是否落在该（状态 × 归类）格子里 —— 点柱打开的「数据详情」行按它筛（保证「柱上数字 = 表行数」）。 */
+export function isIssueInCell(issue: DashboardIssueLike, state: string, category: string): boolean {
+  return issueStateNameOf(issue.state) === state && issue.categories.includes(category);
 }
