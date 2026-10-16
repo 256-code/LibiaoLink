@@ -90,10 +90,11 @@ export interface LegacyChange {
 
 export interface LegacyImage {
   sheet: string;
-  /** 1 based 行（对应日报 sheet 的行号；第 2 行起为数据行）。 */
+  /** 1 based 行（对应所在 sheet 的行号；第 2 行起为数据行）。 */
   row: number;
   col: number;
-  kind: "onsite" | "issue";
+  /** onsite / issue = 日报 sheet 的现场图 / 问题图；change_before / change_after = 变更表「变更前」「变更后」列内嵌图（Push 349）。 */
+  kind: "onsite" | "issue" | "change_before" | "change_after";
   media: string;
 }
 
@@ -789,12 +790,21 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
   }
 
   const changes: LegacyChange[] = [];
+  // 变更前 / 变更后列（1 based 列号；缺列 = null）：列内嵌图随变更行导入（Push 349，锚点行 = 变更行）。
+  const changeBeforeColumn = changeSheet === null || !changeSheet.index.has("变更前") ? null : changeSheet.index.get("变更前")! + 1;
+  const changeAfterColumn = changeSheet === null || !changeSheet.index.has("变更后") ? null : changeSheet.index.get("变更后")! + 1;
   if (changeSheet !== null) {
     const sheetRef = changeSheet.sheet;
     const changeIndex = changeSheet.index;
+    // 只有图的变更行也要导入（业务口径 2026-10-16「变更记录也是有图片的这个也要导入的」）：锚点行同样算数据行。
+    const anchoredRows = new Set<number>();
+    for (const anchor of workbook.anchors) {
+      if (anchor.sheet !== sheetRef.name) continue;
+      if (anchor.col === changeBeforeColumn || anchor.col === changeAfterColumn) anchoredRows.add(anchor.row);
+    }
     for (let row = 1; row < sheetRef.rows.length; row += 1) {
       const cells = sheetRef.rows[row] ?? [];
-      if (!cells.some((value) => clean(value) !== "")) continue;
+      if (!cells.some((value) => clean(value) !== "") && !anchoredRows.has(row + 1)) continue;
       const stageRaw = cellAt(sheetRef, row, changeIndex, "变更阶段");
       const content = cellAt(sheetRef, row, changeIndex, "变更内容描述");
       const reason = cellAt(sheetRef, row, changeIndex, "变更原因");
@@ -936,6 +946,36 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
       if (anchor.col !== 5 && anchor.col !== 9) continue;
       if (anchor.row < 2) continue;
       images.push({ sheet: anchor.sheet, row: anchor.row, col: anchor.col, kind: anchor.col === 5 ? "onsite" : "issue", media: anchor.media });
+    }
+  }
+  // 变更表「变更前 / 变更后」列内嵌图（Push 349）：按列定位、按行对变更记录；列外 / 表头行锚点出提醒、不导入。
+  if (changeSheet !== null) {
+    let unplaced = 0;
+    for (const anchor of workbook.anchors) {
+      if (anchor.sheet !== changeSheet.sheet.name) continue;
+      const kind =
+        anchor.row >= 2 && anchor.col === changeBeforeColumn
+          ? "change_before"
+          : anchor.row >= 2 && anchor.col === changeAfterColumn
+            ? "change_after"
+            : null;
+      if (kind === null) {
+        unplaced += 1;
+        continue;
+      }
+      images.push({ sheet: anchor.sheet, row: anchor.row, col: anchor.col, kind, media: anchor.media });
+    }
+    if (unplaced > 0) {
+      issues.push(
+        createIssue(
+          "warning",
+          "CHANGE_IMAGE_UNPLACED",
+          null,
+          String(unplaced) + " 张",
+          "变更表有 " + String(unplaced) + " 张图片不在「变更前 / 变更后」列（或锚在表头行）：未导入，请导入后在变更记录里手工补图",
+          "The change sheet has " + String(unplaced) + " image(s) outside the 变更前 / 变更后 columns (or anchored on the header row); they were skipped — please add them manually in the change records.",
+        ),
+      );
     }
   }
   const manualFiles: LegacyManualFile[] = [];
