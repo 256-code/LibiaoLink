@@ -128,6 +128,9 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   /** 仪表盘页常驻视图（Push 332 · 业务口径「这个页面要记住 因为不同的人想常驻的页面可能不一样」）：按账号记住 —— 地址不带 `?view=` 时本页落在这一屏。 */
   const [hubView, setHubView] = useState<HubView>("map");
+  /** 首落闸门（Push 354 · 业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：账号记忆（prefs）落定前，
+   *  仪表盘页 #/（无 ?view=）先不渲染卡面 —— 落哪一屏由记忆决定，记忆没到就落屏必出「先地图、后滑屏」的假转场。 */
+  const [hubPrefsSettled, setHubPrefsSettled] = useState(false);
   /** 仪表盘「项目进度一览」常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目；null = 全部项目。 */
   const [hubDashProject, setHubDashProject] = useState<string | null>(null);
   /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：按账号记住选中视图 —— 项目进度一览 / 任务状态 / 问题 / 交付时间。 */
@@ -236,6 +239,8 @@ export default function App() {
           // 界面语言（Push 296）：按账号静默落位（刷新 / 换设备同账号保持；坏值 / 缺键回落中文）
           applyLocale(asLocale(prefsResult.value.locale));
         }
+        // Push 354 首落闸门放行：账号记忆到这一步已落定（成功落值 / 失败留缺省），#/ 无 ?view= 时可渲染卡面。
+        setHubPrefsSettled(true);
       } catch (error: unknown) {
         if (!cancelled) {
           setState({ kind: "error", message: String(error) });
@@ -720,6 +725,16 @@ export default function App() {
 
   if (route.kind === "hub") {
     // 仪表盘页（顶层 · Push 285 前叫「入口页 / 首页」· Push 331 起叫「仪表盘」）：地图 / 「项目进度一览」双视图（Push 332 起视图走地址 `?view=`）；登录后的默认落地已改项目空间 `#/projects`
+    // Push 354 首落闸门（业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：地址没写 ?view= 时，
+    // 落哪一屏由账号记忆（prefs）决定 —— 记忆没落定前先不渲染卡面，防「先按缺省落地图、记忆晚到再换屏」的假转场；
+    // 记忆落定后由 Hub 对齐 effect 瞬时对齐并把视图写回地址（见 Hub.tsx），之后刷新 / 收藏 / 分享都由地址直达。
+    if (route.view === null && !hubPrefsSettled) {
+      return (
+        <main className="page">
+          <Loader />
+        </main>
+      );
+    }
     return (
       <>
         <Hub me={state.me} routeView={route.view} rememberedView={hubView} onViewChange={handleHubViewChange} rememberedDashProject={hubDashProject} onDashProjectChange={handleHubDashProjectChange} rememberedDashView={hubDashView} onDashViewChange={handleHubDashViewChange} />
