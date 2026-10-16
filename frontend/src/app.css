@@ -1433,11 +1433,20 @@ body {
    ① Push 342 给「入场卡」把 from 态落成基础位，堵掉「动画接管前首帧在静止位露出」的闪影；
    ② Push 343 起不再让两屏各自位移 —— 真机上仍能抓到两屏在合成层上脱节的残影（一屏已就位、另一屏还停在原地透出），
       改刚体滑轨后两屏相对几何恒定，任何一帧都只是「滑轨停在某个位置」：叠影 / 闪影在结构上不可能出现；
-   ③ 同步摘掉两屏的 backdrop-blur（滑轨背后只有页面底色，模糊体感≈0，却是毛玻璃重采样脏影与合成层抖动的源头）。 */
+   ③ 同步摘掉两屏的 backdrop-blur（滑轨背后只有页面底色，模糊体感≈0，却是毛玻璃重采样脏影与合成层抖动的源头）；
+   ④ Push 354（2026-10-16 业务口径「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：过渡由「常开」改「只在用户翻页期间开」——
+      此前账号记忆 / 地址落屏对齐改 data-view 时被 600ms 过渡顺手播了一遍（没人滑过滚轮却演了一页转场）。 */
 .hub-deck__strip {
   position: absolute;
   inset: 0;
   transform: translateY(0);
+  /* Push 354（2026-10-16 业务口径「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：
+     滑轨的 transform 过渡只在「用户翻页」（data-anim）期间开启，缺省不吃过渡 ——
+     落屏 / 账号记忆对齐（Hub.tsx 的对齐 effect）是瞬时换屏，改 data-view 绝不能再被过渡顺手播成一次转场。 */
+  transition: none;
+}
+
+.hub-deck__strip[data-anim="true"] {
   transition: transform 600ms ease;
 }
 
@@ -1489,7 +1498,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hub-deck__strip {
+  .hub-deck__strip[data-anim="true"] {
     transition: none;
   }
 
