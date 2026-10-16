@@ -39,6 +39,10 @@ const NOTE_HIT_Y = 72;
 const NOTE_HIT_W = 330;
 const NOTE_HIT_H = 34;
 
+/** 图表入场动画错峰（Push 357 · 业务口径 2026-10-16「这些图表需要有动画效果 柱状图饼状图」+「颜色色调组件都不要改 只要加动画效果」）：三根柱按序 90ms；柱顶数字 300ms 后起淡入（与柱同刻落定）。 */
+const SERIES_ANIM_STAGGER = 90;
+const NUM_ANIM_OFFSET = 300;
+
 /** y 轴刻度步长：按最大柱挑 1 / 2 / 5 / 10 / 20（比行式图更粗一档 —— 三根柱的分布一眼可读）。 */
 function tickStepOf(maxCount: number): number {
   if (maxCount <= 6) {
@@ -110,9 +114,9 @@ export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave,
         return (
           <g key={bucket}>
             {count > 0 ? (
-              <path className="hub-dash-delivery__bar" data-bucket={bucket} data-hover={hoverBucket === bucket ? "true" : "false"} data-drill={canDrill ? "true" : "false"} d={barPathOf(x, barTop, BAR_W, AXIS_Y - barTop)} />
+              <path className="hub-dash-delivery__bar" data-bucket={bucket} data-hover={hoverBucket === bucket ? "true" : "false"} data-drill={canDrill ? "true" : "false"} style={{ animationDelay: index * SERIES_ANIM_STAGGER + "ms" }} d={barPathOf(x, barTop, BAR_W, AXIS_Y - barTop)} />
             ) : null}
-            <text className="hub-dash-delivery__count" data-bucket={bucket} x={cx} y={count > 0 ? barTop - 12 : AXIS_Y - 14} textAnchor="middle" fontSize={20} fontWeight={700}>{count}</text>
+            <text className="hub-dash-delivery__count" data-bucket={bucket} style={{ animationDelay: index * SERIES_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={cx} y={count > 0 ? barTop - 12 : AXIS_Y - 14} textAnchor="middle" fontSize={20} fontWeight={700}>{count}</text>
             <text className="hub-dash-delivery__name" x={cx} y={TICK_LABEL_Y} textAnchor="middle" fontSize={17}>{statusText(locale, bucket)}</text>
             <rect
               className="hub-dash-delivery__hit"
