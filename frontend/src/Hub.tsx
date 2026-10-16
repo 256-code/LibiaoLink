@@ -23,6 +23,12 @@ import type { MeResponse } from "./types";
  * 转场体（Push 343）改「刚体滑轨」（app.css 的 .hub-deck__strip）：两屏在滑轨里静态首尾相接、只动滑轨一格（0.6s ease），
  * 两屏只各自动透明度（出 1→.3、入 .3→1）—— 两屏相对几何恒定，「首帧闪影 / 两屏脱节叠影」在结构上不可能出现。
  *
+ * Push 354（2026-10-16 业务口径「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果 修复」+「我需要上滑再下滑才能正常目前」）：
+ * 「没人翻页却演了一页转场」根治 —— ① 滑轨的 transform 过渡只在用户翻页期间开启（app.css 的 data-anim），落屏 / 地址 /
+ * 账号记忆对齐一律瞬时换屏；② 记忆落屏即把视图写回地址（见下对齐 effect）：地址不再停在 #/、每次刷新都要再等一遍记忆
+ * 晚到，用户也不再需要「上滑再下滑」把地址手动翻回来；③ App 层首落闸门：地址没写 ?view= 时，账号记忆没落定前先不渲染
+ * 卡面（见 App.tsx 的 hubPrefsSettled）。
+ *
  * 尺寸（2026-10-15「蓝图页面我不希望有鼠标滚动条 所以尺寸还要优化」）：外框收口成视口高度
  * （h-[100dvh] + overflow-hidden），面板 flex-1，地图 / 统计都按 viewBox 缩放 —— 本页不出滚动条，
  * 滚轮专用于触发转场（面板内部可滚区，例如钉住的「项目梳理」清单，照常滚）。
@@ -247,19 +253,34 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
 
   /**
    * 地址 / 账号记忆与当前视图对齐（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：
-   * ① 地址显式带视图（`?view=dashboard`）时以地址为准；② 地址不带参数时落账号记忆的常驻视图。
+   * ① 地址显式带视图（?view=dashboard）时以地址为准；② 地址不带参数时落账号记忆的常驻视图。
    * 两者都只在「当前不在这一屏」时瞬时对齐 —— 它是落地定位，不是滚轮 / 按钮触发的翻页（不走转场）。
+   *
+   * Push 354（2026-10-16 业务口径「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果 修复」+「我需要上滑再下滑才能正常目前」）：
+   * ③ 对齐换屏不吃 CSS 过渡：滑轨过渡只在转场（animRef 非空）期间开启（app.css 的 data-anim）——
+   *    此前记忆 / 地址晚到改 data-view 时被 600ms 过渡顺手播了一遍，「没人滑过滚轮却演了一页转场」由此而来；
+   * ④ 记忆落屏即把视图写回地址（replace）：否则地址停在 #/，刷新时记忆晚到又重演一遍假转场
+   *    —— 业务侧只能「上滑再下滑」手动翻一遍，让地址被转场落定写回后才恢复正常。
    */
   useEffect(() => {
     const target = routeView ?? rememberedView;
     if (target === "dashboard") {
       ensureDashboard();
     }
-    if (target === viewRef.current || animRef.current !== null) {
+    if (animRef.current !== null) {
+      return;
+    }
+    if (target === viewRef.current) {
+      if (routeView === null) {
+        replaceHubView(target);
+      }
       return;
     }
     viewRef.current = target;
     setView(target);
+    if (routeView === null) {
+      replaceHubView(target);
+    }
   }, [routeView, rememberedView, ensureDashboard]);
 
   useEffect(() => {
@@ -363,7 +384,8 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
     };
   }, "hub", distribution !== null);
 
-  /** 刚体滑轨的落位（Push 343）：转场途中指向目标屏、滑完就是当前视图；两屏在滑轨里永远静态（app.css 的 .hub-deck__strip）。 */
+  /** 刚体滑轨的落位（Push 343）：转场途中指向目标屏、滑完就是当前视图；两屏在滑轨里永远静态（app.css 的 .hub-deck__strip）。
+   *  data-anim（Push 354）：滑轨的 transform 过渡只在转场期间开启 —— 落屏 / 记忆对齐改 data-view 是瞬时换屏（app.css）。 */
   const stripView: HubView = anim === "toMap" ? "map" : anim === "toDashboard" ? "dashboard" : view;
   const mapSideClass = anim === "toMap" ? "hub-deck__cell--in" : anim === "toDashboard" ? "hub-deck__cell--out" : "";
   const dashSideClass = anim === "toDashboard" ? "hub-deck__cell--in" : anim === "toMap" ? "hub-deck__cell--out" : "";
@@ -377,7 +399,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
       <AppHeader me={me} />
       <main className="relative min-h-0 flex-1 px-6 py-5 lg:px-10 lg:py-6">
         <section ref={deckRef} data-hub-deck="" className="relative h-full overflow-hidden">
-          <div className="hub-deck__strip" data-view={stripView}>
+          <div className="hub-deck__strip" data-view={stripView} data-anim={anim === null ? undefined : "true"}>
             <div data-view="map" data-hub-deck-cell="map" className={deckCellClass + " " + mapSideClass}>
               <HubMap distribution={distribution} note={noteText} />
             </div>
