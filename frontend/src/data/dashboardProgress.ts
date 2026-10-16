@@ -267,15 +267,16 @@ export function isIssueInCell(issue: DashboardIssueLike, state: string, category
 
 /**
  * 「交付时间」视图口径（Push 345 · 业务口径 2026-10-16「这个交付时间也要做一个图表 但是它的这个逻辑我没搞懂
- * 感觉也不好 请你重新设计一个告诉我」+「选择B方案 然后 提前完成也加进去 叫交付时间 加一个「按时率 67%」的小结」）：
- * 仪表盘第四个视图 —— 四结果竖直柱状图（提前完成 / 按时交付 / 逾期已交付 / 逾期未交付）+ 右上「按时率」小结 +
+ * 感觉也不好 请你重新设计一个告诉我」+「选择B方案 叫交付时间 加一个「按时率」的小结」；
+ * Push 346 追订「取消提前完成展示」：提前完成并入按时交付、不再单独占一档）：
+ * 仪表盘第四个视图 —— 三结果竖直柱状图（按时交付 / 逾期已交付 / 逾期未交付）+ 右上「按时率」小结 +
  * 「未到交付节点」注记；取数与明细在 src/dashboardApi.ts（与进度 / 状态同一轮取数，零额外请求）。
  *
  * 口径（改规则只改这里；与任务表「是否按时交付」列 + 展示态同源，见 HubDashDetail.onTimeLabelOf / data/tasks.ts）：
- * - 分类 = 服务端展示态（displayStatus）+ onTime 四选一：已延期 → 逾期未交付；完成态（已完成 / 提前完成）且
- *   onTime=false → 逾期已交付；完成态且 onTime=true → 展示态「提前完成」记「提前完成」、否则记「按时交付」。
+ * - 分类 = 服务端展示态（displayStatus）+ onTime 三选一：已延期 → 逾期未交付；完成态（已完成 / 提前完成）且
+ *   onTime=false → 逾期已交付；完成态且 onTime=true → 按时交付（提前完成并入，不单独展示）。
  * - 未到交付节点（进行中 / 待开始 / 完成但未判定 onTime=null）不计入（只进注记条数）。
- * - 按时率 = （提前完成 + 按时交付）÷ 已交付合计（四结果之和），百分比取整；分母 0 → 显示「—」。
+ * - 按时率 = 按时交付 ÷ 已交付合计（三结果之和），百分比取整；分母 0 → 显示「—」。
  */
 
 /** 仪表盘页内视图 id（Push 345 · 业务口径「选择后刷新不变 按账号记住」；与契约 HUB_DASH_VIEW_IDS 同源）：
@@ -289,8 +290,8 @@ export function asHubDashView(value: unknown): HubDashView {
   return typeof value === "string" && (HUB_DASH_VIEW_IDS as readonly string[]).includes(value) ? (value as HubDashView) : "progress";
 }
 
-/** 交付结果展示序（Push 345 · 从左到右：提前完成 → 按时交付 → 逾期已交付 → 逾期未交付；0 条也固定占位）。 */
-export const DASHBOARD_DELIVERY_ORDER = ["提前完成", "按时交付", "逾期已交付", "逾期未交付"] as const;
+/** 交付结果展示序（Push 345；Push 346 追订起三档 —— 从左到右：按时交付 → 逾期已交付 → 逾期未交付；0 条也固定占位）。 */
+export const DASHBOARD_DELIVERY_ORDER = ["按时交付", "逾期已交付", "逾期未交付"] as const;
 
 export type DashboardDeliveryBucket = (typeof DASHBOARD_DELIVERY_ORDER)[number];
 
@@ -300,7 +301,7 @@ export type DashboardDeliveryTaskLike = {
   readonly onTime: boolean | null;
 };
 
-/** 任务 → 交付结果（null = 未到交付节点 / 未判定，不计入）—— 与任务表「是否按时交付」列同一套判定。 */
+/** 任务 → 交付结果（null = 未到交付节点 / 未判定，不计入）—— 与任务表「是否按时交付」列同一套判定（提前完成 = 按时交付）。 */
 export function deliveryBucketOf(task: DashboardDeliveryTaskLike): DashboardDeliveryBucket | null {
   const status = displayStatusLabel(task.displayStatus);
   if (status === "已延期") {
@@ -313,16 +314,16 @@ export function deliveryBucketOf(task: DashboardDeliveryTaskLike): DashboardDeli
     if (task.onTime === null) {
       return null;
     }
-    return status === "提前完成" ? "提前完成" : "按时交付";
+    return "按时交付";
   }
   return null;
 }
 
 /** 交付结果分布（「交付时间」视图口径 · Push 345）。 */
 export type DashboardDelivery = {
-  /** 四结果计数（下标与 DASHBOARD_DELIVERY_ORDER 同序；0 也保留 —— 图上四位固定）。 */
+  /** 三结果计数（下标与 DASHBOARD_DELIVERY_ORDER 同序；0 也保留 —— 图上三档固定）。 */
   readonly counts: readonly number[];
-  /** 已交付合计（四结果之和 = 按时率分母）。 */
+  /** 已交付合计（三结果之和 = 按时率分母）。 */
   readonly total: number;
   /** 按时率（百分比取整 0~100）；分母 0 → null（显示「—」）。 */
   readonly onTimeRate: number | null;
@@ -347,7 +348,7 @@ export function buildDashboardDelivery(tasks: readonly DashboardDeliveryTaskLike
   return {
     counts,
     total,
-    onTimeRate: total === 0 ? null : Math.round(((counts[0] + counts[1]) / total) * 100),
+    onTimeRate: total === 0 ? null : Math.round((counts[0] / total) * 100),
     pendingCount,
   };
 }
@@ -355,4 +356,9 @@ export function buildDashboardDelivery(tasks: readonly DashboardDeliveryTaskLike
 /** 任务是否落在该交付结果柱里 —— 点柱打开的「数据详情」按它筛（保证柱上数字 = 表行数）。 */
 export function isTaskInDeliveryBucket(task: DashboardDeliveryTaskLike, bucket: DashboardDeliveryBucket): boolean {
   return deliveryBucketOf(task) === bucket;
+}
+
+/** 任务是否未到交付节点（右上注记「未到交付节点 N 条」—— 点注记打开的「数据详情」按它筛）。 */
+export function isTaskPendingDelivery(task: DashboardDeliveryTaskLike): boolean {
+  return deliveryBucketOf(task) === null;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DashboardDataset, DashboardIssueDataset } from "../dashboardApi";
-import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, isTaskInDeliveryBucket, type DashboardDeliveryBucket, type DashboardStatusSlice, type HubDashView } from "../data/dashboardProgress";
+import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, isTaskInDeliveryBucket, isTaskPendingDelivery, type DashboardDeliveryBucket, type DashboardStatusSlice, type HubDashView } from "../data/dashboardProgress";
 import type { TaskStatus } from "../data/tasks";
 import { fieldText, stageText, statusText, useLocale, useT, type TextKey } from "../i18n";
 import { displayStatusLabel } from "../taskApi";
@@ -55,11 +55,15 @@ import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
  *
  * Push 345（2026-10-16 业务口径「这个交付时间也要做一个图表 但是它的这个逻辑我没搞懂 感觉也不好 请你重新设计一个告诉我」
  * +「选择B方案 然后 提前完成也加进去 叫交付时间 加一个「按时率 67%」的小结」+「选择后刷新不变 按账号记住」）：
- * 底栏加第四枚视图「交付时间」—— 四结果竖直柱状图（HubDashDelivery = 提前完成 / 按时交付 / 逾期已交付 / 逾期未交付，
+ * 底栏加第四枚视图「交付时间」—— 三结果竖直柱状图（HubDashDelivery = 按时交付 / 逾期已交付 / 逾期未交付，
  * 口径 buildDashboardDelivery）+ 右上「按时率」小结（悬停出公式卡）+「未到交付节点」注记；悬停柱出浮层卡（记录数 / 占比）、
  * 点柱开只读「数据详情」（与柱段 / 扇区 / 问题柱同一套「选中具体项目才可点」，筛选见 isTaskInDeliveryBucket）；
  * 页内视图写回账号偏好 user_preferences.prefs.hubDashView（单键 PATCH，乐观更新 + 失败回滚在 App 层）——
- * 刷新 / 换设备同账号停在同一个视图。 */
+ * 刷新 / 换设备同账号停在同一个视图。
+ *
+ * Push 346 追订（2026-10-16 业务口径「点击也要进入详情的」+「取消提前完成展示」）：
+ * 点「按时率」小结 = 开按时交付口径的数据详情（与按时交付柱同一筛选）、点「未到交付节点」注记 = 开注记里那 N 条
+ * （isTaskPendingDelivery）—— 与点柱同一套「选中具体项目才可点」；「提前完成」并入「按时交付」、不再单独占一档。 */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
 /** 悬停卡（Push 335 柱段 / Push 339 扇区 / Push 340 行阴影）：柱段 = 行名 + 单档一行；行阴影 = 行名 + 五档整排；
@@ -122,7 +126,8 @@ type DashDetailPick =
   | { readonly kind: "cell"; readonly rowKey: string; readonly bin: number }
   | { readonly kind: "status"; readonly status: TaskStatus }
   | { readonly kind: "issue"; readonly state: string; readonly category: string }
-  | { readonly kind: "delivery"; readonly bucket: DashboardDeliveryBucket };
+  | { readonly kind: "delivery"; readonly bucket: DashboardDeliveryBucket }
+  | { readonly kind: "deliveryPending" };
 
 /** 柱段悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）。 */
 const TIP_W = 190;
@@ -564,6 +569,14 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
             setTip(null);
             setDetail({ kind: "delivery", bucket });
           }}
+          onRatePick={() => {
+            setTip(null);
+            setDetail({ kind: "delivery", bucket: "按时交付" });
+          }}
+          onNotePick={() => {
+            setTip(null);
+            setDetail({ kind: "deliveryPending" });
+          }}
         />
       ) : issuesState === "ready" && issuesView !== null ? (
         issuesView.totalIssues === 0 ? (
@@ -653,7 +666,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
           <div className="hub-dash-tip hub-dash-tip--deliveryRate" style={{ left: tip.left, top: tip.top }}>
             <div className="hub-dash-tip__row">{t("hub.dash.delivery.rate")}</div>
             <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateFormula")}</div>
-            {deliveryView.total > 0 ? <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateCalc", { early: deliveryView.counts[0], ontime: deliveryView.counts[1], total: deliveryView.total, rate: deliveryView.onTimeRate ?? "—" })}</div> : null}
+            {deliveryView.total > 0 ? <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateCalc", { ontime: deliveryView.counts[0], total: deliveryView.total, rate: deliveryView.onTimeRate ?? "—" })}</div> : null}
           </div>
         ) : tip.kind === "issue" ? (
           <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
@@ -692,7 +705,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
           <HubDashDetail
             projectName={pickedName}
             manager={data.managerByProject.get(pickedId) ?? ""}
-            tasks={(data.tasksByProject.get(pickedId) ?? []).filter((task) => detail.kind === "cell" ? isTaskInCell(task, detail.rowKey, detail.bin) : detail.kind === "delivery" ? isTaskInDeliveryBucket(task, detail.bucket) : displayStatusLabel(task.displayStatus) === detail.status)}
+            tasks={(data.tasksByProject.get(pickedId) ?? []).filter((task) => detail.kind === "cell" ? isTaskInCell(task, detail.rowKey, detail.bin) : detail.kind === "delivery" ? isTaskInDeliveryBucket(task, detail.bucket) : detail.kind === "deliveryPending" ? isTaskPendingDelivery(task) : displayStatusLabel(task.displayStatus) === detail.status)}
             onClose={() => {
               setDetail(null);
             }}
