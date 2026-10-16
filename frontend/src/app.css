@@ -2370,6 +2370,84 @@ body {
   padding: 0.35rem 3.33% 0.6rem;
 }
 
+/* 「数据总览」（Push 358 · 业务口径 2026-10-16「我要在最左边加一个数据总览 点击后展示的效果如图所示各图表等比例缩小集中展示
+   点击效果 鼠标触碰标签效果依旧」）：五图等比例缩小并排 —— 两列三行网格（左列：项目进度 / 任务状态 / 问题，右列：交付时间 + 词频图跨两行，
+   照业务参考图版式）；这里只做网格 / 面板排布与等比缩放容器 —— 图表本身（viewBox 1200 × 596 + preserveAspectRatio=meet）
+   与配色 / 组件一律不动；面板内 svg 绝对定位铺满图表区（等比缩到底、永不产生滚动条）。 */
+.hub-dash-overview {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem 0.9rem;
+  padding: 0.15rem 3.33% 0.35rem;
+}
+
+.hub-dash-overview__panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.35rem 0.5rem 0.45rem;
+}
+
+/* 版式照业务参考图：左列 进度 / 任务状态 / 问题；右列 交付时间（与左列第一格同高）+ 词频图（占第 2-3 行）。 */
+.hub-dash-overview__panel[data-panel="progress"] {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.hub-dash-overview__panel[data-panel="status"] {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.hub-dash-overview__panel[data-panel="issues"] {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.hub-dash-overview__panel[data-panel="delivery"] {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.hub-dash-overview__panel[data-panel="wordcloud"] {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+}
+
+/* 小标题（各图视图名，与底栏切换文案同源 i18n）：小号深灰、贴面板左上。 */
+.hub-dash-overview__title {
+  margin: 0;
+  padding: 0.1rem 0 0.2rem 0.15rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+/* 图表区：撑满面板剩余高度；子元素（svg / 空态）绝对定位铺满 —— svg 以 meet 等比缩放到容器内、居中留白。 */
+.hub-dash-overview__chart {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.hub-dash-overview__chart > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.hub-dash-overview__chart > .hub-dash-state {
+  position: absolute;
+  inset: 0;
+}
+
 /* 「词频图」（Push 353 · 业务口径 2026-10-16「现在做这个词频图 根据变更原因的词频拼成这个图」+
    「词频图中修饰词不纳入 只保留核心词纳入词频图」）：变更原因核心词词云 —— 词面 / 字号 / 颜色由组件内联
    （data/changeWords.ts 分词、HubDashWordCloud 画布像素蒙版落位）；这里只定画布伸缩、悬停聚焦过渡与可点光标
