@@ -20,9 +20,9 @@
  * → 降级前缀附绑定指引话术（**D4 定稿 2026-10-16**：「当前用户未绑定企业微信，请前往设置补绑」）；其余失败用通用前缀。降级写库失败 →
  * retry 收敛（有界重试，不静默丢消息）。管理员告警群留痕由 outbox 死信告警自动承担（dispatcher → OUTBOX_ALERT_SINK）。
  *
- * 绑定码链路（M5-03-5-6 · 口径 §3 / §5）：`requestBindingCode`（取码）/ `ingestCallback`（单聊发码 →
- * 同事务写绑定 + 标记码已用 → 会话内回执 `aibot_respond_msg`）/ `getBindingState`（读绑定态）。
- * 解绑 / 换绑入 `audit_logs`（D6）属 admin 审计口径（wmj 线）—— 与本刀未落的契约端点同批对齐。
+ * 绑定码链路（M5-03-5-6 · 口径 §3 / §5；HTTP 面随契约刀 Push 249 落 `/api/v1/wecom-dm-binding`）：
+ * `requestBindingCode`（取码）/ `ingestCallback`（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执
+ * `aibot_respond_msg`）/ `getBindingState`（读绑定态）/ `unbind`（解绑：同事务清绑定行 + 写 `audit_logs` —— D6）。
  *
  * 超长口径（B5 定案 · 同群口径）：markdown 按 UTF-8 字节截断（≤ 20000 字节，留 20480 官方上限余量），
  * 尾部省略 + warn 留痕。免打扰口径同 M5-03-3（不做投递前 DND 过滤）。安全：userid 只进库与限速桶摘要；
@@ -30,11 +30,13 @@
  */
 import { randomInt } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
-import type { NotifyMessagePayload } from "@libiaolink/contracts";
+import type { NotifyMessagePayload, WecomDmBindingState } from "@libiaolink/contracts";
 import { AppConfig } from "../../config/config.module.js";
 import { ClockService } from "../../common/clock/clock.service.js";
+import { DatabaseService } from "../../db/database.service.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
+import { AuditService } from "../audit/index.js";
 import { maskUserid } from "./notify.app.service.js";
 import { parseNotifyMessage } from "./notify.delivery.js";
 import { NotifyDmRepository } from "./notify.dm.repository.js";
@@ -135,6 +137,8 @@ export class NotifyDmService {
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
     private readonly config: AppConfig,
+    private readonly audit: AuditService,
+    private readonly database: DatabaseService,
   ) {}
 
   /** 当前机器人维度（WECOM_BOT_ID 原文）：激活表 / 绑定码一律按 (bot_id, …) 成对读写（D2 定案）。 */
@@ -227,10 +231,11 @@ export class NotifyDmService {
    * 生成绑定码（D3 定案：6 位数字 / TTL 10 分钟 / 一次性 / 3 次每小时每用户；口径 §3 第 1 步）：
    * 频率到顶 → 返回 rate_limited + retryAt（窗口内最早码 + 1 小时 = 最早的可用时刻）；
    * 否则同一事务作废旧 pending 码 + 插入新码（撞码换码重试 DM_BINDING_CODE_ATTEMPTS 次）。
-   * 端点 / 契约（生成绑定码 API）属 wmj 线 —— 本刀只落服务能力，HTTP 面待契约刀（口径 §11）。
+   * HTTP 面（POST /api/v1/wecom-dm-binding/codes · 契约刀）：频率到顶统一映射 429 `RATE_LIMITED` + retryAt。
    */
   async requestBindingCode(userId: string): Promise<
-    { ok: true; code: string; expiresAt: Date } | { ok: false; reason: "rate_limited"; retryAt: Date }
+    | { ok: true; code: string; expiresAt: Date; expiresInSeconds: number }
+    | { ok: false; reason: "rate_limited"; retryAt: Date }
   > {
     const at = this.clock.now();
     const since = new Date(at.getTime() - 3_600_000);
@@ -246,16 +251,59 @@ export class NotifyDmService {
       const code = randomBindingCode();
       if (await this.repository.createBindingCode({ userId, code, expiresAt, at })) {
         this.logger.log("绑定码已生成（TTL 10 分钟 · 旧 pending 码作废）：user_id " + userId);
-        return { ok: true, code, expiresAt };
+        return { ok: true, code, expiresAt, expiresInSeconds: Math.round(DM_BINDING_CODE_TTL_MS / 1000) };
       }
     }
     throw new Error("绑定码生成失败（连续 " + String(DM_BINDING_CODE_ATTEMPTS) + " 次撞码）：user_id " + userId);
   }
 
-  /** 绑定态读面（设置页 / 契约读端点用；口径 §6「设置页显示绑定态」）。 */
-  async getBindingState(userId: string): Promise<{ bound: boolean; boundAt: Date | null }> {
+  /**
+   * 绑定态读面（设置页 / 契约读端点 · D5；口径 §6「设置页显示绑定态」）：恒 200 —— 未绑定 = bound:false。
+   * 密文 open_userid 只回掩码末 4 位（§9 最小暴露 · 沿用群绑定 `chatidMasked` 先例）。
+   */
+  async getBindingState(userId: string): Promise<WecomDmBindingState> {
     const binding = await this.repository.findBindingByUserId(userId, this.botId());
-    return { bound: binding !== null, boundAt: binding === null ? null : binding.boundAt };
+    if (binding === null) {
+      return { bound: false, wecomUseridMasked: null, boundAt: null };
+    }
+    return {
+      bound: true,
+      wecomUseridMasked: maskUserid(binding.wecomUserid),
+      boundAt: binding.boundAt.toISOString(),
+    };
+  }
+
+  /**
+   * 解绑（D6 · 口径 §4）：清当前机器人下该用户的绑定行（`bound_at` / `user_id` 置空 —— 保留激活登记行，
+   * 与「换绑清旧」同形：注销投递资格、激活痕迹仍在），与清除**同一事务**写 `audit_logs`
+   * （objectType=user / action=delete；summary 与 changes 只带掩码 —— §9 最小暴露）。
+   * 幂等：本就无绑定（清除 0 行）→ 直接回落 bound:false，不写审计。
+   */
+  async unbind(userId: string, actorId: string): Promise<WecomDmBindingState> {
+    const botId = this.botId();
+    const binding = await this.repository.findBindingByUserId(userId, botId);
+    if (binding === null) {
+      return { bound: false, wecomUseridMasked: null, boundAt: null };
+    }
+    const masked = maskUserid(binding.wecomUserid);
+    const at = this.clock.now();
+    await this.database.db.transaction(async (tx) => {
+      const cleared = await this.repository.clearBindingByUserId({ botId, userId, at }, tx);
+      if (cleared === 0) {
+        return;
+      }
+      await this.audit.record(tx, {
+        actorId,
+        action: "delete",
+        objectType: "user",
+        objectId: userId,
+        summary: "解绑企业微信单聊（open_userid " + masked + "）",
+        changes: [{ field: "wecomDmBinding", from: masked, to: null }],
+        metadata: { bound: false, botId },
+      });
+    });
+    this.logger.log("企业微信单聊已解绑（绑定行去址 · 审计同事务已写）：user_id " + userId);
+    return { bound: false, wecomUseridMasked: null, boundAt: null };
   }
 
   async consume(row: OutboxClaimedRow): Promise<OutboxHandleOutcome> {

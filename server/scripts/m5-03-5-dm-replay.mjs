@@ -330,6 +330,8 @@ async function main() {
       upsertCalls: [],
       backfillCalls: [],
       bindCalls: [],
+      clearCalls: [],
+      clearOverride: null,
       codeCreateCalls: [],
       issuedAt: [],
       codeConflicts: 0,
@@ -401,6 +403,18 @@ async function main() {
         this.deliveries.push(input);
       },
     };
+    /** 解绑仓储面（D6）：清绑定行 + 回清除行数；`clearOverride` 用于复现「并发已清 → 清 0 行」竞态。 */
+    repo.clearBindingByUserId = async function clearBindingByUserId(input, client) {
+      this.clearCalls.push({ ...input, client });
+      let cleared = 0;
+      for (const [key, row] of this.bindings) {
+        if (row.botId === input.botId && row.userId === input.userId) {
+          this.bindings.delete(key);
+          cleared += 1;
+        }
+      }
+      return this.clearOverride ?? cleared;
+    };
     const aibot = {
       sends: [],
       replies: [],
@@ -425,8 +439,23 @@ async function main() {
         return { duplicate: false };
       },
     };
+    /** 审计替身（D6）：记录 (client, input) —— 以 client 同一性断言「与清绑定同事务」。 */
+    const audit = {
+      records: [],
+      async record(client, input) {
+        this.records.push({ client, input });
+      },
+    };
+    /** 事务替身：单层事务直接跑回调并把 tx 传给仓储 / 审计（同一对象 = 同一事务证据）。 */
+    const database = { db: { transaction: async (fn) => fn({ tx: "stub" }) } };
     const config = { env: { WECOM_BOT_ID: BOT_ID_STUB } };
-    return { service: new dm.NotifyDmService(repo, aibot, inbox, clock, config), repo, aibot, inbox };
+    return {
+      service: new dm.NotifyDmService(repo, aibot, inbox, clock, config, audit, database),
+      repo,
+      aibot,
+      inbox,
+      audit,
+    };
   };
 
   /** 已绑定（可投递）场景：联系人 + 绑定行齐备（M5-03-5-6 起发送地址 = 绑定行 open_userid）。 */
@@ -727,7 +756,73 @@ async function main() {
     );
   }
 
-  const summary = "m5-03-5 单聊 aibot（实现段 + M5-03-5-6 绑定码链路）回放：PASS " + pass + " / FAIL " + fail;
+  // S20 绑定态读面 + 解绑（契约刀：D5 读面 / D6 解绑 + 同事务审计 / 幂等）
+  {
+    const bound = boundService({ ok: true, attempts: 1 });
+    const state = await bound.service.getBindingState(USER_ID);
+    assertEqual(
+      "S20 绑定态读面（D5）：已绑定 → bound:true + open_userid 掩码末 4 位 + boundAt",
+      String(state.bound) + ":" + String(state.wecomUseridMasked) + ":" + String(state.boundAt),
+      "true:****" + OPEN_USERID.slice(-4) + ":" + AT.toISOString(),
+    );
+
+    const after = await bound.service.unbind(USER_ID, USER_ID);
+    assertEqual(
+      "S20 解绑（D6）：收回落 bound:false（掩码 / 时刻一律 null —— 不回泄漏已解绑地址）",
+      String(after.bound) + ":" + String(after.wecomUseridMasked) + ":" + String(after.boundAt),
+      "false:null:null",
+    );
+    assertEqual(
+      "S20 解绑：清绑定行 1 行 → 寻址面回落未绑定（findBindingByUserId 不再命中）",
+      String(bound.repo.clearCalls.length) + ":" + String(bound.repo.bindings.size) + ":" + String((await bound.service.getBindingState(USER_ID)).bound),
+      "1:0:false",
+    );
+    assertTrue(
+      "S20 解绑审计（D6）：audit_logs 1 条（objectType=user / action=delete / actor=本人 / 摘要与 changes 只带掩码）",
+      bound.audit.records.length === 1 &&
+        bound.audit.records[0].input.objectType === "user" &&
+        bound.audit.records[0].input.action === "delete" &&
+        bound.audit.records[0].input.objectId === USER_ID &&
+        bound.audit.records[0].input.actorId === USER_ID &&
+        bound.audit.records[0].input.summary.includes("****" + OPEN_USERID.slice(-4)) &&
+        bound.audit.records[0].input.changes[0].field === "wecomDmBinding" &&
+        bound.audit.records[0].input.changes[0].from === "****" + OPEN_USERID.slice(-4) &&
+        bound.audit.records[0].input.changes[0].to === null &&
+        bound.audit.records[0].input.metadata.bound === false &&
+        bound.audit.records[0].input.metadata.botId === BOT_ID_STUB,
+    );
+    assertEqual(
+      "S20 解绑审计与清绑定同事务（同一 client 对象传入仓储与审计）",
+      String(bound.audit.records[0].client === bound.repo.clearCalls[0].client),
+      "true",
+    );
+
+    const again = await bound.service.unbind(USER_ID, USER_ID);
+    assertEqual(
+      "S20 解绑幂等：再解绑 → bound:false 且零副作用（本次不清库、审计仍 1 条）",
+      String(again.bound) + ":" + String(bound.repo.clearCalls.length) + ":" + String(bound.audit.records.length),
+      "false:1:1",
+    );
+
+    const plain = makeService({ ok: true, attempts: 1 });
+    const none = await plain.service.unbind(USER_ID, USER_ID);
+    assertEqual(
+      "S20 未绑定解绑：bound:false 且不触库 / 不写审计（幂等幂）",
+      String(none.bound) + ":" + String(plain.repo.clearCalls.length) + ":" + String(plain.audit.records.length),
+      "false:0:0",
+    );
+
+    const race = boundService({ ok: true, attempts: 1 });
+    race.repo.clearOverride = 0;
+    const raced = await race.service.unbind(USER_ID, USER_ID);
+    assertEqual(
+      "S20 解绑竞态（清 0 行 = 他处已清）：不写审计、仍回 bound:false",
+      String(raced.bound) + ":" + String(race.repo.clearCalls.length) + ":" + String(race.audit.records.length),
+      "false:1:0",
+    );
+  }
+
+  const summary = "m5-03-5 单聊 aibot（实现段 + M5-03-5-6 绑定码链路 + 契约刀绑定端点）回放：PASS " + pass + " / FAIL " + fail;
   console.log(summary);
   for (const line of report) console.log("  " + line);
   if (args.out) {
