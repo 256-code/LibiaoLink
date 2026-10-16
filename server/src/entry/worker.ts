@@ -116,11 +116,12 @@ async function bootstrap(): Promise<void> {
   // 单聊未配置 = 投递行按未就绪 retry 收敛（bounded）；api 进程同模块但从不 start()（构造无副作用）。
   if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
     aibot.onMessage((message) => {
-      // 分流（M5-03-5-4）：单聊回调 → 单聊激活 ingest；其余（群聊 / 事件回调）→ 群 ingest。
+      // 分流（M5-03-5-4；单聊面 M5-03-5-6 扩绑定码）：单聊回调 → 单聊 ingest（激活登记 + 绑定码命中）；
+      // 其余（群聊 / 事件回调）→ 群 ingest。
       // 两侧 ingest 各自带过滤防御（cmd / chattype / 合法性），入参同形 —— 互不牵连。
       const ingest =
         message.chattype === "single"
-          ? dmNotify.activateFromCallback(message)
+          ? dmNotify.ingestCallback(message)
           : groupNotify.activateFromCallback(message);
       void ingest.catch((error) => {
         logger.warn("回调 ingest 失败（忽略本次；待下次回调或人工核查）：" + messageOf(error));

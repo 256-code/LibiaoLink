@@ -2,7 +2,7 @@
  * 企微智能机器人长连接客户端回归（M5-03-2 · P5 定案；M5-03-5-3 扩单聊面）：假 socket 驱动 —— 订阅成败 /
  * 状态机与统计 / 推送帧形状（群 chat_type=2 / 单聊 chatid 填 userid + chat_type=1 · P4 锁帧）/
  * 846607 双语义（群 groupActivated / 单聊 dmActivated）/ 846609 与回执超时 / 双窗口限速拒绝（group / single）/
- * 心跳失联重连 / 回调分发 / stop 清理。
+ * 会话内回执（M5-03-5-6 · aibot_respond_msg + 回调 req_id 透传）/ 心跳失联重连 / 回调分发 / stop 清理。
  * 不触外网（socketFactory 全替身；生产 `ws` 实现见 wecom.aibot.ts createWsSocketFactory）。
  */
 import { describe, expect, it } from "vitest";
@@ -257,6 +257,64 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
     await client.stop();
   });
 
+  it("会话内回执（M5-03-5-6）：cmd=aibot_respond_msg + headers.req_id = 回调 req_id + stream 单帧收敛，回执 ok", async () => {
+    const { client, sockets } = makeClient({
+      windows: [
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: 0 },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: 0 },
+      ],
+    });
+    const socket = await connect(client, sockets);
+
+    const pending = client.replyToCallback({ reqId: "ReqIdCallback0001", userid: "wosu-open-userid", content: "绑定成功" });
+    await sleep(0);
+    expect(socket.lastFrame()).toMatchObject({ cmd: "aibot_respond_msg", headers: { req_id: "ReqIdCallback0001" } });
+    const body = socket.lastFrame()["body"] as Record<string, unknown>;
+    expect(body["msgtype"]).toBe("stream");
+    expect(body["stream"]).toMatchObject({ finish: true, content: "绑定成功" });
+    expect(String((body["stream"] as Record<string, unknown>)["id"]).startsWith("stream_")).toBe(true);
+    socket.ackLast(0);
+    expect(await pending).toEqual({ ok: true, attempts: 1 });
+    await client.stop();
+  });
+
+  it("会话内回执：未就绪 → retryable / attempts=0（不发帧）", async () => {
+    const { client, sockets } = makeClient();
+
+    const result = await client.replyToCallback({ reqId: "req-1", userid: "u-1", content: "绑定成功" });
+
+    expect(result).toMatchObject({ ok: false, kind: "retryable", attempts: 0 });
+    expect(sockets.length).toBe(0);
+    await client.stop();
+  });
+
+  it("会话内回执：单聊桶限速拒绝 → rate_limited / attempts=0（不发帧）；846607 回执 → rate_limited", async () => {
+    const { client, sockets } = makeClient({
+      windows: [
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: 1 },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: 0 },
+      ],
+      now: () => 1_700_000_000_000,
+    });
+    const socket = await connect(client, sockets);
+
+    const first = client.replyToCallback({ reqId: "req-1", userid: "u-1", content: "绑定成功" });
+    await sleep(0);
+    socket.ackLast(0);
+    expect((await first).ok).toBe(true);
+    const frames = socket.sent.length;
+
+    const refused = await client.replyToCallback({ reqId: "req-2", userid: "u-1", content: "已绑定" });
+    expect(refused).toMatchObject({ ok: false, kind: "rate_limited", attempts: 0 });
+    expect(socket.sent.length).toBe(frames);
+
+    const throttled = client.replyToCallback({ reqId: "req-3", userid: "u-2", content: "绑定成功" });
+    await sleep(0);
+    socket.ackLast(846607, "aibot send msg frequency limit exceeded");
+    expect(await throttled).toMatchObject({ ok: false, kind: "rate_limited", errcode: 846607, attempts: 1 });
+    await client.stop();
+  });
+
   it("单聊 846607 分流：dmActivated=false（未命中激活表）→ permanent；true / 缺省 → rate_limited（超频）", async () => {
     const { client, sockets } = makeClient();
     const socket = await connect(client, sockets);
@@ -335,7 +393,7 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
     await client.stop();
   });
 
-  it("回调分发：aibot_msg_callback 归一载荷经 onMessage（退订后不再分发）", async () => {
+  it("回调分发：aibot_msg_callback 归一载荷经 onMessage（含 msgtype / 文本正文；退订后不再分发）", async () => {
     const { client, sockets } = makeClient();
     const socket = await connect(client, sockets);
     const received: AibotIncomingMessage[] = [];
@@ -344,7 +402,14 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
     socket.deliver({
       cmd: "aibot_msg_callback",
       headers: { req_id: "req-cb-1" },
-      body: { chatid: "chat-9", chattype: "group", from: { userid: "u-9" }, msgid: "m-1" },
+      body: {
+        chatid: "chat-9",
+        chattype: "group",
+        from: { userid: "u-9" },
+        msgid: "m-1",
+        msgtype: "text",
+        text: { content: "@Bot 绑定 123456" },
+      },
     });
     expect(received).toEqual([
       {
@@ -354,12 +419,31 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
         chattype: "group",
         fromUserId: "u-9",
         msgid: "m-1",
+        msgtype: "text",
+        text: "@Bot 绑定 123456",
       },
     ]);
 
+    // 事件回调（单聊 enter_chat）：带 req_id + from.userid，无正文（msgtype=event → text 为 null）
+    socket.deliver({
+      cmd: "aibot_event_callback",
+      headers: { req_id: "req-cb-ev" },
+      body: { chattype: "single", from: { userid: "u-9" }, msgid: "m-2", msgtype: "event", event: { eventtype: "enter_chat" } },
+    });
+    expect(received[1]).toEqual({
+      cmd: "aibot_event_callback",
+      reqId: "req-cb-ev",
+      chatid: null,
+      chattype: "single",
+      fromUserId: "u-9",
+      msgid: "m-2",
+      msgtype: "event",
+      text: null,
+    });
+
     off();
     socket.deliver({ cmd: "aibot_event_callback", headers: { req_id: "req-cb-2" }, body: { chatid: "chat-9" } });
-    expect(received).toHaveLength(1);
+    expect(received).toHaveLength(2);
     await client.stop();
   });
 
