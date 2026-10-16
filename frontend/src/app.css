@@ -1363,57 +1363,78 @@ body {
 }
 
 /* 蓝图页「蓝图 ⇄ 仪表盘」转场（业务口径 2026-10-15「鼠标滑动蓝图转场展示仪表盘」「导航栏名称蓝图改成仪表盘」）：
-   转场效果参照 tympanus《A Collection of Page Transitions》的「Fade top / Fade bottom」（第 11 / 12 号动画）——
-   旧页上移淡出（translateY(-100%)、opacity → 0.3）、新页自下淡入（translateY(100%) → 0、opacity 0.3 → 1），
-   0.6s ease both；返回方向镜像。两屏都是整卡位移，画布外的裁切由外层 section 的 overflow-hidden 负责。 */
-.hub-deck__view[data-parked="true"] {
-  visibility: hidden;
-  pointer-events: none;
+   转场照 tympanus《A Collection of Page Transitions》第 11 / 12 项「Fade top / Fade bottom」——
+   上下两屏在一条「刚体滑轨」（.hub-deck__strip）里静态首尾相接，滑轨整体位移一格（translateY 0 ↔ -100%、600ms ease）：
+   去仪表盘 = 滑轨上移（地图上移淡出、仪表盘自下淡入）、回地图 = 反向；透明度交叉 = 两屏各自的淡入 / 淡出
+   （出屏 1 → 0.3、入屏 0.3 → 1），与滑轨位移同一条 600ms ease 时间轴。画布外的裁切由外层 section 的 overflow-hidden 负责。
+   修复史（业务口径：「按钮大小小一点 然后向上滚动有bug」→「这个bug还是有 从下往上滑动就出现」）：
+   ① Push 342 给「入场卡」把 from 态落成基础位，堵掉「动画接管前首帧在静止位露出」的闪影；
+   ② Push 343 起不再让两屏各自位移 —— 真机上仍能抓到两屏在合成层上脱节的残影（一屏已就位、另一屏还停在原地透出），
+      改刚体滑轨后两屏相对几何恒定，任何一帧都只是「滑轨停在某个位置」：叠影 / 闪影在结构上不可能出现；
+   ③ 同步摘掉两屏的 backdrop-blur（滑轨背后只有页面底色，模糊体感≈0，却是毛玻璃重采样脏影与合成层抖动的源头）。 */
+.hub-deck__strip {
+  position: absolute;
+  inset: 0;
+  transform: translateY(0);
+  transition: transform 600ms ease;
 }
 
-.hub-deck__view--out-top {
-  animation: ll-hub-out-top 600ms ease both;
+.hub-deck__strip[data-view="dashboard"] {
+  transform: translateY(-100%);
 }
 
-.hub-deck__view--in-bottom {
-  z-index: 2;
-  animation: ll-hub-in-bottom 600ms ease both;
+/* 滑轨里的两屏（静态排布，永不动 transform）：地图在上一格、仪表盘在下一格。 */
+.hub-deck__cell {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
 }
 
-.hub-deck__view--out-bottom {
-  animation: ll-hub-out-bottom 600ms ease both;
+.hub-deck__cell[data-view="dashboard"] {
+  top: 100%;
 }
 
-.hub-deck__view--in-top {
-  z-index: 2;
-  animation: ll-hub-in-top 600ms ease both;
+/* 透明度交叉（只动 opacity，不碰几何）：入场 0.3 → 1、出场 1 → 0.3。 */
+.hub-deck__cell--in {
+  opacity: 0.3;
+  animation: ll-hub-cell-in 600ms ease both;
 }
 
-@keyframes ll-hub-out-top {
-  to {
-    opacity: 0.3;
-    transform: translateY(-100%);
-  }
+.hub-deck__cell--out {
+  animation: ll-hub-cell-out 600ms ease both;
 }
 
-@keyframes ll-hub-in-bottom {
+@keyframes ll-hub-cell-in {
   from {
     opacity: 0.3;
-    transform: translateY(100%);
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
-@keyframes ll-hub-out-bottom {
+@keyframes ll-hub-cell-out {
+  from {
+    opacity: 1;
+  }
+
   to {
     opacity: 0.3;
-    transform: translateY(100%);
   }
 }
 
-@keyframes ll-hub-in-top {
-  from {
-    opacity: 0.3;
-    transform: translateY(-100%);
+@media (prefers-reduced-motion: reduce) {
+  .hub-deck__strip {
+    transition: none;
+  }
+
+  .hub-deck__cell--in,
+  .hub-deck__cell--out {
+    animation: none;
+    opacity: 1;
   }
 }
 
@@ -1470,8 +1491,8 @@ body {
 
 .hub-dash-head {
   display: flex;
-  align-items: baseline;
-  gap: 0.15rem;
+  align-items: center;
+  gap: 0.4rem;
   /* 左缩进 = 图内 x=40 / viewBox 1200（按宽度缩放，宽屏下与图例 / 阶段名同一竖线起排）。 */
   padding: 0.1rem 3.33% 0.35rem;
 }
@@ -1489,49 +1510,42 @@ body {
   line-height: 1;
 }
 
+/* 项目选择器（Push 336 换全站 SearchSelect；Push 337 追订业务口径「还是要刚刚的字体效果 只是 点击筛选按钮后
+   可以变成现在的效果」）：**收起态 = 标题同款观感**（透明无框 · 1.25rem 加粗 · 宽度贴文字 · 箭头紧随其后），
+   **点开（aria-expanded=true）与浮层 = SearchSelect 缺省的描边输入框 + 搜索下拉**。 */
 .hub-dash-pick {
+  width: auto;
+  max-width: min(20rem, 32vw);
+}
+
+.hub-dash-pick button[aria-expanded="false"] {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.hub-dash-pick__ghost {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  white-space: nowrap;
-  font-size: 1.25rem;
-  font-weight: 700;
-  pointer-events: none;
-}
-
-.hub-dash-pick select {
-  padding: 0 1.15rem 0 0;
-  border: 0;
+  width: auto;
+  border-color: transparent;
   background: transparent;
+  padding: 0 1.15rem 0 0;
   color: #1f2329;
-  font: inherit;
   font-size: 1.25rem;
   font-weight: 700;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  appearance: none;
 }
 
-.hub-dash-pick select:hover {
+.hub-dash-pick button[aria-expanded="false"]:hover {
+  border-color: transparent;
+  background: transparent;
   color: #0f172a;
 }
 
-.hub-dash-pick select:focus-visible {
-  outline: 2px solid rgb(31 35 41 / 0.35);
-  outline-offset: 3px;
+.hub-dash-pick button[aria-expanded="false"] span {
+  color: inherit;
+  font-weight: 700;
 }
 
-.hub-dash-pick__caret {
+.hub-dash-pick button[aria-expanded="false"] svg {
   position: absolute;
+  top: 50%;
   right: 0.15rem;
-  color: #6b7280;
-  pointer-events: none;
+  margin-left: 0;
+  transform: translateY(-50%);
 }
 
 /* 仪表盘视图（蓝图页转场后半屏 · 2026-10-15）：阶段 × 进度五档堆叠条（配色 = 业务确认过的效果图） */
@@ -1657,16 +1671,20 @@ body {
   filter: brightness(0.93);
 }
 
-/* 数据详情（Push 335 · 业务口径「点击某一段是这个只读效果」）：铺满白卡的只读表 —— 标题 + 来源 + 搜索 + 明细。 */
+/* 数据详情（Push 335 · 业务口径「点击某一段是这个只读效果」；Push 336 改弹窗形态 · 业务口径「点击具体的模块进入
+   详细内容后是弹窗一样的效果 并且不支持鼠标滑动切换页面 弹窗不用全屏 就像文件预览一样」）：中央浮层里的
+   白卡（半透明遮罩与居中定位在外层 fixed 容器，见 HubDashDetail.tsx）—— 标题 + 来源 + 搜索 + 明细 + 底部横向滑块。 */
 .hub-dash-detail {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
+  position: relative;
   display: flex;
   flex-direction: column;
+  width: min(76rem, 100%);
+  max-height: 100%;
   min-height: 0;
-  border-radius: 0.75rem;
+  padding: 1rem 1.15rem 0.75rem;
+  border-radius: 0.85rem;
   background: #ffffff;
+  box-shadow: 0 30px 70px -34px rgb(15 23 42 / 0.55);
 }
 
 .hub-dash-detail__head {
@@ -1761,9 +1779,16 @@ body {
   overflow: auto;
 }
 
+/* 原生横向滚动条收口（Push 337 业务口径「现在怎么说两个滚动条」）：表体横向只保留底部自绘滑块
+   （TableScrollbar，见 HubDashDetail.tsx），原生那条（带左右箭头）藏掉；纵向原生条照旧。 */
+.hub-dash-detail__scroll::-webkit-scrollbar {
+  height: 0;
+}
+
+/* 列口径 = 项目空间任务表（Push 337「直接把项目空间的那一列展示即可」）：17 列，最小宽抬到 132rem。 */
 .hub-dash-detail__table {
   width: 100%;
-  min-width: 78rem;
+  min-width: 132rem;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.8rem;
@@ -1877,3 +1902,290 @@ body {
   text-align: center;
 }
 
+
+/* 任务状态饼图（Push 339 · 业务口径 2026-10-15「现在准备做这个任务的」+「这些都要参考项目进度一览」）：
+   五态配色照业务参考图，由数据节点的 data-status 就地定义 --hub-status —— 图例色块 / 扇区 / 引线 / 标签字 /
+   悬停卡色条共用同一份。 */
+.hub-dash-status [data-status="进行中"],
+.hub-dash-tip--status[data-status="进行中"] {
+  --hub-status: #267ef0;
+}
+
+.hub-dash-status [data-status="已完成"],
+.hub-dash-tip--status[data-status="已完成"] {
+  --hub-status: #f9bcb9;
+}
+
+.hub-dash-status [data-status="待开始"],
+.hub-dash-tip--status[data-status="待开始"] {
+  --hub-status: #f69abc;
+}
+
+.hub-dash-status [data-status="提前完成"],
+.hub-dash-tip--status[data-status="提前完成"] {
+  --hub-status: #e07fd6;
+}
+
+/* 「已延期」不在当前参考图里（没有该态任务才不出现在图上）—— 取全站逾期色（rose，与导出报告 / 状态签同源）。 */
+.hub-dash-status [data-status="已延期"],
+.hub-dash-tip--status[data-status="已延期"] {
+  --hub-status: #f43f5e;
+}
+
+.hub-dash-status {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+/* 扇区：白描边 2（扇区间留白色缝隙）+ 圆角由路径本身收（见 HubDashStatus 的 sectorPathOf）。 */
+.hub-dash-status__arc {
+  fill: var(--hub-status);
+  /* 分隔线 = 白描边（业务口径「中间的缝不要」：扇区全直角、从圆心出发，线宽 1.5 ≈ 参考图那道细缝），不圆角、不在圆心留缺口。 */
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.hub-dash-status__swatch {
+  fill: var(--hub-status);
+}
+
+.hub-dash-status__legendText {
+  fill: #6b7280;
+}
+
+.hub-dash-status__label {
+  fill: var(--hub-status);
+}
+
+.hub-dash-status__line {
+  stroke: var(--hub-status);
+  stroke-opacity: 0.45;
+}
+
+/* 选中具体项目才能点扇区（与柱段同一口径：可选时给手型 + 悬停压深一档）。 */
+.hub-dash-status__arc[data-drill="true"] {
+  cursor: pointer;
+}
+
+.hub-dash-status__arc[data-drill="true"]:hover {
+  filter: brightness(0.96);
+}
+
+/* 扇区悬停卡（Push 339 · 业务口径「鼠标触碰效果」）：状态名 + 左侧色条 + 记录数 / 占比两行（形态照参考图）。 */
+.hub-dash-tip--status {
+  min-width: 10.5rem;
+  padding: 0.6rem 0.85rem 0.7rem;
+}
+
+.hub-dash-tip__statusTitle {
+  font-size: 0.8rem;
+  color: #4b5563;
+}
+
+.hub-dash-tip__statusBody {
+  display: flex;
+  align-items: stretch;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+
+.hub-dash-tip__statusBar {
+  width: 0.4rem;
+  border-radius: 999px;
+  background: var(--hub-status);
+}
+
+.hub-dash-tip__statusRows {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.hub-dash-tip__statusRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.2rem;
+}
+
+.hub-dash-tip__statusLabel {
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+.hub-dash-tip__statusValue {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+/* 「问题」分组柱状图（Push 344 · 业务口径 2026-10-16「现在做这个问题 效果和上面做的一样」）：
+   x = 问题状态、图例 = 问题归类；柱色 / 柱顶数字走组件里的 DASHBOARD_ISSUE_COLORS（内联 fill），
+   这里只做网格线 / 0 轴 / 刻度字 / 悬停高亮条 / 点击光标。 */
+.hub-dash-issues {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+/* 悬停整组铺浅灰底（形态照业务参考图二）；默认真透明（口径同 Push 341 的行阴影：不常驻）。 */
+.hub-dash-issues__band {
+  fill: transparent;
+}
+
+.hub-dash-issues__band[data-hover="true"] {
+  fill: #f3f4f6;
+}
+
+.hub-dash-issues__grid {
+  stroke: #e8eaee;
+  stroke-dasharray: 3 4;
+}
+
+.hub-dash-issues__axis {
+  stroke: #b8bec6;
+}
+
+.hub-dash-issues__tick {
+  fill: #8a9099;
+}
+
+.hub-dash-issues__legendText {
+  fill: #6b7280;
+}
+
+.hub-dash-issues__state {
+  fill: #4b5563;
+}
+
+/* 选中具体项目才能点柱（与柱段 / 扇区同一口径：可选时给手型 + 悬停压深一档）。 */
+.hub-dash-issues__bar[data-drill="true"] {
+  cursor: pointer;
+}
+
+.hub-dash-issues__bar[data-drill="true"]:hover {
+  filter: brightness(0.94);
+}
+
+/* 「问题」数据详情（Push 344）：与任务版共用弹窗外壳（.hub-dash-detail*），只补问题表两处宽度收口。 */
+.hub-dash-issue-detail .hub-dash-detail__scroll {
+  max-height: min(64vh, 34rem);
+}
+
+.hub-dash-issue-detail__table th:nth-child(4),
+.hub-dash-issue-detail__table td:nth-child(4) {
+  min-width: 14rem;
+}
+
+/* 「交付时间」柱状图（Push 345 · 业务口径 2026-10-16「这个交付时间也要做一个图表」+「选择B方案 叫交付时间 加一个
+   「按时率」的小结」；Push 346 追订「取消提前完成展示」起三档）：柱 / 柱顶数字 / 悬停卡共用 data-bucket 就地定义
+   --hub-status（按时交付 = 绿、逾期已交付 = 黄、逾期未交付 = 玫红，与任务表「是否按时交付」色族同源）；
+   网格 / 轴线 / 刻度字 / 右上「按时率」小结排版都走这里。 */
+.hub-dash-delivery {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.hub-dash-delivery [data-bucket="按时交付"],
+.hub-dash-tip--delivery[data-bucket="按时交付"] {
+  --hub-status: #22c55e;
+}
+
+.hub-dash-delivery [data-bucket="逾期已交付"],
+.hub-dash-tip--delivery[data-bucket="逾期已交付"] {
+  --hub-status: #f5c518;
+}
+
+.hub-dash-delivery [data-bucket="逾期未交付"],
+.hub-dash-tip--delivery[data-bucket="逾期未交付"] {
+  --hub-status: #f43f5e;
+}
+
+.hub-dash-delivery__bar {
+  fill: var(--hub-status, #c9ced6);
+  transition: filter 150ms ease;
+}
+
+.hub-dash-delivery__bar[data-hover="true"] {
+  filter: brightness(0.93);
+}
+
+.hub-dash-delivery__count {
+  fill: var(--hub-status, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-delivery__name {
+  fill: #374151;
+}
+
+.hub-dash-delivery__grid {
+  stroke: #e8eaee;
+  stroke-dasharray: 3 4;
+}
+
+.hub-dash-delivery__axis {
+  stroke: #b8bec6;
+}
+
+.hub-dash-delivery__tick {
+  fill: #8a9099;
+}
+
+.hub-dash-delivery__rateLabel {
+  fill: #6b7280;
+}
+
+.hub-dash-delivery__rateValue {
+  fill: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-delivery__rateNote {
+  fill: #9aa0a6;
+}
+
+/* 悬停 / 点击命中区（整槽 + 按时率小结 + 未到交付节点注记）：透明矩形，覆盖柱 / 数字 / 类别名与小结文字；可选时给手型。 */
+.hub-dash-delivery__hit,
+.hub-dash-delivery__rateHit,
+.hub-dash-delivery__noteHit {
+  fill: transparent;
+}
+
+.hub-dash-delivery__hit[data-drill="true"],
+.hub-dash-delivery__rateHit[data-drill="true"],
+.hub-dash-delivery__noteHit[data-drill="true"] {
+  cursor: pointer;
+}
+
+/* 按时率公式卡（悬停右上小结）：标题 + 两行说明，行距比「记录数 / 占比」卡松一点。 */
+.hub-dash-tip--deliveryRate {
+  min-width: 15.5rem;
+  padding: 0.6rem 0.85rem 0.7rem;
+}
+
+.hub-dash-tip--deliveryRate .hub-dash-tip__line {
+  margin-top: 0.4rem;
+}
+
+/* 底部视图切换（Push 339 · 业务口径「在仪表盘页面在底部增加切换的按钮」+ 追订「这个按钮再做一个进度一览 靠左不居中」；
+   按钮照业务给的参考代码、尺寸按 2026-10-15「按钮大小小一点」收小（24px 圆角方框、白勾 16px）、
+   未选灰底灰边、选中蓝底白勾、悬停微放大、渐变脉冲高光 —— Tailwind 类在组件里
+   （白勾 / 脉冲层用 group-has-[:checked]:，参考代码的 peer-checked: 挂在内层元素上 —— 兄弟选择器够不到、不生效）
+   这里只做底栏排布：**靠左、与标题条同一条竖线起排**（3.33% = 图内 x=40 / viewBox 1200，与 .hub-dash-head 同缩进）。 */
+.hub-dash-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem 2.25rem;
+  padding: 0.35rem 3.33% 0.6rem;
+}

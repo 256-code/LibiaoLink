@@ -1,9 +1,16 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { DASHBOARD_BINS, isTaskInCell } from "../data/dashboardProgress";
-import type { DashboardDataset } from "../dashboardApi";
-import { stageText, useLocale, useT, type TextKey } from "../i18n";
+import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import type { DashboardDataset, DashboardIssueDataset } from "../dashboardApi";
+import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, isTaskInDeliveryBucket, isTaskPendingDelivery, type DashboardDeliveryBucket, type DashboardStatusSlice, type HubDashView } from "../data/dashboardProgress";
+import type { TaskStatus } from "../data/tasks";
+import { fieldText, stageText, statusText, useLocale, useT, type TextKey } from "../i18n";
+import { displayStatusLabel } from "../taskApi";
+import { HubDashDelivery } from "./HubDashDelivery";
 import { HubDashDetail } from "./HubDashDetail";
+import { HubDashIssueDetail } from "./HubDashIssueDetail";
+import { HubDashIssues, type DashboardIssueRow } from "./HubDashIssues";
+import { HubDashStatus } from "./HubDashStatus";
 import { Loader } from "./Loader";
+import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
 
 /**
  * 仪表盘视图（蓝图页「蓝图 ⇄ 仪表盘」转场后半屏 · 2026-10-15 业务口径「鼠标滑动蓝图转场展示仪表盘」）：
@@ -16,22 +23,128 @@ import { Loader } from "./Loader";
  * Push 335（2026-10-15 业务口径「鼠标放上去是这样的效果」+「点击某一段是这个只读效果」）：
  * 悬停柱段出浮层卡（行名 + 档位色块 + 档位 + 条数，替代原生 title 灰框）；点柱段打开只读「数据详情」
  * （HubDashDetail）。「如果是全部项目的话不支持点击查看数据来源」—— 选中具体项目时柱段才可点。
- */
+ *
+ * Push 336（2026-10-15 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」+「这个选择项目的ui太丑了 和现在的ui完全不符 要重写 要带搜索的选择器」）：
+ * 选择器由原生 select 换成全站同款可搜索下拉 SearchSelect（SearchSelect.tsx）；选中项目写回账号偏好
+ * user_preferences.prefs.hubDashProject（单键 PATCH，乐观更新 + 失败回滚在 App 层），刷新 / 换设备同账号仍停在同一个项目。
+ *
+ * Push 339（2026-10-15 业务口径「现在准备做这个任务状态的」+「鼠标触碰效果」+「点击后效果」+
+ * 「这些都要参考项目进度一览 之前都做过的」+「在仪表盘页面在底部增加切换的按钮」+「这个按钮再做一个进度一览 靠左不居中」）：
+ * 新增「任务状态」视图（HubDashStatus 饼图 = 五态分布 + 色字标签 + 引线）；底部挂两枚勾选框式视图按钮
+ * （DashViewSwitch：左「项目进度一览」、右「任务状态」，单选框语义 = 选中态就是当前视图、点已选中的那枚不取消；
+ * **靠左与标题条同一条竖线起排**，不再居中）；按钮样式照
+ * 业务给的参考代码，见 app.css 的 .hub-dash-switch；**参考代码的白勾 / 脉冲层用 peer-checked: 挂在
+ * 内层元素上 —— 兄弟选择器够不到、照抄永不显示，这里改 group-has-[:checked]: 才真正渲染**）。悬停扇区
+ * 出浮层卡（状态名 + 色条 + 记录数 / 占比），
+ * 点扇区开只读「数据详情」—— 与点柱段同一套口径（「全部项目」不可点）。统计口径 buildDashboardStatus
+ * （data/dashboardProgress.ts）、按项目分桶在取数同一轮完成（零额外请求）。
+ *
+ * Push 340（2026-10-15 业务口径「鼠标放在阴影部分是展示全部阶段的标签的」+「那我们的要展示该阶段的五个状态不就好了」）：
+ * 行阴影（行高亮条）常驻化 + 可悬停 —— 悬停整行任意空白处出「行名 + 五档整排」浮层卡（该阶段的五个状态）；
+ * 彩色柱段的单档卡不变（悬停柱段仍是「行名 + 单档一行」，点柱段的只读「数据详情」也不变）。
+ *
+ * Push 342（2026-10-15 业务口径「按钮大小小一点」）：底栏两枚视图勾选框整体收小（32 → 24px 方框、
+ * 白勾 20 → 16px、标签间距 ml-3 → ml-2）；靠左起排、选中 / 悬停动效口径不变。
+ *
+ * Push 344（2026-10-16 业务口径「现在做这个问题 效果和上面做的一样」）：底栏加第三枚视图「问题」——
+ * 分组柱状图（HubDashIssues）= 问题状态 × 问题归类，形态照业务参考图（图例居中在顶 / 虚线网格 / 柱顶同色数字）；
+ * 悬停柱出浮层卡（状态名 + 归类色点 + 归类 + 条数）、悬停组内空白出「状态名 + 全部归类整排」卡（同 Push 340 口径）；
+ * 点柱开只读「数据详情」（HubDashIssueDetail = 参考图的日报侧五列 + 问题侧三列，另补「问题描述」列），
+ * 与柱段 / 扇区同一套「选中具体项目才可点」；问题 / 日报读面**懒加载**（首次切到「问题」才拉，见 Hub.tsx 的
+ * ensureIssues；三个视图共用同一个项目选择器与常驻项目）。
+ *
+ * Push 345（2026-10-16 业务口径「这个交付时间也要做一个图表 但是它的这个逻辑我没搞懂 感觉也不好 请你重新设计一个告诉我」
+ * +「选择B方案 然后 提前完成也加进去 叫交付时间 加一个「按时率 67%」的小结」+「选择后刷新不变 按账号记住」）：
+ * 底栏加第四枚视图「交付时间」—— 三结果竖直柱状图（HubDashDelivery = 按时交付 / 逾期已交付 / 逾期未交付，
+ * 口径 buildDashboardDelivery）+ 右上「按时率」小结（悬停出公式卡）+「未到交付节点」注记；悬停柱出浮层卡（记录数 / 占比）、
+ * 点柱开只读「数据详情」（与柱段 / 扇区 / 问题柱同一套「选中具体项目才可点」，筛选见 isTaskInDeliveryBucket）；
+ * 页内视图写回账号偏好 user_preferences.prefs.hubDashView（单键 PATCH，乐观更新 + 失败回滚在 App 层）——
+ * 刷新 / 换设备同账号停在同一个视图。
+ *
+ * Push 346 追订（2026-10-16 业务口径「点击也要进入详情的」+「取消提前完成展示」）：
+ * 点「按时率」小结 = 开按时交付口径的数据详情（与按时交付柱同一筛选）、点「未到交付节点」注记 = 开注记里那 N 条
+ * （isTaskPendingDelivery）—— 与点柱同一套「选中具体项目才可点」；「提前完成」并入「按时交付」、不再单独占一档。 */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
-/** 悬停卡（Push 335 · 业务口径「鼠标放上去是这样的效果」）：行名 + 档位色块 + 档位文案 + 该档任务数。
- *  自绘浮层替代浏览器原生 title 灰框（原生框样式不可控、与本页设计不一致）。 */
-type DashTip = {
-  readonly left: number;
-  readonly top: number;
-  readonly row: string;
-  readonly bin: number;
-  readonly count: number;
-};
+/** 悬停卡（Push 335 柱段 / Push 339 扇区 / Push 340 行阴影）：柱段 = 行名 + 单档一行；行阴影 = 行名 + 五档整排；
+ *  扇区 = 状态名 + 色条 + 记录数 / 占比两行。自绘浮层替代浏览器原生 title 灰框（原生框样式不可控、与本页设计不一致）。 */
+type DashTip =
+  | {
+      readonly kind: "bin";
+      readonly left: number;
+      readonly top: number;
+      readonly row: string;
+      readonly bin: number;
+      readonly count: number;
+    }
+  | {
+      readonly kind: "row";
+      readonly left: number;
+      readonly top: number;
+      readonly row: string;
+      readonly counts: readonly number[];
+    }
+  | {
+      readonly kind: "status";
+      readonly left: number;
+      readonly top: number;
+      readonly status: TaskStatus;
+      readonly count: number;
+      readonly share: string;
+    }
+  | {
+      readonly kind: "delivery";
+      readonly left: number;
+      readonly top: number;
+      readonly bucket: DashboardDeliveryBucket;
+      readonly count: number;
+      readonly share: string;
+    }
+  | {
+      readonly kind: "deliveryRate";
+      readonly left: number;
+      readonly top: number;
+    }
+  | {
+      readonly kind: "issue";
+      readonly left: number;
+      readonly top: number;
+      readonly state: string;
+      readonly category: string;
+      readonly count: number;
+    }
+  | {
+      readonly kind: "issueRow";
+      readonly left: number;
+      readonly top: number;
+      readonly state: string;
+      readonly rows: readonly DashboardIssueRow[];
+    };
 
-/** 悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）。 */
+/** 数据详情打开项（Push 335 / Push 339）：柱段 = 行 × 档；扇区 = 状态。 */
+type DashDetailPick =
+  | { readonly kind: "cell"; readonly rowKey: string; readonly bin: number }
+  | { readonly kind: "status"; readonly status: TaskStatus }
+  | { readonly kind: "issue"; readonly state: string; readonly category: string }
+  | { readonly kind: "delivery"; readonly bucket: DashboardDeliveryBucket }
+  | { readonly kind: "deliveryPending" };
+
+/** 柱段悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）。 */
 const TIP_W = 190;
 const TIP_H = 84;
+/** 行阴影卡（行名 + 五档整排）比单档卡高四行（Push 340）。 */
+const ROW_TIP_H = 170;
+/** 扇区悬停卡尺寸（同上；形态照业务参考图，比柱段卡高一档）。 */
+const STATUS_TIP_W = 200;
+const STATUS_TIP_H = 108;
+/** 问题柱 / 问题组悬停卡尺寸（Push 344；组卡按归类行数长高，见 showIssueRowTip）。 */
+const ISSUE_TIP_W = 200;
+const ISSUE_TIP_H = 84;
+/** 交付结果柱 / 按时率小结的悬停卡尺寸（Push 345；结果卡与扇区卡同形态）。 */
+const DELIVERY_TIP_W = 200;
+const DELIVERY_TIP_H = 108;
+const RATE_TIP_W = 300;
+const RATE_TIP_H = 108;
 
 const VIEW_W = 1200;
 const VIEW_H = 596;
@@ -75,27 +188,97 @@ function tickMaxOf(maxTotal: number): { max: number; step: number } {
   return { max: Math.max(step, target), step };
 }
 
-export function HubDashboard({ data, state }: { data: DashboardDataset | null; state: HubDashboardState }) {
+/** 底部视图切换按钮（Push 339 追订 · 业务口径「这个按钮再做一个进度一览 靠左不居中」）：一枚按钮一个视图，
+ *  勾选框式样照业务给的参考代码（灰底灰边圆角方框 → 选中蓝底白勾 + 渐变脉冲层，鼠标触碰放大 1.05 + 文字转蓝）。
+ *  用单选框语义（同组 name，选中态 = 当前视图，点已选中的那枚不会取消选择）；白勾 / 脉冲层用 group-has-[:checked]:
+ *  —— 参考代码的 peer-checked: 挂在内层元素上、兄弟选择器够不到，照抄不生效。 */
+function DashViewSwitch({ view, checked, label, onSelect }: {
+  readonly view: HubDashView;
+  readonly checked: boolean;
+  readonly label: string;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <label className="group flex cursor-pointer items-center" data-switch={view}>
+      <input
+        type="radio"
+        name="hub-dash-view"
+        className="peer sr-only"
+        checked={checked}
+        onChange={(event) => {
+          if (event.target.checked) {
+            onSelect();
+          }
+        }}
+      />
+      <span className="relative flex h-6 w-6 items-center justify-center rounded-md border-2 border-gray-400 bg-gray-100 shadow-md transition-all duration-500 group-hover:scale-105 peer-checked:border-blue-500 peer-checked:bg-blue-500 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400/60">
+        <span className="absolute inset-0 rounded-md bg-gradient-to-br from-white/30 to-white/10 opacity-0 transition-all duration-500 group-has-[:checked]:animate-pulse group-has-[:checked]:opacity-100" />
+        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" className="hidden h-4 w-4 scale-50 text-white transition-transform duration-500 group-has-[:checked]:block group-has-[:checked]:scale-100">
+          <path clipRule="evenodd" fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 10-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z" />
+        </svg>
+      </span>
+      <span className="ml-2 font-medium text-gray-700 transition-colors duration-300 group-hover:text-blue-500">{label}</span>
+    </label>
+  );
+}
+export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, rememberedDashProject, onDashProjectChange, rememberedDashView, onDashViewChange }: {
+  data: DashboardDataset | null;
+  state: HubDashboardState;
+  /** 「问题」视图数据（Push 344 · 懒加载：首次切到「问题」时才拉；null = 还没拉）。 */
+  issues: DashboardIssueDataset | null;
+  /** 「问题」读面状态：idle = 还没拉过 / loading / ready / failed（切走再切回会重试）。 */
+  issuesState: "idle" | "loading" | "ready" | "failed";
+  /** 请求拉「问题」读面（首次切到「问题」视图 / 失败后重试）。 */
+  onNeedIssues: () => void;
+  /** 账号记的常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」；null = 全部项目）。 */
+  rememberedDashProject: string | null;
+  /** 把选中项目写回账号偏好（Push 336；App 层乐观更新 + 失败回滚 + Toast）。 */
+  onDashProjectChange: (projectId: string | null) => Promise<void>;
+  /** 账号记的仪表盘页内视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；缺省 progress）。 */
+  rememberedDashView: HubDashView;
+  /** 记下页内视图（Push 345；App 层乐观更新 + 失败回滚 + Toast）。 */
+  onDashViewChange: (view: HubDashView) => Promise<void>;
+}) {
   const t = useT();
   const locale = useLocale();
   /** 每行一条圆角裁剪（柱条两端圆角、段与段之间直角）：id 需要实例级唯一。 */
   const uid = useId().replace(/:/g, "");
-  /** Push 334：项目选择器（第一行固定「全部项目」；选中项目即只统计该项目）。 */
-  const [pickedId, setPickedId] = useState<string | null>(null);
+  /** Push 334：项目选择器（第一行固定「全部项目」；选中项目即只统计该项目）；Push 336：初值取账号常驻项目。 */
+  const [pickedId, setPickedId] = useState<string | null>(rememberedDashProject);
+  /** 仪表盘页内视图（Push 339 底栏按钮驱动；Push 345 按账号常驻）：progress = 项目进度一览 / status = 任务状态 / issues = 问题 / delivery = 交付时间。 */
+  const [view, setView] = useState<HubDashView>(rememberedDashView);
   /** 悬停卡 + 行高亮（同一行的柱段共用：卡里写行名，图上该行铺一条浅灰底）。 */
   const [tip, setTip] = useState<DashTip | null>(null);
   const [hoverRow, setHoverRow] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  /** 数据详情（Push 335：点柱段打开；记「行键 × 档」，打开时按它筛任务）。 */
-  const [detail, setDetail] = useState<{ readonly rowKey: string; readonly bin: number } | null>(null);
-  /** 选择器宽度跟随当前文字（业务口径「选择按钮和文字之间距离不要这么远 要动态近距离」）：量一份同字号的隐藏文本。 */
-  const pickGhostRef = useRef<HTMLSpanElement | null>(null);
-  const [pickTextWidth, setPickTextWidth] = useState<number | null>(null);
+  /** 数据详情（Push 335：点柱段打开；Push 339：点扇区打开；记「行 × 档」或「状态」，打开时按它筛任务）。 */
+  const [detail, setDetail] = useState<DashDetailPick | null>(null);
+  /** 已失效的常驻项目只清一次（Push 336）：PATCH 失败回滚时不再重复请求，避免打转。 */
+  const staleClearedRef = useRef<string | null>(null);
+  /** 常驻项目（Push 336）：偏好晚到（首屏 prefs 未回）/ 换账号 / 保存失败回滚时跟随 —— 与本地选中同值即空转。 */
+  useEffect(() => {
+    setPickedId(rememberedDashProject);
+  }, [rememberedDashProject]);
+  /** 常驻页内视图（Push 345 · 业务口径「选择后刷新不变 按账号记住」）：偏好晚到（首屏 prefs 未回）/ 换账号 / 保存失败回滚时跟随 —— 与本地选中同值即空转。 */
+  useEffect(() => {
+    setView(rememberedDashView);
+  }, [rememberedDashView]);
+  /** 「问题」读面懒加载（Push 344）：切到「问题」视图时拉；首屏直接落在「问题」（常驻视图）也拉。 */
+  useEffect(() => {
+    if (view === "issues") {
+      onNeedIssues();
+    }
+  }, [view, onNeedIssues]);
+  /** 常驻的项目已不存在（被删）：界面回落「全部项目」，并把账号偏好一并清掉（只清一次）。 */
   useEffect(() => {
     if (pickedId !== null && data !== null && !data.byProject.has(pickedId)) {
       setPickedId(null);
+      if (rememberedDashProject === pickedId && staleClearedRef.current !== pickedId) {
+        staleClearedRef.current = pickedId;
+        void onDashProjectChange(null);
+      }
     }
-  }, [data, pickedId]);
+  }, [data, pickedId, rememberedDashProject, onDashProjectChange]);
   /** 「全部项目」不支持点击查看数据来源（业务口径）：退到全部项目 / 切项目时关掉已开的数据详情。 */
   useEffect(() => {
     if (pickedId === null) {
@@ -110,6 +293,7 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
     }
     const box = wrap.getBoundingClientRect();
     setTip({
+      kind: "bin",
       left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - TIP_W - 6)),
       top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - TIP_H - 6)),
       row: rowText,
@@ -117,15 +301,107 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
       count,
     });
   };
-
-  useLayoutEffect(() => {
-    const ghost = pickGhostRef.current;
-    if (ghost === null) {
+  /** 悬停扇区（Push 339 · 业务口径「鼠标触碰效果」）：卡里写状态名 / 记录数 / 占比（形态照业务参考图）。 */
+  const showStatusTip = (event: ReactMouseEvent<SVGGElement>, slice: DashboardStatusSlice, share: string): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
       return;
     }
-    const width = ghost.getBoundingClientRect().width;
-    setPickTextWidth((prev) => (prev !== null && Math.abs(prev - width) < 0.5 ? prev : width));
-  });
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "status",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - STATUS_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - STATUS_TIP_H - 6)),
+      status: slice.status,
+      count: slice.count,
+      share,
+    });
+  };
+  /** 悬停交付结果柱（Push 345）：卡里写结果名 + 色条 + 记录数 / 占比（与扇区卡同形态）。 */
+  const showDeliveryTip = (event: ReactMouseEvent<SVGRectElement>, bucket: DashboardDeliveryBucket, count: number, share: string): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "delivery",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - DELIVERY_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - DELIVERY_TIP_H - 6)),
+      bucket,
+      count,
+      share,
+    });
+  };
+  /** 悬停「按时率」小结（Push 345）：卡里写口径公式与算式（让 67% 一眼可自查）。 */
+  const showDeliveryRateTip = (event: ReactMouseEvent<SVGRectElement>): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "deliveryRate",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - RATE_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - RATE_TIP_H - 6)),
+    });
+  };
+  /** 悬停行阴影（Push 340）：同一坐标口径，卡里写行名 + 五档整排（该阶段的五个状态，0 也列出）。 */
+  const showRowTip = (event: ReactMouseEvent<SVGRectElement>, rowText: string, counts: readonly number[]): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "row",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - ROW_TIP_H - 6)),
+      row: rowText,
+      counts,
+    });
+  };
+  /** 悬停问题柱（Push 344 · 业务口径「效果和上面做的一样」）：卡里写状态名 + 归类色点 / 归类 / 条数（形态照参考图二）。 */
+  const showIssueTip = (event: ReactMouseEvent<SVGRectElement>, state: string, category: string, count: number): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "issue",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - ISSUE_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - ISSUE_TIP_H - 6)),
+      state,
+      category,
+      count,
+    });
+  };
+  /** 悬停问题组内空白（Push 344）：卡里写状态名 + 该状态全部归类整排（与 Push 340 的行阴影卡同一口径）。 */
+  const showIssueRowTip = (event: ReactMouseEvent<SVGRectElement>, state: string, rows: readonly DashboardIssueRow[]): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    const height = ISSUE_TIP_H + 22 * Math.max(rows.length - 1, 0);
+    setTip({
+      kind: "issueRow",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - ISSUE_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - height - 6)),
+      state,
+      rows,
+    });
+  };
+  /** 切视图（Push 339 / Push 344 / Push 345）：先关掉旧视图的浮层卡 / 数据详情（详情对应的柱段 / 扇区 / 柱已不在画面上）；
+   *  视图写回账号偏好（Push 345 · 「选择后刷新不变 按账号记住」）；「问题」读面懒加载由 view 跟随的 effect 负责。 */
+  const switchView = (next: HubDashView): void => {
+    setView(next);
+    setTip(null);
+    setHoverRow(null);
+    setDetail(null);
+    void onDashViewChange(next);
+  };
 
   if (state === "failed") {
     return <div className="hub-dash-state">{t("hub.dash.failed")}</div>;
@@ -138,42 +414,41 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
     );
   }
   const progress = pickedId === null ? data.all : data.byProject.get(pickedId) ?? data.all;
-  /** 标题条：项目进度一览·<选择器>（选择器里的当前项就是标题的后半段）。 */
+  /** 任务状态分布（Push 339）：与进度同一套项目选择（同一轮取数里分桶，切换不发请求）。 */
+  const statusView = pickedId === null ? data.statusAll : data.statusByProject.get(pickedId) ?? data.statusAll;
+  /** 交付结果分布（Push 345 · 「交付时间」视图）：同一套项目选择（同一轮取数里分桶，切换不发请求）。 */
+  const deliveryView = pickedId === null ? data.deliveryAll : data.deliveryByProject.get(pickedId) ?? data.deliveryAll;
+  /** 问题分布（Push 344）：同一套项目选择；数据懒加载（issues === null = 还没拉过）。 */
+  const issuesView = issues === null ? null : pickedId === null ? issues.all : issues.byProject.get(pickedId) ?? issues.all;
+  /** 标题条：<视图名>·<选择器>（选择器里的当前项就是标题的后半段；视图名随底部切换走）。 */
   const pickedName = pickedId !== null ? data.options.find((option) => option.id === pickedId)?.name ?? t("hub.dash.allProjects") : t("hub.dash.allProjects");
-  /** 只有选中具体项目才能点开数据详情（「全部项目」= 混合来源，不给来源明细 —— 业务口径）。 */
+  /** 只有选中具体项目才能点开数据详情（「全部项目」= 混合来源，不给来源明细 —— 业务口径；柱段 / 扇区同一套）。 */
   const canDrill = pickedId !== null;
-  /** 选择器宽度 = 当前文字宽 + 箭头位（最长 20rem，超长走省略号）—— 箭头永远贴着文字。 */
-  const pickWidth = pickTextWidth === null ? undefined : Math.min(Math.ceil(pickTextWidth) + 20, 320);
+  /** 选择器选项（Push 336）：第一行固定「全部项目」（value ""），其余按项目名。 */
+  const pickOptions: readonly SearchSelectOption[] = [{ value: "", label: t("hub.dash.allProjects") }, ...data.options.map((option) => ({ value: option.id, label: option.name }))];
+  /** 选中项目（Push 336）：立即上屏并按账号记住（乐观）；切项目即关掉已开的数据详情。 */
+  const pickProject = (next: string | null): void => {
+    setPickedId(next);
+    setDetail(null);
+    void onDashProjectChange(next);
+  };
   const head = (
     <div className="hub-dash-head">
-      <span className="hub-dash-title">{t("hub.dash.title")}</span>
+      <span className="hub-dash-title">{view === "progress" ? t("hub.dash.title") : view === "status" ? t("hub.dash.status.title") : view === "issues" ? t("hub.dash.issues.title") : t("hub.dash.delivery.title")}</span>
       <span className="hub-dash-sep" aria-hidden="true">
         •
       </span>
-      <span className="hub-dash-pick">
-        <span ref={pickGhostRef} className="hub-dash-pick__ghost" aria-hidden="true">
-          {pickedName}
-        </span>
-        <select
+      <div className="hub-dash-pick">
+        <SearchSelect
+          options={pickOptions}
           value={pickedId ?? ""}
-          style={pickWidth === undefined ? undefined : { width: pickWidth + "px" }}
-          aria-label={t("hub.dash.pickProject")}
-          onChange={(event) => {
-            setPickedId(event.target.value === "" ? null : event.target.value);
-            setDetail(null);
-          }}
-        >
-          <option value="">{t("hub.dash.allProjects")}</option>
-          {data.options.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.name}
-            </option>
-          ))}
-        </select>
-        <svg className="hub-dash-pick__caret" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </span>
+          onChange={(value) => pickProject(value === "" ? null : value)}
+          placeholder={t("hub.dash.allProjects")}
+          ariaLabel={t("hub.dash.pickProject")}
+          searchPlaceholder={t("hub.dash.pickSearch")}
+          emptyText={t("hub.dash.pickEmpty")}
+        />
+      </div>
     </div>
   );
   if (progress.totalTasks === 0) {
@@ -198,89 +473,244 @@ export function HubDashboard({ data, state }: { data: DashboardDataset | null; s
   return (
     <div ref={wrapRef} className="hub-dash-wrap">
       {head}
-      <svg className="hub-dash" viewBox={"0 0 " + VIEW_W + " " + VIEW_H} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("hub.dash.aria")}>
-        <defs>
-          {rows.map((row, index) => (
-            <clipPath key={row.key} id={uid + "-clip-" + index}>
-              <rect x={PLOT_X0} y={barYOf(index)} width={Math.max(row.total * unit, 0)} height={barH} rx={6} />
-            </clipPath>
-          ))}
-        </defs>
-        {LEGEND_KEYS.map((key, index) => (
-          <g key={key}>
-            <rect className="hub-dash__swatch" data-bin={DASHBOARD_BINS[index]} x={40 + index * 150} y={10} width={14} height={14} rx={3} />
-            <text x={60 + index * 150} y={22} fontSize={13} fill="#4b5563">{t(key)}</text>
-          </g>
-        ))}
-        {ticks.map((value) => (
-          <line key={value} x1={PLOT_X0 + value * unit} y1={ROWS_TOP - 8} x2={PLOT_X0 + value * unit} y2={AXIS_Y} stroke="#e5e7eb" strokeDasharray="3,4" />
-        ))}
-        {rows.map((row, index) => {
-          const barY = barYOf(index);
-          const baseline = barY + barH / 2 + 4.5;
-          let cursor = PLOT_X0;
-          const rowText = row.isUngrouped ? t("hub.dash.ungrouped") : stageText(locale, row.label);
-          return (
-            <g key={row.key} onMouseEnter={() => setHoverRow(row.key)} onMouseLeave={() => { setHoverRow(null); setTip(null); }}>
-              {hoverRow === row.key ? (
-                <rect className="hub-dash__rowband" x={16} y={barY - 7} width={VIEW_W - 32} height={barH + 14} rx={8} />
-              ) : null}
-              <text x={LABEL_X} y={baseline} textAnchor="end" fontSize={14.5} fill="#374151">{rowText}</text>
-              <g clipPath={"url(#" + uid + "-clip-" + index + ")"}>
-                {row.counts.map((count, bin) => {
-                  if (count === 0) {
-                    return null;
-                  }
-                  const width = count * unit;
-                  const x = cursor;
-                  cursor += width;
-                  return (
-                    <g
-                      key={bin}
-                      onMouseEnter={(event) => showTip(event, rowText, bin, count)}
-                      onMouseMove={(event) => showTip(event, rowText, bin, count)}
-                      onMouseLeave={() => setTip(null)}
-                      onClick={canDrill ? () => {
-                        setTip(null);
-                        setDetail({ rowKey: row.key, bin });
-                      } : undefined}
-                    >
-                      <rect className="hub-dash__seg" data-bin={DASHBOARD_BINS[bin]} data-drill={canDrill ? "true" : "false"} x={x} y={barY} width={width} height={barH} />
-                      {width >= 24 ? (
-                        <text className="hub-dash__num" data-tone={bin === 0 || bin === 2 ? "dark" : "light"} x={x + width / 2} y={baseline} textAnchor="middle" fontSize={13} fontWeight={600}>{count}</text>
-                      ) : null}
-                    </g>
-                  );
-                })}
-              </g>
-              <text x={TOTAL_X} y={baseline} fontSize={13} fill="#9ca3af">{row.total}</text>
+      {view === "progress" ? (
+        <svg className="hub-dash" viewBox={"0 0 " + VIEW_W + " " + VIEW_H} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("hub.dash.aria")}>
+          <defs>
+            {rows.map((row, index) => (
+              <clipPath key={row.key} id={uid + "-clip-" + index}>
+                <rect x={PLOT_X0} y={barYOf(index)} width={Math.max(row.total * unit, 0)} height={barH} rx={6} />
+              </clipPath>
+            ))}
+          </defs>
+          {LEGEND_KEYS.map((key, index) => (
+            <g key={key}>
+              <rect className="hub-dash__swatch" data-bin={DASHBOARD_BINS[index]} x={40 + index * 150} y={10} width={14} height={14} rx={3} />
+              <text x={60 + index * 150} y={22} fontSize={13} fill="#4b5563">{t(key)}</text>
             </g>
-          );
-        })}
-        <line x1={PLOT_X0 - 8} y1={AXIS_Y} x2={PLOT_X1 + 8} y2={AXIS_Y} stroke="#b8bec6" />
-        {ticks.map((value) => (
-          <text key={value} x={PLOT_X0 + value * unit} y={TICK_LABEL_Y} textAnchor="middle" fontSize={12} fill="#8a9099">{value}</text>
-        ))}
-      </svg>
-      {tip !== null ? (
-        <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
-          <div className="hub-dash-tip__row">{tip.row}</div>
-          <div className="hub-dash-tip__line">
-            <span className="hub-dash-tip__dot" data-bin={DASHBOARD_BINS[tip.bin]} />
-            <span className="hub-dash-tip__label">{t(LEGEND_KEYS[tip.bin])}</span>
-            <span className="hub-dash-tip__count">{tip.count}</span>
-          </div>
-        </div>
-      ) : null}
-      {detail !== null && pickedId !== null ? (
-        <HubDashDetail
-          projectName={pickedName}
-          manager={data.managerByProject.get(pickedId) ?? ""}
-          tasks={(data.tasksByProject.get(pickedId) ?? []).filter((task) => isTaskInCell(task, detail.rowKey, detail.bin))}
-          onClose={() => {
-            setDetail(null);
+          ))}
+          {ticks.map((value) => (
+            <line key={value} x1={PLOT_X0 + value * unit} y1={ROWS_TOP - 8} x2={PLOT_X0 + value * unit} y2={AXIS_Y} stroke="#e5e7eb" strokeDasharray="3,4" />
+          ))}
+          {rows.map((row, index) => {
+            const barY = barYOf(index);
+            const baseline = barY + barH / 2 + 4.5;
+            let cursor = PLOT_X0;
+            const rowText = row.isUngrouped ? t("hub.dash.ungrouped") : stageText(locale, row.label);
+            return (
+              <g key={row.key} onMouseEnter={() => setHoverRow(row.key)} onMouseLeave={() => { setHoverRow(null); setTip(null); }}>
+                {/* Push 340 行阴影常驻命中区（悬停出「行名 + 五档整排」卡）；Push 341：默认态内联 style 真透明（呈现属性压不过 CSS 类），悬停才着色。 */}
+                <rect
+                  className="hub-dash__rowband"
+                  style={hoverRow === row.key ? undefined : { fill: "transparent" }}
+                  x={16}
+                  y={barY - 7}
+                  width={VIEW_W - 32}
+                  height={barH + 14}
+                  rx={8}
+                  onMouseEnter={(event) => showRowTip(event, rowText, row.counts)}
+                  onMouseMove={(event) => showRowTip(event, rowText, row.counts)}
+                />
+                <text x={LABEL_X} y={baseline} textAnchor="end" fontSize={14.5} fill="#374151">{rowText}</text>
+                <g clipPath={"url(#" + uid + "-clip-" + index + ")"}>
+                  {row.counts.map((count, bin) => {
+                    if (count === 0) {
+                      return null;
+                    }
+                    const width = count * unit;
+                    const x = cursor;
+                    cursor += width;
+                    return (
+                      <g
+                        key={bin}
+                        onMouseEnter={(event) => showTip(event, rowText, bin, count)}
+                        onMouseMove={(event) => showTip(event, rowText, bin, count)}
+                        onMouseLeave={() => setTip(null)}
+                        onClick={canDrill ? () => {
+                          setTip(null);
+                          setDetail({ kind: "cell", rowKey: row.key, bin });
+                        } : undefined}
+                      >
+                        <rect className="hub-dash__seg" data-bin={DASHBOARD_BINS[bin]} data-drill={canDrill ? "true" : "false"} x={x} y={barY} width={width} height={barH} />
+                        {width >= 24 ? (
+                          <text className="hub-dash__num" data-tone={bin === 0 || bin === 2 ? "dark" : "light"} x={x + width / 2} y={baseline} textAnchor="middle" fontSize={13} fontWeight={600}>{count}</text>
+                        ) : null}
+                      </g>
+                    );
+                  })}
+                </g>
+                <text x={TOTAL_X} y={baseline} fontSize={13} fill="#9ca3af">{row.total}</text>
+              </g>
+            );
+          })}
+          <line x1={PLOT_X0 - 8} y1={AXIS_Y} x2={PLOT_X1 + 8} y2={AXIS_Y} stroke="#b8bec6" />
+          {ticks.map((value) => (
+            <text key={value} x={PLOT_X0 + value * unit} y={TICK_LABEL_Y} textAnchor="middle" fontSize={12} fill="#8a9099">{value}</text>
+          ))}
+        </svg>
+      ) : view === "status" ? (
+        <HubDashStatus
+          status={statusView}
+          canDrill={canDrill}
+          onTip={showStatusTip}
+          onLeave={() => setTip(null)}
+          onPick={(slice) => {
+            setTip(null);
+            setDetail({ kind: "status", status: slice.status });
           }}
         />
+      ) : view === "delivery" ? (
+        <HubDashDelivery
+          delivery={deliveryView}
+          canDrill={canDrill}
+          onTip={showDeliveryTip}
+          onRateTip={showDeliveryRateTip}
+          onLeave={() => setTip(null)}
+          onPick={(bucket) => {
+            setTip(null);
+            setDetail({ kind: "delivery", bucket });
+          }}
+          onRatePick={() => {
+            setTip(null);
+            setDetail({ kind: "delivery", bucket: "按时交付" });
+          }}
+          onNotePick={() => {
+            setTip(null);
+            setDetail({ kind: "deliveryPending" });
+          }}
+        />
+      ) : issuesState === "ready" && issuesView !== null ? (
+        issuesView.totalIssues === 0 ? (
+          <div className="hub-dash-state">{t("hub.dash.issues.empty")}</div>
+        ) : (
+          <HubDashIssues
+            issues={issuesView}
+            canDrill={canDrill}
+            onTip={showIssueTip}
+            onRowTip={showIssueRowTip}
+            onLeave={() => setTip(null)}
+            onPick={(state, category) => {
+              setTip(null);
+              setDetail({ kind: "issue", state, category });
+            }}
+          />
+        )
+      ) : issuesState === "failed" ? (
+        <div className="hub-dash-state">{t("hub.dash.failed")}</div>
+      ) : (
+        <div className="hub-dash-state">
+          <Loader />
+        </div>
+      )}
+      <div className="hub-dash-switch">
+        <DashViewSwitch view="progress" checked={view === "progress"} label={t("hub.dash.title")} onSelect={() => switchView("progress")} />
+        <DashViewSwitch view="status" checked={view === "status"} label={t("hub.dash.status.title")} onSelect={() => switchView("status")} />
+        <DashViewSwitch view="issues" checked={view === "issues"} label={t("hub.dash.issues.title")} onSelect={() => switchView("issues")} />
+        <DashViewSwitch view="delivery" checked={view === "delivery"} label={t("hub.dash.delivery.title")} onSelect={() => switchView("delivery")} />
+      </div>
+      {tip !== null ? (
+        tip.kind === "bin" ? (
+          <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__row">{tip.row}</div>
+            <div className="hub-dash-tip__line">
+              <span className="hub-dash-tip__dot" data-bin={DASHBOARD_BINS[tip.bin]} />
+              <span className="hub-dash-tip__label">{t(LEGEND_KEYS[tip.bin])}</span>
+              <span className="hub-dash-tip__count">{tip.count}</span>
+            </div>
+          </div>
+        ) : tip.kind === "row" ? (
+          <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__row">{tip.row}</div>
+            {tip.counts.map((count, bin) => (
+              <div key={bin} className="hub-dash-tip__line">
+                <span className="hub-dash-tip__dot" data-bin={DASHBOARD_BINS[bin]} />
+                <span className="hub-dash-tip__label">{t(LEGEND_KEYS[bin])}</span>
+                <span className="hub-dash-tip__count">{count}</span>
+              </div>
+            ))}
+          </div>
+        ) : tip.kind === "status" ? (
+          <div className="hub-dash-tip hub-dash-tip--status" data-status={tip.status} style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__statusTitle">{statusText(locale, tip.status)}</div>
+            <div className="hub-dash-tip__statusBody">
+              <span className="hub-dash-tip__statusBar" />
+              <span className="hub-dash-tip__statusRows">
+                <span className="hub-dash-tip__statusRow">
+                  <span className="hub-dash-tip__statusLabel">{t("hub.dash.status.count")}</span>
+                  <span className="hub-dash-tip__statusValue">{tip.count}</span>
+                </span>
+                <span className="hub-dash-tip__statusRow">
+                  <span className="hub-dash-tip__statusLabel">{t("hub.dash.status.share")}</span>
+                  <span className="hub-dash-tip__statusValue">{tip.share}</span>
+                </span>
+              </span>
+            </div>
+          </div>
+        ) : tip.kind === "delivery" ? (
+          <div className="hub-dash-tip hub-dash-tip--status hub-dash-tip--delivery" data-bucket={tip.bucket} style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__statusTitle">{statusText(locale, tip.bucket)}</div>
+            <div className="hub-dash-tip__statusBody">
+              <span className="hub-dash-tip__statusBar" />
+              <span className="hub-dash-tip__statusRows">
+                <span className="hub-dash-tip__statusRow">
+                  <span className="hub-dash-tip__statusLabel">{t("hub.dash.status.count")}</span>
+                  <span className="hub-dash-tip__statusValue">{tip.count}</span>
+                </span>
+                <span className="hub-dash-tip__statusRow">
+                  <span className="hub-dash-tip__statusLabel">{t("hub.dash.status.share")}</span>
+                  <span className="hub-dash-tip__statusValue">{tip.share}</span>
+                </span>
+              </span>
+            </div>
+          </div>
+        ) : tip.kind === "deliveryRate" ? (
+          <div className="hub-dash-tip hub-dash-tip--deliveryRate" style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__row">{t("hub.dash.delivery.rate")}</div>
+            <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateFormula")}</div>
+            {deliveryView.total > 0 ? <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateCalc", { ontime: deliveryView.counts[0], total: deliveryView.total, rate: deliveryView.onTimeRate ?? "—" })}</div> : null}
+          </div>
+        ) : tip.kind === "issue" ? (
+          <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__row">{statusText(locale, tip.state)}</div>
+            <div className="hub-dash-tip__line">
+              <span className="hub-dash-tip__dot" style={{ background: DASHBOARD_ISSUE_COLORS[tip.category] ?? "#c9ced6" }} />
+              <span className="hub-dash-tip__label">{fieldText(locale, tip.category)}</span>
+              <span className="hub-dash-tip__count">{tip.count}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__row">{statusText(locale, tip.state)}</div>
+            {tip.rows.map((row) => (
+              <div key={row.category} className="hub-dash-tip__line">
+                <span className="hub-dash-tip__dot" style={{ background: DASHBOARD_ISSUE_COLORS[row.category] ?? "#c9ced6" }} />
+                <span className="hub-dash-tip__label">{fieldText(locale, row.category)}</span>
+                <span className="hub-dash-tip__count">{row.count}</span>
+              </div>
+            ))}
+          </div>
+        )
+      ) : null}
+      {detail !== null && pickedId !== null ? (
+        detail.kind === "issue" ? (
+          <HubDashIssueDetail
+            projectName={pickedName}
+            rows={(issues === null ? [] : issues.issuesByProject.get(pickedId) ?? [])
+              .filter((issue) => isIssueInCell(issue, detail.state, detail.category))
+              .map((issue) => ({ issue, report: (issues === null ? [] : issues.reportsByProject.get(pickedId) ?? []).find((report) => report.id === issue.reportId) ?? null }))}
+            onClose={() => {
+              setDetail(null);
+            }}
+          />
+        ) : (
+          <HubDashDetail
+            projectName={pickedName}
+            manager={data.managerByProject.get(pickedId) ?? ""}
+            tasks={(data.tasksByProject.get(pickedId) ?? []).filter((task) => detail.kind === "cell" ? isTaskInCell(task, detail.rowKey, detail.bin) : detail.kind === "delivery" ? isTaskInDeliveryBucket(task, detail.bucket) : detail.kind === "deliveryPending" ? isTaskPendingDelivery(task) : displayStatusLabel(task.displayStatus) === detail.status)}
+            onClose={() => {
+              setDetail(null);
+            }}
+          />
+        )
       ) : null}
     </div>
   );

@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { AppError } from "../../common/errors/app-error.js";
-import { BACKGROUND_TIER_IDS, HUB_VIEW_IDS, LOCALE_IDS, PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type BackgroundTier, type HubView, type Locale, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
+import { BACKGROUND_TIER_IDS, HUB_DASH_PROJECT_MAX_LENGTH, HUB_DASH_VIEW_IDS, HUB_VIEW_IDS, LOCALE_IDS, PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type BackgroundTier, type HubDashView, type HubView, type Locale, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -103,6 +103,18 @@ function hubViewOf(value: unknown): HubView {
   return typeof value === "string" && HUB_VIEW_SET.has(value) ? (value as HubView) : "map";
 }
 
+/** 仪表盘常驻项目（Push 336 · 业务口径 2026-10-15「选择的项目也要记住 不随刷新变动而回到全部项目」）：jsonb 里非字符串 / 空串 / 超长一律回 null（= 全部项目，不抛错）。 */
+function hubDashProjectOf(value: unknown): string | null {
+  return typeof value === "string" && value !== "" && value.length <= HUB_DASH_PROJECT_MAX_LENGTH ? value : null;
+}
+
+/** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：jsonb 里白名单外（progress / status / issues / delivery 之外）/ 缺省一律回默认 progress（不抛错）。 */
+const HUB_DASH_VIEW_SET: ReadonlySet<string> = new Set(HUB_DASH_VIEW_IDS);
+
+function hubDashViewOf(value: unknown): HubDashView {
+  return typeof value === "string" && HUB_DASH_VIEW_SET.has(value) ? (value as HubDashView) : "progress";
+}
+
 /** 工作台展开态（A31 · Push 233）：`{ tasks, raised }` 两个项目 id 列表；jsonb 里非对象 / 数组内非字符串项一律收敛（不抛错）。 */
 function openProjectsOf(value: unknown): WorkspaceOpenProjects {
   const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -201,7 +213,7 @@ function dayOf(value: unknown): string | null {
 }
 
 /**
- * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）；
+ * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）；
  * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
  * 偏好不写审计；事务内合并，多窗口整板/组合写入必须比较对应键的版本。
@@ -251,6 +263,8 @@ export class UserPreferenceService {
       cardWatermark: cardWatermarkOf(prefs["cardWatermark"]),
       locale: localeOf(prefs["locale"]),
       hubView: hubViewOf(prefs["hubView"]),
+      hubDashProject: hubDashProjectOf(prefs["hubDashProject"]),
+      hubDashView: hubDashViewOf(prefs["hubDashView"]),
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }
