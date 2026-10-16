@@ -5,10 +5,12 @@ import { statusText, useLocale, useT } from "../i18n";
 
 /**
  * 仪表盘「交付时间」视图（Push 345 · 业务口径 2026-10-16「这个交付时间也要做一个图表 但是它的这个逻辑我没搞懂
- * 感觉也不好 请你重新设计一个告诉我」+「选择B方案 然后 提前完成也加进去 叫交付时间 加一个「按时率 67%」的小结」）：
- * 四结果竖直柱状图（提前完成 / 按时交付 / 逾期已交付 / 逾期未交付）+ 右上「按时率」小结 + 「未到交付节点」注记；
- * 柱顶数字 + 柱下类别名；悬停柱出浮层卡（记录数 / 占比）、悬停按时率出公式卡；点柱开只读「数据详情」
- * （选中具体项目才可点 —— 与柱段 / 扇区 / 问题柱同一套口径）。
+ * 感觉也不好 请你重新设计一个告诉我」+「选择B方案 叫交付时间 加一个「按时率」的小结」；
+ * Push 346 追订「取消提前完成展示」（提前完成并入按时交付、不再单独占一档）+「点击也要进入详情的」
+ * （点「按时率」小结 / 点「未到交付节点」注记也开只读「数据详情」））：
+ * 三结果竖直柱状图（按时交付 / 逾期已交付 / 逾期未交付，提前完成并入按时交付）+ 右上「按时率」小结 +
+ * 「未到交付节点」注记；柱顶数字 + 柱下类别名；悬停柱出浮层卡（记录数 / 占比）、悬停按时率出公式卡；
+ * 点柱 / 点按时率 / 点注记都开只读「数据详情」（选中具体项目才可点 —— 与柱段 / 扇区 / 问题柱同一套口径）。
  * 画布 1200 x 596（与其他视图同款 viewBox，等比缩放填满面板）；口径见 data/dashboardProgress.ts 的 buildDashboardDelivery。
  */
 
@@ -31,8 +33,13 @@ const RATE_HIT_X = 840;
 const RATE_HIT_Y = 6;
 const RATE_HIT_W = 336;
 const RATE_HIT_H = 100;
+/** 「未到交付节点」注记命中区（Push 346；压在按时率命中区之上，只认注记那一行）。 */
+const NOTE_HIT_X = PLOT_X1 - 330;
+const NOTE_HIT_Y = 72;
+const NOTE_HIT_W = 330;
+const NOTE_HIT_H = 34;
 
-/** y 轴刻度步长：按最大柱挑 1 / 2 / 5 / 10 / 20（比行式图更粗一档 —— 四根柱的分布一眼可读）。 */
+/** y 轴刻度步长：按最大柱挑 1 / 2 / 5 / 10 / 20（比行式图更粗一档 —— 三根柱的分布一眼可读）。 */
 function tickStepOf(maxCount: number): number {
   if (maxCount <= 6) {
     return 1;
@@ -62,13 +69,17 @@ function barPathOf(x: number, top: number, width: number, height: number): strin
   return "M " + x + " " + (top + height) + " L " + x + " " + (top + radius) + " Q " + x + " " + top + " " + (x + radius) + " " + top + " L " + (x + width - radius) + " " + top + " Q " + (x + width) + " " + top + " " + (x + width) + " " + (top + radius) + " L " + (x + width) + " " + (top + height) + " Z";
 }
 
-export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave, onPick }: {
+export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave, onPick, onRatePick, onNotePick }: {
   readonly delivery: DashboardDelivery;
   readonly canDrill: boolean;
   readonly onTip: (event: ReactMouseEvent<SVGRectElement>, bucket: DashboardDeliveryBucket, count: number, share: string) => void;
   readonly onRateTip: (event: ReactMouseEvent<SVGRectElement>) => void;
   readonly onLeave: () => void;
   readonly onPick: (bucket: DashboardDeliveryBucket) => void;
+  /** 点「按时率」小结（Push 346 · 业务口径「点击也要进入详情的」）：开按时交付口径的数据详情（与按时交付柱同一筛选）。 */
+  readonly onRatePick: () => void;
+  /** 点「未到交付节点」注记（Push 346）：开未到交付节点口径的数据详情（注记里那 N 条本体）。 */
+  readonly onNotePick: () => void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -130,7 +141,10 @@ export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave,
       {delivery.pendingCount > 0 ? (
         <text className="hub-dash-delivery__rateNote" x={PLOT_X1} y={90} textAnchor="end" fontSize={12.5}>{t("hub.dash.delivery.note", { n: delivery.pendingCount })}</text>
       ) : null}
-      <rect className="hub-dash-delivery__rateHit" x={RATE_HIT_X} y={RATE_HIT_Y} width={RATE_HIT_W} height={RATE_HIT_H} onMouseEnter={onRateTip} onMouseMove={onRateTip} onMouseLeave={onLeave} />
+      <rect className="hub-dash-delivery__rateHit" data-drill={canDrill ? "true" : "false"} x={RATE_HIT_X} y={RATE_HIT_Y} width={RATE_HIT_W} height={RATE_HIT_H} onMouseEnter={onRateTip} onMouseMove={onRateTip} onMouseLeave={onLeave} onClick={canDrill ? onRatePick : undefined} />
+      {delivery.pendingCount > 0 ? (
+        <rect className="hub-dash-delivery__noteHit" data-drill={canDrill ? "true" : "false"} x={NOTE_HIT_X} y={NOTE_HIT_Y} width={NOTE_HIT_W} height={NOTE_HIT_H} onClick={canDrill ? onNotePick : undefined} />
+      ) : null}
     </svg>
   );
 }

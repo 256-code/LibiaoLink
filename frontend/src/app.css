@@ -2083,20 +2083,15 @@ body {
   min-width: 14rem;
 }
 
-/* 「交付时间」四结果柱状图（Push 345 · 业务口径 2026-10-16「这个交付时间也要做一个图表」+「选择B方案 然后 提前完成
-   也加进去 叫交付时间 加一个「按时率 67%」的小结」）：柱 / 柱顶数字 / 悬停卡共用 data-bucket 就地定义 --hub-status
-   （提前完成 = 深青（领先）、按时交付 = 绿、逾期已交付 = 黄、逾期未交付 = 玫红，与任务表「是否按时交付」色族同源）；
+/* 「交付时间」柱状图（Push 345 · 业务口径 2026-10-16「这个交付时间也要做一个图表」+「选择B方案 叫交付时间 加一个
+   「按时率」的小结」；Push 346 追订「取消提前完成展示」起三档）：柱 / 柱顶数字 / 悬停卡共用 data-bucket 就地定义
+   --hub-status（按时交付 = 绿、逾期已交付 = 黄、逾期未交付 = 玫红，与任务表「是否按时交付」色族同源）；
    网格 / 轴线 / 刻度字 / 右上「按时率」小结排版都走这里。 */
 .hub-dash-delivery {
   display: block;
   flex: 1 1 auto;
   width: 100%;
   min-height: 0;
-}
-
-.hub-dash-delivery [data-bucket="提前完成"],
-.hub-dash-tip--delivery[data-bucket="提前完成"] {
-  --hub-status: #14b8a6;
 }
 
 .hub-dash-delivery [data-bucket="按时交付"],
@@ -2158,13 +2153,16 @@ body {
   fill: #9aa0a6;
 }
 
-/* 悬停命中区（整槽 + 按时率小结）：透明矩形，覆盖柱 / 数字 / 类别名与小结文字；可选时给手型。 */
+/* 悬停 / 点击命中区（整槽 + 按时率小结 + 未到交付节点注记）：透明矩形，覆盖柱 / 数字 / 类别名与小结文字；可选时给手型。 */
 .hub-dash-delivery__hit,
-.hub-dash-delivery__rateHit {
+.hub-dash-delivery__rateHit,
+.hub-dash-delivery__noteHit {
   fill: transparent;
 }
 
-.hub-dash-delivery__hit[data-drill="true"] {
+.hub-dash-delivery__hit[data-drill="true"],
+.hub-dash-delivery__rateHit[data-drill="true"],
+.hub-dash-delivery__noteHit[data-drill="true"] {
   cursor: pointer;
 }
 
