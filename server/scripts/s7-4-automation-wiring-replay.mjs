@@ -313,8 +313,18 @@ function buildEnv(overrides = {}) {
       now: () => CLOCK_NOW.getTime(),
     },
   ).aibot;
-  // M5-03-5-6：第 5 参 = AppConfig（`bot_id` 维度取值来源：config.env.WECOM_BOT_ID）。
-  const dmNotify = new runtime.NotifyDmService(new runtime.NotifyDmRepository(database), dmAibot, notify, clock, config);
+  // M5-03-5-6 / 契约刀：第 5 参 = AppConfig（`bot_id` 维度取值来源：config.env.WECOM_BOT_ID）；
+  // 第 6 / 7 参 = 审计服务（解绑留痕 —— D6）与数据库（解绑事务）。真 AuditService 走真库（本回放不触解绑路径）。
+  const audit = new runtime.AuditService(database, new runtime.AuditRepository(database));
+  const dmNotify = new runtime.NotifyDmService(
+    new runtime.NotifyDmRepository(database),
+    dmAibot,
+    notify,
+    clock,
+    config,
+    audit,
+    database,
+  );
   dmAibot.start();
   dmSockets[0].open();
   /** 确定性等待订阅完成（stub 应答；超时即回放异常，不静默降级断言）。 */

@@ -370,3 +370,57 @@ export const NotificationSnoozeListResponseSchema = z
   .object({ items: z.array(NotificationSnoozeRecordSchema) })
   .openapi("NotificationSnoozeListResponse", { description: "稍后提醒记录清单（按 id 降序，不翻页）" });
 export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeListResponseSchema>;
+
+/* ------------------------------------------------------------------------------------------------
+ * 企业微信单聊绑定（M5-03-5-6 绑定码链路 · 契约刀 · 2026-10-16 · lan 代记 / wmj 复核）
+ *
+ * 口径来源：`docs/M5-03-5-绑定码方案设计口径(企微单聊).md` v1.4（§3 目标形态 / §4 数据模型 / §6 投递前判定 /
+ *   §7 846607 分流 / §10 待定项 D2 · D3 · D5 · D6）；`docs/M5-03-单聊改智能机器人执行计划(企微单聊).md` §3.2 / §4。
+ *
+ * 语义：单聊可投递地址 = 绑定行（`wecom_aibot_dm_activations.bound_at` 非空）的 `wecom_userid`
+ *   （回调 `from.userid` 原文 = 密文 open_userid；企微后台无管理员权限所致的既有事实）。绑定只能由用户交互
+ *   产生 —— 本组端点 = 「取码（POST codes）→ 用户把码发进企微单聊（worker ingest 落绑定 + 会话内回执）→
+ *   查绑定态（GET）→ 解绑（DELETE）」。
+ * 安全口径（§9）：密文 open_userid 只回掩码末 4 位（最小暴露 · 沿用群绑定 `chatidMasked` 先例）；绑定码正文
+ *   不入库、不落日志；取码频率 3 次 / 小时 / 用户（D3，超出 = 429 `RATE_LIMITED` + `details[].meta.retryAt`）；
+ *   解绑 / 换绑写 `audit_logs`（D6）。
+ * 权限口径：个人资源（同收件箱 / 通知偏好先例）—— 无功能权限位；读 = 会话，写 = 会话 + CSRF。
+ * ---------------------------------------------------------------------------------------------- */
+
+/** 绑定码位数（D3：6 位数字）。 */
+export const WECOM_DM_BINDING_CODE_LENGTH = 6;
+/** 绑定码有效期（D3：10 分钟）。 */
+export const WECOM_DM_BINDING_CODE_TTL_MS = 10 * 60_000;
+/** 绑定码生成频率上限（D3：3 次 / 小时 / 用户；超出 → 429 `RATE_LIMITED`）。 */
+export const WECOM_DM_BINDING_CODE_MAX_PER_HOUR = 3;
+
+/** 绑定态（读面恒 200；未绑定 = `bound:false`）—— GET / DELETE 同形。 */
+export const WecomDmBindingStateSchema = z
+  .object({
+    bound: z.boolean().openapi({ description: "当前机器人（`WECOM_BOT_ID`）下是否已有可投递地址" }),
+    wecomUseridMasked: z
+      .string()
+      .nullable()
+      .openapi({ description: "企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null" }),
+    boundAt: DateTimeSchema.nullable().openapi({ description: "绑定确立时刻；未绑定 / 解绑后 = null" }),
+  })
+  .openapi("WecomDmBindingState", {
+    description:
+      "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）",
+  });
+export type WecomDmBindingState = z.infer<typeof WecomDmBindingStateSchema>;
+
+/** 绑定码（POST codes 响应）：只回码 + 失效时刻，不含任何企微标识。 */
+export const WecomDmBindingCodeSchema = z
+  .object({
+    code: z
+      .string()
+      .regex(/^[0-9]{6}$/)
+      .openapi({ description: "6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）", example: "482913" }),
+    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 10 分钟）" }),
+    expiresInSeconds: z.number().int().positive().openapi({ description: "剩余有效期（秒；供前端倒计时）" }),
+  })
+  .openapi("WecomDmBindingCode", {
+    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码）",
+  });
+export type WecomDmBindingCode = z.infer<typeof WecomDmBindingCodeSchema>;
