@@ -4,6 +4,7 @@ import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./i
 import { useLiveRefresh } from "./useLiveRefresh";
 import { AuditLogPage } from "./AuditLogPage";
 import { FileLibraryPage } from "./FileLibraryPage";
+import { SettingsPage } from "./SettingsPage";
 import Hub from "./Hub";
 import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
@@ -15,6 +16,7 @@ import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
+import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
 import { hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
@@ -683,6 +685,8 @@ export default function App() {
           }}
         />
       )}
+      {/* 首登「绑定企业微信」引导（D5 · Push 250）：未绑定且本机未跳过才弹；已绑定 / 已跳过 = 静默不渲染。 */}
+      <BindingGuideModal me={state.me} />
     </>
   );
 
@@ -803,6 +807,16 @@ export default function App() {
     return (
       <>
         <AuditLogPage me={state.me} query={route.query} onChangeQuery={replaceAuditQuery} directory={directory} />
+        {bottomBars}
+      </>
+    );
+  }
+
+  if (route.kind === "settings") {
+    // 设置页（Push 250 · 头像菜单首项「设置」）：账号级设置的家 —— 当前落点 = 企业微信绑定（D5 / D6 绑定码链路）。
+    return (
+      <>
+        <SettingsPage me={state.me} />
         {bottomBars}
       </>
     );

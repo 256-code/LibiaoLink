@@ -6,7 +6,8 @@ import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
 import { hasPermission, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
-import { AUDIT_BASE_HASH, FILES_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { clearBindingGuidePrefs } from "../bindingGuide";
+import { AUDIT_BASE_HASH, FILES_BASE_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { TopNav } from "./TopNav";
 import { InboxPanel } from "./InboxPanel";
 import { Toast } from "./Toast";
@@ -22,7 +23,9 @@ import type { MeResponse, Project } from "../types";
  * 站内信（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）：「语言」胶囊左侧
  *  新增铃铛按钮 + 未读红点（Transitions.dev「Notification badge」样张：滑入 + 弹性放大、读完后缩小消散，
  *  app.css 的 .inbox-badge 等价还原），点击 = 局部弹窗（最近 8 条 + 全部已读；见 ./InboxPanel）；
- *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）。 */
+ *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）。
+ * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单首项
+ *  「设置」（#/settings · 全账号可见），落点 = 账号级设置（当前 = 企业微信绑定 D5 / D6）。 */
 
 type AppHeaderProps = {
   me: MeResponse;
@@ -411,12 +414,25 @@ export function AppHeader({ me, project }: AppHeaderProps) {
               >
                 <a
                   role="menuitem"
+                  data-account-settings="true"
+                  href={SETTINGS_BASE_HASH}
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                >
+                  {t("header.settings")}
+                </a>
+                <a
+                  role="menuitem"
                   href="/auth/logout"
                   onClick={() => {
                     // 退出登录清除本地记忆：多人共用设备时，避免把上一位用户的筛选选择带给下一位
                     clearHomePrefs();
                     // 「我的计划」便签墙：数据在账号里（Push 268 起）；这里只清尚未迁移上云的本机旧键，不带给下一位用户
                     clearLegacyPlanBoard();
+                    // 「绑定企业微信」引导的跳过位（Push 250）：本机记忆按账号分记，退出登录一并清 —— 换人登录照常引导
+                    clearBindingGuidePrefs();
                   }}
                   className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
