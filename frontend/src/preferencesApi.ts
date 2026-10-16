@@ -1,6 +1,6 @@
 /**
  * 用户偏好（A4 / A24）：GET / PATCH /api/v1/users/me/preferences。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）。
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）。
  * （focusMode「A4 醒目模式 · Push 171」已随 Push 290「醒目模式下架、观感统一走背景档位」停用：前端不再读写，服务端键保留不动。）
  * 常用筛选（A24）自 Push 169 起按账号存服务端（user_preferences.prefs.homeSavedFilters）——
  * 同一账号换设备可见；同一设备换账号互不可见（服务端按会话 actorId 隔离，路径不接受用户 id）。
@@ -9,6 +9,7 @@
 import { apiRequest, apiSend } from "./api";
 import type { BackgroundTier } from "./backgroundTier";
 import type { Locale } from "./i18n";
+import type { HubDashView } from "./data/dashboardProgress";
 import type { HubView } from "./useHashRoute";
 import { clearLegacySavedFilters, readLegacySavedFilters } from "./savedFilters";
 import type { SavedFilter } from "./savedFilters";
@@ -48,6 +49,8 @@ export type UserPreferences = {
   hubView: HubView;
   /** 仪表盘「项目进度一览」常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目 id；null = 全部项目（默认）。 */
   hubDashProject: string | null;
+  /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」—— 刷新 / 换设备同账号保持。 */
+  hubDashView: HubDashView;
   updatedAt: string | null;
 };
 
@@ -94,6 +97,11 @@ export function saveHubView(view: HubView): Promise<UserPreferences> {
 /** 仪表盘常驻项目单键 PATCH（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：只传这一个键，null = 回全部项目；返回服务端收敛后的全量偏好。 */
 export function saveHubDashProject(projectId: string | null): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { hubDashProject: projectId });
+}
+
+/** 仪表盘页内图表视图单键 PATCH（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：只传这一个键，返回服务端收敛后的全量偏好。 */
+export function saveHubDashView(view: HubDashView): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { hubDashView: view });
 }
 
 /** 界面语言单键 PATCH（Push 296 · 业务口径「按账号记住 刷新不会回中文」）：只传这一个键，返回服务端收敛后的全量偏好。 */

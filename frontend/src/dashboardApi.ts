@@ -16,7 +16,7 @@
  *   问题 / 日报逐项目读面**懒加载**（首次切到「问题」视图才拉，任务读面 / 首屏不受影响），拉完存明细、
  *   切项目 / 开弹窗零请求（口径见 data/dashboardProgress.ts 的 buildDashboardIssues）。
  */
-import { buildDashboardIssues, buildDashboardProgress, buildDashboardStatus, type DashboardIssues, type DashboardProgress, type DashboardStatus } from "./data/dashboardProgress";
+import { buildDashboardDelivery, buildDashboardIssues, buildDashboardProgress, buildDashboardStatus, type DashboardDelivery, type DashboardIssues, type DashboardProgress, type DashboardStatus } from "./data/dashboardProgress";
 import { fetchProjectList } from "./projectApi";
 import { fetchProjectTasks, type ApiTaskListItem } from "./taskApi";
 import { fetchProjectIssues, fetchProjectReports } from "./reportApi";
@@ -57,6 +57,10 @@ export type DashboardDataset = {
   readonly statusAll: DashboardStatus;
   /** 项目 id → 该项目任务状态分布（Push 339；同一轮取数里分桶，不再发请求）。 */
   readonly statusByProject: ReadonlyMap<string, DashboardStatus>;
+  /** 全部项目的交付结果分布（Push 345 · 「交付时间」视图取它；同一轮取数里分桶，不再发请求）。 */
+  readonly deliveryAll: DashboardDelivery;
+  /** 项目 id → 该项目交付结果分布（Push 345；同一轮取数里分桶，不再发请求）。 */
+  readonly deliveryByProject: ReadonlyMap<string, DashboardDelivery>;
   /** 项目 id → 该项目任务明细（Push 335：点柱段打开的「数据详情」只读表用；同一轮取数里存下，零额外请求）。 */
   readonly tasksByProject: ReadonlyMap<string, readonly ApiTaskListItem[]>;
   /** 项目 id → 项目经理名（契约 managerNames 按「、」连接；「数据详情」表「项目经理」列用）。 */
@@ -69,13 +73,15 @@ export async function fetchDashboardProgress(projects?: readonly { id: string; n
   const pages = await mapWithLimit(list, 4, (project) => fetchProjectTasks(project.id));
   const byProject = new Map<string, DashboardProgress>();
   const statusByProject = new Map<string, DashboardStatus>();
+  const deliveryByProject = new Map<string, DashboardDelivery>();
   const tasksByProject = new Map<string, readonly ApiTaskListItem[]>();
   const managerByProject = new Map<string, string>();
-  const allTasks: Array<{ readonly stageKey: string | null; readonly progress: number; readonly displayStatus: string }> = [];
+  const allTasks: Array<{ readonly stageKey: string | null; readonly progress: number; readonly displayStatus: string; readonly onTime: boolean | null }> = [];
   list.forEach((project, index) => {
     const items = pages[index].items;
     byProject.set(project.id, buildDashboardProgress(items));
     statusByProject.set(project.id, buildDashboardStatus(items));
+    deliveryByProject.set(project.id, buildDashboardDelivery(items));
     tasksByProject.set(project.id, items);
     managerByProject.set(project.id, (project.managerNames ?? []).filter((name): name is string => name !== null && name !== "").join("、"));
     allTasks.push(...items);
@@ -86,6 +92,8 @@ export async function fetchDashboardProgress(projects?: readonly { id: string; n
     byProject,
     statusAll: buildDashboardStatus(allTasks),
     statusByProject,
+    deliveryAll: buildDashboardDelivery(allTasks),
+    deliveryByProject,
     tasksByProject,
     managerByProject,
   };

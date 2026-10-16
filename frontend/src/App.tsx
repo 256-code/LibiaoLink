@@ -29,8 +29,9 @@ import {
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
 import { archiveProject, createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
+import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
+import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
 import { asHubView, replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute, type HubView } from "./useHashRoute";
 import { projectStatusOf, type MeResponse, type Project } from "./types";
 
@@ -128,6 +129,8 @@ export default function App() {
   const [hubView, setHubView] = useState<HubView>("map");
   /** 仪表盘「项目进度一览」常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目；null = 全部项目。 */
   const [hubDashProject, setHubDashProject] = useState<string | null>(null);
+  /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：按账号记住选中视图 —— 项目进度一览 / 任务状态 / 问题 / 交付时间。 */
+  const [hubDashView, setHubDashView] = useState<HubDashView>("progress");
   /** 权限画像（Push 172 重新接线）：管理入口的呈现层收敛 —— 字典治理（dict.manage）与删除项目（project.delete）。 */
   const permissions = useMyPermissions();
   /** 待确认删除的项目（卡片删除先出确认条，第二下才真删）：null = 没有待确认的删除。 */
@@ -160,6 +163,7 @@ export default function App() {
       setTaskTableHiddenColumns(prefs.taskTableHiddenColumns);
       setHubView(asHubView(prefs.hubView));
       setHubDashProject(prefs.hubDashProject ?? null);
+      setHubDashView(asHubDashView(prefs.hubDashView));
       applyBackgroundTier(asBackgroundTier(prefs.backgroundTier));
       applyCardWatermark(asCardWatermark(prefs.cardWatermark));
       applyLocale(asLocale(prefs.locale));
@@ -211,6 +215,8 @@ export default function App() {
           setHubView(asHubView(prefsResult.value.hubView));
           // 仪表盘常驻项目（Push 336 · 「选择的项目也要记住 不随刷新变动而回到全部项目」）：登录后从账号偏好静默落位（缺键 / 已删项目在页面内回落全部项目）
           setHubDashProject(prefsResult.value.hubDashProject ?? null);
+          // 仪表盘页内图表视图（Push 345 · 「选择后刷新不变 按账号记住」）：登录后从账号偏好静默落位（缺键 / 坏值回落项目进度一览）
+          setHubDashView(asHubDashView(prefsResult.value.hubDashView));
           // 外观偏好（Push 291 背景档位 / Push 292 卡片水印）：登录后从账号偏好静默落位（坏值 / 缺键回落默认）
           applyBackgroundTier(asBackgroundTier(prefsResult.value.backgroundTier));
           applyCardWatermark(asCardWatermark(prefsResult.value.cardWatermark));
@@ -440,6 +446,22 @@ export default function App() {
     } catch (error: unknown) {
       setHubDashProject((current) => (current === next ? previous : current));
       setNotice(errorMessageOf(error, t("app.fail.saveHubDashProject")));
+    }
+  };
+
+  /**
+   * 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：
+   * 与 hubDashProject 同一套乐观更新 + 失败回滚（单键 PATCH user_preferences.prefs.hubDashView）。
+   */
+  const handleHubDashViewChange = async (next: HubDashView): Promise<void> => {
+    const previous = hubDashView;
+    setHubDashView(next);
+    try {
+      const prefs = await saveHubDashView(next);
+      setHubDashView(asHubDashView(prefs.hubDashView));
+    } catch (error: unknown) {
+      setHubDashView((current) => (current === next ? previous : current));
+      setNotice(errorMessageOf(error, t("app.fail.saveHubDashView")));
     }
   };
 
@@ -687,7 +709,7 @@ export default function App() {
     // 仪表盘页（顶层 · Push 285 前叫「入口页 / 首页」· Push 331 起叫「仪表盘」）：地图 / 「项目进度一览」双视图（Push 332 起视图走地址 `?view=`）；登录后的默认落地已改项目空间 `#/projects`
     return (
       <>
-        <Hub me={state.me} routeView={route.view} rememberedView={hubView} onViewChange={handleHubViewChange} rememberedDashProject={hubDashProject} onDashProjectChange={handleHubDashProjectChange} />
+        <Hub me={state.me} routeView={route.view} rememberedView={hubView} onViewChange={handleHubViewChange} rememberedDashProject={hubDashProject} onDashProjectChange={handleHubDashProjectChange} rememberedDashView={hubDashView} onDashViewChange={handleHubDashViewChange} />
         {bottomBars}
       </>
     );

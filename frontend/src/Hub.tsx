@@ -5,6 +5,7 @@ import { AppHeader } from "./components/AppHeader";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
 import type { DashboardDataset, DashboardIssueDataset } from "./dashboardApi";
+import type { HubDashView } from "./data/dashboardProgress";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
 import { fetchDashboardIssues, fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
@@ -66,7 +67,7 @@ function scrollableAncestorWithin(target: EventTarget | null, boundary: HTMLElem
   return false;
 }
 
-export default function Hub({ me, routeView, rememberedView, onViewChange, rememberedDashProject, onDashProjectChange }: {
+export default function Hub({ me, routeView, rememberedView, onViewChange, rememberedDashProject, onDashProjectChange, rememberedDashView, onDashViewChange }: {
   me: MeResponse;
   /** 地址里的视图（`#/?view=dashboard`；null = 地址没写，落账号记忆的常驻视图）—— Push 332。 */
   routeView: HubView | null;
@@ -77,6 +78,10 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   rememberedDashProject: string | null;
   /** 记下 / 清除仪表盘常驻项目（Push 336；乐观更新由 App 层负责）。 */
   onDashProjectChange: (projectId: string | null) => Promise<void>;
+  /** 账号记的仪表盘页内视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；缺省 progress）。 */
+  rememberedDashView: HubDashView;
+  /** 记下仪表盘页内视图（Push 345；乐观更新 + 失败回滚 + Toast 由 App 层负责）。 */
+  onDashViewChange: (view: HubDashView) => Promise<void>;
 }) {
   const t = useT();
   /** 提示条内容（Push 301）：存结构化状态、渲染时按当前语言取词（切换语言不用等下一次取数）。 */
@@ -329,7 +334,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
               <HubMap distribution={distribution} note={noteText} />
             </div>
             <div data-view="dashboard" data-hub-deck-cell="dashboard" className={deckCellClass + " " + dashSideClass}>
-              <HubDashboard data={dash} state={dashState} issues={issues} issuesState={issuesState} onNeedIssues={ensureIssues} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} />
+              <HubDashboard data={dash} state={dashState} issues={issues} issuesState={issuesState} onNeedIssues={ensureIssues} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} rememberedDashView={rememberedDashView} onDashViewChange={onDashViewChange} />
             </div>
           </div>
           <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>
