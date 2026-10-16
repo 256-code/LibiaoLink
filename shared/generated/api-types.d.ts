@@ -7750,6 +7750,7 @@ export interface components {
             afterSummaryFileIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["ChangeStatus"];
             appliedBy: components["schemas"]["Uuid"];
+            writerBy: components["schemas"]["Uuid"] & (string | null);
             appliedAt: components["schemas"]["DateTime"];
             createdAt: components["schemas"]["DateTime"];
             fileId: components["schemas"]["Uuid"] & (string | null);

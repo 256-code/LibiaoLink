@@ -92,6 +92,7 @@ export const ChangeRequestSchema = z
     afterSummaryFileIds: z.array(UuidSchema).openapi({ description: "变更后摘要附图（文件 id 有序；Push 314 变更前后可填图）" }),
     status: ChangeStatusSchema,
     appliedBy: UuidSchema,
+    writerBy: UuidSchema.nullable().openapi({ description: "变更记录「填写者」账号（Push 347 / 迁移 0054）：导入表导入按源表「填写者」列匹配命中；应用内提交 / 未命中 / 存量行 = null（前端「填写者」回落申请人展示）" }),
     appliedAt: DateTimeSchema,
     createdAt: DateTimeSchema,
     fileId: UuidSchema.nullable().openapi({ description: "变更文件（一期单文件一条变更；多文件 change_items 后续扩展）；Push 319：导入表导入变更暂无变更后文件（源文件在微盘，人工后补）= null" }),

@@ -398,7 +398,7 @@ const REPORT_HEADER = [
   "问题是否处理",
   "解决方案或建议",
 ];
-const CHANGE_HEADER = ["变更时间", "变更阶段", "变更内容描述", "变更原因", "变更前", "变更后", "变更后文件", "变更后文件版本", "关联", "变更申请人"];
+const CHANGE_HEADER = ["变更时间", "变更阶段", "变更内容描述", "变更原因", "变更前", "变更后", "变更后文件", "变更后文件版本", "关联", "变更申请人", "填写者"];
 
 const ACTOR_ID = "99999999-9999-4999-8999-999999999999";
 
@@ -406,6 +406,8 @@ const ACTOR_ID = "99999999-9999-4999-8999-999999999999";
 function sampleSheets(
   extraAnchors: Array<{ row: number; col: number; media: string }> = [],
   reportIssueState = "处理中",
+  changeRequester = "朱成荣(Eli)",
+  changeFiller = "朱成荣(Eli)",
 ): SheetInput[] {
   return [
     {
@@ -435,7 +437,7 @@ function sampleSheets(
       name: "变更管理",
       rows: [
         CHANGE_HEADER,
-        ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "Layout更新版.dwg", "V2", "", "朱成荣(Eli)"],
+        ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "Layout更新版.dwg", "V2", "", changeRequester, changeFiller],
       ],
     },
   ];
@@ -514,9 +516,9 @@ function linkWorkbook(): Buffer {
       name: "变更管理",
       rows: [
         CHANGE_HEADER,
-        ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "", "", "通电测试Power-on Test", "朱成荣(Eli)"],
-        ["2026-09-01", "发货阶段", "物流包装升级", "客户原因", "", "", "", "", "运输", "朱成荣(Eli)"],
-        ["2026-09-01", "实施阶段", "关联不上的变更", "其他", "", "", "", "", "不存在的任务", "朱成荣(Eli)"],
+        ["2026-09-01", "实施阶段", "供应商货架立柱尺寸不符", "供应商原因", "", "", "", "", "通电测试Power-on Test", "朱成荣(Eli)", "朱成荣(Eli)"],
+        ["2026-09-01", "发货阶段", "物流包装升级", "客户原因", "", "", "", "", "运输", "朱成荣(Eli)", "朱成荣(Eli)"],
+        ["2026-09-01", "实施阶段", "关联不上的变更", "其他", "", "", "", "", "不存在的任务", "朱成荣(Eli)", ""],
       ],
     },
   ]);
@@ -827,6 +829,9 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     // 变更：内容 + 原因合并；变更后文件只进「需手动导入」清单（不建文件行）
     expect(h.previews.changes[0]?.reason).toBe("供应商货架立柱尺寸不符；原因：供应商原因");
     expect(h.previews.changes[0]?.stageKey).toBe("install");
+    // 变更申请人 / 填写者（Push 347）：库内无账号命中 → 申请人回落导入人（提醒）、填写者留空（提醒）
+    expect(h.previews.changes[0]?.appliedBy).toBe(ACTOR_ID);
+    expect(h.previews.changes[0]?.writerBy).toBeNull();
 
     // 图片：两张（现场图挂日报 / 问题图挂问题），对象键 = 契约键（projects/<projectId>/files/<fileId>/v1/<hash>.png）
     expect(h.previews.files.length).toBe(2);
@@ -843,6 +848,8 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(codes).toContain("OWNER_MISSING");
     expect(codes).toContain("AUTHOR_MISSING");
     expect(codes).toContain("ISSUE_OWNER_FALLBACK");
+    expect(codes).toContain("CHANGE_APPLICANT_MISSING");
+    expect(codes).toContain("CHANGE_WRITER_MISSING");
     const ownerFallback = result.issues.find((issue) => issue.code === "ISSUE_OWNER_FALLBACK");
     expect(ownerFallback?.level).toBe("info");
     expect(ownerFallback?.message).toContain("导入人");
@@ -900,6 +907,34 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
       ],
     ]);
     expect(result.issues.map((issue) => issue.code)).toContain("CHANGE_LINK_SUMMARY");
+  });
+
+  it("变更申请人 / 填写者（Push 347）：源表两列命中库内账号 → applied_by / writer_by 按文件落人 + 无缺号提醒", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    h.previews.users = [
+      { id: "user-jia", username: "jiahaiyang", displayName: "贾海洋" },
+      { id: "user-zhu", username: "zhuchengrong", displayName: "朱成荣-test" },
+    ];
+    const preview = await h.service.preview({
+      bytes: buildWorkbook(sampleSheets([], "处理中", "贾海洋(haiyang)", "朱成荣(Eli)")),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    const previewCodes = preview.issues.map((issue) => issue.code);
+    expect(previewCodes).not.toContain("CHANGE_APPLICANT_MISSING");
+    expect(previewCodes).not.toContain("CHANGE_WRITER_MISSING");
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+
+    expect(h.previews.changes.length).toBe(1);
+    expect(h.previews.changes[0]?.appliedBy).toBe("user-jia");
+    expect(h.previews.changes[0]?.writerBy).toBe("user-zhu");
+    const codes = result.issues.map((issue) => issue.code);
+    expect(codes).not.toContain("CHANGE_APPLICANT_MISSING");
+    expect(codes).not.toContain("CHANGE_WRITER_MISSING");
   });
 
   it("账号已在库：项目经理 / 负责人 / 日报作者都直接挂人，不再回落", async () => {

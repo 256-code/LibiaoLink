@@ -306,6 +306,8 @@ export type ChangeRequestDetail = {
   afterSummaryFileIds: string[];
   status: string;
   appliedBy: string;
+  /** Push 347：导入表导入的「填写者」账号（源表「填写者」列命中）；应用内提交 / 未命中 = null（「填写者」回落申请人展示）。 */
+  writerBy: string | null;
   appliedAt: string;
   /** Push 319：导入遗留变更（无变更后文件）= null（前端标「变更后文件待补」）。 */
   fileId: string | null;

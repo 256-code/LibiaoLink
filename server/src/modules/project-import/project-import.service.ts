@@ -198,8 +198,14 @@ export class ProjectImportService {
       extraSeeds.push(stakeholderSheetMissingSeed());
     }
     const fillers = await this.resolveStakeholderFillers(parse);
-    const unresolvedFillers = unresolvedFillerNames(fillers);
+    const unresolvedFillers = unresolvedNamesOf(fillers);
     if (unresolvedFillers.length > 0) extraSeeds.push(stakeholderFillerMissingSeed(unresolvedFillers));
+    const changeApplicants = await this.resolveByDisplayNames(parse.changes.map((change) => change.requester));
+    const unresolvedChangeApplicants = unresolvedNamesOf(changeApplicants);
+    if (unresolvedChangeApplicants.length > 0) extraSeeds.push(changeApplicantMissingSeed(unresolvedChangeApplicants));
+    const changeWriters = await this.resolveByDisplayNames(parse.changes.map((change) => change.filler));
+    const unresolvedChangeWriters = unresolvedNamesOf(changeWriters);
+    if (unresolvedChangeWriters.length > 0) extraSeeds.push(changeWriterMissingSeed(unresolvedChangeWriters));
     if (resolution.unknownNames.length > 0) extraSeeds.push(unknownPeopleSeed(resolution.unknownNames));
     if (skippedImages > 0) extraSeeds.push(imageRowMissingSeed(skippedImages));
     const unresolvedIssues = parse.reports.filter((report) => report.issue !== null && report.issue.state !== "done").length;
@@ -288,8 +294,15 @@ export class ProjectImportService {
     }
     const extraSeeds: LegacyIssueSeed[] = [];
     const fillerIds = await this.resolveStakeholderFillers(parse);
-    const unresolvedFillers = unresolvedFillerNames(fillerIds);
+    const unresolvedFillers = unresolvedNamesOf(fillerIds);
     if (unresolvedFillers.length > 0) extraSeeds.push(stakeholderFillerMissingSeed(unresolvedFillers));
+    // 变更「申请人 / 填写者」（Push 347）：源表两列命中账号 → applied_by / writer_by；未命中进提醒（申请人回落导入人、填写者留空）。
+    const changeApplicantIds = await this.resolveByDisplayNames(parse.changes.map((change) => change.requester));
+    const changeWriterIds = await this.resolveByDisplayNames(parse.changes.map((change) => change.filler));
+    const unresolvedChangeApplicants = unresolvedNamesOf(changeApplicantIds);
+    if (unresolvedChangeApplicants.length > 0) extraSeeds.push(changeApplicantMissingSeed(unresolvedChangeApplicants));
+    const unresolvedChangeWriters = unresolvedNamesOf(changeWriterIds);
+    if (unresolvedChangeWriters.length > 0) extraSeeds.push(changeWriterMissingSeed(unresolvedChangeWriters));
     if (managerIds.length === 0) {
       managerIds.push(actorId);
       extraSeeds.push(
@@ -494,9 +507,12 @@ export class ProjectImportService {
         reason: composeChangeReason(change),
         beforeSummary: clipNullable(change.before, TEXT_LIMIT),
         afterSummary: clipNullable(change.after, TEXT_LIMIT),
+        // 申请人 / 填写者（Push 347）：命中 = 源表人；申请人未命中回落导入人（已出提醒），填写者未命中留空。
+        appliedBy: changeApplicantIds.get(change.requester) ?? actorId,
+        writerBy: changeWriterIds.get(change.filler) ?? null,
       }));
       throwIfCancelled(signal);
-      const changeIds = await this.previews.insertChangeRequests(tx, projectRow.id, changeRows, actorId, at);
+      const changeIds = await this.previews.insertChangeRequests(tx, projectRow.id, changeRows, at);
       const changeLinks: LegacyChangeLink[] = parse.changeLinks ?? [];
       if (changeLinks.length > 0) {
         const refsByTask = new Map<string, string[]>();
@@ -633,10 +649,19 @@ export class ProjectImportService {
       const raw = stakeholder.filler;
       if (raw !== null && raw !== "" && !rawNames.includes(raw)) rawNames.push(raw);
     }
-    const result = new Map<string, string | null>();
-    if (rawNames.length === 0) return result;
-    const candidates: string[] = [];
+    return this.resolveByDisplayNames(rawNames);
+  }
+
+  /** 显示名 → 库内账号（原文 / 去括注 / 去括注 + -test 三路候选；Push 347 起干系人「填写者」/ 变更「申请人」「填写者」共用）。 */
+  private async resolveByDisplayNames(rawNames: readonly string[]): Promise<Map<string, string | null>> {
+    const names: string[] = [];
     for (const raw of rawNames) {
+      if (raw !== "" && !names.includes(raw)) names.push(raw);
+    }
+    const result = new Map<string, string | null>();
+    if (names.length === 0) return result;
+    const candidates: string[] = [];
+    for (const raw of names) {
       const base = stripParen(raw);
       for (const candidate of [raw, base, base + "-test"]) {
         if (candidate !== "" && !candidates.includes(candidate)) candidates.push(candidate);
@@ -646,7 +671,7 @@ export class ProjectImportService {
     for (const user of await this.previews.findUsersByDisplayNames(candidates)) {
       if (!idByDisplay.has(user.displayName)) idByDisplay.set(user.displayName, user.id);
     }
-    for (const raw of rawNames) {
+    for (const raw of names) {
       const base = stripParen(raw);
       const hit = idByDisplay.get(raw) ?? idByDisplay.get(base) ?? idByDisplay.get(base + "-test") ?? null;
       result.set(raw, hit);
@@ -983,8 +1008,34 @@ function stakeholderFillerMissingSeed(names: readonly string[]): LegacyIssueSeed
   };
 }
 
-/** 「填写者」映射里没命中账号的名字（去括注、去重、保序）。 */
-function unresolvedFillerNames(map: Map<string, string | null>): string[] {
+/** 变更申请人未命中（Push 347）：按导入人记录（与负责人 / 日报作者回落同口径，出 warning 提醒）。 */
+function changeApplicantMissingSeed(names: readonly string[]): LegacyIssueSeed {
+  const list = names.join("、");
+  return {
+    level: "warning",
+    code: "CHANGE_APPLICANT_MISSING",
+    row: null,
+    subject: list,
+    zh: "变更申请人账号不存在（" + list + "）：本次按导入人记录，导入后可在变更详情核对",
+    en: "Change requester accounts not found (" + list + "): recorded as the importer (please review the change details after import).",
+  };
+}
+
+/** 变更「填写者」未命中（Push 347）：writer_by 留空 → 读面「填写者」回落申请人展示（info）。 */
+function changeWriterMissingSeed(names: readonly string[]): LegacyIssueSeed {
+  const list = names.join("、");
+  return {
+    level: "info",
+    code: "CHANGE_WRITER_MISSING",
+    row: null,
+    subject: list,
+    zh: "变更「填写者」账号未找到（" + list + "）：该列暂按申请人展示（可到变更详情核对）",
+    en: "Change 填写者 accounts not found (" + list + "): the writer column falls back to the applicant display.",
+  };
+}
+
+/** 显示名映射里没命中账号的名字（去括注、去重、保序；干系人「填写者」/ 变更「申请人」「填写者」共用）。 */
+function unresolvedNamesOf(map: Map<string, string | null>): string[] {
   const names: string[] = [];
   for (const [raw, id] of map) {
     if (id !== null) continue;

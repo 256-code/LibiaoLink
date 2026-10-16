@@ -1668,6 +1668,7 @@ export function toChangeRequestView(
     afterSummaryFileIds: row.afterSummaryFileIds,
     status: row.status as ChangeRequestView["status"],
     appliedBy: row.appliedBy,
+    writerBy: row.writerBy,
     appliedAt: row.appliedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     fileId,

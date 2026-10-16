@@ -40,6 +40,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - 变更读面（Push 319 · file 模块）：导入遗留变更没有 `file_versions` 行 —— 列表 / 详情 `fileId` / `versionId` / `versionSeq` 可为 null（`file` / `version` 给 null，前端标「变更后文件待补」）；本模块提交只写 `change_requests` 行、不建文件行。
 - 图片：表内嵌图 → 文件库（挂日报 / 问题）；微盘 / 本地路径 → 「需手动导入」清单（导入时不再抓取）。
 - 干系人（Push 324）：导入表「干系人」sheet导入表没有该表 = info `STAKEHOLDER_SHEET_MISSING` 照常导入）；写库 = 台账 `stakeholders` + 项目关联 `project_stakeholders` 同批（单事务）；姓名必填（空行跳过）；公司自由写法 → 四值 + 具体公司名（识别不出按 `customer` 兜底 + `STAKEHOLDER_COMPANY_UNMATCHED`）；联系方式含「微信 / WeChat / weixin」→ `wechat`、否则整段落 `phone`；「填写者」按显示名匹配（原文 / 去括注 / 去括注 + `-test`），未命中 `created_by` 留空 + `STAKEHOLDER_FILLER_MISSING`；「提交时间」→ `created_at`（当天 00:00 UTC；缺 = 导入时间）；超长截断（name 80 / company 120 / title 80 / phone 40 / wechat 64 / role 80、email 3..120）。
+- 变更申请人 / 填写者（Push 347 · 迁移 `0054`）：「变更管理」表的「变更申请人」「填写者」两列按显示名三路匹配库内账号（原文 / 去括注 / 去括注 + `-test`，与干系人「填写者」同口径；`resolveByDisplayNames` 由干系人填写者解析泛化）—— 申请人命中 = `change_requests.applied_by`（未命中回落导入人 + warning `CHANGE_APPLICANT_MISSING`）、填写者命中 = `change_requests.writer_by`（未命中留空 + info `CHANGE_WRITER_MISSING`）；预览 / 结果两处提醒；旧表缺「填写者」列 = 空、不提醒。
 - 写入取消（Push 321）：`commit` 收 AbortSignal（controller 把「响应连接在写完前断开」—— 取消写入 / 刷新 / 关页 / 断网 —— 转 abort）；检查点（读源文件前 / 图片上传每轮 / 事务首行 / 补节点循环每轮 / 各批量写入（任务 / 日报 / 问题 / 变更 / 文件）/ 审计记录前 / 票据落定前）命中即抛 400 `IMPORT_CANCELLED`：**单事务回滚 + 丢弃本次已上传图片对象**；票据保持 pending、源文件保留（可再次提交）；响应已正常写回时不触发。
 - 账号：只对账不建号（登录名 = 拼音、显示名 = 中文名 + `-test`、初始口令 123456 属账号体系口径；**自动建号仅测试环境需要** —— 正式环境用户目录完整、不需要自动创建）；缺号 → `ACCOUNT_MISSING`，项目经理 / 负责人 / 日报作者缺号回落导入人并提醒（`MANAGER_FALLBACK` / `OWNER_MISSING` / `AUTHOR_MISSING`）。
 - 地区：`commit.region` 必填（面板选，201 国口径）；项目类型按源表关键字识别（AIRROB → 飞箱）可留空。
@@ -55,7 +56,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 
 ## 测试
 
-- `server/test/project-import.test.ts`（18 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`）** / **未解决问题默认处理人（含 done 不挂人）** / **写入取消两例（Push 321：上传途中 abort → 已传图片清理 + 票据 pending + 重提成功 + 源文件保留；事务内 abort → 回滚 + 已传图片全清）** / **过期票据清扫（Push 325：删除源对象成功置 expired；删除失败保留 pending 下轮重试）** / **干系人两例（Push 324：导入表内嵌转换（分类四值 / 联系方式拆分 / 提交时间）；导入表缺表 info 提醒，不导入干系人；提交写台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号））**。
+- `server/test/project-import.test.ts`（19 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`）** / **未解决问题默认处理人（含 done 不挂人）** / **写入取消两例（Push 321：上传途中 abort → 已传图片清理 + 票据 pending + 重提成功 + 源文件保留；事务内 abort → 回滚 + 已传图片全清）** / **过期票据清扫（Push 325：删除源对象成功置 expired；删除失败保留 pending 下轮重试）** / **干系人两例（Push 324：导入表内嵌转换（分类四值 / 联系方式拆分 / 提交时间）；导入表缺表 info 提醒，不导入干系人；提交写台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号））** / **变更申请人·填写者（Push 347：源表「变更申请人」「填写者」两列命中库内账号 → `applied_by` / `writer_by`；未命中 = 回落导入人 / 留空 + `CHANGE_APPLICANT_MISSING` / `CHANGE_WRITER_MISSING`）**。
 - `server/test/resource-change.test.ts`：commit 的资源变更登记（projects / tasks / reports / issues / files / templates）。
 
 ## 待落地
