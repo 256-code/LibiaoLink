@@ -8371,15 +8371,15 @@ export interface components {
          * @enum {string}
          */
         FollowObjectType: "project" | "task";
-        /** @description 仪表盘页「项目进度一览」的常驻项目 id（Push 336 · 按账号记住）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
+        /** @description 仪表盘页的常驻项目 id（Push 336 · 按账号记住；Push 358 起六个图表视图共用）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
         HubDashProject: string | null;
         /**
-         * @description 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress
+         * @description 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」、Push 358 加「数据总览」）：overview = 「数据总览」/ progress = 「项目进度」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/ wordcloud = 「词频图」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress
          * @enum {string}
          */
-        HubDashView: "progress" | "status" | "issues" | "delivery" | "wordcloud";
+        HubDashView: "overview" | "progress" | "status" | "issues" | "delivery" | "wordcloud";
         /**
-         * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
+         * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 仪表盘大屏（含数据总览 / 项目进度 等六个图表视图）；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
          * @enum {string}
          */
         HubView: "map" | "dashboard";
