@@ -185,6 +185,10 @@ const TICK_LABEL_Y = 544;
 /** 行内柱高（上限 30；行数再多也跟着行高缩）。 */
 const BAR_MAX_H = 30;
 
+/** 图表入场动画错峰（Push 357 · 业务口径 2026-10-16「这些图表需要有动画效果 柱状图饼状图」+「颜色色调组件都不要改 只要加动画效果」）：行间 55ms；柱段数字 300ms 后起淡入（与各自的柱段同刻落定）。 */
+const ROW_ANIM_STAGGER = 55;
+const NUM_ANIM_OFFSET = 300;
+
 /** 五档图例（与 DASHBOARD_BINS 同下标）。 */
 const LEGEND_KEYS: readonly TextKey[] = ["hub.dash.b0", "hub.dash.b25", "hub.dash.b50", "hub.dash.b75", "hub.dash.b100"];
 
@@ -580,9 +584,9 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
                           setDetail({ kind: "cell", rowKey: row.key, bin });
                         } : undefined}
                       >
-                        <rect className="hub-dash__seg" data-bin={DASHBOARD_BINS[bin]} data-drill={canDrill ? "true" : "false"} x={x} y={barY} width={width} height={barH} />
+                        <rect className="hub-dash__seg" data-bin={DASHBOARD_BINS[bin]} data-drill={canDrill ? "true" : "false"} style={{ animationDelay: index * ROW_ANIM_STAGGER + "ms" }} x={x} y={barY} width={width} height={barH} />
                         {width >= 24 ? (
-                          <text className="hub-dash__num" data-tone={bin === 0 || bin === 2 ? "dark" : "light"} x={x + width / 2} y={baseline} textAnchor="middle" fontSize={13} fontWeight={600}>{count}</text>
+                          <text className="hub-dash__num" data-tone={bin === 0 || bin === 2 ? "dark" : "light"} style={{ animationDelay: index * ROW_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={x + width / 2} y={baseline} textAnchor="middle" fontSize={13} fontWeight={600}>{count}</text>
                         ) : null}
                       </g>
                     );

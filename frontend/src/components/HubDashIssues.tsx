@@ -34,6 +34,10 @@ const BAR_GAP_RATIO = 0.32;
 /** 悬停高亮条左右内缩（不贴组边界）。 */
 const BAND_INSET = 6;
 
+/** 图表入场动画错峰（Push 357 · 业务口径 2026-10-16「这些图表需要有动画效果 柱状图饼状图」+「颜色色调组件都不要改 只要加动画效果」）：归类（series）间 70ms；柱顶数字 300ms 后起淡入（与柱同刻落定）。 */
+const SERIES_ANIM_STAGGER = 70;
+const NUM_ANIM_OFFSET = 300;
+
 /** y 轴刻度：按最大单柱挑 1 / 2 / 5 / 10 / 20 整步（参考图最大柱 5 → 刻度 0 / 2 / 4 / 6）。 */
 function axisOf(maxBar: number): { max: number; step: number } {
   if (maxBar <= 1) {
@@ -149,6 +153,7 @@ export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPi
                 <g key={group.state + "-" + category}>
                   <rect
                     className="hub-dash-issues__bar"
+                    style={{ animationDelay: seriesIndex * SERIES_ANIM_STAGGER + "ms" }}
                     data-state={group.state}
                     data-category={category}
                     data-count={count}
@@ -164,7 +169,7 @@ export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPi
                     onMouseLeave={() => { setHover(null); onLeave(); }}
                     onClick={canDrill ? () => { onPick(group.state, category); } : undefined}
                   />
-                  <text className="hub-dash-issues__num" data-category={category} x={x + barW / 2} y={y - 8} textAnchor="middle" fontSize={13} fontWeight={600} fill={DASHBOARD_ISSUE_COLORS[category] ?? "#c9ced6"}>{count}</text>
+                  <text className="hub-dash-issues__num" data-category={category} style={{ animationDelay: seriesIndex * SERIES_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={x + barW / 2} y={y - 8} textAnchor="middle" fontSize={13} fontWeight={600} fill={DASHBOARD_ISSUE_COLORS[category] ?? "#c9ced6"}>{count}</text>
                 </g>
               );
             })}
