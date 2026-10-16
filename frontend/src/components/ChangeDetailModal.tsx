@@ -34,6 +34,7 @@ import { fieldText, stageText, useLocale, useT, type Locale } from "../i18n";
  * 「变更文件」行口径（业务口径「变更文件就是输出文件成果这个类型」）：文件成果类型为空时回退所属任务的「输出成果文件」。
  * Push 347（业务口径 2026-10-16「变更申请和填写人没有根据文件的导入啊…现在是导入的是账号人」）：「填写者」行改用
  * 变更详情 writerBy（导入表导入按源表「填写者」列命中账号）；应用内提交 / 未命中 = 回落申请人展示。
+ * Push 350（业务反馈「图片怎么能在弹窗后面 是bug」）：变更前 / 变更后缩略图的大图预览提级（previewZClass z-[80]，与「变更后文件」预览同层）—— 大图不再被弹窗 z-[70] 盖住；Esc 优先级同步（缩略图大图预览开着时先关预览、弹窗仍在 —— PhotoStrip onPreviewOpenChange 让位）。
  */
 export function ChangeDetailModal({ changeId, linkedTaskTitle, members, deliverableTypes, onOpenLinkedTask, onClose }: {
   changeId: string;
@@ -57,6 +58,8 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
   const [previewNote, setPreviewNote] = useState<string | null>(null);
   const previewRef = useRef(preview);
   previewRef.current = preview;
+  /** Push 350：「变更前 / 变更后」缩略图大图预览的开合（Esc 让位用 —— 预览开着时 Esc 先关预览、弹窗仍在）。 */
+  const thumbPreviewOpenRef = useRef(false);
   /** 键盘焦点陷阱（Push 264 追订）：打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发处。 */
   const trapRef = useFocusTrap<HTMLDivElement>();
   const t = useT();
@@ -96,10 +99,11 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        // 「Esc 先关内层」：弹内预览开着先关预览（弹窗仍在），否则关弹窗。
+        // 「Esc 先关内层」：弹内预览开着先关预览（弹窗仍在），否则关弹窗；
+        // Push 350：PhotoStrip 缩略图的大图预览开着时让位给预览层自己的 Esc（先关预览、弹窗仍在）。
         if (previewRef.current !== null) {
           setPreview(null);
-        } else {
+        } else if (!thumbPreviewOpenRef.current) {
           onClose();
         }
       }
@@ -219,13 +223,13 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                   <DetailRow kind="image" label={fieldText(locale, "变更前")} testKey="before">
                     <span className="block">{textOrDash(detail.beforeSummary)}</span>
                     {detail.beforeSummaryFileIds.length === 0 ? null : (
-                      <PhotoStrip strip="change-modal-before" size="md" items={detail.beforeSummaryFileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }))} />
+                      <PhotoStrip strip="change-modal-before" size="md" previewZClass="z-[80]" onPreviewOpenChange={(open) => { thumbPreviewOpenRef.current = open; }} items={detail.beforeSummaryFileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }))} />
                     )}
                   </DetailRow>
                   <DetailRow kind="image" label={fieldText(locale, "变更后")} testKey="after">
                     <span className="block">{textOrDash(detail.afterSummary)}</span>
                     {detail.afterSummaryFileIds.length === 0 ? null : (
-                      <PhotoStrip strip="change-modal-after" size="md" items={detail.afterSummaryFileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }))} />
+                      <PhotoStrip strip="change-modal-after" size="md" previewZClass="z-[80]" onPreviewOpenChange={(open) => { thumbPreviewOpenRef.current = open; }} items={detail.afterSummaryFileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }))} />
                     )}
                   </DetailRow>
                   <DetailRow kind="doc" label={fieldText(locale, "变更原因")} testKey="cause">{textOrDash(split.cause)}</DetailRow>

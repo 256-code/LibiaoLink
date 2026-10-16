@@ -106,9 +106,12 @@ interface ImagePlan {
   fileId: string;
   name: string;
   mime: string | null;
-  kind: "onsite" | "issue";
-  reportIndex: number;
+  kind: "onsite" | "issue" | "change_before" | "change_after";
+  /** 挂接日报下标（现场图 / 问题图；变更前 / 变更后图 = null）。 */
+  reportIndex: number | null;
   issueIndex: number | null;
+  /** 变更表下标（变更前 / 变更后图；与 insertChangeRequests 返回同序）；日报图 = null。 */
+  changeIndex: number | null;
   objectKey: string;
   sizeBytes: number;
   contentHash: string;
@@ -546,7 +549,8 @@ export class ProjectImportService {
       }));
       await this.previews.insertStakeholders(tx, projectRow.id, stakeholderRows, actorId, at);
 
-      // 图片：对象已上传；事务内登记 files + file_versions + file_links（现场图挂日报；问题图随问题转挂 issue 侧）。
+      // 图片：对象已上传；事务内登记 files + file_versions + file_links（现场图挂日报；问题图随问题转挂 issue 侧；
+      // 变更前 / 变更后附图（Push 349）不落 file_links —— 登记 files 后回填 change_requests 两列，同 0052 应用内口径）。
       const fileRows: ImportFileInsert[] = imageBuild.plans.map((plan) => ({
         id: plan.fileId,
         name: plan.name,
@@ -556,10 +560,15 @@ export class ProjectImportService {
         mime: plan.mime,
         reportIndex: plan.reportIndex,
         issueIndex: plan.issueIndex,
+        changeIndex: plan.changeIndex,
         kind: plan.kind,
       }));
       throwIfCancelled(signal);
       await this.previews.insertFiles(tx, projectRow.id, reportIds, issueIds, fileRows, actorId, at);
+      const changeImageUpdates = buildChangeImageUpdates(imageBuild.plans, changeIds);
+      if (changeImageUpdates.length > 0) {
+        await this.previews.attachChangeSummaryImages(tx, changeImageUpdates);
+      }
 
       const counts: ImportResultCounts = {
         tasks: taskRows.length,
@@ -915,17 +924,20 @@ function composeChangeReason(change: LegacyChange): string {
   return content + "；原因：" + reason;
 }
 
-/** 未导入的图片数（锚点行不是有效日报 / 源文件里找不到该 media）：预览与提交同一判定，提醒口径一致。 */
+/** 未导入的图片数（锚点行不是有效日报 / 变更行、源文件里找不到该 media）：预览与提交同一判定，提醒口径一致。 */
 function countSkippedImages(parse: LegacyParse, readMedia: (media: string) => Buffer | null): number {
   const reportRows = new Set(parse.reports.map((report) => report.row));
+  const changeRows = new Set(parse.changes.map((change) => change.row));
   let skipped = 0;
   for (const image of parse.images) {
-    if (!reportRows.has(image.row) || readMedia(image.media) === null) skipped += 1;
+    const isChange = image.kind === "change_before" || image.kind === "change_after";
+    const rowExists = isChange ? changeRows.has(image.row) : reportRows.has(image.row);
+    if (!rowExists || readMedia(image.media) === null) skipped += 1;
   }
   return skipped;
 }
 
-/** 图片落位计划：锚点行 = 日报行 → 挂该日报；media 缺失 / 行未匹配 → 计入 skipped（提醒，不阻断）。 */
+/** 图片落位计划：锚点行 = 日报行 / 变更行 → 挂该行；media 缺失 / 行未匹配 / 单条变更附图超 30 张 → 计入 skipped（提醒，不阻断）。 */
 function buildImagePlans(
   parse: LegacyParse,
   readMedia: (media: string) => Buffer | null,
@@ -934,12 +946,15 @@ function buildImagePlans(
 ): { plans: ImagePlan[]; skipped: number } {
   const reportIndexByRow = new Map<number, number>();
   parse.reports.forEach((report, index) => reportIndexByRow.set(report.row, index));
+  const changeIndexByRow = new Map<number, number>();
+  parse.changes.forEach((change, index) => changeIndexByRow.set(change.row, index));
   const counters = new Map<string, number>();
   const plans: ImagePlan[] = [];
   let skipped = 0;
   for (const image of parse.images) {
-    const reportIndex = reportIndexByRow.get(image.row);
-    if (reportIndex === undefined) {
+    const isChange = image.kind === "change_before" || image.kind === "change_after";
+    const targetIndex = isChange ? changeIndexByRow.get(image.row) : reportIndexByRow.get(image.row);
+    if (targetIndex === undefined) {
       skipped += 1;
       continue;
     }
@@ -948,18 +963,25 @@ function buildImagePlans(
       skipped += 1;
       continue;
     }
-    const report = parse.reports[reportIndex]!;
-    const counterKey = image.kind + "-" + String(reportIndex);
+    const counterKey = image.kind + "-" + String(targetIndex);
     const index = (counters.get(counterKey) ?? 0) + 1;
     counters.set(counterKey, index);
+    // 变更附图与应用内同口径上限 ≤ 30 张（库内 CHECK），超出计入提醒。
+    if (isChange && index > 30) {
+      skipped += 1;
+      continue;
+    }
     const extension = extensionOf(image.media);
-    const name =
-      (image.kind === "onsite" ? "现场工作照 " : "问题附图 ") +
-      report.reportDate +
-      " " +
-      String(index).padStart(2, "0") +
-      "." +
-      extension;
+    const seq = String(index).padStart(2, "0");
+    let name: string;
+    if (image.kind === "change_before" || image.kind === "change_after") {
+      const change = parse.changes[targetIndex]!;
+      const label = image.kind === "change_before" ? "变更前附图" : "变更后附图";
+      name = label + " " + (change.appliedAt === null ? "日期待补" : change.appliedAt) + " " + seq + "." + extension;
+    } else {
+      const report = parse.reports[targetIndex]!;
+      name = (image.kind === "onsite" ? "现场工作照 " : "问题附图 ") + report.reportDate + " " + seq + "." + extension;
+    }
     const contentHash = createHash("sha256").update(bytes).digest("hex");
     const fileId = randomUUID();
     plans.push({
@@ -967,8 +989,9 @@ function buildImagePlans(
       name,
       mime: mimeOf(extension),
       kind: image.kind,
-      reportIndex,
-      issueIndex: image.kind === "issue" ? (issueIndexByReport.get(reportIndex) ?? null) : null,
+      reportIndex: isChange ? null : targetIndex,
+      issueIndex: image.kind === "issue" ? (issueIndexByReport.get(targetIndex) ?? null) : null,
+      changeIndex: isChange ? targetIndex : null,
       objectKey: buildObjectKey({ projectId, fileId, seq: 1, contentHash, fileName: name }),
       sizeBytes: bytes.length,
       contentHash,
@@ -976,6 +999,28 @@ function buildImagePlans(
     });
   }
   return { plans, skipped };
+}
+
+/** 变更附图装配（Push 349）：变更下标 → 变更前 / 变更后文件 id 有序数组（序 = 源表锚点阅读序）。 */
+function buildChangeImageUpdates(
+  plans: readonly ImagePlan[],
+  changeIds: readonly string[],
+): { changeId: string; beforeFileIds: string[]; afterFileIds: string[] }[] {
+  const byChange = new Map<number, { beforeFileIds: string[]; afterFileIds: string[] }>();
+  for (const plan of plans) {
+    if (plan.changeIndex === null) continue;
+    const entry = byChange.get(plan.changeIndex) ?? { beforeFileIds: [], afterFileIds: [] };
+    if (plan.kind === "change_before") entry.beforeFileIds.push(plan.fileId);
+    else if (plan.kind === "change_after") entry.afterFileIds.push(plan.fileId);
+    byChange.set(plan.changeIndex, entry);
+  }
+  const updates: { changeId: string; beforeFileIds: string[]; afterFileIds: string[] }[] = [];
+  for (const [index, entry] of byChange) {
+    const changeId = changeIds[index];
+    if (changeId === undefined) continue;
+    updates.push({ changeId, beforeFileIds: entry.beforeFileIds, afterFileIds: entry.afterFileIds });
+  }
+  return updates;
 }
 
 /** 写入取消（Push 321）：客户端断开 / 主动取消 → 每个检查点抛错 → 单事务回滚；票据保持可再次提交。 */
@@ -1138,9 +1183,9 @@ function imageRowMissingSeed(count: number): LegacyIssueSeed {
     code: "IMAGE_ROW_MISSING",
     row: null,
     subject: String(count) + " 张",
-    zh: "有 " + String(count) + " 张表内图片未导入（锚点行不是有效日报，或源文件里找不到图片对象）：请在文件库手动上传",
+    zh: "有 " + String(count) + " 张表内图片未导入（锚点行不是有效日报 / 变更行、单条变更附图超过 30 张，或源文件里找不到图片对象）：请在对应处手动上传",
     en:
       String(count) +
-      " embedded image(s) were skipped (anchor row without a valid daily report, or media missing in the source file); please upload them manually.",
+      " embedded image(s) were skipped (anchor row without a valid daily report / change record, more than 30 images for one change, or media missing in the source file); please upload them manually.",
   };
 }
