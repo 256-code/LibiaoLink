@@ -53,8 +53,8 @@ export type KanbanMode = "owner" | "status";
 /** 「任务进展」看板的列顺序（业务定稿：已延期 → 进行中 → 已完成 → 提前完成 → 待开始）。 */
 const STATUS_ORDER: readonly TaskStatus[] = ["已延期", "进行中", "已完成", "提前完成", "待开始"];
 
-/** 阶段色签（卡片「所属阶段」一栏）：按阶段固定色（口径对齐业务样张里的色签）。 */
-const STAGE_TAG_CLASS: Record<string, string> = {
+/** 阶段色签（卡片「所属阶段」一栏）：按阶段固定色（口径对齐业务样张里的色签）；Push 353 起导出 —— 仪表盘「词频图」数据详情（HubDashWordDetail）的「变更阶段」列复用同一张色表。 */
+export const STAGE_TAG_CLASS: Record<string, string> = {
   售前规划: "bg-violet-100 text-violet-700",
   设计开发: "bg-sky-100 text-sky-700",
   加工采购: "bg-zinc-200 text-zinc-600",

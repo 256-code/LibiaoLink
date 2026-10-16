@@ -43,7 +43,7 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  *   页面见 frontend/src/FileLibraryPage.tsx。
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { ApiError, apiRequest, apiSend } from "./api";
+import { ApiError, apiRequest, apiSend, readAllPages } from "./api";
 import { sha256Hex } from "./sha256";
 
 type UploadCreateResponse = {
@@ -318,6 +318,37 @@ export type ChangeRequestDetail = {
   /** Push 256：本次变更同时更名时 = 更名前文件名称（变更记录「变更前」行显示）；未更名 = null。 */
   filePreviousName: string | null;
 };
+
+/**
+ * 变更记录列表行（契约 ChangeRequest · M4-04 读面 A4-15）：GET /projects/{id}/change-requests 的一行
+ * （变更本体 + 反查的文件 / 版本；导入遗留变更 fileId / versionId 为空、状态仍为 pending 体系外的原值）。
+ * Push 353：仪表盘「词频图」取数（dashboardApi.ts 的 fetchDashboardChangeWords）与点词「数据详情」用它。
+ */
+export type ApiChangeRequest = {
+  readonly id: string;
+  readonly projectId: string;
+  readonly nodeId: string | null;
+  readonly stageKey: string | null;
+  readonly reason: string;
+  readonly beforeSummary: string | null;
+  readonly afterSummary: string | null;
+  readonly beforeSummaryFileIds: readonly string[];
+  readonly afterSummaryFileIds: readonly string[];
+  readonly status: string;
+  readonly appliedBy: string;
+  readonly writerBy: string | null;
+  readonly appliedAt: string;
+  readonly createdAt: string;
+  readonly fileId: string | null;
+  readonly versionId: string | null;
+  readonly versionSeq: number | null;
+};
+
+/** 项目变更记录列表（M4-04 读面 · Push 353 仪表盘「词频图」取数）：GET /projects/{id}/change-requests 翻页取满。 */
+export async function fetchProjectChanges(projectId: string): Promise<ApiChangeRequest[]> {
+  const payload = await readAllPages<ApiChangeRequest>("/api/v1/projects/" + encodeURIComponent(projectId) + "/change-requests");
+  return payload.items;
+}
 
 /** 变更详情（抽屉「变更记录」页按任务 changeLinks 逐条取全文；非成员 / 不存在统一 404）。 */
 export function fetchChangeRequest(id: string): Promise<ChangeRequestDetail> {

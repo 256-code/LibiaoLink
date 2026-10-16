@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import type { DashboardDataset, DashboardIssueDataset } from "../dashboardApi";
+import type { DashboardDataset, DashboardIssueDataset, DashboardWordDataset } from "../dashboardApi";
+import { isChangeWordHit } from "../data/changeWords";
 import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, isTaskInDeliveryBucket, isTaskPendingDelivery, type DashboardDeliveryBucket, type DashboardStatusSlice, type HubDashView } from "../data/dashboardProgress";
 import type { TaskStatus } from "../data/tasks";
 import { fieldText, stageText, statusText, useLocale, useT, type TextKey } from "../i18n";
@@ -9,6 +10,8 @@ import { HubDashDetail } from "./HubDashDetail";
 import { HubDashIssueDetail } from "./HubDashIssueDetail";
 import { HubDashIssues, type DashboardIssueRow } from "./HubDashIssues";
 import { HubDashStatus } from "./HubDashStatus";
+import { HubDashWordCloud } from "./HubDashWordCloud";
+import { HubDashWordDetail } from "./HubDashWordDetail";
 import { Loader } from "./Loader";
 import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
 
@@ -63,7 +66,17 @@ import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
  *
  * Push 346 追订（2026-10-16 业务口径「点击也要进入详情的」+「取消提前完成展示」）：
  * 点「按时率」小结 = 开按时交付口径的数据详情（与按时交付柱同一筛选）、点「未到交付节点」注记 = 开注记里那 N 条
- * （isTaskPendingDelivery）—— 与点柱同一套「选中具体项目才可点」；「提前完成」并入「按时交付」、不再单独占一档。 */
+ * （isTaskPendingDelivery）—— 与点柱同一套「选中具体项目才可点」；「提前完成」并入「按时交付」、不再单独占一档。
+ *
+ * Push 353（2026-10-16 业务口径「现在做这个词频图 根据变更原因的词频拼成这个图」+「词频图中修饰词不纳入
+ * 只保留核心词纳入词频图」+「还是和之前做的地方和效果一样」+「我们的词频图也要拼凑出形状」+
+ * 「不需要每个都可以点击只有最中间的需要」）：底栏加第五枚视图「词频图」—— 变更原因核心词
+ * 词云（HubDashWordCloud，画布像素蒙版落位 / 悬停卡 / 中心词点开详情都与其他视图同一套口径）+
+ * 点最中间那枚词只读「数据详情」（只有它可点）
+ * （HubDashWordDetail，列序照业务参考图：变更时间 / 变更阶段 / 变更文件 / 变更内容描述 / 变更前 / 变更后 /
+ * 变更原因 / 变更申请人 / 填写者）；读面懒加载（首次切到「词频图」才拉变更记录，见 Hub.tsx 的 ensureWords），
+ * 分词 / 计数口径见 data/changeWords.ts。
+ */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
 /** 悬停卡（Push 335 柱段 / Push 339 扇区 / Push 340 行阴影）：柱段 = 行名 + 单档一行；行阴影 = 行名 + 五档整排；
@@ -114,6 +127,13 @@ type DashTip =
       readonly count: number;
     }
   | {
+      readonly kind: "word";
+      readonly left: number;
+      readonly top: number;
+      readonly word: string;
+      readonly count: number;
+    }
+  | {
       readonly kind: "issueRow";
       readonly left: number;
       readonly top: number;
@@ -127,7 +147,8 @@ type DashDetailPick =
   | { readonly kind: "status"; readonly status: TaskStatus }
   | { readonly kind: "issue"; readonly state: string; readonly category: string }
   | { readonly kind: "delivery"; readonly bucket: DashboardDeliveryBucket }
-  | { readonly kind: "deliveryPending" };
+  | { readonly kind: "deliveryPending" }
+  | { readonly kind: "word"; readonly word: string };
 
 /** 柱段悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）。 */
 const TIP_W = 190;
@@ -145,6 +166,9 @@ const DELIVERY_TIP_W = 200;
 const DELIVERY_TIP_H = 108;
 const RATE_TIP_W = 300;
 const RATE_TIP_H = 108;
+/** 词频卡（Push 353；与扇区 / 交付卡同形态：行名 = 词、单行 = 词频 + 次数）。 */
+const WORD_TIP_W = 200;
+const WORD_TIP_H = 84;
 
 const VIEW_W = 1200;
 const VIEW_H = 596;
@@ -221,7 +245,7 @@ function DashViewSwitch({ view, checked, label, onSelect }: {
     </label>
   );
 }
-export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, rememberedDashProject, onDashProjectChange, rememberedDashView, onDashViewChange }: {
+export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, words, wordsState, onNeedWords, rememberedDashProject, onDashProjectChange, rememberedDashView, onDashViewChange }: {
   data: DashboardDataset | null;
   state: HubDashboardState;
   /** 「问题」视图数据（Push 344 · 懒加载：首次切到「问题」时才拉；null = 还没拉）。 */
@@ -230,6 +254,12 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   issuesState: "idle" | "loading" | "ready" | "failed";
   /** 请求拉「问题」读面（首次切到「问题」视图 / 失败后重试）。 */
   onNeedIssues: () => void;
+  /** 「词频图」视图数据（Push 353 · 懒加载：首次切到「词频图」时才拉；null = 还没拉）。 */
+  words: DashboardWordDataset | null;
+  /** 「词频图」读面状态：idle = 还没拉过 / loading / ready / failed（切走再切回会重试）。 */
+  wordsState: "idle" | "loading" | "ready" | "failed";
+  /** 请求拉「词频图」读面（首次切到「词频图」视图 / 失败后重试）。 */
+  onNeedWords: () => void;
   /** 账号记的常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」；null = 全部项目）。 */
   rememberedDashProject: string | null;
   /** 把选中项目写回账号偏好（Push 336；App 层乐观更新 + 失败回滚 + Toast）。 */
@@ -263,12 +293,15 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   useEffect(() => {
     setView(rememberedDashView);
   }, [rememberedDashView]);
-  /** 「问题」读面懒加载（Push 344）：切到「问题」视图时拉；首屏直接落在「问题」（常驻视图）也拉。 */
+  /** 「问题 / 词频图」读面懒加载（Push 344 / Push 353）：切到对应视图时拉；首屏直接落在该视图（常驻视图）也拉。 */
   useEffect(() => {
     if (view === "issues") {
       onNeedIssues();
     }
-  }, [view, onNeedIssues]);
+    if (view === "wordcloud") {
+      onNeedWords();
+    }
+  }, [view, onNeedIssues, onNeedWords]);
   /** 常驻的项目已不存在（被删）：界面回落「全部项目」，并把账号偏好一并清掉（只清一次）。 */
   useEffect(() => {
     if (pickedId !== null && data !== null && !data.byProject.has(pickedId)) {
@@ -393,7 +426,22 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
       rows,
     });
   };
-  /** 切视图（Push 339 / Push 344 / Push 345）：先关掉旧视图的浮层卡 / 数据详情（详情对应的柱段 / 扇区 / 柱已不在画面上）；
+  /** 悬停词（Push 353 · 业务口径「还是和之前做的地方和效果一样」）：卡里写词 + 词频（与扇区 / 交付卡同形态）。 */
+  const showWordTip = (event: ReactMouseEvent<SVGTextElement>, word: string, count: number): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "word",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - WORD_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - WORD_TIP_H - 6)),
+      word,
+      count,
+    });
+  };
+  /** 切视图（Push 339 / Push 344 / Push 345 / Push 353）：先关掉旧视图的浮层卡 / 数据详情（详情对应的柱段 / 扇区 / 柱已不在画面上）；
    *  视图写回账号偏好（Push 345 · 「选择后刷新不变 按账号记住」）；「问题」读面懒加载由 view 跟随的 effect 负责。 */
   const switchView = (next: HubDashView): void => {
     setView(next);
@@ -420,6 +468,8 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   const deliveryView = pickedId === null ? data.deliveryAll : data.deliveryByProject.get(pickedId) ?? data.deliveryAll;
   /** 问题分布（Push 344）：同一套项目选择；数据懒加载（issues === null = 还没拉过）。 */
   const issuesView = issues === null ? null : pickedId === null ? issues.all : issues.byProject.get(pickedId) ?? issues.all;
+  /** 词频图（Push 353）：同一套项目选择；数据懒加载（words === null = 还没拉过）。 */
+  const wordsView = words === null ? null : pickedId === null ? words.all : words.byProject.get(pickedId) ?? words.all;
   /** 标题条：<视图名>·<选择器>（选择器里的当前项就是标题的后半段；视图名随底部切换走）。 */
   const pickedName = pickedId !== null ? data.options.find((option) => option.id === pickedId)?.name ?? t("hub.dash.allProjects") : t("hub.dash.allProjects");
   /** 只有选中具体项目才能点开数据详情（「全部项目」= 混合来源，不给来源明细 —— 业务口径；柱段 / 扇区同一套）。 */
@@ -434,7 +484,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   };
   const head = (
     <div className="hub-dash-head">
-      <span className="hub-dash-title">{view === "progress" ? t("hub.dash.title") : view === "status" ? t("hub.dash.status.title") : view === "issues" ? t("hub.dash.issues.title") : t("hub.dash.delivery.title")}</span>
+      <span className="hub-dash-title">{view === "progress" ? t("hub.dash.title") : view === "status" ? t("hub.dash.status.title") : view === "issues" ? t("hub.dash.issues.title") : view === "delivery" ? t("hub.dash.delivery.title") : t("hub.dash.wordcloud.title")}</span>
       <span className="hub-dash-sep" aria-hidden="true">
         •
       </span>
@@ -578,6 +628,29 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
             setDetail({ kind: "deliveryPending" });
           }}
         />
+      ) : view === "wordcloud" ? (
+        wordsState === "ready" && wordsView !== null ? (
+          wordsView.words.length === 0 ? (
+            <div className="hub-dash-state">{t("hub.dash.wordcloud.empty")}</div>
+          ) : (
+            <HubDashWordCloud
+              words={wordsView}
+              canDrill={canDrill}
+              onTip={showWordTip}
+              onLeave={() => setTip(null)}
+              onPick={(word) => {
+                setTip(null);
+                setDetail({ kind: "word", word });
+              }}
+            />
+          )
+        ) : wordsState === "failed" ? (
+          <div className="hub-dash-state">{t("hub.dash.failed")}</div>
+        ) : (
+          <div className="hub-dash-state">
+            <Loader />
+          </div>
+        )
       ) : issuesState === "ready" && issuesView !== null ? (
         issuesView.totalIssues === 0 ? (
           <div className="hub-dash-state">{t("hub.dash.issues.empty")}</div>
@@ -606,6 +679,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
         <DashViewSwitch view="status" checked={view === "status"} label={t("hub.dash.status.title")} onSelect={() => switchView("status")} />
         <DashViewSwitch view="issues" checked={view === "issues"} label={t("hub.dash.issues.title")} onSelect={() => switchView("issues")} />
         <DashViewSwitch view="delivery" checked={view === "delivery"} label={t("hub.dash.delivery.title")} onSelect={() => switchView("delivery")} />
+        <DashViewSwitch view="wordcloud" checked={view === "wordcloud"} label={t("hub.dash.wordcloud.title")} onSelect={() => switchView("wordcloud")} />
       </div>
       {tip !== null ? (
         tip.kind === "bin" ? (
@@ -668,6 +742,15 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
             <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateFormula")}</div>
             {deliveryView.total > 0 ? <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateCalc", { ontime: deliveryView.counts[0], total: deliveryView.total, rate: deliveryView.onTimeRate ?? "—" })}</div> : null}
           </div>
+        ) : tip.kind === "word" ? (
+          <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__row">{tip.word}</div>
+            <div className="hub-dash-tip__line">
+              <span className="hub-dash-tip__dot" />
+              <span className="hub-dash-tip__label">{t("hub.dash.wordcloud.frequency")}</span>
+              <span className="hub-dash-tip__count">{tip.count}</span>
+            </div>
+          </div>
         ) : tip.kind === "issue" ? (
           <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
             <div className="hub-dash-tip__row">{statusText(locale, tip.state)}</div>
@@ -691,7 +774,16 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
         )
       ) : null}
       {detail !== null && pickedId !== null ? (
-        detail.kind === "issue" ? (
+        detail.kind === "word" ? (
+          <HubDashWordDetail
+            rows={(words === null ? [] : words.changesByProject.get(pickedId) ?? []).filter((change) => isChangeWordHit(change.reason, detail.word))}
+            members={words === null ? [] : words.members}
+            tasks={data.tasksByProject.get(pickedId) ?? []}
+            onClose={() => {
+              setDetail(null);
+            }}
+          />
+        ) : detail.kind === "issue" ? (
           <HubDashIssueDetail
             projectName={pickedName}
             rows={(issues === null ? [] : issues.issuesByProject.get(pickedId) ?? [])

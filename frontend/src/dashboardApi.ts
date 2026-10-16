@@ -15,11 +15,18 @@
  * - Push 344：「问题」视图（问题状态 × 问题归类分组柱状图 + 点柱只读「数据详情」）的读面在 fetchDashboardIssues ——
  *   问题 / 日报逐项目读面**懒加载**（首次切到「问题」视图才拉，任务读面 / 首屏不受影响），拉完存明细、
  *   切项目 / 开弹窗零请求（口径见 data/dashboardProgress.ts 的 buildDashboardIssues）。
+ * - Push 353：「词频图」视图（变更原因核心词词云 + 点词只读「数据详情」）的读面在 fetchDashboardChangeWords ——
+ *   变更记录逐项目 + 用户目录（变更申请人 / 填写者列）**懒加载**（首次切到「词频图」才拉）；分词 / 计数口径见
+ *   data/changeWords.ts。
  */
 import { buildDashboardDelivery, buildDashboardIssues, buildDashboardProgress, buildDashboardStatus, type DashboardDelivery, type DashboardIssues, type DashboardProgress, type DashboardStatus } from "./data/dashboardProgress";
 import { fetchProjectList } from "./projectApi";
 import { fetchProjectTasks, type ApiTaskListItem } from "./taskApi";
 import { fetchProjectIssues, fetchProjectReports } from "./reportApi";
+import { fetchProjectChanges, type ApiChangeRequest } from "./fileApi";
+import { directoryMemberOptions, loadDirectory } from "./directory";
+import { buildDashboardChangeWords, type DashboardChangeWords } from "./data/changeWords";
+import type { Member } from "./data/members";
 import type { DailyReport, Issue } from "./data/reports";
 import { EMPTY_LIST_QUERY } from "./useHashRoute";
 
@@ -133,4 +140,41 @@ export async function fetchDashboardIssues(projects?: readonly { id: string; nam
     allIssues.push(...issues);
   });
   return { all: buildDashboardIssues(allIssues), byProject, issuesByProject, reportsByProject };
+}
+
+/** 仪表盘词频图取数（Push 353 · 「词频图」视图 / 点词「数据详情」）。 */
+export type DashboardWordDataset = {
+  /** 全部项目合计（「词频图」· 全部项目口径）。 */
+  readonly all: DashboardChangeWords;
+  /** 项目 id → 该项目词频（切项目零请求）。 */
+  readonly byProject: ReadonlyMap<string, DashboardChangeWords>;
+  /** 项目 id → 该项目变更明细（点词「数据详情」按 isChangeWordHit 筛；同一轮取数里存下）。 */
+  readonly changesByProject: ReadonlyMap<string, readonly ApiChangeRequest[]>;
+  /** 用户目录（「变更申请人 / 填写者」两列的名字 + 工号；与全站目录同口径）。 */
+  readonly members: readonly Member[];
+};
+
+/**
+ * 变更记录逐项目读面 + 用户目录 → 核心词词频 + 明细（懒加载：调用方 = Hub.tsx 首次切到「词频图」时触发；
+ * 分词 / 计数口径见 data/changeWords.ts）。变更读面并发 4；任一项目失败即整轮失败（调用方落「统计加载失败」，
+ * 切走再切回会重试）。
+ */
+export async function fetchDashboardChangeWords(projects?: readonly { id: string; name: string }[]): Promise<DashboardWordDataset> {
+  const list = projects === undefined ? (await fetchProjectList(EMPTY_LIST_QUERY)).items : projects;
+  const [changePages, directory] = await Promise.all([
+    mapWithLimit(list, 4, (project) => fetchProjectChanges(project.id)),
+    loadDirectory(),
+  ]);
+  const byProject = new Map<string, DashboardChangeWords>();
+  const changesByProject = new Map<string, readonly ApiChangeRequest[]>();
+  const allRows: ApiChangeRequest[] = [];
+  list.forEach((project, index) => {
+    const rows = changePages[index];
+    byProject.set(project.id, buildDashboardChangeWords(rows));
+    changesByProject.set(project.id, rows);
+    for (const row of rows) {
+      allRows.push(row);
+    }
+  });
+  return { all: buildDashboardChangeWords(allRows), byProject, changesByProject, members: directoryMemberOptions(directory) };
 }
