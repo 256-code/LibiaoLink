@@ -73,6 +73,7 @@
  *      Esc / 点遮罩只关弹窗（抽屉 / 页面仍在 · ④u6b 段）；
  *   ⑳b 弹窗两个可点击（Push 256 续 · 业务反馈「这两个要可以点击 点击文件预览 点击布局定档抽屉显示」）：
  *      ①「变更后文件」卡 → 弹内版本态预览（浮层 z 高于弹窗；Esc 先关预览、弹窗仍在 —— ④u6c / ④u6d 段）；
+ *      Push 350 追订：弹窗「变更前 / 变更后」摘要缩略图点开的大图预览同口径 —— z 压过弹窗 + Esc 先关预览、弹窗仍在（④u6b3 / ④u6b4 段）；
  *      ②「关联」→ 关弹窗打开回写任务抽屉（任务表 chip 路径 = 选中该行开抽屉，④u6g / ④u6h；抽屉内路径 = 露出抽屉本身，④u6f）；
  *      ③「变更文件」行 = 输出成果文件类型（业务口径「变更文件就是输出文件成果这个类型」）：文件 doc_type 空 → 回退任务输出成果文件（④v5）；
  *   ㉑ 收尾：定档任务先取消定档（recycle 闸不绕过）→ 八份文件回收 + purge → 临时项目物理删、会话撤销 → 零残留。
@@ -1181,6 +1182,21 @@ const modalInfo = modalShown === true ? await ev("(function(){var m=document.que
 // ④u6b2（Push 314）：弹窗「变更前 / 变更后」行 = 摘要文本 + 摘要附图缩略图（各 1 张；懒取签名后出图）。
 const modalSummaryThumbs = await waitFor("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");if(m===null){return false;}return m.querySelectorAll(" + j("[data-change-modal-row=before] [data-attachment-thumb]") + ").length===1&&m.querySelectorAll(" + j("[data-change-modal-row=after] [data-attachment-thumb]") + ").length===1;})()", 20000);
 check("④u6b2 变更管理弹窗「变更前 / 变更后」出摘要附图缩略图（各 1 张 · Push 314）", modalSummaryThumbs === true, String(modalSummaryThumbs));
+// ④u6b3 / ④u6b4（Push 350 · 业务反馈「图片怎么能在弹窗后面 是bug」）：弹窗内缩略图点开的大图预览必须浮于弹窗之上
+// （修复前 PhotoPreview 硬编码 z-[60] < 弹窗 z-[70]，大图被压在弹窗后面）；Esc 先关预览、弹窗仍在（弹窗 Esc 让位）。
+const modalThumbPoint = await clickScrolled("[data-change-modal-row=before] [data-attachment-thumb]");
+const modalThumbPreviewShown = await waitFor("document.querySelector(" + j("[data-photo-preview]") + ")!==null&&document.querySelector(" + j("[data-change-modal]") + ")!==null", 20000);
+const modalThumbPreviewLift = modalThumbPreviewShown === true ? await ev("(function(){var p=document.querySelector(" + j("[data-photo-preview]") + ");var m=document.querySelector(" + j("[data-change-modal]") + ");if(p===null||m===null){return null;}var pz=Number(getComputedStyle(p).zIndex);var mz=Number(getComputedStyle(m).zIndex);var r=p.getBoundingClientRect();var el=document.elementFromPoint(Math.round(r.left+r.width/2),Math.round(r.top+r.height/2));return {pz:pz,mz:mz,onTop:p.contains(el)};})()") : null;
+check("④u6b3 弹窗「变更前」缩略图点开 = 大图预览浮于弹窗之上（z 压过弹窗 · elementFromPoint 命中预览层 · Push 350）",
+  modalThumbPoint === true && modalThumbPreviewShown === true && modalThumbPreviewLift !== null && modalThumbPreviewLift !== undefined
+  && modalThumbPreviewLift.pz > modalThumbPreviewLift.mz && modalThumbPreviewLift.onTop === true,
+  JSON.stringify(modalThumbPreviewLift));
+const shotModalThumbPreview = await page.send("Page.captureScreenshot", { format: "png" });
+writeFileSync(join(SCREENSHOT_DIR, "m4-07-modal-thumb-preview.png"), Buffer.from(shotModalThumbPreview.data, "base64"));
+console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-modal-thumb-preview.png"));
+await pressKey("Escape", "Escape", 27);
+const modalThumbPreviewClosed = await waitFor("(function(){return document.querySelector(" + j("[data-photo-preview]") + ")===null&&document.querySelector(" + j("[data-change-modal]") + ")!==null;})()", 5000);
+check("④u6b4 关缩略图预览（Esc）= 预览浮层关、变更管理弹窗仍在（Esc 先关内层）", modalThumbPreviewClosed === true, String(modalThumbPreviewClosed));
 
 check("④u6b 点「变更关联」= 居中「变更管理」详情弹窗（来自 ▦变更管理 / 大日期 / 变更文件=输出成果文件类型 CAD图纸 / 阶段=设计开发 / 内容+原因 / 申请人=潘兴 / 变更后文件版本=变更名（v2） / 文件卡 / 关联=本任务）",
   linkPoint === true && modalShown === true && modalInfo !== null && modalInfo !== undefined
