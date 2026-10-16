@@ -12,6 +12,9 @@
  *     T5-1b 真机 errcode=0 实测锁定（P4 复核 · 2026-10-14），stub 锁帧见测试 / 回放；
  *   - 回调 `aibot_msg_callback` / `aibot_event_callback`（body.chatid 仅群聊；chattype / from.userid /
  *     msgid）经 `onMessage` 交给调用方（群绑定 ingest 用；本刀不落库）；
+ *   - 会话内回复 `aibot_respond_msg`（M5-03-5-6 · 绑定码回执）：透传回调帧 `headers.req_id`，body =
+ *     单帧收敛流式回复（官方 SDK 1.0.3 实证 —— 回复不依赖 chatid / 寻址；`response_url` 未被 SDK 使用，
+ *     本仓同样不落该字段）；
  *   - 回执帧形状 = `{ headers: { req_id }, errcode, errmsg }` —— **errcode 在帧顶层**（非 body）。
  *
  * 语义：
@@ -61,7 +64,11 @@ interface AibotAckFrame {
   errmsg?: unknown;
 }
 
-/** 回调帧归一载荷（群绑定 ingest 用；本刀仅透传，不落库）。 */
+/**
+ * 回调帧归一载荷（群 / 单聊 ingest 用；仅透传，正文不落库 —— 单聊绑定码在服务层匹配，M5-03-5-6）。
+ * `reqId` = 回调帧 `headers.req_id`：会话内回复（`replyToCallback`）透传它 —— 单聊回调无 `chatid`，
+ * 回复不依赖寻址（官方 SDK 1.0.3 实证：回复 = `{ cmd: "aibot_respond_msg", headers: { req_id }, body }`）。
+ */
 export interface AibotIncomingMessage {
   cmd: "aibot_msg_callback" | "aibot_event_callback";
   reqId: string | null;
@@ -69,6 +76,10 @@ export interface AibotIncomingMessage {
   chattype: string | null;
   fromUserId: string | null;
   msgid: string | null;
+  /** 消息类型（text / image / …；事件回调为 event）。 */
+  msgtype: string | null;
+  /** 文本正文（msgtype = text 时非空；其余为 null）。 */
+  text: string | null;
 }
 
 export type AibotSendResult =
@@ -233,6 +244,80 @@ export class WecomAibotClient {
       bucketId: userBucketId(params.userid),
       activated: params.dmActivated ?? null,
     });
+  }
+
+  /**
+   * 会话内回复（M5-03-5-6 · 绑定码回执）：被动回复走长连接 `aibot_respond_msg`，`headers.req_id` 透传
+   * 回调帧的 req_id（官方 SDK 1.0.3 实证：`reply(frame, body)` → `{ cmd: "aibot_respond_msg", headers: { req_id }, body }`；
+   * 单聊回调无 `chatid`，回复不依赖寻址）；body = 单帧收敛流式回复 `{ msgtype: "stream", stream: { id, finish: true, content } }`。
+   * 限速：仍按目标会话桶计入（官方口径「回复 + 主动推送合计」同一配额）—— 被拒 = 不回复（回执属尽力而为，不影响绑定落库）。
+   */
+  async replyToCallback(params: { reqId: string; userid: string; content: string }): Promise<AibotSendResult> {
+    if (this.state !== "subscribed" || this.socket === null) {
+      return {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: "长连接未就绪（state=" + this.state + "）",
+        retryAt: null,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    const rate = await this.options.limiter.tryConsume("single", userBucketId(params.userid), this.now());
+    if (!rate.ok) {
+      const refused = rate.windows.find((state) => state.count > state.limit);
+      return {
+        ok: false,
+        kind: "rate_limited",
+        errcode: null,
+        errmsg:
+          refused === undefined
+            ? "本地限速桶已满（会话内回复）"
+            : "本地限速桶已满（会话内回复 · " + String(refused.count) + "/" + String(refused.limit) + "）",
+        retryAt: rate.retryAt,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    const ack = this.waitAck(params.reqId);
+    const sent = this.sendFrame({
+      cmd: "aibot_respond_msg",
+      headers: { req_id: params.reqId },
+      body: { msgtype: "stream", stream: { id: this.nextReqId("stream"), finish: true, content: params.content } },
+    });
+    if (!sent) {
+      this.cancelAck(params.reqId, "closed");
+    }
+    const outcome = await ack;
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: outcome.reason === "timeout" ? "会话内回复回执超时" : "连接已断开（回复未确认）",
+        retryAt: null,
+        attempts: sent ? 1 : 0,
+        state: this.state,
+      };
+    }
+    const errcode = typeof outcome.frame.errcode === "number" ? outcome.frame.errcode : null;
+    if (errcode === 0) {
+      return { ok: true, attempts: 1 };
+    }
+    const errmsg = typeof outcome.frame.errmsg === "string" ? outcome.frame.errmsg : null;
+    if (errcode === null) {
+      return { ok: false, kind: "retryable", errcode: null, errmsg: "回执缺 errcode", retryAt: null, attempts: 1, state: this.state };
+    }
+    return {
+      ok: false,
+      kind: classifyWecomErrcode("wecom_aibot", errcode, { dmActivated: true }),
+      errcode,
+      errmsg,
+      retryAt: null,
+      attempts: 1,
+      state: this.state,
+    };
   }
 
   /** 发送主体（群 / 单聊共用）：限速（双窗口按目标桶）→ aibot_send_msg → 等回执 → 分类。 */
@@ -423,6 +508,7 @@ export class WecomAibotClient {
   private dispatchCallback(cmd: "aibot_msg_callback" | "aibot_event_callback", reqId: string | null, frame: Record<string, unknown>): void {
     const body = asRecord(frame["body"]);
     const from = body === null ? null : asRecord(body["from"]);
+    const text = body === null ? null : asRecord(body["text"]);
     const message: AibotIncomingMessage = {
       cmd,
       reqId,
@@ -430,6 +516,8 @@ export class WecomAibotClient {
       chattype: readString(body, "chattype"),
       fromUserId: readString(from, "userid"),
       msgid: readString(body, "msgid"),
+      msgtype: readString(body, "msgtype"),
+      text: readString(text, "content"),
     };
     for (const handler of this.handlers) {
       try {

@@ -142,6 +142,8 @@ function incoming(overrides: Partial<AibotIncomingMessage> = {}): AibotIncomingM
     chattype: "group",
     fromUserId: "user1",
     msgid: "m1",
+    msgtype: "event",
+    text: null,
     ...overrides,
   };
 }

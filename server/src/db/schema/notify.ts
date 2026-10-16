@@ -13,6 +13,10 @@
  *
  * 0048 · M5-03-5-2 追加：wecom_aibot_dm_activations（单聊激活表 —— 单聊 aibot 主动推送前置）/ notify_deliveries.channel CHECK 扩值（增 wecom_aibot · 保留旧值）；
  * 表口径见 database/migrations/0048_wecom_aibot_dm_activation.sql。
+ *
+ * 0055 · M5-03-5-6 追加：wecom_id_binding_codes（企微 ID 绑定码 —— 绑定码链路：取码 / 单聊发码 / ingest 绑定）
+ * + wecom_aibot_dm_activations 加机器人维度 bot_id 与绑定标记 bound_at（唯一键改 (bot_id, wecom_userid)）；
+ * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql。
  */
 import { sql } from "drizzle-orm";
 import {
@@ -187,28 +191,79 @@ export const wecomGroups = pgTable(
 );
 
 /**
- * 单聊激活表（0048 · M5-03-5-2 · 单聊 aibot 主动推送前置）：用户向机器人发过消息 = 激活（enter_chat
- * 等事件不激活）；wecom_userid = 回调 from.userid 原文唯一；user_id 按 users.username 反查回填（可空）；
- * first_activated_at 首次激活后不再覆盖，last_message_at 随 upsert 刷新；updated_at 由应用写入（无触发器）。
+ * 单聊激活表（0048 · M5-03-5-2 · 单聊 aibot 主动推送前置；0055 · M5-03-5-6 加绑定维度）：
+ * 用户向机器人发过消息 = 激活（enter_chat 等事件不激活）；wecom_userid = 回调 from.userid 原文
+ * （企微后台无管理员权限 → 实为密文 open_userid）；bot_id = 机器人维度（WECOM_BOT_ID 原文，(bot_id, wecom_userid)
+ * 唯一 —— 激活态按机器人成立）；bound_at 非空 = 绑定行 = 可投递地址（绑定码命中的产物），NULL = 仅激活登记
+ * （D1：不可作发送地址）；first_activated_at 首次激活后不再覆盖，last_message_at 随 upsert 刷新；
+ * updated_at 由应用写入（无触发器）。表口径见 database/migrations/0055_wecom_id_binding_codes.sql。
  */
 export const wecomAibotDmActivations = pgTable(
   "wecom_aibot_dm_activations",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    /** 企微 userid（回调 from.userid 原文；与 users.username 同源反查）。 */
+    /** 机器人维度（= WECOM_BOT_ID 原文；NULL = 历史遗留行（旧机器人），不参与发送寻址）。 */
+    botId: text("bot_id"),
+    /** 企微 userid（回调 from.userid 原文 —— 密文 open_userid；不再与 users.username 同源）。 */
     wecomUserid: text("wecom_userid").notNull(),
-    /** 反查回填的本地用户（可空 —— 未匹配 / 尚未回填；用户不物理删，故无级联口径）。 */
+    /** 库内用户（可空 —— 仅激活登记行无主；绑定行必带，由绑定码链路写入；用户不物理删，故无级联口径）。 */
     userId: uuid("user_id").references(() => users.id),
     /** 首次激活时刻（upsert 不覆盖）。 */
     firstActivatedAt: timestamp("first_activated_at", { withTimezone: true }).notNull().defaultNow(),
     /** 最近一条消息时刻（upsert 刷新）。 */
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 绑定确立时刻（非空 = 绑定行 = 可投递地址；NULL = 仅激活登记）。 */
+    boundAt: timestamp("bound_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("uq_wecom_aibot_dm_activations_userid").on(table.wecomUserid),
+    uniqueIndex("uq_wecom_aibot_dm_activations_bot_userid").on(table.botId, table.wecomUserid),
     check("ck_wecom_aibot_dm_activations_userid", sql`${table.wecomUserid} ~ '^[A-Za-z0-9_.@-]{1,64}$'`),
+    check("ck_wecom_aibot_dm_activations_bot_id", sql`${table.botId} is null or ${table.botId} ~ '^[A-Za-z0-9_.@-]{1,64}$'`),
+  ],
+);
+
+/**
+ * 企微 ID 绑定码（0055 · M5-03-5-6 · D3 定案：6 位数字 / TTL 10 分钟 / 一次性 / 3 次每小时每用户）：
+ * 服务端取码 → 用户在单聊发码 → 回调 ingest 命中 → 同一事务写绑定行（wecom_aibot_dm_activations.bound_at）
+ * + 标记本行 used（used_at / used_wecom_userid 留痕）。status = pending（待用）/ used（已用）/ expired（重发废止）；
+ * 同一 user_id 仅一个 pending（部分唯一索引 uq_wecom_id_binding_codes_pending —— 重发由写入侧先作废旧码）。
+ * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql。
+ */
+export const wecomIdBindingCodes = pgTable(
+  "wecom_id_binding_codes",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    /** 绑定码（6 位数字串；全库唯一 —— 用户把它发进单聊）。 */
+    code: text("code").notNull(),
+    /** 发起人（库内用户；用户不物理删，故无级联口径）。 */
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** 处置态（pending / used / expired）。 */
+    status: text("status").notNull().default("pending"),
+    /** 失效时刻（created_at + TTL；写入侧定）。 */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** 实际使用该码的时刻（status = used 时非空 —— 见 ck_wecom_id_binding_codes_used）。 */
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    /** 实际使用该码的 open_userid（误绑可审计；掩码只用于日志 / 读面）。 */
+    usedWecomUserid: text("used_wecom_userid"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_wecom_id_binding_codes_code").on(table.code),
+    uniqueIndex("uq_wecom_id_binding_codes_pending")
+      .on(table.userId)
+      .where(sql`${table.status} = 'pending'`),
+    index("ix_wecom_id_binding_codes_user_created").on(table.userId, table.createdAt.desc()),
+    check("ck_wecom_id_binding_codes_code", sql`${table.code} ~ '^[0-9]{6}$'`),
+    check("ck_wecom_id_binding_codes_status", sql`${table.status} in ('pending', 'used', 'expired')`),
+    check("ck_wecom_id_binding_codes_used", sql`(${table.status} = 'used') = (${table.usedAt} is not null)`),
+    check(
+      "ck_wecom_id_binding_codes_used_userid",
+      sql`${table.usedWecomUserid} is null or ${table.usedWecomUserid} ~ '^[A-Za-z0-9_.@-]{1,64}$'`,
+    ),
   ],
 );
 

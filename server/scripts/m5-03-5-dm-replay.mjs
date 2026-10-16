@@ -13,6 +13,11 @@
  *      停用 → dead + 降级 / 降级写库失败 → retry。
  *   ⑤ 激活 ingest：single 消息回调 upsert（原文 userid + 反查回填 + 幂等刷新 last_message_at）/
  *      enter_chat 不激活 / 未匹配用户留空登记 / 非法 userid 忽略。
+ *   ⑥ 绑定码链路（M5-03-5-6 · 迁移 0055 · 口径 v1.2）：会话内回执帧形锁帧（`aibot_respond_msg` + 回调
+ *      req_id 透传 + `msgtype: stream` 单帧收敛）／绑定行寻址（未绑定 → 不发帧 + dead + D4 降级）／
+ *      ingest 全分支（单聊发码命中 → 同事务写绑定 + 标记码已用 + 回「绑定成功」；码过期 / 已用 → 「码已失效」；
+ *      已绑定 → 「已绑定」；未命中 / 群聊 / 事件回调 → 不回复；非码消息 → 仅登记激活 D1）／
+ *      取码（TTL 10 分钟 / 3 次每小时 / 撞码重试）。
  *
  * 前置：已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && node scripts/m5-03-5-dm-replay.mjs [--out <报告.md>] [--json <证据.json>]
@@ -97,6 +102,10 @@ function makeFakeSocket() {
 const AT = new Date("2026-10-14T06:00:00.000Z");
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const USERID = "zhangsan";
+/** 单聊寻址口径（M5-03-5-6）：绑定行 = 回调 from.userid 原文（密文 open_userid）+ 机器人维度 bot_id。 */
+const BOT_ID_STUB = "bot-stub";
+const OPEN_USERID = "wosuIHCwAAseSgWSu-LuNOhnzP0vbmUw";
+const CODE = "123456";
 const FIXED_NOW = 1_700_000_000_000;
 const minuteWindowStart = Math.floor(FIXED_NOW / 60_000) * 60_000;
 
@@ -108,8 +117,12 @@ async function main() {
   const { ClockService } = await import(pathToFileURL(join(HERE, "..", "dist", "common", "clock", "clock.service.js")).href);
 
   check(
-    "D0 dist 单聊实现面可用（NotifyDmService / composeDmMarkdown / 降级前缀导出）",
-    typeof dm.NotifyDmService === "function" && typeof dm.composeDmMarkdown === "function" && typeof dm.DM_ACTIVATION_DEGRADE_PREFIX === "string",
+    "D0 dist 单聊实现面可用（NotifyDmService / composeDmMarkdown / extractBindingCode / 绑定指引降级前缀导出）",
+    typeof dm.NotifyDmService === "function" &&
+      typeof dm.composeDmMarkdown === "function" &&
+      typeof dm.extractBindingCode === "function" &&
+      typeof dm.DM_BINDING_DEGRADE_PREFIX === "string" &&
+      typeof dm.DM_BINDING_REPLY_BOUND === "string",
   );
 
   // ---- 发送面（真实客户端 + 假 socket） ----
@@ -294,29 +307,54 @@ async function main() {
     createdAt: AT,
     ...overrides,
   });
+  /** 单聊回调帧归一入参（长连接 dispatchCallback 的产物形态：req_id / msgtype / text 齐备）。 */
+  const dmIncoming = (overrides = {}) => ({
+    cmd: "aibot_msg_callback",
+    reqId: "ReqIdCallback0001",
+    chatid: null,
+    chattype: "single",
+    fromUserId: OPEN_USERID,
+    msgid: "m1",
+    msgtype: "text",
+    text: "你好",
+    ...overrides,
+  });
 
   const makeService = (clientResult) => {
     const repo = {
       contacts: new Map([[USER_ID, contact()]]),
       activations: new Map(),
+      bindings: new Map(),
+      codes: new Map(),
       deliveries: [],
       upsertCalls: [],
       backfillCalls: [],
+      bindCalls: [],
+      codeCreateCalls: [],
+      issuedAt: [],
+      codeConflicts: 0,
+      bindFails: false,
       async findContact(userId) {
         return this.contacts.get(userId) ?? null;
       },
-      async findUserIdByUsername(username) {
-        return username === USERID ? USER_ID : null;
+      async findActivation(wecomUserid, botId) {
+        return this.activations.get(botId + "|" + wecomUserid) ?? null;
       },
-      async findActivation(wecomUserid) {
-        return this.activations.get(wecomUserid) ?? null;
+      async findBindingByUserId(userId, botId) {
+        for (const row of this.bindings.values()) {
+          if (row.botId === botId && row.userId === userId) return row;
+        }
+        return null;
+      },
+      async findBindingByWecomUserid(wecomUserid, botId) {
+        return this.bindings.get(botId + "|" + wecomUserid) ?? null;
       },
       async upsertActivationFromCallback(input) {
         this.upsertCalls.push(input);
-        const existing = this.activations.get(input.wecomUserid);
-        this.activations.set(input.wecomUserid, {
+        const existing = this.activations.get(input.botId + "|" + input.wecomUserid);
+        this.activations.set(input.botId + "|" + input.wecomUserid, {
           wecomUserid: input.wecomUserid,
-          userId: existing?.userId ?? input.userId,
+          userId: existing?.userId ?? null,
           firstActivatedAt: existing?.firstActivatedAt ?? input.at,
           lastMessageAt: input.at,
         });
@@ -324,15 +362,55 @@ async function main() {
       async backfillActivationOnSend(input) {
         this.backfillCalls.push(input);
       },
+      async bindingCodesSince(userId, since) {
+        return this.issuedAt.filter((item) => item.getTime() >= since.getTime());
+      },
+      async createBindingCode(input) {
+        this.codeCreateCalls.push(input);
+        if (this.codeConflicts > 0) {
+          this.codeConflicts -= 1;
+          return false;
+        }
+        this.codes.set(input.code, {
+          id: this.codes.size + 1,
+          code: input.code,
+          userId: input.userId,
+          status: "pending",
+          expiresAt: input.expiresAt,
+        });
+        return true;
+      },
+      async findBindingCode(code) {
+        return this.codes.get(code) ?? null;
+      },
+      async bindWithCode(input) {
+        this.bindCalls.push(input);
+        if (this.bindFails) return false;
+        for (const row of this.codes.values()) {
+          if (row.id === input.codeId) row.status = "used";
+        }
+        this.bindings.set(input.botId + "|" + input.wecomUserid, {
+          botId: input.botId,
+          wecomUserid: input.wecomUserid,
+          userId: input.userId,
+          boundAt: input.at,
+        });
+        return true;
+      },
       async insertDelivery(input) {
         this.deliveries.push(input);
       },
     };
     const aibot = {
       sends: [],
+      replies: [],
       async sendUserMarkdown(params) {
         this.sends.push(params);
         return clientResult;
+      },
+      async replyToCallback(params) {
+        this.replies.push(params);
+        return { ok: true, attempts: 1 };
       },
     };
     const inbox = {
@@ -347,32 +425,55 @@ async function main() {
         return { duplicate: false };
       },
     };
-    return { service: new dm.NotifyDmService(repo, aibot, inbox, clock), repo, aibot, inbox };
+    const config = { env: { WECOM_BOT_ID: BOT_ID_STUB } };
+    return { service: new dm.NotifyDmService(repo, aibot, inbox, clock, config), repo, aibot, inbox };
+  };
+
+  /** 已绑定（可投递）场景：联系人 + 绑定行齐备（M5-03-5-6 起发送地址 = 绑定行 open_userid）。 */
+  const boundService = (clientResult) => {
+    const made = makeService(clientResult);
+    made.repo.bindings.set(BOT_ID_STUB + "|" + OPEN_USERID, {
+      botId: BOT_ID_STUB,
+      wecomUserid: OPEN_USERID,
+      userId: USER_ID,
+      boundAt: AT,
+    });
+    return made;
   };
 
   // S6 ok → done + sent 行 + 旁证回填（D4）
   {
-    const { service, repo, aibot, inbox } = makeService({ ok: true, attempts: 1 });
+    const { service, repo, aibot, inbox } = boundService({ ok: true, attempts: 1 });
     const outcome = await service.consume(claimedRow(payload()));
     assertEqual("S6 消费 ok：done", outcome.outcome, "done");
     assertEqual(
-      "S6 消费 ok：sent 行（target=userid / attempts=1 / sentAt 非空 / error null）",
+      "S6 消费 ok：sent 行（target = 绑定行 open_userid / attempts=1 / sentAt 非空 / error null）",
       repo.deliveries[0].state + ":" + repo.deliveries[0].target + ":" + String(repo.deliveries[0].attempts) + ":" + String(repo.deliveries[0].sentAt !== null) + ":" + String(repo.deliveries[0].error),
-      "sent:" + USERID + ":1:true:null",
+      "sent:" + OPEN_USERID + ":1:true:null",
     );
+    assertEqual("S6 消费 ok：发帧目标 = 绑定行地址（不再读 users.username）", aibot.sends[0].userid, OPEN_USERID);
     assertEqual("S6 消费 ok：内容逐字 = 加粗标题 + 空行 + 正文", aibot.sends[0].content, "**任务节点完成**\n\n节点：到货验收 负责人：张工");
     assertEqual("S6 消费 ok：未命中激活表 → dmActivated=false 传入（D4 不拦截、仍尝试发送）", String(aibot.sends[0].dmActivated), "false");
     assertTrue(
-      "S6 消费 ok：旁证回填（D4）—— wecom_userid / user_id / 时刻",
-      repo.backfillCalls.length === 1 && repo.backfillCalls[0].wecomUserid === USERID && repo.backfillCalls[0].userId === USER_ID && repo.backfillCalls[0].at.getTime() === AT.getTime(),
+      "S6 消费 ok：旁证回填（D4）—— bot_id / wecom_userid / user_id / 时刻",
+      repo.backfillCalls.length === 1 &&
+        repo.backfillCalls[0].botId === BOT_ID_STUB &&
+        repo.backfillCalls[0].wecomUserid === OPEN_USERID &&
+        repo.backfillCalls[0].userId === USER_ID &&
+        repo.backfillCalls[0].at.getTime() === AT.getTime(),
     );
     assertEqual("S6 消费 ok：不产生降级副本", String(inbox.copies.length), "0");
   }
 
   // S7 命中激活表 → dmActivated=true、不重复回填
   {
-    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
-    repo.activations.set(USERID, { wecomUserid: USERID, userId: USER_ID, firstActivatedAt: AT, lastMessageAt: AT });
+    const { service, repo, aibot } = boundService({ ok: true, attempts: 1 });
+    repo.activations.set(BOT_ID_STUB + "|" + OPEN_USERID, {
+      wecomUserid: OPEN_USERID,
+      userId: USER_ID,
+      firstActivatedAt: AT,
+      lastMessageAt: AT,
+    });
     await service.consume(claimedRow(payload()));
     assertTrue(
       "S7 命中激活表 → dmActivated=true 传入且不重复回填",
@@ -383,7 +484,7 @@ async function main() {
   // S8 rate_limited → deferred
   {
     const retryAt = new Date(AT.getTime() + 30_000);
-    const { service, repo } = makeService({ ok: false, kind: "rate_limited", errcode: null, errmsg: "本地限速桶已满", retryAt, attempts: 0, state: "subscribed" });
+    const { service, repo } = boundService({ ok: false, kind: "rate_limited", errcode: null, errmsg: "本地限速桶已满", retryAt, attempts: 0, state: "subscribed" });
     const outcome = await service.consume(claimedRow(payload()));
     assertEqual(
       "S8 rate_limited：deferred + availableAt = retryAt（attempts 不消耗）",
@@ -399,14 +500,14 @@ async function main() {
 
   // S9 retryable → retry
   {
-    const { service, repo } = makeService({ ok: false, kind: "retryable", errcode: 846609, errmsg: "not subscribed", retryAt: null, attempts: 1, state: "backoff" });
+    const { service, repo } = boundService({ ok: false, kind: "retryable", errcode: 846609, errmsg: "not subscribed", retryAt: null, attempts: 1, state: "backoff" });
     const outcome = await service.consume(claimedRow(payload()));
     assertEqual("S9 retryable（未订阅 / 断连）：retry + failed 行", outcome.outcome + ":" + repo.deliveries[0].state, "retry:failed");
   }
 
   // S10 permanent 853000 → dead + 通用前缀降级
   {
-    const { service, repo, inbox } = makeService({ ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" });
+    const { service, repo, inbox } = boundService({ ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" });
     const outcome = await service.consume(claimedRow(payload({ refType: "task", refId: "33333333-3333-4333-8333-333333333333" })));
     assertTrue(
       "S10 permanent（853000）：dead + dead 行（含 errcode）",
@@ -425,19 +526,20 @@ async function main() {
     );
   }
 
-  // S11 permanent 846607 未命中 → dead + 激活指引前缀（P3 · 终稿）
+  // S11 permanent 846607 未命中 → dead + 绑定指引前缀（D4 终稿 · 兜底分支）
   {
-    const { service, inbox, aibot } = makeService({ ok: false, kind: "permanent", errcode: 846607, errmsg: "aibot send msg frequency limit exceeded", retryAt: null, attempts: 1, state: "subscribed" });
+    const { service, inbox, aibot } = boundService({ ok: false, kind: "permanent", errcode: 846607, errmsg: "aibot send msg frequency limit exceeded", retryAt: null, attempts: 1, state: "subscribed" });
     const outcome = await service.consume(claimedRow(payload()));
     assertTrue(
       "S11 846607 未命中激活表：dmActivated=false 传入 + dead 收口",
       aibot.sends[0].dmActivated === false && outcome.outcome === "dead",
     );
     assertTrue(
-      "S11 降级前缀附激活指引话术终稿（P3 · 2026-10-15 · 含终稿句与原文保留）",
+      "S11 降级前缀附绑定指引话术终稿（D4 · 2026-10-16 · 含终稿句与原文保留）",
       inbox.copies.length === 1 &&
-        String(inbox.copies[0].message.body).startsWith(dm.DM_ACTIVATION_DEGRADE_PREFIX) &&
-        String(inbox.copies[0].message.body).includes("当前机器人未激活，请私发任意消息给机器人即可激活。") &&
+        String(inbox.copies[0].message.body).startsWith(dm.DM_BINDING_DEGRADE_PREFIX) &&
+        String(inbox.copies[0].message.body).includes("当前用户未绑定企业微信，请前往设置补绑") &&
+        !String(inbox.copies[0].message.body).includes("私发任意消息") &&
         String(inbox.copies[0].message.body).includes("节点：到货验收 负责人：张工"),
     );
   }
@@ -466,7 +568,7 @@ async function main() {
 
   // S14 降级写库失败 → retry
   {
-    const { service, inbox } = makeService({ ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" });
+    const { service, inbox } = boundService({ ok: false, kind: "permanent", errcode: 853000, errmsg: "invalid bot", retryAt: null, attempts: 1, state: "subscribed" });
     inbox.failNext = true;
     const outcome = await service.consume(claimedRow(payload()));
     assertTrue(
@@ -475,32 +577,157 @@ async function main() {
     );
   }
 
-  // S15 激活 ingest（single 消息回调 upsert）
+  // S15 激活登记 ingest（D1：非绑定码单聊消息仍登记 —— 但不可作发送地址）
   {
-    const { service, repo } = makeService({ ok: true, attempts: 1 });
-    const incoming = { cmd: "aibot_msg_callback", reqId: null, chatid: null, chattype: "single", fromUserId: USERID, msgid: "m1" };
-    await service.activateFromCallback(incoming);
-    await service.activateFromCallback(incoming); // 幂等复放（刷新 last_message_at）
+    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
+    const incoming = dmIncoming({ text: "你好" });
+    await service.ingestCallback(incoming);
+    await service.ingestCallback(incoming); // 幂等复放（刷新 last_message_at）
     assertTrue(
-      "S15 单聊消息回调 ingest：upsert 幂等（原文 userid / 反查 user_id 回填 / last_message_at 刷新）",
+      "S15 单聊消息回调 ingest：登记 upsert 幂等（原文 userid + bot_id / user_id 留空 / last_message_at 刷新）",
       repo.upsertCalls.length === 2 &&
-        repo.upsertCalls[0].wecomUserid === USERID &&
-        repo.upsertCalls[0].userId === USER_ID &&
-        repo.activations.get(USERID).lastMessageAt.getTime() === AT.getTime(),
+        repo.upsertCalls[0].botId === BOT_ID_STUB &&
+        repo.upsertCalls[0].wecomUserid === OPEN_USERID &&
+        Object.keys(repo.upsertCalls[0]).length === 3 &&
+        repo.activations.get(BOT_ID_STUB + "|" + OPEN_USERID).lastMessageAt.getTime() === AT.getTime() &&
+        repo.activations.get(BOT_ID_STUB + "|" + OPEN_USERID).userId === null,
     );
-    await service.activateFromCallback({ ...incoming, cmd: "aibot_event_callback" }); // enter_chat 不激活
-    await service.activateFromCallback({ ...incoming, chattype: "group" });
-    assertEqual("S15 enter_chat（event 回调）/ 群聊回调不激活（upsert 次数不变）", String(repo.upsertCalls.length), "2");
-    await service.activateFromCallback({ ...incoming, fromUserId: "unmatched-user" });
-    assertTrue(
-      "S15 未匹配用户：user_id 留空登记（行仍落 —— 仍可作已激活判据）",
-      repo.upsertCalls.length === 3 && repo.upsertCalls[2].userId === null && repo.activations.has("unmatched-user"),
+    assertEqual("S15 非绑定码消息不绑定、不回复（防探测）", String(repo.bindCalls.length) + ":" + String(aibot.replies.length), "0:0");
+    await service.ingestCallback(dmIncoming({ cmd: "aibot_event_callback", text: CODE })); // enter_chat 不处理
+    await service.ingestCallback(dmIncoming({ chattype: "group", chatid: "wrsuTest", text: CODE }));
+    await service.ingestCallback(dmIncoming({ fromUserId: null, text: CODE }));
+    await service.ingestCallback(dmIncoming({ fromUserId: "bad userid!", text: CODE }));
+    assertEqual(
+      "S15 事件回调 / 群聊回调 / userid 缺失或非法：不登记、不绑定",
+      String(repo.upsertCalls.length) + ":" + String(repo.bindCalls.length),
+      "2:0",
     );
-    await service.activateFromCallback({ ...incoming, fromUserId: "bad userid!" });
-    assertEqual("S15 userid 非法：忽略不入库（防脏回调打断 ingest）", String(repo.upsertCalls.length), "3");
   }
 
-  const summary = "m5-03-5-3 单聊 aibot（实现段）回放：PASS " + pass + " / FAIL " + fail;
+  // S16 会话内回执帧形锁帧（aibot_respond_msg + 回调 req_id 透传 + 单帧收敛流式回复）
+  {
+    const { aibot, sockets } = makeRuntime();
+    const socket = await connect(aibot, sockets);
+    const pending = aibot.replyToCallback({ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: "绑定成功" });
+    await sleep(0);
+    const frame = socket.lastFrame();
+    const body = frame.body ?? {};
+    check(
+      "S16 回执帧形锁帧：cmd=aibot_respond_msg + headers.req_id = 回调 req_id + body = { msgtype: stream, stream: { id, finish: true, content } }",
+      frame.cmd === "aibot_respond_msg" &&
+        frame.headers?.req_id === "ReqIdCallback0001" &&
+        body.msgtype === "stream" &&
+        body.stream?.finish === true &&
+        body.stream?.content === "绑定成功" &&
+        typeof body.stream?.id === "string" &&
+        body.stream.id.startsWith("stream_") &&
+        Object.keys(body).length === 2 &&
+        Object.keys(body.stream).length === 3,
+      JSON.stringify(frame),
+    );
+    socket.ackLast(0);
+    const replied = await pending;
+    check("S16 回执：errcode=0 → ok / attempts=1", replied.ok === true && replied.attempts === 1, JSON.stringify(replied));
+    await aibot.stop();
+  }
+
+  // S17 未绑定企微（无绑定行）→ 不发帧 + dead + D4 绑定指引降级
+  {
+    const { service, repo, aibot, inbox } = makeService({ ok: true, attempts: 1 });
+    const outcome = await service.consume(claimedRow(payload()));
+    assertEqual(
+      "S17 未绑定：不发帧 + dead 行（target=user:<id> / attempts=0）",
+      outcome.outcome + ":" + String(aibot.sends.length) + ":" + repo.deliveries[0].state + ":" + repo.deliveries[0].target,
+      "dead:0:dead:user:" + USER_ID,
+    );
+    assertTrue(
+      "S17 未绑定降级（C5-04 · D4 终稿）：站内信副本含终稿句、不带旧 B6 话术",
+      inbox.copies.length === 1 &&
+        inbox.copies[0].dedupeKey === "R02:t-1:v5:aibot:c504" &&
+        String(inbox.copies[0].message.body).startsWith(dm.DM_BINDING_DEGRADE_PREFIX) &&
+        String(inbox.copies[0].message.body).includes("当前用户未绑定企业微信，请前往设置补绑") &&
+        !String(inbox.copies[0].message.body).includes("私发任意消息"),
+    );
+  }
+
+  // S18 绑定码 ingest 全分支（命中 / 已绑定 / 过期 / 未命中）
+  {
+    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
+    repo.codes.set(CODE, { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() + 600_000) });
+    await service.ingestCallback(dmIncoming({ text: "绑定" + CODE }));
+    assertTrue(
+      "S18 命中：同事务写绑定（bot_id + open_userid + 库内用户）+ 标记码已用",
+      repo.bindCalls.length === 1 &&
+        repo.bindCalls[0].codeId === 7 &&
+        repo.bindCalls[0].botId === BOT_ID_STUB &&
+        repo.bindCalls[0].wecomUserid === OPEN_USERID &&
+        repo.bindCalls[0].userId === USER_ID &&
+        repo.bindings.get(BOT_ID_STUB + "|" + OPEN_USERID).userId === USER_ID &&
+        repo.codes.get(CODE).status === "used",
+    );
+    assertEqual(
+      "S18 命中回执：会话内回「绑定成功」（透传回调 req_id）",
+      aibot.replies[0].reqId + ":" + aibot.replies[0].content,
+      "ReqIdCallback0001:" + dm.DM_BINDING_REPLY_BOUND,
+    );
+    await service.ingestCallback(dmIncoming({ text: CODE }));
+    assertEqual(
+      "S18 已绑定再发码（含回调重复投递）：回「已绑定」+ 不重复绑定",
+      aibot.replies[1].content + ":" + String(repo.bindCalls.length),
+      dm.DM_BINDING_REPLY_ALREADY_BOUND + ":1",
+    );
+
+    const stale = makeService({ ok: true, attempts: 1 });
+    stale.repo.codes.set(CODE, { id: 8, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() - 1_000) });
+    await stale.service.ingestCallback(dmIncoming({ text: CODE }));
+    assertEqual(
+      "S18 码过期：回「码已失效」+ 不写绑定",
+      stale.aibot.replies[0].content + ":" + String(stale.repo.bindCalls.length),
+      dm.DM_BINDING_REPLY_INVALID + ":0",
+    );
+
+    const miss = makeService({ ok: true, attempts: 1 });
+    await miss.service.ingestCallback(dmIncoming({ text: "绑定654321" }));
+    assertEqual(
+      "S18 未命中任何码：登记激活但不回复（防探测）",
+      String(miss.repo.upsertCalls.length) + ":" + String(miss.aibot.replies.length) + ":" + String(miss.repo.bindCalls.length),
+      "1:0:0",
+    );
+  }
+
+  // S19 取码（TTL / 频率限制 / 撞码重试）
+  {
+    const { service, repo } = makeService({ ok: true, attempts: 1 });
+    const issued = await service.requestBindingCode(USER_ID);
+    assertTrue(
+      "S19 取码：6 位数字 + TTL 10 分钟 + 委托仓储同一事务（作废旧 pending + 插新码）",
+      issued.ok === true &&
+        /^[0-9]{6}$/.test(issued.code) &&
+        issued.expiresAt.getTime() === AT.getTime() + 600_000 &&
+        repo.codeCreateCalls.length === 1 &&
+        repo.codeCreateCalls[0].userId === USER_ID,
+    );
+    const throttled = makeService({ ok: true, attempts: 1 });
+    const first = new Date(AT.getTime() - 3_500_000);
+    throttled.repo.issuedAt = [first, new Date(AT.getTime() - 2_000_000), new Date(AT.getTime() - 1_000_000)];
+    const limited = await throttled.service.requestBindingCode(USER_ID);
+    assertTrue(
+      "S19 频率限制：小时窗口内第 4 次取码 → rate_limited + retryAt = 最早一次 + 1 小时",
+      limited.ok === false &&
+        limited.reason === "rate_limited" &&
+        limited.retryAt.getTime() === first.getTime() + 3_600_000 &&
+        throttled.repo.codeCreateCalls.length === 0,
+    );
+    const clash = makeService({ ok: true, attempts: 1 });
+    clash.repo.codeConflicts = 2;
+    const retried = await clash.service.requestBindingCode(USER_ID);
+    assertTrue(
+      "S19 撞码重试：唯一键挡下两次 → 第三次成功（共 3 次写入尝试）",
+      retried.ok === true && clash.repo.codeCreateCalls.length === 3,
+    );
+  }
+
+  const summary = "m5-03-5 单聊 aibot（实现段 + M5-03-5-6 绑定码链路）回放：PASS " + pass + " / FAIL " + fail;
   console.log(summary);
   for (const line of report) console.log("  " + line);
   if (args.out) {
