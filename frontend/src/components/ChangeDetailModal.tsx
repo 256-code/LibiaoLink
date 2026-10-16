@@ -32,6 +32,8 @@ import { fieldText, stageText, useLocale, useT, type Locale } from "../i18n";
  * 弹内版本态预览（A4-06；浮层 z 提到弹窗之上，「Esc 先关预览、弹窗仍在」）；②「关联」= 可点击 → 打开回写任务抽屉
  * （onOpenLinkedTask 由调用方给：任务表 = 选中该行开抽屉；抽屉内 = 关弹窗露出抽屉本身）。
  * 「变更文件」行口径（业务口径「变更文件就是输出文件成果这个类型」）：文件成果类型为空时回退所属任务的「输出成果文件」。
+ * Push 347（业务口径 2026-10-16「变更申请和填写人没有根据文件的导入啊…现在是导入的是账号人」）：「填写者」行改用
+ * 变更详情 writerBy（导入表导入按源表「填写者」列命中账号）；应用内提交 / 未命中 = 回落申请人展示。
  */
 export function ChangeDetailModal({ changeId, linkedTaskTitle, members, deliverableTypes, onOpenLinkedTask, onClose }: {
   changeId: string;
@@ -118,6 +120,11 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
   const applicantName = memberNameOf(members, applicantId) ?? (applicantId === "" ? fieldText(locale, "成员") : applicantId);
   const applicant = members.find((member) => member.id === applicantId);
   const applicantLabel = applicantHandleText(applicantName, applicant === undefined ? null : applicant.handle);
+  /** 填写者（Push 347）：导入表导入按源表「填写者」列命中账号；应用内提交 / 未命中 = 回落申请人展示。 */
+  const writerId = detail === null ? "" : detail.writerBy ?? detail.appliedBy;
+  const writerName = memberNameOf(members, writerId) ?? (writerId === "" ? fieldText(locale, "成员") : writerId);
+  const writer = members.find((member) => member.id === writerId);
+  const writerLabel = applicantHandleText(writerName, writer === undefined ? null : writer.handle);
   /** 「变更文件」展示类型（业务口径「变更文件就是输出文件成果这个类型」）：文件自身 docType 空 → 回退任务输出成果文件。 */
   const fileTypeText = detail === null ? null : detail.file === null ? deliverableTypes[0] ?? null : detail.file.docType === null ? deliverableTypes[0] ?? null : detail.file.docType;
 
@@ -229,9 +236,9 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                     </span>
                   </DetailRow>
                   <DetailRow kind="person" label={fieldText(locale, "填写者")} testKey="writer">
-                    <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-700">
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-400 text-[9px] font-medium text-white">{applicantName.slice(0, 1)}</span>
-                      {applicantLabel}
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-700" title={writerId}>
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-400 text-[9px] font-medium text-white">{writerName.slice(0, 1)}</span>
+                      {writerLabel}
                     </span>
                   </DetailRow>
                   <DetailRow kind="check" label={fieldText(locale, "进度")} testKey="progress"><span className="text-zinc-400">—</span></DetailRow>

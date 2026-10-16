@@ -361,6 +361,7 @@ class FakeFileRepository {
       afterSummaryFileIds: input.afterSummaryFileIds,
       status: "applied",
       appliedBy: input.appliedBy,
+      writerBy: null,
       appliedAt: input.appliedAt,
       createdAt: input.createdAt,
     };

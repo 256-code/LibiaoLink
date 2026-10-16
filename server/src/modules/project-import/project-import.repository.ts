@@ -79,6 +79,10 @@ export interface ImportChangeInsert {
   reason: string;
   beforeSummary: string | null;
   afterSummary: string | null;
+  /** 变更申请人（Push 347）：源表「变更申请人」命中账号；未命中 = 导入人（服务层算好，落库非空）。 */
+  appliedBy: string;
+  /** 填写者（Push 347）：源表「填写者」命中账号；未命中 / 缺列 = null（读面「填写者」回落申请人展示）。 */
+  writerBy: string | null;
 }
 
 export interface ImportFileInsert {
@@ -279,7 +283,7 @@ export class ProjectImportRepository {
     return inserted.map((row) => row.id);
   }
 
-  async insertChangeRequests(tx: DbClient, projectId: string, rows: ImportChangeInsert[], actorId: string, at: Date): Promise<string[]> {
+  async insertChangeRequests(tx: DbClient, projectId: string, rows: ImportChangeInsert[], at: Date): Promise<string[]> {
     if (rows.length === 0) return [];
     const inserted = await tx.insert(changeRequests).values(
       rows.map((row) => ({
@@ -290,7 +294,8 @@ export class ProjectImportRepository {
         beforeSummary: row.beforeSummary,
         afterSummary: row.afterSummary,
         status: "applied",
-        appliedBy: actorId,
+        appliedBy: row.appliedBy,
+        writerBy: row.writerBy,
         appliedAt: row.appliedAt ?? at,
         createdAt: at,
       })),

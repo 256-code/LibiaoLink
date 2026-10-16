@@ -76,6 +76,8 @@ export interface LegacyChange {
   after: string | null;
   reason: string;
   requester: string;
+  /** 「填写者」列（0054 / Push 347；旧表缺列 = 空串）。 */
+  filler: string;
   afterFileName: string | null;
   afterFileVersion: string | null;
   related: string | null;
@@ -814,6 +816,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
         after: cellAt(sheetRef, row, changeIndex, "变更后") || null,
         reason,
         requester: cellAt(sheetRef, row, changeIndex, "变更申请人"),
+        filler: cellAt(sheetRef, row, changeIndex, "填写者"),
         afterFileName: cellAt(sheetRef, row, changeIndex, "变更后文件") || null,
         afterFileVersion: cellAt(sheetRef, row, changeIndex, "变更后文件版本") || null,
         related: cellAt(sheetRef, row, changeIndex, "关联") || null,
