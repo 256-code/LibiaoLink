@@ -2371,68 +2371,101 @@ body {
 }
 
 /* 「数据总览」（Push 358 · 业务口径 2026-10-16「我要在最左边加一个数据总览 点击后展示的效果如图所示各图表等比例缩小集中展示
-   点击效果 鼠标触碰标签效果依旧」）：五图等比例缩小并排 —— 两列三行网格（左列：项目进度 / 任务状态 / 问题，右列：交付时间 + 词频图跨两行，
-   照业务参考图版式）；这里只做网格 / 面板排布与等比缩放容器 —— 图表本身（viewBox 1200 × 596 + preserveAspectRatio=meet）
-   与配色 / 组件一律不动；面板内 svg 绝对定位铺满图表区（等比缩到底、永不产生滚动条）。 */
+   点击效果 鼠标触碰标签效果依旧」；追修（Push 359）2026-10-16「统一展示主要是文字太小了 所以布局要改 不能死板的不改布局尺寸」
+   +「不要滚动」+「你完全可以在原本的空间下实现 尺寸画面放大让人感到舒服」）：
+   五图等比例缩小、卡片内一屏铺满、**不滚动** —— 两行版式：第一行 项目进度 / 任务状态 / 问题（三等分），第二行 交付时间 /
+   词频图（两等分、更大）；读序照业务参考图；图表本身（viewBox 1200 × 596 + preserveAspectRatio=meet）与配色 / 组件一律不动，
+   只做版式：每格宽 = 图表高 × 1200 / 596 + 面板内衬（图 100% 铺满格子、不再「小图飘在大面板里」）；
+   图表高按「可用宽三等分（行 1）/ 两等分（行 2）」与「可用高按 0.396 / 0.604 比例分配」两档取小 ——
+   宽屏取宽档（约原图 0.56 / 0.85 倍：四张小图比左三竖排版再放大两成 / 八成），窄屏自动收小，永不溢出、无滚动条。 */
 .hub-dash-overview {
-  display: grid;
+  container-type: size;
   flex: 1 1 auto;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: repeat(3, minmax(0, 1fr));
-  gap: 0.6rem 0.9rem;
+  overflow: hidden;
   padding: 0.15rem 3.33% 0.35rem;
 }
 
+.hub-dash-overview__grid {
+  /* 面板内衬 / 小标题行高（格子倒算的固定开销）、格间距。 */
+  --ov-pad-x: 0.5rem;
+  --ov-pad-y: 0.4rem;
+  --ov-title-h: 1.35rem;
+  --ov-gap-x: 0.9rem;
+  --ov-gap-y: 0.6rem;
+  --ov-chrome-h: calc(var(--ov-pad-y) * 2 + var(--ov-title-h) + 2px);
+  --ov-chrome-w: calc(var(--ov-pad-x) * 2 + 2px);
+  /* 行 1 / 行 2 图表高 = min(按可用宽三等分 / 两等分可容纳, 高度预算按 0.396 / 0.604 分配)。 */
+  --ov-chart-h1: min(
+    calc((100cqw - var(--ov-gap-x) * 2 - var(--ov-chrome-w) * 3) / 6.0402),
+    calc((100cqh - var(--ov-chrome-h) * 2 - var(--ov-gap-y)) * 0.396)
+  );
+  --ov-chart-h2: min(
+    calc((100cqw - var(--ov-gap-x) - var(--ov-chrome-w) * 2) / 4.0268),
+    calc((100cqh - var(--ov-chrome-h) * 2 - var(--ov-gap-y)) * 0.604)
+  );
+  --ov-row-h1: calc(var(--ov-chart-h1) + var(--ov-chrome-h));
+  --ov-row-h2: calc(var(--ov-chart-h2) + var(--ov-chrome-h));
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-rows: var(--ov-row-h1) var(--ov-row-h2);
+  align-content: center;
+  gap: var(--ov-gap-y) var(--ov-gap-x);
+}
+
 .hub-dash-overview__panel {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: var(--ov-title-h) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  padding: 0.35rem 0.5rem 0.45rem;
+  padding: var(--ov-pad-y) var(--ov-pad-x);
 }
 
-/* 版式照业务参考图：左列 进度 / 任务状态 / 问题；右列 交付时间（与左列第一格同高）+ 词频图（占第 2-3 行）。 */
+/* 两行版式（读序照业务参考图）：行 1 = 进度 / 任务状态 / 问题（各 2 列 ≈ 三等分）；行 2 = 交付时间 / 词频图（各 3 列 = 两等分）。 */
 .hub-dash-overview__panel[data-panel="progress"] {
-  grid-column: 1;
+  grid-column: 1 / span 2;
   grid-row: 1;
 }
 
 .hub-dash-overview__panel[data-panel="status"] {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.hub-dash-overview__panel[data-panel="issues"] {
-  grid-column: 1;
-  grid-row: 3;
-}
-
-.hub-dash-overview__panel[data-panel="delivery"] {
-  grid-column: 2;
+  grid-column: 3 / span 2;
   grid-row: 1;
 }
 
-.hub-dash-overview__panel[data-panel="wordcloud"] {
-  grid-column: 2;
-  grid-row: 2 / span 2;
+.hub-dash-overview__panel[data-panel="issues"] {
+  grid-column: 5 / span 2;
+  grid-row: 1;
 }
 
-/* 小标题（各图视图名，与底栏切换文案同源 i18n）：小号深灰、贴面板左上。 */
+.hub-dash-overview__panel[data-panel="delivery"] {
+  grid-column: 1 / span 3;
+  grid-row: 2;
+}
+
+.hub-dash-overview__panel[data-panel="wordcloud"] {
+  grid-column: 4 / span 3;
+  grid-row: 2;
+}
+
+/* 小标题（各图视图名，与底栏切换文案同源 i18n）：小号深灰、贴面板左上、行高锁定。 */
 .hub-dash-overview__title {
+  display: flex;
+  align-items: center;
   margin: 0;
-  padding: 0.1rem 0 0.2rem 0.15rem;
+  padding-left: 0.15rem;
   font-size: 0.82rem;
   font-weight: 600;
   color: #374151;
 }
 
-/* 图表区：撑满面板剩余高度；子元素（svg / 空态）绝对定位铺满 —— svg 以 meet 等比缩放到容器内、居中留白。 */
+/* 图表区：占满格子剩余区（宽 = 格子宽 − 面板内衬 = 图表高 × 1200 / 596），svg 等比铺满。 */
 .hub-dash-overview__chart {
   position: relative;
-  flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
 }
 
