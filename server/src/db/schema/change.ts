@@ -33,6 +33,8 @@ export const changeRequests = pgTable(
       .default(sql`array[]::uuid[]`),
     status: text("status").notNull(),
     appliedBy: uuid("applied_by").notNull(),
+    /** 变更「填写者」（0054 / Push 347）：导入表导入按源表「填写者」列命中账号；应用内提交 / 未命中 / 存量行 = null。 */
+    writerBy: uuid("writer_by"),
     appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

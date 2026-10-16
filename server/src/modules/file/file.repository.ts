@@ -63,6 +63,8 @@ export interface ChangeRequestJoinedRow {
   beforeSummaryFileIds: string[];
   afterSummaryFileIds: string[];
   appliedBy: string;
+  /** 变更「填写者」（Push 347 / 迁移 0054）：导入表导入命中源表「填写者」列账号；应用内提交 / 未命中 / 存量行 = null。 */
+  writerBy: string | null;
   appliedAt: Date;
   createdAt: Date;
   /** 导入遗留变更（源文件在微盘，未挂版本）= null。 */
@@ -728,6 +730,7 @@ const CHANGE_REQUEST_SELECT = {
   afterSummaryFileIds: changeRequests.afterSummaryFileIds,
   status: changeRequests.status,
   appliedBy: changeRequests.appliedBy,
+  writerBy: changeRequests.writerBy,
   appliedAt: changeRequests.appliedAt,
   createdAt: changeRequests.createdAt,
   fileId: fileVersions.fileId,
