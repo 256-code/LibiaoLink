@@ -204,10 +204,19 @@ export const HubDashProjectSchema = z
   .nullable()
   .openapi("HubDashProject", { description: "仪表盘页常驻项目 id（Push 336）：null = 全部项目（默认）；读侧非法 / 缺省一律收敛为 null" });
 
+/** 仪表盘页内图表视图 id（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：
+ *  progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；
+ *  读侧白名单外 / 缺省一律收敛为 progress。 */
+export const HUB_DASH_VIEW_IDS = ["progress", "status", "issues", "delivery"] as const;
+
+export const HubDashViewSchema = z
+  .enum(HUB_DASH_VIEW_IDS)
+  .openapi("HubDashView", { description: "仪表盘页内图表视图（Push 345 · 按账号记住）：progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间；读侧白名单外 / 缺省一律收敛为 progress" });
+
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）；
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）；
  * 未声明键按 `.catchall` 原样保存（前向兼容），但不回读 —— 新增偏好键必须同时补这里与 service 的 toContract。
  */
 export const UserPreferencesSchema = z
@@ -238,6 +247,7 @@ export const UserPreferencesSchema = z
       }),
     hubView: HubViewSchema.openapi({ description: "仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map" }),
     hubDashProject: HubDashProjectSchema.openapi({ description: "仪表盘页「项目进度一览」的常驻项目 id（Push 336 · 按账号记住）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null" }),
+    hubDashView: HubDashViewSchema.openapi({ description: "仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
   .openapi("UserPreferences", { description: "用户偏好（全量；GET 返回当前值）" });
@@ -256,11 +266,12 @@ export const UserPreferencesUpdateBodySchema = z
     cardWatermark: z.boolean().optional(),
     hubView: HubViewSchema.optional(),
     hubDashProject: HubDashProjectSchema.optional(),
+    hubDashView: HubDashViewSchema.optional(),
   })
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView需在枚举内，hubDashProject为1..64字符或null，否则400"
+      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */
@@ -271,6 +282,7 @@ export type BackgroundTier = z.infer<typeof BackgroundTierSchema>;
 export type Locale = z.infer<typeof LocaleSchema>;
 export type HubView = z.infer<typeof HubViewSchema>;
 export type HubDashProject = z.infer<typeof HubDashProjectSchema>;
+export type HubDashView = z.infer<typeof HubDashViewSchema>;
 export type PlanBoardBg = z.infer<typeof PlanBoardBgSchema>;
 export type MyPlanNote = z.infer<typeof MyPlanNoteSchema>;
 export type MyPlanBoard = z.infer<typeof MyPlanBoardSchema>;

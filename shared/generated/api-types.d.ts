@@ -8245,6 +8245,11 @@ export interface components {
         /** @description 仪表盘页「项目进度一览」的常驻项目 id（Push 336 · 按账号记住）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
         HubDashProject: string | null;
         /**
+         * @description 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress
+         * @enum {string}
+         */
+        HubDashView: "progress" | "status" | "issues" | "delivery";
+        /**
          * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
          * @enum {string}
          */
@@ -9680,9 +9685,10 @@ export interface components {
             cardWatermark: boolean;
             hubView: components["schemas"]["HubView"];
             hubDashProject: components["schemas"]["HubDashProject"];
+            hubDashView: components["schemas"]["HubDashView"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView需在枚举内，hubDashProject为1..64字符或null，否则400 */
+        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400 */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
@@ -9699,6 +9705,7 @@ export interface components {
             cardWatermark?: boolean;
             hubView?: components["schemas"]["HubView"] & unknown;
             hubDashProject?: components["schemas"]["HubDashProject"] & unknown;
+            hubDashView?: components["schemas"]["HubDashView"] & unknown;
         } & {
             [key: string]: unknown;
         };

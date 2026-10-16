@@ -20,7 +20,7 @@
  */
 import { displayStatusLabel, stageNameOf } from "../taskApi";
 import { ISSUE_STATE_NAMES } from "../reportApi";
-import type { TaskStatus } from "./tasks";
+import { isCompleteStatus, type TaskStatus } from "./tasks";
 
 /** 进度五档（契约 TaskProgressSchema）：堆叠顺序 = 从左到右 0 → 1。 */
 export const DASHBOARD_BINS = [0, 0.25, 0.5, 0.75, 1] as const;
@@ -263,4 +263,96 @@ export function buildDashboardIssues(issues: readonly DashboardIssueLike[]): Das
 /** 问题是否落在该（状态 × 归类）格子里 —— 点柱打开的「数据详情」行按它筛（保证「柱上数字 = 表行数」）。 */
 export function isIssueInCell(issue: DashboardIssueLike, state: string, category: string): boolean {
   return issueStateNameOf(issue.state) === state && issue.categories.includes(category);
+}
+
+/**
+ * 「交付时间」视图口径（Push 345 · 业务口径 2026-10-16「这个交付时间也要做一个图表 但是它的这个逻辑我没搞懂
+ * 感觉也不好 请你重新设计一个告诉我」+「选择B方案 然后 提前完成也加进去 叫交付时间 加一个「按时率 67%」的小结」）：
+ * 仪表盘第四个视图 —— 四结果竖直柱状图（提前完成 / 按时交付 / 逾期已交付 / 逾期未交付）+ 右上「按时率」小结 +
+ * 「未到交付节点」注记；取数与明细在 src/dashboardApi.ts（与进度 / 状态同一轮取数，零额外请求）。
+ *
+ * 口径（改规则只改这里；与任务表「是否按时交付」列 + 展示态同源，见 HubDashDetail.onTimeLabelOf / data/tasks.ts）：
+ * - 分类 = 服务端展示态（displayStatus）+ onTime 四选一：已延期 → 逾期未交付；完成态（已完成 / 提前完成）且
+ *   onTime=false → 逾期已交付；完成态且 onTime=true → 展示态「提前完成」记「提前完成」、否则记「按时交付」。
+ * - 未到交付节点（进行中 / 待开始 / 完成但未判定 onTime=null）不计入（只进注记条数）。
+ * - 按时率 = （提前完成 + 按时交付）÷ 已交付合计（四结果之和），百分比取整；分母 0 → 显示「—」。
+ */
+
+/** 仪表盘页内视图 id（Push 345 · 业务口径「选择后刷新不变 按账号记住」；与契约 HUB_DASH_VIEW_IDS 同源）：
+ *  progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间。 */
+export const HUB_DASH_VIEW_IDS = ["progress", "status", "issues", "delivery"] as const;
+
+export type HubDashView = (typeof HUB_DASH_VIEW_IDS)[number];
+
+/** 偏好里读回的页内视图收敛（白名单外 / 坏值 → progress，不抛错 —— 与读侧收敛同口径）。 */
+export function asHubDashView(value: unknown): HubDashView {
+  return typeof value === "string" && (HUB_DASH_VIEW_IDS as readonly string[]).includes(value) ? (value as HubDashView) : "progress";
+}
+
+/** 交付结果展示序（Push 345 · 从左到右：提前完成 → 按时交付 → 逾期已交付 → 逾期未交付；0 条也固定占位）。 */
+export const DASHBOARD_DELIVERY_ORDER = ["提前完成", "按时交付", "逾期已交付", "逾期未交付"] as const;
+
+export type DashboardDeliveryBucket = (typeof DASHBOARD_DELIVERY_ORDER)[number];
+
+/** 聚合输入的最小任务形状（ApiTaskListItem 满足）：吃服务端展示态 + onTime。 */
+export type DashboardDeliveryTaskLike = {
+  readonly displayStatus: string;
+  readonly onTime: boolean | null;
+};
+
+/** 任务 → 交付结果（null = 未到交付节点 / 未判定，不计入）—— 与任务表「是否按时交付」列同一套判定。 */
+export function deliveryBucketOf(task: DashboardDeliveryTaskLike): DashboardDeliveryBucket | null {
+  const status = displayStatusLabel(task.displayStatus);
+  if (status === "已延期") {
+    return "逾期未交付";
+  }
+  if (isCompleteStatus(status)) {
+    if (task.onTime === false) {
+      return "逾期已交付";
+    }
+    if (task.onTime === null) {
+      return null;
+    }
+    return status === "提前完成" ? "提前完成" : "按时交付";
+  }
+  return null;
+}
+
+/** 交付结果分布（「交付时间」视图口径 · Push 345）。 */
+export type DashboardDelivery = {
+  /** 四结果计数（下标与 DASHBOARD_DELIVERY_ORDER 同序；0 也保留 —— 图上四位固定）。 */
+  readonly counts: readonly number[];
+  /** 已交付合计（四结果之和 = 按时率分母）。 */
+  readonly total: number;
+  /** 按时率（百分比取整 0~100）；分母 0 → null（显示「—」）。 */
+  readonly onTimeRate: number | null;
+  /** 未到交付节点（进行中 / 待开始 / 完成但未判定）的任务数（不计入本图）。 */
+  readonly pendingCount: number;
+};
+
+/** 全量任务 → 交付结果分布（纯函数，取数见 dashboardApi.ts）。 */
+export function buildDashboardDelivery(tasks: readonly DashboardDeliveryTaskLike[]): DashboardDelivery {
+  const counts = DASHBOARD_DELIVERY_ORDER.map(() => 0);
+  let total = 0;
+  let pendingCount = 0;
+  for (const task of tasks) {
+    const bucket = deliveryBucketOf(task);
+    if (bucket === null) {
+      pendingCount += 1;
+      continue;
+    }
+    counts[DASHBOARD_DELIVERY_ORDER.indexOf(bucket)] += 1;
+    total += 1;
+  }
+  return {
+    counts,
+    total,
+    onTimeRate: total === 0 ? null : Math.round(((counts[0] + counts[1]) / total) * 100),
+    pendingCount,
+  };
+}
+
+/** 任务是否落在该交付结果柱里 —— 点柱打开的「数据详情」按它筛（保证柱上数字 = 表行数）。 */
+export function isTaskInDeliveryBucket(task: DashboardDeliveryTaskLike, bucket: DashboardDeliveryBucket): boolean {
+  return deliveryBucketOf(task) === bucket;
 }

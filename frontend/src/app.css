@@ -2083,6 +2083,101 @@ body {
   min-width: 14rem;
 }
 
+/* 「交付时间」四结果柱状图（Push 345 · 业务口径 2026-10-16「这个交付时间也要做一个图表」+「选择B方案 然后 提前完成
+   也加进去 叫交付时间 加一个「按时率 67%」的小结」）：柱 / 柱顶数字 / 悬停卡共用 data-bucket 就地定义 --hub-status
+   （提前完成 = 深青（领先）、按时交付 = 绿、逾期已交付 = 黄、逾期未交付 = 玫红，与任务表「是否按时交付」色族同源）；
+   网格 / 轴线 / 刻度字 / 右上「按时率」小结排版都走这里。 */
+.hub-dash-delivery {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.hub-dash-delivery [data-bucket="提前完成"],
+.hub-dash-tip--delivery[data-bucket="提前完成"] {
+  --hub-status: #14b8a6;
+}
+
+.hub-dash-delivery [data-bucket="按时交付"],
+.hub-dash-tip--delivery[data-bucket="按时交付"] {
+  --hub-status: #22c55e;
+}
+
+.hub-dash-delivery [data-bucket="逾期已交付"],
+.hub-dash-tip--delivery[data-bucket="逾期已交付"] {
+  --hub-status: #f5c518;
+}
+
+.hub-dash-delivery [data-bucket="逾期未交付"],
+.hub-dash-tip--delivery[data-bucket="逾期未交付"] {
+  --hub-status: #f43f5e;
+}
+
+.hub-dash-delivery__bar {
+  fill: var(--hub-status, #c9ced6);
+  transition: filter 150ms ease;
+}
+
+.hub-dash-delivery__bar[data-hover="true"] {
+  filter: brightness(0.93);
+}
+
+.hub-dash-delivery__count {
+  fill: var(--hub-status, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-delivery__name {
+  fill: #374151;
+}
+
+.hub-dash-delivery__grid {
+  stroke: #e8eaee;
+  stroke-dasharray: 3 4;
+}
+
+.hub-dash-delivery__axis {
+  stroke: #b8bec6;
+}
+
+.hub-dash-delivery__tick {
+  fill: #8a9099;
+}
+
+.hub-dash-delivery__rateLabel {
+  fill: #6b7280;
+}
+
+.hub-dash-delivery__rateValue {
+  fill: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-dash-delivery__rateNote {
+  fill: #9aa0a6;
+}
+
+/* 悬停命中区（整槽 + 按时率小结）：透明矩形，覆盖柱 / 数字 / 类别名与小结文字；可选时给手型。 */
+.hub-dash-delivery__hit,
+.hub-dash-delivery__rateHit {
+  fill: transparent;
+}
+
+.hub-dash-delivery__hit[data-drill="true"] {
+  cursor: pointer;
+}
+
+/* 按时率公式卡（悬停右上小结）：标题 + 两行说明，行距比「记录数 / 占比」卡松一点。 */
+.hub-dash-tip--deliveryRate {
+  min-width: 15.5rem;
+  padding: 0.6rem 0.85rem 0.7rem;
+}
+
+.hub-dash-tip--deliveryRate .hub-dash-tip__line {
+  margin-top: 0.4rem;
+}
+
 /* 底部视图切换（Push 339 · 业务口径「在仪表盘页面在底部增加切换的按钮」+ 追订「这个按钮再做一个进度一览 靠左不居中」；
    按钮照业务给的参考代码、尺寸按 2026-10-15「按钮大小小一点」收小（24px 圆角方框、白勾 16px）、
    未选灰底灰边、选中蓝底白勾、悬停微放大、渐变脉冲高光 —— Tailwind 类在组件里

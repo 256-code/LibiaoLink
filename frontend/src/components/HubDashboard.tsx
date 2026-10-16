@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DashboardDataset, DashboardIssueDataset } from "../dashboardApi";
-import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, type DashboardStatusSlice } from "../data/dashboardProgress";
+import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, isTaskInDeliveryBucket, type DashboardDeliveryBucket, type DashboardStatusSlice, type HubDashView } from "../data/dashboardProgress";
 import type { TaskStatus } from "../data/tasks";
 import { fieldText, stageText, statusText, useLocale, useT, type TextKey } from "../i18n";
 import { displayStatusLabel } from "../taskApi";
+import { HubDashDelivery } from "./HubDashDelivery";
 import { HubDashDetail } from "./HubDashDetail";
 import { HubDashIssueDetail } from "./HubDashIssueDetail";
 import { HubDashIssues, type DashboardIssueRow } from "./HubDashIssues";
@@ -50,7 +51,15 @@ import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
  * 悬停柱出浮层卡（状态名 + 归类色点 + 归类 + 条数）、悬停组内空白出「状态名 + 全部归类整排」卡（同 Push 340 口径）；
  * 点柱开只读「数据详情」（HubDashIssueDetail = 参考图的日报侧五列 + 问题侧三列，另补「问题描述」列），
  * 与柱段 / 扇区同一套「选中具体项目才可点」；问题 / 日报读面**懒加载**（首次切到「问题」才拉，见 Hub.tsx 的
- * ensureIssues；三个视图共用同一个项目选择器与常驻项目）。 */
+ * ensureIssues；三个视图共用同一个项目选择器与常驻项目）。
+ *
+ * Push 345（2026-10-16 业务口径「这个交付时间也要做一个图表 但是它的这个逻辑我没搞懂 感觉也不好 请你重新设计一个告诉我」
+ * +「选择B方案 然后 提前完成也加进去 叫交付时间 加一个「按时率 67%」的小结」+「选择后刷新不变 按账号记住」）：
+ * 底栏加第四枚视图「交付时间」—— 四结果竖直柱状图（HubDashDelivery = 提前完成 / 按时交付 / 逾期已交付 / 逾期未交付，
+ * 口径 buildDashboardDelivery）+ 右上「按时率」小结（悬停出公式卡）+「未到交付节点」注记；悬停柱出浮层卡（记录数 / 占比）、
+ * 点柱开只读「数据详情」（与柱段 / 扇区 / 问题柱同一套「选中具体项目才可点」，筛选见 isTaskInDeliveryBucket）；
+ * 页内视图写回账号偏好 user_preferences.prefs.hubDashView（单键 PATCH，乐观更新 + 失败回滚在 App 层）——
+ * 刷新 / 换设备同账号停在同一个视图。 */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
 /** 悬停卡（Push 335 柱段 / Push 339 扇区 / Push 340 行阴影）：柱段 = 行名 + 单档一行；行阴影 = 行名 + 五档整排；
@@ -80,6 +89,19 @@ type DashTip =
       readonly share: string;
     }
   | {
+      readonly kind: "delivery";
+      readonly left: number;
+      readonly top: number;
+      readonly bucket: DashboardDeliveryBucket;
+      readonly count: number;
+      readonly share: string;
+    }
+  | {
+      readonly kind: "deliveryRate";
+      readonly left: number;
+      readonly top: number;
+    }
+  | {
       readonly kind: "issue";
       readonly left: number;
       readonly top: number;
@@ -99,7 +121,8 @@ type DashTip =
 type DashDetailPick =
   | { readonly kind: "cell"; readonly rowKey: string; readonly bin: number }
   | { readonly kind: "status"; readonly status: TaskStatus }
-  | { readonly kind: "issue"; readonly state: string; readonly category: string };
+  | { readonly kind: "issue"; readonly state: string; readonly category: string }
+  | { readonly kind: "delivery"; readonly bucket: DashboardDeliveryBucket };
 
 /** 柱段悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）。 */
 const TIP_W = 190;
@@ -112,6 +135,11 @@ const STATUS_TIP_H = 108;
 /** 问题柱 / 问题组悬停卡尺寸（Push 344；组卡按归类行数长高，见 showIssueRowTip）。 */
 const ISSUE_TIP_W = 200;
 const ISSUE_TIP_H = 84;
+/** 交付结果柱 / 按时率小结的悬停卡尺寸（Push 345；结果卡与扇区卡同形态）。 */
+const DELIVERY_TIP_W = 200;
+const DELIVERY_TIP_H = 108;
+const RATE_TIP_W = 300;
+const RATE_TIP_H = 108;
 
 const VIEW_W = 1200;
 const VIEW_H = 596;
@@ -160,7 +188,7 @@ function tickMaxOf(maxTotal: number): { max: number; step: number } {
  *  用单选框语义（同组 name，选中态 = 当前视图，点已选中的那枚不会取消选择）；白勾 / 脉冲层用 group-has-[:checked]:
  *  —— 参考代码的 peer-checked: 挂在内层元素上、兄弟选择器够不到，照抄不生效。 */
 function DashViewSwitch({ view, checked, label, onSelect }: {
-  readonly view: "progress" | "status" | "issues";
+  readonly view: HubDashView;
   readonly checked: boolean;
   readonly label: string;
   readonly onSelect: () => void;
@@ -188,7 +216,7 @@ function DashViewSwitch({ view, checked, label, onSelect }: {
     </label>
   );
 }
-export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, rememberedDashProject, onDashProjectChange }: {
+export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, rememberedDashProject, onDashProjectChange, rememberedDashView, onDashViewChange }: {
   data: DashboardDataset | null;
   state: HubDashboardState;
   /** 「问题」视图数据（Push 344 · 懒加载：首次切到「问题」时才拉；null = 还没拉）。 */
@@ -201,6 +229,10 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   rememberedDashProject: string | null;
   /** 把选中项目写回账号偏好（Push 336；App 层乐观更新 + 失败回滚 + Toast）。 */
   onDashProjectChange: (projectId: string | null) => Promise<void>;
+  /** 账号记的仪表盘页内视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；缺省 progress）。 */
+  rememberedDashView: HubDashView;
+  /** 记下页内视图（Push 345；App 层乐观更新 + 失败回滚 + Toast）。 */
+  onDashViewChange: (view: HubDashView) => Promise<void>;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -208,8 +240,8 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   const uid = useId().replace(/:/g, "");
   /** Push 334：项目选择器（第一行固定「全部项目」；选中项目即只统计该项目）；Push 336：初值取账号常驻项目。 */
   const [pickedId, setPickedId] = useState<string | null>(rememberedDashProject);
-  /** 仪表盘页内视图（Push 339 · 业务口径「在仪表盘页面在底部增加切换的按钮」）：progress = 项目进度一览（堆叠条）；status = 任务状态（饼图）。底部切换按钮驱动。 */
-  const [view, setView] = useState<"progress" | "status" | "issues">("progress");
+  /** 仪表盘页内视图（Push 339 底栏按钮驱动；Push 345 按账号常驻）：progress = 项目进度一览 / status = 任务状态 / issues = 问题 / delivery = 交付时间。 */
+  const [view, setView] = useState<HubDashView>(rememberedDashView);
   /** 悬停卡 + 行高亮（同一行的柱段共用：卡里写行名，图上该行铺一条浅灰底）。 */
   const [tip, setTip] = useState<DashTip | null>(null);
   const [hoverRow, setHoverRow] = useState<string | null>(null);
@@ -222,6 +254,16 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   useEffect(() => {
     setPickedId(rememberedDashProject);
   }, [rememberedDashProject]);
+  /** 常驻页内视图（Push 345 · 业务口径「选择后刷新不变 按账号记住」）：偏好晚到（首屏 prefs 未回）/ 换账号 / 保存失败回滚时跟随 —— 与本地选中同值即空转。 */
+  useEffect(() => {
+    setView(rememberedDashView);
+  }, [rememberedDashView]);
+  /** 「问题」读面懒加载（Push 344）：切到「问题」视图时拉；首屏直接落在「问题」（常驻视图）也拉。 */
+  useEffect(() => {
+    if (view === "issues") {
+      onNeedIssues();
+    }
+  }, [view, onNeedIssues]);
   /** 常驻的项目已不存在（被删）：界面回落「全部项目」，并把账号偏好一并清掉（只清一次）。 */
   useEffect(() => {
     if (pickedId !== null && data !== null && !data.byProject.has(pickedId)) {
@@ -268,6 +310,35 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
       status: slice.status,
       count: slice.count,
       share,
+    });
+  };
+  /** 悬停交付结果柱（Push 345）：卡里写结果名 + 色条 + 记录数 / 占比（与扇区卡同形态）。 */
+  const showDeliveryTip = (event: ReactMouseEvent<SVGRectElement>, bucket: DashboardDeliveryBucket, count: number, share: string): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "delivery",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - DELIVERY_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - DELIVERY_TIP_H - 6)),
+      bucket,
+      count,
+      share,
+    });
+  };
+  /** 悬停「按时率」小结（Push 345）：卡里写口径公式与算式（让 67% 一眼可自查）。 */
+  const showDeliveryRateTip = (event: ReactMouseEvent<SVGRectElement>): void => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+    const box = wrap.getBoundingClientRect();
+    setTip({
+      kind: "deliveryRate",
+      left: Math.max(6, Math.min(event.clientX - box.left + 14, box.width - RATE_TIP_W - 6)),
+      top: Math.max(6, Math.min(event.clientY - box.top + 14, box.height - RATE_TIP_H - 6)),
     });
   };
   /** 悬停行阴影（Push 340）：同一坐标口径，卡里写行名 + 五档整排（该阶段的五个状态，0 也列出）。 */
@@ -317,16 +388,14 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
       rows,
     });
   };
-  /** 切视图（Push 339 / Push 344）：先关掉旧视图的浮层卡 / 数据详情（详情对应的柱段 / 扇区已不在画面上）；
-   *  首次切到「问题」视图按需拉问题读面（懒加载，任务读面不受影响）。 */
-  const switchView = (next: "progress" | "status" | "issues"): void => {
+  /** 切视图（Push 339 / Push 344 / Push 345）：先关掉旧视图的浮层卡 / 数据详情（详情对应的柱段 / 扇区 / 柱已不在画面上）；
+   *  视图写回账号偏好（Push 345 · 「选择后刷新不变 按账号记住」）；「问题」读面懒加载由 view 跟随的 effect 负责。 */
+  const switchView = (next: HubDashView): void => {
     setView(next);
     setTip(null);
     setHoverRow(null);
     setDetail(null);
-    if (next === "issues") {
-      onNeedIssues();
-    }
+    void onDashViewChange(next);
   };
 
   if (state === "failed") {
@@ -342,6 +411,8 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   const progress = pickedId === null ? data.all : data.byProject.get(pickedId) ?? data.all;
   /** 任务状态分布（Push 339）：与进度同一套项目选择（同一轮取数里分桶，切换不发请求）。 */
   const statusView = pickedId === null ? data.statusAll : data.statusByProject.get(pickedId) ?? data.statusAll;
+  /** 交付结果分布（Push 345 · 「交付时间」视图）：同一套项目选择（同一轮取数里分桶，切换不发请求）。 */
+  const deliveryView = pickedId === null ? data.deliveryAll : data.deliveryByProject.get(pickedId) ?? data.deliveryAll;
   /** 问题分布（Push 344）：同一套项目选择；数据懒加载（issues === null = 还没拉过）。 */
   const issuesView = issues === null ? null : pickedId === null ? issues.all : issues.byProject.get(pickedId) ?? issues.all;
   /** 标题条：<视图名>·<选择器>（选择器里的当前项就是标题的后半段；视图名随底部切换走）。 */
@@ -358,7 +429,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
   };
   const head = (
     <div className="hub-dash-head">
-      <span className="hub-dash-title">{view === "progress" ? t("hub.dash.title") : view === "status" ? t("hub.dash.status.title") : t("hub.dash.issues.title")}</span>
+      <span className="hub-dash-title">{view === "progress" ? t("hub.dash.title") : view === "status" ? t("hub.dash.status.title") : view === "issues" ? t("hub.dash.issues.title") : t("hub.dash.delivery.title")}</span>
       <span className="hub-dash-sep" aria-hidden="true">
         •
       </span>
@@ -482,6 +553,18 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
             setDetail({ kind: "status", status: slice.status });
           }}
         />
+      ) : view === "delivery" ? (
+        <HubDashDelivery
+          delivery={deliveryView}
+          canDrill={canDrill}
+          onTip={showDeliveryTip}
+          onRateTip={showDeliveryRateTip}
+          onLeave={() => setTip(null)}
+          onPick={(bucket) => {
+            setTip(null);
+            setDetail({ kind: "delivery", bucket });
+          }}
+        />
       ) : issuesState === "ready" && issuesView !== null ? (
         issuesView.totalIssues === 0 ? (
           <div className="hub-dash-state">{t("hub.dash.issues.empty")}</div>
@@ -509,6 +592,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
         <DashViewSwitch view="progress" checked={view === "progress"} label={t("hub.dash.title")} onSelect={() => switchView("progress")} />
         <DashViewSwitch view="status" checked={view === "status"} label={t("hub.dash.status.title")} onSelect={() => switchView("status")} />
         <DashViewSwitch view="issues" checked={view === "issues"} label={t("hub.dash.issues.title")} onSelect={() => switchView("issues")} />
+        <DashViewSwitch view="delivery" checked={view === "delivery"} label={t("hub.dash.delivery.title")} onSelect={() => switchView("delivery")} />
       </div>
       {tip !== null ? (
         tip.kind === "bin" ? (
@@ -548,6 +632,29 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
               </span>
             </div>
           </div>
+        ) : tip.kind === "delivery" ? (
+          <div className="hub-dash-tip hub-dash-tip--status hub-dash-tip--delivery" data-bucket={tip.bucket} style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__statusTitle">{statusText(locale, tip.bucket)}</div>
+            <div className="hub-dash-tip__statusBody">
+              <span className="hub-dash-tip__statusBar" />
+              <span className="hub-dash-tip__statusRows">
+                <span className="hub-dash-tip__statusRow">
+                  <span className="hub-dash-tip__statusLabel">{t("hub.dash.status.count")}</span>
+                  <span className="hub-dash-tip__statusValue">{tip.count}</span>
+                </span>
+                <span className="hub-dash-tip__statusRow">
+                  <span className="hub-dash-tip__statusLabel">{t("hub.dash.status.share")}</span>
+                  <span className="hub-dash-tip__statusValue">{tip.share}</span>
+                </span>
+              </span>
+            </div>
+          </div>
+        ) : tip.kind === "deliveryRate" ? (
+          <div className="hub-dash-tip hub-dash-tip--deliveryRate" style={{ left: tip.left, top: tip.top }}>
+            <div className="hub-dash-tip__row">{t("hub.dash.delivery.rate")}</div>
+            <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateFormula")}</div>
+            {deliveryView.total > 0 ? <div className="hub-dash-tip__line">{t("hub.dash.delivery.rateCalc", { early: deliveryView.counts[0], ontime: deliveryView.counts[1], total: deliveryView.total, rate: deliveryView.onTimeRate ?? "—" })}</div> : null}
+          </div>
         ) : tip.kind === "issue" ? (
           <div className="hub-dash-tip" style={{ left: tip.left, top: tip.top }}>
             <div className="hub-dash-tip__row">{statusText(locale, tip.state)}</div>
@@ -585,7 +692,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, r
           <HubDashDetail
             projectName={pickedName}
             manager={data.managerByProject.get(pickedId) ?? ""}
-            tasks={(data.tasksByProject.get(pickedId) ?? []).filter((task) => detail.kind === "cell" ? isTaskInCell(task, detail.rowKey, detail.bin) : displayStatusLabel(task.displayStatus) === detail.status)}
+            tasks={(data.tasksByProject.get(pickedId) ?? []).filter((task) => detail.kind === "cell" ? isTaskInCell(task, detail.rowKey, detail.bin) : detail.kind === "delivery" ? isTaskInDeliveryBucket(task, detail.bucket) : displayStatusLabel(task.displayStatus) === detail.status)}
             onClose={() => {
               setDetail(null);
             }}
