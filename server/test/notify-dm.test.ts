@@ -21,7 +21,8 @@ import type {
 } from "../src/modules/notify/notify.dm.repository.js";
 import {
   composeDmMarkdown,
-  DM_BINDING_CODE_MAX_PER_HOUR,
+  DM_BINDING_CODE_MAX_PER_WINDOW,
+  DM_BINDING_CODE_WINDOW_MS,
   DM_BINDING_CODE_TTL_MS,
   DM_BINDING_DEGRADE_PREFIX,
   DM_BINDING_REPLY_ALREADY_BOUND,
@@ -820,20 +821,29 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
     expect(repo.codeCreateCalls[0]).toMatchObject({ userId: USER_ID, expiresAt: new Date(AT.getTime() + DM_BINDING_CODE_TTL_MS), at: AT });
   });
 
-  it("频率限制：窗口内已取满 3 次 → rate_limited + retryAt = 最早一次码 + 1 小时", async () => {
+  it("频率限制：窗口内已取满 5 次 → rate_limited + retryAt = 最早一次码 + 窗口长度（≤ 10 分钟）", async () => {
     const { service, repo } = makeService();
-    const first = new Date(AT.getTime() - 3_500_000);
-    repo.issuedAt = [first, new Date(AT.getTime() - 2_000_000), new Date(AT.getTime() - 1_000_000)];
+    const first = new Date(AT.getTime() - 500_000);
+    repo.issuedAt = [
+      first,
+      new Date(AT.getTime() - 400_000),
+      new Date(AT.getTime() - 300_000),
+      new Date(AT.getTime() - 200_000),
+      new Date(AT.getTime() - 100_000),
+    ];
 
     const result = await service.requestBindingCode(USER_ID);
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe("rate_limited");
-      expect(result.retryAt.getTime()).toBe(first.getTime() + 3_600_000);
+      expect(result.retryAt.getTime()).toBe(first.getTime() + DM_BINDING_CODE_WINDOW_MS);
+      // 最长等待 = 窗口长度（10 分钟）—— D3 修订 v1.7 的可用性口径
+      expect(result.retryAt.getTime() - AT.getTime()).toBeLessThanOrEqual(DM_BINDING_CODE_WINDOW_MS);
     }
     expect(repo.codeCreateCalls).toEqual([]);
-    expect(DM_BINDING_CODE_MAX_PER_HOUR).toBe(3);
+    expect(DM_BINDING_CODE_MAX_PER_WINDOW).toBe(5);
+    expect(DM_BINDING_CODE_WINDOW_MS).toBe(600_000);
   });
 
   it("撞码重试：前两次被唯一键挡下 → 第三次成功", async () => {

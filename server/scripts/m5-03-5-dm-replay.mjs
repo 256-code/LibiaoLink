@@ -17,7 +17,7 @@
  *      req_id 透传 + `msgtype: stream` 单帧收敛）／绑定行寻址（未绑定 → 不发帧 + dead + D4 降级）／
  *      ingest 全分支（单聊发码命中 → 同事务写绑定 + 标记码已用 + 回「绑定成功」；码过期 / 已用 → 「码已失效」；
  *      已绑定 → 「已绑定」；未命中 / 群聊 / 事件回调 → 不回复；非码消息 → 仅登记激活 D1）／
- *      取码（TTL 10 分钟 / 3 次每小时 / 撞码重试）。
+ *      取码（TTL 10 分钟 / 5 次每 10 分钟 / 撞码重试）。
  *
  * 前置：已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && node scripts/m5-03-5-dm-replay.mjs [--out <报告.md>] [--json <证据.json>]
@@ -737,14 +737,21 @@ async function main() {
         repo.codeCreateCalls[0].userId === USER_ID,
     );
     const throttled = makeService({ ok: true, attempts: 1 });
-    const first = new Date(AT.getTime() - 3_500_000);
-    throttled.repo.issuedAt = [first, new Date(AT.getTime() - 2_000_000), new Date(AT.getTime() - 1_000_000)];
+    const first = new Date(AT.getTime() - 500_000);
+    throttled.repo.issuedAt = [
+      first,
+      new Date(AT.getTime() - 400_000),
+      new Date(AT.getTime() - 300_000),
+      new Date(AT.getTime() - 200_000),
+      new Date(AT.getTime() - 100_000),
+    ];
     const limited = await throttled.service.requestBindingCode(USER_ID);
     assertTrue(
-      "S19 频率限制：小时窗口内第 4 次取码 → rate_limited + retryAt = 最早一次 + 1 小时",
+      "S19 频率限制：10 分钟窗口内第 6 次取码 → rate_limited + retryAt = 最早一次 + 窗口长度（最长 ≤ 10 分钟）",
       limited.ok === false &&
         limited.reason === "rate_limited" &&
-        limited.retryAt.getTime() === first.getTime() + 3_600_000 &&
+        limited.retryAt.getTime() === first.getTime() + 600_000 &&
+        limited.retryAt.getTime() - AT.getTime() <= 600_000 &&
         throttled.repo.codeCreateCalls.length === 0,
     );
     const clash = makeService({ ok: true, attempts: 1 });

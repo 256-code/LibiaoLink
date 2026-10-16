@@ -73,8 +73,11 @@ export const DM_BINDING_CODE_PATTERN = /^[0-9]{6}$/;
 /** 绑定码有效期（D3 定案：TTL 10 分钟）。 */
 export const DM_BINDING_CODE_TTL_MS = 10 * 60_000;
 
-/** 绑定码生成频率上限（D3 定案：3 次/小时/用户）。 */
-export const DM_BINDING_CODE_MAX_PER_HOUR = 3;
+/** 绑定码生成频率窗口（D3 修订 v1.7 · 2026-10-16：10 分钟滚动窗口；最长等待 = 窗口长度）。 */
+export const DM_BINDING_CODE_WINDOW_MS = 10 * 60_000;
+
+/** 绑定码生成频率上限（D3 修订 v1.7 · 2026-10-16：5 次 / 10 分钟 / 用户 —— 原「3 次/小时」等待过久）。 */
+export const DM_BINDING_CODE_MAX_PER_WINDOW = 5;
 
 /** 绑定码生成冲突重试次数（6 位数字空间 1e6，撞码概率极低；到顶抛错由调用方按 5xx 收口）。 */
 const DM_BINDING_CODE_ATTEMPTS = 8;
@@ -228,8 +231,8 @@ export class NotifyDmService {
   }
 
   /**
-   * 生成绑定码（D3 定案：6 位数字 / TTL 10 分钟 / 一次性 / 3 次每小时每用户；口径 §3 第 1 步）：
-   * 频率到顶 → 返回 rate_limited + retryAt（窗口内最早码 + 1 小时 = 最早的可用时刻）；
+   * 生成绑定码（D3 签发：6 位数字 / TTL 10 分钟 / 一次性；频率口径 D3 修订 v1.7：5 次 / 10 分钟 / 用户）：
+   * 频率到顶 → 返回 rate_limited + retryAt（窗口内最早码 + 窗口长度 = 最早的可用时刻，最长 ≤ 10 分钟）；
    * 否则同一事务作废旧 pending 码 + 插入新码（撞码换码重试 DM_BINDING_CODE_ATTEMPTS 次）。
    * HTTP 面（POST /api/v1/wecom-dm-binding/codes · 契约刀）：频率到顶统一映射 429 `RATE_LIMITED` + retryAt。
    */
@@ -238,12 +241,19 @@ export class NotifyDmService {
     | { ok: false; reason: "rate_limited"; retryAt: Date }
   > {
     const at = this.clock.now();
-    const since = new Date(at.getTime() - 3_600_000);
+    const since = new Date(at.getTime() - DM_BINDING_CODE_WINDOW_MS);
     const issuedAt = await this.repository.bindingCodesSince(userId, since);
-    if (issuedAt.length >= DM_BINDING_CODE_MAX_PER_HOUR) {
+    if (issuedAt.length >= DM_BINDING_CODE_MAX_PER_WINDOW) {
       const oldest = issuedAt[0];
-      const retryAt = new Date((oldest === undefined ? at.getTime() : oldest.getTime()) + 3_600_000);
-      this.logger.warn("绑定码生成频率到顶（" + String(DM_BINDING_CODE_MAX_PER_HOUR) + " 次/小时）：user_id " + userId);
+      const retryAt = new Date((oldest === undefined ? at.getTime() : oldest.getTime()) + DM_BINDING_CODE_WINDOW_MS);
+      this.logger.warn(
+        "绑定码生成频率到顶（" +
+          String(DM_BINDING_CODE_MAX_PER_WINDOW) +
+          " 次 / " +
+          String(DM_BINDING_CODE_WINDOW_MS / 60_000) +
+          " 分钟）：user_id " +
+          userId,
+      );
       return { ok: false, reason: "rate_limited", retryAt };
     }
     const expiresAt = new Date(at.getTime() + DM_BINDING_CODE_TTL_MS);

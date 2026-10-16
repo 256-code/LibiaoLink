@@ -23,19 +23,22 @@ export class WecomDmBindingController {
     return this.dm.getBindingState(actorId);
   }
 
-  /** 取码（D3）：6 位数字 / TTL 10 分钟 / 一次性（重复取码作废上一条未用码）；频率到顶 → 429 `RATE_LIMITED`。 */
+  /**
+   * 取码（D3 签发 · 频率 D3 修订 v1.7）：6 位数字 / TTL 10 分钟 / 一次性（重复取码作废上一条未用码）；
+   * 频率到顶（5 次 / 10 分钟 / 用户）→ 429 `RATE_LIMITED` + `details[].meta.retryAt`（最长等待 ≤ 10 分钟）。
+   */
   @Post("codes")
   @HttpCode(200)
   @UseGuards(CsrfGuard)
   async requestCode(@CurrentActorId() actorId: string): Promise<WecomDmBindingCode> {
     const result = await this.dm.requestBindingCode(actorId);
     if (!result.ok) {
-      throw new AppError("RATE_LIMITED", "绑定码生成频率到顶（3 次 / 小时），请稍后再试", [
+      throw new AppError("RATE_LIMITED", "绑定码生成频率到顶（5 次 / 10 分钟），请稍后再试", [
         {
           code: "rate_limited",
           message: "可重试时刻：" + result.retryAt.toISOString(),
           path: "body",
-          meta: { retryAt: result.retryAt.toISOString(), window: "hour" },
+          meta: { retryAt: result.retryAt.toISOString(), window: "10m" },
         },
       ]);
     }
