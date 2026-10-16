@@ -1,21 +1,35 @@
 /**
- * 单聊 aibot 消费回归（M5-03-5-3 实现段 · outbox 主题 notify.message 的 channel=wecom_aibot 分支）：
- * markdown 组装与字节截断、消费三分类（ok / rate_limited / retryable / permanent → done / deferred /
- * retry / dead + 投递留痕）、激活表读（846607 分流传入态）与发送成功旁证回填（D4）、C5-04 降级
- * （同收件人站内信 · :c504 · 未激活附激活指引前缀 P3）、收件人不可投递收敛、渠道路由防御、回调 ingest
- * （激活 upsert · 未匹配留空 · enter_chat 不激活）。仓储 / 长连接客户端 / 站内信 / 时钟全替身，不连库、不发帧。
+ * 单聊 aibot 消费 + 绑定码 ingest 回归（M5-03-5-3 实现段 · **M5-03-5-6 绑定码链路**）：
+ * markdown 组装与字节截断、绑定码正文归一（纯函数）、消费三分类（ok / rate_limited / retryable / permanent
+ * → done / deferred / retry / dead + 投递留痕）、**绑定行寻址**（无绑定行 → dead + D4 绑定指引降级；有绑定行
+ * → 正常发帧）、激活表读（846607 分流传入态）与发送成功旁证回填（D4）、收件人不可投递收敛、渠道路由防御、
+ * 绑定码 ingest（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执；群聊 / 事件回调不绑定；码过期 / 已用 /
+ * 已绑定 / 未命中各回执面）、取码（TTL / 频率限制 / 撞码重试）与绑定态读面。
+ * 仓储 / 长连接客户端 / 站内信 / 时钟 / 配置全替身，不连库、不发帧。
  */
 import { describe, expect, it } from "vitest";
 import type { NotifyMessagePayload } from "@libiaolink/contracts";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
-import type { DmActivationRow, NotifyDmDeliveryInsert, WecomDmContact } from "../src/modules/notify/notify.dm.repository.js";
+import type {
+  DmActivationRow,
+  DmBindingCodeRow,
+  DmBindingRow,
+  NotifyDmDeliveryInsert,
+  WecomDmContact,
+} from "../src/modules/notify/notify.dm.repository.js";
 import {
   composeDmMarkdown,
-  DM_ACTIVATION_DEGRADE_PREFIX,
+  DM_BINDING_CODE_MAX_PER_HOUR,
+  DM_BINDING_CODE_TTL_MS,
+  DM_BINDING_DEGRADE_PREFIX,
+  DM_BINDING_REPLY_ALREADY_BOUND,
+  DM_BINDING_REPLY_BOUND,
+  DM_BINDING_REPLY_INVALID,
   DM_DEGRADE_PREFIX,
   DM_MARKDOWN_MAX_BYTES,
   DM_TRUNCATION_SUFFIX,
+  extractBindingCode,
   NotifyDmService,
   truncateDmMarkdown,
 } from "../src/modules/notify/notify.dm.service.js";
@@ -24,53 +38,133 @@ import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "..
 const AT = new Date("2026-10-14T06:00:00.000Z");
 const BEFORE = new Date("2026-10-14T05:00:00.000Z");
 const USER_ID = "11111111-1111-4111-8111-111111111111";
-const USERID = "zhangsan";
+const BOT_ID = "aibTestBot0001";
+const OPEN_USERID = "wosuIHCwAAseSgWSu-LuNOhnzP0vbmUw";
+const CODE = "123456";
+
+/** 绑定行 / 激活行在替身里的键：机器人维度 + 企微号（与 (bot_id, wecom_userid) 唯一键同形）。 */
+function key(botId: string, wecomUserid: string): string {
+  return botId + "|" + wecomUserid;
+}
 
 class FakeDmRepository {
   contacts = new Map<string, WecomDmContact>();
   activations = new Map<string, DmActivationRow>();
+  bindings = new Map<string, { botId: string; wecomUserid: string; userId: string; boundAt: Date }>();
+  codes = new Map<string, DmBindingCodeRow>();
   deliveries: NotifyDmDeliveryInsert[] = [];
-  upsertCalls: { wecomUserid: string; userId: string | null; at: Date }[] = [];
-  backfillCalls: { wecomUserid: string; userId: string; at: Date }[] = [];
+  upsertCalls: { botId: string; wecomUserid: string; at: Date }[] = [];
+  backfillCalls: { botId: string; wecomUserid: string; userId: string; at: Date }[] = [];
+  bindCalls: { codeId: number; userId: string; botId: string; wecomUserid: string; at: Date }[] = [];
+  codeCreateCalls: { userId: string; code: string; expiresAt: Date; at: Date }[] = [];
+  /** 频率限制读面替身（窗口内已生成码的创建时刻）。 */
+  issuedAt: Date[] = [];
+  /** 前 N 次取码按「撞码」返回 false（重试路径）。 */
+  codeConflicts = 0;
+  /** 绑定占用失败（并发 / 恰过期）。 */
+  bindFails = false;
   backfillFails = false;
-  /** username → 本地用户 id（反查替身）。 */
-  usernames = new Map<string, string>();
+  private nextCodeId = 1;
 
   async findContact(userId: string): Promise<WecomDmContact | null> {
     return this.contacts.get(userId) ?? null;
   }
 
-  async findUserIdByUsername(username: string): Promise<string | null> {
-    return this.usernames.get(username) ?? null;
+  async findActivation(wecomUserid: string, botId: string): Promise<DmActivationRow | null> {
+    return this.activations.get(key(botId, wecomUserid)) ?? null;
   }
 
-  async findActivation(wecomUserid: string): Promise<DmActivationRow | null> {
-    return this.activations.get(wecomUserid) ?? null;
+  async findBindingByUserId(userId: string, botId: string): Promise<DmBindingRow | null> {
+    for (const row of this.bindings.values()) {
+      if (row.botId === botId && row.userId === userId) {
+        return row;
+      }
+    }
+    return null;
   }
 
-  async upsertActivationFromCallback(input: { wecomUserid: string; userId: string | null; at: Date }): Promise<void> {
+  async findBindingByWecomUserid(wecomUserid: string, botId: string): Promise<DmBindingRow | null> {
+    return this.bindings.get(key(botId, wecomUserid)) ?? null;
+  }
+
+  async upsertActivationFromCallback(input: { botId: string; wecomUserid: string; at: Date }): Promise<void> {
     this.upsertCalls.push(input);
-    const existing = this.activations.get(input.wecomUserid);
-    this.activations.set(input.wecomUserid, {
+    const existing = this.activations.get(key(input.botId, input.wecomUserid));
+    this.activations.set(key(input.botId, input.wecomUserid), {
       wecomUserid: input.wecomUserid,
-      userId: existing?.userId ?? input.userId,
+      userId: existing?.userId ?? null,
       firstActivatedAt: existing?.firstActivatedAt ?? input.at,
       lastMessageAt: input.at,
     });
   }
 
-  async backfillActivationOnSend(input: { wecomUserid: string; userId: string; at: Date }): Promise<void> {
+  async backfillActivationOnSend(input: {
+    botId: string;
+    wecomUserid: string;
+    userId: string;
+    at: Date;
+  }): Promise<void> {
     if (this.backfillFails) {
       throw new Error("fake 回填写库失败");
     }
     this.backfillCalls.push(input);
-    const existing = this.activations.get(input.wecomUserid);
-    this.activations.set(input.wecomUserid, {
+    const existing = this.activations.get(key(input.botId, input.wecomUserid));
+    this.activations.set(key(input.botId, input.wecomUserid), {
       wecomUserid: input.wecomUserid,
       userId: existing?.userId ?? input.userId,
       firstActivatedAt: existing?.firstActivatedAt ?? input.at,
       lastMessageAt: existing?.lastMessageAt ?? input.at,
     });
+  }
+
+  async bindingCodesSince(userId: string, since: Date): Promise<Date[]> {
+    return this.issuedAt.filter((item) => item.getTime() >= since.getTime());
+  }
+
+  async createBindingCode(input: { userId: string; code: string; expiresAt: Date; at: Date }): Promise<boolean> {
+    this.codeCreateCalls.push(input);
+    if (this.codeConflicts > 0) {
+      this.codeConflicts -= 1;
+      return false;
+    }
+    this.codes.set(input.code, {
+      id: this.nextCodeId,
+      code: input.code,
+      userId: input.userId,
+      status: "pending",
+      expiresAt: input.expiresAt,
+    });
+    this.nextCodeId += 1;
+    return true;
+  }
+
+  async findBindingCode(code: string): Promise<DmBindingCodeRow | null> {
+    return this.codes.get(code) ?? null;
+  }
+
+  async bindWithCode(input: {
+    codeId: number;
+    userId: string;
+    botId: string;
+    wecomUserid: string;
+    at: Date;
+  }): Promise<boolean> {
+    this.bindCalls.push(input);
+    if (this.bindFails) {
+      return false;
+    }
+    for (const row of this.codes.values()) {
+      if (row.id === input.codeId) {
+        row.status = "used";
+      }
+    }
+    this.bindings.set(key(input.botId, input.wecomUserid), {
+      botId: input.botId,
+      wecomUserid: input.wecomUserid,
+      userId: input.userId,
+      boundAt: input.at,
+    });
+    return true;
   }
 
   async insertDelivery(input: NotifyDmDeliveryInsert): Promise<void> {
@@ -80,7 +174,9 @@ class FakeDmRepository {
 
 class FakeAibot {
   sends: { userid: string; content: string; dmActivated?: boolean | null }[] = [];
+  replies: { reqId: string; userid: string; content: string }[] = [];
   result: AibotSendResult = { ok: true, attempts: 1 };
+  replyResult: AibotSendResult = { ok: true, attempts: 1 };
 
   async sendUserMarkdown(params: {
     userid: string;
@@ -89,6 +185,11 @@ class FakeAibot {
   }): Promise<AibotSendResult> {
     this.sends.push(params);
     return this.result;
+  }
+
+  async replyToCallback(params: { reqId: string; userid: string; content: string }): Promise<AibotSendResult> {
+    this.replies.push(params);
+    return this.replyResult;
   }
 }
 
@@ -121,16 +222,39 @@ function makeService(): {
   const inbox = new FakeNotifyInbox();
   const clock = new ClockService();
   clock.setSource(() => AT);
-  const service = new NotifyDmService(repo as never, aibot as unknown as WecomAibotClient, inbox as never, clock);
+  const config = { env: { WECOM_BOT_ID: BOT_ID } };
+  const service = new NotifyDmService(
+    repo as never,
+    aibot as unknown as WecomAibotClient,
+    inbox as never,
+    clock,
+    config as never,
+  );
   return { service, repo, aibot, inbox };
 }
 
 function contact(overrides: Partial<WecomDmContact> = {}): WecomDmContact {
-  return { id: USER_ID, username: USERID, status: "active", removedAt: null, ...overrides };
+  return { id: USER_ID, status: "active", removedAt: null, ...overrides };
 }
 
 function activation(overrides: Partial<DmActivationRow> = {}): DmActivationRow {
-  return { wecomUserid: USERID, userId: USER_ID, firstActivatedAt: BEFORE, lastMessageAt: BEFORE, ...overrides };
+  return { wecomUserid: OPEN_USERID, userId: null, firstActivatedAt: BEFORE, lastMessageAt: BEFORE, ...overrides };
+}
+
+function binding(overrides: Partial<DmBindingRow> = {}): DmBindingRow {
+  return { wecomUserid: OPEN_USERID, userId: USER_ID, boundAt: BEFORE, ...overrides };
+}
+
+function codeRow(overrides: Partial<DmBindingCodeRow> = {}): DmBindingCodeRow {
+  return { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() + 60_000), ...overrides };
+}
+
+/** 已绑定（可投递）的消费场景：联系人 + 绑定行齐备。 */
+function makeBoundService(): ReturnType<typeof makeService> {
+  const made = makeService();
+  made.repo.contacts.set(USER_ID, contact());
+  made.repo.bindings.set(key(BOT_ID, OPEN_USERID), { botId: BOT_ID, wecomUserid: OPEN_USERID, userId: USER_ID, boundAt: BEFORE });
+  return made;
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -165,13 +289,20 @@ function permanent(errcode: number, errmsg: string): AibotSendResult {
 function incoming(overrides: Partial<AibotIncomingMessage> = {}): AibotIncomingMessage {
   return {
     cmd: "aibot_msg_callback",
-    reqId: null,
+    reqId: "ReqIdCallback0001",
     chatid: null,
     chattype: "single",
-    fromUserId: USERID,
+    fromUserId: OPEN_USERID,
     msgid: "m1",
+    msgtype: "text",
+    text: "你好",
     ...overrides,
   };
+}
+
+/** 单聊发码回调（正文形态见实测量 E4：用户可能带「绑定」前缀、也可能不带空格）。 */
+function codeIncoming(text: string = "绑定" + CODE): AibotIncomingMessage {
+  return incoming({ text });
 }
 
 // ---------- markdown 组装 / 截断（纯函数） ----------
@@ -199,27 +330,46 @@ describe("composeDmMarkdown / truncateDmMarkdown（纯函数）", () => {
   });
 });
 
-// ---------- 消费三分类 ----------
+// ---------- 绑定码正文归一（纯函数） ----------
 
-describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）", () => {
-  it("ok：done + sent 行（target=userid）+ 加粗标题发出 + 未命中激活表 → 旁证回填（D4）", async () => {
-    const { service, repo, aibot, inbox } = makeService();
-    repo.contacts.set(USER_ID, contact());
+describe("extractBindingCode（正文归一取码 · 口径 §5）", () => {
+  it("纯码 / 「绑定」前缀 / 带空格：均取 6 位数字", () => {
+    expect(extractBindingCode("123456")).toBe("123456");
+    expect(extractBindingCode("绑定123456")).toBe("123456");
+    expect(extractBindingCode("  绑定 123456  ")).toBe("123456");
+  });
+
+  it("群聊 @机器人名 前缀容错（正文归一后仍取码 —— 但群聊回调在 ingest 层被排除）", () => {
+    expect(extractBindingCode("@LibiaoLinkRobot 绑定 123456")).toBe("123456");
+  });
+
+  it("无码 / 位数不足 / 位数超出 / 数字串中间：null（不误取）", () => {
+    expect(extractBindingCode("你好")).toBeNull();
+    expect(extractBindingCode("12345")).toBeNull();
+    expect(extractBindingCode("1234567")).toBeNull();
+    expect(extractBindingCode("")).toBeNull();
+  });
+});
+
+// ---------- 消费三分类（绑定行寻址） ----------
+
+describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 绑定行寻址）", () => {
+  it("ok：done + sent 行（target = 绑定行 open_userid）+ 加粗标题发出 + 未命中激活表 → 旁证回填（D4）", async () => {
+    const { service, repo, aibot, inbox } = makeBoundService();
 
     const outcome = await service.consume(claimedRow(payload()));
 
     expect(outcome).toEqual({ outcome: "done" });
-    expect(repo.deliveries[0]).toMatchObject({ state: "sent", target: USERID, attempts: 1, sentAt: AT, error: null });
-    expect(aibot.sends[0]).toMatchObject({ userid: USERID, dmActivated: false });
+    expect(repo.deliveries[0]).toMatchObject({ state: "sent", target: OPEN_USERID, attempts: 1, sentAt: AT, error: null });
+    expect(aibot.sends[0]).toMatchObject({ userid: OPEN_USERID, dmActivated: false });
     expect(aibot.sends[0]!.content).toBe("**任务节点完成**\n\n节点：到货验收 负责人：张工");
-    expect(repo.backfillCalls).toEqual([{ wecomUserid: USERID, userId: USER_ID, at: AT }]);
+    expect(repo.backfillCalls).toEqual([{ botId: BOT_ID, wecomUserid: OPEN_USERID, userId: USER_ID, at: AT }]);
     expect(inbox.copies).toEqual([]);
   });
 
   it("ok：命中激活表 → dmActivated=true 传入、不重复回填", async () => {
-    const { service, repo, aibot } = makeService();
-    repo.contacts.set(USER_ID, contact());
-    repo.activations.set(USERID, activation());
+    const { service, repo, aibot } = makeBoundService();
+    repo.activations.set(key(BOT_ID, OPEN_USERID), activation({ userId: USER_ID }));
 
     const outcome = await service.consume(claimedRow(payload()));
 
@@ -228,30 +378,51 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     expect(repo.backfillCalls).toEqual([]);
   });
 
-  it("ok：激活行存在但 user_id 留空（未匹配登记）→ 命中分流 + 补回填 user_id", async () => {
-    const { service, repo, aibot } = makeService();
-    repo.contacts.set(USER_ID, contact());
-    repo.activations.set(USERID, activation({ userId: null }));
+  it("ok：激活行存在但 user_id 留空（D1 仅登记行）→ 命中分流 + 补回填 user_id", async () => {
+    const { service, repo, aibot } = makeBoundService();
+    repo.activations.set(key(BOT_ID, OPEN_USERID), activation({ userId: null }));
 
     const outcome = await service.consume(claimedRow(payload()));
 
     expect(outcome).toEqual({ outcome: "done" });
     expect(aibot.sends[0]!.dmActivated).toBe(true);
-    expect(repo.backfillCalls).toEqual([{ wecomUserid: USERID, userId: USER_ID, at: AT }]);
+    expect(repo.backfillCalls).toEqual([{ botId: BOT_ID, wecomUserid: OPEN_USERID, userId: USER_ID, at: AT }]);
   });
 
   it("ok：旁证回填写库失败 → 不影响 done（旁证非关键路径）", async () => {
-    const { service, repo } = makeService();
-    repo.contacts.set(USER_ID, contact());
-    repo.backfillFails = true;
+    const made = makeBoundService();
+    made.repo.backfillFails = true;
 
-    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+    expect(await made.service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+  });
+
+  it("未绑定企微（无绑定行）：不发帧 + dead 行（target=user:<id>）+ D4 绑定指引降级", async () => {
+    const { service, repo, aibot, inbox } = makeService();
+    repo.contacts.set(USER_ID, contact());
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome.outcome).toBe("dead");
+    expect(aibot.sends).toEqual([]);
+    expect(repo.deliveries[0]).toMatchObject({
+      state: "dead",
+      target: "user:" + USER_ID,
+      attempts: 0,
+      error: "收件人未绑定企业微信（无可投递地址）",
+    });
+    expect(inbox.copies).toHaveLength(1);
+    expect(inbox.copies[0]!.dedupeKey).toBe("R02:t-1:v5:aibot:c504");
+    expect(String(inbox.copies[0]!.message.body)).toContain("节点：到货验收 负责人：张工");
+    expect(String(inbox.copies[0]!.message.body)).toContain("当前用户未绑定企业微信，请前往设置补绑");
+  });
+
+  it("D4 话术终稿逐字锁定（前缀 = 标签行 + 终稿句）", () => {
+    expect(DM_BINDING_DEGRADE_PREFIX).toBe("【企微未送达，已转站内信】\n当前用户未绑定企业微信，请前往设置补绑\n\n");
   });
 
   it("rate_limited：deferred + deferred 行（availableAt = retryAt；attempts 不消耗）", async () => {
     const retryAt = new Date(AT.getTime() + 30_000);
-    const { service, repo, aibot } = makeService();
-    repo.contacts.set(USER_ID, contact());
+    const { service, repo, aibot } = makeBoundService();
     aibot.result = {
       ok: false,
       kind: "rate_limited",
@@ -273,9 +444,8 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
 
   it("846607 命中激活表（客户端按超频分类）→ dmActivated=true + deferred（与未激活分支成对）", async () => {
     const retryAt = new Date(AT.getTime() + 60_000);
-    const { service, repo, aibot } = makeService();
-    repo.contacts.set(USER_ID, contact());
-    repo.activations.set(USERID, activation());
+    const { service, repo, aibot } = makeBoundService();
+    repo.activations.set(key(BOT_ID, OPEN_USERID), activation({ userId: USER_ID }));
     aibot.result = {
       ok: false,
       kind: "rate_limited",
@@ -293,8 +463,7 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
   });
 
   it("retryable（断连 / 未订阅 / 超时）：retry + failed 行", async () => {
-    const { service, repo, aibot } = makeService();
-    repo.contacts.set(USER_ID, contact());
+    const { service, repo, aibot } = makeBoundService();
     aibot.result = {
       ok: false,
       kind: "retryable",
@@ -312,8 +481,7 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
   });
 
   it("permanent（853000 配置类）：dead + dead 行 + 通用前缀降级（:c504 / 标题关联保留）", async () => {
-    const { service, repo, aibot, inbox } = makeService();
-    repo.contacts.set(USER_ID, contact());
+    const { service, repo, aibot, inbox } = makeBoundService();
     aibot.result = permanent(853000, "invalid bot");
 
     const outcome = await service.consume(
@@ -321,7 +489,7 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     );
 
     expect(outcome.outcome).toBe("dead");
-    expect(repo.deliveries[0]).toMatchObject({ state: "dead", target: USERID, error: expect.stringContaining("853000") });
+    expect(repo.deliveries[0]).toMatchObject({ state: "dead", target: OPEN_USERID, error: expect.stringContaining("853000") });
     expect(inbox.copies).toHaveLength(1);
     expect(inbox.copies[0]!.topic).toBe("notify.message");
     expect(inbox.copies[0]!.dedupeKey).toBe("R02:t-1:v5:aibot:c504");
@@ -334,11 +502,11 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     });
     expect(inbox.copies[0]!.message.body.startsWith(DM_DEGRADE_PREFIX)).toBe(true);
     expect(inbox.copies[0]!.message.body).toContain("节点：到货验收 负责人：张工");
+    expect(inbox.copies[0]!.message.body).not.toContain("未绑定企业微信");
   });
 
-  it("permanent（846607 未命中激活表 = 未激活）：dead + 降级前缀附激活指引话术终稿（P3 · 2026-10-15）", async () => {
-    const { service, repo, aibot, inbox } = makeService();
-    repo.contacts.set(USER_ID, contact());
+  it("permanent（846607 未命中激活表 · 兜底分支）：dead + 绑定指引话术（D4 终稿）", async () => {
+    const { service, repo, aibot, inbox } = makeBoundService();
     aibot.result = permanent(846607, "aibot send msg frequency limit exceeded");
 
     const outcome = await service.consume(claimedRow(payload()));
@@ -348,9 +516,10 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     expect(repo.deliveries[0]).toMatchObject({ state: "dead", error: expect.stringContaining("846607") });
     expect(inbox.copies).toHaveLength(1);
     const body = String(inbox.copies[0]!.message.body);
-    expect(body.startsWith(DM_ACTIVATION_DEGRADE_PREFIX)).toBe(true);
-    expect(body).toContain("当前机器人未激活，请私发任意消息给机器人即可激活。");
+    expect(body.startsWith(DM_BINDING_DEGRADE_PREFIX)).toBe(true);
+    expect(body).toContain("当前用户未绑定企业微信，请前往设置补绑");
     expect(body).toContain("节点：到货验收 负责人：张工");
+    expect(body).not.toContain("私发任意消息");
   });
 
   it("收件人不存在：dead + dead 行（target=user:<id>）、不发送、不降级", async () => {
@@ -364,30 +533,31 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     expect(inbox.copies).toEqual([]);
   });
 
-  it("收件人停用 / 已删除 / userid 缺失：dead + dead 行 + 降级（同 app 口径：用户存在即降级）", async () => {
-    const disabled = makeService();
+  it("收件人停用 / 已删除：dead + dead 行 + 降级（同 app 口径：用户存在即降级；target 取绑定行地址）", async () => {
+    const disabled = makeBoundService();
     disabled.repo.contacts.set(USER_ID, contact({ status: "disabled" }));
     expect((await disabled.service.consume(claimedRow(payload()))).outcome).toBe("dead");
-    expect(disabled.repo.deliveries[0]).toMatchObject({ state: "dead", target: USERID, error: "收件人不可投递（已停用）" });
+    expect(disabled.repo.deliveries[0]).toMatchObject({ state: "dead", target: OPEN_USERID, error: "收件人不可投递（已停用）" });
     expect(disabled.inbox.copies).toHaveLength(1);
 
-    const removed = makeService();
+    const removed = makeBoundService();
     removed.repo.contacts.set(USER_ID, contact({ removedAt: AT }));
     expect((await removed.service.consume(claimedRow(payload()))).outcome).toBe("dead");
     expect(removed.repo.deliveries[0]!.error).toContain("已删除");
     expect(removed.inbox.copies).toHaveLength(1);
+  });
 
-    const nameless = makeService();
-    nameless.repo.contacts.set(USER_ID, contact({ username: "  " }));
-    expect((await nameless.service.consume(claimedRow(payload()))).outcome).toBe("dead");
-    expect(nameless.repo.deliveries[0]).toMatchObject({ target: "user:" + USER_ID, error: "收件人不可投递（userid 缺失）" });
-    expect(nameless.aibot.sends).toEqual([]);
-    expect(nameless.inbox.copies).toHaveLength(1);
+  it("收件人停用且未绑定：dead 行 target 回落 user:<id>（无地址可落）", async () => {
+    const made = makeService();
+    made.repo.contacts.set(USER_ID, contact({ status: "disabled" }));
+
+    expect((await made.service.consume(claimedRow(payload()))).outcome).toBe("dead");
+    expect(made.repo.deliveries[0]).toMatchObject({ target: "user:" + USER_ID, error: "收件人不可投递（已停用）" });
+    expect(made.aibot.sends).toEqual([]);
   });
 
   it("降级站内信写库失败：retry 收敛（不静默丢消息）", async () => {
-    const { service, repo, aibot, inbox } = makeService();
-    repo.contacts.set(USER_ID, contact());
+    const { service, repo, aibot, inbox } = makeBoundService();
     aibot.result = permanent(853000, "invalid bot");
     inbox.fail = true;
 
@@ -397,11 +567,11 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
     if (outcome.outcome === "retry") {
       expect(outcome.error).toContain("降级站内信失败");
     }
+    expect(repo.deliveries).toHaveLength(1);
   });
 
   it("发送内容：合法上限内长正文（3000 字）逐字发出、≤ 20000 字节防御上限（截断行为另由纯函数锁）", async () => {
-    const { service, repo, aibot } = makeService();
-    repo.contacts.set(USER_ID, contact());
+    const { service, repo, aibot } = makeBoundService();
 
     const body = "长".repeat(3_000);
     const outcome = await service.consume(claimedRow(payload({ body })));
@@ -440,62 +610,212 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 激活面）",
   });
 });
 
-// ---------- 回调 ingest ----------
+// ---------- 绑定码 ingest ----------
 
-describe("NotifyDmService.activateFromCallback（单聊激活 upsert）", () => {
-  it("单聊用户消息：upsert（wecom_userid = from.userid 原文 + 反查回填 user_id + 时刻）", async () => {
-    const { service, repo } = makeService();
-    repo.usernames.set(USERID, USER_ID);
+describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", () => {
+  it("非绑定码单聊消息：仅写激活登记（D1 · 不可作发送地址）、不回复", async () => {
+    const { service, repo, aibot } = makeService();
 
-    await service.activateFromCallback(incoming());
+    await service.ingestCallback(incoming({ text: "你好" }));
 
-    expect(repo.upsertCalls).toEqual([{ wecomUserid: USERID, userId: USER_ID, at: AT }]);
-    expect(repo.activations.get(USERID)).toEqual({
-      wecomUserid: USERID,
-      userId: USER_ID,
+    expect(repo.upsertCalls).toEqual([{ botId: BOT_ID, wecomUserid: OPEN_USERID, at: AT }]);
+    expect(repo.activations.get(key(BOT_ID, OPEN_USERID))).toEqual({
+      wecomUserid: OPEN_USERID,
+      userId: null,
       firstActivatedAt: AT,
       lastMessageAt: AT,
     });
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toEqual([]);
   });
 
-  it("幂等：重复回调刷新 last_message_at、first_activated_at 不覆盖", async () => {
-    const { service, repo } = makeService();
-    repo.usernames.set(USERID, USER_ID);
-    repo.activations.set(USERID, activation());
+  it("非文本消息（图片 / 语音）：不做码匹配、只登记激活", async () => {
+    const { service, repo, aibot } = makeService();
 
-    await service.activateFromCallback(incoming());
+    await service.ingestCallback(incoming({ msgtype: "image", text: null }));
 
-    const row = repo.activations.get(USERID)!;
-    expect(row.firstActivatedAt).toEqual(BEFORE);
-    expect(row.lastMessageAt).toEqual(AT);
+    expect(repo.upsertCalls).toHaveLength(1);
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toEqual([]);
   });
 
-  it("未匹配本地用户：user_id 留空登记（warn 不阻断 —— 该行仍可作已激活判据）", async () => {
-    const { service, repo } = makeService();
+  it("命中绑定码：同事务写绑定（bot_id + open_userid + 库内用户）+ 回「绑定成功」", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow());
 
-    await service.activateFromCallback(incoming());
+    await service.ingestCallback(codeIncoming("绑定" + CODE));
 
-    expect(repo.upsertCalls).toEqual([{ wecomUserid: USERID, userId: null, at: AT }]);
-    expect(repo.activations.get(USERID)!.userId).toBeNull();
+    expect(repo.upsertCalls).toHaveLength(1); // 先登记激活（D1）
+    expect(repo.bindCalls).toEqual([{ codeId: 7, userId: USER_ID, botId: BOT_ID, wecomUserid: OPEN_USERID, at: AT }]);
+    expect(repo.bindings.get(key(BOT_ID, OPEN_USERID))).toMatchObject({ userId: USER_ID, boundAt: AT });
+    expect(repo.codes.get(CODE)!.status).toBe("used");
+    expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_BOUND }]);
   });
 
-  it("enter_chat 等事件回调 / 群聊回调 / fromUserId 缺失：不 upsert（仅用户消息激活）", async () => {
-    const { service, repo } = makeService();
+  it("群聊 @机器人名 前缀正文（群形态）也容错取码 —— 但群聊回调一律不绑定", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow());
 
-    await service.activateFromCallback(incoming({ cmd: "aibot_event_callback" }));
-    await service.activateFromCallback(incoming({ chattype: "group" }));
-    await service.activateFromCallback(incoming({ fromUserId: null }));
+    await service.ingestCallback(incoming({ chattype: "group", chatid: "wrsuTest", text: "@LibiaoLinkRobot 绑定 " + CODE }));
 
     expect(repo.upsertCalls).toEqual([]);
-    expect(repo.activations.size).toBe(0);
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toEqual([]);
   });
 
-  it("userid 非法（超激活表 CHECK 字符集 / 空串）：忽略不入库（防脏回调打断 ingest）", async () => {
-    const { service, repo } = makeService();
+  it("enter_chat 等事件回调 / fromUserId 缺失 / userid 非法：不登记、不绑定、不回复", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow());
 
-    await service.activateFromCallback(incoming({ fromUserId: "bad userid!" }));
-    await service.activateFromCallback(incoming({ fromUserId: "" }));
+    await service.ingestCallback(incoming({ cmd: "aibot_event_callback", text: CODE }));
+    await service.ingestCallback(incoming({ fromUserId: null, text: CODE }));
+    await service.ingestCallback(incoming({ fromUserId: "bad userid!", text: CODE }));
+    await service.ingestCallback(incoming({ fromUserId: "", text: CODE }));
 
     expect(repo.upsertCalls).toEqual([]);
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toEqual([]);
+  });
+
+  it("正文未命中任何码：登记激活 + 不回复（防探测）", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.ingestCallback(codeIncoming("绑定654321"));
+
+    expect(repo.upsertCalls).toHaveLength(1);
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toEqual([]);
+  });
+
+  it("码已过期：回「码已失效，请重新获取」+ 不写绑定", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow({ expiresAt: new Date(AT.getTime() - 1_000) }));
+
+    await service.ingestCallback(codeIncoming());
+
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
+  });
+
+  it("码已用（status=used）：回「码已失效，请重新获取」+ 不写绑定", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow({ status: "used" }));
+
+    await service.ingestCallback(codeIncoming());
+
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
+  });
+
+  it("该企微号已绑定：回「已绑定」+ 不再绑定（幂等 · 含回调重复投递）", async () => {
+    const { service, repo, aibot } = makeBoundService();
+    repo.codes.set(CODE, codeRow());
+
+    await service.ingestCallback(codeIncoming());
+    await service.ingestCallback(codeIncoming());
+
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies).toHaveLength(2);
+    expect(aibot.replies[0]!.content).toBe(DM_BINDING_REPLY_ALREADY_BOUND);
+    expect(repo.bindings.get(key(BOT_ID, OPEN_USERID))!.boundAt).toEqual(BEFORE); // 原绑定未被覆盖
+  });
+
+  it("占用失败（并发消费 / 恰过期）：回「码已失效」+ 不写绑定", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow());
+    repo.bindFails = true;
+
+    await service.ingestCallback(codeIncoming());
+
+    expect(repo.bindCalls).toHaveLength(1);
+    expect(repo.bindings.size).toBe(0);
+    expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
+  });
+
+  it("回调缺 req_id：跳过会话内回执（不抛错），绑定仍落库", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow());
+
+    await service.ingestCallback(incoming({ reqId: null, text: CODE }));
+
+    expect(repo.bindings.size).toBe(1);
+    expect(aibot.replies).toEqual([]);
+  });
+
+  it("会话内回执失败 / 抛错：不影响绑定结果（不回滚、不抛）", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.codes.set(CODE, codeRow());
+    aibot.replyResult = permanent(853000, "invalid bot");
+
+    await service.ingestCallback(codeIncoming());
+    expect(repo.bindings.size).toBe(1);
+
+    const second = makeService();
+    second.repo.codes.set(CODE, codeRow());
+    second.aibot.replyToCallback = async () => {
+      throw new Error("fake 回复异常");
+    };
+    await second.service.ingestCallback(codeIncoming());
+    expect(second.repo.bindings.size).toBe(1);
+  });
+});
+
+// ---------- 取码与绑定态 ----------
+
+describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径）", () => {
+  it("取码：6 位数字 + expiresAt = now + 10 分钟", async () => {
+    const { service, repo } = makeService();
+
+    const result = await service.requestBindingCode(USER_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.code).toMatch(/^[0-9]{6}$/);
+      expect(result.expiresAt.getTime()).toBe(AT.getTime() + DM_BINDING_CODE_TTL_MS);
+    }
+    expect(repo.codeCreateCalls).toHaveLength(1);
+    expect(repo.codeCreateCalls[0]).toMatchObject({ userId: USER_ID, expiresAt: new Date(AT.getTime() + DM_BINDING_CODE_TTL_MS), at: AT });
+  });
+
+  it("频率限制：窗口内已取满 3 次 → rate_limited + retryAt = 最早一次码 + 1 小时", async () => {
+    const { service, repo } = makeService();
+    const first = new Date(AT.getTime() - 3_500_000);
+    repo.issuedAt = [first, new Date(AT.getTime() - 2_000_000), new Date(AT.getTime() - 1_000_000)];
+
+    const result = await service.requestBindingCode(USER_ID);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("rate_limited");
+      expect(result.retryAt.getTime()).toBe(first.getTime() + 3_600_000);
+    }
+    expect(repo.codeCreateCalls).toEqual([]);
+    expect(DM_BINDING_CODE_MAX_PER_HOUR).toBe(3);
+  });
+
+  it("撞码重试：前两次被唯一键挡下 → 第三次成功", async () => {
+    const { service, repo } = makeService();
+    repo.codeConflicts = 2;
+
+    const result = await service.requestBindingCode(USER_ID);
+
+    expect(result.ok).toBe(true);
+    expect(repo.codeCreateCalls).toHaveLength(3);
+  });
+
+  it("连续撞码到顶：抛错（由调用方按 5xx 收口，不静默返回无效码）", async () => {
+    const { service, repo } = makeService();
+    repo.codeConflicts = 99;
+
+    await expect(service.requestBindingCode(USER_ID)).rejects.toThrow("绑定码生成失败");
+  });
+
+  it("绑定态读面：已绑定 / 未绑定", async () => {
+    const bound = makeBoundService();
+    expect(await bound.service.getBindingState(USER_ID)).toEqual({ bound: true, boundAt: BEFORE });
+
+    const unbound = makeService();
+    unbound.repo.contacts.set(USER_ID, contact());
+    expect(await unbound.service.getBindingState(USER_ID)).toEqual({ bound: false, boundAt: null });
   });
 });

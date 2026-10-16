@@ -33,8 +33,11 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
  * 应用消息（M5-03-3）：`NotifyAppService` 消费 `notify.message` 的 channel=wecom_app 分支（OutboxModule 路由）；
  * `WecomClient`（自建应用）由工厂装配，限速计数同走 `PgRateWindowStore`。
  * 单聊 aibot（M5-03-5-3 实现段）：`NotifyDmService` 消费 `notify.message` 的 channel=wecom_aibot 分支
- * （发送面 = 长连接 `sendUserMarkdown` · 限速 kind `single` · 激活表读 / 回填 · 846607 分流 + C5-04 降级；
+ * （发送面 = 长连接 `sendUserMarkdown` · 限速 kind `single` · 绑定行寻址 / 激活表读 · 846607 分流 + C5-04 降级；
  * 生产路由 / 产出接线 / worker 回调分流随 M5-03-5-4 —— 见执行计划 §4）。
+ * 单聊绑定码链路（M5-03-5-6 实现刀 · 迁移 0055）：`NotifyDmService` 扩 `requestBindingCode`（取码）/
+ * `ingestCallback`（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执）/ `getBindingState`（绑定态读）；
+ * 生成绑定码 / 查询绑定态 / 解绑的 HTTP 契约属 wmj 线 —— 本刀只落服务能力（口径 §11）。
  */
 @Module({
   imports: [IdentityModule, PermissionModule],

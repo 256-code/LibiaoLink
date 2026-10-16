@@ -24,15 +24,28 @@ export { NotifyAppRepository } from "./notify.app.repository.js";
 export type { NotifyAppDeliveryInsert, WecomAppContact } from "./notify.app.repository.js";
 export {
   composeDmMarkdown,
-  DM_ACTIVATION_DEGRADE_PREFIX,
+  DM_BINDING_CODE_MAX_PER_HOUR,
+  DM_BINDING_CODE_PATTERN,
+  DM_BINDING_CODE_TTL_MS,
+  DM_BINDING_DEGRADE_PREFIX,
+  DM_BINDING_REPLY_ALREADY_BOUND,
+  DM_BINDING_REPLY_BOUND,
+  DM_BINDING_REPLY_INVALID,
   DM_DEGRADE_PREFIX,
   DM_MARKDOWN_MAX_BYTES,
   DM_TRUNCATION_SUFFIX,
+  extractBindingCode,
   NotifyDmService,
   truncateDmMarkdown,
 } from "./notify.dm.service.js";
 export { NotifyDmRepository } from "./notify.dm.repository.js";
-export type { DmActivationRow, NotifyDmDeliveryInsert, WecomDmContact } from "./notify.dm.repository.js";
+export type {
+  DmActivationRow,
+  DmBindingCodeRow,
+  DmBindingRow,
+  NotifyDmDeliveryInsert,
+  WecomDmContact,
+} from "./notify.dm.repository.js";
 export { PgRateWindowStore } from "./wecom.rate.pg.js";
 export { NotifyService } from "./notify.service.js";
 export type { NotifyFlushStats, NotifySnoozeFlushStats } from "./notify.service.js";
