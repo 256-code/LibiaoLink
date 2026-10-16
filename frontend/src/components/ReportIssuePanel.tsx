@@ -830,7 +830,7 @@ function PasteIcon({ className = "h-5 w-5" }: { className?: string }) {
  *  4) Esc 改**捕获阶段**监听并止住传播：预览层在最上层时 Esc 只关预览层（再按一次才轮到抽屉自己的 Esc）。
  *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图改挂共享组件 ImageZoomViewer —— 滚轮 / ＋− / 双击 /
  *  拖动平移（25% ~ 800%）；点图不再关（留给缩放 / 拖动），关浮层 = 点遮罩 / Esc。 */
-function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
+function PhotoPreview({ url, name, onClose, zClass = "z-[60]" }: { url: string; name: string; onClose: () => void; /** 浮层层级（Push 350：变更详情弹窗（z-[70]）内嵌缩略图的大图预览要盖在弹窗之上 → 传 z-[80]；默认同抽屉口径 z-[60]）。 */ zClass?: string }) {
   const t = useT();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -857,7 +857,7 @@ function PhotoPreview({ url, name, onClose }: { url: string; name: string; onClo
       onPointerDown={(event) => {
         event.stopPropagation();
       }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 p-6"
+      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 p-6"}
     >
       <figure className="flex max-h-full max-w-full flex-col items-center">
         <ImageZoomViewer src={url} alt={name} />
@@ -1001,14 +1001,20 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
  *  Push 206 加 size 档位：sm（默认 —— 表单贴图区：32×32 小缩略图 + 文件名胶囊）/ lg（「日报记录」列表用：
  *  约 128×96 大图瓦片、多张自动折行、只出图不带文件名 —— 业务样 = 图 2；名字放 title 提示）。
  *  Push 207 再加 md（40×40 紧凑缩略图、只出图不带文件名 —— 业务样 = 图五；Push 217 起「问题追踪」表改用 lg，
- *  现用于「问题看板」卡片与问题详情抽屉的贴图区）。 */
-export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemove = false }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg"; /** Push 224 续：移除图片二次确认（只开在抽屉口径 —— 抽屉里 × 是即时落库的，业务口径「移除图片要加二次确认」；表单 / 编辑弹窗里的删除仍是一下即摘，保存时才落库）。 */ confirmRemove?: boolean }) {
+ *  现用于「问题看板」卡片与问题详情抽屉的贴图区）。
+ *  Push 350：大图预览层层级参数 previewZClass（变更详情弹窗内传 z-[80]，避免大图被弹窗 z-[70] 盖住；默认 z-[60]）+ 开合通知 onPreviewOpenChange（宿主弹窗 Esc 让位：预览开着时 Esc 先关预览、弹窗仍在）。 */
+export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", confirmRemove = false, previewZClass = "z-[60]", onPreviewOpenChange }: { items: readonly ReportPhoto[]; onRemove?: (at: number) => void; onRename?: (at: number, name: string) => void; strip?: string; size?: "sm" | "md" | "lg"; /** Push 224 续：移除图片二次确认（只开在抽屉口径 —— 抽屉里 × 是即时落库的，业务口径「移除图片要加二次确认」；表单 / 编辑弹窗里的删除仍是一下即摘，保存时才落库）。 */ confirmRemove?: boolean; /** 大图预览层层级（Push 350：默认 z-[60]；变更详情弹窗内传 z-[80]，大图盖在弹窗 z-[70] 之上）。 */ previewZClass?: string; /** 大图预览开 / 关通知（Push 350：宿主弹窗据此让出 Esc 优先级 —— 预览开着时 Esc 先关预览、弹窗仍在）。 */ onPreviewOpenChange?: (open: boolean) => void }) {
   const t = useT();
   const isLarge = size === "lg";
   /** 列表里的紧凑缩略图档（40×40、名字进 title）。 */
   const isThumb = size === "md";
   /** 大图预览（Push 216：存已解析的展示地址 —— 本地 blob 或服务端预览签名）。 */
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  /** 大图预览开 / 关（Push 350：带出开合通知 —— 宿主弹窗 Esc 让位给预览层）。 */
+  const setPreviewOpen = (next: { url: string; name: string } | null) => {
+    setPreview(next);
+    onPreviewOpenChange?.(next !== null);
+  };
   /** 移除图片二次确认（Push 224 续 · 业务口径「移除图片要加二次确认」，只开在抽屉口径）：
    *  第一下「×」只出底部确认条（与行删除二次提示同款固定底栏），第二下「移除」才真摘。
    *  确认条 portal 到 body —— 抽屉壳 .drawer-panel 的入场动画会当 containing block，留在组件里会偏移。 */
@@ -1080,10 +1086,10 @@ export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", conf
           startRename={startRename}
           onRename={onRename}
           onRemove={onRemove === undefined ? undefined : confirmRemove ? requestRemove : onRemove}
-          onPreview={(url, name) => setPreview({ url, name })}
+          onPreview={(url, name) => { setPreviewOpen({ url, name }); }}
         />
       ))}
-      {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => setPreview(null)} />}
+      {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => { setPreviewOpen(null); }} zClass={previewZClass} />}
       {pendingRemove === null ? null : createPortal(
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
           <div
