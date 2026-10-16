@@ -125,6 +125,23 @@ const ZH_TEXTS = {
   "header.logout": "退出登录",
   "header.audit": "操作记录",
   "header.files": "文件库",
+  "header.inbox.title": "站内信",
+  "header.inbox.unreadAria": "站内信 · {count} 条未读",
+  "header.inbox.markAllRead": "全部已读",
+  "header.inbox.empty": "暂无消息",
+  "header.inbox.loadFailed": "消息加载失败",
+  "header.inbox.retry": "重试",
+  "header.inbox.more": "仅显示最近 {shown} / {total} 条",
+  "header.inbox.merged": "含 {n} 条合并消息",
+  "header.inbox.saveFailed": "消息状态保存失败",
+  "inbox.type.reminder": "提醒",
+  "inbox.type.approval": "审批",
+  "inbox.type.broadcast": "播报",
+  "inbox.type.system": "系统",
+  "time.justNow": "刚刚",
+  "time.minutesAgo": "{n} 分钟前",
+  "time.hoursAgo": "{n} 小时前",
+  "time.daysAgo": "{n} 天前",
   "home.sort.groupAria": "按创建时间排序（降序 / 升序）",
   "home.sort.field": "创建时间",
   "home.sort.desc": "降序",
@@ -1303,6 +1320,23 @@ const EN_TEXTS: Record<TextKey, string> = {
   "header.logout": "Sign out",
   "header.audit": "Activity log",
   "header.files": "File library",
+  "header.inbox.title": "Inbox",
+  "header.inbox.unreadAria": "Inbox · {count} unread",
+  "header.inbox.markAllRead": "Mark all read",
+  "header.inbox.empty": "No messages",
+  "header.inbox.loadFailed": "Failed to load messages",
+  "header.inbox.retry": "Retry",
+  "header.inbox.more": "Showing latest {shown} of {total}",
+  "header.inbox.merged": "{n} messages merged",
+  "header.inbox.saveFailed": "Failed to save the message status",
+  "inbox.type.reminder": "Reminder",
+  "inbox.type.approval": "Approval",
+  "inbox.type.broadcast": "Broadcast",
+  "inbox.type.system": "System",
+  "time.justNow": "Just now",
+  "time.minutesAgo": "{n} min ago",
+  "time.hoursAgo": "{n} h ago",
+  "time.daysAgo": "{n} d ago",
   "home.sort.groupAria": "Sort by created time (descending / ascending)",
   "home.sort.field": "Created",
   "home.sort.desc": "Descending",
@@ -2869,4 +2903,35 @@ export function fullDateText(locale: Locale, iso: string): string {
   const month = Number(match[2]);
   const day = Number(match[3]);
   return locale === "en" ? EN_MONTHS[month - 1] + " " + String(day) + ", " + String(year) : String(year) + "年" + String(month) + "月" + String(day) + "日";
+}
+
+/** 站内信列表的相对时间文案（Push 352 · 顶栏弹窗；词典键 time.justNow / minutesAgo / hoursAgo / daysAgo）：
+ *  < 1 分钟「刚刚」/ {n} 分钟前 / {n} 小时前 / {n} 天前（< 7 天），更早回落完整日期（按沪时区取日 ——
+ *  本地换算，避免 i18n → projectApi 的反向依赖）；非法时间原样返回。 */
+const RELATIVE_MINUTE_MS = 60_000;
+
+export function relativeTimeText(locale: Locale, iso: string): string {
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) {
+    return iso;
+  }
+  const diff = Date.now() - time;
+  if (diff < RELATIVE_MINUTE_MS) {
+    return textOf(locale, "time.justNow");
+  }
+  if (diff < 60 * RELATIVE_MINUTE_MS) {
+    return textOf(locale, "time.minutesAgo", { n: Math.floor(diff / RELATIVE_MINUTE_MS) });
+  }
+  if (diff < 24 * 60 * RELATIVE_MINUTE_MS) {
+    return textOf(locale, "time.hoursAgo", { n: Math.floor(diff / (60 * RELATIVE_MINUTE_MS)) });
+  }
+  if (diff < 7 * 24 * 60 * RELATIVE_MINUTE_MS) {
+    return textOf(locale, "time.daysAgo", { n: Math.floor(diff / (24 * 60 * RELATIVE_MINUTE_MS)) });
+  }
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(time));
+  const pick = (type: string): string => {
+    const found = parts.find((part) => part.type === type);
+    return found === undefined ? "" : found.value;
+  };
+  return fullDateText(locale, pick("year") + "-" + pick("month") + "-" + pick("day"));
 }

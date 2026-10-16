@@ -249,6 +249,62 @@ body {
   animation: ll-plan-bg-panel-in 240ms cubic-bezier(0.175, 0.885, 0.32, 1.1) both;
 }
 
+/* 顶栏「站内信」未读红点（Push 352 · 业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗
+   用来消息通知」）：样式借 Transitions.dev「Notification badge」样张 —— 未读出现 = 260ms 自左下角滑入
+   + 弹性放大回弹（cubic-bezier(0.34,1.36,0.64,1)）；读完清零 = 180ms 缩小 + 模糊消散。
+   红点常挂按钮右上角（pointer-events:none，不抢按钮点击）。 */
+@keyframes ll-inbox-badge-slide-in {
+  from { transform: translate(-8px, 12px); }
+  to   { transform: translate(0, 0); }
+}
+
+.inbox-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.inbox-badge[data-open="true"] {
+  animation: ll-inbox-badge-slide-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.inbox-badge-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px #ffffff;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  transform-origin: center;
+  transform: scale(1);
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    transform 500ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    opacity 400ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    filter 500ms cubic-bezier(0.34, 1.36, 0.64, 1);
+  will-change: transform, opacity, filter;
+}
+
+.inbox-badge[data-open="false"] .inbox-badge-dot {
+  transform: scale(0);
+  opacity: 0;
+  filter: blur(2px);
+  transition:
+    transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    filter 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drawer-backdrop,
   .drawer-panel,
@@ -258,6 +314,12 @@ body {
   .submenu-pop,
   .plan-bg-panel-pop {
     animation: none;
+  }
+  .inbox-badge {
+    animation: none;
+  }
+  .inbox-badge-dot {
+    transition: none;
   }
 }
 
