@@ -12,10 +12,15 @@
  *   「数据详情」只读表用，仍是同一轮取数里存下、**零额外请求**（明细筛选口径见 data/dashboardProgress.ts）。
  * - Push 339：「任务状态」视图（饼图）也用同一轮取数 —— 顺带分桶出 statusAll / statusByProject
  *   （buildDashboardStatus，口径见 data/dashboardProgress.ts），同样零额外请求。
+ * - Push 344：「问题」视图（问题状态 × 问题归类分组柱状图 + 点柱只读「数据详情」）的读面在 fetchDashboardIssues ——
+ *   问题 / 日报逐项目读面**懒加载**（首次切到「问题」视图才拉，任务读面 / 首屏不受影响），拉完存明细、
+ *   切项目 / 开弹窗零请求（口径见 data/dashboardProgress.ts 的 buildDashboardIssues）。
  */
-import { buildDashboardProgress, buildDashboardStatus, type DashboardProgress, type DashboardStatus } from "./data/dashboardProgress";
+import { buildDashboardIssues, buildDashboardProgress, buildDashboardStatus, type DashboardIssues, type DashboardProgress, type DashboardStatus } from "./data/dashboardProgress";
 import { fetchProjectList } from "./projectApi";
 import { fetchProjectTasks, type ApiTaskListItem } from "./taskApi";
+import { fetchProjectIssues, fetchProjectReports } from "./reportApi";
+import type { DailyReport, Issue } from "./data/reports";
 import { EMPTY_LIST_QUERY } from "./useHashRoute";
 
 /** 并发闸：同时最多 4 个 /tasks 请求在飞。 */
@@ -84,4 +89,40 @@ export async function fetchDashboardProgress(projects?: readonly { id: string; n
     tasksByProject,
     managerByProject,
   };
+}
+
+/** 仪表盘问题分布取数（Push 344 · 「问题」视图 / 点柱「数据详情」）。 */
+export type DashboardIssueDataset = {
+  /** 全部项目合计（「问题」视图 · 全部项目口径）。 */
+  readonly all: DashboardIssues;
+  /** 项目 id → 该项目问题分布（切项目零请求）。 */
+  readonly byProject: ReadonlyMap<string, DashboardIssues>;
+  /** 项目 id → 该项目问题明细（点柱「数据详情」按 isIssueInCell 筛；同一轮取数里存下）。 */
+  readonly issuesByProject: ReadonlyMap<string, readonly Issue[]>;
+  /** 项目 id → 该项目日报明细（明细表的报告侧字段 —— 日期 / 当日完成工作 / 施工人数 / 填写者 / 明日计划 / 现场工作附图 —— 按 issue.reportId 取）。 */
+  readonly reportsByProject: ReadonlyMap<string, readonly DailyReport[]>;
+};
+
+/**
+ * 问题 / 日报逐项目读面 → 问题分布 + 明细（懒加载：调用方 = Hub.tsx 首次切到「问题」视图时触发；口径见 data/dashboardProgress.ts）。
+ * 两条读面各自并发 4；任一项目失败即整轮失败（调用方落「统计加载失败」，切走再切回会重试）。
+ */
+export async function fetchDashboardIssues(projects?: readonly { id: string; name: string }[]): Promise<DashboardIssueDataset> {
+  const list = projects === undefined ? (await fetchProjectList(EMPTY_LIST_QUERY)).items : projects;
+  const [issuePages, reportPages] = await Promise.all([
+    mapWithLimit(list, 4, (project) => fetchProjectIssues(project.id)),
+    mapWithLimit(list, 4, (project) => fetchProjectReports(project.id)),
+  ]);
+  const byProject = new Map<string, DashboardIssues>();
+  const issuesByProject = new Map<string, readonly Issue[]>();
+  const reportsByProject = new Map<string, readonly DailyReport[]>();
+  const allIssues: Issue[] = [];
+  list.forEach((project, index) => {
+    const issues = issuePages[index];
+    byProject.set(project.id, buildDashboardIssues(issues));
+    issuesByProject.set(project.id, issues);
+    reportsByProject.set(project.id, reportPages[index]);
+    allIssues.push(...issues);
+  });
+  return { all: buildDashboardIssues(allIssues), byProject, issuesByProject, reportsByProject };
 }
