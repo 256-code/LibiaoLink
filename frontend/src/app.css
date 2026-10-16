@@ -2251,3 +2251,50 @@ body {
   gap: 0.55rem 2.25rem;
   padding: 0.35rem 3.33% 0.6rem;
 }
+
+/* 「词频图」（Push 353 · 业务口径 2026-10-16「现在做这个词频图 根据变更原因的词频拼成这个图」+
+   「词频图中修饰词不纳入 只保留核心词纳入词频图」）：变更原因核心词词云 —— 词面 / 字号 / 颜色由组件内联
+   （data/changeWords.ts 分词、HubDashWordCloud 画布像素蒙版落位）；这里只定画布伸缩、悬停压深与可点光标
+   （选中具体项目时只有词频最高的中心词可点 —— 与柱段 / 扇区 / 问题柱 / 交付柱同一套口径）。 */
+.hub-dash-wordcloud {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.hub-dash-wordcloud__word {
+  transition: filter 150ms ease;
+}
+
+.hub-dash-wordcloud__word[data-drill="true"] {
+  cursor: pointer;
+}
+
+.hub-dash-wordcloud__word[data-hover="true"] {
+  filter: brightness(0.84);
+}
+
+/* 「词频图」数据详情（Push 353）：与任务版 / 问题版共用弹窗外壳（.hub-dash-detail*），
+   只补来源小图标与两处宽列（变更内容描述 / 变更原因）。 */
+.hub-dash-detail__sourceIcon {
+  color: #8a9099;
+}
+
+.hub-dash-word-detail .hub-dash-detail__scroll {
+  max-height: min(64vh, 34rem);
+}
+
+.hub-dash-word-detail__table th:nth-child(5),
+.hub-dash-word-detail__table td:nth-child(5),
+.hub-dash-word-detail__table th:nth-child(8),
+.hub-dash-word-detail__table td:nth-child(8) {
+  min-width: 15rem;
+}
+
+.hub-dash-word-detail__table th:nth-child(6),
+.hub-dash-word-detail__table td:nth-child(6),
+.hub-dash-word-detail__table th:nth-child(7),
+.hub-dash-word-detail__table td:nth-child(7) {
+  min-width: 11rem;
+}

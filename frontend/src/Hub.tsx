@@ -4,10 +4,10 @@ import { useT } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
-import type { DashboardDataset, DashboardIssueDataset } from "./dashboardApi";
+import type { DashboardDataset, DashboardIssueDataset, DashboardWordDataset } from "./dashboardApi";
 import type { HubDashView } from "./data/dashboardProgress";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
-import { fetchDashboardIssues, fetchDashboardProgress } from "./dashboardApi";
+import { fetchDashboardChangeWords, fetchDashboardIssues, fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
 import { fetchProjectList, type ApiProject } from "./projectApi";
 import { EMPTY_LIST_QUERY, replaceHubView, type HubView } from "./useHashRoute";
@@ -30,6 +30,11 @@ import type { MeResponse } from "./types";
  * Push 344（2026-10-16 业务口径「现在做这个问题 效果和上面做的一样」）：仪表盘第三个视图「问题」（分组柱状图 +
  * 点柱只读「数据详情」）的问题 / 日报读面**懒加载** —— 首次切到「问题」视图才拉（ensureIssues；不加重仪表盘首屏那轮
  * 任务取数），拉完存明细、切项目 / 开弹窗零请求；已经拉过（ready）时随变更静默刷新跟着刷（见下 useLiveRefresh）。
+ *
+ * Push 353（2026-10-16 业务口径「现在做这个词频图 根据变更原因的词频拼成这个图」）：仪表盘第五个视图「词频图」
+ * （变更原因核心词词云 + 点最中间那枚词只读「数据详情」）的变更记录 + 用户目录读面**懒加载** —— 首次切到「词频图」视图才拉
+ * （ensureWords；不加重仪表盘首屏那轮任务取数），拉完存明细、切项目 / 点词零请求；已经拉过（ready）时随变更
+ * 静默刷新跟着刷；分词 / 计数口径见 data/changeWords.ts。
  *
  * 历史（口径不动，只动了页面命名）：Push 285「登录后默认进入项目空间 首页名称改成蓝图」—— 本页由
  * 「入口页 / 首页」改名「蓝图」，登录后的默认落地改为项目空间 `#/projects`，本页由导航首项 / `#/` 直连进入；
@@ -94,6 +99,9 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   /** 「问题」视图数据（Push 344 · 懒加载：首次切到「问题」视图才拉，不加重仪表盘首屏；取数见 dashboardApi.ts）。 */
   const [issues, setIssues] = useState<DashboardIssueDataset | null>(null);
   const [issuesState, setIssuesState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
+  /** 「词频图」视图数据（Push 353 · 懒加载：首次切到「词频图」视图才拉；取数见 dashboardApi.ts）。 */
+  const [words, setWords] = useState<DashboardWordDataset | null>(null);
+  const [wordsState, setWordsState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
   const deckRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<HubView>(routeView ?? rememberedView);
   const animRef = useRef<HubAnim>(null);
@@ -101,6 +109,8 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const dashLoadingRef = useRef(false);
   const issuesStateRef = useRef<"idle" | "loading" | "ready" | "failed">("idle");
   const issuesLoadingRef = useRef(false);
+  const wordsStateRef = useRef<"idle" | "loading" | "ready" | "failed">("idle");
+  const wordsLoadingRef = useRef(false);
   const projectsRef = useRef<readonly ApiProject[] | null>(null);
   const settleTimerRef = useRef<number | null>(null);
   const noteText = note === "loading" ? t("hub.loading") : note === "failed" ? t("hub.loadFailed") : note === "none" ? "" : t("hub.capped", { n: note.n, total: note.total });
@@ -113,6 +123,11 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const updateIssuesState = useCallback((next: "idle" | "loading" | "ready" | "failed") => {
     issuesStateRef.current = next;
     setIssuesState(next);
+  }, []);
+
+  const updateWordsState = useCallback((next: "idle" | "loading" | "ready" | "failed") => {
+    wordsStateRef.current = next;
+    setWordsState(next);
   }, []);
 
   /** 拉统计（纯取数、不落状态）：首转 / 失败重试 / 变更静默刷新共用。 */
@@ -128,6 +143,15 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const pullIssues = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardIssueDataset | null> => {
     try {
       return await fetchDashboardIssues(projects ?? projectsRef.current ?? undefined);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /** 拉词频图读面（纯取数、不落状态）：首次 / 失败重试 / 变更静默刷新共用。 */
+  const pullWords = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardWordDataset | null> => {
+    try {
+      return await fetchDashboardChangeWords(projects ?? projectsRef.current ?? undefined);
     } catch {
       return null;
     }
@@ -151,6 +175,25 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
       updateIssuesState("ready");
     })();
   }, [pullIssues, updateIssuesState]);
+
+  /** 首次切到「词频图」视图时拉变更记录 / 用户目录读面（Push 353 · 懒加载：不进仪表盘首屏那一轮取数）。 */
+  const ensureWords = useCallback(() => {
+    if (wordsStateRef.current === "ready" || wordsLoadingRef.current) {
+      return;
+    }
+    wordsLoadingRef.current = true;
+    updateWordsState("loading");
+    void (async () => {
+      const data = await pullWords();
+      wordsLoadingRef.current = false;
+      if (data === null) {
+        updateWordsState("failed");
+        return;
+      }
+      setWords(data);
+      updateWordsState("ready");
+    })();
+  }, [pullWords, updateWordsState]);
 
   /** 转入仪表盘前确保有数据：未就绪拉一次（转场先走，拉完再渲染数据，中途显示加载球）。 */
   const ensureDashboard = useCallback(() => {
@@ -302,6 +345,8 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
     const nextDash = dashStateRef.current === "ready" ? ((await pullDashboard(list.items)) ?? dash) : dash;
     /** 问题读面只在已经拉过（ready）后跟着静默刷新（没切过「问题」视图就不预拉）。 */
     const nextIssues = issuesStateRef.current === "ready" ? ((await pullIssues(list.items)) ?? issues) : issues;
+    /** 词频图读面只在已经拉过（ready）后跟着静默刷新（没切过「词频图」视图就不预拉）。 */
+    const nextWords = wordsStateRef.current === "ready" ? ((await pullWords(list.items)) ?? words) : words;
     return () => {
       projectsRef.current = list.items;
       setDistribution(buildMapDistribution(list.items, dicts));
@@ -311,6 +356,9 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
       }
       if (nextIssues !== issues) {
         setIssues(nextIssues);
+      }
+      if (nextWords !== words) {
+        setWords(nextWords);
       }
     };
   }, "hub", distribution !== null);
@@ -334,7 +382,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
               <HubMap distribution={distribution} note={noteText} />
             </div>
             <div data-view="dashboard" data-hub-deck-cell="dashboard" className={deckCellClass + " " + dashSideClass}>
-              <HubDashboard data={dash} state={dashState} issues={issues} issuesState={issuesState} onNeedIssues={ensureIssues} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} rememberedDashView={rememberedDashView} onDashViewChange={onDashViewChange} />
+              <HubDashboard data={dash} state={dashState} issues={issues} issuesState={issuesState} onNeedIssues={ensureIssues} words={words} wordsState={wordsState} onNeedWords={ensureWords} rememberedDashProject={rememberedDashProject} onDashProjectChange={onDashProjectChange} rememberedDashView={rememberedDashView} onDashViewChange={onDashViewChange} />
             </div>
           </div>
           <nav className="hub-deck-dots" aria-label={t("hub.dots.label")}>

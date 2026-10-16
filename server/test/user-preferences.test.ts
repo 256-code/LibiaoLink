@@ -256,22 +256,25 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashProject: true }).success).toBe(false);
   });
 
-  it("仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：只传 hubDashView 落库、未传键保持原值；读侧白名单外回 progress", async () => {
+  it("仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加词频图）：只传 hubDashView 落库、未传键保持原值；读侧白名单外回 progress", async () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { hubDashView: "delivery" }, AT);
     expect((await service.get(USER_ID)).hubDashView).toBe("delivery");
     expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ hubDashView: "delivery" });
     expect((await service.update(USER_ID, { focusMode: true }, AT)).hubDashView).toBe("delivery");
     expect((await service.update(USER_ID, { hubDashView: "progress" }, AT)).hubDashView).toBe("progress");
+    expect((await service.update(USER_ID, { hubDashView: "wordcloud" }, AT)).hubDashView).toBe("wordcloud");
+    expect((await service.update(USER_ID, { hubDashView: "progress" }, AT)).hubDashView).toBe("progress");
     repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubDashView: "board" }, updatedAt: AT } as unknown as UserPreferenceRow);
     expect((await service.get(USER_ID)).hubDashView).toBe("progress");
   });
 
-  it("仪表盘页内图表视图契约：progress / status / issues / delivery 通过，其它字符串 / 布尔 400", () => {
+  it("仪表盘页内图表视图契约：progress / status / issues / delivery / wordcloud 通过，其它字符串 / 布尔 400", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "progress" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "status" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "issues" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "delivery" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "wordcloud" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "board" }).success).toBe(false);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: true }).success).toBe(false);
   });
